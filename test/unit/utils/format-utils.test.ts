@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { describe, it, expect } from 'vitest';
-import { formatDurationSeconds, formatBytes, createId } from '@utils/format-utils';
+import { createId, formatBytes, formatDurationSeconds } from '@utils/format-utils';
+import { describe, expect, it } from 'vitest';
 
 describe('formatDurationSeconds', () => {
   it('formats 0 seconds as 0:00', () => {

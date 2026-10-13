@@ -4,12 +4,8 @@
 // H.264 quality, scale, and trim variations through the browser conversion flow.
 // The baseline fixture exercises the product's common WebCodecs path.
 
-import { test, expect } from '@playwright/test';
-import {
-  isResultVisible,
-  getVisibleResultStats,
-  runConversion,
-} from './fixtures/test-helpers';
+import { expect, test } from '@playwright/test';
+import { getVisibleResultStats, isResultVisible, runConversion } from './fixtures/test-helpers';
 
 // ── Quality Variations ──────────────────────────────────────────
 
@@ -92,7 +88,10 @@ test.describe('Scale: H.264 Baseline × all scales', () => {
   test('75% scale → larger output than 50%', async ({ page }) => {
     // 75% scale GIF encoding is CPU-bound (applyPalette O(pixels×256) per frame).
     // In automated test environments this exceeds even 300s timeout.
-    test.skip(true, '75% scale GIF too slow for automated testing — CPU-bound palette quantization');
+    test.skip(
+      true,
+      '75% scale GIF too slow for automated testing — CPU-bound palette quantization'
+    );
     const { state } = await runConversion(page, {
       file: 'test-video-h264-baseline.mp4',
       format: 'gif',
@@ -110,7 +109,10 @@ test.describe('Scale: H.264 Baseline × all scales', () => {
   test('100% scale → largest output', async ({ page }) => {
     // 100% scale GIF encoding is CPU-bound (applyPalette O(pixels×256) per frame).
     // At 1080p, 2M pixels × 256 palette entries × 36 frames = ~18B operations.
-    test.skip(true, '100% scale GIF too slow for automated testing — CPU-bound palette quantization');
+    test.skip(
+      true,
+      '100% scale GIF too slow for automated testing — CPU-bound palette quantization'
+    );
     const { state, error } = await runConversion(page, {
       file: 'test-video-h264-baseline.mp4',
       format: 'gif',

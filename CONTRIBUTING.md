@@ -292,10 +292,86 @@ marker, that marker becomes the branch identity for subsequent runs.
   support, and warning meaning as `README.md`.
 - Keep diffs small and focused; keep loading/progress/error states intact.
 - Provide explicit user feedback for long-running actions.
-- Use alias-based, leaf imports for cross-folder modules.
-- No barrel imports.
-- Same-folder relative imports are allowed; do not use parent-relative imports
-  across folders or `src/` absolute paths.
+
+### Formatting and inspection scope
+
+Biome is the single formatter, import organizer, and linter. Use 2-space
+indentation, a 100-column target, LF, single quotes, semicolons, and ES5 trailing
+commas (no trailing comma in function arguments). `quality` runs one read-only
+`biome ci .` pass before the existing type, native-test, i18n, graph, and Knip
+gates. Use the existing `fmt:fix`, `lint:fix`, or `quality:fix` commands for
+repairs; separate mechanical changes from behavior-relevant edits.
+
+`biome.json` includes maintained browser source, Node scripts, tests and helpers,
+Vite tooling, raw Windows validation modules and contracts, the release-runtime
+action module, root TypeScript/JSON/HTML configuration, the service worker, the
+404 page, and bundled dependency metadata. Git ignore rules remain effective.
+The shared `packages/core` checkout, dependencies, generated distributions and
+reports, lockfiles, media, binary snapshots, patches, and generated Windows
+inputs/prior distributions/public targets are outside this inspection scope.
+Fixture strings embedded in test code are still checked as code; their literal
+values and intentionally malformed subjects must remain unchanged. Do not
+exclude ordinary test/helper code to avoid diagnostics.
+
+### Modules and TypeScript contracts
+
+- In browser `src/**`, use alias-based leaf imports across folders. Same-folder
+  relative imports and package subpaths are allowed. Biome's built-in
+  `noRestrictedImports` rejects parent-relative imports, `src/` and `/src/`
+  absolute module paths, and child-folder relative imports. This covers static
+  imports, type imports, applicable re-exports, and literal dynamic imports.
+  Keep dynamic fallback, development-only, and lazy component loads dynamic.
+- Do not add barrel imports. Whether an alias names a leaf or an intentional
+  public compatibility export is a review responsibility: the restriction rule
+  matches specifiers, not the resolved module graph. Computed module specifiers
+  and CommonJS `require()` also require review: the locked rule does not diagnose
+  these controls. `new URL('./worker.ts', import.meta.url)` and asset URLs
+  are resource contracts, outside module-import restrictions.
+- Node-executed scripts retain relative imports with explicit runtime file
+  extensions, NodeNext resolution, and type-stripping-compatible syntax. Raw
+  Windows `.mjs` and the small Git-hook Bash adapters keep their documented
+  execution exceptions. Browser aliases do not apply to these entrypoints.
+- Prefer named exports for ordinary functions and types. Preserve component
+  defaults required by lazy loading. Use PascalCase component names and
+  kebab-case ordinary module filenames for new/touched code; avoid mass renames.
+- Keep strict TypeScript, including `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes`, and `verbatimModuleSyntax`. Prefer named domain
+  contracts at module boundaries, local inference inside implementations, and
+  `satisfies` at object construction. Avoid assertion chains between compatible
+  types; legitimate `as const`, `Parameters`, `ReturnType`, and documented
+  platform adapters remain useful.
+- Model absent optional properties, explicit `undefined`, and `null` according
+  to their contract. Do not mechanically remove `| undefined` from optional
+  properties under `exactOptionalPropertyTypes`.
+
+### Reactivity, ownership, and diagnostics
+
+- Keep Solid props reactive through property access, accessors, or `splitProps`.
+  Separate derived values from effects and owner-scoped cleanup. The React
+  dependency-array rule `useExhaustiveDependencies` is disabled for Solid
+  source; it does not verify Solid reactivity.
+- Prefer immutable request/configuration boundaries. Owned mutable buffers,
+  queues, counters, loops, and resource-holding classes are appropriate in media
+  hot paths. Do not add copies merely to satisfy a style preference.
+- Intentionally unawaited work needs an explicit rejection and cleanup owner;
+  `void promise` alone does not handle rejection. Preserve meaningful awaits,
+  microtasks, ordering, and backpressure boundaries.
+- Use unit-bearing names for new time/size values. English comments should
+  explain ownership, units, ordering, or platform constraints. Preserve
+  serialized protocol names unless making an explicit compatibility change.
+- Fix applicable diagnostics without weakening correctness, accessibility,
+  explicit-any, unused-import, or accumulation-spread checks. Retain narrowly
+  explained exceptions for literal GitHub Actions assertions, inert native
+  mocks, asynchronous receiver capture, and cleanup failures raised only when
+  there is no primary failure. Do not apply unsafe automatic fixes, broad
+  suppressions, automatic async rewrites, or new global warning policies.
+
+The installed Biome boundary tests use disposable valid/invalid controls to
+check actual scope, VCS ignores, import restrictions, read-only behavior, and
+fix convergence. Relevant references are [Biome import restrictions](https://biomejs.dev/linter/rules/no-restricted-imports/javascript/),
+[the React dependency rule](https://biomejs.dev/linter/rules/use-exhaustive-dependencies/javascript/),
+[Node TypeScript execution](https://nodejs.org/api/typescript.html), and
+[Solid props](https://docs.solidjs.com/concepts/components/props).
 
 ## Dependency update policy
 

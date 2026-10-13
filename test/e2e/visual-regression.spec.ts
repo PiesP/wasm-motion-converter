@@ -10,7 +10,7 @@
 // Update baselines:
 //   pnpm exec playwright test test/e2e/visual-regression.spec.ts --update-snapshots
 
-import { test, expect, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page, test } from '@playwright/test';
 import { injectTestFile } from './fixtures/test-helpers';
 
 /**
@@ -167,7 +167,6 @@ test.describe('Visual: Progress UI', () => {
     // Elapsed time
     const elapsedText = page.locator('[data-testid="elapsed-time"]').first();
     await expect(elapsedText).toBeVisible({ timeout: 3000 });
-
   });
 });
 
@@ -218,7 +217,9 @@ test.describe('Visual: Result Section', () => {
     const resultImage = page.locator('[data-testid="result-image"]');
     const isImageVisible = await resultImage.isVisible({ timeout: 10_000 }).catch(() => false);
     if (isImageVisible) {
-      const naturalWidth = await resultImage.evaluate((el) => (el as HTMLImageElement).naturalWidth);
+      const naturalWidth = await resultImage.evaluate(
+        (el) => (el as HTMLImageElement).naturalWidth
+      );
       expect(naturalWidth).toBeGreaterThan(0);
     }
   });
@@ -251,7 +252,6 @@ test.describe('Visual: Theme', () => {
       threshold: 0.2,
       maxDiffPixels: 1000,
     });
-
   });
 });
 

@@ -1,6 +1,6 @@
+import tailwindcss from '@tailwindcss/vite';
 import type { UserConfig } from 'vite';
 import solid from 'vite-plugin-solid';
-import tailwindcss from '@tailwindcss/vite';
 
 export function browserAppManualChunk(id: string): string | undefined {
   // Keep Vite's shared preload helper separate from the lazy codec chunk.
@@ -54,7 +54,10 @@ const browserAppPreset: UserConfig = {
         // Keep wasm-webp out of the worker chunk and defer it until WebP encoding.
         manualChunks: browserAppManualChunk,
       },
-      onwarn(warning: { code?: string; message: string }, defaultHandler: (w: { code?: string; message: string }) => void) {
+      onwarn(
+        warning: { code?: string; message: string },
+        defaultHandler: (w: { code?: string; message: string }) => void
+      ) {
         // Suppress "module" externalization warning from wasm-webp
         if (
           warning.code === 'MODULE_LEVEL_DIRECTIVE' ||

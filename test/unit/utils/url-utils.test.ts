@@ -6,8 +6,8 @@ describe('containsUrlHostname', () => {
     expect(
       containsUrlHostname(
         '503 https://static.cloudflareinsights.com/beacon',
-        'static.cloudflareinsights.com',
-      ),
+        'static.cloudflareinsights.com'
+      )
     ).toBe(true);
   });
 
@@ -15,14 +15,14 @@ describe('containsUrlHostname', () => {
     expect(
       containsUrlHostname(
         'https://evil-static.cloudflareinsights.com/beacon',
-        'static.cloudflareinsights.com',
-      ),
+        'static.cloudflareinsights.com'
+      )
     ).toBe(false);
     expect(
       containsUrlHostname(
         'https://example.com/static.cloudflareinsights.com',
-        'static.cloudflareinsights.com',
-      ),
+        'static.cloudflareinsights.com'
+      )
     ).toBe(false);
   });
 
@@ -30,20 +30,20 @@ describe('containsUrlHostname', () => {
     expect(
       containsUrlHostname(
         'not a URL: https://[static.cloudflareinsights.com',
-        'static.cloudflareinsights.com',
-      ),
+        'static.cloudflareinsights.com'
+      )
     ).toBe(false);
   });
 });
 
 describe('isCloudflareInsightsResource', () => {
   it('recognizes a Cloudflare Insights resource URL', () => {
-    expect(
-      isCloudflareInsightsResource('https://static.cloudflareinsights.com/beacon'),
-    ).toBe(true);
+    expect(isCloudflareInsightsResource('https://static.cloudflareinsights.com/beacon')).toBe(true);
   });
 
   it('does not recognize a different host', () => {
-    expect(isCloudflareInsightsResource('https://example.com/static.cloudflareinsights.com')).toBe(false);
+    expect(isCloudflareInsightsResource('https://example.com/static.cloudflareinsights.com')).toBe(
+      false
+    );
   });
 });

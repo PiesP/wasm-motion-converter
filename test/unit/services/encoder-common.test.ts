@@ -6,6 +6,7 @@ import {
   calcMemoryPressureDecimation,
   resolveCadencePolicy,
 } from '@services/encoder-common';
+
 describe('calcAutoDecimation', () => {
   // ── Basic FPS-based decimation ─────────────────────────────
 

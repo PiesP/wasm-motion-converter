@@ -5,22 +5,22 @@
 // Fast, minimal coverage: one codec per path, one format per codec.
 // For full matrix coverage, see matrix.spec.ts.
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
+  clickConvert,
+  dismissWarningDialog,
+  downloadResult,
+  getAppState,
+  getVisibleResultStats,
   injectTestFile,
+  isErrorVisible,
+  isResultVisible,
   parseSizeString,
+  runConversion,
   setFormat,
   setQuality,
   setScale,
-  clickConvert,
-  dismissWarningDialog,
-  isResultVisible,
-  isErrorVisible,
-  getVisibleResultStats,
-  getAppState,
   waitForConversionComplete,
-  downloadResult,
-  runConversion,
 } from './fixtures/test-helpers';
 import { validateFileMagic } from './fixtures/verify';
 
@@ -43,7 +43,9 @@ test.describe('Smoke: H.264 → GIF (WebCodecs path)', () => {
     if (state === 'error') {
       console.log('Conversion error:', error);
       const logs = await page.evaluate(() => {
-        return (window as any).__LAST_ERROR__ || 'no error captured';
+        return (
+          (window as Window & { __LAST_ERROR__?: unknown }).__LAST_ERROR__ || 'no error captured'
+        );
       });
       console.log('Browser error:', logs);
     }
@@ -71,7 +73,9 @@ test.describe('Smoke: H.264 → WebP', () => {
 
     // Wait for result section to appear (queueMicrotask defers setConversionResults)
     await page.waitForTimeout(1000);
-    const resultVisible = await page.evaluate(() => window.__TEST_HELPERS__?.isResultVisible() ?? false);
+    const resultVisible = await page.evaluate(
+      () => window.__TEST_HELPERS__?.isResultVisible() ?? false
+    );
     if (!resultVisible) {
       // Extra wait for slow environments
       await page.waitForTimeout(2000);
@@ -244,7 +248,9 @@ test.describe('Smoke: Error handling', () => {
     let progressIncreased = false;
     while (attempts < 20) {
       await page.waitForTimeout(1000);
-      const currentProgress = await page.evaluate(() => window.__TEST_HELPERS__?.getProgress() ?? 0);
+      const currentProgress = await page.evaluate(
+        () => window.__TEST_HELPERS__?.getProgress() ?? 0
+      );
       const currentState = await getAppState(page);
       attempts++;
 

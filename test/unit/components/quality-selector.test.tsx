@@ -21,10 +21,7 @@ describe('QualitySelector format-aware frame-rate descriptions', () => {
   it('shows GIF target FPS for every quality preset', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
-    render(
-      () => <QualitySelector format="gif" value="medium" onChange={() => {}} />,
-      container
-    );
+    render(() => <QualitySelector format="gif" value="medium" onChange={() => {}} />, container);
 
     expect(container.textContent).toContain('quality.lowDesc:8');
     expect(container.textContent).toContain('quality.mediumDesc:12');
@@ -34,10 +31,7 @@ describe('QualitySelector format-aware frame-rate descriptions', () => {
   it('shows WebP target FPS for every quality preset', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
-    render(
-      () => <QualitySelector format="webp" value="medium" onChange={() => {}} />,
-      container
-    );
+    render(() => <QualitySelector format="webp" value="medium" onChange={() => {}} />, container);
 
     expect(container.textContent).toContain('quality.lowDesc:12');
     expect(container.textContent).toContain('quality.mediumDesc:18');

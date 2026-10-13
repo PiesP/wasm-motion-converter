@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { validateVideoDuration, validateVideoFile } from '@utils/file-validation';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const t = ((key: string) => key) as never;
 
@@ -26,8 +26,14 @@ describe('video file validation edge paths', () => {
     ['MP4 with an altered ftyp atom', [0, 0, 0, 0, 0x66, 0x74, 0x79, 0x78, 0, 0, 0, 0]],
     ['MOV with an altered moov atom', [0, 0, 0, 0, 0x6d, 0x6f, 0x6f, 0x78, 0, 0, 0, 0]],
     ['WebM with an altered EBML header', [0x1a, 0x45, 0xdf, 0xa4, 0, 0, 0, 0]],
-    ['RIFF containing WAVE instead of AVI', [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45]],
-    ['AVI subtype without a RIFF header', [0x52, 0x49, 0x46, 0x58, 0, 0, 0, 0, 0x41, 0x56, 0x49, 0x20]],
+    [
+      'RIFF containing WAVE instead of AVI',
+      [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45],
+    ],
+    [
+      'AVI subtype without a RIFF header',
+      [0x52, 0x49, 0x46, 0x58, 0, 0, 0, 0, 0x41, 0x56, 0x49, 0x20],
+    ],
     ['Ogg with an altered capture pattern', [0x4f, 0x67, 0x67, 0x58, 0, 0, 0, 0]],
   ])('rejects %s when MIME and extension offer no support', async (_name, signature) => {
     const result = await validateVideoFile(makeFile(signature), t);
@@ -70,7 +76,9 @@ describe('validateVideoDuration', () => {
       value: vi.fn(),
     });
     vi.spyOn(document, 'createElement').mockImplementation(((tagName: string) =>
-      tagName === 'video' ? video : document.createElementNS('http://www.w3.org/1999/xhtml', tagName)) as never);
+      tagName === 'video'
+        ? video
+        : document.createElementNS('http://www.w3.org/1999/xhtml', tagName)) as never);
   });
 
   afterEach(() => {

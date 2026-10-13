@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import type { ConversionSettings, ProgressPhase } from '@t/conversion-types';
 import { createComputed, createRoot, createSignal } from 'solid-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConversionSettings, ProgressPhase } from '@t/conversion-types';
 
 const mocks = vi.hoisted(() => ({
-  confirmation: undefined as
-    | { onCancel: () => void; onConfirm: () => void }
-    | undefined,
+  confirmation: undefined as { onCancel: () => void; onConfirm: () => void } | undefined,
   appState: 'idle' as 'idle' | 'cancelling' | 'error',
   focusElementUnlessUserIsEditing: vi.fn(),
   runPipelineWithFallback: vi.fn(),
@@ -93,8 +91,8 @@ vi.mock('@utils/dom-utils', () => ({
   focusPrimaryErrorAction: vi.fn(),
 }));
 
-import * as conversionModule from '@hooks/conversion-handlers/use-perform-conversion';
 import { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
+import * as conversionModule from '@hooks/conversion-handlers/use-perform-conversion';
 
 const { handleCancelConversion, handleConvert, handleDismissError, handleRetry } = conversionModule;
 
@@ -111,12 +109,14 @@ beforeEach(() => {
   mocks.confirmation = undefined;
   mocks.appState = 'idle';
   mocks.focusElementUnlessUserIsEditing.mockReset();
-  mocks.runPipelineWithFallback.mockReset().mockResolvedValue(
-    new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer
-  );
-  mocks.runConversionPipeline.mockReset().mockResolvedValue(
-    new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
-  );
+  mocks.runPipelineWithFallback
+    .mockReset()
+    .mockResolvedValue(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer);
+  mocks.runConversionPipeline
+    .mockReset()
+    .mockResolvedValue(
+      new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
+    );
   mocks.setConversionProgress.mockReset();
   mocks.readWholeFile.mockReset().mockRejectedValue(new Error('Full-file reads are forbidden'));
   mocks.setInputFile.mockClear();
@@ -335,7 +335,10 @@ describe('handleConvert conversion ownership', () => {
 
   it('passes the original File to the GIF worker without a full-file read', async () => {
     mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
-    await handleConvert(createRuntime(), ((key: string) => key) as Parameters<typeof handleConvert>[1]);
+    await handleConvert(
+      createRuntime(),
+      ((key: string) => key) as Parameters<typeof handleConvert>[1]
+    );
 
     expect(mocks.runPipelineWithFallback).toHaveBeenCalledWith(
       expect.any(File),
@@ -380,7 +383,10 @@ describe('handleConvert conversion ownership', () => {
     const pipeline = format === 'gif' ? mocks.runPipelineWithFallback : mocks.runConversionPipeline;
     pipeline.mockResolvedValueOnce(output);
 
-    await handleConvert(createRuntime(), ((key: string) => key) as Parameters<typeof handleConvert>[1]);
+    await handleConvert(
+      createRuntime(),
+      ((key: string) => key) as Parameters<typeof handleConvert>[1]
+    );
 
     expect(mocks.setErrorMessage).toHaveBeenCalledWith(
       expect.stringContaining('invalid output header')
@@ -395,7 +401,10 @@ describe('handleConvert conversion ownership', () => {
     mocks.settings = { ...mocks.settings, scale: 0.5 };
     mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
 
-    await handleConvert(createRuntime(), ((key: string) => key) as Parameters<typeof handleConvert>[1]);
+    await handleConvert(
+      createRuntime(),
+      ((key: string) => key) as Parameters<typeof handleConvert>[1]
+    );
     await Promise.resolve();
 
     expect(mocks.setConversionResults).toHaveBeenLastCalledWith([

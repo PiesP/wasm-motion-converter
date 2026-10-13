@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { describe, expect, it } from 'vitest';
 import { getPooledBufferSize } from '@services/buffer-pool';
 import {
-  calculateStagedFrameSourceCapacity,
   calculateFrameOutputConcurrency,
+  calculateStagedFrameSourceCapacity,
   calculateWebpWorkerCountForBudget,
-  estimateDecodedSourceFrameBytes,
   estimateActiveFrameBytes,
+  estimateDecodedSourceFrameBytes,
   estimateFrameOutputBytes,
   estimateFrameTaskBytes,
   estimateRuntimeDecodedSourceFrameBytes,
@@ -21,12 +20,11 @@ import {
   MAX_FRAME_PIXEL_COUNT,
   WEBP_MAX_OUTPUT_BYTES,
 } from '@utils/constants';
+import { describe, expect, it } from 'vitest';
 
 describe('frame memory reservations', () => {
   it('reserves the maximum coded and display dimensions for a decoded source frame', () => {
-    expect(estimateDecodedSourceFrameBytes(1920, 1080, 2048, 1152)).toBe(
-      2048 * 1152 * 4
-    );
+    expect(estimateDecodedSourceFrameBytes(1920, 1080, 2048, 1152)).toBe(2048 * 1152 * 4);
   });
 
   it('keeps one target working set outside the queued 1080p source-frame capacity', () => {
@@ -96,12 +94,8 @@ describe('frame memory reservations', () => {
     const concurrency = calculateFrameOutputConcurrency(3840, 2160, 3840, 2160, 10);
 
     expect(concurrency).toBe(1);
-    expect(bytesPerFrame * concurrency).toBeLessThanOrEqual(
-      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
-    );
-    expect(bytesPerFrame * (concurrency + 1)).toBeGreaterThan(
-      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
-    );
+    expect(bytesPerFrame * concurrency).toBeLessThanOrEqual(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
+    expect(bytesPerFrame * (concurrency + 1)).toBeGreaterThan(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
   });
 
   it('includes a 4K source frame when calculating 360p output concurrency', () => {
@@ -109,9 +103,7 @@ describe('frame memory reservations', () => {
 
     expect(calculateFrameOutputConcurrency(640, 360, 640, 360, 10)).toBe(10);
     expect(calculateFrameOutputConcurrency(3840, 2160, 640, 360, 10)).toBe(5);
-    expect(bytesPerOutput).toBe(
-      3840 * 2160 * 4 + estimateActiveFrameBytes(640, 360)
-    );
+    expect(bytesPerOutput).toBe(3840 * 2160 * 4 + estimateActiveFrameBytes(640, 360));
     expect(bytesPerOutput).toBeLessThanOrEqual(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
     expect(bytesPerOutput * 5).toBeLessThanOrEqual(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
     expect(bytesPerOutput * 6).toBeGreaterThan(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
@@ -137,13 +129,7 @@ describe('frame memory reservations', () => {
 
     expect(bytesPerOutput).toBeLessThanOrEqual(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
     expect(
-      calculateFrameOutputConcurrency(
-        sourceWidth,
-        sourceHeight,
-        targetWidth,
-        targetHeight,
-        10
-      )
+      calculateFrameOutputConcurrency(sourceWidth, sourceHeight, targetWidth, targetHeight, 10)
     ).toBe(1);
   });
 
@@ -157,9 +143,7 @@ describe('frame memory reservations', () => {
 
   it('partitions demux, live frames, and two output copies within one envelope', () => {
     expect(
-      DEMUX_MEMORY_BUDGET_BYTES +
-        FRAME_PIPELINE_MEMORY_BUDGET_BYTES +
-        WEBP_MAX_OUTPUT_BYTES * 2
+      DEMUX_MEMORY_BUDGET_BYTES + FRAME_PIPELINE_MEMORY_BUDGET_BYTES + WEBP_MAX_OUTPUT_BYTES * 2
     ).toBe(CONVERSION_MEMORY_BUDGET_BYTES);
   });
 
@@ -207,12 +191,18 @@ describe('frame memory reservations', () => {
 
   it('reserves and releases motion analysis within the same hard frame budget', () => {
     const budget = new WebpFrameMemoryBudget({
-      codedWidth: 8, codedHeight: 8, displayWidth: 8, displayHeight: 8,
-      targetWidth: 8, targetHeight: 8, workerCount: 1,
+      codedWidth: 8,
+      codedHeight: 8,
+      displayWidth: 8,
+      displayHeight: 8,
+      targetWidth: 8,
+      targetHeight: 8,
+      workerCount: 1,
     });
     const analysis = budget.reserveAnalysis(37_376);
     expect(budget.usage.analysisBytes).toBe(37_376);
-    const available = FRAME_PIPELINE_MEMORY_BUDGET_BYTES - budget.usage.totalBytes - budget.targetTaskBytes;
+    const available =
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES - budget.usage.totalBytes - budget.targetTaskBytes;
     const source = budget.tryReserveSource(available);
     expect(source).not.toBeNull();
     expect(budget.tryReserveSource(1)).toBeNull();

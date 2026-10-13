@@ -46,11 +46,7 @@ describe('UI state clarity', () => {
     document.body.appendChild(container);
     const dispose = render(
       () => (
-        <VideoMetadataDisplay
-          fileName="sample.mp4"
-          fileSize={18_400_000}
-          metadata={metadata}
-        />
+        <VideoMetadataDisplay fileName="sample.mp4" fileSize={18_400_000} metadata={metadata} />
       ),
       container
     );
@@ -187,7 +183,10 @@ describe('UI state clarity', () => {
     expect(download?.compareDocumentPosition(image!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
     const scrollIntoView = vi.fn();
-    Object.defineProperty(download, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    Object.defineProperty(download, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
     download?.focus();
     image?.dispatchEvent(new Event('load'));
 
@@ -235,7 +234,10 @@ describe('UI state clarity', () => {
       '[data-testid="download-result-button"]'
     );
     const scrollIntoView = vi.fn();
-    Object.defineProperty(download, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+    Object.defineProperty(download, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
     download?.focus();
     image?.dispatchEvent(new Event('load'));
 
@@ -251,7 +253,8 @@ describe('UI state clarity', () => {
   it('opts into reduced-motion previews, detaches the image when hidden, and preserves the download URL', async () => {
     const motionPreference = Object.assign(new EventTarget(), { matches: true });
     vi.stubGlobal('matchMedia', () => motionPreference);
-    const createUrl = vi.spyOn(URL, 'createObjectURL')
+    const createUrl = vi
+      .spyOn(URL, 'createObjectURL')
       .mockReturnValueOnce('blob:first-result')
       .mockReturnValueOnce('blob:second-result');
     const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
@@ -264,12 +267,27 @@ describe('UI state clarity', () => {
       const [hidden, setHidden] = createSignal(false);
       replaceBlob = setBlob;
       preferHidden = setHidden;
-      return <ResultPreview originalName="sample.mp4" originalSize={1000} outputBlob={blob()} outputWidth={80} outputHeight={45} settings={settings} preferHidden={hidden()} onPreviewHidden={() => setHidden(true)} />;
+      return (
+        <ResultPreview
+          originalName="sample.mp4"
+          originalSize={1000}
+          outputBlob={blob()}
+          outputWidth={80}
+          outputHeight={45}
+          settings={settings}
+          preferHidden={hidden()}
+          onPreviewHidden={() => setHidden(true)}
+        />
+      );
     }, container);
     await Promise.resolve();
 
-    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="result-preview-toggle"]')!;
-    const download = container.querySelector<HTMLAnchorElement>('[data-testid="download-result-button"]')!;
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="result-preview-toggle"]'
+    )!;
+    const download = container.querySelector<HTMLAnchorElement>(
+      '[data-testid="download-result-button"]'
+    )!;
     expect(toggle.textContent).toContain('result.showPreview');
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
@@ -316,11 +334,22 @@ describe('UI state clarity', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const dispose = render(
-      () => <ResultPreview originalName="sample.mp4" originalSize={1000} outputBlob={new Blob(['gif'], { type: 'image/gif' })} outputWidth={80} outputHeight={45} settings={settings} />,
+      () => (
+        <ResultPreview
+          originalName="sample.mp4"
+          originalSize={1000}
+          outputBlob={new Blob(['gif'], { type: 'image/gif' })}
+          outputWidth={80}
+          outputHeight={45}
+          settings={settings}
+        />
+      ),
       container
     );
     await Promise.resolve();
-    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="result-preview-toggle"]')!;
+    const toggle = container.querySelector<HTMLButtonElement>(
+      '[data-testid="result-preview-toggle"]'
+    )!;
     expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull();
     motionPreference.matches = true;
     motionPreference.dispatchEvent(new Event('change'));

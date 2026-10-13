@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SerializedConversionOptions } from '@services/conversion-worker/types';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   demuxVideo: vi.fn(),
@@ -44,62 +44,58 @@ const baseOptions: SerializedConversionOptions = {
 beforeEach(() => {
   demuxResult.dispose.mockClear();
   mocks.demuxVideo.mockReset().mockResolvedValue(demuxResult);
-  mocks.encodeGif
-    .mockReset()
-    .mockImplementation(
-      async (
-        _demux: unknown,
-        options: {
-          onFrameDecoded?: (frameCount: number, totalFrames: number) => void;
-          onFrameEncoded?: (frameCount: number, totalFrames: number) => void;
-          onEncodingComplete?: (counts: {
-            consumedChunks?: number;
-            decodedFrames: number;
-            selectedFrames?: number;
-            encodedFrames: number;
-            emittedFrames?: number;
-          }) => void;
-        }
-      ) => {
-        options.onFrameDecoded?.(10, 30);
-        options.onFrameEncoded?.(10, 10);
-        options.onEncodingComplete?.({
-          consumedChunks: 30,
-          decodedFrames: 30,
-          selectedFrames: 12,
-          encodedFrames: 10,
-          emittedFrames: 10,
-        });
-        return new Uint8Array([1, 2, 3]);
+  mocks.encodeGif.mockReset().mockImplementation(
+    async (
+      _demux: unknown,
+      options: {
+        onFrameDecoded?: (frameCount: number, totalFrames: number) => void;
+        onFrameEncoded?: (frameCount: number, totalFrames: number) => void;
+        onEncodingComplete?: (counts: {
+          consumedChunks?: number;
+          decodedFrames: number;
+          selectedFrames?: number;
+          encodedFrames: number;
+          emittedFrames?: number;
+        }) => void;
       }
-    );
-  mocks.encodeWebp
-    .mockReset()
-    .mockImplementation(
-      async (
-        _demux: unknown,
-        options: {
-          onEncodingComplete?: (counts: {
-            consumedChunks?: number;
-            decodedFrames: number;
-            selectedFrames?: number;
-            encodedFrames: number;
-            emittedFrames?: number;
-          }) => void;
-        },
-        onProgress?: (progress: { currentFrame?: number; totalFrames?: number }) => void
-      ) => {
-        onProgress?.({ currentFrame: 1, totalFrames: 30 });
-        options.onEncodingComplete?.({
-          consumedChunks: 3,
-          decodedFrames: 2,
-          selectedFrames: 1,
-          encodedFrames: 1,
-          emittedFrames: 1,
-        });
-        return new Uint8Array([1, 2, 3]);
-      }
-    );
+    ) => {
+      options.onFrameDecoded?.(10, 30);
+      options.onFrameEncoded?.(10, 10);
+      options.onEncodingComplete?.({
+        consumedChunks: 30,
+        decodedFrames: 30,
+        selectedFrames: 12,
+        encodedFrames: 10,
+        emittedFrames: 10,
+      });
+      return new Uint8Array([1, 2, 3]);
+    }
+  );
+  mocks.encodeWebp.mockReset().mockImplementation(
+    async (
+      _demux: unknown,
+      options: {
+        onEncodingComplete?: (counts: {
+          consumedChunks?: number;
+          decodedFrames: number;
+          selectedFrames?: number;
+          encodedFrames: number;
+          emittedFrames?: number;
+        }) => void;
+      },
+      onProgress?: (progress: { currentFrame?: number; totalFrames?: number }) => void
+    ) => {
+      onProgress?.({ currentFrame: 1, totalFrames: 30 });
+      options.onEncodingComplete?.({
+        consumedChunks: 3,
+        decodedFrames: 2,
+        selectedFrames: 1,
+        encodedFrames: 1,
+        emittedFrames: 1,
+      });
+      return new Uint8Array([1, 2, 3]);
+    }
+  );
 });
 
 afterEach(() => {
@@ -110,19 +106,26 @@ describe('worker pipeline smart frame skip forwarding', () => {
   it.each(['gif', 'webp'] as const)(
     'forwards independent normal, pressure, and explicit-gap policies to %s',
     async (format) => {
-      await runWorkerPipeline(new ArrayBuffer(8), {
-        ...baseOptions,
-        format,
-        forceDecimation: 2,
-        memoryPressureCadenceRatio: 4.2,
-      }, vi.fn(), 'cadence-policy');
+      await runWorkerPipeline(
+        new ArrayBuffer(8),
+        {
+          ...baseOptions,
+          format,
+          forceDecimation: 2,
+          memoryPressureCadenceRatio: 4.2,
+        },
+        vi.fn(),
+        'cadence-policy'
+      );
       const encoder = format === 'gif' ? mocks.encodeGif : mocks.encodeWebp;
       expect(encoder).toHaveBeenCalledOnce();
-      expect(encoder.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
-        frameDecimation: 2,
-        minimumSourceFrameGap: 2,
-        pressureCadenceRatio: 4.2,
-      }));
+      expect(encoder.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          frameDecimation: 2,
+          minimumSourceFrameGap: 2,
+          pressureCadenceRatio: 4.2,
+        })
+      );
     }
   );
   it('passes Blob input to demux without reading the whole file first', async () => {
@@ -229,9 +232,7 @@ describe('worker pipeline smart frame skip forwarding', () => {
       4
     );
 
-    expect(mocks.demuxVideo.mock.calls[0]?.[1]).toEqual(
-      expect.objectContaining({ rotation: 270 })
-    );
+    expect(mocks.demuxVideo.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ rotation: 270 }));
     expect(mocks.encodeGif).toHaveBeenCalledWith(
       expect.objectContaining({ rotation: 270 }),
       expect.objectContaining({ width: 48, height: 80 }),

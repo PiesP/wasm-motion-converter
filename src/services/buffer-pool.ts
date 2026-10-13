@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import {
-  BYTES_PER_MB,
-  DEVICE_MEMORY_HEAP_RATIO,
-  WORKER_MAX_MEMORY_MB,
-} from '../utils/constants.js';
-import { getEstimatedHeapLimitBytes } from '../utils/memory-info.js';
-import { getMemoryInfo } from '../utils/memory-monitor.js';
+import { BYTES_PER_MB, DEVICE_MEMORY_HEAP_RATIO, WORKER_MAX_MEMORY_MB } from '@utils/constants';
+import { getEstimatedHeapLimitBytes } from '@utils/memory-info';
+import { getMemoryInfo } from '@utils/memory-monitor';
 
 /**
  * Default maximum total pooled memory: 512 MB.

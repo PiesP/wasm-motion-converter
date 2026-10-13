@@ -4,15 +4,26 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { gzipSync } from 'node:zlib';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.mjs';
-import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
-import { exerciseOfflineRecovery } from './offline-recovery.mjs';
+import { gzipSync } from 'node:zlib';
 import { runAppUpdate } from './app-update.mjs';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.mjs';
+import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
+import { exerciseOfflineRecovery } from './offline-recovery.mjs';
+import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.mjs';
 
 const PROFILE_ID = 'wmc-media';
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
@@ -50,7 +61,10 @@ function sha256(bytes) {
 function parseCssColor(value) {
   const rgbMatch = value.match(/^rgba?\(([^)]+)\)$/);
   if (rgbMatch) {
-    const components = rgbMatch[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    const components = rgbMatch[1]
+      .split(/[,\s/]+/)
+      .filter(Boolean)
+      .map(Number);
     assert(components.length >= 3 && components.slice(0, 3).every(Number.isFinite));
     return {
       channels: components.slice(0, 3),
@@ -60,7 +74,10 @@ function parseCssColor(value) {
 
   const srgbMatch = value.match(/^color\(srgb\s+([^)]*)\)$/);
   assert(srgbMatch, `Unsupported computed color: ${value}`);
-  const components = srgbMatch[1].split(/[\s/]+/).filter(Boolean).map(Number);
+  const components = srgbMatch[1]
+    .split(/[\s/]+/)
+    .filter(Boolean)
+    .map(Number);
   assert(components.length >= 3 && components.slice(0, 3).every(Number.isFinite));
   return {
     channels: components.slice(0, 3).map((channel) => channel * 255),
@@ -102,15 +119,16 @@ function contrastRatio(foreground, background) {
 }
 
 async function settleVisualState(page) {
-  await page.evaluate(
-    async () => {
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      await Promise.all(document.getAnimations().filter((animation) =>
-        animation instanceof CSSTransition
-      ).map((animation) => animation.finished.catch(() => {})));
-      await new Promise((resolve) => requestAnimationFrame(resolve));
-    }
-  );
+  await page.evaluate(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => animation instanceof CSSTransition)
+        .map((animation) => animation.finished.catch(() => {}))
+    );
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
 }
 
 async function readResultMetadataContrast(page, selector) {
@@ -174,9 +192,7 @@ function isWithin(parent, child) {
   const childRelative = relative(parent, child);
   return (
     childRelative === '' ||
-    (!childRelative.startsWith(`..${sep}`) &&
-      childRelative !== '..' &&
-      !isAbsolute(childRelative))
+    (!childRelative.startsWith(`..${sep}`) && childRelative !== '..' && !isAbsolute(childRelative))
   );
 }
 
@@ -264,9 +280,7 @@ function decodeRequestPath(requestUrl) {
   }
   const segments = pathname.split('/').filter(Boolean);
   if (
-    segments.some(
-      (segment) => segment === '.' || segment === '..' || /[:*?"<>|]/.test(segment)
-    )
+    segments.some((segment) => segment === '.' || segment === '..' || /[:*?"<>|]/.test(segment))
   ) {
     const error = new Error('Unsafe request path');
     error.statusCode = 400;
@@ -339,14 +353,17 @@ async function startStaticServer(bundleRoot, { gzipAssets = false, metadataHandl
       const file = await resolveStaticFile(distRoot, request.url);
       const bytes = await readFile(file);
       const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-      for (const [name, value] of matchedHeaders(headerRules, pathname)) response.setHeader(name, value);
+      for (const [name, value] of matchedHeaders(headerRules, pathname))
+        response.setHeader(name, value);
       response.setHeader(
         'Content-Type',
         MIME_TYPES.get(extname(file).toLowerCase()) ?? 'application/octet-stream'
       );
-      const compressible = gzipAssets &&
-        ['.js', '.css', '.json'].includes(extname(file).toLowerCase());
-      const acceptsGzip = /(?:^|,)\s*gzip\s*(?:;|,|$)/i.test(request.headers['accept-encoding'] ?? '');
+      const compressible =
+        gzipAssets && ['.js', '.css', '.json'].includes(extname(file).toLowerCase());
+      const acceptsGzip = /(?:^|,)\s*gzip\s*(?:;|,|$)/i.test(
+        request.headers['accept-encoding'] ?? ''
+      );
       const wireBytes = compressible && acceptsGzip ? gzipSync(bytes) : bytes;
       if (compressible) response.setHeader('Vary', 'Accept-Encoding');
       if (wireBytes !== bytes) response.setHeader('Content-Encoding', 'gzip');
@@ -359,9 +376,11 @@ async function startStaticServer(bundleRoot, { gzipAssets = false, metadataHandl
         : error?.code === 'ENOENT'
           ? 404
           : 500;
-      for (const [name, value] of matchedHeaders(headerRules, '/', true)) response.setHeader(name, value);
+      for (const [name, value] of matchedHeaders(headerRules, '/', true))
+        response.setHeader(name, value);
       response.writeHead(statusCode, {
-        'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache',
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-cache',
       });
       response.end(statusCode === 404 ? 'Not found' : 'Request rejected');
     }
@@ -391,7 +410,10 @@ async function validateBundleFile(bundleRoot, relativePath) {
   const fileReal = await realpath(resolve(rootReal, relativePath));
   assert(isWithin(rootReal, fileReal), `Bundled asset escaped its root: ${relativePath}`);
   const fileStat = await stat(fileReal);
-  assert(fileStat.isFile() && fileStat.size > 0, `Bundled asset is empty or not a file: ${relativePath}`);
+  assert(
+    fileStat.isFile() && fileStat.size > 0,
+    `Bundled asset is empty or not a file: ${relativePath}`
+  );
   return fileReal;
 }
 
@@ -434,21 +456,31 @@ async function selectFixture(page, filePath, inspectAnalysis = false) {
           dataProgress: progress.getAttribute('data-progress'),
           cancelLabel: cancel.getAttribute('aria-label'),
           cancelTitle: cancel.getAttribute('title'),
-          diagnosticsCount: dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length,
+          diagnosticsCount: dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]')
+            .length,
           visibleZero: dropzone?.textContent?.includes('0%') ?? false,
         });
       };
       const observer = new MutationObserver(capture);
-      observer.observe(document.body, { attributes: true, characterData: true, childList: true, subtree: true });
+      observer.observe(document.body, {
+        attributes: true,
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
       globalThis.__wmcAnalysisInspector = { observer, observations };
     });
   }
   const input = page.locator('[data-testid="file-input"]');
   await input.setInputFiles(filePath);
-  await page.waitForFunction(() => {
-    const button = document.querySelector('[data-testid="convert-button"]');
-    return button instanceof HTMLButtonElement && !button.disabled;
-  }, undefined, { timeout: 30_000 });
+  await page.waitForFunction(
+    () => {
+      const button = document.querySelector('[data-testid="convert-button"]');
+      return button instanceof HTMLButtonElement && !button.disabled;
+    },
+    undefined,
+    { timeout: 30_000 }
+  );
   const metadata = page.locator('[data-testid="video-metadata"]');
   await metadata.waitFor({ state: 'visible', timeout: 30_000 });
   assert(
@@ -464,8 +496,16 @@ async function selectFixture(page, filePath, inspectAnalysis = false) {
   });
   for (const observation of observations) {
     assert.equal(observation.busy, 'true', 'Analysis was not busy');
-    assert.equal(observation.ariaValueNow, null, 'Unknown analysis exposed a numeric progress value');
-    assert.equal(observation.dataProgress, null, 'Unknown analysis exposed synthetic progress data');
+    assert.equal(
+      observation.ariaValueNow,
+      null,
+      'Unknown analysis exposed a numeric progress value'
+    );
+    assert.equal(
+      observation.dataProgress,
+      null,
+      'Unknown analysis exposed synthetic progress data'
+    );
     assert.equal(observation.cancelLabel, 'Cancel analysis');
     assert.equal(observation.cancelTitle, 'Cancel analysis');
     assert.equal(observation.diagnosticsCount, 0, 'Analysis displayed conversion diagnostics');
@@ -486,7 +526,11 @@ async function chooseOption(page, group, value) {
     await advanced.locator('summary').click();
   }
   await option.click();
-  assert.equal(await option.locator('input').isChecked(), true, `${group}=${value} was not selected`);
+  assert.equal(
+    await option.locator('input').isChecked(),
+    true,
+    `${group}=${value} was not selected`
+  );
 }
 
 async function proceedIfPrompted(page) {
@@ -495,21 +539,22 @@ async function proceedIfPrompted(page) {
 }
 
 async function waitForConversionOutcome(page, timeout) {
-  await page.waitForFunction(() => {
-    const visible = (element) => element instanceof HTMLElement && element.getClientRects().length > 0;
-    return (
-      visible(document.querySelector('[data-testid="result-section"]')) ||
-      visible(document.querySelector('[data-testid="error-display"]'))
-    );
-  }, undefined, { timeout });
+  await page.waitForFunction(
+    () => {
+      const visible = (element) =>
+        element instanceof HTMLElement && element.getClientRects().length > 0;
+      return (
+        visible(document.querySelector('[data-testid="result-section"]')) ||
+        visible(document.querySelector('[data-testid="error-display"]'))
+      );
+    },
+    undefined,
+    { timeout }
+  );
   const error = page.locator('[data-testid="error-display"]');
   const errorVisible = await error.isVisible();
   const errorText = errorVisible ? (await error.textContent())?.trim() : null;
-  assert.equal(
-    errorVisible,
-    false,
-    `Conversion failed: ${errorText ?? 'unknown error'}`
-  );
+  assert.equal(errorVisible, false, `Conversion failed: ${errorText ?? 'unknown error'}`);
   await page.locator('[data-testid="result-section"]').waitFor({ state: 'visible' });
 }
 
@@ -533,16 +578,33 @@ function validateOutput(bytes, format, expectedWidth = 80, expectedHeight = 45) 
     assert.equal(bytes.readUInt16LE(8), expectedHeight, 'GIF output height is unexpected');
     return;
   }
-  assert.equal(bytes.subarray(0, 4).toString('ascii'), 'RIFF', 'WebP output has invalid RIFF magic');
-  assert.equal(bytes.subarray(8, 12).toString('ascii'), 'WEBP', 'WebP output has invalid WEBP magic');
-  assert.equal(bytes.readUInt32LE(4) + 8, bytes.byteLength, 'WebP RIFF size does not match its download');
+  assert.equal(
+    bytes.subarray(0, 4).toString('ascii'),
+    'RIFF',
+    'WebP output has invalid RIFF magic'
+  );
+  assert.equal(
+    bytes.subarray(8, 12).toString('ascii'),
+    'WEBP',
+    'WebP output has invalid WEBP magic'
+  );
+  assert.equal(
+    bytes.readUInt32LE(4) + 8,
+    bytes.byteLength,
+    'WebP RIFF size does not match its download'
+  );
 }
 
 async function recordScreenshot(page, outputRoot, fileName, artifacts, fullPage = true) {
   const path = join(outputRoot, fileName);
   await page.screenshot({ path, fullPage, animations: 'disabled', caret: 'hide' });
   const bytes = await readFile(path);
-  artifacts.push({ kind: 'screenshot', file: fileName, bytes: bytes.byteLength, sha256: sha256(bytes) });
+  artifacts.push({
+    kind: 'screenshot',
+    file: fileName,
+    bytes: bytes.byteLength,
+    sha256: sha256(bytes),
+  });
 }
 
 async function recordChromeZoomScreenshot(page, outputRoot, fileName, artifacts) {
@@ -551,16 +613,28 @@ async function recordChromeZoomScreenshot(page, outputRoot, fileName, artifacts)
     await session.send('Page.bringToFront');
     // An omitted clip follows Chrome's real zoomed surface, not Playwright's pre-zoom viewport.
     const { data } = await session.send('Page.captureScreenshot', {
-      format: 'png', fromSurface: true, captureBeyondViewport: false,
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: false,
     });
     const bytes = Buffer.from(data, 'base64');
-    assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a',
-      'Chrome zoom capture is not a PNG');
+    assert.equal(
+      bytes.subarray(0, 8).toString('hex'),
+      '89504e470d0a1a0a',
+      'Chrome zoom capture is not a PNG'
+    );
     await writeFile(join(outputRoot, fileName), bytes);
-    artifacts.push({ kind: 'screenshot', file: fileName,
-      bytes: bytes.byteLength, sha256: sha256(bytes) });
-    return { method: 'cdp-page-capture-screenshot-no-clip',
-      width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+    artifacts.push({
+      kind: 'screenshot',
+      file: fileName,
+      bytes: bytes.byteLength,
+      sha256: sha256(bytes),
+    });
+    return {
+      method: 'cdp-page-capture-screenshot-no-clip',
+      width: bytes.readUInt32BE(16),
+      height: bytes.readUInt32BE(20),
+    };
   } finally {
     await session.detach();
   }
@@ -569,26 +643,34 @@ async function recordChromeZoomScreenshot(page, outputRoot, fileName, artifacts)
 async function readForcedColorsControlDiagnostics(page) {
   return page.evaluate(() => ({
     viewport: { width: innerWidth, height: innerHeight, scrollY },
-    controls: ['download-result-button', 'download-result-label', 'result-preview-toggle'].map((testId) => {
-      const element = document.querySelector(`[data-testid="${testId}"]`);
-      if (!(element instanceof HTMLElement)) return { testId, present: false };
-      const style = getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return {
-        testId,
-        present: true,
-        textContent: element.textContent?.trim() ?? '',
-        color: style.color,
-        backgroundColor: style.backgroundColor,
-        forcedColorAdjust: style.forcedColorAdjust,
-        visibility: style.visibility,
-        display: style.display,
-        opacity: style.opacity,
-        hasClientRect: element.getClientRects().length > 0,
-        rect: { top: rect.top, right: rect.right, bottom: rect.bottom,
-          left: rect.left, width: rect.width, height: rect.height },
-      };
-    }),
+    controls: ['download-result-button', 'download-result-label', 'result-preview-toggle'].map(
+      (testId) => {
+        const element = document.querySelector(`[data-testid="${testId}"]`);
+        if (!(element instanceof HTMLElement)) return { testId, present: false };
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return {
+          testId,
+          present: true,
+          textContent: element.textContent?.trim() ?? '',
+          color: style.color,
+          backgroundColor: style.backgroundColor,
+          forcedColorAdjust: style.forcedColorAdjust,
+          visibility: style.visibility,
+          display: style.display,
+          opacity: style.opacity,
+          hasClientRect: element.getClientRects().length > 0,
+          rect: {
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height,
+          },
+        };
+      }
+    ),
   }));
 }
 
@@ -667,7 +749,15 @@ async function readResultDiscoveryState(page, format) {
   }, format);
 }
 
-async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoot, artifacts, reusePage = false) {
+async function convertSmallFixture(
+  page,
+  baseUrl,
+  fixturePath,
+  format,
+  outputRoot,
+  artifacts,
+  reusePage = false
+) {
   await page.setViewportSize(
     format === 'webp' ? { width: 390, height: 844 } : { width: 1280, height: 900 }
   );
@@ -687,7 +777,9 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   assert.equal((await previewToggle.textContent())?.trim(), 'Show animated preview');
   assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
   assert.equal(await page.locator('[data-testid="result-preview-hidden"]').isVisible(), true);
-  const downloadHref = await page.locator('[data-testid="download-result-button"]').getAttribute('href');
+  const downloadHref = await page
+    .locator('[data-testid="download-result-button"]')
+    .getAttribute('href');
   assert(downloadHref?.startsWith('blob:'), 'Reduced-motion result has no download URL');
   assert.equal(
     await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
@@ -697,12 +789,16 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
 
   let initialDiscovery;
   try {
-    await page.waitForFunction(() => {
-      const button = document.querySelector('[data-testid="download-result-button"]');
-      if (!(button instanceof HTMLElement) || document.activeElement !== button) return false;
-      const rect = button.getBoundingClientRect();
-      return rect.top >= 0 && rect.bottom <= innerHeight;
-    }, undefined, { timeout: 5_000 });
+    await page.waitForFunction(
+      () => {
+        const button = document.querySelector('[data-testid="download-result-button"]');
+        if (!(button instanceof HTMLElement) || document.activeElement !== button) return false;
+        const rect = button.getBoundingClientRect();
+        return rect.top >= 0 && rect.bottom <= innerHeight;
+      },
+      undefined,
+      { timeout: 5_000 }
+    );
     initialDiscovery = await readResultDiscoveryState(page, format);
   } catch (error) {
     initialDiscovery = await readResultDiscoveryState(page, format);
@@ -724,7 +820,12 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   assert.equal(initialDiscovery.summary.present, true, 'Reduced-motion result summary is missing');
   assert.equal(initialDiscovery.summary.beforeDownload, true);
   assert.equal(initialDiscovery.image.present, false, 'Reduced-motion result auto-played');
-  await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-reduced-default.png`, artifacts);
+  await recordScreenshot(
+    page,
+    outputRoot,
+    `${PROFILE_ID}-${format}-reduced-default.png`,
+    artifacts
+  );
 
   await previewToggle.focus();
   await page.keyboard.press('Enter');
@@ -733,10 +834,14 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   assert.equal(await previewToggle.evaluate((button) => document.activeElement === button), true);
   const preview = page.locator('[data-testid="result-image"]');
   await preview.waitFor({ state: 'visible', timeout: 30_000 });
-  await page.waitForFunction(() => {
-    const image = document.querySelector('[data-testid="result-image"]');
-    return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
-  }, undefined, { timeout: 30_000 });
+  await page.waitForFunction(
+    () => {
+      const image = document.querySelector('[data-testid="result-image"]');
+      return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+    },
+    undefined,
+    { timeout: 30_000 }
+  );
   const dimensions = await preview.evaluate((image) => ({
     width: image.naturalWidth,
     height: image.naturalHeight,
@@ -771,12 +876,16 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   );
 
   await page.locator('[data-testid="preview-size-fit"]').click();
-  await page.waitForFunction(() => {
-    const image = document.querySelector('[data-testid="result-image"]');
-    if (!(image instanceof HTMLImageElement) || image.naturalWidth <= 0) return false;
-    const rect = image.getBoundingClientRect();
-    return Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight) > 1.1;
-  }, undefined, { timeout: 5_000 });
+  await page.waitForFunction(
+    () => {
+      const image = document.querySelector('[data-testid="result-image"]');
+      if (!(image instanceof HTMLImageElement) || image.naturalWidth <= 0) return false;
+      const rect = image.getBoundingClientRect();
+      return Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight) > 1.1;
+    },
+    undefined,
+    { timeout: 5_000 }
+  );
   await settleVisualState(page);
   const fitPresentation = await readPreviewPresentation(page);
   assert.equal(fitPresentation.actualPressed, 'false');
@@ -792,12 +901,16 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   );
 
   await page.locator('[data-testid="preview-size-actual"]').click();
-  await page.waitForFunction(() => {
-    const image = document.querySelector('[data-testid="result-image"]');
-    if (!(image instanceof HTMLImageElement) || image.naturalWidth <= 0) return false;
-    const rect = image.getBoundingClientRect();
-    return Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight) <= 1.01;
-  }, undefined, { timeout: 5_000 });
+  await page.waitForFunction(
+    () => {
+      const image = document.querySelector('[data-testid="result-image"]');
+      if (!(image instanceof HTMLImageElement) || image.naturalWidth <= 0) return false;
+      const rect = image.getBoundingClientRect();
+      return Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight) <= 1.01;
+    },
+    undefined,
+    { timeout: 5_000 }
+  );
   await settleVisualState(page);
 
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
@@ -835,9 +948,11 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
     active: matchMedia('(forced-colors: active)').matches,
     horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     previewToggleVisible:
-      (document.querySelector('[data-testid="result-preview-toggle"]')?.getClientRects().length ?? 0) > 0,
+      (document.querySelector('[data-testid="result-preview-toggle"]')?.getClientRects().length ??
+        0) > 0,
     downloadVisible:
-      (document.querySelector('[data-testid="download-result-button"]')?.getClientRects().length ?? 0) > 0,
+      (document.querySelector('[data-testid="download-result-button"]')?.getClientRects().length ??
+        0) > 0,
   }));
   assert.equal(forcedColors.active, true, 'Forced Colors emulation was not active');
   assert(forcedColors.horizontalOverflow <= 1, 'Forced Colors result overflowed horizontally');
@@ -859,19 +974,27 @@ async function convertSmallFixture(page, baseUrl, fixturePath, format, outputRoo
   assert.equal(downloadLabel.color, downloadControl.color);
   assert.equal(parseCssColor(downloadLabel.backgroundColor).alpha, 0);
   forcedColors.downloadLabelContrast = await readResultMetadataContrast(
-    page, '[data-testid="download-result-label"]'
+    page,
+    '[data-testid="download-result-label"]'
   );
   assert.equal(forcedColors.downloadLabelContrast.opacity, 1);
   assert(forcedColors.downloadLabelContrast.fontSizePx >= 12);
-  assert(forcedColors.downloadLabelContrast.ratio >= 4.5,
-    'Forced Colors download label and background have insufficient computed contrast');
+  assert(
+    forcedColors.downloadLabelContrast.ratio >= 4.5,
+    'Forced Colors download label and background have insufficient computed contrast'
+  );
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-forced-colors.png`, artifacts);
   await page.locator('[data-testid="download-result-button"]').scrollIntoViewIfNeeded();
   await page.locator('[data-testid="result-preview-toggle"]').scrollIntoViewIfNeeded();
   await settleVisualState(page);
   forcedColors.beforeViewportScreenshot = await readForcedColorsControlDiagnostics(page);
-  await recordScreenshot(page, outputRoot,
-    `${PROFILE_ID}-${format}-forced-colors-viewport.png`, artifacts, false);
+  await recordScreenshot(
+    page,
+    outputRoot,
+    `${PROFILE_ID}-${format}-forced-colors-viewport.png`,
+    artifacts,
+    false
+  );
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce', forcedColors: 'none' });
   await settleVisualState(page);
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-result.png`, artifacts);
@@ -992,10 +1115,14 @@ async function convertOutputContract(
 
   const preview = page.locator('[data-testid="result-image"]');
   await preview.waitFor({ state: 'visible', timeout: 30_000 });
-  await page.waitForFunction(() => {
-    const image = document.querySelector('[data-testid="result-image"]');
-    return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
-  }, undefined, { timeout: 30_000 });
+  await page.waitForFunction(
+    () => {
+      const image = document.querySelector('[data-testid="result-image"]');
+      return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+    },
+    undefined,
+    { timeout: 30_000 }
+  );
   assert.deepEqual(
     await preview.evaluate((image) => ({
       width: image.naturalWidth,
@@ -1020,12 +1147,15 @@ async function convertOutputContract(
   const decoded = await verifyAnimatedOutput(page, bytes, contract, markers);
   const gifDelaysCs = contract.format === 'gif' ? parseGifDelaysCs(bytes) : null;
   if (gifDelaysCs) {
-    assert(gifDelaysCs.every((delay) => delay >= 2 && delay <= 200),
-      `${contract.id}: an emitted record is not viewer-safe`);
+    assert(
+      gifDelaysCs.every((delay) => delay >= 2 && delay <= 200),
+      `${contract.id}: an emitted record is not viewer-safe`
+    );
   }
-  const exactOracle = contract.id === 'cfr-trim-gif'
-    ? await compareAnimatedOutputExact(page, bytes, bytes, contract.format)
-    : null;
+  const exactOracle =
+    contract.id === 'cfr-trim-gif'
+      ? await compareAnimatedOutputExact(page, bytes, bytes, contract.format)
+      : null;
   return {
     id: `output-contract-${contract.id}`,
     status: 'passed',
@@ -1053,7 +1183,10 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
   await metadataSummary.focus();
   await page.keyboard.press('Enter');
   assert.equal(await metadata.evaluate((element) => element.open), true);
-  assert.equal(await metadataSummary.evaluate((element) => document.activeElement === element), true);
+  assert.equal(
+    await metadataSummary.evaluate((element) => document.activeElement === element),
+    true
+  );
   assert(
     (await metadata.textContent())?.includes(basename(fixturePath)),
     'Metadata disclosure omitted the selected fixture name'
@@ -1070,7 +1203,10 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
   await advancedSummary.focus();
   await page.keyboard.press('Enter');
   assert.equal(await advanced.evaluate((element) => element.open), true);
-  assert.equal(await advancedSummary.evaluate((element) => document.activeElement === element), true);
+  assert.equal(
+    await advancedSummary.evaluate((element) => document.activeElement === element),
+    true
+  );
 
   await chooseOption(page, 'smart-frame-skip', 'off');
   const offInput = page.locator('[data-testid="option-smart-frame-skip-off"] input');
@@ -1078,7 +1214,11 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
   const lowInput = lowOption.locator('input');
   await offInput.focus();
   await page.keyboard.press('ArrowRight');
-  assert.equal(await lowInput.isChecked(), true, 'Keyboard did not select the next frame-skip mode');
+  assert.equal(
+    await lowInput.isChecked(),
+    true,
+    'Keyboard did not select the next frame-skip mode'
+  );
   const lowLabel = await lowOption.getAttribute('aria-label');
   assert(lowLabel, 'Frame-skip option has no accessible label');
   assert(
@@ -1129,10 +1269,18 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
     'Sharing action changed the selected trim range'
   );
   assert.equal(await sharingButton.isDisabled(), true, 'Applied sharing action remained enabled');
-  assert.equal(await convertButton.isEnabled(), true, 'Sharing action did not leave conversion ready');
+  assert.equal(
+    await convertButton.isEnabled(),
+    true,
+    'Sharing action did not leave conversion ready'
+  );
   assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), false);
   await chooseOption(page, 'quality', 'high');
-  assert.equal(await sharingButton.isEnabled(), true, 'Manual override did not re-enable sharing action');
+  assert.equal(
+    await sharingButton.isEnabled(),
+    true,
+    'Manual override did not re-enable sharing action'
+  );
 
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-disclosures.png`, artifacts);
   await advancedSummary.focus();
@@ -1204,7 +1352,10 @@ async function exerciseLongLocaleResult(page, outputRoot, artifacts) {
     });
     assert.equal(layout.lang, locale);
     assert.equal(layout.dir, dir);
-    assert(layout.documentWidth <= layout.viewportWidth + 1, `${locale} result overflows horizontally`);
+    assert(
+      layout.documentWidth <= layout.viewportWidth + 1,
+      `${locale} result overflows horizontally`
+    );
     for (const [index, control] of layout.controls.entries()) {
       assert(control.left !== null && control.left >= -1, `${locale} control is clipped at start`);
       assert(
@@ -1215,20 +1366,36 @@ async function exerciseLongLocaleResult(page, outputRoot, artifacts) {
         control.height !== null && control.height >= (index < 2 ? 44 : 28),
         `${locale} control is too short`
       );
-      assert(control.fontSizePx !== null && control.fontSizePx >= 12, `${locale} control text is too small`);
+      assert(
+        control.fontSizePx !== null && control.fontSizePx >= 12,
+        `${locale} control text is too small`
+      );
     }
     assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
     assert.equal(await page.locator('[data-testid="result-image"]').count(), 0);
     assert.equal(await download.getAttribute('href'), downloadHref);
     await settleVisualState(page);
-    await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${locale}-narrow-result.png`, artifacts);
+    await recordScreenshot(
+      page,
+      outputRoot,
+      `${PROFILE_ID}-${locale}-narrow-result.png`,
+      artifacts
+    );
     observations.push(layout);
   }
 
   return { id: 'long-locale-narrow-result', status: 'passed', observations };
 }
 
-async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePath, outputRoot, artifacts) {
+async function exerciseBrowserZoom(
+  browser,
+  page,
+  bundleRoot,
+  baseUrl,
+  fixturePath,
+  outputRoot,
+  artifacts
+) {
   const userAgent = await page.evaluate(() => navigator.userAgent);
   if (userAgent.includes('Edg/')) {
     return { id: 'browser-zoom-200', status: 'not-run', reason: 'Chrome Settings adapter only' };
@@ -1261,11 +1428,15 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
       reducedMotion: 'reduce',
       viewport: { width: 1280, height: 900 },
     });
-    zoomPage = zoomContext.pages()[0] ?? await zoomContext.newPage();
+    zoomPage = zoomContext.pages()[0] ?? (await zoomContext.newPage());
     zoomPage.on('pageerror', (error) => pageErrors.push(error.message));
     stage = 'load-same-production-bundle';
     const appLoad = await loadApplication(zoomPage, baseUrl);
-    assert.equal(appLoad.crossOriginIsolated, true, 'Owned Chrome profile lost COOP/COEP isolation');
+    assert.equal(
+      appLoad.crossOriginIsolated,
+      true,
+      'Owned Chrome profile lost COOP/COEP isolation'
+    );
 
     stage = 'convert-owned-gif';
     await selectFixture(zoomPage, fixturePath);
@@ -1278,19 +1449,23 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     const toggle = zoomPage.locator('[data-testid="result-preview-toggle"]');
     const download = zoomPage.locator('[data-testid="download-result-button"]');
     await toggle.waitFor({ state: 'visible' });
-    assert.equal(await toggle.getAttribute('aria-expanded'), 'false',
-      'Reduced-motion GIF started animating in the owned profile');
+    assert.equal(
+      await toggle.getAttribute('aria-expanded'),
+      'false',
+      'Reduced-motion GIF started animating in the owned profile'
+    );
     assert.equal(await zoomPage.locator('[data-testid="result-image"]').count(), 0);
     const href = await download.getAttribute('href');
     assert(href?.startsWith('blob:'), 'Owned GIF result has no Blob download');
 
     stage = 'select-arabic-product-locale';
     await zoomPage.locator('[data-testid="language-selector"]').selectOption('ar');
-    await zoomPage.waitForFunction(() =>
-      document.documentElement.lang === 'ar' &&
-      document.documentElement.dir === 'rtl' &&
-      document.querySelector('[data-testid="result-preview-toggle"]')?.textContent?.trim() ===
-        'إظهار المعاينة المتحركة'
+    await zoomPage.waitForFunction(
+      () =>
+        document.documentElement.lang === 'ar' &&
+        document.documentElement.dir === 'rtl' &&
+        document.querySelector('[data-testid="result-preview-toggle"]')?.textContent?.trim() ===
+          'إظهار المعاينة المتحركة'
     );
 
     stage = 'set-real-browser-zoom';
@@ -1300,18 +1475,26 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     previousZoom = await zoom.inputValue();
     assert.equal(Number(previousZoom), 1, 'Owned Chrome profile did not start at 100% zoom');
     baseline = await zoomPage.evaluate(() => ({
-      devicePixelRatio, width: innerWidth, scale: visualViewport?.scale,
+      devicePixelRatio,
+      width: innerWidth,
+      scale: visualViewport?.scale,
     }));
     baselineScreenshot = await recordChromeZoomScreenshot(
-      zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-100.png`, artifacts
+      zoomPage,
+      outputRoot,
+      `${PROFILE_ID}-browser-zoom-100.png`,
+      artifacts
     );
     await zoom.selectOption('2');
     await zoomPage.bringToFront();
-    await zoomPage.waitForFunction((before) =>
-      Math.abs(devicePixelRatio / before.devicePixelRatio - 2) < 0.02 &&
-      Math.abs(innerWidth / before.width - 0.5) < 0.02 &&
-      Math.abs((visualViewport?.scale ?? 0) - 1) < 0.02,
-    baseline, { timeout: 10_000 });
+    await zoomPage.waitForFunction(
+      (before) =>
+        Math.abs(devicePixelRatio / before.devicePixelRatio - 2) < 0.02 &&
+        Math.abs(innerWidth / before.width - 0.5) < 0.02 &&
+        Math.abs((visualViewport?.scale ?? 0) - 1) < 0.02,
+      baseline,
+      { timeout: 10_000 }
+    );
 
     stage = 'exercise-zoomed-result';
     assert.equal(await download.getAttribute('href'), href, 'Browser zoom replaced the Blob URL');
@@ -1324,10 +1507,14 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     assert.equal(await zoomPage.locator('[data-testid="result-image"]').count(), 0);
     assert.equal(await download.getAttribute('href'), href);
     const observation = await zoomPage.evaluate(() => ({
-      devicePixelRatio, width: innerWidth, height: innerHeight, scale: visualViewport?.scale,
+      devicePixelRatio,
+      width: innerWidth,
+      height: innerHeight,
+      scale: visualViewport?.scale,
       language: document.documentElement.lang,
       direction: document.documentElement.dir,
-      horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      horizontalOverflow:
+        document.documentElement.scrollWidth - document.documentElement.clientWidth,
     }));
     assert(observation.horizontalOverflow <= 1, '200% browser zoom caused horizontal overflow');
     assert.equal(observation.language, 'ar');
@@ -1336,12 +1523,18 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
       await control.focus();
       const geometry = await control.evaluate((element) => {
         const rect = element.getBoundingClientRect();
-        return { left: rect.left, right: rect.right, width: innerWidth,
+        return {
+          left: rect.left,
+          right: rect.right,
+          width: innerWidth,
           fontSize: Number.parseFloat(getComputedStyle(element).fontSize),
-          focused: document.activeElement === element };
+          focused: document.activeElement === element,
+        };
       });
-      assert(geometry.left >= -1 && geometry.right <= geometry.width + 1,
-        'A zoomed result control was clipped horizontally');
+      assert(
+        geometry.left >= -1 && geometry.right <= geometry.width + 1,
+        'A zoomed result control was clipped horizontally'
+      );
       assert(geometry.focused && geometry.fontSize >= 12);
     }
     await toggle.scrollIntoViewIfNeeded();
@@ -1352,20 +1545,35 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
       return controls.map((testId) => {
         const element = document.querySelector(`[data-testid="${testId}"]`);
         const rect = element?.getBoundingClientRect();
-        return { testId, left: rect?.left ?? null, right: rect?.right ?? null,
-          top: rect?.top ?? null, bottom: rect?.bottom ?? null,
-          width: rect?.width ?? null, height: rect?.height ?? null,
-          viewportWidth: innerWidth, viewportHeight: innerHeight };
+        return {
+          testId,
+          left: rect?.left ?? null,
+          right: rect?.right ?? null,
+          top: rect?.top ?? null,
+          bottom: rect?.bottom ?? null,
+          width: rect?.width ?? null,
+          height: rect?.height ?? null,
+          viewportWidth: innerWidth,
+          viewportHeight: innerHeight,
+        };
       });
     });
     for (const control of screenshotControls) {
-      assert(control.width > 0 && control.height > 0 && control.left >= -1 &&
-        control.right <= control.viewportWidth + 1 &&
-        control.top >= -1 && control.bottom <= control.viewportHeight + 1,
-      `${control.testId} is outside the zoom screenshot viewport`);
+      assert(
+        control.width > 0 &&
+          control.height > 0 &&
+          control.left >= -1 &&
+          control.right <= control.viewportWidth + 1 &&
+          control.top >= -1 &&
+          control.bottom <= control.viewportHeight + 1,
+        `${control.testId} is outside the zoom screenshot viewport`
+      );
     }
     const zoomScreenshot = await recordChromeZoomScreenshot(
-      zoomPage, outputRoot, `${PROFILE_ID}-browser-zoom-200.png`, artifacts
+      zoomPage,
+      outputRoot,
+      `${PROFILE_ID}-browser-zoom-200.png`,
+      artifacts
     );
     // CDP captures the native surface while Playwright may emulate the page's DPR.
     assert.equal(zoomScreenshot.width, baselineScreenshot.width);
@@ -1380,14 +1588,27 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     validateOutput(bytes, 'gif');
     const outputFile = `${PROFILE_ID}-browser-zoom-gif.gif`;
     await writeFile(join(outputRoot, outputFile), bytes);
-    artifacts.push({ kind: 'zoomed-converted-media', file: outputFile,
-      bytes: bytes.byteLength, sha256: sha256(bytes) });
+    artifacts.push({
+      kind: 'zoomed-converted-media',
+      file: outputFile,
+      bytes: bytes.byteLength,
+      sha256: sha256(bytes),
+    });
     assert.deepEqual(pageErrors, [], 'Owned Chrome result page emitted errors');
-    result = { id: 'browser-zoom-200', status: 'passed', factor: 2,
-      method: 'owned-persistent-chrome-settings-page', baseline, observation,
-      language: 'ar', previewHiddenAfterKeyboard: true, screenshotControls,
-      baselineScreenshot, zoomScreenshot,
-      download: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) } };
+    result = {
+      id: 'browser-zoom-200',
+      status: 'passed',
+      factor: 2,
+      method: 'owned-persistent-chrome-settings-page',
+      baseline,
+      observation,
+      language: 'ar',
+      previewHiddenAfterKeyboard: true,
+      screenshotControls,
+      baselineScreenshot,
+      zoomScreenshot,
+      download: { file: outputFile, bytes: bytes.byteLength, sha256: sha256(bytes) },
+    };
   } catch (error) {
     primaryError = error;
   } finally {
@@ -1396,11 +1617,14 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
         await settingsPage.locator('select#zoomLevel').selectOption(previousZoom);
         if (baseline) {
           await zoomPage.bringToFront();
-          await zoomPage.waitForFunction((before) =>
-            Math.abs(devicePixelRatio / before.devicePixelRatio - 1) < 0.02 &&
-            Math.abs(innerWidth / before.width - 1) < 0.02 &&
-            Math.abs((visualViewport?.scale ?? 0) - 1) < 0.02,
-          baseline, { timeout: 10_000 });
+          await zoomPage.waitForFunction(
+            (before) =>
+              Math.abs(devicePixelRatio / before.devicePixelRatio - 1) < 0.02 &&
+              Math.abs(innerWidth / before.width - 1) < 0.02 &&
+              Math.abs((visualViewport?.scale ?? 0) - 1) < 0.02,
+            baseline,
+            { timeout: 10_000 }
+          );
         }
         zoomRestored = true;
       } catch (error) {
@@ -1408,7 +1632,11 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
       }
     }
     if (settingsPage) {
-      try { await settingsPage.close(); } catch (error) { cleanupErrors.push(error); }
+      try {
+        await settingsPage.close();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
     }
     if (zoomContext) {
       try {
@@ -1421,7 +1649,10 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     if (contextClosed) {
       try {
         assert.equal(dirname(profilePath), bundleRoot, 'Zoom profile escaped the bundle root');
-        assert(basename(profilePath).startsWith(ZOOM_PROFILE_PREFIX), 'Zoom profile is not task-owned');
+        assert(
+          basename(profilePath).startsWith(ZOOM_PROFILE_PREFIX),
+          'Zoom profile is not task-owned'
+        );
         await rm(profilePath, { recursive: true, force: false, maxRetries: 3, retryDelay: 100 });
         profileRemoved = true;
       } catch (error) {
@@ -1431,17 +1662,25 @@ async function exerciseBrowserZoom(browser, page, bundleRoot, baseUrl, fixturePa
     if (primaryError || cleanupErrors.length) {
       const diagnostic = {
         stage,
-        error: primaryError === undefined ? null :
-          primaryError instanceof Error ? primaryError.message : String(primaryError),
-        cleanupErrors: cleanupErrors.map((error) => error instanceof Error ? error.message : String(error)),
+        error:
+          primaryError === undefined
+            ? null
+            : primaryError instanceof Error
+              ? primaryError.message
+              : String(primaryError),
+        cleanupErrors: cleanupErrors.map((error) =>
+          error instanceof Error ? error.message : String(error)
+        ),
         profileName: basename(profilePath),
         contextClosed,
         profileRemoved,
         zoomRestored,
       };
       try {
-        await writeFile(join(outputRoot, `${PROFILE_ID}-browser-zoom-failure.json`),
-          `${JSON.stringify(diagnostic, null, 2)}\n`);
+        await writeFile(
+          join(outputRoot, `${PROFILE_ID}-browser-zoom-failure.json`),
+          `${JSON.stringify(diagnostic, null, 2)}\n`
+        );
       } catch (error) {
         cleanupErrors.push(error);
       }
@@ -1527,11 +1766,15 @@ export async function installCancellationInspector(page) {
           label: dropzoneCancel?.getAttribute('aria-label') ?? null,
         },
         dropzoneBusy: dropzone?.getAttribute('aria-busy') ?? null,
-        progressBusy: progressBusyRegion && progressBusyRegion !== dropzone && dropzone?.contains(progressBusyRegion)
-          ? progressBusyRegion.getAttribute('aria-busy')
-          : null,
+        progressBusy:
+          progressBusyRegion &&
+          progressBusyRegion !== dropzone &&
+          dropzone?.contains(progressBusyRegion)
+            ? progressBusyRegion.getAttribute('aria-busy')
+            : null,
         progressAriaValueNow: progressSample.ariaValueNow,
-        diagnosticsCount: dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length ?? 0,
+        diagnosticsCount:
+          dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length ?? 0,
         diagnosticsOpen: diagnostics?.open ?? null,
         diagnosticsSummaryFontSizePx: diagnosticsSummary
           ? Number.parseFloat(getComputedStyle(diagnosticsSummary).fontSize)
@@ -1565,19 +1808,23 @@ export async function readCancellationInspector(page) {
 async function inspectRestoredPreview(page) {
   const preview = page.locator('#selection-preview-video');
   await preview.waitFor({ state: 'visible', timeout: 30_000 });
-  await page.waitForFunction(() => {
-    const video = document.querySelector('#selection-preview-video');
-    if (!(video instanceof HTMLVideoElement)) return false;
-    const rect = video.getBoundingClientRect();
-    return (
-      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
-      video.videoWidth > 0 &&
-      video.videoHeight > 0 &&
-      rect.width > 0 &&
-      rect.height > 0 &&
-      getComputedStyle(video).opacity === '1'
-    );
-  }, undefined, { timeout: 10_000 });
+  await page.waitForFunction(
+    () => {
+      const video = document.querySelector('#selection-preview-video');
+      if (!(video instanceof HTMLVideoElement)) return false;
+      const rect = video.getBoundingClientRect();
+      return (
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0 &&
+        rect.width > 0 &&
+        rect.height > 0 &&
+        getComputedStyle(video).opacity === '1'
+      );
+    },
+    undefined,
+    { timeout: 10_000 }
+  );
   await settleVisualState(page);
 
   const firstFrame = await preview.evaluate((video) => {
@@ -1625,7 +1872,10 @@ async function inspectRestoredPreview(page) {
 
     const seek = (time) =>
       new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Restored preview seek timed out')), 3_000);
+        const timeout = setTimeout(
+          () => reject(new Error('Restored preview seek timed out')),
+          3_000
+        );
         const onSeeked = () => {
           clearTimeout(timeout);
           resolve();
@@ -1687,16 +1937,22 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     };
   }
   if (firstOutcome === 'error') {
-    assert.fail(`High-motion setup failed: ${(await error.textContent())?.trim() ?? 'unknown error'}`);
+    assert.fail(
+      `High-motion setup failed: ${(await error.textContent())?.trim() ?? 'unknown error'}`
+    );
   }
 
   const progress = page.locator('[data-testid="dropzone"] [role="progressbar"]');
   const progressOutcome = await Promise.race([
     page
-      .waitForFunction(() => {
-        const element = document.querySelector('[data-testid="dropzone"] [role="progressbar"]');
-        return Number(element?.getAttribute('data-progress')) > 0;
-      }, undefined, { timeout: CANCELLATION_TIMEOUT_MS })
+      .waitForFunction(
+        () => {
+          const element = document.querySelector('[data-testid="dropzone"] [role="progressbar"]');
+          return Number(element?.getAttribute('data-progress')) > 0;
+        },
+        undefined,
+        { timeout: CANCELLATION_TIMEOUT_MS }
+      )
       .then(() => 'progress'),
     result.waitFor({ state: 'visible', timeout: CANCELLATION_TIMEOUT_MS }).then(() => 'completed'),
     error.waitFor({ state: 'visible', timeout: CANCELLATION_TIMEOUT_MS }).then(() => 'error'),
@@ -1711,7 +1967,9 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     };
   }
   if (progressOutcome === 'error') {
-    assert.fail(`High-motion setup failed: ${(await error.textContent())?.trim() ?? 'unknown error'}`);
+    assert.fail(
+      `High-motion setup failed: ${(await error.textContent())?.trim() ?? 'unknown error'}`
+    );
   }
   const progressBeforeCancel = await installCancellationInspector(page);
   assert.equal(Number(await progress.getAttribute('data-progress')), progressBeforeCancel);
@@ -1732,12 +1990,20 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
     throw clickError;
   }
 
-  await page.waitForFunction(() => {
-    const convert = document.querySelector('[data-testid="convert-button"]');
-    const stopButton = document.querySelector('[data-testid="stop-conversion-button"]');
-    return convert instanceof HTMLButtonElement && !convert.disabled && !stopButton;
-  }, undefined, { timeout: 30_000 });
-  assert.equal(await result.isVisible(), false, 'Cancelled conversion unexpectedly produced a result');
+  await page.waitForFunction(
+    () => {
+      const convert = document.querySelector('[data-testid="convert-button"]');
+      const stopButton = document.querySelector('[data-testid="stop-conversion-button"]');
+      return convert instanceof HTMLButtonElement && !convert.disabled && !stopButton;
+    },
+    undefined,
+    { timeout: 30_000 }
+  );
+  assert.equal(
+    await result.isVisible(),
+    false,
+    'Cancelled conversion unexpectedly produced a result'
+  );
   const errorVisible = await error.isVisible();
   const errorText = errorVisible ? (await error.textContent())?.trim() : null;
   assert.equal(
@@ -1749,19 +2015,29 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
   const cancellationFile = `${PROFILE_ID}-cancellation-state.json`;
   const cancellationBytes = Buffer.from(`${JSON.stringify(cancellationUi, null, 2)}\n`);
   await writeFile(join(outputRoot, cancellationFile), cancellationBytes);
-  artifacts.push({ kind: 'diagnostic', file: cancellationFile,
-    bytes: cancellationBytes.byteLength, sha256: sha256(cancellationBytes) });
+  artifacts.push({
+    kind: 'diagnostic',
+    file: cancellationFile,
+    bytes: cancellationBytes.byteLength,
+    sha256: sha256(cancellationBytes),
+  });
   assert(cancellationUi, 'Cancellation state was not observable by the UI inspector');
   assert.equal(cancellationUi.sameProgressElement, true);
   const progressAtCancellation = cancellationUi.progressValues[0];
   assert(Number.isFinite(progressAtCancellation) && progressAtCancellation > 0);
   assert.equal(cancellationUi.progressBeforeClick, progressBeforeCancel);
   assert.equal(cancellationUi.sampleOverflow, false, 'Cancellation progress samples overflowed');
-  assert.deepEqual(cancellationUi.progressSamples, [{
-    values: [progressAtCancellation],
-    ariaValueNow: String(progressAtCancellation),
-    sameProgressElement: true,
-  }], 'Progress changed while the UI was cancelling');
+  assert.deepEqual(
+    cancellationUi.progressSamples,
+    [
+      {
+        values: [progressAtCancellation],
+        ariaValueNow: String(progressAtCancellation),
+        sameProgressElement: true,
+      },
+    ],
+    'Progress changed while the UI was cancelling'
+  );
   assert.equal(cancellationUi.visibleProgressBarCount, 1);
   assert.equal(cancellationUi.legacyProgressCount, 0);
   assert.equal(cancellationUi.settingsCancel.disabled, true);
@@ -1796,7 +2072,8 @@ async function observeEnvironment(page, browser) {
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('webgl');
       const extension = context?.getExtension('WEBGL_debug_renderer_info');
-      if (context && extension) webglRenderer = context.getParameter(extension.UNMASKED_RENDERER_WEBGL);
+      if (context && extension)
+        webglRenderer = context.getParameter(extension.UNMASKED_RENDERER_WEBGL);
     } catch {
       // The renderer is diagnostic-only and can be withheld by browser policy.
     }
@@ -1831,14 +2108,19 @@ async function loadPublicTargets(bundleRoot) {
   const path = await validateBundleFile(bundleRoot, PUBLIC_TARGET);
   const config = JSON.parse(await readFile(path, 'utf8'));
   assert.equal(config.schemaVersion, 1, 'Unsupported public target schema');
-  assert(Array.isArray(config.targets) && config.targets.length <= 2, 'Expected at most two public targets');
+  assert(
+    Array.isArray(config.targets) && config.targets.length <= 2,
+    'Expected at most two public targets'
+  );
   for (const target of config.targets) {
     assert.equal(typeof target.url, 'string');
     const url = new URL(target.url);
     assert.equal(url.protocol, 'https:', 'Public target must use HTTPS');
-    assert(url.hostname === 'wasm-motion-converter.pages.dev' ||
-      /^[a-z0-9-]+\.wasm-motion-converter\.pages\.dev$/.test(url.hostname),
-    'Public target is outside the owned Pages project');
+    assert(
+      url.hostname === 'wasm-motion-converter.pages.dev' ||
+        /^[a-z0-9-]+\.wasm-motion-converter\.pages\.dev$/.test(url.hostname),
+      'Public target is outside the owned Pages project'
+    );
     assert.equal(url.pathname, '/');
     assert.equal(url.search, '');
     assert.equal(url.hash, '');
@@ -1848,7 +2130,15 @@ async function loadPublicTargets(bundleRoot) {
   return config.targets;
 }
 
-async function exercisePublicTarget(browser, target, targetIndex, fixturePath, cancellationFixture, outputRoot, artifacts) {
+async function exercisePublicTarget(
+  browser,
+  target,
+  targetIndex,
+  fixturePath,
+  cancellationFixture,
+  outputRoot,
+  artifacts
+) {
   const publicDir = `public-${targetIndex + 1}-${target.deploymentId}`;
   const publicRoot = join(outputRoot, publicDir);
   const publicArtifacts = [];
@@ -1860,32 +2150,49 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
   const assets = new Map();
   const workers = [];
   const origin = new URL(target.url).origin;
-  const resourceTiming = (subject) => subject.evaluate(() => performance.getEntriesByType('resource')
-    .filter((entry) => entry instanceof PerformanceResourceTiming)
-    .map((entry) => ({ name: new URL(entry.name).pathname, initiatorType: entry.initiatorType,
-      transferSize: entry.transferSize, encodedBodySize: entry.encodedBodySize,
-      decodedBodySize: entry.decodedBodySize })));
+  const resourceTiming = (subject) =>
+    subject.evaluate(() =>
+      performance
+        .getEntriesByType('resource')
+        .filter((entry) => entry instanceof PerformanceResourceTiming)
+        .map((entry) => ({
+          name: new URL(entry.name).pathname,
+          initiatorType: entry.initiatorType,
+          transferSize: entry.transferSize,
+          encodedBodySize: entry.encodedBodySize,
+          decodedBodySize: entry.decodedBodySize,
+        }))
+    );
   const captureAssetRequests = () => {
     const requests = [];
     const onRequest = (request) => {
       const url = new URL(request.url());
-      if (url.origin === origin && /^\/assets\/.*\.(?:js|css|wasm)$/.test(url.pathname)) requests.push(request);
+      if (url.origin === origin && /^\/assets\/.*\.(?:js|css|wasm)$/.test(url.pathname))
+        requests.push(request);
     };
     context.on('request', onRequest);
     return async () => {
       context.off('request', onRequest);
-      return Promise.all(requests.map(async (request) => {
-        const response = await request.response();
-        assert(response, `Public asset request had no response: ${request.url()}`);
-        return { path: new URL(request.url()).pathname, resourceType: request.resourceType(),
-          status: response.status(), sizes: await request.sizes() };
-      }));
+      return Promise.all(
+        requests.map(async (request) => {
+          const response = await request.response();
+          assert(response, `Public asset request had no response: ${request.url()}`);
+          return {
+            path: new URL(request.url()).pathname,
+            resourceType: request.resourceType(),
+            status: response.status(),
+            sizes: await request.sizes(),
+          };
+        })
+      );
     };
   };
   try {
     await mkdir(publicRoot, { recursive: true });
     context = await browser.newContext({
-      acceptDownloads: true, locale: 'en-US', serviceWorkers: 'block',
+      acceptDownloads: true,
+      locale: 'en-US',
+      serviceWorkers: 'block',
       viewport: { width: 1280, height: 900 },
     });
     const page = await context.newPage();
@@ -1895,28 +2202,40 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
       if (message.type() === 'error') errors.console.push(message.text());
     });
     context.on('requestfailed', (request) => {
-      if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED') return;
+      if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED')
+        return;
       errors.request.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`);
     });
     context.on('request', (request) => {
       const url = new URL(request.url());
-      if (url.protocol === 'edge:' && ['downloads-hub', 'resources', 'fileicon'].includes(url.hostname)) {
+      if (
+        url.protocol === 'edge:' &&
+        ['downloads-hub', 'resources', 'fileicon'].includes(url.hostname)
+      ) {
         browserInternalRequests.push(`${url.protocol}//${url.hostname}${url.pathname}`);
         return;
       }
-      if (!['GET', 'HEAD'].includes(request.method())) errors.uploads.push(`${request.method()} ${request.url()}`);
+      if (!['GET', 'HEAD'].includes(request.method()))
+        errors.uploads.push(`${request.method()} ${request.url()}`);
       if (!request.url().startsWith('blob:') && url.origin !== origin)
         errors.external.push(request.url());
     });
     context.on('response', (response) => {
       const path = new URL(response.url()).pathname;
       if (/^\/assets\/.*\.(?:js|css|wasm)$/.test(path)) {
-        const snapshot = { url: response.url(), status: response.status(), headers: response.headers() };
+        const snapshot = {
+          url: response.url(),
+          status: response.status(),
+          headers: response.headers(),
+        };
         // Preserve bodies before later navigation invalidates their CDP request IDs.
-        assets.set(path, response.body().then(
-          (bytes) => ({ ...snapshot, bytes }),
-          (error) => ({ ...snapshot, error: String(error) })
-        ));
+        assets.set(
+          path,
+          response.body().then(
+            (bytes) => ({ ...snapshot, bytes }),
+            (error) => ({ ...snapshot, error: String(error) })
+          )
+        );
       }
     });
     await context.addInitScript(() => {
@@ -1925,14 +2244,23 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
         globalThis.__wmcPublicViolations.push(`${event.effectiveDirective}: ${event.blockedURI}`);
       });
     });
-    const metadataResponse = await context.request.get(new URL('/deployment-state.json', target.url).href,
-      { maxRedirects: 0 });
+    const metadataResponse = await context.request.get(
+      new URL('/deployment-state.json', target.url).href,
+      { maxRedirects: 0 }
+    );
     assert.equal(metadataResponse.status(), 200, 'Public deployment metadata is unavailable');
-    assert.match(metadataResponse.headers()['content-type'] ?? '', /^application\/json\b/i,
-      'Public deployment metadata has the wrong MIME type');
+    assert.match(
+      metadataResponse.headers()['content-type'] ?? '',
+      /^application\/json\b/i,
+      'Public deployment metadata has the wrong MIME type'
+    );
     const metadata = await metadataResponse.json();
     assert.equal(metadata.schemaVersion, 1);
-    assert.equal(metadata.sourceSha, target.sourceSha, 'Public source differs from provider deployment source');
+    assert.equal(
+      metadata.sourceSha,
+      target.sourceSha,
+      'Public source differs from provider deployment source'
+    );
     assert(/^[a-f0-9]{40}$/.test(metadata.treeSha));
     assert(/^[a-f0-9]{40}$/.test(metadata.coreSha));
     assert.equal(metadata.branch, 'master');
@@ -1940,12 +2268,19 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     assert(Array.isArray(metadata.files) && metadata.files.length > 0);
     const served = [];
     for (const file of metadata.files) {
-      assert(typeof file.path === 'string' && !file.path.startsWith('/') &&
-        !file.path.split('/').includes('..'), 'Invalid metadata asset path');
+      assert(
+        typeof file.path === 'string' &&
+          !file.path.startsWith('/') &&
+          !file.path.split('/').includes('..'),
+        'Invalid metadata asset path'
+      );
       assert(Number.isSafeInteger(file.size) && file.size >= 0);
       assert(/^[a-f0-9]{64}$/.test(file.sha256));
-      const path = file.path === 'index.html' ? '/' : file.path === '404.html' ? '/404' : `/${file.path}`;
-      const response = await context.request.get(new URL(path, target.url).href, { maxRedirects: 0 });
+      const path =
+        file.path === 'index.html' ? '/' : file.path === '404.html' ? '/404' : `/${file.path}`;
+      const response = await context.request.get(new URL(path, target.url).href, {
+        maxRedirects: 0,
+      });
       assert.equal(response.status(), 200, `Public asset ${file.path} did not return 200`);
       const bytes = await response.body();
       assert.equal(bytes.byteLength, file.size, `Public asset size differs: ${file.path}`);
@@ -1965,10 +2300,14 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     });
     assert.equal(revalidatedAsset.status(), 304, 'Public asset did not preserve ETag revalidation');
     for (const extension of ['js', 'css', 'wasm']) {
-      const missing = await context.request.get(new URL(`/assets/missing-289.${extension}`, target.url).href);
+      const missing = await context.request.get(
+        new URL(`/assets/missing-289.${extension}`, target.url).href
+      );
       assert.equal(missing.status(), 404, `Missing ${extension} asset was not a 404`);
-      assert(!/\bimmutable\b/i.test(missing.headers()['cache-control'] ?? ''),
-        `Missing ${extension} asset received immutable caching`);
+      assert(
+        !/\bimmutable\b/i.test(missing.headers()['cache-control'] ?? ''),
+        `Missing ${extension} asset received immutable caching`
+      );
     }
     const document = await page.goto(target.url);
     assert.equal(document?.status(), 200);
@@ -1979,15 +2318,27 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     await page.waitForLoadState('networkidle');
     assert.equal(await page.evaluate(() => crossOriginIsolated), true);
     await recordScreenshot(page, publicRoot, 'initial.png', publicArtifacts);
-    const timing = () => page.evaluate(() => performance.getEntriesByType('resource')
-      .filter((entry) => entry instanceof PerformanceResourceTiming && entry.name.endsWith('.js'))
-      .map((entry) => ({ name: new URL(entry.name).pathname, transferSize: entry.transferSize,
-        encodedBodySize: entry.encodedBodySize, decodedBodySize: entry.decodedBodySize })));
+    const timing = () =>
+      page.evaluate(() =>
+        performance
+          .getEntriesByType('resource')
+          .filter(
+            (entry) => entry instanceof PerformanceResourceTiming && entry.name.endsWith('.js')
+          )
+          .map((entry) => ({
+            name: new URL(entry.name).pathname,
+            transferSize: entry.transferSize,
+            encodedBodySize: entry.encodedBodySize,
+            decodedBodySize: entry.decodedBodySize,
+          }))
+      );
     const cold = await timing();
     const coldPositive = cold.filter((entry) => entry.transferSize > 0);
     assert(coldPositive.length > 0, 'Public cold load has no positive JS transfer timing');
-    assert(coldPositive.reduce((sum, entry) => sum + entry.transferSize, 0) < 150_000,
-      'Public cold JS transfer exceeded the unchanged 150000-byte budget');
+    assert(
+      coldPositive.reduce((sum, entry) => sum + entry.transferSize, 0) < 150_000,
+      'Public cold JS transfer exceeded the unchanged 150000-byte budget'
+    );
     await page.reload();
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await page.waitForLoadState('networkidle');
@@ -2003,39 +2354,59 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     await proceedIfPrompted(page);
     await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
     const [gifDownload] = await Promise.all([
-      page.waitForEvent('download'), page.locator('[data-testid="download-result-button"]').click(),
+      page.waitForEvent('download'),
+      page.locator('[data-testid="download-result-button"]').click(),
     ]);
     const gifBytes = await readDownload(gifDownload);
     validateOutput(gifBytes, 'gif');
     assert(workers.length > 0, 'Public GIF conversion never started a module worker');
     await page.waitForLoadState('networkidle');
-    const firstGifTraffic = { pageResourceTiming: await resourceTiming(page),
-      networkAssetRequests: await finishGifRequests() };
-    assert(firstGifTraffic.networkAssetRequests.some((request) => workers.includes(request.path)),
-      'Public GIF traffic did not record its module worker request');
+    const firstGifTraffic = {
+      pageResourceTiming: await resourceTiming(page),
+      networkAssetRequests: await finishGifRequests(),
+    };
+    assert(
+      firstGifTraffic.networkAssetRequests.some((request) => workers.includes(request.path)),
+      'Public GIF traffic did not record its module worker request'
+    );
     await recordScreenshot(page, publicRoot, 'gif-result.png', publicArtifacts);
 
     await loadApplication(page, target.url);
     const documentIdentity = await page.evaluate(() => performance.timeOrigin);
     const budgetFixture = makeMp4BudgetFixture(await readFile(fixturePath));
     await page.locator('[data-testid="file-input"]').setInputFiles({
-      name: 'public-invalid.mp4', mimeType: 'video/mp4', buffer: budgetFixture.bytes,
+      name: 'public-invalid.mp4',
+      mimeType: 'video/mp4',
+      buffer: budgetFixture.bytes,
     });
     const metadataError = page.locator('[data-testid="error-display"]');
     await metadataError.waitFor({ state: 'visible', timeout: 10_000 });
     assert((await metadataError.textContent())?.includes('ISOBMFF sample metadata'));
-    await page.locator(
-      '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
-    ).click();
+    await page
+      .locator(
+        '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
+      )
+      .click();
     await page.locator('[data-testid="file-input"]').setInputFiles(fixturePath);
     await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
     assert.equal(await page.locator('[data-testid="convert-button"]').isEnabled(), true);
-    assert.equal(await page.evaluate(() => performance.timeOrigin), documentIdentity,
-      'Public invalid-input recovery reloaded the document');
-    const cancellation = await exerciseCancellation(
-      page, target.url, cancellationFixture, publicRoot, publicArtifacts
+    assert.equal(
+      await page.evaluate(() => performance.timeOrigin),
+      documentIdentity,
+      'Public invalid-input recovery reloaded the document'
     );
-    assert.equal(cancellation.effective, true, 'Public cancellation did not stop active conversion');
+    const cancellation = await exerciseCancellation(
+      page,
+      target.url,
+      cancellationFixture,
+      publicRoot,
+      publicArtifacts
+    );
+    assert.equal(
+      cancellation.effective,
+      true,
+      'Public cancellation did not stop active conversion'
+    );
 
     const wasmPage = await context.newPage();
     wasmPage.on('pageerror', (error) => errors.page.push(error.message));
@@ -2044,12 +2415,15 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     });
     await wasmPage.addInitScript(() => {
       Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
-        configurable: true, value: undefined,
+        configurable: true,
+        value: undefined,
       });
       Object.defineProperty(globalThis, 'Worker', {
         configurable: true,
         value: class UnavailableWorker {
-          constructor() { throw new DOMException('Force WASM fallback', 'NotSupportedError'); }
+          constructor() {
+            throw new DOMException('Force WASM fallback', 'NotSupportedError');
+          }
         },
       });
     });
@@ -2064,49 +2438,84 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     await proceedIfPrompted(wasmPage);
     await waitForConversionOutcome(wasmPage, CONVERSION_TIMEOUT_MS);
     const [webpDownload] = await Promise.all([
-      wasmPage.waitForEvent('download'), wasmPage.locator('[data-testid="download-result-button"]').click(),
+      wasmPage.waitForEvent('download'),
+      wasmPage.locator('[data-testid="download-result-button"]').click(),
     ]);
     const webpBytes = await readDownload(webpDownload);
     validateOutput(webpBytes, 'webp');
     await wasmPage.waitForLoadState('networkidle');
     await recordScreenshot(wasmPage, publicRoot, 'webp-wasm-result.png', publicArtifacts);
-    const firstWebpTraffic = { pageResourceTiming: await resourceTiming(wasmPage),
-      networkAssetRequests: await finishWebpRequests() };
+    const firstWebpTraffic = {
+      pageResourceTiming: await resourceTiming(wasmPage),
+      networkAssetRequests: await finishWebpRequests(),
+    };
     const wasmAssets = [...assets.entries()].filter(([path]) => path.endsWith('.wasm'));
     assert(wasmAssets.length > 0, 'Public WebP fallback loaded no WASM');
-    assert(firstWebpTraffic.networkAssetRequests.some((request) => request.path.endsWith('.wasm')),
-      'Public WebP traffic did not record its WASM request');
+    assert(
+      firstWebpTraffic.networkAssetRequests.some((request) => request.path.endsWith('.wasm')),
+      'Public WebP traffic did not record its WASM request'
+    );
     for (const [path, pending] of assets) {
       const response = await pending;
       assert(!response.error, `Executable ${path} body capture failed: ${response.error}`);
       assert.equal(response.status, 200, `Executable ${response.url} status`);
-      const type = path.endsWith('.wasm') ? /^application\/wasm\b/i :
-        path.endsWith('.css') ? /^text\/css\b/i : /^(?:text|application)\/javascript\b/i;
+      const type = path.endsWith('.wasm')
+        ? /^application\/wasm\b/i
+        : path.endsWith('.css')
+          ? /^text\/css\b/i
+          : /^(?:text|application)\/javascript\b/i;
       assert.match(response.headers['content-type'] ?? '', type, `Executable ${path} MIME`);
       const bytes = response.bytes;
       assert(bytes.length > 0, `Executable ${path} has no body`);
-      assert(!/^\s*<!doctype html/i.test(bytes.subarray(0, 256).toString('utf8')),
-        `Executable ${path} is an HTML fallback`);
+      assert(
+        !/^\s*<!doctype html/i.test(bytes.subarray(0, 256).toString('utf8')),
+        `Executable ${path} is an HTML fallback`
+      );
       if (path.endsWith('.wasm')) {
         assert.equal(bytes.subarray(0, 4).toString('hex'), '0061736d', 'WASM magic is invalid');
-        await wasmPage.evaluate(async (value) => WebAssembly.compile(new Uint8Array(value)), [...bytes]);
+        await wasmPage.evaluate(
+          async (value) => WebAssembly.compile(new Uint8Array(value)),
+          [...bytes]
+        );
       }
     }
     errors.csp = [
-      ...await page.evaluate(() => globalThis.__wmcPublicViolations),
-      ...await wasmPage.evaluate(() => globalThis.__wmcPublicViolations),
+      ...(await page.evaluate(() => globalThis.__wmcPublicViolations)),
+      ...(await wasmPage.evaluate(() => globalThis.__wmcPublicViolations)),
     ];
-    assert.deepEqual(errors, { page: [], console: [], request: [], csp: [], uploads: [], external: [] });
-    artifacts.push(...publicArtifacts.map((artifact) => ({
-      ...artifact, file: `${publicDir}-${artifact.file}`,
-    })));
-    return { id: 'public-source-bound-smoke', status: 'passed', deploymentId: target.deploymentId,
-      url: target.url, sourceSha: target.sourceSha, metadata: {
-        treeSha: metadata.treeSha, coreSha: metadata.coreSha, version: metadata.version,
+    assert.deepEqual(errors, {
+      page: [],
+      console: [],
+      request: [],
+      csp: [],
+      uploads: [],
+      external: [],
+    });
+    artifacts.push(
+      ...publicArtifacts.map((artifact) => ({
+        ...artifact,
+        file: `${publicDir}-${artifact.file}`,
+      }))
+    );
+    return {
+      id: 'public-source-bound-smoke',
+      status: 'passed',
+      deploymentId: target.deploymentId,
+      url: target.url,
+      sourceSha: target.sourceSha,
+      metadata: {
+        treeSha: metadata.treeSha,
+        coreSha: metadata.coreSha,
+        version: metadata.version,
         files: served,
       },
-      coldJs: cold, warmJs: warm, firstGifTraffic, firstWebpTraffic,
-      workerPaths: workers, wasmPaths: wasmAssets.map(([path]) => path), cancellation,
+      coldJs: cold,
+      warmJs: warm,
+      firstGifTraffic,
+      firstWebpTraffic,
+      workerPaths: workers,
+      wasmPaths: wasmAssets.map(([path]) => path),
+      cancellation,
       gif: { bytes: gifBytes.length, sha256: sha256(gifBytes) },
       webp: { bytes: webpBytes.length, sha256: sha256(webpBytes) },
       browserInternalRequests,
@@ -2115,22 +2524,41 @@ async function exercisePublicTarget(browser, target, targetIndex, fixturePath, c
     primaryFailure = error;
     throw error;
   } finally {
-    try { await context?.close(); }
-    catch (error) { closeFailure = error; }
-    await writeFile(join(publicRoot, 'diagnostics.json'), JSON.stringify({
-      target: target.url, sourceSha: target.sourceSha, deploymentId: target.deploymentId,
-      errors, observedAssets: [...assets.keys()], workers, browserInternalRequests,
-      failure: primaryFailure ? String(primaryFailure) : null,
-      cleanupErrors: closeFailure ? [String(closeFailure)] : [],
-    }, null, 2)).catch(() => {});
+    try {
+      await context?.close();
+    } catch (error) {
+      closeFailure = error;
+    }
+    await writeFile(
+      join(publicRoot, 'diagnostics.json'),
+      JSON.stringify(
+        {
+          target: target.url,
+          sourceSha: target.sourceSha,
+          deploymentId: target.deploymentId,
+          errors,
+          observedAssets: [...assets.keys()],
+          workers,
+          browserInternalRequests,
+          failure: primaryFailure ? String(primaryFailure) : null,
+          cleanupErrors: closeFailure ? [String(closeFailure)] : [],
+        },
+        null,
+        2
+      )
+    ).catch(() => {});
     // The shared guest collector reads flat output files, including failures.
     // Keep each target's namespace while preserving every generated byte.
     const files = await readdir(publicRoot, { withFileTypes: true });
-    assert(files.every((file) => file.isFile()), 'Public evidence contains a nested directory');
+    assert(
+      files.every((file) => file.isFile()),
+      'Public evidence contains a nested directory'
+    );
     for (const file of files) {
       await rename(join(publicRoot, file.name), join(outputRoot, `${publicDir}-${file.name}`));
     }
     await rmdir(publicRoot);
+    // biome-ignore lint/correctness/noUnsafeFinally: Cleanup failure is raised only when no primary failure exists.
     if (closeFailure && !primaryFailure) throw closeFailure;
   }
 }
@@ -2160,10 +2588,21 @@ export async function run({ browser, root, output }) {
   if (appUpdatePresent) {
     const configPath = await validateBundleFile(bundleRoot, appUpdateConfig);
     const config = JSON.parse(await readFile(configPath, 'utf8'));
-    assert.deepEqual(Object.keys(config).sort(), [
-      'schemaVersion', 'mode', 'buildA', 'baseline', 'baselineSourceSha', 'baselineTreeSha',
-      'cleanupBaseline', 'cleanupBaselineSourceSha', 'cleanupBaselineTreeSha',
-    ].sort(), 'Invalid application-update bundle configuration keys');
+    assert.deepEqual(
+      Object.keys(config).sort(),
+      [
+        'schemaVersion',
+        'mode',
+        'buildA',
+        'baseline',
+        'baselineSourceSha',
+        'baselineTreeSha',
+        'cleanupBaseline',
+        'cleanupBaselineSourceSha',
+        'cleanupBaselineTreeSha',
+      ].sort(),
+      'Invalid application-update bundle configuration keys'
+    );
     assert.equal(config.schemaVersion, 1);
     assert.equal(config.mode, 'application-update');
     assert.equal(config.buildA, 'validation/windows/inputs/deployment-a');
@@ -2175,8 +2614,15 @@ export async function run({ browser, root, output }) {
     assert.equal(config.cleanupBaselineTreeSha, '3a5c34857aa9e5a9d3dfbb7429d648004fd2fe44');
     const outputRoot = resolve(output);
     await mkdir(outputRoot, { recursive: true });
-    return runAppUpdate({ browser, bundleRoot, outputRoot, config,
-      startStaticServer, closeServer, validateBundleFile });
+    return runAppUpdate({
+      browser,
+      bundleRoot,
+      outputRoot,
+      config,
+      startStaticServer,
+      closeServer,
+      validateBundleFile,
+    });
   }
   const smallFixture = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
   const publicTargets = await loadPublicTargets(bundleRoot);
@@ -2236,12 +2682,24 @@ export async function run({ browser, root, output }) {
 
     const appLoad = await loadApplication(page, started.url);
     const environment = await observeEnvironment(page, browser);
-    assert.equal(appLoad.crossOriginIsolated, true, 'COOP/COEP did not produce a cross-origin-isolated app');
+    assert.equal(
+      appLoad.crossOriginIsolated,
+      true,
+      'COOP/COEP did not produce a cross-origin-isolated app'
+    );
 
     const checks = [{ id: 'app-load', status: 'passed', ...appLoad }];
-    checks.push(await exerciseOfflineRecovery(
-      browser, started.url, outputRoot, started.setDistribution, bundleRoot, smallFixture, cancellationFixture
-    ));
+    checks.push(
+      await exerciseOfflineRecovery(
+        browser,
+        started.url,
+        outputRoot,
+        started.setDistribution,
+        bundleRoot,
+        smallFixture,
+        cancellationFixture
+      )
+    );
     for (const file of ['offline-app-recovery.png', 'offline-static-recovery.png']) {
       const bytes = await readFile(join(outputRoot, file));
       artifacts.push({ kind: 'screenshot', file, bytes: bytes.byteLength, sha256: sha256(bytes) });
@@ -2250,7 +2708,9 @@ export async function run({ browser, root, output }) {
     const documentIdentity = await page.evaluate(() => performance.timeOrigin);
     const rejectedAt = performance.now();
     await page.locator('[data-testid="file-input"]').setInputFiles({
-      name: 'sample-budget.mp4', mimeType: 'video/mp4', buffer: budgetFixture.bytes,
+      name: 'sample-budget.mp4',
+      mimeType: 'video/mp4',
+      buffer: budgetFixture.bytes,
     });
     const metadataError = page.locator('[data-testid="error-display"]');
     await metadataError.waitFor({ state: 'visible', timeout: 10_000 });
@@ -2261,33 +2721,61 @@ export async function run({ browser, root, output }) {
     );
     assert.equal(await selectDifferent.isEnabled(), true);
     const rejectionMs = performance.now() - rejectedAt;
-    assert(rejectionMs < 10_000, 'Over-budget metadata did not settle within the bounded observation');
+    assert(
+      rejectionMs < 10_000,
+      'Over-budget metadata did not settle within the bounded observation'
+    );
     await recordScreenshot(page, outputRoot, 'mp4-sample-budget-error.png', artifacts);
     await selectDifferent.click();
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
-    const recoveredGif = await convertSmallFixture(page, started.url, smallFixture, 'gif', outputRoot, artifacts, true);
-    assert.equal(await page.evaluate(() => performance.timeOrigin), documentIdentity,
-      'Recovery must use the same application document');
+    const recoveredGif = await convertSmallFixture(
+      page,
+      started.url,
+      smallFixture,
+      'gif',
+      outputRoot,
+      artifacts,
+      true
+    );
+    assert.equal(
+      await page.evaluate(() => performance.timeOrigin),
+      documentIdentity,
+      'Recovery must use the same application document'
+    );
     assert.equal(await metadataError.isVisible(), false);
-    checks.push({ id: 'mp4-sample-budget-recovery', status: 'passed',
-      fixtureBytes: budgetFixture.bytes.length, fixtureSha256: sha256(budgetFixture.bytes),
-      originalCount: budgetFixture.originalCount, declaredCount: budgetFixture.declaredCount,
-      rejectionMs, sameDocument: true, subsequentGifDownload: recoveredGif.status,
-      accounting: 'Logical-count rejection before size-table expansion; browser heap/RSS not measured' });
+    checks.push({
+      id: 'mp4-sample-budget-recovery',
+      status: 'passed',
+      fixtureBytes: budgetFixture.bytes.length,
+      fixtureSha256: sha256(budgetFixture.bytes),
+      originalCount: budgetFixture.originalCount,
+      declaredCount: budgetFixture.declaredCount,
+      rejectionMs,
+      sameDocument: true,
+      subsequentGifDownload: recoveredGif.status,
+      accounting:
+        'Logical-count rejection before size-table expansion; browser heap/RSS not measured',
+    });
     checks.push(recoveredGif);
-    checks.push(await convertSmallFixture(page, started.url, smallFixture, 'webp', outputRoot, artifacts));
-    checks.push(await exerciseCancellation(page, started.url, cancellationFixture, outputRoot, artifacts));
-    checks.push(await exerciseUiDisclosures(page, started.url, smallFixture, outputRoot, artifacts));
+    checks.push(
+      await convertSmallFixture(page, started.url, smallFixture, 'webp', outputRoot, artifacts)
+    );
+    checks.push(
+      await exerciseCancellation(page, started.url, cancellationFixture, outputRoot, artifacts)
+    );
+    checks.push(
+      await exerciseUiDisclosures(page, started.url, smallFixture, outputRoot, artifacts)
+    );
     for (const contract of outputContract.cases) {
       const check = await convertOutputContract(
-          page,
-          started.url,
-          contractFixtures.get(contract.id),
-          contract,
-          outputContract.markers,
-          outputRoot,
-          artifacts
-        );
+        page,
+        started.url,
+        contractFixtures.get(contract.id),
+        contract,
+        outputContract.markers,
+        outputRoot,
+        artifacts
+      );
       checks.push(check);
       if (contract.id === 'short-tail-gif') {
         const playback = await collectGifPlayback({
@@ -2309,23 +2797,34 @@ export async function run({ browser, root, output }) {
       await pressurePage.addInitScript(() => {
         Object.defineProperty(performance, 'memory', {
           configurable: true,
-          value: { usedJSHeapSize: 8 * 1024 * 1024, totalJSHeapSize: 16 * 1024 * 1024,
-            jsHeapSizeLimit: 16 * 1024 * 1024 },
-        });
-        const probe = globalThis.__wmcPressureProbe = {
-          nativeDecoded: 0, submittedWebp: 0, terminal: null, startRatios: [],
-          reset() {
-            this.nativeDecoded = 0; this.submittedWebp = 0;
-            this.terminal = null; this.startRatios = [];
+          value: {
+            usedJSHeapSize: 8 * 1024 * 1024,
+            totalJSHeapSize: 16 * 1024 * 1024,
+            jsHeapSizeLimit: 16 * 1024 * 1024,
           },
-        };
+        });
+        const probe = (globalThis.__wmcPressureProbe = {
+          nativeDecoded: 0,
+          submittedWebp: 0,
+          terminal: null,
+          startRatios: [],
+          reset() {
+            this.nativeDecoded = 0;
+            this.submittedWebp = 0;
+            this.terminal = null;
+            this.startRatios = [];
+          },
+        });
         const NativeDecoder = VideoDecoder;
         globalThis.VideoDecoder = class ObservedDecoder extends NativeDecoder {
           constructor(config) {
-            super({ ...config, output(frame) {
-              probe.nativeDecoded++;
-              config.output(frame);
-            } });
+            super({
+              ...config,
+              output(frame) {
+                probe.nativeDecoded++;
+                config.output(frame);
+              },
+            });
           }
         };
         const NativeWorker = Worker;
@@ -2335,8 +2834,10 @@ export async function run({ browser, root, output }) {
             this.addEventListener('message', ({ data }) => {
               if (data?.type === 'progress' && data.percent === 100) {
                 probe.terminal = {
-                  decodedFrames: data.decodedFrames, selectedFrames: data.selectedFrames,
-                  encodedFrames: data.encodedFrames, emittedFrames: data.emittedFrames,
+                  decodedFrames: data.decodedFrames,
+                  selectedFrames: data.selectedFrames,
+                  encodedFrames: data.encodedFrames,
+                  emittedFrames: data.emittedFrames,
                 };
               }
             });
@@ -2352,13 +2853,26 @@ export async function run({ browser, root, output }) {
         };
       });
       for (const format of ['gif', 'webp']) {
-        const contract = outputContract.cases.find((candidate) => candidate.id === `pressure-21fps-${format}`);
+        const contract = outputContract.cases.find(
+          (candidate) => candidate.id === `pressure-21fps-${format}`
+        );
         assert(contract, 'Missing pressure cadence output contract');
-        const check = await convertOutputContract(pressurePage, started.url,
-          contractFixtures.get(contract.id), { ...contract, id: `critical-${contract.id}`, expected: {
-            ...contract.expected, ...outputContract.pressureExpectations[format],
-          } },
-          outputContract.markers, outputRoot, artifacts);
+        const check = await convertOutputContract(
+          pressurePage,
+          started.url,
+          contractFixtures.get(contract.id),
+          {
+            ...contract,
+            id: `critical-${contract.id}`,
+            expected: {
+              ...contract.expected,
+              ...outputContract.pressureExpectations[format],
+            },
+          },
+          outputContract.markers,
+          outputRoot,
+          artifacts
+        );
         const counts = await pressurePage.evaluate(() => {
           const { reset: _reset, ...observation } = globalThis.__wmcPressureProbe;
           return observation;
@@ -2372,11 +2886,18 @@ export async function run({ browser, root, output }) {
           assert.equal(counts.nativeDecoded, 21);
           assert.equal(counts.submittedWebp, 15);
         }
-        checks.push({ ...check, admission: {
-          ...counts, route: format === 'gif' ? 'gif-worker' : 'webp-parallel-canvas',
-          boundary: format === 'gif' ? 'production Worker terminal progress' : 'native decoder output and submitted encoder tasks',
-          controlledPreflight: { usedMB: 8, totalMB: 16, limitMB: 16 },
-        } });
+        checks.push({
+          ...check,
+          admission: {
+            ...counts,
+            route: format === 'gif' ? 'gif-worker' : 'webp-parallel-canvas',
+            boundary:
+              format === 'gif'
+                ? 'production Worker terminal progress'
+                : 'native decoder output and submitted encoder tasks',
+            controlledPreflight: { usedMB: 8, totalMB: 16, limitMB: 16 },
+          },
+        });
       }
     } finally {
       await pressurePage.close();
@@ -2386,24 +2907,37 @@ export async function run({ browser, root, output }) {
     try {
       await serialPage.addInitScript(() => {
         globalThis.__wmcWorkerConstructionAttempts = 0;
-        Object.defineProperty(globalThis, 'Worker', { configurable: true,
-          value: class UnavailableWorker { constructor() {
-            globalThis.__wmcWorkerConstructionAttempts++;
-            throw new DOMException('Force serial Canvas contract', 'NotSupportedError');
-          } },
+        Object.defineProperty(globalThis, 'Worker', {
+          configurable: true,
+          value: class UnavailableWorker {
+            constructor() {
+              globalThis.__wmcWorkerConstructionAttempts++;
+              throw new DOMException('Force serial Canvas contract', 'NotSupportedError');
+            }
+          },
         });
       });
-      const contract = outputContract.cases.find((candidate) => candidate.id === 'integer-vfr-webp');
+      const contract = outputContract.cases.find(
+        (candidate) => candidate.id === 'integer-vfr-webp'
+      );
       assert(contract, 'Missing integer-ratio VFR WebP contract');
-      const serial = await convertOutputContract(serialPage, started.url,
-        contractFixtures.get(contract.id), { ...contract, id: 'integer-vfr-serial-webp' },
-        outputContract.markers, outputRoot, artifacts);
+      const serial = await convertOutputContract(
+        serialPage,
+        started.url,
+        contractFixtures.get(contract.id),
+        { ...contract, id: 'integer-vfr-serial-webp' },
+        outputContract.markers,
+        outputRoot,
+        artifacts
+      );
       const routeProbe = await serialPage.evaluate(() => ({
         workerAttempts: globalThis.__wmcWorkerConstructionAttempts,
         nativeWebpAvailable: typeof OffscreenCanvas.prototype.convertToBlob === 'function',
       }));
-      assert(routeProbe.workerAttempts > 0 && routeProbe.nativeWebpAvailable,
-        'Serial Canvas check did not reject its pool while preserving native WebP');
+      assert(
+        routeProbe.workerAttempts > 0 && routeProbe.nativeWebpAvailable,
+        'Serial Canvas check did not reject its pool while preserving native WebP'
+      );
       checks.push({ ...serial, routeProbe });
     } finally {
       await serialPage.close();
@@ -2442,32 +2976,67 @@ export async function run({ browser, root, output }) {
       workerAttempts: globalThis.__wmcWorkerConstructionAttempts,
       nativeWebpAvailable: typeof OffscreenCanvas.prototype.convertToBlob === 'function',
     }));
-    assert.equal(fallback.workerAttempts, 0,
-      'Rejected native WebP capability must select WASM before creating a Worker pool');
+    assert.equal(
+      fallback.workerAttempts,
+      0,
+      'Rejected native WebP capability must select WASM before creating a Worker pool'
+    );
     assert.equal(fallback.nativeWebpAvailable, false);
     checks.push({ ...wasmCheck, fallback });
-    const integerWasmContract = outputContract.cases.find((contract) => contract.id === 'integer-vfr-webp');
+    const integerWasmContract = outputContract.cases.find(
+      (contract) => contract.id === 'integer-vfr-webp'
+    );
     assert(integerWasmContract, 'Missing integer-ratio WASM contract');
-    checks.push(await convertOutputContract(page, started.url,
-      contractFixtures.get(integerWasmContract.id),
-      { ...integerWasmContract, id: 'integer-vfr-wasm-webp' },
-      outputContract.markers, outputRoot, artifacts));
+    checks.push(
+      await convertOutputContract(
+        page,
+        started.url,
+        contractFixtures.get(integerWasmContract.id),
+        { ...integerWasmContract, id: 'integer-vfr-wasm-webp' },
+        outputContract.markers,
+        outputRoot,
+        artifacts
+      )
+    );
     checks.push(await exerciseLongLocaleResult(page, outputRoot, artifacts));
-    checks.push(await exerciseBrowserZoom(
-      browser, page, bundleRoot, started.url, smallFixture, outputRoot, artifacts
-    ));
+    checks.push(
+      await exerciseBrowserZoom(
+        browser,
+        page,
+        bundleRoot,
+        started.url,
+        smallFixture,
+        outputRoot,
+        artifacts
+      )
+    );
 
     for (const [targetIndex, target] of publicTargets.entries()) {
-      checks.push(await exercisePublicTarget(
-        browser, target, targetIndex, smallFixture, cancellationFixture, outputRoot, artifacts
-      ));
+      checks.push(
+        await exercisePublicTarget(
+          browser,
+          target,
+          targetIndex,
+          smallFixture,
+          cancellationFixture,
+          outputRoot,
+          artifacts
+        )
+      );
     }
 
-    await writeFile(join(outputRoot, 'network-diagnostics.json'), JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2));
+    await writeFile(
+      join(outputRoot, 'network-diagnostics.json'),
+      JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2)
+    );
     assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);
     assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(' | ')}`);
     assert.deepEqual(failedRequests, [], `Failed requests: ${JSON.stringify(failedRequests)}`);
-    assert.deepEqual(failedResponses, [], `Failed HTTP responses: ${JSON.stringify(failedResponses)}`);
+    assert.deepEqual(
+      failedResponses,
+      [],
+      `Failed HTTP responses: ${JSON.stringify(failedResponses)}`
+    );
 
     return {
       profile: PROFILE_ID,
@@ -2478,7 +3047,8 @@ export async function run({ browser, root, output }) {
         consoleErrors,
         failedRequests,
         scope: 'functional-and-visual-smoke',
-        publicTargets: publicTargets.length > 0 ? publicTargets.map((target) => target.url) : 'not-run',
+        publicTargets:
+          publicTargets.length > 0 ? publicTargets.map((target) => target.url) : 'not-run',
         nativeDialogs: 'not-tested',
         explorerIntegration: 'not-tested',
         gpuPerformance: 'not-measured',

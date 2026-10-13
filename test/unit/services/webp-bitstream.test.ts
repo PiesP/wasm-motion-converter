@@ -5,7 +5,9 @@ import { extractCanvasWebp, extractVp8Chunk } from '@services/webp-bitstream';
 
 function makeIccWebp(profile: number[]): Uint8Array {
   const frame = [0x06, 0, 0, 0x9d, 0x01, 0x2a, 2, 0, 2, 0];
-  const output = new Uint8Array(12 + 18 + 8 + profile.length + (profile.length & 1) + 8 + frame.length);
+  const output = new Uint8Array(
+    12 + 18 + 8 + profile.length + (profile.length & 1) + 8 + frame.length
+  );
   const view = new DataView(output.buffer);
   output.set([0x52, 0x49, 0x46, 0x46], 0);
   view.setUint32(4, output.length - 8, true);

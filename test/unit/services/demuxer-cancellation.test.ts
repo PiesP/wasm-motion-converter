@@ -47,7 +47,9 @@ const metadata = {
 const firstPacket = {
   byteLength: 4,
   timestamp: 0,
-  toEncodedVideoChunk: vi.fn().mockReturnValue({ byteLength: 4, duration: 1_000_000, timestamp: 0 }),
+  toEncodedVideoChunk: vi
+    .fn()
+    .mockReturnValue({ byteLength: 4, duration: 1_000_000, timestamp: 0 }),
 };
 
 describe('demuxVideo cancellation', () => {

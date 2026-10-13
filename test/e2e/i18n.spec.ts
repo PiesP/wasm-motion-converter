@@ -5,7 +5,7 @@
 // Covers: language switching, persistence, RTL support, selector interaction,
 // full UI translation, and translation chunk loading.
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 // ── Constants ──────────────────────────────────────────────────────
 
@@ -65,7 +65,9 @@ test.describe('i18n: Language switch updates UI text', () => {
     expect(lang).toBe('en');
   });
 
-  test('switching to Korean via localStorage updates UI text and lang attribute', async ({ page }) => {
+  test('switching to Korean via localStorage updates UI text and lang attribute', async ({
+    page,
+  }) => {
     await page.goto('/');
     await waitForAppReady(page);
 
@@ -297,7 +299,7 @@ test.describe('i18n: Translation chunk loading', () => {
 
     // No i18n-related errors in console
     const i18nErrors = consoleErrors.filter(
-      (e) => e.includes('i18n') || e.includes('Failed to load translations'),
+      (e) => e.includes('i18n') || e.includes('Failed to load translations')
     );
     expect(i18nErrors).toEqual([]);
   });

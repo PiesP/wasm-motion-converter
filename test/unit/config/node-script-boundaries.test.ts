@@ -32,7 +32,11 @@ const entries = [
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'wmc node scripts with spaces '));
   roots.push(root);
-  for (const path of [...entries, 'scripts/release/legacy-state.ts', 'scripts/build/deployment-state.ts']) {
+  for (const path of [
+    ...entries,
+    'scripts/release/legacy-state.ts',
+    'scripts/build/deployment-state.ts',
+  ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     copyFileSync(join(project, path), join(root, path));
   }
@@ -103,8 +107,12 @@ describe('direct Node script boundaries', () => {
     expect(browserOnly.status).not.toBe(0);
     const diagnostics = browserOnly.stdout.trim().split('\n');
     expect(diagnostics).toHaveLength(2);
-    expect(diagnostics[0]).toMatch(/browser-only\.ts\(1,1\): error TS2584: Cannot find name 'document'/);
-    expect(diagnostics[1]).toMatch(/browser-only\.ts\(2,1\): error TS2304: Cannot find name 'window'/);
+    expect(diagnostics[0]).toMatch(
+      /browser-only\.ts\(1,1\): error TS2584: Cannot find name 'document'/
+    );
+    expect(diagnostics[1]).toMatch(
+      /browser-only\.ts\(2,1\): error TS2304: Cannot find name 'window'/
+    );
 
     // A disposable DOM reintroduction must make the negative fixture compile.
     writeConfig(['node-only.ts', 'browser-only.ts'], ['ES2022', 'DOM']);
@@ -122,7 +130,7 @@ describe('direct Node script boundaries', () => {
     for (const module of modules) {
       const path = join(moduleRoot, module);
       const result = spawnSync(process.execPath, ['--check', path], { encoding: 'utf8' });
-      expect(result.status, path + ': ' + result.stderr).toBe(0);
+      expect(result.status, `${path}: ${result.stderr}`).toBe(0);
     }
   });
 
@@ -137,17 +145,21 @@ describe('direct Node script boundaries', () => {
       stub(join(bin, name), 'printf invoked >> "$SPAWN_RECORD"\nexit 91');
     for (const entry of entries) {
       const code = `process.argv[1] = '/definitely/missing/entry.ts'; await import(${JSON.stringify(join(root, entry))});`;
-      const result = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', code], {
-        cwd: root,
-        env: {
-          ...process.env,
-          PATH: `${bin}:${process.env.PATH ?? ''}`,
-          SPAWN_RECORD: join(root, 'spawned'),
-          RELEASE_VERSION: 'invalid',
-          npm_execpath: join(root, 'missing-package-manager.mjs'),
-        },
-        encoding: 'utf8',
-      });
+      const result = spawnSync(
+        process.execPath,
+        ['--experimental-strip-types', '--input-type=module', '-e', code],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH ?? ''}`,
+            SPAWN_RECORD: join(root, 'spawned'),
+            RELEASE_VERSION: 'invalid',
+            npm_execpath: join(root, 'missing-package-manager.mjs'),
+          },
+          encoding: 'utf8',
+        }
+      );
       expect(result.status, `${entry}: ${result.stderr}`).toBe(0);
       expect(result.stdout).toBe('');
     }
@@ -171,10 +183,14 @@ describe('direct Node script boundaries', () => {
     const { root } = fixture();
     symlinkSync(join(root, 'scripts/ci/deep-check-reuse.ts'), join(root, 'linked-deep.ts'));
     const invoke = (gate: string) =>
-      spawnSync(process.execPath, ['--experimental-strip-types', join(root, 'linked-deep.ts'), 'unknown', gate], {
-        cwd: root,
-        encoding: 'utf8',
-      });
+      spawnSync(
+        process.execPath,
+        ['--experimental-strip-types', join(root, 'linked-deep.ts'), 'unknown', gate],
+        {
+          cwd: root,
+          encoding: 'utf8',
+        }
+      );
     const unknownCommand = invoke('mutation');
     expect(unknownCommand.status).not.toBe(0);
     expect(unknownCommand.stderr).toContain('Unknown command: unknown');
@@ -188,8 +204,14 @@ describe('direct Node script boundaries', () => {
     const { root, run } = fixture();
     mkdirSync(join(root, 'node_modules/sample'), { recursive: true });
     mkdirSync(join(root, 'public'));
-    writeFileSync(join(root, 'package.json'), '{"type":"module","dependencies":{"sample":"1.0.0"}}');
-    writeFileSync(join(root, 'node_modules/sample/package.json'), '{"version":"1.0.0","license":"MIT"}');
+    writeFileSync(
+      join(root, 'package.json'),
+      '{"type":"module","dependencies":{"sample":"1.0.0"}}'
+    );
+    writeFileSync(
+      join(root, 'node_modules/sample/package.json'),
+      '{"version":"1.0.0","license":"MIT"}'
+    );
     const result = run('scripts/build/generate-licenses.ts');
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toContain('### sample');
@@ -197,8 +219,20 @@ describe('direct Node script boundaries', () => {
     const generated = readFileSync(join(root, 'public/LICENSES.md'), 'utf8');
     const clock = join(root, 'clock.mjs');
     for (const instant of ['2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z']) {
-      writeFileSync(clock, `globalThis.Date = class extends Date { constructor() { super('${instant}'); } };`);
-      const dated = spawnSync(process.execPath, ['--import', clock, '--experimental-strip-types', join(root, 'scripts/build/generate-licenses.ts')], { cwd: root, encoding: 'utf8' });
+      writeFileSync(
+        clock,
+        `globalThis.Date = class extends Date { constructor() { super('${instant}'); } };`
+      );
+      const dated = spawnSync(
+        process.execPath,
+        [
+          '--import',
+          clock,
+          '--experimental-strip-types',
+          join(root, 'scripts/build/generate-licenses.ts'),
+        ],
+        { cwd: root, encoding: 'utf8' }
+      );
       expect(dated.status, dated.stderr).toBe(0);
       expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toBe(generated);
     }
@@ -209,7 +243,10 @@ describe('direct Node script boundaries', () => {
     mkdirSync(join(root, 'dist/assets'), { recursive: true });
     mkdirSync(join(root, 'public'));
     writeFileSync(join(root, 'public/_headers'), '/*\n  X-Content-Type-Options: nosniff\n');
-    writeFileSync(join(root, 'dist/index.html'), '<script type="module" src="/assets/app.js"></script>');
+    writeFileSync(
+      join(root, 'dist/index.html'),
+      '<script type="module" src="/assets/app.js"></script>'
+    );
     writeFileSync(join(root, 'dist/assets/a.wasm'), 'same');
     writeFileSync(join(root, 'dist/assets/b.wasm'), 'same');
     writeFileSync(join(root, 'dist/assets/app.js'), 'fetch("/assets/b.wasm")');
@@ -219,7 +256,10 @@ describe('direct Node script boundaries', () => {
     expect(readFileSync(join(root, 'dist/assets/app.js'), 'utf8')).toContain('/assets/a.wasm');
     expect(existsSync(join(root, 'dist/assets/b.wasm'))).toBe(false);
     expect(existsSync(join(root, 'dist/test-video-sample.mp4'))).toBe(false);
-    writeFileSync(join(root, 'dist/index.html'), '<script src="https://static.cloudflareinsights.com/beacon.min.js"></script>');
+    writeFileSync(
+      join(root, 'dist/index.html'),
+      '<script src="https://static.cloudflareinsights.com/beacon.min.js"></script>'
+    );
     const external = run('scripts/build/postbuild.ts');
     expect(external.status).not.toBe(0);
     expect(external.stderr).toContain('External provider/CDN scripts are forbidden');
@@ -266,19 +306,44 @@ describe('direct Node script boundaries', () => {
     edit.writeUInt32BE(1, 4);
     edit.writeUInt32BE(1, 8);
     const mp4Path = join(root, 'singleton.mp4');
-    writeFileSync(mp4Path, box('moov', box('mvhd', clock), box('trak',
-      box('tkhd', track), box('edts', box('elst', edit)), box('mdia',
-        box('mdhd', clock), box('minf', box('stbl', box('stts', timing)))))));
-    stub(join(bin, 'ffmpeg'), 'for last do :; done\ncase "$last" in\n*short-tail.mp4) cp "$FAKE_MP4" "$last" ;;\n*) printf video > "$last" ;;\nesac');
-    stub(join(bin, 'ffprobe'), `printf '%s\\n' '{"streams":[{"has_b_frames":1}],"packets_and_frames":[{"type":"packet","pts":2,"dts":0},{"type":"packet","pts":1,"dts":1},{"type":"frame","pict_type":"B"}]}'`);
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, PREPARE_RESOURCE_FIXTURES: 'false', FAKE_MP4: mp4Path };
+    writeFileSync(
+      mp4Path,
+      box(
+        'moov',
+        box('mvhd', clock),
+        box(
+          'trak',
+          box('tkhd', track),
+          box('edts', box('elst', edit)),
+          box('mdia', box('mdhd', clock), box('minf', box('stbl', box('stts', timing))))
+        )
+      )
+    );
+    stub(
+      join(bin, 'ffmpeg'),
+      'for last do :; done\ncase "$last" in\n*short-tail.mp4) cp "$FAKE_MP4" "$last" ;;\n*) printf video > "$last" ;;\nesac'
+    );
+    stub(
+      join(bin, 'ffprobe'),
+      `printf '%s\\n' '{"streams":[{"has_b_frames":1}],"packets_and_frames":[{"type":"packet","pts":2,"dts":0},{"type":"packet","pts":1,"dts":1},{"type":"frame","pict_type":"B"}]}'`
+    );
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      PREPARE_RESOURCE_FIXTURES: 'false',
+      FAKE_MP4: mp4Path,
+    };
     const result = run('scripts/test/generate-e2e-video.ts', env);
     expect(result.status, result.stderr).toBe(0);
-    expect(readFileSync(join(root, 'public/test-video-contract-bframes.mp4'), 'utf8')).toBe('video');
+    expect(readFileSync(join(root, 'public/test-video-contract-bframes.mp4'), 'utf8')).toBe(
+      'video'
+    );
     const shortTail = readFileSync(join(root, 'public/test-video-contract-short-tail.mp4'));
     const sttsType = shortTail.indexOf(Buffer.from('stts'));
     expect(shortTail.readUInt32BE(sttsType + 16)).toBe(10);
-    expect(existsSync(join(root, 'public/test-video-contract-rotate-90.mp4.unrotated.mp4'))).toBe(false);
+    expect(existsSync(join(root, 'public/test-video-contract-rotate-90.mp4.unrotated.mp4'))).toBe(
+      false
+    );
     stub(join(bin, 'ffmpeg'), 'exit 7');
     const failed = run('scripts/test/generate-e2e-video.ts', env);
     expect(failed.status).not.toBe(0);
@@ -288,17 +353,26 @@ describe('direct Node script boundaries', () => {
   it('closes the allocated port and propagates the package script exit status', () => {
     const { root, run } = fixture();
     const packageManager = join(root, 'fake-manager.mjs');
-    writeFileSync(packageManager, `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.FAKE_RESULT, JSON.stringify({ argv: process.argv.slice(2), port: process.env.PLAYWRIGHT_DEV_PORT }));\nprocess.exitCode = 7;\n`);
+    writeFileSync(
+      packageManager,
+      `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.FAKE_RESULT, JSON.stringify({ argv: process.argv.slice(2), port: process.env.PLAYWRIGHT_DEV_PORT }));\nprocess.exitCode = 7;\n`
+    );
     const result = run('scripts/test/run-e2e-on-free-port.ts', {
       ...process.env,
       npm_execpath: packageManager,
       FAKE_RESULT: join(root, 'result.json'),
     });
     expect(result.status).toBe(7);
-    const recorded = JSON.parse(readFileSync(join(root, 'result.json'), 'utf8')) as { argv: string[]; port: string };
+    const recorded = JSON.parse(readFileSync(join(root, 'result.json'), 'utf8')) as {
+      argv: string[];
+      port: string;
+    };
     expect(recorded.argv).toEqual(['test:e2e:ci']);
     expect(Number(recorded.port)).toBeGreaterThan(0);
-    const missing = run('scripts/test/run-e2e-on-free-port.ts', { ...process.env, npm_execpath: '' });
+    const missing = run('scripts/test/run-e2e-on-free-port.ts', {
+      ...process.env,
+      npm_execpath: '',
+    });
     expect(missing.status).not.toBe(0);
     expect(missing.stderr).toContain('npm_execpath is required');
   });

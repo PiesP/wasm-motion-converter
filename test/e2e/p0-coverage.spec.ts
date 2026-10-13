@@ -13,17 +13,17 @@
 // 6. Trim controls (F07): set trim via text input → verify trim range respected
 // 7. Language selector interaction (F21 supplement): verify selector works end-to-end
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
+  clickConvert,
+  dismissWarningDialog,
+  downloadResult,
+  getAppState,
   injectTestFile,
+  runConversion,
   setFormat,
   setQuality,
   setScale,
-  clickConvert,
-  dismissWarningDialog,
-  getAppState,
-  downloadResult,
-  runConversion,
   setSmartFrameSkip,
   waitForIdle,
 } from './fixtures/test-helpers';
@@ -38,27 +38,42 @@ const LOCALE_STORAGE_KEY = 'dropconvert.locale';
 
 /** Set a locale via localStorage and reload page. */
 async function setLocaleAndReload(page: import('@playwright/test').Page, locale: string) {
-  await page.evaluate(({ key, value }) => {
-    localStorage.setItem(key, value);
-  }, { key: LOCALE_STORAGE_KEY, value: locale });
+  await page.evaluate(
+    ({ key, value }) => {
+      localStorage.setItem(key, value);
+    },
+    { key: LOCALE_STORAGE_KEY, value: locale }
+  );
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
 }
 
 /** Read conversion settings from localStorage. */
-async function readStoredSettings(page: import('@playwright/test').Page): Promise<Record<string, unknown> | null> {
+async function readStoredSettings(
+  page: import('@playwright/test').Page
+): Promise<Record<string, unknown> | null> {
   return page.evaluate((key) => {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
-    try { return JSON.parse(raw); } catch { return null; }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
   }, SETTINGS_STORAGE_KEY);
 }
 
 /** Write conversion settings directly to localStorage. */
-async function writeStoredSettings(page: import('@playwright/test').Page, settings: Record<string, unknown>) {
-  await page.evaluate(({ key, value }) => {
-    localStorage.setItem(key, JSON.stringify(value));
-  }, { key: SETTINGS_STORAGE_KEY, value: settings });
+async function writeStoredSettings(
+  page: import('@playwright/test').Page,
+  settings: Record<string, unknown>
+) {
+  await page.evaluate(
+    ({ key, value }) => {
+      localStorage.setItem(key, JSON.stringify(value));
+    },
+    { key: SETTINGS_STORAGE_KEY, value: settings }
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -296,7 +311,9 @@ test.describe('Conversion cancel (F09)', () => {
     expect(error).toBe(false);
 
     // Verify convert button is re-enabled (user can start again)
-    const convertEnabled = await page.evaluate(() => window.__TEST_HELPERS__?.isConvertButtonEnabled());
+    const convertEnabled = await page.evaluate(() =>
+      window.__TEST_HELPERS__?.isConvertButtonEnabled()
+    );
     expect(convertEnabled).toBe(true);
   });
 
@@ -410,7 +427,9 @@ test.describe('Trim controls (F07)', () => {
     // Trim selector should be visible after file is loaded
     const trimSelector = page.locator('[data-testid="trim-selector"]');
     await expect(trimSelector).toBeVisible({ timeout: 5000 });
-    await expect(page.locator('[data-testid="dropzone"] [data-testid="input-range-editor"]')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="dropzone"] [data-testid="input-range-editor"]')
+    ).toBeVisible();
   });
 
   test('trim handles support keyboard adjustment and expose dependent bounds', async ({ page }) => {
@@ -567,7 +586,9 @@ test.describe('Language selector interaction (F21)', () => {
     expect(value).toBe('ko');
 
     // Verify Korean subtitle text is visible
-    await expect(page.getByText('비디오를 애니메이션 GIF 또는 WebP 이미지로 변환하세요')).toBeVisible({ timeout: 5000 });
+    await expect(
+      page.getByText('비디오를 애니메이션 GIF 또는 WebP 이미지로 변환하세요')
+    ).toBeVisible({ timeout: 5000 });
   });
 
   test('switching back to English from Korean', async ({ page }) => {
@@ -584,7 +605,9 @@ test.describe('Language selector interaction (F21)', () => {
     await page.waitForTimeout(2000);
 
     // Verify English text
-    await expect(page.getByText('Convert videos to animated GIF or WebP images')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Convert videos to animated GIF or WebP images')).toBeVisible({
+      timeout: 5000,
+    });
 
     const selector = page.locator('[data-testid="language-selector"]');
     const value = await selector.inputValue();

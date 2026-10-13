@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   focusElement,
   focusElementUnlessUserIsEditing,
   focusPrimaryErrorAction,
   scheduleTask,
 } from '@utils/dom-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 describe('dom utilities', () => {
   beforeEach(() => vi.useFakeTimers());

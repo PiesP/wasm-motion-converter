@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { describe, expect, it } from 'vitest';
 import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
 import type { SerializedConversionOptions } from '@services/conversion-worker/types';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
+import { describe, expect, it } from 'vitest';
 
 describe('buildConversionRequest', () => {
   const baseOptions: SerializedConversionOptions = {

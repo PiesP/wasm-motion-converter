@@ -1,6 +1,6 @@
+import type { Buffer } from 'node:buffer';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Buffer } from 'node:buffer';
 
 const execFileAsync = promisify(execFile);
 
@@ -16,11 +16,14 @@ export async function probeFile(filePath: string): Promise<{
   codec: string;
 }> {
   const { stdout } = await execFileAsync('ffprobe', [
-    '-v', 'quiet',
-    '-print_format', 'json',
+    '-v',
+    'quiet',
+    '-print_format',
+    'json',
     '-show_format',
     '-show_streams',
-    '-select_streams', 'v:0',
+    '-select_streams',
+    'v:0',
     '-count_frames',
     filePath,
   ]);
@@ -31,9 +34,14 @@ export async function probeFile(filePath: string): Promise<{
 
   const format = data.format?.format_name?.split(',')[0] || 'unknown';
   const duration = parseFloat(data.format?.duration || '0');
-  const frameCount = parseInt(stream.nb_read_frames || '0', 10) ||
+  const frameCount =
+    parseInt(stream.nb_read_frames || '0', 10) ||
     parseInt(stream.nb_frames || '0', 10) ||
-    Math.round(duration * (parseFloat(stream.r_frame_rate?.split('/')[0] || '0') / parseFloat(stream.r_frame_rate?.split('/')[1] || '1')));
+    Math.round(
+      duration *
+        (parseFloat(stream.r_frame_rate?.split('/')[0] || '0') /
+          parseFloat(stream.r_frame_rate?.split('/')[1] || '1'))
+    );
 
   return {
     format,
@@ -69,7 +77,11 @@ export async function decodeFileFully(filePath: string): Promise<void> {
  * Validate GIF file by checking magic bytes.
  * GIF files start with "GIF89a" or "GIF87a" and end with 0x3B.
  */
-export function validateGifMagic(bytes: Uint8Array): { valid: boolean; width?: number; height?: number } {
+export function validateGifMagic(bytes: Uint8Array): {
+  valid: boolean;
+  width?: number;
+  height?: number;
+} {
   if (bytes.length < 10) return { valid: false };
 
   const header = String.fromCharCode(
@@ -78,7 +90,7 @@ export function validateGifMagic(bytes: Uint8Array): { valid: boolean; width?: n
     bytes[2]!,
     bytes[3]!,
     bytes[4]!,
-    bytes[5]!,
+    bytes[5]!
   );
   if (header !== 'GIF89a' && header !== 'GIF87a') return { valid: false };
   if (bytes[bytes.length - 1] !== 0x3b) return { valid: false };
@@ -94,7 +106,11 @@ export function validateGifMagic(bytes: Uint8Array): { valid: boolean; width?: n
  * Validate WebP file by checking magic bytes.
  * WebP: bytes 0-3 = "RIFF", bytes 8-11 = "WEBP"
  */
-export function validateWebpMagic(bytes: Uint8Array): { valid: boolean; width?: number; height?: number } {
+export function validateWebpMagic(bytes: Uint8Array): {
+  valid: boolean;
+  width?: number;
+  height?: number;
+} {
   if (bytes.length < 20) return { valid: false };
 
   const riff = String.fromCharCode(bytes[0]!, bytes[1]!, bytes[2]!, bytes[3]!);
@@ -106,8 +122,8 @@ export function validateWebpMagic(bytes: Uint8Array): { valid: boolean; width?: 
   const codec = String.fromCharCode(bytes[12]!, bytes[13]!, bytes[14]!, bytes[15]!);
   if (codec === 'VP8 ' && bytes.length >= 30) {
     // VP8: width at offset 26-27, height at offset 28-29 (little-endian, 14-bit each)
-    const w = (bytes[26]! | (bytes[27]! << 8)) & 0x3FFF;
-    const h = (bytes[28]! | (bytes[29]! << 8)) & 0x3FFF;
+    const w = (bytes[26]! | (bytes[27]! << 8)) & 0x3fff;
+    const h = (bytes[28]! | (bytes[29]! << 8)) & 0x3fff;
     return { valid: true, width: w, height: h };
   }
   if (codec === 'VP8L' && bytes.length >= 25) {
@@ -131,7 +147,9 @@ export function validateFileMagic(
   if (expectedFormat === 'gif') {
     const result = validateGifMagic(bytes);
     if (!result.valid) {
-      const headerHex = Array.from(bytes.slice(0, 12)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+      const headerHex = Array.from(bytes.slice(0, 12))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join(' ');
       return { valid: false, message: `Invalid GIF magic: ${headerHex}` };
     }
     return { ...result, message: 'Valid GIF' };
@@ -140,7 +158,9 @@ export function validateFileMagic(
   if (expectedFormat === 'webp') {
     const result = validateWebpMagic(bytes);
     if (!result.valid) {
-      const headerHex = Array.from(bytes.slice(0, 12)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+      const headerHex = Array.from(bytes.slice(0, 12))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join(' ');
       return { valid: false, message: `Invalid WebP magic: ${headerHex}` };
     }
     return { ...result, message: 'Valid WebP' };

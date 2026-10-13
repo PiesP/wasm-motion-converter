@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { describe, it, expect } from 'vitest';
-import { formatNumber, formatPercent } from '@utils/intl-utils';
 import { formatBytes } from '@utils/format-utils';
+import { formatNumber, formatPercent } from '@utils/intl-utils';
+import { describe, expect, it } from 'vitest';
 
 describe('formatBytes', () => {
   describe('English locale', () => {

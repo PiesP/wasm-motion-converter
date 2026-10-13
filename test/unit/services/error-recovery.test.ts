@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { describe, expect, it } from 'vitest';
 import { validateOutput } from '@services/error-recovery';
+import { describe, expect, it } from 'vitest';
 
 const bytes = (text: string, length = text.length) => {
   const output = new Uint8Array(length);
@@ -25,5 +25,4 @@ describe('validateOutput', () => {
     expect(validateOutput(bytes('RIFFxxxxPNG!', 12), 'webp')).toBe(false);
     expect(validateOutput(bytes('WEBPxxxxRIFF', 12), 'webp')).toBe(false);
   });
-
 });

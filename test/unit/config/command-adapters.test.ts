@@ -28,16 +28,23 @@ function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'wmc commands with spaces '));
   fixtureRoots.push(root);
   mkdirSync(join(root, 'scripts/check'), { recursive: true });
-  copyFileSync(join(projectRoot, 'scripts/check/bootstrap.ts'), join(root, 'scripts/check/bootstrap.ts'));
+  copyFileSync(
+    join(projectRoot, 'scripts/check/bootstrap.ts'),
+    join(root, 'scripts/check/bootstrap.ts')
+  );
   return root;
 }
 
 function runCli(root: string, name: string, environment = process.env) {
-  return spawnSync(process.execPath, ['--experimental-strip-types', join(root, 'scripts/check', name)], {
-    cwd: tmpdir(),
-    env: environment,
-    encoding: 'utf8',
-  });
+  return spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', join(root, 'scripts/check', name)],
+    {
+      cwd: tmpdir(),
+      env: environment,
+      encoding: 'utf8',
+    }
+  );
 }
 
 describe('dependency-free command adapters', () => {
@@ -83,7 +90,12 @@ describe('dependency-free command adapters', () => {
     const root = fixtureRoot();
     writeFileSync(
       join(root, 'package.json'),
-      JSON.stringify({ name: 'wmc-command-fixture', private: true, type: 'module', scripts: { preinstall: manifest.scripts.preinstall } })
+      JSON.stringify({
+        name: 'wmc-command-fixture',
+        private: true,
+        type: 'module',
+        scripts: { preinstall: manifest.scripts.preinstall },
+      })
     );
     const result = spawnSync('pnpm', ['run', 'preinstall'], {
       cwd: root,
@@ -98,10 +110,13 @@ describe('dependency-free command adapters', () => {
   it('has no side effects when imported', () => {
     const root = fixtureRoot();
     const url = pathToFileURL(join(root, 'scripts/check/bootstrap.ts')).href;
-    const result = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `import ${JSON.stringify(url)};`], { cwd: tmpdir(), encoding: 'utf8' });
+    const result = spawnSync(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '-e', `import ${JSON.stringify(url)};`],
+      { cwd: tmpdir(), encoding: 'utf8' }
+    );
     expect(result.status).toBe(0);
     expect(result.stdout).toBe('');
     expect(result.stderr).toBe('');
   });
-
 });

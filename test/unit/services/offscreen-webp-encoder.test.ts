@@ -86,18 +86,25 @@ describe('OffscreenCanvas WebP RGBA ownership', () => {
           totalFrames: 1,
         },
         {
-          height: 1, quality: 'medium', scale: 1, width: 1,
-          frameDecimation: 1.05, minimumSourceFrameGap: 2, pressureCadenceRatio: 1.4,
+          height: 1,
+          quality: 'medium',
+          scale: 1,
+          width: 1,
+          frameDecimation: 1.05,
+          minimumSourceFrameGap: 2,
+          pressureCadenceRatio: 1.4,
         }
       )
     ).resolves.toBeInstanceOf(Uint8Array);
 
     expect(mocks.pixelFormat).toBe('rgba');
-    expect(mocks.decodeOptions).toEqual(expect.objectContaining({
-      frameDecimation: 1.05,
-      minimumSourceFrameGap: 2,
-      pressureCadenceRatio: 1.4,
-    }));
+    expect(mocks.decodeOptions).toEqual(
+      expect.objectContaining({
+        frameDecimation: 1.05,
+        minimumSourceFrameGap: 2,
+        pressureCadenceRatio: 1.4,
+      })
+    );
     expect(imageDataInputs).toHaveLength(1);
     expect(imageDataInputs[0]).toEqual(new Uint8ClampedArray([10, 20, 30, 255]));
     expect(imageDataInputs[0]?.byteLength).toBe(4);

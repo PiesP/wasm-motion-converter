@@ -1,16 +1,27 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applicationSourceSha, fingerprintedAssetHeaders, writeDeploymentState } from '../../../scripts/build/deployment-state';
+import {
+  applicationSourceSha,
+  fingerprintedAssetHeaders,
+  writeDeploymentState,
+} from '../../../scripts/build/deployment-state';
 import { pagesBuild } from '../../../scripts/build/pages-build';
 
 const roots: string[] = [];
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), 'wmc-pages-'));
   roots.push(root);
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ version: '0.2.3', packageManager: 'pnpm@11.26.0', volta: { node: process.versions.node } }));
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({
+      version: '0.2.3',
+      packageManager: 'pnpm@11.26.0',
+      volta: { node: process.versions.node },
+    })
+  );
   writeFileSync(join(root, '.node-version'), process.versions.node);
   return root;
 }
@@ -23,7 +34,8 @@ describe('Pages source-build contract', () => {
   it('binds the app to a clean source and leaves dirty/non-Git local builds unknown', () => {
     const root = fixture();
     expect(applicationSourceSha(root)).toBeNull();
-    const git = (args: string[]): string => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+    const git = (args: string[]): string =>
+      execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
     git(['init', '-q']);
     git(['config', 'user.email', 'test@example.test']);
     git(['config', 'user.name', 'Test']);
@@ -50,9 +62,13 @@ describe('Pages source-build contract', () => {
     };
     pagesBuild(fixture(), run);
     expect(calls.map(({ command, args }) => `${command} ${args.join(' ')}`)).toEqual([
-      'pnpm --version', 'git submodule sync --recursive', 'git submodule update --init --recursive',
-      'git rev-parse HEAD:packages/core', 'git -C packages/core rev-parse HEAD',
-      'pnpm install --frozen-lockfile --prod=false', 'pnpm build',
+      'pnpm --version',
+      'git submodule sync --recursive',
+      'git submodule update --init --recursive',
+      'git rev-parse HEAD:packages/core',
+      'git -C packages/core rev-parse HEAD',
+      'pnpm install --frozen-lockfile --prod=false',
+      'pnpm build',
     ]);
     expect(calls[5]?.environment?.NODE_ENV).toBe('development');
     expect(calls[6]?.environment?.NODE_ENV).toBe('production');
@@ -64,22 +80,32 @@ describe('Pages source-build contract', () => {
     expect(() => pagesBuild(root, wrongPnpm)).toThrow('pnpm version');
     expect(wrongPnpm).toHaveBeenCalledTimes(1);
     const calls: string[] = [];
-    expect(() => pagesBuild(root, (_command, args) => {
-      calls.push(args.join(' '));
-      return args[0] === '--version' ? '11.26.0' : args[0] === '-C' ? 'b'.repeat(40) : 'a'.repeat(40);
-    })).toThrow('gitlink mismatch');
+    expect(() =>
+      pagesBuild(root, (_command, args) => {
+        calls.push(args.join(' '));
+        return args[0] === '--version'
+          ? '11.26.0'
+          : args[0] === '-C'
+            ? 'b'.repeat(40)
+            : 'a'.repeat(40);
+      })
+    ).toThrow('gitlink mismatch');
     expect(calls.some((call) => call.startsWith('install'))).toBe(false);
   });
 
   it('uses cumulative rules without giving missing or unversioned assets an immutable policy', () => {
     const template = readFileSync(resolve('public/_headers'), 'utf8');
-    const headers = fingerprintedAssetHeaders(template, ['app.ABCDef12.js', 'codec-1234abcd.wasm', 'unversioned.wasm']);
+    const headers = fingerprintedAssetHeaders(template, [
+      'app.ABCDef12.js',
+      'codec-1234abcd.wasm',
+      'unversioned.wasm',
+    ]);
     const matched = (path: string): string[] => {
       let route = '';
       const values: string[] = [];
       for (const line of headers.split('\n')) {
         if (line.startsWith('/')) route = line;
-        const value = /^  Cache-Control: (.+)$/.exec(line)?.[1];
+        const value = /^ {2}Cache-Control: (.+)$/.exec(line)?.[1];
         if (value && (route === '/*' || route === path)) values.push(value);
       }
       return values;
@@ -94,7 +120,8 @@ describe('Pages source-build contract', () => {
 
   it('records postprocessed bytes and distinct Git/core identity, and rejects a provider source mismatch', () => {
     const root = fixture();
-    const git = (args: string[]): string => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+    const git = (args: string[]): string =>
+      execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
     git(['init', '-q']);
     git(['config', 'user.email', 'test@example.test']);
     git(['config', 'user.name', 'Test']);
@@ -111,7 +138,10 @@ describe('Pages source-build contract', () => {
     const state = JSON.parse(readFileSync(join(root, 'dist/deployment-state.json'), 'utf8'));
     expect(state.sourceSha).toBe(git(['rev-parse', 'HEAD']));
     expect(state.coreSha).toBe(core);
-    expect(state.files.map((file: { path: string }) => file.path)).toEqual(['assets/app.1234abcd.js', 'index.html']);
+    expect(state.files.map((file: { path: string }) => file.path)).toEqual([
+      'assets/app.1234abcd.js',
+      'index.html',
+    ]);
     expect(state.files[0].size).toBe(13);
     vi.stubEnv('CF_PAGES_COMMIT_SHA', 'b'.repeat(40));
     expect(() => writeDeploymentState(root, join(root, 'dist'))).toThrow('source SHA');

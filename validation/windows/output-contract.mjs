@@ -28,11 +28,7 @@ export async function inspectAnimatedOutput(page, bytes, format, markers) {
             const classify = (rgb) => {
               const candidates = Object.entries(markerColors).map(([name, color]) => ({
                 name,
-                distance: Math.hypot(
-                  rgb[0] - color[0],
-                  rgb[1] - color[1],
-                  rgb[2] - color[2]
-                ),
+                distance: Math.hypot(rgb[0] - color[0], rgb[1] - color[1], rgb[2] - color[2]),
               }));
               candidates.sort((left, right) => left.distance - right.distance);
               return {

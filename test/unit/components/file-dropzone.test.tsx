@@ -82,21 +82,15 @@ describe('FileDropzone', () => {
       ),
       container
     );
-    const player = container.querySelector<HTMLElement>(
-      '[data-testid="selection-preview-player"]'
-    );
+    const player = container.querySelector<HTMLElement>('[data-testid="selection-preview-player"]');
     const video = player?.querySelector<HTMLVideoElement>('video');
-    const button = player?.querySelector<HTMLButtonElement>(
-      '[data-testid="trim-preview-button"]'
-    );
+    const button = player?.querySelector<HTMLButtonElement>('[data-testid="trim-preview-button"]');
 
     expect(player).not.toBeNull();
     expect(video).not.toBeNull();
     expect(button).not.toBeNull();
     expect(
-      container.querySelector(
-        '[data-testid="trim-selector"] [data-testid="trim-preview-button"]'
-      )
+      container.querySelector('[data-testid="trim-selector"] [data-testid="trim-preview-button"]')
     ).toBeNull();
 
     Object.defineProperties(video!, {
@@ -127,9 +121,9 @@ describe('FileDropzone', () => {
     expect(video!.currentTime).toBe(2);
     expect(button!.getAttribute('aria-pressed')).toBe('false');
     expect(document.activeElement).toBe(button);
-    expect(
-      player?.querySelector<HTMLButtonElement>('[data-testid="trim-preview-button"]')
-    ).toBe(button);
+    expect(player?.querySelector<HTMLButtonElement>('[data-testid="trim-preview-button"]')).toBe(
+      button
+    );
 
     dispose();
   });

@@ -177,9 +177,7 @@ describe('WebP encoder worker message security', () => {
       | { id: number; bitstream: Uint8Array }
       | undefined;
     expect(result?.id).toBe(7);
-    expect(result?.bitstream).toEqual(
-      new Uint8Array([0x16, 0, 0, 0x9d, 0x01, 0x2a, 1, 0, 1, 0])
-    );
+    expect(result?.bitstream).toEqual(new Uint8Array([0x16, 0, 0, 0x9d, 0x01, 0x2a, 1, 0, 1, 0]));
     expect(imageDataInputs).toHaveLength(1);
     expect(imageDataInputs[0]).toMatchObject({ height: 1, width: 1 });
     expect(imageDataInputs[0]?.data).toEqual(new Uint8ClampedArray([0, 0, 0, 255]));

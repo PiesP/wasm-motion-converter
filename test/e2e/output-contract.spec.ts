@@ -3,11 +3,11 @@
 
 import { expect, test } from '@playwright/test';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
-import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import { parseGifDelaysCs } from '../../validation/windows/gif-playback.mjs';
+import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {
-  type OutputContractCase,
   compareAnimatedOutputExact,
+  type OutputContractCase,
   verifyAnimatedOutput,
 } from '../../validation/windows/output-contract.mjs';
 import {
@@ -27,17 +27,16 @@ import {
 const cases = contractData.cases as OutputContractCase[];
 const markers = contractData.markers as Record<string, number[]>;
 
-async function configureContract(page: Parameters<typeof injectTestFile>[0], contract: OutputContractCase) {
+async function configureContract(
+  page: Parameters<typeof injectTestFile>[0],
+  contract: OutputContractCase
+) {
   await injectTestFile(page, contract.fixture.replace(/^public\//, ''));
   await setFormat(page, contract.format);
   await setQuality(page, contract.settings.quality);
   await setScale(
     page,
-    contract.settings.scale === '1'
-      ? '100%'
-      : contract.settings.scale === '0.75'
-        ? '75%'
-        : '50%'
+    contract.settings.scale === '1' ? '100%' : contract.settings.scale === '0.75' ? '75%' : '50%'
   );
   await setSmartFrameSkip(page, contract.settings.smartFrameSkip);
 
@@ -116,19 +115,34 @@ test.describe('deterministic output contracts', () => {
 });
 
 test.describe('fractional pressure cadence through UI routing', () => {
-  for (const route of ['gif-worker', 'gif-main', 'webp-parallel', 'webp-serial', 'webp-wasm'] as const) {
-    test(`${route} admits fifteen of twenty-one decoded frames under critical pressure`, async ({ page }) => {
+  for (const route of [
+    'gif-worker',
+    'gif-main',
+    'webp-parallel',
+    'webp-serial',
+    'webp-wasm',
+  ] as const) {
+    test(`${route} admits fifteen of twenty-one decoded frames under critical pressure`, async ({
+      page,
+    }) => {
       await page.addInitScript((backend) => {
         if (backend === 'gif-main' || backend === 'webp-serial') {
-          Object.defineProperty(globalThis, 'Worker', { configurable: true,
-            value: class UnavailableWorker { constructor() {
-              throw new DOMException('Force the selected main-thread contract', 'NotSupportedError');
-            } },
+          Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class UnavailableWorker {
+              constructor() {
+                throw new DOMException(
+                  'Force the selected main-thread contract',
+                  'NotSupportedError'
+                );
+              }
+            },
           });
         }
         if (backend === 'webp-wasm') {
           Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
-            configurable: true, value: undefined,
+            configurable: true,
+            value: undefined,
           });
         }
       }, route);
@@ -140,14 +154,24 @@ test.describe('fractional pressure cadence through UI routing', () => {
       for (const critical of [false, true]) {
         await page.evaluate((isCritical) => {
           window.__TEST_HELPERS__?.resetApp();
-          Object.defineProperty(performance, 'memory', { configurable: true,
-            value: { usedJSHeapSize: 8 * 1024 * 1024, totalJSHeapSize: 16 * 1024 * 1024,
-              jsHeapSizeLimit: (isCritical ? 16 : 1024) * 1024 * 1024 },
+          Object.defineProperty(performance, 'memory', {
+            configurable: true,
+            value: {
+              usedJSHeapSize: 8 * 1024 * 1024,
+              totalJSHeapSize: 16 * 1024 * 1024,
+              jsHeapSizeLimit: (isCritical ? 16 : 1024) * 1024 * 1024,
+            },
           });
         }, critical);
-        const activeContract = critical ? { ...contract, expected: {
-          ...contract.expected, ...contractData.pressureExpectations[format],
-        } } : contract;
+        const activeContract = critical
+          ? {
+              ...contract,
+              expected: {
+                ...contract.expected,
+                ...contractData.pressureExpectations[format],
+              },
+            }
+          : contract;
         const output = await runContractConversion(page, activeContract);
         await verifyAnimatedOutput(page, output, activeContract, markers);
         const profile = await page.evaluate(() => {
@@ -157,19 +181,28 @@ test.describe('fractional pressure cadence through UI routing', () => {
           return helper.getConversionProfile();
         });
         const stage = profile?.stages.find((entry) => entry.stage === 'transcoding');
-        if (!stage || stage.stage !== 'transcoding') throw new Error('Missing native counts');
+        if (stage?.stage !== 'transcoding') throw new Error('Missing native counts');
         expect(stage.decodedFrames).toBe(21);
         expect(stage.selectedFrames).toBe(critical ? 15 : format === 'gif' ? 20 : 21);
-        expect(profile?.encoderRoute).toBe(route === 'webp-parallel' ? 'webp-parallel-canvas'
-          : route === 'webp-serial' ? 'webp-serial-canvas' : route);
+        expect(profile?.encoderRoute).toBe(
+          route === 'webp-parallel'
+            ? 'webp-parallel-canvas'
+            : route === 'webp-serial'
+              ? 'webp-serial-canvas'
+              : route
+        );
         observations.push({ critical, profile });
         expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
       }
       await page.evaluate(() => {
         window.__TEST_HELPERS__?.resetApp();
-        Object.defineProperty(performance, 'memory', { configurable: true,
-          value: { usedJSHeapSize: 8 * 1024 * 1024, totalJSHeapSize: 16 * 1024 * 1024,
-            jsHeapSizeLimit: 1024 * 1024 * 1024 },
+        Object.defineProperty(performance, 'memory', {
+          configurable: true,
+          value: {
+            usedJSHeapSize: 8 * 1024 * 1024,
+            totalJSHeapSize: 16 * 1024 * 1024,
+            jsHeapSizeLimit: 1024 * 1024 * 1024,
+          },
         });
       });
       const integerVfr = cases.find((entry) => entry.id === `integer-vfr-${format}`)!;
@@ -182,7 +215,7 @@ test.describe('fractional pressure cadence through UI routing', () => {
         return helper.getConversionProfile();
       });
       const vfrStage = vfrProfile?.stages.find((entry) => entry.stage === 'transcoding');
-      if (!vfrStage || vfrStage.stage !== 'transcoding') throw new Error('Missing VFR admission counts');
+      if (vfrStage?.stage !== 'transcoding') throw new Error('Missing VFR admission counts');
       expect(vfrStage.decodedFrames).toBe(3);
       expect(vfrStage.selectedFrames).toBe(3);
       await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
@@ -192,49 +225,104 @@ test.describe('fractional pressure cadence through UI routing', () => {
       await setScale(page, '100%');
       await setSmartFrameSkip(page, 'off');
       await page.evaluate(() => {
-        const samples: Array<{ atMs: number; percent: number; current: number; total: number; phase: string; fps: number | null }> = [];
+        const samples: Array<{
+          atMs: number;
+          percent: number;
+          current: number;
+          total: number;
+          phase: string;
+          fps: number | null;
+        }> = [];
         const capture = () => {
           const diagnostics = document.querySelector('[data-testid="progress-diagnostics"]');
           const text = diagnostics?.textContent ?? '';
           const count = /Frame (\d+)\/(\d+)/.exec(text);
           const rate = /@ ([\d.]+) fps/.exec(text);
           const phase = /— (\w+)/.exec(text)?.[1] ?? 'unknown';
-          const percent = Number(document.querySelector('[role="progressbar"]')?.getAttribute('data-progress'));
+          const percent = Number(
+            document.querySelector('[role="progressbar"]')?.getAttribute('data-progress')
+          );
           if (!count || !Number.isFinite(percent)) return;
           const current = Number(count[1]);
           if (samples.at(-1)?.current === current && samples.at(-1)?.phase === phase) return;
           if (samples.length >= 128) throw new Error('Progress observer overflow');
-          samples.push({ atMs: performance.now(), percent, current, total: Number(count[2]), phase,
-            fps: rate ? Number(rate[1]) : null });
+          samples.push({
+            atMs: performance.now(),
+            percent,
+            current,
+            total: Number(count[2]),
+            phase,
+            fps: rate ? Number(rate[1]) : null,
+          });
         };
         const observer = new MutationObserver(capture);
-        observer.observe(document.body, { attributes: true, characterData: true, childList: true, subtree: true });
-        (globalThis as unknown as { __wmcProgressObservation: unknown }).__wmcProgressObservation = { samples, observer };
+        observer.observe(document.body, {
+          attributes: true,
+          characterData: true,
+          childList: true,
+          subtree: true,
+        });
+        (globalThis as unknown as { __wmcProgressObservation: unknown }).__wmcProgressObservation =
+          { samples, observer };
       });
       await clickConvert(page);
       await dismissWarningDialog(page);
       expect(await waitForConversionComplete(page, 120_000)).toBe('done');
       const progressObservation = await page.evaluate(() => {
-        const inspector = (globalThis as unknown as { __wmcProgressObservation: {
-          samples: Array<{ atMs: number; percent: number; current: number; total: number; phase: string; fps: number | null }>;
-          observer: MutationObserver;
-        } }).__wmcProgressObservation;
+        const inspector = (
+          globalThis as unknown as {
+            __wmcProgressObservation: {
+              samples: Array<{
+                atMs: number;
+                percent: number;
+                current: number;
+                total: number;
+                phase: string;
+                fps: number | null;
+              }>;
+              observer: MutationObserver;
+            };
+          }
+        ).__wmcProgressObservation;
         inspector.observer.disconnect();
         return inspector.samples;
       });
-      const longProfile = await page.evaluate(() => (window.__TEST_HELPERS__ as unknown as {
-        getConversionProfile: () => ConversionProfileReport | null;
-      }).getConversionProfile());
+      const longProfile = await page.evaluate(() =>
+        (
+          window.__TEST_HELPERS__ as unknown as {
+            getConversionProfile: () => ConversionProfileReport | null;
+          }
+        ).getConversionProfile()
+      );
       const longStage = longProfile?.stages.find((entry) => entry.stage === 'transcoding');
-      if (!longStage || longStage.stage !== 'transcoding') throw new Error('Missing native long-stream counts');
+      if (longStage?.stage !== 'transcoding') throw new Error('Missing native long-stream counts');
       expect(longStage.decodedFrames).toBe(360);
-      const intermediate = progressObservation.filter((sample) => sample.current > 1 && sample.current < 360 && sample.percent < 100);
+      const intermediate = progressObservation.filter(
+        (sample) => sample.current > 1 && sample.current < 360 && sample.percent < 100
+      );
       expect(intermediate.length).toBeGreaterThan(0);
-      expect(intermediate.some((sample) => sample.fps !== null && Number.isFinite(sample.fps) && sample.fps > 0)).toBe(true);
-      expect(progressObservation.every((sample, index) => index === 0 || sample.percent >= progressObservation[index - 1]!.percent && (sample.phase !== progressObservation[index - 1]!.phase || sample.current >= progressObservation[index - 1]!.current))).toBe(true);
+      expect(
+        intermediate.some(
+          (sample) => sample.fps !== null && Number.isFinite(sample.fps) && sample.fps > 0
+        )
+      ).toBe(true);
+      expect(
+        progressObservation.every(
+          (sample, index) =>
+            index === 0 ||
+            (sample.percent >= progressObservation[index - 1]!.percent &&
+              (sample.phase !== progressObservation[index - 1]!.phase ||
+                sample.current >= progressObservation[index - 1]!.current))
+        )
+      ).toBe(true);
       expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
       await test.info().attach(`${route}-admission.json`, {
-        body: JSON.stringify({ timeOrigin, observations, vfrProfile, longProfile, progressObservation }, null, 2), contentType: 'application/json',
+        body: JSON.stringify(
+          { timeOrigin, observations, vfrProfile, longProfile, progressObservation },
+          null,
+          2
+        ),
+        contentType: 'application/json',
       });
     });
   }
@@ -271,8 +359,10 @@ test.describe('Canvas pixel-copy fallback', () => {
 
       Object.defineProperty(VideoFrame.prototype, 'copyTo', {
         configurable: true,
-        value: function () {
-          return Promise.reject(new DOMException('Force Canvas pixel copying', 'NotSupportedError'));
+        value: () => {
+          return Promise.reject(
+            new DOMException('Force Canvas pixel copying', 'NotSupportedError')
+          );
         },
       });
 
@@ -355,7 +445,9 @@ test.describe('conversion Worker fallback boundary', () => {
   ];
 
   for (const bootstrapCase of bootstrapCases) {
-    test(`${bootstrapCase.contract.id} preserves output with ${bootstrapCase.encoder} fallback`, async ({ page }) => {
+    test(`${bootstrapCase.contract.id} preserves output with ${bootstrapCase.encoder} fallback`, async ({
+      page,
+    }) => {
       const fallbackContract = bootstrapCase.contract;
       await page.addInitScript((disableNativeWebp) => {
         // Keep Canvas pixel-copy support while forcing the existing WASM encoder branch.
@@ -400,23 +492,27 @@ test.describe('conversion Worker fallback boundary', () => {
         expect(warnings.some((message) => message.includes(bootstrapCase.warning!))).toBe(true);
       }
       const route = await page.evaluate(() => {
-        const helpers = window.__TEST_HELPERS__ as unknown as {
-          getConversionProfile: () => ConversionProfileReport | null;
-        } | undefined;
+        const helpers = window.__TEST_HELPERS__ as unknown as
+          | {
+              getConversionProfile: () => ConversionProfileReport | null;
+            }
+          | undefined;
         return helpers?.getConversionProfile()?.encoderRoute ?? null;
       });
       expect(route).toBe(bootstrapCase.route);
       if (bootstrapCase.disableNativeWebp) {
-        expect(
-          await page.evaluate(() => typeof OffscreenCanvas.prototype.convertToBlob)
-        ).toBe('undefined');
+        expect(await page.evaluate(() => typeof OffscreenCanvas.prototype.convertToBlob)).toBe(
+          'undefined'
+        );
       }
       await verifyAnimatedOutput(page, output, fallbackContract, markers);
     });
   }
 
   for (const failure of ['runtime', 'decoder'] as const) {
-    test(`recovers with a new conversion after a post-start ${failure} failure`, async ({ page }) => {
+    test(`recovers with a new conversion after a post-start ${failure} failure`, async ({
+      page,
+    }) => {
       await page.addInitScript((failureKind) => {
         const NativeWorker = globalThis.Worker;
         let injectedFailure = false;
@@ -432,16 +528,27 @@ test.describe('conversion Worker fallback boundary', () => {
             this.inner.onmessage = (event) => {
               this.onmessage?.(event);
               const data = event.data as { type?: string; message?: string } | null;
-              if (!injectedFailure && !this.injected && data?.type === 'log' && data.message === 'Worker initialized') {
+              if (
+                !injectedFailure &&
+                !this.injected &&
+                data?.type === 'log' &&
+                data.message === 'Worker initialized'
+              ) {
                 this.injected = true;
                 injectedFailure = true;
                 this.inner.terminate();
                 queueMicrotask(() => {
                   if (failureKind === 'decoder') {
-                    this.onmessage?.(new MessageEvent('message', { data: {
-                      type: 'error', requestId: this.requestId,
-                      message: 'Forced decoder failure', code: 'DECODER_ERROR',
-                    } }));
+                    this.onmessage?.(
+                      new MessageEvent('message', {
+                        data: {
+                          type: 'error',
+                          requestId: this.requestId,
+                          message: 'Forced decoder failure',
+                          code: 'DECODER_ERROR',
+                        },
+                      })
+                    );
                   } else {
                     this.onerror?.(
                       new ErrorEvent('error', { message: 'Forced post-start Worker failure' })
@@ -481,17 +588,23 @@ test.describe('conversion Worker fallback boundary', () => {
 
       expect(await waitForConversionComplete(page, 30_000)).toBe('error');
       expect(warnings.some((message) => message.includes('worker.fallback'))).toBe(false);
-      expect(await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null)).toBeNull();
+      expect(
+        await page.evaluate(() => window.__TEST_HELPERS__?.getResultBlob() ?? null)
+      ).toBeNull();
       await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
       const recoveredOutput = await runContractConversion(page, contract);
       await verifyAnimatedOutput(page, recoveredOutput, contract, markers);
       expect(await page.evaluate(() => performance.timeOrigin)).toBe(documentIdentity);
-      expect(await page.evaluate(() => {
-        const helpers = window.__TEST_HELPERS__ as unknown as {
-          getConversionProfile: () => ConversionProfileReport | null;
-        } | undefined;
-        return helpers?.getConversionProfile()?.encoderRoute ?? null;
-      })).toBe('gif-worker');
+      expect(
+        await page.evaluate(() => {
+          const helpers = window.__TEST_HELPERS__ as unknown as
+            | {
+                getConversionProfile: () => ConversionProfileReport | null;
+              }
+            | undefined;
+          return helpers?.getConversionProfile()?.encoderRoute ?? null;
+        })
+      ).toBe('gif-worker');
       expect(warnings.some((message) => message.includes('worker.fallback'))).toBe(false);
     });
   }

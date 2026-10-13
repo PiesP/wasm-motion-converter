@@ -8,8 +8,8 @@ vi.mock('@utils/cdn-config', () => ({
   esmShModuleUrl: 'https://esm.sh/mock',
 }));
 
-import { describe, it, expect, vi } from 'vitest';
 import { validateVideoFile } from '@utils/file-validation';
+import { describe, expect, it, vi } from 'vitest';
 
 // Mock translation function that returns the key with optional params
 const mockT = vi.fn((key: string, params?: Record<string, string | number>) => {
@@ -90,9 +90,17 @@ describe('validateVideoFile', () => {
 
   it('accepts all supported MIME types', async () => {
     const mimes = [
-      'video/mp4', 'video/quicktime', 'video/webm', 'video/x-msvideo',
-      'video/x-matroska', 'video/x-m4v', 'video/ogg', 'video/mpeg',
-      'video/mp2t', 'video/x-ms-wmv', 'video/x-flv',
+      'video/mp4',
+      'video/quicktime',
+      'video/webm',
+      'video/x-msvideo',
+      'video/x-matroska',
+      'video/x-m4v',
+      'video/ogg',
+      'video/mpeg',
+      'video/mp2t',
+      'video/x-ms-wmv',
+      'video/x-flv',
     ];
     for (const mime of mimes) {
       const file = new File(['dummy'], 'video.mp4', { type: mime });
@@ -102,7 +110,22 @@ describe('validateVideoFile', () => {
   });
 
   it('accepts all supported extensions', async () => {
-    const exts = ['mp4', 'mov', 'webm', 'avi', 'mkv', 'm4v', 'ogv', 'mpg', 'mpeg', 'ts', 'mts', 'm2ts', 'wmv', 'flv'];
+    const exts = [
+      'mp4',
+      'mov',
+      'webm',
+      'avi',
+      'mkv',
+      'm4v',
+      'ogv',
+      'mpg',
+      'mpeg',
+      'ts',
+      'mts',
+      'm2ts',
+      'wmv',
+      'flv',
+    ];
     for (const ext of exts) {
       const file = new File(['dummy'], `video.${ext}`, { type: '' });
       const result = await validateVideoFile(file, mockT);

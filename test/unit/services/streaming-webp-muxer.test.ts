@@ -8,8 +8,8 @@
  * to reduce peak memory during finalization.
  */
 
-import { describe, expect, it } from 'vitest';
 import { StreamingWebpMuxer } from '@services/streaming-webp-encoder';
+import { describe, expect, it } from 'vitest';
 
 /** Create a minimal dummy VP8 bitstream for testing muxer structure only. */
 function dummyBitstream(size = 100, seed = 0): Uint8Array {
@@ -25,8 +25,9 @@ describe('StreamingWebpMuxer', () => {
     const muxer = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 191 });
     muxer.addPresentationFrame(dummyBitstream(100), { startUs: 0, endUs: 1000 }, profile);
     profile[0] = 9;
-    expect(() => muxer.addPresentationFrame(dummyBitstream(100, 1),
-      { startUs: 1000, endUs: 2000 }, profile)).toThrow('inconsistent ICC');
+    expect(() =>
+      muxer.addPresentationFrame(dummyBitstream(100, 1), { startUs: 1000, endUs: 2000 }, profile)
+    ).toThrow('inconsistent ICC');
     muxer.finishPresentation(1000);
     const output = await muxer.finish();
     expect(output[20]).toBe(0x22);
@@ -35,17 +36,24 @@ describe('StreamingWebpMuxer', () => {
     expect(output.length).toBe(188);
 
     const capped = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 190 });
-    expect(() => capped.addPresentationFrame(dummyBitstream(100),
-      { startUs: 0, endUs: 1000 }, new Uint8Array([1, 2, 3]))).toThrow('byte limit');
+    expect(() =>
+      capped.addPresentationFrame(
+        dummyBitstream(100),
+        { startUs: 0, endUs: 1000 },
+        new Uint8Array([1, 2, 3])
+      )
+    ).toThrow('byte limit');
   });
   describe('source presentation holds', () => {
     const durations = (bytes: Uint8Array): number[] => {
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       const result: number[] = [];
-      for (let offset = 12; offset < bytes.length;) {
+      for (let offset = 12; offset < bytes.length; ) {
         const size = view.getUint32(offset + 4, true);
         if (view.getUint32(offset) === 0x414e4d46) {
-          result.push(bytes[offset + 20]! | (bytes[offset + 21]! << 8) | (bytes[offset + 22]! << 16));
+          result.push(
+            bytes[offset + 20]! | (bytes[offset + 21]! << 8) | (bytes[offset + 22]! << 16)
+          );
         }
         offset += 8 + size + (size & 1);
       }
@@ -64,8 +72,8 @@ describe('StreamingWebpMuxer', () => {
       const muxer = new StreamingWebpMuxer(16, 16);
       for (let index = 0; index < 120; index++) {
         muxer.addPresentationFrame(dummyBitstream(100, index), {
-          startUs: Math.round(index * 1_000_000 / 120),
-          endUs: Math.round((index + 1) * 1_000_000 / 120),
+          startUs: Math.round((index * 1_000_000) / 120),
+          endUs: Math.round(((index + 1) * 1_000_000) / 120),
         });
       }
       muxer.finishPresentation(1_000_000);
@@ -120,29 +128,33 @@ describe('StreamingWebpMuxer', () => {
       const muxer = new StreamingWebpMuxer(16, 16);
       muxer.addPresentationFrame(dummyBitstream(), { startUs: 0, endUs: 1000 });
       muxer.addPresentationFrame(dummyBitstream(), { startUs: 1000, endUs: 2000 });
-      expect(() => muxer.addPresentationFrame(dummyBitstream(),
-        { startUs: 500, endUs: 1500 })).toThrow('out of order');
+      expect(() =>
+        muxer.addPresentationFrame(dummyBitstream(), { startUs: 500, endUs: 1500 })
+      ).toThrow('out of order');
     });
 
     it('bounds two compressed views during a zero-hold replacement before copying', () => {
       const muxer = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 550 });
       muxer.addPresentationFrame(dummyBitstream(100, 1), { startUs: 0, endUs: 800 });
       muxer.addPresentationFrame(dummyBitstream(200, 2), { startUs: 800, endUs: 900 });
-      expect(() => muxer.addPresentationFrame(dummyBitstream(200, 3),
-        { startUs: 900, endUs: 1000 })).toThrow('byte limit');
+      expect(() =>
+        muxer.addPresentationFrame(dummyBitstream(200, 3), { startUs: 900, endUs: 1000 })
+      ).toThrow('byte limit');
       expect(muxer.frames).toBe(1);
       expect(muxer.frameBytes).toBe(300);
     });
 
     it('rejects invalid dimensions and mixed presentation APIs', () => {
       const muxer = new StreamingWebpMuxer(16, 16);
-      expect(() => muxer.addPresentationFrame(dummyBitstream(100, 1),
-        { startUs: 0, endUs: 1000 })).not.toThrow();
+      expect(() =>
+        muxer.addPresentationFrame(dummyBitstream(100, 1), { startUs: 0, endUs: 1000 })
+      ).not.toThrow();
       expect(() => muxer.addFrame(dummyBitstream(), 1)).toThrow('Cannot mix');
       const wrongSize = dummyBitstream();
       wrongSize[6] = 15;
-      expect(() => muxer.addPresentationFrame(wrongSize,
-        { startUs: 1000, endUs: 2000 })).toThrow('dimensions');
+      expect(() => muxer.addPresentationFrame(wrongSize, { startUs: 1000, endUs: 2000 })).toThrow(
+        'dimensions'
+      );
     });
 
     it('checks all continuation frames against the output cap before emission', () => {

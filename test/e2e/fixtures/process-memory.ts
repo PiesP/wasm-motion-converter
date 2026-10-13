@@ -57,7 +57,7 @@ function readKilobytes(text: string, field: string): number | null {
 
 export async function readLinuxProcessMemory(
   pid: number,
-  readTextFile: ReadTextFile = (path) => readFile(path, 'utf8'),
+  readTextFile: ReadTextFile = (path) => readFile(path, 'utf8')
 ): Promise<ProcessMemoryReading> {
   const errors: string[] = [];
   let pssMB: number | null = null;
@@ -136,13 +136,13 @@ export function summarizeProcessMemory(processes: ProcessMemoryEntry[]): Process
     pssMB: hasProcesses
       ? processes.reduce<number | null>(
           (total, process) => addAvailable(total, process.memory.pssMB),
-          0,
+          0
         )
       : null,
     rssMB: hasProcesses
       ? processes.reduce<number | null>(
           (total, process) => addAvailable(total, process.memory.rssMB),
-          0,
+          0
         )
       : null,
     processCount: processes.length,

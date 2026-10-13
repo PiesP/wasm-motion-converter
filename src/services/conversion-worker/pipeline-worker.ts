@@ -11,6 +11,7 @@
  */
 
 import { globalBufferPool } from '@services/buffer-pool';
+import type { ConversionProfileReport } from '@services/conversion-profiler';
 import { demuxVideo } from '@services/demuxer-service';
 import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder-common';
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
@@ -28,7 +29,6 @@ import {
   WORKER_MAX_MEMORY_MB,
   WORKER_MIN_MEMORY_MB,
 } from '@utils/constants';
-import type { ConversionProfileReport } from '../conversion-profiler';
 import { buildConversionRequest } from './build-conversion-request';
 import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
 import { createWorkerLogRelay } from './worker-log-relay';
@@ -104,7 +104,7 @@ export async function runWorkerPipeline(
 ): Promise<{ outputBuffer: ArrayBuffer; profile?: ConversionProfileReport }> {
   const pipelineStart = performance.now();
   const profilerClass = import.meta.env.DEV
-    ? (await import('../conversion-profiler')).ConversionProfiler
+    ? (await import('@services/conversion-profiler')).ConversionProfiler
     : undefined;
   const profiler = profilerClass ? new profilerClass() : null;
   const profileOperation = profiler?.recordOperation;

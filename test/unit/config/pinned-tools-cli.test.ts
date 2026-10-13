@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -25,7 +34,9 @@ function fixture() {
   const pins = JSON.parse(readFileSync(join(source, 'pinned-tools.json'), 'utf8')) as Pins;
   writeFileSync(join(scripts, 'pinned-tools.json'), JSON.stringify(pins));
   const stub = join(bin, 'mock');
-  writeFileSync(stub, `#!${process.execPath}
+  writeFileSync(
+    stub,
+    `#!${process.execPath}
 import fs from 'node:fs';
 import path from 'node:path';
 const command = path.basename(process.argv[1]);
@@ -58,7 +69,8 @@ if (command === 'gh') {
   else if (scenario !== 'no-image-digest')
     process.stdout.write('Docker-Content-Digest: ' + (scenario === 'image-mismatch' ? 'sha256:' + '0'.repeat(64) : pins.osv.image.split('@')[1]) + '\\r\\n');
 }
-`);
+`
+  );
   chmodSync(stub, 0o755);
   for (const name of ['gh', 'curl']) copyFileSync(stub, join(bin, name));
   const env = {
@@ -71,13 +83,20 @@ if (command === 'gh') {
     GITHUB_TOKEN: 'secret-github',
   };
   const run = (name: string, scenario = '', args: string[] = []) => {
-    const result = spawnSync(process.execPath, ['--experimental-strip-types', join(scripts, name), ...args], {
-      cwd: root,
-      env: { ...env, MOCK_SCENARIO: scenario },
-      encoding: 'utf8',
-    });
+    const result = spawnSync(
+      process.execPath,
+      ['--experimental-strip-types', join(scripts, name), ...args],
+      {
+        cwd: root,
+        env: { ...env, MOCK_SCENARIO: scenario },
+        encoding: 'utf8',
+      }
+    );
     const calls = existsSync(join(root, 'calls.jsonl'))
-      ? readFileSync(join(root, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { command: string; args: string[] })
+      ? readFileSync(join(root, 'calls.jsonl'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as { command: string; args: string[] })
       : [];
     return { result, calls };
   };
@@ -95,8 +114,28 @@ describe('pinned tool checker CLI', () => {
     expect(result.status).toBe(0);
     expect(calls.map((call) => [call.command, ...call.args])).toEqual([
       ['gh', 'api', 'repos/google/osv-scanner/releases?per_page=100'],
-      ['curl', '--fail', '--silent', '--show-error', 'https://ghcr.io/token?scope=repository:google/osv-scanner-action:pull'],
-      ['curl', '--fail', '--silent', '--show-error', '--dump-header', '-', '--output', '/dev/null', '--header', 'Authorization: Bearer fixture-token', '--header', 'Accept: application/vnd.docker.distribution.manifest.v2+json', `https://ghcr.io/v2/google/osv-scanner-action/manifests/v${pins.osv.version}`],
+      [
+        'curl',
+        '--fail',
+        '--silent',
+        '--show-error',
+        'https://ghcr.io/token?scope=repository:google/osv-scanner-action:pull',
+      ],
+      [
+        'curl',
+        '--fail',
+        '--silent',
+        '--show-error',
+        '--dump-header',
+        '-',
+        '--output',
+        '/dev/null',
+        '--header',
+        'Authorization: Bearer fixture-token',
+        '--header',
+        'Accept: application/vnd.docker.distribution.manifest.v2+json',
+        `https://ghcr.io/v2/google/osv-scanner-action/manifests/v${pins.osv.version}`,
+      ],
       ['gh', 'api', 'repos/semgrep/semgrep/releases?per_page=100'],
     ]);
   });
@@ -109,9 +148,12 @@ describe('pinned tool checker CLI', () => {
   });
 
   for (const [scenario, message] of [
-    ['no-mature', 'No stable'], ['api-fail', 'check-pinned-tools:'],
-    ['malformed-api', 'Invalid'], ['no-token', 'Invalid GHCR token'],
-    ['no-image-digest', 'digest mismatch'], ['image-mismatch', 'digest mismatch'],
+    ['no-mature', 'No stable'],
+    ['api-fail', 'check-pinned-tools:'],
+    ['malformed-api', 'Invalid'],
+    ['no-token', 'Invalid GHCR token'],
+    ['no-image-digest', 'digest mismatch'],
+    ['image-mismatch', 'digest mismatch'],
     ['manifest-fail', 'curl request failed (exit 7)'],
   ]) {
     it(`fails closed on ${scenario}`, () => {
@@ -133,7 +175,9 @@ describe('pinned tool checker CLI', () => {
     const { run } = fixture();
     const { result, calls } = run('check-pinned-tools.ts', 'api-fail');
     expect(result.status).toBe(1);
-    expect(calls.some((call) => call.args.includes('repos/semgrep/semgrep/releases?per_page=100'))).toBe(true);
+    expect(
+      calls.some((call) => call.args.includes('repos/semgrep/semgrep/releases?per_page=100'))
+    ).toBe(true);
   });
 });
 
@@ -160,9 +204,14 @@ describe('pinned image environment CLI', () => {
 
   it('requires the workflow environment output path', () => {
     const { env, scripts } = fixture();
-    const result = spawnSync(process.execPath, ['--experimental-strip-types', join(scripts, 'pinned-tools.ts'), 'env'], {
-      env: { ...env, GITHUB_ENV: '' }, encoding: 'utf8',
-    });
+    const result = spawnSync(
+      process.execPath,
+      ['--experimental-strip-types', join(scripts, 'pinned-tools.ts'), 'env'],
+      {
+        env: { ...env, GITHUB_ENV: '' },
+        encoding: 'utf8',
+      }
+    );
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('GITHUB_ENV is required');
   });
@@ -181,7 +230,16 @@ it('rejects missing or malformed metadata before external calls', () => {
 it('does no reads, writes, or subprocess calls on module import', () => {
   const { scripts, root, env } = fixture();
   for (const name of ['pinned-tools.ts', 'check-pinned-tools.ts']) {
-    const result = spawnSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', `await import(${JSON.stringify(join(scripts, name))})`], { env, encoding: 'utf8' });
+    const result = spawnSync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '-e',
+        `await import(${JSON.stringify(join(scripts, name))})`,
+      ],
+      { env, encoding: 'utf8' }
+    );
     expect(result.status).toBe(0);
     expect(existsSync(join(root, 'calls.jsonl'))).toBe(false);
   }

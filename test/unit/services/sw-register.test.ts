@@ -10,7 +10,7 @@
 // cannot be reliably mocked at the module level in vitest — the production
 // logic is the meaningful code path under test.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // ServiceWorker mocks
@@ -28,7 +28,9 @@ interface MockServiceWorkerRegistration {
 
 let mockRegistration: MockServiceWorkerRegistration;
 
-function createMockRegistration(overrides: Partial<MockServiceWorkerRegistration> = {}): MockServiceWorkerRegistration {
+function createMockRegistration(
+  overrides: Partial<MockServiceWorkerRegistration> = {}
+): MockServiceWorkerRegistration {
   return {
     scope: 'http://localhost:5173/',
     active: null,
@@ -122,7 +124,7 @@ describe('registerServiceWorker', () => {
 
     expect(mockRegistration.addEventListener).toHaveBeenCalledWith(
       'updatefound',
-      expect.any(Function),
+      expect.any(Function)
     );
   });
 
@@ -135,10 +137,7 @@ describe('registerServiceWorker', () => {
     const { registerServiceWorker } = await import('@/sw-register');
     await registerServiceWorker();
 
-    expect(addEventListenerSpy).toHaveBeenCalledWith(
-      'visibilitychange',
-      expect.any(Function),
-    );
+    expect(addEventListenerSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
   });
 
   it('calls registration.update() when page becomes visible', async () => {
@@ -199,10 +198,7 @@ describe('registerServiceWorker', () => {
 
     result.cleanup!();
 
-    expect(removeEventListenerSpy).toHaveBeenCalledWith(
-      'visibilitychange',
-      expect.any(Function),
-    );
+    expect(removeEventListenerSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
   });
 
   it('adds pagehide listener for cleanup on unload', async () => {
@@ -212,10 +208,7 @@ describe('registerServiceWorker', () => {
     const { registerServiceWorker } = await import('@/sw-register');
     await registerServiceWorker();
 
-    expect(addEventListenerSpy).toHaveBeenCalledWith(
-      'pagehide',
-      expect.any(Function),
-    );
+    expect(addEventListenerSpy).toHaveBeenCalledWith('pagehide', expect.any(Function));
   });
 
   it('cleanup can be called more than once without error', async () => {
@@ -232,18 +225,27 @@ describe('registerServiceWorker', () => {
   it('accepts unavailable messages only from the current controller and removes the listener on cleanup', async () => {
     setupNavigator(true);
     const controller = {} as ServiceWorker;
-    Object.defineProperty(navigator.serviceWorker, 'controller', { value: controller, configurable: true });
+    Object.defineProperty(navigator.serviceWorker, 'controller', {
+      value: controller,
+      configurable: true,
+    });
     const onAssetUnavailable = vi.fn();
     const { registerServiceWorker } = await import('@/sw-register');
     const result = await registerServiceWorker({ onAssetUnavailable });
-    const listener = vi.mocked(navigator.serviceWorker.addEventListener).mock.calls.find(([type]) => type === 'message')?.[1];
+    const listener = vi
+      .mocked(navigator.serviceWorker.addEventListener)
+      .mock.calls.find(([type]) => type === 'message')?.[1];
     if (typeof listener !== 'function') throw new Error('Message listener was not registered');
     const dispatch = (source: unknown, data: unknown): void => {
       const event = new Event('message');
       Object.assign(event, { source, data });
       listener(event);
     };
-    const data = { type: 'dropconvert:asset-unavailable', path: '/assets/codec.ABCDef12.js', status: 404 };
+    const data = {
+      type: 'dropconvert:asset-unavailable',
+      path: '/assets/codec.ABCDef12.js',
+      status: 404,
+    };
     dispatch({}, data);
     dispatch(controller, { ...data, path: '/private.mp4' });
     dispatch(controller, { ...data, status: -1 });
@@ -252,7 +254,10 @@ describe('registerServiceWorker', () => {
     expect(onAssetUnavailable).toHaveBeenCalledTimes(1);
     result.cleanup?.();
     expect(navigator.serviceWorker.removeEventListener).toHaveBeenCalledWith('message', listener);
-    expect(mockRegistration.removeEventListener).toHaveBeenCalledWith('updatefound', expect.any(Function));
+    expect(mockRegistration.removeEventListener).toHaveBeenCalledWith(
+      'updatefound',
+      expect.any(Function)
+    );
   });
 
   // ── Error handling ───────────────────────────────────────────────
@@ -280,8 +285,11 @@ describe('registerServiceWorker', () => {
     const onOfflineReady = vi.fn();
     const { registerServiceWorker } = await import('@/sw-register');
     const registration = await registerServiceWorker({ onUpdate, onOfflineReady });
-    const updatefound = mockRegistration.addEventListener.mock.calls.find(([type]) => type === 'updatefound')?.[1];
-    updatefound(); updatefound();
+    const updatefound = mockRegistration.addEventListener.mock.calls.find(
+      ([type]) => type === 'updatefound'
+    )?.[1];
+    updatefound();
+    updatefound();
     Object.assign(worker, { state: 'activated' });
     worker.dispatchEvent(new Event('statechange'));
     worker.dispatchEvent(new Event('statechange'));

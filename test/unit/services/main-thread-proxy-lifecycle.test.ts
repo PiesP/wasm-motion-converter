@@ -52,6 +52,7 @@ class ThrowingWorker {
 vi.stubGlobal('Worker', ThrowingWorker);
 vi.stubGlobal('crypto', { randomUUID: () => 'request-1' });
 
+import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import {
   runPipelineViaWorker,
   runPipelineWithFallback,
@@ -60,7 +61,6 @@ import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
 } from '@services/conversion-worker/types';
-import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import { MAX_CODEC_DESCRIPTION_BYTES } from '@utils/constants';
 
 const validDecoderConfig: SerializedDecoderConfig = {
@@ -175,7 +175,10 @@ describe('runPipelineViaWorker lifecycle', () => {
     Object.defineProperty(input, 'arrayBuffer', { value: readWholeFile });
     const outputBuffer = new ArrayBuffer(4);
     ThrowingWorker.response = {
-      type: 'complete', requestId: 'request-1', outputBuffer, durationMs: 10,
+      type: 'complete',
+      requestId: 'request-1',
+      outputBuffer,
+      durationMs: 10,
     };
     const postMessage = vi.spyOn(ThrowingWorker.prototype, 'postMessage');
     try {
@@ -206,7 +209,9 @@ describe('runPipelineViaWorker lifecycle', () => {
     ).resolves.toBe(output);
 
     expect(runConversionPipeline).toHaveBeenCalledWith(
-      expect.objectContaining({ inputBlob: input }), expect.any(Function), undefined
+      expect.objectContaining({ inputBlob: input }),
+      expect.any(Function),
+      undefined
     );
     expect(runConversionPipeline.mock.calls[0]?.[0]).not.toHaveProperty('inputBuffer');
     expect(readWholeFile).not.toHaveBeenCalled();
@@ -347,15 +352,33 @@ describe('runPipelineViaWorker lifecycle', () => {
       ThrowingWorker.response = [
         workerProgress(3),
         ...(ending === 'complete'
-          ? [{ type: 'complete', requestId: 'request-1', outputBuffer: firstOutput, durationMs: 10 }]
+          ? [
+              {
+                type: 'complete',
+                requestId: 'request-1',
+                outputBuffer: firstOutput,
+                durationMs: 10,
+              },
+            ]
           : ending === 'error'
-            ? [{ type: 'error', requestId: 'request-1', message: 'fixture failure', code: 'DECODER_ERROR' }]
+            ? [
+                {
+                  type: 'error',
+                  requestId: 'request-1',
+                  message: 'fixture failure',
+                  code: 'DECODER_ERROR',
+                },
+              ]
             : []),
       ];
       const firstProgress = vi.fn();
       const controller = new AbortController();
       const first = runPipelineViaWorker(
-        new ArrayBuffer(8), validDecoderConfig, validOptions, firstProgress, controller.signal
+        new ArrayBuffer(8),
+        validDecoderConfig,
+        validOptions,
+        firstProgress,
+        controller.signal
       );
       const priorWorker = ThrowingWorker.instance!;
       if (ending === 'cancel') {
@@ -373,15 +396,27 @@ describe('runPipelineViaWorker lifecycle', () => {
       ThrowingWorker.response = [
         workerProgress(1),
         {
-          type: 'progress', requestId: 'request-1', phase: 'assembling', percent: 100,
-          fps: 0, etaSeconds: 0, memoryMB: null, accountedMemoryMB: 14,
-          decodedFrames: 13, selectedFrames: 5, emittedFrames: 2, outputFrames: 2,
+          type: 'progress',
+          requestId: 'request-1',
+          phase: 'assembling',
+          percent: 100,
+          fps: 0,
+          etaSeconds: 0,
+          memoryMB: null,
+          accountedMemoryMB: 14,
+          decodedFrames: 13,
+          selectedFrames: 5,
+          emittedFrames: 2,
+          outputFrames: 2,
         },
         { type: 'complete', requestId: 'request-1', outputBuffer: nextOutput, durationMs: 10 },
       ];
       const nextProgress = vi.fn();
       const next = runPipelineViaWorker(
-        new ArrayBuffer(8), validDecoderConfig, validOptions, nextProgress
+        new ArrayBuffer(8),
+        validDecoderConfig,
+        validOptions,
+        nextProgress
       );
       priorWorker.onmessage?.(new MessageEvent('message', { data: workerProgress(99) }));
       await expect(next).resolves.toBe(nextOutput);

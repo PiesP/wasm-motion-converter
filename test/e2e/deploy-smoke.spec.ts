@@ -10,12 +10,12 @@
 // Environment variables:
 //   DEPLOY_URL — the deployed URL to test (default: https://wasm-motion-converter.pages.dev)
 
-import { test, expect, type APIResponse, type Page, type Response } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
-import { assertExecutableBody, assertExecutableResponse } from './lib/deployment-responses';
+import { type APIResponse, expect, type Page, type Response, test } from '@playwright/test';
 import { conditionalEtagObservation } from './lib/conditional-etag';
+import { assertExecutableBody, assertExecutableResponse } from './lib/deployment-responses';
 
 const DEPLOY_URL = process.env.DEPLOY_URL || 'https://wasm-motion-converter.pages.dev';
 const TEST_VIDEO_PATH =
@@ -43,13 +43,16 @@ async function getConsoleErrors(page: Page): Promise<string[]> {
   return errors;
 }
 
-async function collectRuntimeFailures(page: Page): Promise<() => Promise<Record<string, string[]>>> {
+async function collectRuntimeFailures(
+  page: Page
+): Promise<() => Promise<Record<string, string[]>>> {
   const pageErrors: string[] = [];
   const requestFailures: string[] = [];
   const consoleErrors = await getConsoleErrors(page);
   page.on('pageerror', (error) => pageErrors.push(error.message));
   page.on('requestfailed', (request) => {
-    if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED') return;
+    if (request.url().startsWith('blob:') && request.failure()?.errorText === 'net::ERR_ABORTED')
+      return;
     requestFailures.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`);
   });
   await page.addInitScript(() => {
@@ -63,9 +66,11 @@ async function collectRuntimeFailures(page: Page): Promise<() => Promise<Record<
     pageErrors,
     requestFailures,
     consoleErrors,
-    cspViolations: await page.evaluate(() => (
-      (globalThis as typeof globalThis & { __deployCspViolations?: string[] }).__deployCspViolations ?? []
-    )),
+    cspViolations: await page.evaluate(
+      () =>
+        (globalThis as typeof globalThis & { __deployCspViolations?: string[] })
+          .__deployCspViolations ?? []
+    ),
   });
 }
 
@@ -99,7 +104,9 @@ async function uploadTestVideo(page: Page): Promise<void> {
 
 async function startConversion(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Convert', exact: true }).click();
-  const modalProceed = page.getByRole('button', { name: 'Proceed with conversion despite warnings' });
+  const modalProceed = page.getByRole('button', {
+    name: 'Proceed with conversion despite warnings',
+  });
   if (await modalProceed.isVisible({ timeout: 5000 }).catch(() => false)) {
     await modalProceed.click();
   }
@@ -114,7 +121,8 @@ function downloadLink(page: Page) {
 }
 
 function expectSingleHeader(response: APIResponse, name: string, value: string): void {
-  const values = response.headersArray()
+  const values = response
+    .headersArray()
     .filter((header) => header.name.toLowerCase() === name)
     .map((header) => header.value);
   expect(values, `${response.url()} ${name} values`).toEqual([value]);
@@ -129,7 +137,7 @@ function expectSecurityHeaders(response: APIResponse, csp: string): void {
 
 async function expectedCsp(): Promise<string> {
   const headers = await readFile(resolve(process.cwd(), 'public/_headers'), 'utf8');
-  const policy = /^  Content-Security-Policy: (.+)$/m.exec(headers)?.[1];
+  const policy = /^ {2}Content-Security-Policy: (.+)$/m.exec(headers)?.[1];
   expect(policy, 'Source _headers must define a CSP').toBeTruthy();
   return policy!;
 }
@@ -150,8 +158,16 @@ test.describe('Deployment: Page Load', () => {
     expect(response?.headers()['cross-origin-embedder-policy']).toBe('require-corp');
     expect(await page.evaluate(() => crossOriginIsolated)).toBe(true);
     const failures = await runtimeFailures();
-    await testInfo.attach('runtime-failures', { body: JSON.stringify(failures, null, 2), contentType: 'application/json' });
-    expect(failures).toEqual({ pageErrors: [], requestFailures: [], consoleErrors: [], cspViolations: [] });
+    await testInfo.attach('runtime-failures', {
+      body: JSON.stringify(failures, null, 2),
+      contentType: 'application/json',
+    });
+    expect(failures).toEqual({
+      pageErrors: [],
+      requestFailures: [],
+      consoleErrors: [],
+      cspViolations: [],
+    });
   });
 
   test('no failed static resource loads', async ({ page }) => {
@@ -185,7 +201,9 @@ test.describe('Deployment: Page Load', () => {
 
   test('missing assets are 404 and cannot become immutable HTML', async ({ request }) => {
     for (const extension of ['js', 'css', 'wasm']) {
-      const response = await request.get(new URL(`/assets/deploy-missing-289.${extension}`, DEPLOY_URL).href);
+      const response = await request.get(
+        new URL(`/assets/deploy-missing-289.${extension}`, DEPLOY_URL).href
+      );
       expect(response.status(), extension).toBe(404);
       expect(response.headers()['cache-control'] ?? '', extension).not.toMatch(/immutable/i);
       expect(response.headers()['cross-origin-opener-policy'], extension).toBe('same-origin');
@@ -193,17 +211,22 @@ test.describe('Deployment: Page Load', () => {
     }
   });
 
-  test('Pages serves one security and cache policy per document, metadata, and fingerprinted asset',
-    async ({ request }, testInfo) => {
-      const csp = await expectedCsp();
-      const metadataUrl = new URL('/deployment-state.json', DEPLOY_URL).href;
-      const metadataResponse = await request.get(metadataUrl, { maxRedirects: 0, failOnStatusCode: false });
-      expect(metadataResponse.status()).toBe(200);
-      expect(metadataResponse.headers()['content-type']).toMatch(/^application\/json(?:\s*;|$)/i);
-      expectSecurityHeaders(metadataResponse, csp);
-      expectSingleHeader(metadataResponse, 'cache-control', REVALIDATION);
-      const metadata: unknown = await metadataResponse.json();
-      expect(metadata).toEqual(expect.objectContaining({
+  test('Pages serves one security and cache policy per document, metadata, and fingerprinted asset', async ({
+    request,
+  }, testInfo) => {
+    const csp = await expectedCsp();
+    const metadataUrl = new URL('/deployment-state.json', DEPLOY_URL).href;
+    const metadataResponse = await request.get(metadataUrl, {
+      maxRedirects: 0,
+      failOnStatusCode: false,
+    });
+    expect(metadataResponse.status()).toBe(200);
+    expect(metadataResponse.headers()['content-type']).toMatch(/^application\/json(?:\s*;|$)/i);
+    expectSecurityHeaders(metadataResponse, csp);
+    expectSingleHeader(metadataResponse, 'cache-control', REVALIDATION);
+    const metadata: unknown = await metadataResponse.json();
+    expect(metadata).toEqual(
+      expect.objectContaining({
         schemaVersion: 1,
         sourceSha: expect.stringMatching(SHA),
         treeSha: expect.stringMatching(SHA),
@@ -213,81 +236,108 @@ test.describe('Deployment: Page Load', () => {
         sourceDirty: expect.any(Boolean),
         headersSha256: expect.stringMatching(DIGEST),
         files: expect.any(Array),
-      }));
-      const files = (metadata as { files: { path: string; size: number; sha256: string }[] }).files;
-      expect(files.length).toBeGreaterThan(0);
-      expect(files.length).toBeLessThanOrEqual(100);
-      for (const file of files) {
-        expect(file).toEqual({ path: expect.stringMatching(/^[\w.-]+(?:\/[\w.-]+)*$/),
-          size: expect.any(Number), sha256: expect.stringMatching(DIGEST) });
-        expect(Number.isSafeInteger(file.size) && file.size > 0, file.path).toBe(true);
-      }
-      const assetFiles = files.filter((file) => FINGERPRINTED_ASSET.test(file.path));
-      expect(assetFiles.length).toBeGreaterThan(0);
-      expect(new Set(assetFiles.map((file) => file.path)).size).toBe(assetFiles.length);
-      const kinds = new Set(assetFiles.map((file) => file.path.split('.').at(-1)));
-      expect(kinds).toEqual(new Set(['js', 'css', 'wasm']));
-      expect(assetFiles.some((file) => /(?:^|[-.])worker[-.]/.test(basename(file.path))),
-        'Deployment inventory has no fingerprinted Worker script').toBe(true);
-
-      for (const path of ['/', '/service-worker.js']) {
-        const response = await request.get(new URL(path, DEPLOY_URL).href,
-          { maxRedirects: 0, failOnStatusCode: false });
-        expect(response.status(), path).toBe(200);
-        expect(response.headers()['content-type'], path).toMatch(
-          path === '/' ? /^text\/html(?:\s*;|$)/i : /^(?:text|application)\/javascript(?:\s*;|$)/i,
-        );
-        expectSecurityHeaders(response, csp);
-        expectSingleHeader(response, 'cache-control', REVALIDATION);
-      }
-
-      const conditionalObservations = [];
-      for (const file of assetFiles) {
-        const url = new URL(`/${file.path}`, DEPLOY_URL).href;
-        const response = await request.get(url, { maxRedirects: 0, failOnStatusCode: false });
-        const kind = file.path.endsWith('.wasm') ? 'wasm' : file.path.endsWith('.css') ? 'css' : 'js';
-        const body = await response.body();
-        assertExecutableBody(kind, response.status(), response.headers()['content-type'] ?? null, body);
-        expectSecurityHeaders(response, csp);
-        expectSingleHeader(response, 'cache-control', IMMUTABLE);
-        const etag = response.headers().etag;
-        if (!etag) throw new Error(`${file.path} has no ETag`);
-        expect(etag, `${file.path} ETag`).toMatch(/^(?:W\/)?"[^\"]+"$/);
-        const revalidated = await request.get(url, {
-          headers: { 'If-None-Match': etag }, maxRedirects: 0, failOnStatusCode: false,
-        });
-        expect(revalidated.status(), `${file.path} conditional status`).toBe(304);
-        const conditionalEtag = revalidated.headers().etag;
-        // RFC 9110 15.4.5 requires the 200 ETag on this 304. Pages/Wrangler
-        // omissions are an explicitly reported integration exception (#289/#292).
-        const etagObservation = conditionalEtagObservation(
-          url, etag, conditionalEtag, process.env.PLAYWRIGHT_TEST_PROFILE === 'deploy'
-        );
-        expect(await revalidated.body(), `${file.path} conditional body`).toHaveLength(0);
-        expectSecurityHeaders(revalidated, csp);
-        expectSingleHeader(revalidated, 'cache-control', IMMUTABLE);
-        const unmatched = await request.get(url, {
-          headers: { 'If-None-Match': '"wmc-unmatched-validator"' },
-          maxRedirects: 0, failOnStatusCode: false,
-        });
-        expect(unmatched.status(), `${file.path} unmatched conditional status`).toBe(200);
-        expect(await unmatched.body(), `${file.path} unmatched conditional bytes`).toEqual(body);
-        expect(unmatched.headers().etag, `${file.path} unmatched conditional ETag`).toBe(etag);
-        expectSecurityHeaders(unmatched, csp);
-        expectSingleHeader(unmatched, 'cache-control', IMMUTABLE);
-        conditionalObservations.push({ path: file.path, etag, ...etagObservation,
-          status: revalidated.status(), unmatchedStatus: unmatched.status() });
-      }
-      await testInfo.attach('conditional-header-observations', {
-        body: JSON.stringify(conditionalObservations, null, 2), contentType: 'application/json',
+      })
+    );
+    const files = (metadata as { files: { path: string; size: number; sha256: string }[] }).files;
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.length).toBeLessThanOrEqual(100);
+    for (const file of files) {
+      expect(file).toEqual({
+        path: expect.stringMatching(/^[\w.-]+(?:\/[\w.-]+)*$/),
+        size: expect.any(Number),
+        sha256: expect.stringMatching(DIGEST),
       });
+      expect(Number.isSafeInteger(file.size) && file.size > 0, file.path).toBe(true);
+    }
+    const assetFiles = files.filter((file) => FINGERPRINTED_ASSET.test(file.path));
+    expect(assetFiles.length).toBeGreaterThan(0);
+    expect(new Set(assetFiles.map((file) => file.path)).size).toBe(assetFiles.length);
+    const kinds = new Set(assetFiles.map((file) => file.path.split('.').at(-1)));
+    expect(kinds).toEqual(new Set(['js', 'css', 'wasm']));
+    expect(
+      assetFiles.some((file) => /(?:^|[-.])worker[-.]/.test(basename(file.path))),
+      'Deployment inventory has no fingerprinted Worker script'
+    ).toBe(true);
+
+    for (const path of ['/', '/service-worker.js']) {
+      const response = await request.get(new URL(path, DEPLOY_URL).href, {
+        maxRedirects: 0,
+        failOnStatusCode: false,
+      });
+      expect(response.status(), path).toBe(200);
+      expect(response.headers()['content-type'], path).toMatch(
+        path === '/' ? /^text\/html(?:\s*;|$)/i : /^(?:text|application)\/javascript(?:\s*;|$)/i
+      );
+      expectSecurityHeaders(response, csp);
+      expectSingleHeader(response, 'cache-control', REVALIDATION);
+    }
+
+    const conditionalObservations = [];
+    for (const file of assetFiles) {
+      const url = new URL(`/${file.path}`, DEPLOY_URL).href;
+      const response = await request.get(url, { maxRedirects: 0, failOnStatusCode: false });
+      const kind = file.path.endsWith('.wasm') ? 'wasm' : file.path.endsWith('.css') ? 'css' : 'js';
+      const body = await response.body();
+      assertExecutableBody(
+        kind,
+        response.status(),
+        response.headers()['content-type'] ?? null,
+        body
+      );
+      expectSecurityHeaders(response, csp);
+      expectSingleHeader(response, 'cache-control', IMMUTABLE);
+      const etag = response.headers().etag;
+      if (!etag) throw new Error(`${file.path} has no ETag`);
+      expect(etag, `${file.path} ETag`).toMatch(/^(?:W\/)?"[^"]+"$/);
+      const revalidated = await request.get(url, {
+        headers: { 'If-None-Match': etag },
+        maxRedirects: 0,
+        failOnStatusCode: false,
+      });
+      expect(revalidated.status(), `${file.path} conditional status`).toBe(304);
+      const conditionalEtag = revalidated.headers().etag;
+      // RFC 9110 15.4.5 requires the 200 ETag on this 304. Pages/Wrangler
+      // omissions are an explicitly reported integration exception (#289/#292).
+      const etagObservation = conditionalEtagObservation(
+        url,
+        etag,
+        conditionalEtag,
+        process.env.PLAYWRIGHT_TEST_PROFILE === 'deploy'
+      );
+      expect(await revalidated.body(), `${file.path} conditional body`).toHaveLength(0);
+      expectSecurityHeaders(revalidated, csp);
+      expectSingleHeader(revalidated, 'cache-control', IMMUTABLE);
+      const unmatched = await request.get(url, {
+        headers: { 'If-None-Match': '"wmc-unmatched-validator"' },
+        maxRedirects: 0,
+        failOnStatusCode: false,
+      });
+      expect(unmatched.status(), `${file.path} unmatched conditional status`).toBe(200);
+      expect(await unmatched.body(), `${file.path} unmatched conditional bytes`).toEqual(body);
+      expect(unmatched.headers().etag, `${file.path} unmatched conditional ETag`).toBe(etag);
+      expectSecurityHeaders(unmatched, csp);
+      expectSingleHeader(unmatched, 'cache-control', IMMUTABLE);
+      conditionalObservations.push({
+        path: file.path,
+        etag,
+        ...etagObservation,
+        status: revalidated.status(),
+        unmatchedStatus: unmatched.status(),
+      });
+    }
+    await testInfo.attach('conditional-header-observations', {
+      body: JSON.stringify(conditionalObservations, null, 2),
+      contentType: 'application/json',
     });
+  });
 
   test('validator rejects mislabeled HTML and invalid WASM bytes', () => {
     const html = new TextEncoder().encode('<!doctype html><title>fallback</title>');
     expect(() => assertExecutableBody('js', 200, 'text/javascript', html)).toThrow();
     expect(() => assertExecutableBody('wasm', 200, 'application/wasm', html)).toThrow();
-    expect(() => assertExecutableBody('js', 404, 'text/javascript', new TextEncoder().encode('export {}'))).toThrow();
+    expect(() =>
+      assertExecutableBody('js', 404, 'text/javascript', new TextEncoder().encode('export {}'))
+    ).toThrow();
   });
 });
 
@@ -306,8 +356,12 @@ test.describe('Deployment: Visual — Initial State', () => {
     // Verify key elements are visible
     await expect(page.locator('#root')).toBeVisible();
     await expect(page.locator('#main-content')).toBeVisible();
-    await expect(page.getByRole('group', { name: 'Select video file for conversion' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Select a video to start conversion' })).toBeDisabled();
+    await expect(
+      page.getByRole('group', { name: 'Select video file for conversion' })
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Select a video to start conversion' })
+    ).toBeDisabled();
     await expect(page.locator('h1')).toHaveText('dropconvert');
   });
 
@@ -362,7 +416,9 @@ test.describe('Deployment: Visual — File Upload', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('Deployment: Visual — Progress UI', () => {
-  test('GIF conversion starts a module worker and downloads valid bytes', async ({ page }, testInfo) => {
+  test('GIF conversion starts a module worker and downloads valid bytes', async ({
+    page,
+  }, testInfo) => {
     const runtimeFailures = await collectRuntimeFailures(page);
     const workers: string[] = [];
     page.on('worker', (worker) => workers.push(worker.url()));
@@ -373,11 +429,9 @@ test.describe('Deployment: Visual — Progress UI', () => {
     const progressBar = page.getByRole('progressbar').first();
     const result = resultSection(page);
     await expect
-      .poll(
-        async () =>
-          (await progressBar.isVisible()) || (await result.isVisible()),
-        { timeout: 30_000 },
-      )
+      .poll(async () => (await progressBar.isVisible()) || (await result.isVisible()), {
+        timeout: 30_000,
+      })
       .toBe(true);
 
     // Capture progress UI during conversion
@@ -409,24 +463,44 @@ test.describe('Deployment: Visual — Progress UI', () => {
     const bytes = await readFile(await download.path());
     expect(bytes.subarray(0, 6).toString('ascii')).toMatch(/^GIF8[79]a$/);
     await testInfo.attach('first-gif-traffic', {
-      body: JSON.stringify(await page.evaluate(() => performance.getEntriesByType('resource')
-        .filter((entry) => entry instanceof PerformanceResourceTiming)
-        .map((entry) => ({ name: new URL(entry.name).pathname, transferSize: entry.transferSize }))), null, 2),
+      body: JSON.stringify(
+        await page.evaluate(() =>
+          performance
+            .getEntriesByType('resource')
+            .filter((entry) => entry instanceof PerformanceResourceTiming)
+            .map((entry) => ({
+              name: new URL(entry.name).pathname,
+              transferSize: entry.transferSize,
+            }))
+        ),
+        null,
+        2
+      ),
       contentType: 'application/json',
     });
-    expect(await runtimeFailures()).toEqual({ pageErrors: [], requestFailures: [], consoleErrors: [], cspViolations: [] });
+    expect(await runtimeFailures()).toEqual({
+      pageErrors: [],
+      requestFailures: [],
+      consoleErrors: [],
+      cspViolations: [],
+    });
   });
 
-  test('WebP conversion uses real WASM fallback and downloads valid bytes', async ({ page }, testInfo) => {
+  test('WebP conversion uses real WASM fallback and downloads valid bytes', async ({
+    page,
+  }, testInfo) => {
     const runtimeFailures = await collectRuntimeFailures(page);
     await page.addInitScript(() => {
       Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
-        configurable: true, value: undefined,
+        configurable: true,
+        value: undefined,
       });
       Object.defineProperty(globalThis, 'Worker', {
         configurable: true,
         value: class UnavailableWorker {
-          constructor() { throw new DOMException('Force WASM fallback', 'NotSupportedError'); }
+          constructor() {
+            throw new DOMException('Force WASM fallback', 'NotSupportedError');
+          }
         },
       });
     });
@@ -436,8 +510,10 @@ test.describe('Deployment: Visual — Progress UI', () => {
     });
     await page.goto(DEPLOY_URL);
     await uploadTestVideo(page);
-    await page.getByRole('radiogroup', { name: 'Output Format' })
-      .getByRole('radio', { name: /^WebP/ }).check();
+    await page
+      .getByRole('radiogroup', { name: 'Output Format' })
+      .getByRole('radio', { name: /^WebP/ })
+      .check();
     await startConversion(page);
     await expect(resultSection(page)).toBeVisible({ timeout: 120_000 });
     expect(wasmResponses.length, 'WebP fallback loaded no WASM response').toBeGreaterThan(0);
@@ -454,12 +530,27 @@ test.describe('Deployment: Visual — Progress UI', () => {
     expect(bytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
     expect(bytes.subarray(8, 12).toString('ascii')).toBe('WEBP');
     await testInfo.attach('first-webp-traffic', {
-      body: JSON.stringify(await page.evaluate(() => performance.getEntriesByType('resource')
-        .filter((entry) => entry instanceof PerformanceResourceTiming)
-        .map((entry) => ({ name: new URL(entry.name).pathname, transferSize: entry.transferSize }))), null, 2),
+      body: JSON.stringify(
+        await page.evaluate(() =>
+          performance
+            .getEntriesByType('resource')
+            .filter((entry) => entry instanceof PerformanceResourceTiming)
+            .map((entry) => ({
+              name: new URL(entry.name).pathname,
+              transferSize: entry.transferSize,
+            }))
+        ),
+        null,
+        2
+      ),
       contentType: 'application/json',
     });
-    expect(await runtimeFailures()).toEqual({ pageErrors: [], requestFailures: [], consoleErrors: [], cspViolations: [] });
+    expect(await runtimeFailures()).toEqual({
+      pageErrors: [],
+      requestFailures: [],
+      consoleErrors: [],
+      cspViolations: [],
+    });
   });
 });
 
@@ -486,7 +577,10 @@ test.describe('Deployment: Visual — Result Section', () => {
 
     // Verify result stats are present
     const summary = page.getByRole('region', { name: /^GIF conversion results:/ });
-    const outputSize = summary.getByText('Output size', { exact: true }).locator('..').locator('dd');
+    const outputSize = summary
+      .getByText('Output size', { exact: true })
+      .locator('..')
+      .locator('dd');
     const format = summary.getByText('Format', { exact: true }).locator('..').locator('dd');
     const details = page.getByRole('region', { name: 'Result details' });
 
@@ -522,10 +616,14 @@ test.describe('Deployment: Production controls', () => {
     await expect(page.locator('#main-content')).toBeVisible();
     await expect(page.locator('#file-upload')).toBeAttached();
     await expect(page.getByRole('combobox', { name: 'Select language' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Select a video to start conversion' })).toBeDisabled();
-    await expect(page.getByRole('radiogroup', { name: 'Output Format' })
-      .getByRole('radio', { name: /^GIF/ })).toBeVisible();
-    await expect(page.getByRole('radiogroup', { name: 'Output Format' })
-      .getByRole('radio', { name: /^WebP/ })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Select a video to start conversion' })
+    ).toBeDisabled();
+    await expect(
+      page.getByRole('radiogroup', { name: 'Output Format' }).getByRole('radio', { name: /^GIF/ })
+    ).toBeVisible();
+    await expect(
+      page.getByRole('radiogroup', { name: 'Output Format' }).getByRole('radio', { name: /^WebP/ })
+    ).toBeVisible();
   });
 });

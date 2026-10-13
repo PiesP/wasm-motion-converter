@@ -34,7 +34,11 @@ describe('buildConversionMemoryPlan', () => {
   it.each([
     ['missing metadata', null, { ...defaultSettings, quality: 'high' as const }],
     ['non-high quality', defaultMetadata, defaultSettings],
-    ['reduced scale', defaultMetadata, { ...defaultSettings, quality: 'high' as const, scale: 0.75 as const }],
+    [
+      'reduced scale',
+      defaultMetadata,
+      { ...defaultSettings, quality: 'high' as const, scale: 0.75 as const },
+    ],
   ])('skips memory probing for %s', (_name, metadata, settings) => {
     expect(buildConversionMemoryPlan(metadata, settings)).toBeNull();
   });
@@ -62,21 +66,24 @@ describe('buildConversionMemoryPlan', () => {
   it.each([
     ['gif', 20, 200],
     ['webp', 30, 300],
-  ] as const)('uses the selected trim range when estimating %s memory', (format, targetFps, frames) => {
-    const plan = buildConversionMemoryPlan(
-      { ...defaultMetadata, duration: 120 },
-      {
-        ...defaultSettings,
-        format,
-        quality: 'high',
-        trimEnd: 20,
-        trimStart: 10,
-      }
-    );
+  ] as const)(
+    'uses the selected trim range when estimating %s memory',
+    (format, targetFps, frames) => {
+      const plan = buildConversionMemoryPlan(
+        { ...defaultMetadata, duration: 120 },
+        {
+          ...defaultSettings,
+          format,
+          quality: 'high',
+          trimEnd: 20,
+          trimStart: 10,
+        }
+      );
 
-    expect(plan?.estimatedFrames).toBe(frames);
-    expect(plan?.targetFps).toBe(targetFps);
-  });
+      expect(plan?.estimatedFrames).toBe(frames);
+      expect(plan?.targetFps).toBe(targetFps);
+    }
+  );
 
   it('uses full duration for the full-duration trim sentinel and clamps trim values', () => {
     const fullDuration = buildConversionMemoryPlan(
@@ -132,7 +139,7 @@ describe('resolveMemoryPressureDecimation', () => {
     expect(request.forceDecimation).toBeUndefined();
     const normal = createPresentationSampler(21, 21 / 20);
     const critical = createPresentationSampler(21, request.memoryPressureCadenceRatio!);
-    const pts = Array.from({ length: 21 }, (_, i) => Math.round(i * 1_000_000 / 21));
+    const pts = Array.from({ length: 21 }, (_, i) => Math.round((i * 1_000_000) / 21));
     expect(pts.filter((timestamp, i) => normal(timestamp, i))).toHaveLength(20);
     expect(pts.filter((timestamp, i) => critical(timestamp, i))).toHaveLength(15);
   });
@@ -253,7 +260,9 @@ describe('serializeConversionInputs', () => {
       },
     };
 
-    expect(serializeConversionInputs(metadata, undefined, defaultSettings).serializedConfig).toEqual(
+    expect(
+      serializeConversionInputs(metadata, undefined, defaultSettings).serializedConfig
+    ).toEqual(
       expect.objectContaining({
         displayAspectHeight: 1080,
         displayAspectWidth: 0,

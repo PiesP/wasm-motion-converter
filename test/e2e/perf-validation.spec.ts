@@ -10,59 +10,31 @@
 // 4. Buffer pool effectiveness (repeated conversions don't leak)
 // 5. Non-overlapping stage profiling and timing breakdown
 
-import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import type { ConversionProfileReport } from '@services/conversion-profiler';
 import {
+  clickConvert,
+  dismissWarningDialog,
+  downloadResult,
+  getAppState,
+  getVisibleResultStats,
   injectTestFile,
+  isErrorVisible,
+  isResultVisible,
+  runConversion,
   setFormat,
   setQuality,
   setScale,
-  clickConvert,
-  dismissWarningDialog,
-  isResultVisible,
-  isErrorVisible,
-  getVisibleResultStats,
-  getAppState,
   waitForConversionComplete,
-  downloadResult,
-  runConversion,
 } from './fixtures/test-helpers';
 import { validateFileMagic } from './fixtures/verify';
 
 // ─── Helper: get conversion profile from browser ───
 
-type ProfileStage = 'demuxing' | 'transcoding' | 'finalizing';
-
-interface StageMetrics {
-  stage: ProfileStage;
-  durationMs: number;
-  heapStartMB: number;
-  heapEndMB: number;
-  heapPeakMB: number;
-  framesProcessed?: number;
-  decodedFrames?: number;
-  encodedFrames?: number;
-  outputBytes?: number;
-  throughputMBps?: number;
-}
-
-interface ConversionProfile {
-  schemaVersion: 3;
-  totalDurationMs: number;
-  heapStartMB: number;
-  heapEndMB: number;
-  heapPeakMB: number;
-  stages: StageMetrics[];
-  operationTotals: Record<string, { wallMs: number; samples: number }>;
-  copyPathCounts: Record<string, number>;
-  stageWallTimePct: Record<ProfileStage, number>;
-  dominantStage: ProfileStage | null;
-  summary: string;
-}
-
-async function getConversionProfile(page: Page): Promise<ConversionProfile | null> {
+async function getConversionProfile(page: Page): Promise<ConversionProfileReport | null> {
   return page.evaluate(() => {
-    const helpers = (window as any).__TEST_HELPERS__;
+    const helpers = window.__TEST_HELPERS__;
     return helpers?.getConversionProfile() ?? null;
   });
 }
@@ -71,7 +43,7 @@ async function getConversionProfile(page: Page): Promise<ConversionProfile | nul
 
 async function getHeapUsageMB(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const mem = (performance as any).memory;
+    const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
     if (!mem) return -1;
     return Math.round(mem.usedJSHeapSize / (1024 * 1024));
   });
@@ -227,7 +199,8 @@ test.describe('Perf: Memory stability', () => {
 
       // Force GC if available (Chrome --js-flags=--expose-gc)
       await page.evaluate(() => {
-        if ((window as any).gc) (window as any).gc();
+        const gc = (window as Window & { gc?: () => void }).gc;
+        if (gc) gc();
       });
       await page.waitForTimeout(500);
 
@@ -324,7 +297,9 @@ test.describe('Perf: Output quality regression', () => {
     const medBuffer = await downloadResult(page);
     const medSize = medBuffer.length;
 
-    console.log(`  Low: ${(lowSize / 1024).toFixed(1)} KB, Medium: ${(medSize / 1024).toFixed(1)} KB`);
+    console.log(
+      `  Low: ${(lowSize / 1024).toFixed(1)} KB, Medium: ${(medSize / 1024).toFixed(1)} KB`
+    );
     // Low quality should produce smaller output (fewer colors = better LZW compression)
     expect(lowSize).toBeLessThan(medSize);
   });
@@ -361,7 +336,7 @@ test.describe('Perf: Wall-clock stage profiling', () => {
     expect(profile!.totalDurationMs).toBeGreaterThan(0);
     expect(profile!.totalDurationMs).toBeLessThan(120_000);
 
-    console.log(`  Stage wall time %:`, profile!.stageWallTimePct);
+    console.log('  Stage wall time %:', profile!.stageWallTimePct);
     for (const pct of Object.values(profile!.stageWallTimePct)) {
       expect(pct).toBeGreaterThanOrEqual(0);
       expect(pct).toBeLessThanOrEqual(100);
@@ -380,10 +355,14 @@ test.describe('Perf: Wall-clock stage profiling', () => {
     expect(profile!.operationTotals.gifQuantization?.samples).toBeGreaterThan(0);
     expect(profile!.operationTotals.gifPaletteMapping?.samples).toBeGreaterThan(0);
     expect(profile!.operationTotals.gifFrameWrite?.samples).toBeGreaterThan(0);
-    expect(Object.values(profile!.copyPathCounts).reduce((sum, count) => sum + count, 0)).toBeGreaterThan(0);
+    expect(
+      Object.values(profile!.copyPathCounts).reduce((sum, count) => sum + count, 0)
+    ).toBeGreaterThan(0);
 
     // Memory tracking should be present (Chrome provides performance.memory)
-    console.log(`  Heap: start=${profile!.heapStartMB}MB, end=${profile!.heapEndMB}MB, peak=${profile!.heapPeakMB}MB`);
+    console.log(
+      `  Heap: start=${profile!.heapStartMB}MB, end=${profile!.heapEndMB}MB, peak=${profile!.heapPeakMB}MB`
+    );
     // Peak heap should be positive (Chrome exposes performance.memory)
     // Note: In headless CI, performance.memory may not be available (returns 0)
     // so we only assert it's non-negative
@@ -438,9 +417,7 @@ test.describe('Perf: Wall-clock stage profiling', () => {
     expect(transcodeStage).toBeDefined();
     expect(demuxStage).toBeDefined();
 
-    console.log(
-      `  Demux: ${demuxStage!.durationMs}ms (${profile!.stageWallTimePct.demuxing}%)`
-    );
+    console.log(`  Demux: ${demuxStage!.durationMs}ms (${profile!.stageWallTimePct.demuxing}%)`);
     console.log(
       `  Transcode: ${transcodeStage!.durationMs}ms (${profile!.stageWallTimePct.transcoding}%)`
     );

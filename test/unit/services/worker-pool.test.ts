@@ -17,8 +17,8 @@ class FakeWorker {
 
 vi.stubGlobal('Worker', FakeWorker);
 
-import { createWorkerPool, disposeWorkerPool, WebpWorkerPool } from '@services/worker-pool';
 import { globalBufferPool } from '@services/buffer-pool';
+import { createWorkerPool, disposeWorkerPool, WebpWorkerPool } from '@services/worker-pool';
 
 beforeEach(() => {
   FakeWorker.instances.length = 0;
@@ -35,17 +35,27 @@ describe('WebpWorkerPool public API', () => {
   it('forwards an ICC profile with its worker frame and rejects malformed profiles', async () => {
     const pool = new WebpWorkerPool(1, 1000);
     try {
-      const task = (id: number) => pool.encode({
-        id, rgbaData: new Uint8Array(4), width: 1, height: 1, quality: 0.8, durationMs: 40,
-      });
+      const task = (id: number) =>
+        pool.encode({
+          id,
+          rgbaData: new Uint8Array(4),
+          width: 1,
+          height: 1,
+          quality: 0.8,
+          durationMs: 40,
+        });
       const first = task(1);
       const worker = FakeWorker.instances[0]!;
       const profile = new Uint8Array([1, 2, 3]);
-      worker.onmessage?.({ data: { id: 1, bitstream: new Uint8Array([1]), iccProfile: profile } } as MessageEvent);
+      worker.onmessage?.({
+        data: { id: 1, bitstream: new Uint8Array([1]), iccProfile: profile },
+      } as MessageEvent);
       await expect(first).resolves.toMatchObject({ id: 1, iccProfile: profile });
 
       const second = task(2);
-      worker.onmessage?.({ data: { id: 2, bitstream: new Uint8Array([1]), iccProfile: 'bad' } } as MessageEvent);
+      worker.onmessage?.({
+        data: { id: 2, bitstream: new Uint8Array([1]), iccProfile: 'bad' },
+      } as MessageEvent);
       await expect(second).rejects.toThrow('Invalid WebP worker response');
     } finally {
       pool.terminate();

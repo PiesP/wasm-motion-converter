@@ -13,7 +13,10 @@ vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     mocks.decodeOptions = options;
     options.onFrameDecoded?.(1, 1);
-    await options.onFrameAvailable(new Uint8Array(3), 100, 0, undefined, { startUs: 0, endUs: 100_000 });
+    await options.onFrameAvailable(new Uint8Array(3), 100, 0, undefined, {
+      startUs: 0,
+      endUs: 100_000,
+    });
     return {
       frames: [],
       outputTotalMs: 0,
@@ -67,23 +70,38 @@ describe('encodeWebp timing', () => {
         sourceTotalMs: 175,
         totalFrames: 1,
       },
-      { width: 1, height: 1, quality: 'medium', scale: 1,
-        frameDecimation: 1.05, minimumSourceFrameGap: 2, pressureCadenceRatio: 1.4,
-        onFrameDecoded, onFrameEncoded, onEncodingComplete }
+      {
+        width: 1,
+        height: 1,
+        quality: 'medium',
+        scale: 1,
+        frameDecimation: 1.05,
+        minimumSourceFrameGap: 2,
+        pressureCadenceRatio: 1.4,
+        onFrameDecoded,
+        onFrameEncoded,
+        onEncodingComplete,
+      }
     );
 
     expect(mocks.finishPresentation).toHaveBeenCalledWith(175_000);
     expect(mocks.encodeRGBReuse).toHaveBeenCalledWith(expect.any(Uint8Array), 1, 1, 75);
     expect(mocks.decodeOptions).not.toHaveProperty('maxInputChunks');
-    expect(mocks.decodeOptions).toEqual(expect.objectContaining({
-      frameDecimation: 1.05,
-      minimumSourceFrameGap: 2,
-      pressureCadenceRatio: 1.4,
-    }));
+    expect(mocks.decodeOptions).toEqual(
+      expect.objectContaining({
+        frameDecimation: 1.05,
+        minimumSourceFrameGap: 2,
+        pressureCadenceRatio: 1.4,
+      })
+    );
     expect(onFrameDecoded).toHaveBeenCalledWith(1, 1);
     expect(onFrameEncoded).toHaveBeenCalledWith(1, 1);
     expect(onEncodingComplete).toHaveBeenCalledWith({
-      consumedChunks: 3, decodedFrames: 1, selectedFrames: 1, encodedFrames: 1, emittedFrames: 1,
+      consumedChunks: 3,
+      decodedFrames: 1,
+      selectedFrames: 1,
+      encodedFrames: 1,
+      emittedFrames: 1,
     });
   });
 });

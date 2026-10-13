@@ -23,25 +23,30 @@ it('keeps sharing settings unavailable while the application is busy', () => {
   const onSharingSettings = vi.fn();
   const container = document.createElement('div');
   document.body.appendChild(container);
-  dispose = render(() => (
-    <SettingsPanel
-      isBusy={busy()}
-      isCancelling={false}
-      isComplete={false}
-      isConversionActive={busy()}
-      settings={DEFAULT_CONVERSION_SETTINGS}
-      metadata={null}
-      onConvert={() => {}}
-      onCancel={() => {}}
-      onFormatChange={() => {}}
-      onQualityChange={() => {}}
-      onScaleChange={() => {}}
-      onSmartFrameSkipChange={() => {}}
-      onSharingSettings={onSharingSettings}
-    />
-  ), container);
+  dispose = render(
+    () => (
+      <SettingsPanel
+        isBusy={busy()}
+        isCancelling={false}
+        isComplete={false}
+        isConversionActive={busy()}
+        settings={DEFAULT_CONVERSION_SETTINGS}
+        metadata={null}
+        onConvert={() => {}}
+        onCancel={() => {}}
+        onFormatChange={() => {}}
+        onQualityChange={() => {}}
+        onScaleChange={() => {}}
+        onSmartFrameSkipChange={() => {}}
+        onSharingSettings={onSharingSettings}
+      />
+    ),
+    container
+  );
 
-  const button = container.querySelector<HTMLButtonElement>('[data-testid="sharing-settings-button"]');
+  const button = container.querySelector<HTMLButtonElement>(
+    '[data-testid="sharing-settings-button"]'
+  );
   expect(button?.disabled).toBe(true);
   button?.click();
   expect(onSharingSettings).not.toHaveBeenCalled();

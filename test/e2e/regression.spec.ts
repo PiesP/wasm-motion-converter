@@ -8,7 +8,7 @@
 //   pnpm test -- regression.spec.ts
 //   (Run after matrix.spec.ts to populate results file)
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { detectRegressions, generateReport } from '../lib/test-recorder';
 
 test.describe('Regression: Baseline comparison', () => {
@@ -41,7 +41,10 @@ test.describe('Regression: Baseline comparison', () => {
       }
     }
 
-    expect(timingRegressions, `Timing regressions detected: ${timingRegressions.length}`).toHaveLength(0);
+    expect(
+      timingRegressions,
+      `Timing regressions detected: ${timingRegressions.length}`
+    ).toHaveLength(0);
   });
 
   test('no new failures', () => {
@@ -49,7 +52,7 @@ test.describe('Regression: Baseline comparison', () => {
 
     // Filter to failure regressions only, excluding known-unsupported codecs
     const failureRegressions = regressions.filter(
-      (r) => r.type === 'failure' && r.videoId !== 'hevc',
+      (r) => r.type === 'failure' && r.videoId !== 'hevc'
     );
 
     if (failureRegressions.length > 0) {
@@ -59,7 +62,9 @@ test.describe('Regression: Baseline comparison', () => {
       }
     }
 
-    expect(failureRegressions, `New failures detected: ${failureRegressions.length}`).toHaveLength(0);
+    expect(failureRegressions, `New failures detected: ${failureRegressions.length}`).toHaveLength(
+      0
+    );
   });
 
   test('generate report', () => {

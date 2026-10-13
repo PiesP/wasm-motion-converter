@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock logger before importing stores
 vi.mock('@utils/logger', () => ({
@@ -85,7 +85,14 @@ describe('conversion-store', () => {
   it('can set and read video metadata', async () => {
     const { videoMetadata, setVideoMetadata } = await import('@stores/conversion-store');
 
-    const mockMetadata = { width: 1920, height: 1080, duration: 5, codec: 'h264', framerate: 30, bitrate: 5000000 };
+    const mockMetadata = {
+      width: 1920,
+      height: 1080,
+      duration: 5,
+      codec: 'h264',
+      framerate: 30,
+      bitrate: 5000000,
+    };
     setVideoMetadata(mockMetadata);
     expect(videoMetadata()).toEqual(mockMetadata);
 
@@ -114,7 +121,9 @@ describe('conversion-store', () => {
   });
 
   it('can set environment supported flag', async () => {
-    const { environmentSupported, setEnvironmentSupported } = await import('@stores/conversion-store');
+    const { environmentSupported, setEnvironmentSupported } = await import(
+      '@stores/conversion-store'
+    );
 
     setEnvironmentSupported(false);
     expect(environmentSupported()).toBe(false);

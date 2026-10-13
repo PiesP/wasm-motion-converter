@@ -1,5 +1,6 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub Actions expressions are literal workflow assertions.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -12,7 +13,7 @@ function jobBlock(workflow: string, jobId: string): string {
   if (start === -1) throw new Error(`Workflow job not found: ${jobId}`);
 
   const afterMarker = start + marker.length;
-  const nextJob = workflow.slice(afterMarker).search(/\n  [a-z][a-z0-9-]*:\n/);
+  const nextJob = workflow.slice(afterMarker).search(/\n {2}[a-z][a-z0-9-]*:\n/);
   return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
 }
 
@@ -43,9 +44,9 @@ function runSecuritySummary(event: string, results: Record<string, string> = {})
 
 describe('Release infrastructure', () => {
   it('keeps the Cloudflare Pages build runtime aligned with Volta', () => {
-    const packageJson = JSON.parse(
-      readFileSync(resolve(root, 'package.json'), 'utf8')
-    ) as { volta?: { node?: string } };
+    const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
+      volta?: { node?: string };
+    };
     const nodeVersion = readFileSync(resolve(root, '.node-version'), 'utf8').trim();
     const wrangler = readFileSync(resolve(root, 'wrangler.toml'), 'utf8');
 
@@ -54,10 +55,7 @@ describe('Release infrastructure', () => {
   });
 
   it('preserves security gates while routing expensive scans by changed path', () => {
-    const workflow = readFileSync(
-      resolve(root, '.github/workflows/security.yaml'),
-      'utf8'
-    );
+    const workflow = readFileSync(resolve(root, '.github/workflows/security.yaml'), 'utf8');
 
     expect(workflow).toContain('name: Classify security changes');
     expect(workflow).toContain('node --experimental-strip-types "$classifier"');
@@ -73,9 +71,7 @@ describe('Release infrastructure', () => {
       "github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || github.event_name == 'merge_group'"
     );
     expect(workflow).toContain('security-summary:');
-    expect(workflow).toContain(
-      'expect_when_required "$CODEQL_REQUIRED" "CodeQL" "$CODEQL_RESULT"'
-    );
+    expect(workflow).toContain('expect_when_required "$CODEQL_REQUIRED" "CodeQL" "$CODEQL_RESULT"');
     expect(workflow).toContain('expect_success "Semgrep" "$SEMGREP_RESULT"');
     expect(workflow).toContain('expect_success "OSV full" "$OSV_FULL_RESULT"');
   });
@@ -102,41 +98,39 @@ describe('Release infrastructure', () => {
   );
 
   it('accepts only the routed CodeQL and freshness skips and rejects unknown events', () => {
-    expect(runSecuritySummary('push', {
-      CODEQL_REQUIRED: 'false',
-      CODEQL_RESULT: 'skipped',
-      PINNED_TOOLS_REQUIRED: 'false',
-      PINNED_TOOLS_RESULT: 'skipped',
-    }).status).toBe(0);
-    expect(runSecuritySummary('push', {
-      CODEQL_REQUIRED: 'false',
-      CODEQL_RESULT: 'failure',
-    }).status).toBe(1);
-    expect(runSecuritySummary('push', {
-      PINNED_TOOLS_REQUIRED: 'false',
-      PINNED_TOOLS_RESULT: 'failure',
-    }).status).toBe(1);
+    expect(
+      runSecuritySummary('push', {
+        CODEQL_REQUIRED: 'false',
+        CODEQL_RESULT: 'skipped',
+        PINNED_TOOLS_REQUIRED: 'false',
+        PINNED_TOOLS_RESULT: 'skipped',
+      }).status
+    ).toBe(0);
+    expect(
+      runSecuritySummary('push', {
+        CODEQL_REQUIRED: 'false',
+        CODEQL_RESULT: 'failure',
+      }).status
+    ).toBe(1);
+    expect(
+      runSecuritySummary('push', {
+        PINNED_TOOLS_REQUIRED: 'false',
+        PINNED_TOOLS_RESULT: 'failure',
+      }).status
+    ).toBe(1);
     expect(runSecuritySummary('unknown').status).toBe(1);
   });
 
   it('publishes a checksum-verifiable archive without flattening the app tree', () => {
-    const workflow = readFileSync(
-      resolve(root, '.github/workflows/release.yaml'),
-      'utf8'
-    );
-    const prepareScript = readFileSync(
-      resolve(root, 'scripts/release/prepare.ts'),
-      'utf8'
-    );
+    const workflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
+    const prepareScript = readFileSync(resolve(root, 'scripts/release/prepare.ts'), 'utf8');
 
     expect(workflow).toContain('release-bundle/release/*');
     expect(workflow).not.toContain('release-bundle/release/**');
     expect(prepareScript).toContain(
       'const archiveName = `wasm-motion-converter-${version}.tar.gz`;'
     );
-    expect(prepareScript).toContain(
-      'const releaseAssets = [archivePath, metadataPath];'
-    );
+    expect(prepareScript).toContain('const releaseAssets = [archivePath, metadataPath];');
     expect(prepareScript).not.toContain('cpSync(distDir, releaseDir');
   });
 
@@ -146,18 +140,40 @@ describe('Release infrastructure', () => {
     try {
       mkdirSync(join(fixture, 'scripts/release'), { recursive: true });
       mkdirSync(join(fixture, 'dist'), { recursive: true });
-      cpSync(resolve(root, 'scripts/release/prepare.ts'), join(fixture, 'scripts/release/prepare.ts'));
-      writeFileSync(join(fixture, 'package.json'), JSON.stringify({ type: 'module', version: '0.2.10' }));
+      cpSync(
+        resolve(root, 'scripts/release/prepare.ts'),
+        join(fixture, 'scripts/release/prepare.ts')
+      );
+      writeFileSync(
+        join(fixture, 'package.json'),
+        JSON.stringify({ type: 'module', version: '0.2.10' })
+      );
       writeFileSync(join(fixture, 'CHANGELOG.md'), '## [0.2.10]\n\nRelease ordering.\n');
       writeFileSync(join(fixture, 'dist/index.html'), '<html></html>');
-      execFileSync(process.execPath, ['--experimental-strip-types', join(fixture, 'scripts/release/prepare.ts')], {
-        cwd: fixture,
-        env: { ...process.env, RELEASE_VERSION: '0.2.10', RELEASE_SHA: source },
-      });
+      execFileSync(
+        process.execPath,
+        ['--experimental-strip-types', join(fixture, 'scripts/release/prepare.ts')],
+        {
+          cwd: fixture,
+          env: { ...process.env, RELEASE_VERSION: '0.2.10', RELEASE_SHA: source },
+        }
+      );
       const marker = { version: '0.2.10', commit: source };
-      expect(JSON.parse(readFileSync(join(fixture, 'release-bundle/dist/release-state.json'), 'utf8'))).toEqual(marker);
-      expect(JSON.parse(readFileSync(join(fixture, 'release-bundle/release/metadata.json'), 'utf8'))).toMatchObject(marker);
-      const archived = execFileSync('tar', ['-xOzf', join(fixture, 'release-bundle/release/wasm-motion-converter-0.2.10.tar.gz'), './release-state.json'], { encoding: 'utf8' });
+      expect(
+        JSON.parse(readFileSync(join(fixture, 'release-bundle/dist/release-state.json'), 'utf8'))
+      ).toEqual(marker);
+      expect(
+        JSON.parse(readFileSync(join(fixture, 'release-bundle/release/metadata.json'), 'utf8'))
+      ).toMatchObject(marker);
+      const archived = execFileSync(
+        'tar',
+        [
+          '-xOzf',
+          join(fixture, 'release-bundle/release/wasm-motion-converter-0.2.10.tar.gz'),
+          './release-state.json',
+        ],
+        { encoding: 'utf8' }
+      );
       expect(JSON.parse(archived)).toEqual(marker);
     } finally {
       rmSync(fixture, { recursive: true, force: true });
@@ -165,27 +181,25 @@ describe('Release infrastructure', () => {
   });
 
   it('binds every release gate and publication step to a protected-master tag SHA', () => {
-    const workflow = readFileSync(
-      resolve(root, '.github/workflows/release.yaml'),
-      'utf8'
-    );
-    const prepareScript = readFileSync(
-      resolve(root, 'scripts/release/prepare.ts'),
-      'utf8'
-    );
+    const workflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
+    const prepareScript = readFileSync(resolve(root, 'scripts/release/prepare.ts'), 'utf8');
     const provenance = jobBlock(workflow, 'provenance');
 
     expect(workflow).toContain('workflow_dispatch:');
-    expect(workflow).not.toMatch(/\n  push:\n\s+tags:/);
+    expect(workflow).not.toMatch(/\n {2}push:\n\s+tags:/);
     expect(provenance).toContain("if: ${{ github.ref == 'refs/heads/master' }}");
     expect(provenance).toContain('ref: ${{ github.sha }}');
     expect(provenance).toContain('fetch-depth: 0');
     expect(provenance).toContain('fetch-tags: true');
     expect(provenance).toContain('persist-credentials: false');
     expect(provenance).toContain('RELEASE_TAG: ${{ inputs.tag }}');
-    expect(provenance).toContain('uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969');
+    expect(provenance).toContain(
+      'uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969'
+    );
     expect(provenance).toContain("install-dependencies: 'false'");
-    expect(provenance).toContain('run: node --experimental-strip-types scripts/release/verify-source.ts');
+    expect(provenance).toContain(
+      'run: node --experimental-strip-types scripts/release/verify-source.ts'
+    );
 
     const localExecutionMarker = {
       quality: 'uses: ./.github/actions/setup-release',
@@ -202,7 +216,9 @@ describe('Release infrastructure', () => {
       expect(job, jobId).toContain('fetch-tags: true');
       expect(job, jobId).toContain('persist-credentials: false');
       expect(job, jobId).toContain('RELEASE_SHA: ${{ needs.provenance.outputs.release-sha }}');
-      expect(job, jobId).toContain('git -c advice.detachedHead=false checkout --detach "$RELEASE_SHA"');
+      expect(job, jobId).toContain(
+        'git -c advice.detachedHead=false checkout --detach "$RELEASE_SHA"'
+      );
       expect(job.indexOf('Checkout verified release commit'), jobId).toBeLessThan(
         job.indexOf(marker)
       );
@@ -216,9 +232,7 @@ describe('Release infrastructure', () => {
     expect(publish).toContain('needs: [provenance, quality, unit, e2e, mutation, build]');
     expect(publish).toContain('name: release-bundle-${{ needs.provenance.outputs.release-sha }}');
     expect(publish).toContain('tag_name: ${{ inputs.tag }}');
-    expect(prepareScript).toContain(
-      'const commit = process.env.RELEASE_SHA;'
-    );
+    expect(prepareScript).toContain('const commit = process.env.RELEASE_SHA;');
   });
 
   it('serializes only publication and checks live state before either writer', () => {
@@ -240,11 +254,8 @@ describe('Release infrastructure', () => {
   });
 
   it('runs release E2E against its development server without a redundant build', () => {
-    const workflow = readFileSync(
-      resolve(root, '.github/workflows/release.yaml'),
-      'utf8'
-    );
-    const e2eJob = workflow.match(/\n  e2e:[\s\S]*?\n  mutation:/)?.[0] ?? '';
+    const workflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
+    const e2eJob = workflow.match(/\n {2}e2e:[\s\S]*?\n {2}mutation:/)?.[0] ?? '';
 
     expect(e2eJob).toContain('pnpm test:e2e:ci');
     expect(e2eJob).not.toContain('pnpm build:ci');

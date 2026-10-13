@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { describe, expect, it } from 'vitest';
 import { isWorkerRequest, isWorkerResponse } from '@services/conversion-worker/guards';
 import { MAX_CODEC_DESCRIPTION_BYTES } from '@utils/constants';
+import { describe, expect, it } from 'vitest';
 
 describe('isWorkerRequest', () => {
   const validStart = {
@@ -106,20 +106,24 @@ describe('isWorkerRequest', () => {
   });
 
   it('rejects start with NaN codedWidth in config', () => {
-    expect(isWorkerRequest({ ...validStart, config: { ...validStart.config, codedWidth: NaN } })).toBe(false);
+    expect(
+      isWorkerRequest({ ...validStart, config: { ...validStart.config, codedWidth: NaN } })
+    ).toBe(false);
   });
 
   it('rejects start with zero codedHeight in config', () => {
-    expect(isWorkerRequest({ ...validStart, config: { ...validStart.config, codedHeight: 0 } })).toBe(false);
+    expect(
+      isWorkerRequest({ ...validStart, config: { ...validStart.config, codedHeight: 0 } })
+    ).toBe(false);
   });
 
   it('accepts only normalized quarter-turn rotation metadata', () => {
     expect(
       isWorkerRequest({ ...validStart, config: { ...validStart.config, rotation: 270 } })
     ).toBe(true);
-    expect(
-      isWorkerRequest({ ...validStart, config: { ...validStart.config, rotation: 45 } })
-    ).toBe(false);
+    expect(isWorkerRequest({ ...validStart, config: { ...validStart.config, rotation: 45 } })).toBe(
+      false
+    );
   });
 
   it('accepts a bounded binary codec description', () => {
@@ -143,15 +147,21 @@ describe('isWorkerRequest', () => {
   });
 
   it('rejects start with NaN fps in options', () => {
-    expect(isWorkerRequest({ ...validStart, options: { ...validStart.options, fps: NaN } })).toBe(false);
+    expect(isWorkerRequest({ ...validStart, options: { ...validStart.options, fps: NaN } })).toBe(
+      false
+    );
   });
 
   it('rejects start with Infinity scale in options', () => {
-    expect(isWorkerRequest({ ...validStart, options: { ...validStart.options, scale: Infinity } })).toBe(false);
+    expect(
+      isWorkerRequest({ ...validStart, options: { ...validStart.options, scale: Infinity } })
+    ).toBe(false);
   });
 
   it('rejects start with negative maxFrames in options', () => {
-    expect(isWorkerRequest({ ...validStart, options: { ...validStart.options, maxFrames: -1 } })).toBe(false);
+    expect(
+      isWorkerRequest({ ...validStart, options: { ...validStart.options, maxFrames: -1 } })
+    ).toBe(false);
   });
 
   it('rejects start with missing maxOutputBytes in options', () => {
@@ -169,21 +179,27 @@ describe('isWorkerRequest', () => {
   });
 
   it('accepts fractional pressure cadence and integer explicit gaps only', () => {
-    expect(isWorkerRequest({
-      ...validStart,
-      options: { ...validStart.options, memoryPressureCadenceRatio: 1.4, forceDecimation: 2 },
-    })).toBe(true);
-    for (const invalid of [0, -1, NaN, Infinity, '1.4', null]) {
-      expect(isWorkerRequest({
+    expect(
+      isWorkerRequest({
         ...validStart,
-        options: { ...validStart.options, memoryPressureCadenceRatio: invalid },
-      })).toBe(false);
+        options: { ...validStart.options, memoryPressureCadenceRatio: 1.4, forceDecimation: 2 },
+      })
+    ).toBe(true);
+    for (const invalid of [0, -1, NaN, Infinity, '1.4', null]) {
+      expect(
+        isWorkerRequest({
+          ...validStart,
+          options: { ...validStart.options, memoryPressureCadenceRatio: invalid },
+        })
+      ).toBe(false);
     }
     for (const invalid of [0, -1, 1.4, NaN, Infinity, '2', null]) {
-      expect(isWorkerRequest({
-        ...validStart,
-        options: { ...validStart.options, forceDecimation: invalid },
-      })).toBe(false);
+      expect(
+        isWorkerRequest({
+          ...validStart,
+          options: { ...validStart.options, forceDecimation: invalid },
+        })
+      ).toBe(false);
     }
   });
 
@@ -414,10 +430,7 @@ describe('isWorkerResponse', () => {
         ...validComplete,
         profile: {
           ...validProfile,
-          stages: [
-            validProfile.stages[0],
-            { ...validProfile.stages[1], consumedChunks: 2.5 },
-          ],
+          stages: [validProfile.stages[0], { ...validProfile.stages[1], consumedChunks: 2.5 }],
         },
       })
     ).toBe(false);

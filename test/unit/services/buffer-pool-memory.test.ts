@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { describe, expect, it } from 'vitest';
 import { BufferPool } from '@services/buffer-pool';
+import { describe, expect, it } from 'vitest';
 
 describe('BufferPool memory accounting', () => {
   it('accounts for checked-out buffers as well as idle pooled buffers', () => {

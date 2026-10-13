@@ -8,8 +8,8 @@
 // Tests cover: default settings, serialization/deserialization, type validation,
 // trim range validation, corrupted data recovery, and error handling.
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ConversionSettings } from '@t/conversion-types';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── Mock logger to silence warnings ────────────────────────────────────
 vi.mock('@utils/logger', () => ({
@@ -92,7 +92,7 @@ describe('conversion-settings-store', () => {
 
     expect(window.localStorage.setItem).toHaveBeenCalledWith(
       STORAGE_KEY,
-      JSON.stringify({ __schemaVersion: 1, ...settings }),
+      JSON.stringify({ __schemaVersion: 1, ...settings })
     );
   });
 
@@ -124,13 +124,19 @@ describe('conversion-settings-store', () => {
   // ── Type validation ────────────────────────────────────────────────
 
   it('returns defaults when format is invalid', async () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...makeTestSettings(), format: 'bmp' }));
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ ...makeTestSettings(), format: 'bmp' })
+    );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('returns defaults when quality is invalid', async () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...makeTestSettings(), quality: 'ultra' }));
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ ...makeTestSettings(), quality: 'ultra' })
+    );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
@@ -142,7 +148,10 @@ describe('conversion-settings-store', () => {
   });
 
   it('returns defaults when smartFrameSkip is invalid', async () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...makeTestSettings(), smartFrameSkip: 'turbo' }));
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ ...makeTestSettings(), smartFrameSkip: 'turbo' })
+    );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
@@ -154,7 +163,10 @@ describe('conversion-settings-store', () => {
   });
 
   it('returns defaults when scale is not a number', async () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...makeTestSettings(), scale: '100%' }));
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ ...makeTestSettings(), scale: '100%' })
+    );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
@@ -164,7 +176,7 @@ describe('conversion-settings-store', () => {
   it('resets trim but preserves other settings when trimStart >= trimEnd (inverted range)', async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(makeTestSettings({ trimStart: 30, trimEnd: 5 })),
+      JSON.stringify(makeTestSettings({ trimStart: 30, trimEnd: 5 }))
     );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     const restored = conversionSettings();
@@ -180,7 +192,7 @@ describe('conversion-settings-store', () => {
   it('resets trim but preserves other settings when trimStart === trimEnd (zero range)', async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(makeTestSettings({ trimStart: 10, trimEnd: 10 })),
+      JSON.stringify(makeTestSettings({ trimStart: 10, trimEnd: 10 }))
     );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     const restored = conversionSettings();
@@ -196,7 +208,7 @@ describe('conversion-settings-store', () => {
   it('preserves valid trim range (start < end, both > 0)', async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(makeTestSettings({ trimStart: 5, trimEnd: 30 })),
+      JSON.stringify(makeTestSettings({ trimStart: 5, trimEnd: 30 }))
     );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     expect(conversionSettings().trimStart).toBe(5);
@@ -206,7 +218,7 @@ describe('conversion-settings-store', () => {
   it('preserves a first-segment trim whose start is zero', async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(makeTestSettings({ trimStart: 0, trimEnd: 5 })),
+      JSON.stringify(makeTestSettings({ trimStart: 0, trimEnd: 5 }))
     );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     expect(conversionSettings().trimStart).toBe(0);
@@ -216,7 +228,7 @@ describe('conversion-settings-store', () => {
   it('clamps negative trimStart to 0 and preserves other settings', async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(makeTestSettings({ trimStart: -5, trimEnd: 10 })),
+      JSON.stringify(makeTestSettings({ trimStart: -5, trimEnd: 10 }))
     );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     const restored = conversionSettings();
@@ -232,7 +244,7 @@ describe('conversion-settings-store', () => {
   it('clamps negative trimEnd to 0 and preserves other settings', async () => {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(makeTestSettings({ trimStart: 5, trimEnd: -1 })),
+      JSON.stringify(makeTestSettings({ trimStart: 5, trimEnd: -1 }))
     );
     const { conversionSettings } = await import('@stores/conversion-settings-store');
     const restored = conversionSettings();
@@ -405,85 +417,103 @@ describe('conversion-settings-store', () => {
     });
 
     it('clamps NaN __schemaVersion to 0 and migrates from scratch', async () => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        __schemaVersion: NaN,
-        format: 'gif',
-        quality: 'low',
-        scale: 0.5,
-        trimStart: 0,
-        trimEnd: 0,
-        smartFrameSkip: 'off',
-      }));
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          __schemaVersion: NaN,
+          format: 'gif',
+          quality: 'low',
+          scale: 0.5,
+          trimStart: 0,
+          trimEnd: 0,
+          smartFrameSkip: 'off',
+        })
+      );
       const { conversionSettings } = await import('@stores/conversion-settings-store');
       expect(conversionSettings().quality).toBe('low');
     });
 
     it('clamps -Infinity __schemaVersion and does not hang', async () => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        __schemaVersion: -Infinity,
-        format: 'webp',
-        quality: 'high',
-        scale: 1.0,
-        trimStart: 0,
-        trimEnd: 0,
-        smartFrameSkip: 'off',
-      }));
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          __schemaVersion: -Infinity,
+          format: 'webp',
+          quality: 'high',
+          scale: 1.0,
+          trimStart: 0,
+          trimEnd: 0,
+          smartFrameSkip: 'off',
+        })
+      );
       const { conversionSettings } = await import('@stores/conversion-settings-store');
       expect(conversionSettings().format).toBe('webp');
     });
 
     it('clamps future __schemaVersion to current to prevent migration gaps', async () => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        __schemaVersion: 999,
-        format: 'gif',
-        quality: 'low',
-        scale: 0.5,
-        trimStart: 0,
-        trimEnd: 0,
-        smartFrameSkip: 'off',
-      }));
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          __schemaVersion: 999,
+          format: 'gif',
+          quality: 'low',
+          scale: 0.5,
+          trimStart: 0,
+          trimEnd: 0,
+          smartFrameSkip: 'off',
+        })
+      );
       const { conversionSettings } = await import('@stores/conversion-settings-store');
       expect(conversionSettings().format).toBe('gif');
     });
 
     it('rejects numeric string for enum field (format)', async () => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        __schemaVersion: 1,
-        format: '123',
-        quality: 'low',
-        scale: 0.5,
-        trimStart: 0,
-        trimEnd: 0,
-        smartFrameSkip: 'off',
-      }));
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          __schemaVersion: 1,
+          format: '123',
+          quality: 'low',
+          scale: 0.5,
+          trimStart: 0,
+          trimEnd: 0,
+          smartFrameSkip: 'off',
+        })
+      );
       const { conversionSettings } = await import('@stores/conversion-settings-store');
       expect(conversionSettings().format).toBe('gif'); // DEFAULT
     });
 
     it('rejects null for enum field and falls back to defaults', async () => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        __schemaVersion: 1,
-        format: null,
-        quality: 'low',
-        scale: 0.5,
-        trimStart: 0,
-        trimEnd: 0,
-        smartFrameSkip: 'off',
-      }));
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          __schemaVersion: 1,
+          format: null,
+          quality: 'low',
+          scale: 0.5,
+          trimStart: 0,
+          trimEnd: 0,
+          smartFrameSkip: 'off',
+        })
+      );
       const { conversionSettings } = await import('@stores/conversion-settings-store');
       expect(conversionSettings().format).toBe('gif'); // DEFAULT
     });
 
     it('rejects boolean for enum field (format)', async () => {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        __schemaVersion: 1,
-        format: true,
-        quality: 'low',
-        scale: 0.5,
-        trimStart: 0,
-        trimEnd: 0,
-        smartFrameSkip: 'off',
-      }));
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          __schemaVersion: 1,
+          format: true,
+          quality: 'low',
+          scale: 0.5,
+          trimStart: 0,
+          trimEnd: 0,
+          smartFrameSkip: 'off',
+        })
+      );
       const { conversionSettings } = await import('@stores/conversion-settings-store');
       expect(conversionSettings().format).toBe('gif'); // DEFAULT
     });

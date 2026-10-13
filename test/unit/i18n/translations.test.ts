@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { describe, it, expect } from 'vitest';
 import arTranslations from '@i18n/ar.json';
 import enTranslations from '@i18n/en.json';
 import esTranslations from '@i18n/es.json';
 import jaTranslations from '@i18n/ja.json';
 import koTranslations from '@i18n/ko.json';
 import zhCnTranslations from '@i18n/zh-CN.json';
+import { describe, expect, it } from 'vitest';
 import { LOCALES } from '../../../src/types/i18n-types';
 
 const allTranslations = {
@@ -195,9 +195,7 @@ describe('translations', () => {
     });
 
     it('has validation.* keys', () => {
-      const validationKeys = Object.keys(enTranslations).filter((k) =>
-        k.startsWith('validation.')
-      );
+      const validationKeys = Object.keys(enTranslations).filter((k) => k.startsWith('validation.'));
       expect(validationKeys.length).toBeGreaterThan(0);
       for (const key of validationKeys) {
         expect(koTranslations[key]).toBeDefined();
@@ -205,9 +203,7 @@ describe('translations', () => {
     });
 
     it('has progress.* keys', () => {
-      const progressKeys = Object.keys(enTranslations).filter((k) =>
-        k.startsWith('progress.')
-      );
+      const progressKeys = Object.keys(enTranslations).filter((k) => k.startsWith('progress.'));
       expect(progressKeys.length).toBeGreaterThan(0);
       for (const key of progressKeys) {
         expect(koTranslations[key]).toBeDefined();

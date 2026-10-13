@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { resolveOutputLimits } from '@services/output-limits';
 import type { ConversionRequest } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
-import { resolveOutputLimits } from '../output-limits';
 import type { SerializedConversionOptions } from './types';
 
 /**

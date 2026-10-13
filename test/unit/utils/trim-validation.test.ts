@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import {
-  clampToStep,
-  formatTimePrecise,
-  isFullDuration,
-  parseTimeInput,
-} from '@utils/trim-time';
+import { clampToStep, formatTimePrecise, isFullDuration, parseTimeInput } from '@utils/trim-time';
 import { describe, expect, it } from 'vitest';
 
 describe('trim time helpers', () => {

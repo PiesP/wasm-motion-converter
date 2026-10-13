@@ -39,9 +39,7 @@ function readFrameDurations(output: Uint8Array): number[] {
       output[offset + 3] === 0x46
     ) {
       durations.push(
-        output[offset + 20]! |
-          (output[offset + 21]! << 8) |
-          (output[offset + 22]! << 16)
+        output[offset + 20]! | (output[offset + 21]! << 8) | (output[offset + 22]! << 16)
       );
     }
   }
@@ -91,9 +89,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
     const rejectedBuffer = new Uint8Array(16);
     const firstError = new Error('first worker failure');
 
-    const submissions = Array.from({ length: 4 }, () =>
-      encoder.submit(new Uint8Array(16), 100)
-    );
+    const submissions = Array.from({ length: 4 }, () => encoder.submit(new Uint8Array(16), 100));
     const blockedSubmission = encoder.submit(rejectedBuffer, 100);
     await vi.waitFor(() => expect(mocks.tasks.size).toBe(4));
 
@@ -114,15 +110,10 @@ describe('createStreamingWebpEncoder tail timing', () => {
   });
 
   it('applies output limits to out-of-order worker results', async () => {
-    const encoder = createStreamingWebpEncoder(
-      createWorkerPool(),
-      16,
-      16,
-      'medium',
-      2,
-      undefined,
-      { maxFrames: 1, maxOutputBytes: 1024 }
-    );
+    const encoder = createStreamingWebpEncoder(createWorkerPool(), 16, 16, 'medium', 2, undefined, {
+      maxFrames: 1,
+      maxOutputBytes: 1024,
+    });
     const firstSubmission = encoder.submit(new Uint8Array(16), 100);
     const secondSubmission = encoder.submit(new Uint8Array(16), 100);
     await vi.waitFor(() => expect(mocks.tasks.size).toBe(2));
@@ -226,9 +217,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
       budget
     );
 
-    const submissions = Array.from({ length: 8 }, () =>
-      encoder.submit(new Uint8Array(16), 100)
-    );
+    const submissions = Array.from({ length: 8 }, () => encoder.submit(new Uint8Array(16), 100));
     await vi.waitFor(() => expect(mocks.tasks.size).toBe(budget.maxOutstandingTasks));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(mocks.tasks.size).toBe(budget.maxOutstandingTasks);
@@ -356,10 +345,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
       workerCount: 2,
     });
     const source = budget.tryReserveSource(
-      FRAME_PIPELINE_MEMORY_BUDGET_BYTES -
-        budget.usage.canvasBytes -
-        budget.targetTaskBytes -
-        4
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES - budget.usage.canvasBytes - budget.targetTaskBytes - 4
     );
     expect(source).not.toBeNull();
     const encoder = createStreamingWebpEncoder(

@@ -33,7 +33,7 @@ describe('Content Security Policy', () => {
       '}',
       'assert.deepEqual(outputs[0], outputs[2]);',
       'assert.notDeepEqual(outputs[0], outputs[1]);',
-      "assert.throws(() => module.encodeRGB(), /arguments/);",
+      'assert.throws(() => module.encodeRGB(), /arguments/);',
       "console.log('WASM WebP CSP round trip passed');",
     ].join('\n');
 

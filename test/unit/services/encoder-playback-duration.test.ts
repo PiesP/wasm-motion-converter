@@ -82,9 +82,7 @@ function readWebpDurationMs(output: Uint8Array): number {
       output[offset + 3] === 0x46
     ) {
       totalMilliseconds +=
-        output[offset + 20]! |
-        (output[offset + 21]! << 8) |
-        (output[offset + 22]! << 16);
+        output[offset + 20]! | (output[offset + 21]! << 8) | (output[offset + 22]! << 16);
     }
   }
   return totalMilliseconds;
@@ -121,6 +119,8 @@ describe('encoder final playback duration', () => {
     expect(onProgress).toHaveBeenLastCalledWith(
       expect.objectContaining({ phase: 'encoding', currentFrame: 1, totalFrames: 2 })
     );
-    expect(onEncodingComplete).toHaveBeenCalledWith(expect.objectContaining({ decodedFrames: 2, encodedFrames: 1 }));
+    expect(onEncodingComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ decodedFrames: 2, encodedFrames: 1 })
+    );
   });
 });

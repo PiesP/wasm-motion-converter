@@ -15,7 +15,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     mocks.pixelFormats.push(options.pixelFormat);
-    await options.onFrameAvailable(mocks.frameFactory(), 100, 0, undefined, { startUs: 0, endUs: 100_000 });
+    await options.onFrameAvailable(mocks.frameFactory(), 100, 0, undefined, {
+      startUs: 0,
+      endUs: 100_000,
+    });
     return {
       frames: [],
       outputTotalMs: 0,
@@ -69,12 +72,8 @@ const width = 3;
 const height = 2;
 const exactRgbaBytes = width * height * 4;
 const validPixels = new Uint8Array([
-  255, 0, 0, 255,
-  0, 255, 0, 255,
-  0, 0, 255, 255,
-  255, 255, 0, 255,
-  0, 255, 255, 255,
-  255, 0, 255, 255,
+  255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255, 0, 255, 255, 255, 255, 0, 255,
+  255,
 ]);
 
 const demux = {

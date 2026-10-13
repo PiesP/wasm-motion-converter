@@ -1,10 +1,14 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub Actions expressions are literal workflow assertions.
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(import.meta.dirname, '../../..');
 const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
-const deepChecksWorkflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
+const deepChecksWorkflow = readFileSync(
+  resolve(root, '.github/workflows/deep-checks.yaml'),
+  'utf8'
+);
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
 const centralSetupAction =
   'uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969';
@@ -20,7 +24,7 @@ function jobBlock(workflow: string, jobId: string): string {
   if (start === -1) throw new Error(`Workflow job not found: ${jobId}`);
 
   const afterMarker = start + marker.length;
-  const nextJob = workflow.slice(afterMarker).search(/\n  [a-z][a-z0-9-]*:\n/);
+  const nextJob = workflow.slice(afterMarker).search(/\n {2}[a-z][a-z0-9-]*:\n/);
   return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
 }
 
@@ -112,9 +116,7 @@ describe('central project setup action', () => {
     const setup = publish.split(setupMarker)[1]?.split('\n      - name:')[0];
 
     expect(setup).toBeDefined();
-    expect(setup).toContain(
-      'uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0'
-    );
+    expect(setup).toContain('uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0');
     expect(checkout).toContain('ref: ${{ github.sha }}');
     expect(checkout).toContain('persist-credentials: false');
     expect(checkout).not.toContain('release-sha');

@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { describe, expect, it } from 'vitest';
 import { ENCODED_PACKET_BUDGET_BYTES, MEDIA_BUNNY_BUFFER_BUDGET_BYTES } from '@utils/constants';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { ALL_FORMATS, BufferSource, Input, InputFormat, Source } from 'mediabunny';
+import { describe, expect, it } from 'vitest';
 
 class ProbeSource extends Source {
   readLengths: number[] = [];
 
   constructor(
     private fileSize: number | null = 64,
-    private readonly dataLength = 64,
+    private readonly dataLength = 64
   ) {
     super();
   }
@@ -37,7 +37,7 @@ class ProbeSource extends Source {
 class ProbeFormat extends InputFormat {
   constructor(
     private readonly readLength: number,
-    private readonly readEntireFile = false,
+    private readonly readEntireFile = false
   ) {
     super();
   }
@@ -51,12 +51,14 @@ class ProbeFormat extends InputFormat {
   }
 
   async _canReadInput(input: Input): Promise<boolean> {
-    const reader = (input as unknown as {
-      _reader: {
-        requestSlice(start: number, length: number): unknown;
-        requestEntireFile(): unknown;
-      };
-    })._reader;
+    const reader = (
+      input as unknown as {
+        _reader: {
+          requestSlice(start: number, length: number): unknown;
+          requestEntireFile(): unknown;
+        };
+      }
+    )._reader;
     if (this.readEntireFile) {
       await reader.requestEntireFile();
     } else {
@@ -131,11 +133,7 @@ function makeOversizedVorbisHeaders(): ArrayBuffer {
   return file.buffer;
 }
 
-function makeFlacMetadataBlock(
-  type: number,
-  payload: Uint8Array,
-  isLast = false,
-): Uint8Array {
+function makeFlacMetadataBlock(type: number, payload: Uint8Array, isLast = false): Uint8Array {
   const block = new Uint8Array(4 + payload.byteLength);
   block[0] = (isLast ? 0x80 : 0) | type;
   block[1] = payload.byteLength >>> 16;
@@ -145,15 +143,12 @@ function makeFlacMetadataBlock(
   return block;
 }
 
-function makeFlacFile(
-  blocks: Uint8Array[],
-  leadingBytes = new Uint8Array(),
-): ArrayBuffer {
+function makeFlacFile(blocks: Uint8Array[], leadingBytes = new Uint8Array()): ArrayBuffer {
   const signature = new Uint8Array([0x66, 0x4c, 0x61, 0x43]); // fLaC
   const file = new Uint8Array(
-    leadingBytes.byteLength
-      + signature.byteLength
-      + blocks.reduce((total, block) => total + block.byteLength, 0),
+    leadingBytes.byteLength +
+      signature.byteLength +
+      blocks.reduce((total, block) => total + block.byteLength, 0)
   );
   file.set(leadingBytes);
   file.set(signature, leadingBytes.byteLength);
@@ -283,9 +278,8 @@ describe('MediaBunny input memory limits', () => {
   });
 
   it('limits Ogg logical bitstreams when a finite memory budget is configured', async () => {
-    const pages = Array.from(
-      { length: 257 },
-      (_, index) => makeOggPage(new Uint8Array([0]), index, 0x02),
+    const pages = Array.from({ length: 257 }, (_, index) =>
+      makeOggPage(new Uint8Array([0]), index, 0x02)
     );
     const input = new Input({
       formats: ALL_FORMATS,
@@ -295,7 +289,7 @@ describe('MediaBunny input memory limits', () => {
 
     try {
       await expect(input.getAudioTracks()).rejects.toThrow(
-        'Ogg logical bitstream count exceeds the configured safety limit.',
+        'Ogg logical bitstream count exceeds the configured safety limit.'
       );
     } finally {
       input.dispose();
@@ -303,9 +297,8 @@ describe('MediaBunny input memory limits', () => {
   });
 
   it('preserves the default Ogg logical bitstream behavior without a finite memory budget', async () => {
-    const pages = Array.from(
-      { length: 257 },
-      (_, index) => makeOggPage(new Uint8Array([0]), index, 0x02),
+    const pages = Array.from({ length: 257 }, (_, index) =>
+      makeOggPage(new Uint8Array([0]), index, 0x02)
     );
     const input = new Input({
       formats: ALL_FORMATS,
@@ -329,14 +322,14 @@ describe('MediaBunny input memory limits', () => {
           makeFlacStreamInfoBlock(),
           makeEmptyVorbisCommentBlock(),
           makeFlacMetadataBlock(4, malformedComment, true),
-        ]),
+        ])
       ),
     });
     setInputMemoryLimits(input, 200);
 
     try {
       await expect(input.getMetadataTags()).rejects.toThrow(
-        'FLAC metadata exceeds the configured memory limit.',
+        'FLAC metadata exceeds the configured memory limit.'
       );
     } finally {
       input.dispose();
@@ -352,17 +345,14 @@ describe('MediaBunny input memory limits', () => {
     const input = new Input({
       formats: ALL_FORMATS,
       source: new BufferSource(
-        makeFlacFile(
-          [makeFlacMetadataBlock(0, new Uint8Array(34), true)],
-          leadingTags,
-        ),
+        makeFlacFile([makeFlacMetadataBlock(0, new Uint8Array(34), true)], leadingTags)
       ),
     });
     setInputMemoryLimits(input, 200);
 
     try {
       await expect(input.getMetadataTags()).rejects.toThrow(
-        'FLAC metadata exceeds the configured memory limit.',
+        'FLAC metadata exceeds the configured memory limit.'
       );
     } finally {
       input.dispose();
@@ -379,14 +369,14 @@ describe('MediaBunny input memory limits', () => {
           makeFlacStreamInfoBlock(),
           makeEmptyFlacPictureBlock(),
           makeFlacMetadataBlock(6, malformedPicture, true),
-        ]),
+        ])
       ),
     });
     setInputMemoryLimits(input, 200);
 
     try {
       await expect(input.getMetadataTags()).rejects.toThrow(
-        'FLAC metadata exceeds the configured memory limit.',
+        'FLAC metadata exceeds the configured memory limit.'
       );
     } finally {
       input.dispose();
@@ -394,21 +384,18 @@ describe('MediaBunny input memory limits', () => {
   });
 
   it('rejects an excessive number of FLAC metadata blocks', async () => {
-    const paddingBlocks = Array.from(
-      { length: 4096 },
-      (_, index) => makeFlacMetadataBlock(1, new Uint8Array(), index === 4095),
+    const paddingBlocks = Array.from({ length: 4096 }, (_, index) =>
+      makeFlacMetadataBlock(1, new Uint8Array(), index === 4095)
     );
     const input = new Input({
       formats: ALL_FORMATS,
-      source: new BufferSource(
-        makeFlacFile([makeFlacStreamInfoBlock(), ...paddingBlocks]),
-      ),
+      source: new BufferSource(makeFlacFile([makeFlacStreamInfoBlock(), ...paddingBlocks])),
     });
     setInputMemoryLimits(input, 200);
 
     try {
       await expect(input.getMetadataTags()).rejects.toThrow(
-        'FLAC metadata block count exceeds the configured safety limit.',
+        'FLAC metadata block count exceeds the configured safety limit.'
       );
     } finally {
       input.dispose();
@@ -416,15 +403,12 @@ describe('MediaBunny input memory limits', () => {
   });
 
   it('preserves the default unbounded FLAC metadata block behavior', async () => {
-    const paddingBlocks = Array.from(
-      { length: 4096 },
-      (_, index) => makeFlacMetadataBlock(1, new Uint8Array(), index === 4095),
+    const paddingBlocks = Array.from({ length: 4096 }, (_, index) =>
+      makeFlacMetadataBlock(1, new Uint8Array(), index === 4095)
     );
     const input = new Input({
       formats: ALL_FORMATS,
-      source: new BufferSource(
-        makeFlacFile([makeFlacStreamInfoBlock(), ...paddingBlocks]),
-      ),
+      source: new BufferSource(makeFlacFile([makeFlacStreamInfoBlock(), ...paddingBlocks])),
     });
 
     try {
@@ -438,10 +422,7 @@ describe('MediaBunny input memory limits', () => {
     const input = new Input({
       formats: ALL_FORMATS,
       source: new BufferSource(
-        makeFlacFile([
-          makeFlacStreamInfoBlock(),
-          makeEmptyVorbisCommentBlock(true),
-        ]),
+        makeFlacFile([makeFlacStreamInfoBlock(), makeEmptyVorbisCommentBlock(true)])
       ),
     });
     setInputMemoryLimits(input, 200);

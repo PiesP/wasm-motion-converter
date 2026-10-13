@@ -1,8 +1,7 @@
-import type { Page } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { Page } from '@playwright/test';
+import type { ConversionProfileReport } from '../../../src/services/conversion-profiler';
 
 /**
  * E2E test helpers — uses __TEST_HELPERS__ exposed by the app in dev mode.
@@ -15,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 // ── Types ──────────────────────────────────────────────────────
 
 export interface TestHelpers {
+  getConversionProfile(): ConversionProfileReport | null;
   getAppState(): string;
   getProgress(): number;
   getSettings(): {
@@ -35,15 +35,18 @@ export interface TestHelpers {
     config?: VideoDecoderConfig;
   } | null;
   getError(): string | null;
-  injectFile(file: File, metadata?: {
-    width: number;
-    height: number;
-    duration: number;
-    codec: string;
-    framerate: number;
-    bitrate: number;
-    config?: VideoDecoderConfig;
-  }): Promise<void>;
+  injectFile(
+    file: File,
+    metadata?: {
+      width: number;
+      height: number;
+      duration: number;
+      codec: string;
+      framerate: number;
+      bitrate: number;
+      config?: VideoDecoderConfig;
+    }
+  ): Promise<void>;
   resetApp(): Promise<void>;
   isConvertButtonEnabled(): boolean;
   isResultVisible(): boolean;
@@ -82,10 +85,14 @@ export function parseSizeString(sizeStr: string): number | undefined {
   const value = parseFloat(match[1]!);
   const unit = match[2]!.toUpperCase();
   switch (unit) {
-    case 'KB': return value * 1024;
-    case 'MB': return value * 1024 * 1024;
-    case 'GB': return value * 1024 * 1024 * 1024;
-    default: return undefined;
+    case 'KB':
+      return value * 1024;
+    case 'MB':
+      return value * 1024 * 1024;
+    case 'GB':
+      return value * 1024 * 1024 * 1024;
+    default:
+      return undefined;
   }
 }
 
@@ -98,10 +105,9 @@ export async function waitForIdle(page: Page, timeoutMs = 30_000): Promise<void>
       await import(modulePath).then((m) => m.attachTestHelpers());
     }
   });
-  await page.waitForFunction(
-    () => window.__TEST_HELPERS__?.getAppState() === 'idle',
-    { timeout: timeoutMs },
-  );
+  await page.waitForFunction(() => window.__TEST_HELPERS__?.getAppState() === 'idle', {
+    timeout: timeoutMs,
+  });
 }
 
 // ── File injection ─────────────────────────────────────────────
@@ -125,7 +131,7 @@ export async function injectTestFile(page: Page, filename: string): Promise<void
   await page.waitForFunction(
     () => window.__TEST_HELPERS__?.isConvertButtonEnabled() === true,
     undefined,
-    { timeout: 15_000 },
+    { timeout: 15_000 }
   );
 }
 
@@ -164,7 +170,7 @@ export async function setScale(page: Page, scale: '50%' | '75%' | '100%'): Promi
 
 export async function setSmartFrameSkip(
   page: Page,
-  mode: 'off' | 'low' | 'medium' | 'high' | 'adaptive',
+  mode: 'off' | 'low' | 'medium' | 'high' | 'adaptive'
 ): Promise<void> {
   const disclosure = page.locator('[data-testid="advanced-settings"]');
   if (!(await disclosure.evaluate((element) => (element as HTMLDetailsElement).open))) {
@@ -180,12 +186,16 @@ export async function clickConvert(page: Page): Promise<void> {
 }
 
 export async function dismissWarningDialog(page: Page): Promise<void> {
-  const btn = page.locator([
-    'button:has-text("Proceed")',
-    'button:has-text("Continue Anyway")',
-    'button:has-text("OK")',
-    '[data-testid="modal-confirm-button"]',
-  ].join(', ')).first();
+  const btn = page
+    .locator(
+      [
+        'button:has-text("Proceed")',
+        'button:has-text("Continue Anyway")',
+        'button:has-text("OK")',
+        '[data-testid="modal-confirm-button"]',
+      ].join(', ')
+    )
+    .first();
   const visible = await btn.isVisible({ timeout: 5000 }).catch(() => false);
   if (visible) {
     await btn.click();
@@ -232,7 +242,7 @@ export async function runConversion(
     quality: 'low' | 'medium' | 'high';
     scale: '50%' | '75%' | '100%';
     timeoutMs?: number;
-  },
+  }
 ): Promise<{ state: string; stats: VisibleResultStats | null; error: string | null }> {
   const { file, format, quality, scale, timeoutMs = 120_000 } = options;
 
@@ -243,7 +253,11 @@ export async function runConversion(
 
   const enabled = await isConvertButtonEnabled(page);
   if (!enabled) {
-    return { state: 'error', stats: null, error: 'Convert button not enabled after file injection' };
+    return {
+      state: 'error',
+      stats: null,
+      error: 'Convert button not enabled after file injection',
+    };
   }
 
   await clickConvert(page);
@@ -257,10 +271,7 @@ export async function runConversion(
 }
 
 /** Wait for conversion to complete (done/error/timeout). */
-export async function waitForConversionComplete(
-  page: Page,
-  timeoutMs = 120_000,
-): Promise<string> {
+export async function waitForConversionComplete(page: Page, timeoutMs = 120_000): Promise<string> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const state = await getAppState(page);

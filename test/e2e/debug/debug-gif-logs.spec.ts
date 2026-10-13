@@ -4,14 +4,14 @@
 // Debug: capture console logs from GIF conversion.
 // Run with: pnpm test -- debug/debug-gif-logs.spec.ts
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
+  clickConvert,
+  dismissWarningDialog,
   injectTestFile,
   setFormat,
   setQuality,
   setScale,
-  clickConvert,
-  dismissWarningDialog,
   waitForConversionComplete,
 } from '../fixtures/test-helpers';
 
@@ -38,12 +38,13 @@ test('H.264 → GIF debug logs', async ({ page }) => {
   console.log(`\n=== Result: ${state} (${(elapsed / 1000).toFixed(1)}s) ===`);
 
   // Print conversion-related logs
-  const conversionLogs = logs.filter((l) =>
-    l.includes('[conversion]') ||
-    l.includes('[ffmpeg]') ||
-    l.includes('WebCodecs') ||
-    l.includes('worker') ||
-    l.includes('FFmpeg direct')
+  const conversionLogs = logs.filter(
+    (l) =>
+      l.includes('[conversion]') ||
+      l.includes('[ffmpeg]') ||
+      l.includes('WebCodecs') ||
+      l.includes('worker') ||
+      l.includes('FFmpeg direct')
   );
 
   console.log('\n── Conversion logs ──');

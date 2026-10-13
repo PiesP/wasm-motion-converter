@@ -6,32 +6,76 @@ import { runInNewContext } from 'node:vm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const origin = 'https://drop.test';
-const assetUrl = (name: string, extension = 'js') => `${origin}/assets/${name}.abcdefgh.${extension}`;
+const assetUrl = (name: string, extension = 'js') =>
+  `${origin}/assets/${name}.abcdefgh.${extension}`;
 
-function assetResponse(url: string, options: { body?: string | Uint8Array; status?: number; type?: string; mime?: string | null; finalUrl?: string; redirected?: boolean; contentEncoding?: string } = {}) {
+function assetResponse(
+  url: string,
+  options: {
+    body?: string | Uint8Array;
+    status?: number;
+    type?: string;
+    mime?: string | null;
+    finalUrl?: string;
+    redirected?: boolean;
+    contentEncoding?: string;
+  } = {}
+) {
   const extension = new URL(url).pathname.split('.').at(-1);
-  const body = options.body ?? (extension === 'wasm' ? new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]) : extension === 'css' ? 'body { color: red }' : 'export const valid = true;');
+  const body =
+    options.body ??
+    (extension === 'wasm'
+      ? new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])
+      : extension === 'css'
+        ? 'body { color: red }'
+        : 'export const valid = true;');
   const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : body;
   const response = {
     url: options.finalUrl ?? url,
     status: options.status ?? 200,
     type: options.type ?? 'basic',
     redirected: options.redirected ?? false,
-    headers: new Headers(options.mime === null ? {} : { 'content-type': options.mime ?? ({ js: 'text/javascript', css: 'text/css', wasm: 'application/wasm' }[extension ?? ''] ?? 'text/plain') }),
-    clone: vi.fn(() => ({ ...response, body: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } }) })),
+    headers: new Headers(
+      options.mime === null
+        ? {}
+        : {
+            'content-type':
+              options.mime ??
+              { js: 'text/javascript', css: 'text/css', wasm: 'application/wasm' }[
+                extension ?? ''
+              ] ??
+              'text/plain',
+          }
+    ),
+    clone: vi.fn(() => ({
+      ...response,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      }),
+    })),
   };
   if (options.contentEncoding) response.headers.set('content-encoding', options.contentEncoding);
   return response;
 }
 
-function documentResponse(body = 'app', overrides: { url?: string; status?: number; type?: string; contentType?: string | null } = {}) {
+function documentResponse(
+  body = 'app',
+  overrides: { url?: string; status?: number; type?: string; contentType?: string | null } = {}
+) {
   const response = {
     body,
     url: overrides.url ?? `${origin}/`,
     status: overrides.status ?? 200,
     type: overrides.type ?? 'basic',
     ok: (overrides.status ?? 200) >= 200 && (overrides.status ?? 200) < 300,
-    headers: new Headers(overrides.contentType === null ? {} : { 'content-type': overrides.contentType ?? 'text/html; charset=utf-8' }),
+    headers: new Headers(
+      overrides.contentType === null
+        ? {}
+        : { 'content-type': overrides.contentType ?? 'text/html; charset=utf-8' }
+    ),
     clone: () => response,
   };
   return response;
@@ -75,7 +119,8 @@ function loadServiceWorker(): {
   cacheStores.set(staticCacheName, staticCacheEntries);
   cacheStores.set(dynamicCacheName, cacheEntries);
 
-  const toCacheKey = (key: string | { url: string }): string => new URL(typeof key === 'string' ? key : key.url, origin).href;
+  const toCacheKey = (key: string | { url: string }): string =>
+    new URL(typeof key === 'string' ? key : key.url, origin).href;
   const defaultResponse = documentResponse();
   let networkResponse: unknown;
   let networkFailure: unknown;
@@ -85,7 +130,16 @@ function loadServiceWorker(): {
   let syncWaitCount = 0;
   const messages: unknown[] = [];
   const fetchMock = vi.fn((request: string | { url: string }) =>
-    networkFailure === undefined ? Promise.resolve(networkResponse ?? (new URL(typeof request === 'string' ? request : request.url).pathname.startsWith('/assets/') ? assetResponse(typeof request === 'string' ? request : request.url) : defaultResponse)) : Promise.reject(networkFailure)
+    networkFailure === undefined
+      ? Promise.resolve(
+          networkResponse ??
+            (new URL(typeof request === 'string' ? request : request.url).pathname.startsWith(
+              '/assets/'
+            )
+              ? assetResponse(typeof request === 'string' ? request : request.url)
+              : defaultResponse)
+        )
+      : Promise.reject(networkFailure)
   );
 
   const createCache = (cacheName: string) => {
@@ -100,7 +154,10 @@ function loadServiceWorker(): {
       }),
       delete: vi.fn((key: string) => Promise.resolve(entries.delete(toCacheKey(key)))),
       match: vi.fn((key: string) => Promise.resolve(entries.get(toCacheKey(key)))),
-      keys: vi.fn(() => { enumerations += 1; return Promise.resolve([...entries.keys()]); }),
+      keys: vi.fn(() => {
+        enumerations += 1;
+        return Promise.resolve([...entries.keys()]);
+      }),
       put: vi.fn((key: string, response: unknown) => {
         writes += 1;
         entries.set(toCacheKey(key), response);
@@ -132,7 +189,10 @@ function loadServiceWorker(): {
     addEventListener: (type: string, listener: (event: ServiceWorkerEventLike) => void) => {
       listeners.set(type, listener);
     },
-    clients: { claim: vi.fn(), get: vi.fn(async () => ({ postMessage: (message: unknown) => messages.push(message) })) },
+    clients: {
+      claim: vi.fn(),
+      get: vi.fn(async () => ({ postMessage: (message: unknown) => messages.push(message) })),
+    },
     location: { origin: 'https://drop.test' },
     skipWaiting: vi.fn(),
   };
@@ -162,12 +222,20 @@ function loadServiceWorker(): {
       const waits: Promise<unknown>[] = [];
       let responsePromise: Promise<unknown> | undefined;
       listeners.get('fetch')?.({
-        request: { destination, method: 'GET', mode: destination === 'document' ? 'navigate' : 'cors', url },
+        request: {
+          destination,
+          method: 'GET',
+          mode: destination === 'document' ? 'navigate' : 'cors',
+          url,
+        },
         clientId: 'test-client',
         respondWith: (promise) => {
           responsePromise = promise;
         },
-        waitUntil: (promise) => { syncWaitCount += 1; waits.push(promise); },
+        waitUntil: (promise) => {
+          syncWaitCount += 1;
+          waits.push(promise);
+        },
       });
       const response = await responsePromise;
       await Promise.all(waits);
@@ -190,7 +258,9 @@ function loadServiceWorker(): {
       networkFailure = undefined;
       networkResponse = response;
     },
-    setStorageFailure: (failure) => { storageFailure = failure; },
+    setStorageFailure: (failure) => {
+      storageFailure = failure;
+    },
   };
 }
 
@@ -225,26 +295,38 @@ describe('service worker dynamic cache boundaries', () => {
     );
   });
 
-  it.each(['/robots.txt', '/sitemap.xml', '/manifest.json', '/error.html', '/other'])('does not replace the recovery document with %s', async (path) => {
-    const worker = loadServiceWorker();
-    const app = documentResponse();
-    worker.setNetworkResponse(app);
-    await worker.dispatchFetch(`${origin}/`, 'document');
-    const resource = documentResponse('resource', { url: `${origin}${path}` });
-    worker.setNetworkResponse(resource);
-    await expect(worker.dispatchFetch(`${origin}${path}`, 'document')).resolves.toBe(resource);
-    expect(worker.cacheEntries.get(`${origin}/`)).toBe(app);
-    worker.setNetworkFailure(new Error('offline'));
-    await expect(worker.dispatchFetch(`${origin}/?offline`, 'document')).resolves.toBe(app);
-    await expect(worker.dispatchFetch(`${origin}${path}?uncached`, 'document')).rejects.toThrow('offline');
-  });
+  it.each(['/robots.txt', '/sitemap.xml', '/manifest.json', '/error.html', '/other'])(
+    'does not replace the recovery document with %s',
+    async (path) => {
+      const worker = loadServiceWorker();
+      const app = documentResponse();
+      worker.setNetworkResponse(app);
+      await worker.dispatchFetch(`${origin}/`, 'document');
+      const resource = documentResponse('resource', { url: `${origin}${path}` });
+      worker.setNetworkResponse(resource);
+      await expect(worker.dispatchFetch(`${origin}${path}`, 'document')).resolves.toBe(resource);
+      expect(worker.cacheEntries.get(`${origin}/`)).toBe(app);
+      worker.setNetworkFailure(new Error('offline'));
+      await expect(worker.dispatchFetch(`${origin}/?offline`, 'document')).resolves.toBe(app);
+      await expect(worker.dispatchFetch(`${origin}${path}?uncached`, 'document')).rejects.toThrow(
+        'offline'
+      );
+    }
+  );
 
   it.each([
-    { status: 204 }, { status: 206 }, { status: 404 },
-    { contentType: 'text/plain' }, { contentType: 'application/xml' }, { contentType: null },
-    { type: 'opaque' }, { type: 'opaqueredirect' },
-    { url: `${origin}/robots.txt` }, { url: `${origin}/error.html` },
-    { url: 'https://elsewhere.test/' }, { url: '' },
+    { status: 204 },
+    { status: 206 },
+    { status: 404 },
+    { contentType: 'text/plain' },
+    { contentType: 'application/xml' },
+    { contentType: null },
+    { type: 'opaque' },
+    { type: 'opaqueredirect' },
+    { url: `${origin}/robots.txt` },
+    { url: `${origin}/error.html` },
+    { url: 'https://elsewhere.test/' },
+    { url: '' },
   ])('returns but does not admit an invalid root response %j', async (overrides) => {
     const worker = loadServiceWorker();
     const app = documentResponse();
@@ -271,7 +353,10 @@ describe('service worker dynamic cache boundaries', () => {
     const app = documentResponse('static app');
     worker.setNetworkResponse(app);
     await worker.dispatchInstall();
-    worker.cacheEntries.set(`${origin}/`, documentResponse('robots', { url: `${origin}/robots.txt`, contentType: 'text/plain' }));
+    worker.cacheEntries.set(
+      `${origin}/`,
+      documentResponse('robots', { url: `${origin}/robots.txt`, contentType: 'text/plain' })
+    );
     worker.setNetworkFailure(new Error('offline'));
     await expect(worker.dispatchFetch(`${origin}/`, 'document')).resolves.toBe(app);
     expect(worker.cacheEntries.has(`${origin}/`)).toBe(false);
@@ -279,8 +364,14 @@ describe('service worker dynamic cache boundaries', () => {
 
   it('fails offline when neither recovery entry is valid', async () => {
     const worker = loadServiceWorker();
-    worker.cacheEntries.set(`${origin}/`, documentResponse('bad dynamic', { contentType: 'text/plain' }));
-    worker.staticCacheEntries.set(`${origin}/`, documentResponse('bad static', { url: 'https://elsewhere.test/' }));
+    worker.cacheEntries.set(
+      `${origin}/`,
+      documentResponse('bad dynamic', { contentType: 'text/plain' })
+    );
+    worker.staticCacheEntries.set(
+      `${origin}/`,
+      documentResponse('bad static', { url: 'https://elsewhere.test/' })
+    );
     worker.setNetworkFailure(new Error('offline'));
     await expect(worker.dispatchFetch(`${origin}/`, 'document')).rejects.toThrow('offline');
     expect(worker.cacheEntries.size).toBe(0);
@@ -300,13 +391,18 @@ describe('service worker dynamic cache boundaries', () => {
     expect(worker.cacheEntries.get(assetUrl('old'))).toBe(oldAsset);
     worker.setNetworkFailure(new Error('offline'));
     await expect(worker.dispatchFetch(assetUrl('old'), 'script')).resolves.toBe(oldAsset);
-    await expect(worker.dispatchFetch(`${origin}/`, 'document')).resolves.toBe(worker.staticCacheEntries.get(`${origin}/`));
+    await expect(worker.dispatchFetch(`${origin}/`, 'document')).resolves.toBe(
+      worker.staticCacheEntries.get(`${origin}/`)
+    );
   });
 
   it('does not cache video files or substitute the app for API/cross-origin misses', async () => {
     const worker = loadServiceWorker();
     await worker.dispatchInstall();
-    worker.cacheStores.set('other-application-cache', new Map([[`${origin}/api/data`, documentResponse('unrelated')]]));
+    worker.cacheStores.set(
+      'other-application-cache',
+      new Map([[`${origin}/api/data`, documentResponse('unrelated')]])
+    );
     await worker.dispatchFetch(`${origin}/video.mp4`, 'document');
     await worker.dispatchFetch(`${origin}/video.webm`, 'document');
     expect(worker.cacheEntries.size).toBe(0);
@@ -314,7 +410,9 @@ describe('service worker dynamic cache boundaries', () => {
     for (const url of [`${origin}/api/data`, 'https://elsewhere.test/']) {
       await expect(worker.dispatchFetch(url)).rejects.toThrow('offline');
     }
-    await expect(worker.dispatchFetch(`${origin}/video.mp4`, 'document')).rejects.toThrow('offline');
+    await expect(worker.dispatchFetch(`${origin}/video.mp4`, 'document')).rejects.toThrow(
+      'offline'
+    );
   });
 
   it('keeps the latest navigation document while evicting runtime assets', async () => {
@@ -364,7 +462,11 @@ describe('service worker dynamic cache boundaries', () => {
     const cached = worker.cacheEntries.get(url);
     const cloned = cached as Response;
     const cloneSpy = vi.spyOn(cloned, 'clone');
-    const before = { fetch: worker.fetchMock.mock.calls.length, writes: worker.cacheWrites(), walks: worker.cacheEnumerations() };
+    const before = {
+      fetch: worker.fetchMock.mock.calls.length,
+      writes: worker.cacheWrites(),
+      walks: worker.cacheEnumerations(),
+    };
     worker.setNetworkFailure(new Error('offline'));
     await expect(worker.dispatchFetch(url, 'script')).resolves.toBe(cached);
     expect(worker.fetchMock).toHaveBeenCalledTimes(before.fetch);
@@ -410,7 +512,9 @@ describe('service worker dynamic cache boundaries', () => {
     await expect(worker.dispatchFetch(url, 'script')).resolves.toBe(old);
     expect(old.clone).toHaveBeenCalledTimes(2);
     const migrated = worker.cacheEntries.get(url);
-    expect((migrated as Response).headers.get('x-dropconvert-asset-admission')).toBe('body-checked-v1');
+    expect((migrated as Response).headers.get('x-dropconvert-asset-admission')).toBe(
+      'body-checked-v1'
+    );
     const cloneSpy = vi.spyOn(migrated as Response, 'clone');
     await expect(worker.dispatchFetch(url, 'script')).resolves.toBe(migrated);
     expect(old.clone).toHaveBeenCalledTimes(2);
@@ -418,36 +522,60 @@ describe('service worker dynamic cache boundaries', () => {
     expect(worker.fetchMock).not.toHaveBeenCalled();
   });
 
-  it.each(['js', 'css', 'wasm'] as const)('rejects HTML mislabeled as %s from network and a polluted cache entry', async (extension) => {
-    const worker = loadServiceWorker();
-    const url = assetUrl(`polluted-${extension}`, extension);
-    const bad = assetResponse(url, { body: '<!doctype html><html>fallback</html>' });
-    worker.cacheEntries.set(url, bad);
-    worker.setNetworkResponse(bad);
-    const response = await worker.dispatchFetch(url);
-    expect((response as Response).type).toBe('error');
-    expect(worker.cacheEntries.has(url)).toBe(false);
-    expect(worker.messages).toEqual([{ type: 'dropconvert:asset-unavailable', path: new URL(url).pathname, status: 200, reason: 'invalid-response' }]);
-  });
+  it.each(['js', 'css', 'wasm'] as const)(
+    'rejects HTML mislabeled as %s from network and a polluted cache entry',
+    async (extension) => {
+      const worker = loadServiceWorker();
+      const url = assetUrl(`polluted-${extension}`, extension);
+      const bad = assetResponse(url, { body: '<!doctype html><html>fallback</html>' });
+      worker.cacheEntries.set(url, bad);
+      worker.setNetworkResponse(bad);
+      const response = await worker.dispatchFetch(url);
+      expect((response as Response).type).toBe('error');
+      expect(worker.cacheEntries.has(url)).toBe(false);
+      expect(worker.messages).toEqual([
+        {
+          type: 'dropconvert:asset-unavailable',
+          path: new URL(url).pathname,
+          status: 200,
+          reason: 'invalid-response',
+        },
+      ]);
+    }
+  );
 
   it.each([
-    { status: 206 }, { status: 404 }, { type: 'opaque' }, { type: 'opaqueredirect' },
-    { mime: 'text/html' }, { finalUrl: `${origin}/index.html` },
-    { finalUrl: 'https://elsewhere.test/assets/app.abcdefgh.js' }, { redirected: true },
+    { status: 206 },
+    { status: 404 },
+    { type: 'opaque' },
+    { type: 'opaqueredirect' },
+    { mime: 'text/html' },
+    { finalUrl: `${origin}/index.html` },
+    { finalUrl: 'https://elsewhere.test/assets/app.abcdefgh.js' },
+    { redirected: true },
   ])('does not admit an invalid asset response %j', async (options) => {
     const worker = loadServiceWorker();
     const url = assetUrl('invalid');
     worker.setNetworkResponse(assetResponse(url, options));
-    expect((await worker.dispatchFetch(url) as Response).type).toBe('error');
+    expect(((await worker.dispatchFetch(url)) as Response).type).toBe('error');
     expect(worker.cacheEntries.size).toBe(0);
   });
 
   it('reports a missing asset with its HTTP status for a controlled reload prompt', async () => {
     const worker = loadServiceWorker();
     const url = assetUrl('missing');
-    worker.setNetworkResponse(assetResponse(url, { status: 404, mime: 'text/html', body: '<html>missing</html>' }));
-    expect((await worker.dispatchFetch(url, 'script') as Response).type).toBe('error');
-    expect(worker.messages).toEqual([{ type: 'dropconvert:asset-unavailable', path: '/assets/missing.abcdefgh.js', status: 404, reason: 'invalid-response' }]);
+    worker.setNetworkResponse(
+      assetResponse(url, { status: 404, mime: 'text/html', body: '<html>missing</html>' })
+    );
+    expect(((await worker.dispatchFetch(url, 'script')) as Response).type).toBe('error');
+    expect(worker.messages).toEqual([
+      {
+        type: 'dropconvert:asset-unavailable',
+        path: '/assets/missing.abcdefgh.js',
+        status: 404,
+        reason: 'invalid-response',
+      },
+    ]);
   });
 
   it('keeps a valid old asset after failed network for a removed lazy chunk', async () => {
@@ -455,9 +583,20 @@ describe('service worker dynamic cache boundaries', () => {
     const oldUrl = assetUrl('old-open-tab');
     worker.cacheEntries.set(oldUrl, assetResponse(oldUrl));
     worker.setNetworkFailure(new Error('removed from deployment'));
-    await expect(worker.dispatchFetch(oldUrl, 'script')).resolves.toBe(worker.cacheEntries.get(oldUrl));
-    await expect(worker.dispatchFetch(assetUrl('never-fetched'), 'script')).rejects.toThrow('removed from deployment');
-    expect(worker.messages).toEqual([{ type: 'dropconvert:asset-unavailable', path: '/assets/never-fetched.abcdefgh.js', status: 0, reason: 'network-error' }]);
+    await expect(worker.dispatchFetch(oldUrl, 'script')).resolves.toBe(
+      worker.cacheEntries.get(oldUrl)
+    );
+    await expect(worker.dispatchFetch(assetUrl('never-fetched'), 'script')).rejects.toThrow(
+      'removed from deployment'
+    );
+    expect(worker.messages).toEqual([
+      {
+        type: 'dropconvert:asset-unavailable',
+        path: '/assets/never-fetched.abcdefgh.js',
+        status: 0,
+        reason: 'network-error',
+      },
+    ]);
     expect(worker.cacheEntries.has(oldUrl)).toBe(true);
   });
 

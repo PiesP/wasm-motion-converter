@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { globalBufferPool } from '@services/buffer-pool';
-import { decodeFrames, type DecodeResult } from '@services/decoder-service';
+import { type DecodeResult, decodeFrames } from '@services/decoder-service';
 import {
   calculateFrameOutputConcurrency,
   calculateStagedFrameSourceCapacity,
@@ -19,6 +18,7 @@ import {
   MAX_FRAME_PIXEL_COUNT,
   STALL_DETECTION_TIMEOUT_MS,
 } from '@utils/constants';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { logger } = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -339,7 +339,10 @@ describe('decoder-service', () => {
           }
         }
       );
-      vi.stubGlobal('createImageBitmap', vi.fn().mockRejectedValue(new Error('use canvas fallback')));
+      vi.stubGlobal(
+        'createImageBitmap',
+        vi.fn().mockRejectedValue(new Error('use canvas fallback'))
+      );
       return { copies: () => canvasCopies };
     }
 
@@ -525,9 +528,7 @@ describe('decoder-service', () => {
     it('assigns skipped fixed-frame holds to the preceding batch frame', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
       FakeVideoFrame.frameDuration = 100_000;
-      const chunks = [0, 1, 2, 3].map((index) =>
-        fixtureChunk(index * 100_000, index * 40)
-      );
+      const chunks = [0, 1, 2, 3].map((index) => fixtureChunk(index * 100_000, index * 40));
       const result = await decodeFrames(
         {
           chunks,
@@ -552,11 +553,7 @@ describe('decoder-service', () => {
       async (mode) => {
         vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
         FakeVideoFrame.frameDuration = 100_000;
-        const chunks = [
-          fixtureChunk(0, 10),
-          fixtureChunk(0, 250),
-          fixtureChunk(100_000, 100),
-        ];
+        const chunks = [fixtureChunk(0, 10), fixtureChunk(0, 250), fixtureChunk(100_000, 100)];
         const streamed: Array<{ intensity: number; startUs: number }> = [];
         const result = await decodeFrames(
           {
@@ -1578,10 +1575,7 @@ describe('decoder-service', () => {
       await expect(
         decodeFrames(
           {
-            chunks: [
-              fixtureChunk(0, 10, { frameDuration: null }),
-              fixtureChunk(Number.NaN, 100),
-            ],
+            chunks: [fixtureChunk(0, 10, { frameDuration: null }), fixtureChunk(Number.NaN, 100)],
             config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
             duration: 1,
             framerate: 30,
@@ -1764,9 +1758,7 @@ describe('decoder-service', () => {
     it('does not let repeated scene changes reset a requested decimation floor', async () => {
       const intensities = [
         ...Array.from({ length: 16 }, () => 0),
-        ...Array.from({ length: 64 }, (_, index) =>
-          Math.floor(index / 2) % 2 === 0 ? 255 : 0
-        ),
+        ...Array.from({ length: 64 }, (_, index) => (Math.floor(index / 2) % 2 === 0 ? 255 : 0)),
       ];
 
       expect(await decodeAdaptive(intensities, 8, 120)).toEqual([
@@ -1933,14 +1925,21 @@ describe('decoder-service', () => {
     });
 
     it('caps adaptive decimation at the minimum output fps', async () => {
-      const delivered = await decodeAdaptive(Array.from({ length: 40 }, () => 0), 1, 15);
+      const delivered = await decodeAdaptive(
+        Array.from({ length: 40 }, () => 0),
+        1,
+        15
+      );
 
       expect(delivered.length).toBeGreaterThanOrEqual(8);
     });
 
     it('classifies static, slow, normal, and fast fixtures with distinct decimation', async () => {
       const warmup = Array.from({ length: 16 }, () => 0);
-      const staticFrames = await decodeAdaptive([...warmup, ...Array.from({ length: 24 }, () => 0)]);
+      const staticFrames = await decodeAdaptive([
+        ...warmup,
+        ...Array.from({ length: 24 }, () => 0),
+      ]);
       const slowFrames = await decodeAdaptive([
         ...warmup,
         ...Array.from({ length: 24 }, (_, index) => (index + 1) * 2),
@@ -1960,12 +1959,7 @@ describe('decoder-service', () => {
     });
 
     it('keeps a scene-change frame that lands on a static-scene skip slot', async () => {
-      const delivered = await decodeAdaptive([
-        ...Array.from({ length: 17 }, () => 0),
-        4,
-        8,
-        12,
-      ]);
+      const delivered = await decodeAdaptive([...Array.from({ length: 17 }, () => 0), 4, 8, 12]);
 
       expect(delivered).toContain(17);
     });
@@ -2056,9 +2050,7 @@ describe('decoder-service', () => {
 
         releaseFirstDelivery();
         await vi.waitFor(() => expect(delivered).toEqual([0, 1]));
-        await vi.waitFor(() =>
-          expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000, 2_000])
-        );
+        await vi.waitFor(() => expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000, 2_000]));
         FakeVideoFrame.copyResolvers.get(2_000)?.();
         await decoding;
       } catch (error) {
@@ -2253,9 +2245,7 @@ describe('decoder-service', () => {
             onFrameAvailable: (rgbaData) => globalBufferPool.release(rgbaData),
           }
         )
-      ).rejects.toThrow(
-        'Decoded frame output memory limit exceeded (shared frame byte budget)'
-      );
+      ).rejects.toThrow('Decoded frame output memory limit exceeded (shared frame byte budget)');
 
       for (const frame of FakeVideoFrame.instances) {
         expect(frame.close).toHaveBeenCalledOnce();
@@ -2334,9 +2324,7 @@ describe('decoder-service', () => {
 
       await vi.waitFor(() => expect(pending.has(0)).toBe(true));
       expect(stats.maxOutstandingFrames).toBe(outputCount);
-      expect(budget.usage.totalBytes).toBeLessThanOrEqual(
-        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
-      );
+      expect(budget.usage.totalBytes).toBeLessThanOrEqual(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
 
       for (let index = 0; index < outputCount; index++) {
         await vi.waitFor(() => expect(pending.has(index)).toBe(true));
@@ -2416,9 +2404,7 @@ describe('decoder-service', () => {
       await vi.waitFor(() => expect(pending.has(0)).toBe(true));
       pending.get(0)?.reject(firstFailure);
 
-      await expect(decoding).rejects.toThrow(
-        'Frame processing failed: connected worker failure'
-      );
+      await expect(decoding).rejects.toThrow('Frame processing failed: connected worker failure');
       await expect(encoder.finish()).rejects.toBe(firstFailure);
       for (const frame of FakeVideoFrame.instances) {
         expect(frame.close).toHaveBeenCalledOnce();
@@ -2546,9 +2532,7 @@ describe('decoder-service', () => {
       FakeVideoFrame.copyResolvers.get(1_000)?.();
       rejectFirstDelivery(new Error('fixture delivery failure'));
 
-      await expect(decoding).rejects.toThrow(
-        'Frame processing failed: fixture delivery failure'
-      );
+      await expect(decoding).rejects.toThrow('Frame processing failed: fixture delivery failure');
       expect(delivered).toEqual([0]);
       expect(FakeVideoFrame.copyStarts).toEqual([0, 1_000]);
       for (const frame of FakeVideoFrame.instances) {
@@ -2799,9 +2783,7 @@ describe('decoder-service', () => {
       await vi.waitFor(() => expect(delivered).toEqual([0]));
       processingFailure.abort(new Error('fixture pre-flush failure'));
 
-      await expect(decoding).rejects.toThrow(
-        'Frame processing failed: fixture pre-flush failure'
-      );
+      await expect(decoding).rejects.toThrow('Frame processing failed: fixture pre-flush failure');
       expect(decoderInstance?.reset).toHaveBeenCalledOnce();
       expect(decoderInstance?.flush).not.toHaveBeenCalled();
       expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
@@ -2988,11 +2970,7 @@ describe('decoder-service', () => {
       const runtimeCapacity = Math.floor(
         (FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingBytes) / runtimeSourceBytes
       );
-      const { Decoder, stats } = createFlushBurstVideoDecoder(
-        runtimeCapacity + 1,
-        1920,
-        1080
-      );
+      const { Decoder, stats } = createFlushBurstVideoDecoder(runtimeCapacity + 1, 1920, 1080);
       const canvas = stubScalingCanvas(960, 540);
       vi.stubGlobal('VideoDecoder', Decoder);
       const delivered: number[] = [];
@@ -3048,11 +3026,7 @@ describe('decoder-service', () => {
       const fallbackCapacity = Math.floor(
         (FRAME_PIPELINE_MEMORY_BUDGET_BYTES - targetWorkingBytes) / fallbackSourceBytes
       );
-      const { Decoder, stats } = createFlushBurstVideoDecoder(
-        fallbackCapacity + 1,
-        1920,
-        1080
-      );
+      const { Decoder, stats } = createFlushBurstVideoDecoder(fallbackCapacity + 1, 1920, 1080);
       vi.stubGlobal('VideoDecoder', Decoder);
 
       await expect(
@@ -3527,9 +3501,7 @@ describe('decoder-service', () => {
         const cancellation = new AbortController();
         const processing = new AbortController();
         class RacingSignalVideoDecoder {
-          static async isConfigSupported(
-            config: VideoDecoderConfig
-          ): Promise<VideoDecoderSupport> {
+          static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
             return { config, supported: true };
           }
 
@@ -3980,9 +3952,7 @@ describe('decoder-service', () => {
       const decodedChunkTimestamps: number[] = [];
       const iteratorClosed = vi.fn();
       class ReorderingVideoDecoder {
-        static async isConfigSupported(
-          config: VideoDecoderConfig
-        ): Promise<VideoDecoderSupport> {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
           return { config, supported: true };
         }
 
@@ -4052,9 +4022,7 @@ describe('decoder-service', () => {
     it('bounds cumulative input packet work even when no output frames are produced', async () => {
       let decodeCalls = 0;
       class NoOutputVideoDecoder {
-        static async isConfigSupported(
-          config: VideoDecoderConfig
-        ): Promise<VideoDecoderSupport> {
+        static async isConfigSupported(config: VideoDecoderConfig): Promise<VideoDecoderSupport> {
           return { config, supported: true };
         }
 

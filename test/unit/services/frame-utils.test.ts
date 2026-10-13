@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { globalBufferPool } from '@services/buffer-pool';
 import {
   clearCanvasCache,
   compareMotionSignatures,
-  copyFrameToPixels,
   computeMotionSignature,
   convertRGBAToRGB,
+  copyFrameToPixels,
   resolveVideoDimensions,
 } from '@services/frame-utils';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => {
   clearCanvasCache();
@@ -82,8 +82,14 @@ describe('bounded color-aware motion signatures', () => {
     const cursor = background.slice();
     cursor.set([255, 255, 255], (screenWidth + 1) * 3);
     const baseline = computeMotionSignature(background, screenWidth, screenHeight);
-    expect(compareMotionSignatures(computeMotionSignature(noise, screenWidth, screenHeight), baseline).distance).toBeLessThanOrEqual(1.5);
-    expect(compareMotionSignatures(computeMotionSignature(cursor, screenWidth, screenHeight), baseline).distance).toBeGreaterThan(6);
+    expect(
+      compareMotionSignatures(computeMotionSignature(noise, screenWidth, screenHeight), baseline)
+        .distance
+    ).toBeLessThanOrEqual(1.5);
+    expect(
+      compareMotionSignatures(computeMotionSignature(cursor, screenWidth, screenHeight), baseline)
+        .distance
+    ).toBeGreaterThan(6);
   });
 
   it('detects scene cuts and gradual motion while tolerating small compression noise', () => {
@@ -153,16 +159,19 @@ describe('resolveVideoDimensions', () => {
     ['NaN', Number.NaN, 576],
     ['infinite', Number.POSITIVE_INFINITY, 576],
     ['incomplete', 1024, undefined],
-  ])('rejects %s display aspect dimensions instead of falling back to coded size', (_name, width, height) => {
-    expect(
-      resolveVideoDimensions({
-        codedWidth: 720,
-        codedHeight: 576,
-        displayAspectWidth: width,
-        displayAspectHeight: height,
-      })
-    ).toBeNull();
-  });
+  ])(
+    'rejects %s display aspect dimensions instead of falling back to coded size',
+    (_name, width, height) => {
+      expect(
+        resolveVideoDimensions({
+          codedWidth: 720,
+          codedHeight: 576,
+          displayAspectWidth: width,
+          displayAspectHeight: height,
+        })
+      ).toBeNull();
+    }
+  );
 
   it('rejects display aspect dimensions above the per-frame working-memory budget', () => {
     expect(
@@ -214,10 +223,7 @@ describe('clearCanvasCache', () => {
       drawImage: vi.fn(),
       getImageData: vi.fn(() => ({
         data: new Uint8ClampedArray([
-          255, 0, 0, 255,
-          0, 255, 0, 255,
-          0, 0, 255, 255,
-          255, 255, 255, 255,
+          255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
         ]),
       })),
     };
@@ -247,20 +253,9 @@ describe('clearCanvasCache', () => {
       displayHeight: 4,
     } as VideoFrame;
 
-    const rgb = await copyFrameToPixels(
-      frame,
-      2,
-      2,
-      { copyPath: null },
-      'rgb'
-    );
+    const rgb = await copyFrameToPixels(frame, 2, 2, { copyPath: null }, 'rgb');
 
-    expect([...rgb.subarray(0, 12)]).toEqual([
-      255, 0, 0,
-      0, 255, 0,
-      0, 0, 255,
-      255, 255, 255,
-    ]);
+    expect([...rgb.subarray(0, 12)]).toEqual([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]);
     expect(closeBitmap).toHaveBeenCalledOnce();
     expect(canvases).toEqual([{ width: 2, height: 2 }]);
     globalBufferPool.release(rgb);
@@ -296,14 +291,7 @@ describe('opaque RGBA frame copying', () => {
       displayWidth: 80,
     } as VideoFrame;
 
-    const rgba = await copyFrameToPixels(
-      frame,
-      48,
-      80,
-      { copyPath: null },
-      'rgba',
-      270
-    );
+    const rgba = await copyFrameToPixels(frame, 48, 80, { copyPath: null }, 'rgba', 270);
 
     expect(context2d.translate).toHaveBeenCalledWith(0, 80);
     expect(context2d.rotate).toHaveBeenCalledWith(-Math.PI / 2);
@@ -430,7 +418,10 @@ describe('opaque RGBA frame copying', () => {
         }
       }
     );
-    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ close: vi.fn() })));
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({ close: vi.fn() }))
+    );
     const frame = {
       allocationSize: () => 8,
       codedHeight: 2,
@@ -480,13 +471,7 @@ describe('opaque RGBA frame copying', () => {
     const createBitmap = vi.fn(async () => ({ close: vi.fn() }));
     vi.stubGlobal('createImageBitmap', createBitmap);
 
-    const copied = await copyFrameToPixels(
-      frame,
-      1,
-      1,
-      { copyPath: null },
-      'rgba'
-    );
+    const copied = await copyFrameToPixels(frame, 1, 1, { copyPath: null }, 'rgba');
 
     expect([...copied]).toEqual([10, 20, 30, 255]);
     expect(context2d.drawImage).toHaveBeenCalledWith(frame, 0, 0);
@@ -523,11 +508,7 @@ describe('convertRGBAToRGB', () => {
   });
 
   it('handles multiple pixels correctly (RGBA)', () => {
-    const rgba = new Uint8Array([
-      255, 0, 0, 255,
-      0, 255, 0, 128,
-      0, 0, 255, 64,
-    ]);
+    const rgba = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 64]);
     const rgb = convertRGBAToRGB(rgba, 3, 1, 'RGBA');
     // 3 pixels × 3 bytes = 9 bytes, pool rounds to 16
     expect(rgb.byteLength).toBeGreaterThanOrEqual(9);

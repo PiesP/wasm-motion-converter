@@ -157,10 +157,7 @@ export interface ExpectedOutputRange {
  *
  * Format: `[videoId][quality][scale] → { minBytes, maxBytes }`
  */
-export const BASELINE_RESULTS: Record<
-  string,
-  Record<string, ExpectedOutputRange>
-> = {
+export const BASELINE_RESULTS: Record<string, Record<string, ExpectedOutputRange>> = {
   'h264-baseline': {
     medium: { minBytes: 25_000_000, maxBytes: 45_000_000 },
     high: { minBytes: 30_000_000, maxBytes: 50_000_000 },

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 import { DEMUX_MEMORY_BUDGET_BYTES, ENCODED_CHUNK_BUDGET_BYTES } from '@utils/constants';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const keyPacket = {
@@ -24,9 +24,9 @@ const mocks = vi.hoisted(() => {
   return {
     getKeyPacket: vi.fn().mockResolvedValue(keyPacket),
     getFirstPacket: vi.fn().mockResolvedValue(keyPacket),
-    getNextPacket: vi.fn().mockImplementation(async (packet: unknown) =>
-      packet === keyPacket ? packets[1] : null
-    ),
+    getNextPacket: vi
+      .fn()
+      .mockImplementation(async (packet: unknown) => (packet === keyPacket ? packets[1] : null)),
     getPacket: vi.fn().mockResolvedValue(keyPacket),
     getNextKeyPacket: vi.fn().mockResolvedValue({
       duration: 1,
@@ -52,7 +52,6 @@ vi.mock('mediabunny', () => ({
     getNextPacket = mocks.getNextPacket;
     getPacket = mocks.getPacket;
     getNextKeyPacket = mocks.getNextKeyPacket;
-
   },
 }));
 

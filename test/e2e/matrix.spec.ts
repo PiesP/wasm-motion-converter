@@ -5,29 +5,25 @@
 // Tests all codec × format combinations from the manifest.
 // For quick smoke tests, see smoke.spec.ts.
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { BASELINE_RESULTS, TEST_VIDEOS, type TestQuality } from '../lib/test-manifest';
+import { recordResult } from '../lib/test-recorder';
 import {
+  clickConvert,
+  dismissWarningDialog,
+  getErrorMessage,
+  getVisibleResultStats,
   injectTestFile,
+  isConvertButtonEnabled,
+  isErrorVisible,
+  isResultVisible,
   isVideoFixtureCodecSupported,
   parseSizeString,
   setFormat,
   setQuality,
   setScale,
-  clickConvert,
-  dismissWarningDialog,
-  isResultVisible,
-  isErrorVisible,
-  getVisibleResultStats,
-  getErrorMessage,
-  isConvertButtonEnabled,
   waitForConversionComplete,
 } from './fixtures/test-helpers';
-import {
-  TEST_VIDEOS,
-  type TestQuality,
-  BASELINE_RESULTS,
-} from '../lib/test-manifest';
-import { recordResult } from '../lib/test-recorder';
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -46,10 +42,10 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
       });
 
       // GIF conversion for all codecs
-      test(`→ GIF (medium, 50%)`, async ({ page }) => {
+      test('→ GIF (medium, 50%)', async ({ page }) => {
         test.skip(
           !(await isVideoFixtureCodecSupported(page, video.file)),
-          `${video.codec} decoding is unavailable in this browser runtime`,
+          `${video.codec} decoding is unavailable in this browser runtime`
         );
         await injectTestFile(page, video.file);
 
@@ -80,7 +76,7 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
               outputSize = parseSizeString(stats.outputSize);
             }
           } else if (result === 'error') {
-            errorMsg = await getErrorMessage(page) ?? 'Unknown error';
+            errorMsg = (await getErrorMessage(page)) ?? 'Unknown error';
           } else {
             errorMsg = 'Conversion timed out';
           }
@@ -115,17 +111,17 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
           if (range) {
             expect(
               outputSize,
-              `Output size ${outputSize} outside expected range [${range.minBytes}, ${range.maxBytes}]`,
+              `Output size ${outputSize} outside expected range [${range.minBytes}, ${range.maxBytes}]`
             ).toBeLessThanOrEqual(range.maxBytes * 1.5);
           }
         }
       });
 
       // WebP conversion for all codecs
-      test(`→ WebP (medium, 50%)`, async ({ page }) => {
+      test('→ WebP (medium, 50%)', async ({ page }) => {
         test.skip(
           !(await isVideoFixtureCodecSupported(page, video.file)),
-          `${video.codec} decoding is unavailable in this browser runtime`,
+          `${video.codec} decoding is unavailable in this browser runtime`
         );
         await injectTestFile(page, video.file);
 
@@ -149,7 +145,7 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
           const result = await waitForConversionComplete(page, video.maxConversionTimeMs);
           success = result === 'done';
           if (!success && result === 'error') {
-            errorMsg = await getErrorMessage(page) ?? 'Unknown error';
+            errorMsg = (await getErrorMessage(page)) ?? 'Unknown error';
           } else if (result === 'timeout') {
             errorMsg = 'Conversion timed out';
           }

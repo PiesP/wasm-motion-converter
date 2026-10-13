@@ -59,8 +59,8 @@ vi.mock('@utils/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { handleFileSelected } from '@hooks/conversion-handlers/use-handle-file-selected';
 import type { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
+import { handleFileSelected } from '@hooks/conversion-handlers/use-handle-file-selected';
 
 describe('handleFileSelected conversion settings', () => {
   beforeEach(() => {
@@ -156,7 +156,10 @@ describe('handleFileSelected conversion settings', () => {
 
   it('clears the previous selection before reporting a new file validation error', async () => {
     mocks.previewUrl = 'blob:previous-preview';
-    mocks.validateVideoFile.mockResolvedValueOnce({ valid: false, error: new Error('invalid file') });
+    mocks.validateVideoFile.mockResolvedValueOnce({
+      valid: false,
+      error: new Error('invalid file'),
+    });
     const runtime = {
       startNewRun: () => ({ isActive: () => true, signal: new AbortController().signal }),
       finishAnalysisRun: vi.fn(),
@@ -272,9 +275,11 @@ describe('handleFileSelected conversion settings', () => {
 
   it('keeps analysis cancellation busy until metadata cleanup settles', async () => {
     let finishMetadata: ((value: unknown) => void) | undefined;
-    mocks.extractVideoMetadata.mockReturnValueOnce(new Promise<unknown>((resolve) => {
-      finishMetadata = resolve;
-    }));
+    mocks.extractVideoMetadata.mockReturnValueOnce(
+      new Promise<unknown>((resolve) => {
+        finishMetadata = resolve;
+      })
+    );
     const abort = new AbortController();
     const runtime = {
       startNewRun: () => ({ isActive: () => !abort.signal.aborted, signal: abort.signal }),
