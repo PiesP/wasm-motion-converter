@@ -108,7 +108,7 @@ static browser or codec allowlist.
 
 Fast CI runs the quality gate, unit coverage, the repository-backed E2E profile
 (including deterministic output contracts), the production build, and
-duplication checks. Deep verification adds mutation testing. The workflow files
+the retained quality checks. Deep verification adds mutation testing. The workflow files
 in `.github/workflows/` are authoritative when this summary changes.
 
 ## Common pitfalls

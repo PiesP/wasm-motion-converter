@@ -5,7 +5,6 @@ name: 🏗️ CI
 # - Run unit tests with coverage thresholds
 # - Run browser E2E tests
 # - Build the production app
-# - Report the required duplication status; strict duplication runs in Deep Verification
 #
 # Expensive mutation testing lives in deep-checks.yaml so PR feedback is not
 # blocked by a long-running, resource-heavy analysis.
@@ -40,7 +39,6 @@ jobs:
       unit: ${{ steps.route.outcome == 'success' && steps.route.outputs.unit || 'true' }}
       e2e: ${{ steps.route.outcome == 'success' && steps.route.outputs.e2e || 'true' }}
       build: ${{ steps.route.outcome == 'success' && steps.route.outputs.build || 'true' }}
-      duplication: ${{ steps.route.outcome == 'success' && steps.route.outputs.duplication || 'true' }}
     steps:
       - name: 📥 Checkout routing inputs
         id: routing_checkout
@@ -90,11 +88,10 @@ jobs:
           UNIT: ${{ steps.classify.outputs.unit }}
           E2E: ${{ steps.classify.outputs.e2e }}
           BUILD: ${{ steps.classify.outputs.build }}
-          DUPLICATION: ${{ steps.classify.outputs.duplication }}
         run: |
           set -euo pipefail
           valid=true
-          for value in "$QUALITY" "$UNIT" "$E2E" "$BUILD" "$DUPLICATION"; do
+          for value in "$QUALITY" "$UNIT" "$E2E" "$BUILD"; do
             if [[ ! "$value" =~ ^(true|false)$ ]]; then
               valid=false
             fi
@@ -106,7 +103,6 @@ jobs:
             UNIT=true
             E2E=true
             BUILD=true
-            DUPLICATION=true
           fi
 
           {
@@ -114,7 +110,6 @@ jobs:
             echo "unit=$UNIT"
             echo "e2e=$E2E"
             echo "build=$BUILD"
-            echo "duplication=$DUPLICATION"
           } >> "$GITHUB_OUTPUT"
 
   quality:

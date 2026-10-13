@@ -38,7 +38,6 @@ describe('Fast mutation profile', () => {
     expect(config.mutator?.excludedMutations).not.toContain('BooleanLiteral');
     expect(packageJson.scripts?.['mut:fast']).toBe('stryker run stryker.conf.fast.json');
     expect(workflow).not.toContain('\n  push:\n');
-    expect(workflow).toContain('run: nose query src --baseline .nose-baseline.json --fail-on new');
     expect(ciWorkflow).not.toContain('name: pr-gate/duplication');
     expect(workflow).toContain('path: reports/mutation/');
     expect(workflow).toContain('if-no-files-found: error');

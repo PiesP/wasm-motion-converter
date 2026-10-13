@@ -10,7 +10,6 @@
     "scripts/release/verify-source.test.ts",
     "scripts/ci/pinned-tools.ts",
     "scripts/ci/check-pinned-tools.ts",
-    "scripts/ci/install-nose.ts",
     "test/unit/**/*.test.{ts,tsx}",
     "test/native/**/*.test.ts",
     "test/e2e/**/*.spec.ts"
@@ -32,7 +31,7 @@
     "@t": ["src/types"],
     "@i18n": ["src/i18n"]
   },
-  "ignoreBinaries": ["ffmpeg", "ffprobe", "nose"],
+  "ignoreBinaries": ["ffmpeg", "ffprobe"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["@types/dom-webcodecs", "wrangler"],
   "node": false

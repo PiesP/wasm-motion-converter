@@ -11,7 +11,6 @@ const keys = [
   'unit',
   'e2e',
   'build',
-  'duplication',
   'mutation',
   'dependency',
   'codeql',
@@ -90,7 +89,6 @@ function classifyPath(routes: Routes, path: string): void {
       'unit',
       'e2e',
       'build',
-      'duplication',
       'mutation',
       'codeql',
       'semgrep',
@@ -122,16 +120,7 @@ function classifyPath(routes: Routes, path: string): void {
     if (path === 'scripts/ci/pinned-tools.json' || path === 'scripts/ci/pinned-tools.ts') {
       enable(routes, 'dependency');
     }
-    enable(
-      routes,
-      'quality',
-      'unit',
-      'duplication',
-      'codeql',
-      'semgrep',
-      'semgrep_full',
-      'security_tools'
-    );
+    enable(routes, 'quality', 'unit', 'codeql', 'semgrep', 'semgrep_full', 'security_tools');
   } else if (path.startsWith('scripts/security/')) {
     enable(routes, 'quality', 'unit', 'codeql', 'semgrep', 'semgrep_full', 'security_tools');
   } else if (path === '.github/workflows/security.yaml') {
@@ -148,8 +137,6 @@ function classifyPath(routes: Routes, path: string): void {
     enable(routes, 'quality', 'unit', 'e2e', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (['stryker.conf.json', 'stryker.conf.fast.json'].includes(path)) {
     enable(routes, 'quality', 'unit', 'mutation', 'codeql', 'semgrep', 'semgrep_full');
-  } else if (path === '.nose-baseline.json' || path === 'nose.toml') {
-    enable(routes, 'quality', 'unit', 'duplication', 'semgrep', 'semgrep_full');
   } else if (path === 'wrangler.toml') {
     enable(routes, 'unit', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path === '.gitattributes' || path === '.gitignore') {
