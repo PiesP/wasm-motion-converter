@@ -184,6 +184,50 @@ export interface DecodeResult {
   tailAccumulatedMs: number;
 }
 
+type DecoderDeliveryPlan =
+  | { kind: 'cpu-batch' }
+  | { kind: 'cpu-stream'; callback: NonNullable<DecodeOptions['onFrameAvailable']> }
+  | { kind: 'video-frame-batch'; callback: NonNullable<DecodeOptions['onVideoFrameAvailable']> }
+  | { kind: 'video-frame-stream'; callback: NonNullable<DecodeOptions['onVideoFrameAvailable']> };
+
+/** Normalize legacy options once, retaining function checks for JavaScript callers. */
+function normalizeDecoderDelivery(
+  mode: DecodeOptions['mode'],
+  onFrameAvailable: DecodeOptions['onFrameAvailable'],
+  onVideoFrameAvailable: DecodeOptions['onVideoFrameAvailable']
+): DecoderDeliveryPlan {
+  const streaming =
+    mode === 'stream' ||
+    (mode !== 'batch' &&
+      (typeof onFrameAvailable === 'function' || typeof onVideoFrameAvailable === 'function'));
+  if (
+    streaming &&
+    typeof onFrameAvailable !== 'function' &&
+    typeof onVideoFrameAvailable !== 'function'
+  ) {
+    throw new Error('Streaming decode requires an onFrameAvailable callback');
+  }
+  if (mode === 'batch' && typeof onFrameAvailable === 'function') {
+    logger.warn(
+      'decoders',
+      'onFrameAvailable provided but mode is "batch" — streaming callback will be ignored',
+      { mode }
+    );
+  }
+  // VideoFrame precedence also applies to explicit batch; its result accounting
+  // remains distinct from inferred/explicit streaming for legacy compatibility.
+  if (typeof onVideoFrameAvailable === 'function') {
+    return {
+      kind: streaming ? 'video-frame-stream' : 'video-frame-batch',
+      callback: onVideoFrameAvailable,
+    };
+  }
+  if (streaming && typeof onFrameAvailable === 'function') {
+    return { kind: 'cpu-stream', callback: onFrameAvailable };
+  }
+  return { kind: 'cpu-batch' };
+}
+
 /**
  * Decode demuxed video chunks into the selected CPU or VideoFrame delivery route.
  *
@@ -229,35 +273,14 @@ export async function decodeFrames(
 
   // ── Smart frame skip state (must be before parallel decode block) ──
   const skipThreshold = getSkipThreshold(effectiveSmartSkip);
-  // Determine streaming mode: explicit 'stream' mode or infer from callback
+  const deliveryPlan = normalizeDecoderDelivery(mode, onFrameAvailable, onVideoFrameAvailable);
+  // Preserve legacy summary/timing accounting independently of the delivered value.
   const streaming =
-    mode === 'stream' ||
-    (mode !== 'batch' &&
-      (typeof onFrameAvailable === 'function' || typeof onVideoFrameAvailable === 'function'));
+    deliveryPlan.kind === 'cpu-stream' || deliveryPlan.kind === 'video-frame-stream';
   const motionMemoryBytes =
-    streaming && effectiveSmartSkip !== 'off' && typeof onVideoFrameAvailable !== 'function'
+    deliveryPlan.kind === 'cpu-stream' && effectiveSmartSkip !== 'off'
       ? MOTION_SIGNATURE_PEAK_BYTES
       : 0;
-
-  if (
-    streaming &&
-    typeof onFrameAvailable !== 'function' &&
-    typeof onVideoFrameAvailable !== 'function'
-  ) {
-    throw new Error('Streaming decode requires an onFrameAvailable callback');
-  }
-  const frameAvailable = onFrameAvailable;
-
-  // Warn if onFrameAvailable is provided but mode is explicitly 'batch'
-  if (mode === 'batch' && typeof onFrameAvailable === 'function') {
-    logger.warn(
-      'decoders',
-      'onFrameAvailable provided but mode is "batch" — streaming callback will be ignored',
-      {
-        mode,
-      }
-    );
-  }
   const batchFrames: DecodedFrame[] = [];
   const pendingConversions = new Set<Promise<void>>();
 
@@ -297,7 +320,7 @@ export async function decodeFrames(
     (demux.config.displayAspectHeight ?? 0) > 0
       ? (demux.config.displayAspectHeight ?? configuredSourceHeight)
       : configuredSourceHeight;
-  const usesStagedCpuStreaming = streaming && typeof onVideoFrameAvailable !== 'function';
+  const usesStagedCpuStreaming = deliveryPlan.kind === 'cpu-stream';
   const MAX_DECODE_QUEUE = 8;
   const queuedSourceHeadroomCount = MAX_DECODE_QUEUE + 1;
   const maxPendingConversions = frameMemoryBudget
@@ -489,8 +512,7 @@ export async function decodeFrames(
     pressureCadenceRatio > 1
       ? createPresentationSampler(sourceFps, pressureCadenceRatio)
       : null;
-  const canRunAdaptiveAnalysis =
-    isAdaptive && streaming && typeof onVideoFrameAvailable !== 'function';
+  const canRunAdaptiveAnalysis = isAdaptive && deliveryPlan.kind === 'cpu-stream';
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
   let adaptLastMotionClass: AdaptiveMotionClass = 'normal';
 
@@ -927,8 +949,7 @@ export async function decodeFrames(
         // copy. Otherwise wait until the normal smart/adaptive decision has
         // updated its independent history before applying the pressure filter.
         const pressureBeforeCopy =
-          !canRunAdaptiveAnalysis &&
-          (!streaming || skipThreshold < 0 || typeof onVideoFrameAvailable === 'function');
+          !canRunAdaptiveAnalysis && (deliveryPlan.kind !== 'cpu-stream' || skipThreshold < 0);
         if (
           pressureBeforeCopy &&
           selectPressureFrame &&
@@ -1074,15 +1095,26 @@ export async function decodeFrames(
             // VideoFrame delivery bypasses CPU copies and pixel-motion processing.
             // The recipient owns the frame from invocation through its terminal close;
             // await its Promise before releasing this ordered processing turn.
-            if (typeof onVideoFrameAvailable === 'function') {
-              await previousProcessing;
-              enteredOrderedProcessing = true;
-              if (signal?.aborted || decodeError || hasProcessingFailure()) return;
-              keptFrameCount++;
-              sourceFrameTransferred = true;
-              await onVideoFrameAvailable(frame, frameDuration, frameNum, presentation);
-              // Transferred frames remain recipient-owned even if delivery rejects.
-              return;
+            switch (deliveryPlan.kind) {
+              case 'video-frame-batch':
+              case 'video-frame-stream': {
+                const callback = deliveryPlan.callback;
+                await previousProcessing;
+                enteredOrderedProcessing = true;
+                if (signal?.aborted || decodeError || hasProcessingFailure()) return;
+                keptFrameCount++;
+                sourceFrameTransferred = true;
+                await callback(frame, frameDuration, frameNum, presentation);
+                // Transferred frames remain recipient-owned even if delivery rejects.
+                return;
+              }
+              case 'cpu-batch':
+              case 'cpu-stream':
+                break;
+              default: {
+                const unreachable: never = deliveryPlan;
+                throw new Error(`Unexpected decoder delivery plan: ${unreachable}`);
+              }
             }
 
             if (usesStagedCpuStreaming) {
@@ -1135,7 +1167,8 @@ export async function decodeFrames(
               return;
             }
 
-            const shouldMeasureMotion = streaming && (skipThreshold >= 0 || isAdaptive);
+            const shouldMeasureMotion =
+              deliveryPlan.kind === 'cpu-stream' && (skipThreshold >= 0 || isAdaptive);
             const motionFeatureStart =
               profileOperation && shouldMeasureMotion ? performance.now() : null;
             const signature = shouldMeasureMotion
@@ -1171,7 +1204,7 @@ export async function decodeFrames(
             }
 
             // ── Smart frame skip: similarity-based deduplication ──
-            if (streaming && skipThreshold >= 0 && signature !== null) {
+            if (deliveryPlan.kind === 'cpu-stream' && skipThreshold >= 0 && signature !== null) {
               if (frameDistance !== null) {
                 // Skip if similar AND consecutive skip time < 500ms
                 // Use max of user threshold and noise-adapted floor
@@ -1283,38 +1316,46 @@ export async function decodeFrames(
 
             recordMotionDecision();
 
-            if (streaming) {
-              // Streaming mode: pass frame to callback for immediate processing.
-              // The next retained timestamp determines this frame's final hold.
-              keptFrameCount++;
-              if (!frameAvailable) {
-                throw new Error('Streaming decode requires an onFrameAvailable callback');
-              }
-              let delivery: Promise<void> | void;
-              try {
-                delivery = frameAvailable(
-                  pixelData,
-                  frameDuration,
-                  frameNum,
-                  targetMemoryHandoff,
-                  presentation
-                );
-              } finally {
-                releaseStagedCopy();
-              }
-              await delivery;
-              // The consumer owns pixels from invocation, including synchronous throws.
-              // Staged-copy capacity is released on invocation; ordered delivery awaits it.
-            } else {
-              // Batch collection owns pixels until successful return to its recipient.
-              if (lastBatchStartUs !== null) {
-                const previous = batchFrames[batchFrames.length - 1];
-                if (previous) {
-                  previous.duration = Math.max(0, (presentation.startUs - lastBatchStartUs) / 1000);
+            switch (deliveryPlan.kind) {
+              case 'cpu-stream': {
+                const callback = deliveryPlan.callback;
+                // The next retained timestamp determines this frame's final hold.
+                keptFrameCount++;
+                let delivery: Promise<void> | void;
+                try {
+                  delivery = callback(
+                    pixelData,
+                    frameDuration,
+                    frameNum,
+                    targetMemoryHandoff,
+                    presentation
+                  );
+                } finally {
+                  releaseStagedCopy();
                 }
+                await delivery;
+                // The consumer owns pixels from invocation, including synchronous throws.
+                // Staged-copy capacity is released on invocation; this turn awaits the Promise.
+                break;
               }
-              batchFrames.push({ data: pixelData, duration: frameDuration });
-              lastBatchStartUs = presentation.startUs;
+              case 'cpu-batch':
+                // Batch collection owns pixels until successful return to its recipient.
+                if (lastBatchStartUs !== null) {
+                  const previous = batchFrames[batchFrames.length - 1];
+                  if (previous) {
+                    previous.duration = Math.max(
+                      0,
+                      (presentation.startUs - lastBatchStartUs) / 1000
+                    );
+                  }
+                }
+                batchFrames.push({ data: pixelData, duration: frameDuration });
+                lastBatchStartUs = presentation.startUs;
+                break;
+              default: {
+                const unreachable: never = deliveryPlan;
+                throw new Error(`Unexpected decoder delivery plan: ${unreachable}`);
+              }
             }
           } catch (error) {
             recordConversionError(error);
