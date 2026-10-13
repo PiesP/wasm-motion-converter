@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -25,10 +25,16 @@ describe('scanner pin workflow contracts', () => {
   });
 
   it('loads security metadata from the reviewed immutable revision', () => {
-    for (const job of ['pin-metadata', 'pinned-tools']) {
+    for (const [job, helper] of [
+      ['pin-metadata', 'pinned-tools.ts'],
+      ['pinned-tools', 'check-pinned-tools.ts'],
+    ] as const) {
       const match = security.split(`\n  ${job}:\n`)[1]?.split(/\n  [a-z][a-z-]*:\n/u)[0] ?? '';
       expect(match).toContain(`ref: ${publishedSha}`);
       expect(match).toContain("install-dependencies: 'false'");
+      expect(match).toContain('pinned_dir="$(mktemp -d "$RUNNER_TEMP/pinned-tools.XXXXXXXX")"');
+      expect(match).toContain('install -m 0600 "scripts/ci/$name" "$pinned_dir/$name"');
+      expect(match).toContain(`"$pinned_dir/${helper}"`);
     }
     expect(security).toContain("needs['pin-metadata'].outputs.OSV_SCANNER_IMAGE");
     expect(security).toContain("needs['pin-metadata'].outputs.SEMGREP_IMAGE");
@@ -46,9 +52,6 @@ describe('scanner pin workflow contracts', () => {
       expect(readFileSync(join(outputDir, 'output'), 'utf8')).toBe(
         `OSV_SCANNER_IMAGE=${metadata.osv.image}\nSEMGREP_IMAGE=${metadata.semgrep.image}\n`
       );
-      for (const name of ['pinned-tools.json', 'pinned-tools.ts', 'check-pinned-tools.ts']) {
-        expect(execFileSync('git', ['show', `${publishedSha}:scripts/ci/${name}`], { cwd: root }).length).toBeGreaterThan(0);
-      }
     } finally {
       rmSync(outputDir, { recursive: true, force: true });
     }
