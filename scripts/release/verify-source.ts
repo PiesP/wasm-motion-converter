@@ -38,6 +38,16 @@ function taggedNodeVersion(sha: string, releaseVersion: string): string {
     throw new Error(
       `Tag version ${releaseVersion} does not match package.json ${String(sourceVersion)}`
     );
+  const scripts = (manifest as { scripts?: unknown }).scripts;
+  if (
+    !scripts ||
+    typeof scripts !== 'object' ||
+    Array.isArray(scripts) ||
+    !Object.values(scripts).every((script) => typeof script === 'string')
+  )
+    throw new Error('Release source must declare a valid scripts map');
+  if (Object.hasOwn(scripts, 'quality:nose'))
+    throw new Error('Release source must not declare quality:nose');
   return version;
 }
 

@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { isCliEntry, packageBinary, runChild } from '../check/run-child.ts';
 
-export type ViteMode = 'dev' | 'build' | 'ci' | 'analyze' | 'preview';
+export type ViteMode = 'dev' | 'build' | 'ci' | 'preview';
 
 export async function runVite(
   mode: ViteMode,
@@ -17,21 +17,19 @@ export async function runVite(
     mode === 'dev' ? args : mode === 'preview' ? ['preview', ...args] : ['build', ...args];
   const result = await run(packageBinary('vite', 'vite'), viteArgs, {
     NODE_OPTIONS: '--no-deprecation',
-    ...(mode === 'analyze' ? { VITE_ANALYZE_BUNDLE: 'true' } : {}),
   });
   if (result !== 0) return result;
 
   if (mode === 'ci') {
     return run(fileURLToPath(new URL('./postbuild.ts', import.meta.url)));
   }
-  if (mode === 'analyze') console.log('\nBundle analysis generated at dist/stats.html');
   return 0;
 }
 
 if (isCliEntry(import.meta.url)) {
   const mode = process.argv[2];
-  if (!['dev', 'build', 'ci', 'analyze', 'preview'].includes(mode ?? '')) {
-    console.error('Expected dev, build, ci, analyze, or preview');
+  if (!['dev', 'build', 'ci', 'preview'].includes(mode ?? '')) {
+    console.error('Expected dev, build, ci, or preview');
     process.exitCode = 1;
   } else {
     runVite(mode as ViteMode, process.argv.slice(3)).then(

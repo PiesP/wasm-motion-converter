@@ -42,7 +42,7 @@ jobs:
       - name: 📥 Checkout reviewed pin source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 7a5ab41114bfe234b4524303680f792266b551d3
+          ref: e474c313673dbdb717156b8df3b0febf1b89f19a
           persist-credentials: false
           submodules: false
 
@@ -56,7 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           pinned_dir="$(mktemp -d "$RUNNER_TEMP/pinned-tools.XXXXXXXX")"
-          for name in pinned-tools.json pinned-tools.ts check-pinned-tools.ts install-nose.ts; do
+          for name in pinned-tools.json pinned-tools.ts check-pinned-tools.ts; do
             install -m 0600 "scripts/ci/$name" "$pinned_dir/$name"
           done
           GITHUB_ENV="$GITHUB_OUTPUT" node --experimental-strip-types "$pinned_dir/pinned-tools.ts" env
@@ -158,7 +158,7 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 7a5ab41114bfe234b4524303680f792266b551d3
+          ref: e474c313673dbdb717156b8df3b0febf1b89f19a
           persist-credentials: false
           submodules: false
 
@@ -173,7 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           pinned_dir="$(mktemp -d "$RUNNER_TEMP/pinned-tools.XXXXXXXX")"
-          for name in pinned-tools.json pinned-tools.ts check-pinned-tools.ts install-nose.ts; do
+          for name in pinned-tools.json pinned-tools.ts check-pinned-tools.ts; do
             install -m 0600 "scripts/ci/$name" "$pinned_dir/$name"
           done
           node --experimental-strip-types "$pinned_dir/check-pinned-tools.ts"

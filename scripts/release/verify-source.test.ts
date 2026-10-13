@@ -7,6 +7,7 @@ import test, { after } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const script = fileURLToPath(new URL('./verify-source.ts', import.meta.url));
+const missingScripts = Symbol('missing scripts');
 const roots: string[] = [];
 after(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
@@ -35,10 +36,18 @@ function fixture() {
     source,
     checkout,
     output,
-    commit(pin: unknown, version: unknown = '1.2.3'): string {
+    commit(
+      pin: unknown,
+      version: unknown = '1.2.3',
+      scripts: unknown = { quality: 'biome ci .' }
+    ): string {
       writeFileSync(
         join(source, 'package.json'),
-        JSON.stringify({ version, volta: { node: pin } })
+        JSON.stringify({
+          version,
+          volta: { node: pin },
+          scripts: scripts === missingScripts ? undefined : scripts,
+        })
       );
       git(source, 'add', 'package.json');
       git(source, 'commit', '-qm', `manifest ${String(pin)}`);
@@ -150,6 +159,33 @@ test('tag and tagged package versions must match before output publication', () 
     const result = f.run('v6.0.0', head);
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Tag version 6\.0\.0 does not match package\.json/);
+    assert.equal(f.values(), '');
+  }
+});
+
+test('tagged Nose quality script cannot authorize release outputs', () => {
+  const f = fixture();
+  const head = f.commit('24.15.0', '7.0.0', {
+    quality: 'pnpm -s fmt',
+    'quality:nose': 'node nose.js',
+  });
+  f.tag('v7.0.0');
+  f.clone();
+  const result = f.run('v7.0.0', head);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /quality:nose/);
+  assert.equal(f.values(), '');
+});
+
+test('malformed tagged scripts maps fail before release outputs', () => {
+  for (const scripts of [missingScripts, null, [], 'quality', { quality: 42 }]) {
+    const f = fixture();
+    const head = f.commit('26.9.0', '8.0.0', scripts);
+    f.tag('v8.0.0');
+    f.clone();
+    const result = f.run('v8.0.0', head);
+    assert.notEqual(result.status, 0, String(scripts));
+    assert.match(result.stderr, /valid scripts map/);
     assert.equal(f.values(), '');
   }
 });
