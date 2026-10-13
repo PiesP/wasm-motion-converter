@@ -4,17 +4,17 @@
 // Debug: diagnose conversion issues on local dev server.
 // Run with: pnpm test -- debug/debug-local.spec.ts
 
-import { test, expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
+  clickConvert,
+  dismissWarningDialog,
+  getAppState,
+  getErrorMessage,
   injectTestFile,
   setFormat,
   setQuality,
   setScale,
-  clickConvert,
-  dismissWarningDialog,
-  getAppState,
   waitForConversionComplete,
-  getErrorMessage,
 } from '../fixtures/test-helpers';
 
 test.describe('Debug: Local Server Diagnosis', () => {

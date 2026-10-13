@@ -34,9 +34,7 @@ export function mountCompactProgressHarness(locale: Locale): () => void {
           showElapsedTime
           startTime={performance.now() - 12_000}
           status={
-            locale === 'ar'
-              ? 'جارٍ ترميز الإطارات المتحركة الطويلة'
-              : 'Encoding animation frames'
+            locale === 'ar' ? 'جارٍ ترميز الإطارات المتحركة الطويلة' : 'Encoding animation frames'
           }
         />
       </LocaleProvider>
@@ -45,7 +43,10 @@ export function mountCompactProgressHarness(locale: Locale): () => void {
   );
 }
 
-export function mountResultPreviewHarness(format: 'gif' | 'webp' = 'gif', locale: Locale = 'en'): () => void {
+export function mountResultPreviewHarness(
+  format: 'gif' | 'webp' = 'gif',
+  locale: Locale = 'en'
+): () => void {
   const host = replaceAppWithHarness('result-preview-harness');
   return render(
     () => (

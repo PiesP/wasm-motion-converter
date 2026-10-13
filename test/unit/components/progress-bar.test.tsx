@@ -6,10 +6,7 @@ import type { ProgressPhase } from '@t/conversion-types';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  mountCompactProgressHarness,
-  mountResultPreviewHarness,
-} from './rendered-design-harness';
+import { mountCompactProgressHarness, mountResultPreviewHarness } from './rendered-design-harness';
 
 vi.mock('@hooks/use-locale', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@hooks/use-locale')>()),
@@ -66,9 +63,9 @@ describe('ProgressBar pipeline phase segments', () => {
 
       const progressbar = container.querySelector<HTMLElement>('[role="progressbar"]');
       expect(progressbar).not.toBeNull();
-      expect(Array.from(progressbar!.children, (segment) => (segment as HTMLElement).style.width)).toEqual(
-        widths.map((width) => `${width}%`)
-      );
+      expect(
+        Array.from(progressbar!.children, (segment) => (segment as HTMLElement).style.width)
+      ).toEqual(widths.map((width) => `${width}%`));
     }
   );
 
@@ -100,10 +97,7 @@ describe('ProgressBar pipeline phase segments', () => {
   it('keeps the active weighted segment pulsing before its phase boundary', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
-    render(
-      () => <ProgressBar progress={50} status="Converting" phase="decoding" />,
-      container
-    );
+    render(() => <ProgressBar progress={50} status="Converting" phase="decoding" />, container);
 
     const segments = container.querySelector<HTMLElement>('[role="progressbar"]')!.children;
     expect(segments[1]?.classList.contains('animate-pulse')).toBe(true);
@@ -112,10 +106,7 @@ describe('ProgressBar pipeline phase segments', () => {
   it('stops pulsing when the active weighted segment reaches its boundary', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
-    render(
-      () => <ProgressBar progress={100} status="Converting" phase="assembling" />,
-      container
-    );
+    render(() => <ProgressBar progress={100} status="Converting" phase="assembling" />, container);
 
     const segments = container.querySelector<HTMLElement>('[role="progressbar"]')!.children;
     expect(segments[3]?.classList.contains('animate-pulse')).toBe(false);
@@ -137,7 +128,15 @@ describe('ProgressBar pipeline phase segments', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const dispose = render(
-      () => <ProgressBar compact progress={null} busy status="Analyzing" statusMessage="Reading metadata" />,
+      () => (
+        <ProgressBar
+          compact
+          progress={null}
+          busy
+          status="Analyzing"
+          statusMessage="Reading metadata"
+        />
+      ),
       container
     );
     const progressbar = container.querySelector('[role="progressbar"]');
@@ -153,7 +152,9 @@ describe('ProgressBar pipeline phase segments', () => {
       () => <ProgressBar compact progress={0} busy status="Converting" phase="demuxing" />,
       container
     );
-    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('0');
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe(
+      '0'
+    );
     expect(container.textContent).toContain('0%');
     expect(container.firstElementChild?.getAttribute('aria-busy')).toBe('true');
     disposeZero();
@@ -163,10 +164,21 @@ describe('ProgressBar pipeline phase segments', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const dispose = render(
-      () => <ProgressBar compact progress={100} busy status="Converting" phase="assembling" estimatedSecondsRemaining={42} />,
+      () => (
+        <ProgressBar
+          compact
+          progress={100}
+          busy
+          status="Converting"
+          phase="assembling"
+          estimatedSecondsRemaining={42}
+        />
+      ),
       container
     );
-    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('100');
+    expect(container.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe(
+      '100'
+    );
     expect(container.firstElementChild?.getAttribute('aria-busy')).toBe('true');
     expect(container.textContent).not.toContain('progress.eta');
     dispose();
@@ -176,14 +188,30 @@ describe('ProgressBar pipeline phase segments', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const dispose = render(
-      () => <ProgressBar compact progress={42} busy status="Converting" statusMessage="Frame 4/10" phase="encoding" memoryUsage="64 MB" currentFrame={4} totalFrames={10} />,
+      () => (
+        <ProgressBar
+          compact
+          progress={42}
+          busy
+          status="Converting"
+          statusMessage="Frame 4/10"
+          phase="encoding"
+          memoryUsage="64 MB"
+          currentFrame={4}
+          totalFrames={10}
+        />
+      ),
       container
     );
-    const details = container.querySelector<HTMLDetailsElement>('[data-testid="progress-diagnostics"]');
+    const details = container.querySelector<HTMLDetailsElement>(
+      '[data-testid="progress-diagnostics"]'
+    );
     expect(details?.open).toBe(false);
     expect(details?.querySelector('summary')?.textContent).toContain('progress.details');
     expect(details?.textContent).toContain('64 MB');
-    expect(container.querySelector('[data-testid="progress-status-message"]')?.textContent).toBe('progress.encoding');
+    expect(container.querySelector('[data-testid="progress-status-message"]')?.textContent).toBe(
+      'progress.encoding'
+    );
     expect(details?.className).toContain('text-sm');
     details?.querySelector('summary')?.click();
     expect(details?.open).toBe(true);
@@ -196,9 +224,7 @@ describe('ProgressBar pipeline phase segments', () => {
       const container = document.createElement('div');
       document.body.appendChild(container);
       render(
-        () => (
-          <ProgressBar compact={compact} progress={42} status="Converting" phase="decoding" />
-        ),
+        () => <ProgressBar compact={compact} progress={42} status="Converting" phase="decoding" />,
         container
       );
 
@@ -214,12 +240,7 @@ describe('ProgressBar pipeline phase segments', () => {
     document.body.append(withEta, withoutEta);
     render(
       () => (
-        <ProgressBar
-          compact
-          estimatedSecondsRemaining={42}
-          progress={42}
-          status="Converting"
-        />
+        <ProgressBar compact estimatedSecondsRemaining={42} progress={42} status="Converting" />
       ),
       withEta
     );
@@ -239,24 +260,12 @@ describe('ProgressBar pipeline phase segments', () => {
     const distinct = document.createElement('div');
     document.body.append(repeated, distinct);
     render(
-      () => (
-        <ProgressBar
-          compact
-          progress={42}
-          status="Cancelling"
-          statusMessage="Cancelling"
-        />
-      ),
+      () => <ProgressBar compact progress={42} status="Cancelling" statusMessage="Cancelling" />,
       repeated
     );
     render(
       () => (
-        <ProgressBar
-          compact
-          progress={42}
-          status="Converting"
-          statusMessage="Encoding frame 42"
-        />
+        <ProgressBar compact progress={42} status="Converting" statusMessage="Encoding frame 42" />
       ),
       distinct
     );

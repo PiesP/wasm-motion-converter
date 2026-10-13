@@ -68,7 +68,11 @@ interface DecodedGifFrame {
   clearCodes: number;
 }
 
-function decodeLzw(data: number[], minCodeSize: number, pixelCount: number): {
+function decodeLzw(
+  data: number[],
+  minCodeSize: number,
+  pixelCount: number
+): {
   indices: number[];
   clearCodes: number;
 } {
@@ -246,8 +250,9 @@ describe('GIF exact indexed representation', () => {
       const frames = readGif(await encodeFrames(1, 1)).frames;
       expect(frames.map((frame) => frame.colors[0])).toEqual(colors);
       expect(frames.map((frame) => frame.delayCs)).toEqual(delaysCs);
-      expect(frames.reduce((total, frame) => total + frame.delayCs * 10, 0) - endUs / 1000)
-        .toBeLessThanOrEqual(20);
+      expect(
+        frames.reduce((total, frame) => total + frame.delayCs * 10, 0) - endUs / 1000
+      ).toBeLessThanOrEqual(20);
     }
   );
 
@@ -302,15 +307,10 @@ describe('GIF exact indexed representation', () => {
     }
   );
 
-  it.each([9_999, 10_000, 10_001])(
-    'floors an entire %i µs clip once',
-    async (endUs) => {
-      mocks.frames = [
-        { startUs: 0, endUs, palette: [[1, 0, 0]], indices: Uint8Array.of(0) },
-      ];
-      expect(readGif(await encodeFrames(1, 1)).frames.map((frame) => frame.delayCs)).toEqual([2]);
-    }
-  );
+  it.each([9_999, 10_000, 10_001])('floors an entire %i µs clip once', async (endUs) => {
+    mocks.frames = [{ startUs: 0, endUs, palette: [[1, 0, 0]], indices: Uint8Array.of(0) }];
+    expect(readGif(await encodeFrames(1, 1)).frames.map((frame) => frame.delayCs)).toEqual([2]);
+  });
 
   it('does not let duplicate merging reintroduce a dropped short scene', async () => {
     mocks.frames = [
@@ -350,28 +350,32 @@ describe('GIF exact indexed representation', () => {
     expect(delays.reduce((total, delay) => total + delay, 0)).toBe(300);
   });
 
-  it.each([64, 128, 256])('compacts a sparse %i-color table to its two used colors', async (size) => {
-    const palette = Array.from({ length: size }, (_, index) => [index, 0, 255 - index]);
-    const indices = Uint8Array.from({ length: 64 }, (_, pixel) => (pixel & 1 ? size - 1 : 0));
-    mocks.frames = [{ startUs: 0, endUs: 100_000, palette, indices }];
+  it.each([64, 128, 256])(
+    'compacts a sparse %i-color table to its two used colors',
+    async (size) => {
+      const palette = Array.from({ length: size }, (_, index) => [index, 0, 255 - index]);
+      const indices = Uint8Array.from({ length: 64 }, (_, pixel) => (pixel & 1 ? size - 1 : 0));
+      mocks.frames = [{ startUs: 0, endUs: 100_000, palette, indices }];
 
-    const optimizedBytes = await encodeFrames(8, 8, 'high');
-    const output = readGif(optimizedBytes);
-    const originalWriter = GIFEncoder({ auto: true });
-    originalWriter.writeFrame(indices, 8, 8, { palette, delay: 100 });
-    originalWriter.finish();
-    const originalBytes = originalWriter.bytes();
+      const optimizedBytes = await encodeFrames(8, 8, 'high');
+      const output = readGif(optimizedBytes);
+      const originalWriter = GIFEncoder({ auto: true });
+      originalWriter.writeFrame(indices, 8, 8, { palette, delay: 100 });
+      originalWriter.finish();
+      const originalBytes = originalWriter.bytes();
 
-    expect(output.globalColors).toBe(2);
-    expect(output.frames[0]?.lzwMinCodeSize).toBe(2);
-    expect(output.frames[0]?.colors).toEqual(
-      Array.from(indices, (index) =>
-        (palette[index]![0]! << 16) | (palette[index]![1]! << 8) | palette[index]![2]!
-      )
-    );
-    expect(output.frames[0]?.colors).toEqual(readGif(originalBytes).frames[0]?.colors);
-    expect(optimizedBytes.byteLength).toBeLessThan(originalBytes.byteLength);
-  });
+      expect(output.globalColors).toBe(2);
+      expect(output.frames[0]?.lzwMinCodeSize).toBe(2);
+      expect(output.frames[0]?.colors).toEqual(
+        Array.from(
+          indices,
+          (index) => (palette[index]![0]! << 16) | (palette[index]![1]! << 8) | palette[index]![2]!
+        )
+      );
+      expect(output.frames[0]?.colors).toEqual(readGif(originalBytes).frames[0]?.colors);
+      expect(optimizedBytes.byteLength).toBeLessThan(originalBytes.byteLength);
+    }
+  );
 
   it.each([2, 4, 16])('uses the necessary LZW width for %i distinct colors', async (size) => {
     const palette = Array.from({ length: size }, (_, color) => [color, 255 - color, color]);
@@ -383,8 +387,9 @@ describe('GIF exact indexed representation', () => {
     expect(output.globalColors).toBe(size);
     expect(output.frames[0]?.lzwMinCodeSize).toBe(Math.max(2, Math.log2(size)));
     expect(output.frames[0]?.colors).toEqual(
-      Array.from(indices, (index) =>
-        (palette[index]![0]! << 16) | (palette[index]![1]! << 8) | palette[index]![2]!
+      Array.from(
+        indices,
+        (index) => (palette[index]![0]! << 16) | (palette[index]![1]! << 8) | palette[index]![2]!
       )
     );
   });
@@ -408,8 +413,9 @@ describe('GIF exact indexed representation', () => {
     expect(output.frames[0]?.lzwMinCodeSize).toBe(8);
     expect(output.frames[0]?.clearCodes).toBeGreaterThan(1);
     expect(output.frames[0]?.colors).toEqual(
-      Array.from(indices, (index) =>
-        (palette[index]![0]! << 16) | (palette[index]![1]! << 8) | palette[index]![2]!
+      Array.from(
+        indices,
+        (index) => (palette[index]![0]! << 16) | (palette[index]![1]! << 8) | palette[index]![2]!
       )
     );
   });
@@ -453,19 +459,29 @@ describe('GIF exact indexed representation', () => {
       {
         startUs: 0,
         endUs: 100_000,
-        palette: [[255, 0, 0], [0, 0, 255]],
+        palette: [
+          [255, 0, 0],
+          [0, 0, 255],
+        ],
         indices: Uint8Array.from([0, 1]),
       },
       {
         startUs: 100_000,
         endUs: 200_000,
-        palette: [[0, 0, 255], [255, 0, 0], [9, 9, 9]],
+        palette: [
+          [0, 0, 255],
+          [255, 0, 0],
+          [9, 9, 9],
+        ],
         indices: Uint8Array.from([0, 1]),
       },
       {
         startUs: 200_000,
         endUs: 300_000,
-        palette: [[0, 255, 0], [0, 0, 255]],
+        palette: [
+          [0, 255, 0],
+          [0, 0, 255],
+        ],
         indices: Uint8Array.from([0, 1]),
       },
     ];
@@ -501,9 +517,7 @@ describe('GIF exact indexed representation', () => {
 
     expect(output.frames.map((frame) => frame.hasLocalTable)).toEqual([false, true]);
     expect(output.frames.map((frame) => frame.lzwMinCodeSize)).toEqual([3, 2]);
-    expect(output.frames[1]?.colors).toEqual([
-      0xd20007, 0, 0xd20007, 0, 0xd20007, 0, 0xd20007, 0,
-    ]);
+    expect(output.frames[1]?.colors).toEqual([0xd20007, 0, 0xd20007, 0, 0xd20007, 0, 0xd20007, 0]);
   });
 
   it('keeps a prior local table on each split when the global table lacks its colors', async () => {
@@ -511,25 +525,26 @@ describe('GIF exact indexed representation', () => {
       {
         startUs: 0,
         endUs: 100_000,
-        palette: [[255, 0, 0], [0, 0, 255]],
+        palette: [
+          [255, 0, 0],
+          [0, 0, 255],
+        ],
         indices: Uint8Array.from([0, 1]),
       },
       {
         startUs: 100_000,
         endUs: 5_100_000,
-        palette: [[0, 255, 0], [0, 0, 255]],
+        palette: [
+          [0, 255, 0],
+          [0, 0, 255],
+        ],
         indices: Uint8Array.from([0, 1]),
       },
     ];
 
     const output = readGif(await encodeFrames(2, 1));
 
-    expect(output.frames.map((frame) => frame.hasLocalTable)).toEqual([
-      false,
-      true,
-      true,
-      true,
-    ]);
+    expect(output.frames.map((frame) => frame.hasLocalTable)).toEqual([false, true, true, true]);
     expect(output.frames.map((frame) => frame.delayCs)).toEqual([10, 200, 200, 100]);
     expect(output.frames.slice(1).map((frame) => frame.colors)).toEqual([
       [0x00ff00, 0x0000ff],

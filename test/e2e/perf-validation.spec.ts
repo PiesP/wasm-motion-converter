@@ -10,22 +10,22 @@
 // 4. Buffer pool effectiveness (repeated conversions don't leak)
 // 5. Non-overlapping stage profiling and timing breakdown
 
-import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
+  clickConvert,
+  dismissWarningDialog,
+  downloadResult,
+  getAppState,
+  getVisibleResultStats,
   injectTestFile,
+  isErrorVisible,
+  isResultVisible,
+  runConversion,
   setFormat,
   setQuality,
   setScale,
-  clickConvert,
-  dismissWarningDialog,
-  isResultVisible,
-  isErrorVisible,
-  getVisibleResultStats,
-  getAppState,
   waitForConversionComplete,
-  downloadResult,
-  runConversion,
 } from './fixtures/test-helpers';
 import { validateFileMagic } from './fixtures/verify';
 
@@ -324,7 +324,9 @@ test.describe('Perf: Output quality regression', () => {
     const medBuffer = await downloadResult(page);
     const medSize = medBuffer.length;
 
-    console.log(`  Low: ${(lowSize / 1024).toFixed(1)} KB, Medium: ${(medSize / 1024).toFixed(1)} KB`);
+    console.log(
+      `  Low: ${(lowSize / 1024).toFixed(1)} KB, Medium: ${(medSize / 1024).toFixed(1)} KB`
+    );
     // Low quality should produce smaller output (fewer colors = better LZW compression)
     expect(lowSize).toBeLessThan(medSize);
   });
@@ -380,10 +382,14 @@ test.describe('Perf: Wall-clock stage profiling', () => {
     expect(profile!.operationTotals.gifQuantization?.samples).toBeGreaterThan(0);
     expect(profile!.operationTotals.gifPaletteMapping?.samples).toBeGreaterThan(0);
     expect(profile!.operationTotals.gifFrameWrite?.samples).toBeGreaterThan(0);
-    expect(Object.values(profile!.copyPathCounts).reduce((sum, count) => sum + count, 0)).toBeGreaterThan(0);
+    expect(
+      Object.values(profile!.copyPathCounts).reduce((sum, count) => sum + count, 0)
+    ).toBeGreaterThan(0);
 
     // Memory tracking should be present (Chrome provides performance.memory)
-    console.log(`  Heap: start=${profile!.heapStartMB}MB, end=${profile!.heapEndMB}MB, peak=${profile!.heapPeakMB}MB`);
+    console.log(
+      `  Heap: start=${profile!.heapStartMB}MB, end=${profile!.heapEndMB}MB, peak=${profile!.heapPeakMB}MB`
+    );
     // Peak heap should be positive (Chrome exposes performance.memory)
     // Note: In headless CI, performance.memory may not be available (returns 0)
     // so we only assert it's non-negative
@@ -438,9 +444,7 @@ test.describe('Perf: Wall-clock stage profiling', () => {
     expect(transcodeStage).toBeDefined();
     expect(demuxStage).toBeDefined();
 
-    console.log(
-      `  Demux: ${demuxStage!.durationMs}ms (${profile!.stageWallTimePct.demuxing}%)`
-    );
+    console.log(`  Demux: ${demuxStage!.durationMs}ms (${profile!.stageWallTimePct.demuxing}%)`);
     console.log(
       `  Transcode: ${transcodeStage!.durationMs}ms (${profile!.stageWallTimePct.transcoding}%)`
     );

@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 
 const root = resolve(import.meta.dirname, '../../..');
 const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
-const deepChecksWorkflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
+const deepChecksWorkflow = readFileSync(
+  resolve(root, '.github/workflows/deep-checks.yaml'),
+  'utf8'
+);
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
 const centralSetupAction =
   'uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969';
@@ -112,9 +115,7 @@ describe('central project setup action', () => {
     const setup = publish.split(setupMarker)[1]?.split('\n      - name:')[0];
 
     expect(setup).toBeDefined();
-    expect(setup).toContain(
-      'uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0'
-    );
+    expect(setup).toContain('uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0');
     expect(checkout).toContain('ref: ${{ github.sha }}');
     expect(checkout).toContain('persist-credentials: false');
     expect(checkout).not.toContain('release-sha');

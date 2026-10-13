@@ -6,9 +6,7 @@ const root = resolve(import.meta.dirname, '../../..');
 
 describe('Fast mutation profile', () => {
   it('fails on regressions, mutates control-flow operators, and preserves reports', () => {
-    const config = JSON.parse(
-      readFileSync(resolve(root, 'stryker.conf.fast.json'), 'utf8')
-    ) as {
+    const config = JSON.parse(readFileSync(resolve(root, 'stryker.conf.fast.json'), 'utf8')) as {
       ignoreStatic?: boolean;
       mutate?: string[];
       coverageAnalysis?: string;
@@ -30,9 +28,7 @@ describe('Fast mutation profile', () => {
     expect(config.mutate).toEqual(
       expect.arrayContaining(['!src/utils/dom-utils.ts', '!src/utils/mediabunny-utils.ts'])
     );
-    expect(config.reporters).toEqual(
-      expect.arrayContaining(['clear-text', 'json', 'html'])
-    );
+    expect(config.reporters).toEqual(expect.arrayContaining(['clear-text', 'json', 'html']));
     expect(config.mutator?.excludedMutations).not.toContain('ConditionalExpression');
     expect(config.mutator?.excludedMutations).not.toContain('EqualityOperator');
     expect(config.mutator?.excludedMutations).not.toContain('BooleanLiteral');

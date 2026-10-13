@@ -56,10 +56,7 @@ Object.defineProperty(window, 'ResizeObserver', {
 
 // IntersectionObserver
 class MockIntersectionObserver {
-  constructor(
-    _callback: IntersectionObserverCallback,
-    _options?: IntersectionObserverInit
-  ) {
+  constructor(_callback: IntersectionObserverCallback, _options?: IntersectionObserverInit) {
     // noop
   }
   observe(): void {

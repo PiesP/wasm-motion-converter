@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { GIFEncoder } from 'gifenc';
 import { deflateSync } from 'node:zlib';
+import { GIFEncoder } from 'gifenc';
 import { describe, expect, it } from 'vitest';
 import {
   analyzeGifPlaybackCycles,
@@ -47,7 +47,10 @@ function gifWithDelays(delaysMs: number[]): Uint8Array {
   const encoder = GIFEncoder({ auto: true });
   for (const [index, delay] of delaysMs.entries()) {
     encoder.writeFrame(Uint8Array.of(index % 2), 1, 1, {
-      palette: [[255, 0, 0], [0, 0, 255]],
+      palette: [
+        [255, 0, 0],
+        [0, 0, 255],
+      ],
       delay,
       repeat: 0,
     });
@@ -57,23 +60,30 @@ function gifWithDelays(delaysMs: number[]): Uint8Array {
 }
 
 function sampledCycles() {
-  const frames: Array<{ sequence: number; timestampMs: number; marker: 'red' | 'lime' | 'blue' }> = [];
+  const frames: Array<{ sequence: number; timestampMs: number; marker: 'red' | 'lime' | 'blue' }> =
+    [];
   frames.push({ sequence: 0, timestampMs: -16, marker: 'blue' });
   for (let cycle = 0; cycle < 4; cycle++) {
     const start = cycle * 120;
     frames.push({ sequence: frames.length, timestampMs: start, marker: 'red' });
     if (cycle === 3) break;
     for (const [timestampMs, marker] of [
-      [start + 16, 'red'], [start + 32, 'red'],
-      [start + 50, 'lime'], [start + 66, 'lime'], [start + 82, 'lime'],
-      [start + 100, 'blue'], [start + 116, 'blue'],
-    ] as const) frames.push({ sequence: frames.length, timestampMs, marker });
+      [start + 16, 'red'],
+      [start + 32, 'red'],
+      [start + 50, 'lime'],
+      [start + 66, 'lime'],
+      [start + 82, 'lime'],
+      [start + 100, 'blue'],
+      [start + 116, 'blue'],
+    ] as const)
+      frames.push({ sequence: frames.length, timestampMs, marker });
   }
   return frames;
 }
 
 function sampledScopedCycles(durationsMs: number[], blueCycle = -1, sparseCycle = -1) {
-  const frames: Array<{ sequence: number; timestampMs: number; marker: 'red' | 'lime' | 'blue' }> = [];
+  const frames: Array<{ sequence: number; timestampMs: number; marker: 'red' | 'lime' | 'blue' }> =
+    [];
   let startMs = 0;
   const add = (timestampMs: number, marker: 'red' | 'lime' | 'blue') => {
     frames.push({ sequence: frames.length, timestampMs, marker });
@@ -99,8 +109,13 @@ function sampledMissingLime(sparseRedToBlue = false) {
     if (frame.timestampMs === 448 || frame.timestampMs === 480) frame.marker = 'blue';
   }
   if (sparseRedToBlue) {
-    frames.splice(frames.findIndex((frame) => frame.timestampMs === 416), 1);
-    frames.forEach((frame, sequence) => { frame.sequence = sequence; });
+    frames.splice(
+      frames.findIndex((frame) => frame.timestampMs === 416),
+      1
+    );
+    frames.forEach((frame, sequence) => {
+      frame.sequence = sequence;
+    });
   }
   return frames;
 }
@@ -134,16 +149,18 @@ function observation(delaysCs: number[], frames = sampledCycles()) {
     },
     rawGceDelaysCs: delaysCs,
     frameRecords,
-    visibility: [{
-      wallEpochMs: 0,
-      visibilityState: 'visible',
-      hasFocus: true,
-      imageSrcAssigned: true,
-      imageComplete: true,
-      naturalWidth: 1,
-      naturalHeight: 1,
-      imageCenterVisible: true,
-    }],
+    visibility: [
+      {
+        wallEpochMs: 0,
+        visibilityState: 'visible',
+        hasFocus: true,
+        imageSrcAssigned: true,
+        imageComplete: true,
+        naturalWidth: 1,
+        naturalHeight: 1,
+        imageCenterVisible: true,
+      },
+    ],
     visibilityEvents: [{ visible: true, wallEpochMs: 0 }],
     overflow: false,
     captureEventCount: frameRecords.length,
@@ -183,7 +200,9 @@ describe('ordinary-image GIF playback evidence', () => {
     expect(result.errors).toEqual([]);
     expect(result.cycles.map((cycle) => cycle.durationMs)).toEqual([120, 120, 120]);
     expect(result.cycles.map((cycle) => cycle.holdsMs)).toEqual([
-      [50, 50, 20], [50, 50, 20], [50, 50, 20],
+      [50, 50, 20],
+      [50, 50, 20],
+      [50, 50, 20],
     ]);
     expect(assertGifPlayback(observation([5, 5, 2])).analysis.cycles).toHaveLength(3);
   });
@@ -193,7 +212,9 @@ describe('ordinary-image GIF playback evidence', () => {
     const evidence = observation([5, 5, 2], frames);
     expect(evidence.analysis.errors).toContain('Missing blue transition before red');
     expect(evidence.cycleAnalysis.cycles.map((cycle) => cycle.status)).toEqual([
-      'qualified', 'qualified', 'qualified',
+      'qualified',
+      'qualified',
+      'qualified',
     ]);
     expect(evidence.cycleAnalysis.cycles.map((cycle) => cycle.bracketsMs)).toEqual([
       { startReturnToRed: 16, redToLime: 32, redToBlue: null, returnToRed: 32 },
@@ -208,7 +229,9 @@ describe('ordinary-image GIF playback evidence', () => {
       everyCycleVisible: 'unknown',
     });
     expect(evidence.cycleAnalysis.cycles[1]!.blue).toEqual({
-      observed: true, holdMs: null, holdKnown: false,
+      observed: true,
+      holdMs: null,
+      holdKnown: false,
     });
     expect(assertGifPlayback(evidence)).toBe(evidence);
   });
@@ -217,43 +240,63 @@ describe('ordinary-image GIF playback evidence', () => {
     const frames = sampledScopedCycles([128, 128, 128], -1, 2);
     const evidence = observation([5, 5, 2], frames);
     expect(evidence.cycleAnalysis.cycles.map((cycle) => cycle.status)).toEqual([
-      'qualified', 'qualified', 'unknown',
+      'qualified',
+      'qualified',
+      'unknown',
     ]);
     expect(evidence.cycleAnalysis.cycles[2]!.reasons).toContain('Return-to-red bracket is sparse');
     expect(evidence.cycleAnalysis.qualifiedCycleCount).toBe(2);
     expect(evidence.cycleAnalysis.maxConsecutiveQualifiedCycles).toBe(2);
     expect(() => assertGifPlayback(evidence)).toThrow('Only 2 consecutive qualified cycles');
-    expect(() => assertGifPlayback(observation([5, 5, 2], sampledScopedCycles([128, 128]))))
-      .toThrow('Only 2 consecutive qualified cycles');
+    expect(() =>
+      assertGifPlayback(observation([5, 5, 2], sampledScopedCycles([128, 128])))
+    ).toThrow('Only 2 consecutive qualified cycles');
   });
 
   it('excludes an explicit sparse cycle when three later qualified cycles agree', () => {
     const evidence = observation(
-      [5, 5, 2], sampledScopedCycles([128, 128, 128, 128, 128, 128], -1, 1)
+      [5, 5, 2],
+      sampledScopedCycles([128, 128, 128, 128, 128, 128], -1, 1)
     );
     expect(evidence.cycleAnalysis.cycles.map((cycle) => cycle.status)).toEqual([
-      'qualified', 'unknown', 'unknown', 'qualified', 'qualified', 'qualified',
+      'qualified',
+      'unknown',
+      'unknown',
+      'qualified',
+      'qualified',
+      'qualified',
     ]);
     expect(evidence.cycleAnalysis.maxConsecutiveQualifiedCycles).toBe(3);
-    expect(evidence.cycleAnalysis.cycles[2]!.reasons).toContain('Start red return bracket is sparse');
+    expect(evidence.cycleAnalysis.cycles[2]!.reasons).toContain(
+      'Start red return bracket is sparse'
+    );
     expect(assertGifPlayback(evidence)).toBe(evidence);
   });
 
   it('does not qualify the first observed red without a preceding return bracket', () => {
-    const frames = sampledScopedCycles([128, 128, 128]).slice(1)
+    const frames = sampledScopedCycles([128, 128, 128])
+      .slice(1)
       .map((frame, sequence) => ({ ...frame, sequence }));
     const evidence = observation([5, 5, 2], frames);
     expect(evidence.cycleAnalysis.cycles.map((cycle) => cycle.status)).toEqual([
-      'unknown', 'qualified', 'qualified',
+      'unknown',
+      'qualified',
+      'qualified',
     ]);
     expect(evidence.cycleAnalysis.cycles[0]!.bracketsMs.startReturnToRed).toBeNull();
-    expect(evidence.cycleAnalysis.cycles[0]!.reasons).toContain('Start red return was not observed');
+    expect(evidence.cycleAnalysis.cycles[0]!.reasons).toContain(
+      'Start red return was not observed'
+    );
     expect(evidence.cycleAnalysis.incompleteTail).toEqual({ status: 'unknown', markers: ['red'] });
     expect(() => assertGifPlayback(evidence)).toThrow('Only 2 consecutive qualified cycles');
   });
 
   it('keeps an unclassified sample as an unknown cycle without inventing a color-order violation', () => {
-    const frames: Array<{ sequence: number; timestampMs: number; marker: 'red' | 'lime' | 'blue' | null }> = [
+    const frames: Array<{
+      sequence: number;
+      timestampMs: number;
+      marker: 'red' | 'lime' | 'blue' | null;
+    }> = [
       { sequence: 0, timestampMs: 0, marker: 'red' },
       { sequence: 1, timestampMs: 32, marker: 'red' },
       { sequence: 2, timestampMs: 64, marker: 'lime' },
@@ -286,9 +329,9 @@ describe('ordinary-image GIF playback evidence', () => {
     expect(evidence.cycleAnalysis.maxConsecutiveQualifiedCycles).toBe(3);
     expect(evidence.cycleAnalysis.cycles[3]!.markers).toEqual(['red', 'blue', 'red']);
     expect(evidence.cycleAnalysis.cycles[3]!.bracketsMs.redToBlue).toBe(32);
-    expect(evidence.cycleAnalysis.errors).toEqual(expect.arrayContaining([
-      expect.stringContaining('Mandatory lime scene omitted'),
-    ]));
+    expect(evidence.cycleAnalysis.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining('Mandatory lime scene omitted')])
+    );
     expect(() => assertGifPlayback(evidence)).toThrow('Mandatory lime scene omitted');
   });
 
@@ -306,15 +349,19 @@ describe('ordinary-image GIF playback evidence', () => {
     frames[1]!.timestampMs = -20;
     frames[2]!.sequence = 0;
     const invalid = observation([5, 5, 2], frames);
-    expect(invalid.cycleAnalysis.errors).toEqual(expect.arrayContaining([
-      expect.stringContaining('timestamp is out of order'),
-      expect.stringContaining('sequence is out of order'),
-    ]));
+    expect(invalid.cycleAnalysis.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('timestamp is out of order'),
+        expect.stringContaining('sequence is out of order'),
+      ])
+    );
     expect(() => assertGifPlayback(invalid)).toThrow();
 
     const reordered = sampledScopedCycles([128, 128, 128]);
     reordered.splice(3, 0, { sequence: 0, timestampMs: 48, marker: 'blue' });
-    reordered.forEach((frame, index) => { frame.sequence = index; });
+    reordered.forEach((frame, index) => {
+      frame.sequence = index;
+    });
     const wrongOrder = observation([5, 5, 2], reordered);
     expect(wrongOrder.cycleAnalysis.cycles[0]!.status).toBe('unknown');
     expect(wrongOrder.cycleAnalysis.errors).toContain(
@@ -344,10 +391,12 @@ describe('ordinary-image GIF playback evidence', () => {
       { sequence: 1, timestampMs: 50, marker: 'lime' },
       { sequence: 2, timestampMs: 120, marker: 'red' },
     ]);
-    expect(missing.errors).toEqual(expect.arrayContaining([
-      expect.stringContaining('Missing blue transition'),
-      expect.stringContaining('Transition sample gap'),
-    ]));
+    expect(missing.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Missing blue transition'),
+        expect.stringContaining('Transition sample gap'),
+      ])
+    );
     const sparse = observation([5, 5, 2]);
     sparse.cycleAnalysis = analyzeGifPlaybackCycles([
       { sequence: 0, timestampMs: 0, marker: 'red' },

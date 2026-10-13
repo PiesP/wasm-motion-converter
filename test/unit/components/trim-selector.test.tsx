@@ -114,9 +114,7 @@ describe('TrimSelector localized summary', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     render(
-      () => (
-        <TrimSelector duration={3661.2} trimStart={0} trimEnd={0} onChange={() => {}} />
-      ),
+      () => <TrimSelector duration={3661.2} trimStart={0} trimEnd={0} onChange={() => {}} />,
       container
     );
 
@@ -130,13 +128,7 @@ describe('TrimSelector localized summary', () => {
     const onSeek = vi.fn();
     render(
       () => (
-        <TrimSelector
-          duration={10}
-          trimStart={2}
-          trimEnd={8}
-          onChange={onChange}
-          onSeek={onSeek}
-        />
+        <TrimSelector duration={10} trimStart={2} trimEnd={8} onChange={onChange} onSeek={onSeek} />
       ),
       container
     );
@@ -257,9 +249,7 @@ describe('TrimSelector localized summary', () => {
     document.body.appendChild(container);
     const onChange = vi.fn();
     render(
-      () => (
-        <TrimSelector duration={40} trimStart={0} trimEnd={0} onChange={onChange} />
-      ),
+      () => <TrimSelector duration={40} trimStart={0} trimEnd={0} onChange={onChange} />,
       container
     );
 

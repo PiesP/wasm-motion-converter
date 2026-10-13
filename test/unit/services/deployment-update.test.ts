@@ -11,7 +11,10 @@ const cleanups: Array<() => void> = [];
 let now: number;
 let fetchMock: ReturnType<typeof vi.fn>;
 
-function metadata(sourceSha = localSha, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function metadata(
+  sourceSha = localSha,
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
   return {
     schemaVersion: 1,
     sourceDirty: false,
@@ -25,10 +28,19 @@ function metadata(sourceSha = localSha, overrides: Record<string, unknown> = {})
 
 function response(
   value: unknown = metadata(),
-  options: { status?: number; contentType?: string; url?: string; redirected?: boolean; contentLength?: string; body?: string } = {}
+  options: {
+    status?: number;
+    contentType?: string;
+    url?: string;
+    redirected?: boolean;
+    contentLength?: string;
+    body?: string;
+  } = {}
 ): Response {
   const body = options.body ?? JSON.stringify(value);
-  const headers = new Headers({ 'content-type': options.contentType ?? 'application/json; charset=utf-8' });
+  const headers = new Headers({
+    'content-type': options.contentType ?? 'application/json; charset=utf-8',
+  });
   if (options.contentLength !== undefined) headers.set('content-length', options.contentLength);
   const result = new Response(body, { status: options.status ?? 200, headers });
   Object.defineProperties(result, {
@@ -50,7 +62,10 @@ function openResponse(options: Parameters<typeof response>[1] = {}): {
   return { result, cancel };
 }
 
-function observe(sourceSha: string | null = localSha, onUpdate = vi.fn()): ReturnType<typeof vi.fn> {
+function observe(
+  sourceSha: string | null = localSha,
+  onUpdate = vi.fn()
+): ReturnType<typeof vi.fn> {
   cleanups.push(observeDeploymentUpdates({ sourceSha, onUpdate }));
   return onUpdate;
 }
@@ -89,9 +104,15 @@ describe('deployment update observer', () => {
     observe(localSha, callback);
     await settle();
     expect(callback).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith(new URL(metadataUrl), expect.objectContaining({
-      cache: 'no-cache', redirect: 'error', mode: 'same-origin', signal: expect.any(AbortSignal),
-    }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL(metadataUrl),
+      expect.objectContaining({
+        cache: 'no-cache',
+        redirect: 'error',
+        mode: 'same-origin',
+        signal: expect.any(AbortSignal),
+      })
+    );
     now = 60_000;
     window.dispatchEvent(new Event('online'));
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -109,24 +130,34 @@ describe('deployment update observer', () => {
     expect(callback).not.toHaveBeenCalled();
   });
 
-  it.each([null, '', 'INVALID', 'A'.repeat(40)])('makes no request for unknown source %j', (sourceSha) => {
-    observe(sourceSha);
-    window.dispatchEvent(new Event('online'));
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
+  it.each([null, '', 'INVALID', 'A'.repeat(40)])(
+    'makes no request for unknown source %j',
+    (sourceSha) => {
+      observe(sourceSha);
+      window.dispatchEvent(new Event('online'));
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
 
-  it.each(['file:///tmp/app.html', 'data:text/html,app', 'http://example.test/app'])('rejects unsafe origin %s', (href) => {
-    vi.stubGlobal('location', { href });
-    observe();
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
+  it.each(['file:///tmp/app.html', 'data:text/html,app', 'http://example.test/app'])(
+    'rejects unsafe origin %s',
+    (href) => {
+      vi.stubGlobal('location', { href });
+      observe();
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  );
 
   it('checks an HTTPS application origin without using a cross-origin endpoint', async () => {
     vi.stubGlobal('location', { href: 'https://drop.test/?entry=one' });
-    fetchMock.mockResolvedValue(response(metadata(), { url: 'https://drop.test/deployment-state.json' }));
+    fetchMock.mockResolvedValue(
+      response(metadata(), { url: 'https://drop.test/deployment-state.json' })
+    );
     observe();
     await settle();
-    expect(fetchMock.mock.calls[0]?.[0]).toEqual(new URL('https://drop.test/deployment-state.json'));
+    expect(fetchMock.mock.calls[0]?.[0]).toEqual(
+      new URL('https://drop.test/deployment-state.json')
+    );
   });
 
   it('waits for visible and online states, without background polling', async () => {
@@ -147,7 +178,12 @@ describe('deployment update observer', () => {
 
   it('coalesces event bursts and uses an attempt-start cooldown', async () => {
     let resolveFirst!: (value: Response) => void;
-    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveFirst = resolve; }));
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFirst = resolve;
+        })
+    );
     observe();
     for (let index = 0; index < 5; index += 1) {
       window.dispatchEvent(new Event('online'));
@@ -192,22 +228,27 @@ describe('deployment update observer', () => {
     { url: 'https://elsewhere.test/deployment-state.json' },
     { contentLength: '65537' },
     { contentLength: 'malformed' },
-  ])('releases an open response rejected by headers (%j), then permits a valid check', async (options) => {
-    const rejected = openResponse(options);
-    fetchMock.mockResolvedValueOnce(rejected.result).mockResolvedValueOnce(response(metadata(remoteSha)));
-    const callback = observe();
-    const firstSignal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
-    await settle();
-    expect(firstSignal.aborted).toBe(true);
-    expect(rejected.cancel).toHaveBeenCalledTimes(1);
-    expect(callback).not.toHaveBeenCalled();
+  ])(
+    'releases an open response rejected by headers (%j), then permits a valid check',
+    async (options) => {
+      const rejected = openResponse(options);
+      fetchMock
+        .mockResolvedValueOnce(rejected.result)
+        .mockResolvedValueOnce(response(metadata(remoteSha)));
+      const callback = observe();
+      const firstSignal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
+      await settle();
+      expect(firstSignal.aborted).toBe(true);
+      expect(rejected.cancel).toHaveBeenCalledTimes(1);
+      expect(callback).not.toHaveBeenCalled();
 
-    now = 60_000;
-    window.dispatchEvent(new Event('online'));
-    await settle();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(callback).toHaveBeenCalledTimes(1);
-  });
+      now = 60_000;
+      window.dispatchEvent(new Event('online'));
+      await settle();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(callback).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('aborts a request when the body exceeds the byte limit', async () => {
     fetchMock.mockResolvedValue(response(metadata(remoteSha), { body: ' '.repeat(65_537) }));
@@ -219,7 +260,8 @@ describe('deployment update observer', () => {
   });
 
   it('aborts a request with malformed JSON and permits the next valid check', async () => {
-    fetchMock.mockResolvedValueOnce(response(metadata(remoteSha), { body: '{' }))
+    fetchMock
+      .mockResolvedValueOnce(response(metadata(remoteSha), { body: '{' }))
       .mockResolvedValueOnce(response(metadata(remoteSha)));
     const callback = observe();
     const firstSignal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
@@ -235,7 +277,11 @@ describe('deployment update observer', () => {
   it('aborts a request when reading the body fails', async () => {
     const unreadable = response(metadata(remoteSha));
     Object.defineProperty(unreadable, 'body', {
-      value: new ReadableStream<Uint8Array>({ pull() { throw new Error('read failed'); } }),
+      value: new ReadableStream<Uint8Array>({
+        pull() {
+          throw new Error('read failed');
+        },
+      }),
     });
     fetchMock.mockResolvedValue(unreadable);
     const callback = observe();
@@ -248,8 +294,19 @@ describe('deployment update observer', () => {
   it('releases a late response from suspended A without aborting active B', async () => {
     let resolveA!: (value: Response) => void;
     let resolveB!: (value: Response) => void;
-    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveA = resolve; }))
-      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveB = resolve; }));
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveA = resolve;
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveB = resolve;
+          })
+      );
     const callback = observe();
     const signalA = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
     pageEvent('pagehide', true);
@@ -274,7 +331,13 @@ describe('deployment update observer', () => {
     vi.useFakeTimers();
     vi.spyOn(performance, 'now').mockImplementation(() => now);
     let resolveA!: (value: Response) => void;
-    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveA = resolve; }))
+    fetchMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveA = resolve;
+          })
+      )
       .mockImplementationOnce(() => new Promise<Response>(() => {}));
     const callback = observe();
     pageEvent('pagehide', true);
@@ -294,7 +357,12 @@ describe('deployment update observer', () => {
   it('does not report a late response after the whole-operation timeout', async () => {
     vi.useFakeTimers();
     let resolveFetch!: (value: Response) => void;
-    fetchMock.mockImplementation(() => new Promise<Response>((resolve) => { resolveFetch = resolve; }));
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
     const callback = observe();
     const signal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
     await vi.advanceTimersByTimeAsync(10_000);
@@ -305,7 +373,9 @@ describe('deployment update observer', () => {
   });
 
   it('treats a synchronous fetch failure as unknown', async () => {
-    fetchMock.mockImplementation(() => { throw new Error('offline'); });
+    fetchMock.mockImplementation(() => {
+      throw new Error('offline');
+    });
     const callback = observe();
     await settle();
     expect(callback).not.toHaveBeenCalled();
@@ -315,9 +385,11 @@ describe('deployment update observer', () => {
     vi.useFakeTimers();
     const stalled = response(metadata(remoteSha));
     Object.defineProperty(stalled, 'body', {
-      value: new ReadableStream<Uint8Array>({ start(controller) {
-        controller.enqueue(new TextEncoder().encode('{"schemaVersion":1,'));
-      } }),
+      value: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"schemaVersion":1,'));
+        },
+      }),
     });
     fetchMock.mockResolvedValue(stalled);
     const callback = observe();
@@ -329,7 +401,12 @@ describe('deployment update observer', () => {
 
   it('ignores late completion after cleanup and removes event ownership', async () => {
     let resolveFetch!: (value: Response) => void;
-    fetchMock.mockImplementation(() => new Promise<Response>((resolve) => { resolveFetch = resolve; }));
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
     const callback = observe();
     const signal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
     cleanups.pop()?.();
@@ -344,7 +421,12 @@ describe('deployment update observer', () => {
 
   it('suspends on BFCache pagehide, resumes once after cooldown, and ignores the old response', async () => {
     let resolveFetch!: (value: Response) => void;
-    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveFetch = resolve; }));
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
     const callback = observe();
     const signal = fetchMock.mock.calls[0]?.[1].signal as AbortSignal;
     pageEvent('pagehide', true);

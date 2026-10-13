@@ -69,7 +69,9 @@ test('sharing settings preserve the selected format and clip and allow manual ch
     .poll(() => page.evaluate(() => window.__TEST_HELPERS__?.getSettings()))
     .toMatchObject(expectedSettings);
   await expect
-    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('conversion-settings') ?? '{}')))
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem('conversion-settings') ?? '{}'))
+    )
     .toMatchObject(expectedSettings);
   const screenshotPath = test.info().outputPath('sharing-settings.png');
   await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -87,7 +89,9 @@ test('sharing settings preserve the selected format and clip and allow manual ch
   await expect(sharingButton).toBeEnabled();
   await expect(page.getByTestId('result-section')).toBeVisible();
   await expect
-    .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('conversion-settings') ?? '{}').quality))
+    .poll(() =>
+      page.evaluate(() => JSON.parse(localStorage.getItem('conversion-settings') ?? '{}').quality)
+    )
     .toBe('high');
   await page.reload();
   await expect(page.locator('input[name="quality"][value="high"]')).toBeChecked();
@@ -238,8 +242,7 @@ test.describe('Selected-range preview', () => {
         .poll(
           () =>
             video.evaluate((element) => ({
-              currentTime:
-                element instanceof HTMLVideoElement ? element.currentTime : Number.NaN,
+              currentTime: element instanceof HTMLVideoElement ? element.currentTime : Number.NaN,
               paused: element instanceof HTMLVideoElement ? element.paused : true,
             })),
           { timeout: 3_000, intervals: [25, 50, 100] }
@@ -249,7 +252,10 @@ test.describe('Selected-range preview', () => {
       const geometry = await player.evaluate((element) => {
         const videoElement = element.querySelector('video');
         const buttonElement = element.querySelector('[data-testid="trim-preview-button"]');
-        if (!(videoElement instanceof HTMLVideoElement) || !(buttonElement instanceof HTMLElement)) {
+        if (
+          !(videoElement instanceof HTMLVideoElement) ||
+          !(buttonElement instanceof HTMLElement)
+        ) {
           throw new Error('Selection preview player is incomplete');
         }
         const videoRect = videoElement.getBoundingClientRect();
@@ -293,9 +299,7 @@ test.describe('Selected-range preview', () => {
       await expect(previewButton).toHaveAttribute('aria-pressed', 'false');
       await expect
         .poll(() =>
-          video.evaluate((element) =>
-            element instanceof HTMLVideoElement ? element.paused : true
-          )
+          video.evaluate((element) => (element instanceof HTMLVideoElement ? element.paused : true))
         )
         .toBe(true);
       await expect(previewButton).toBeFocused();

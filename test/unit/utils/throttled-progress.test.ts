@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { createThrottledProgress } from '@utils/throttled-progress';
 import type { ConversionProgress } from '@t/conversion-types';
+import { createThrottledProgress } from '@utils/throttled-progress';
 
 function makeProgress(overrides: Partial<ConversionProgress> = {}): ConversionProgress {
   return {
@@ -87,9 +87,7 @@ describe('createThrottledProgress', () => {
     vi.advanceTimersByTime(100);
 
     expect(onProgress).toHaveBeenCalledTimes(2);
-    expect(onProgress).toHaveBeenLastCalledWith(
-      expect.objectContaining({ progress: 20 })
-    );
+    expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({ progress: 20 }));
 
     cleanup();
   });
@@ -118,9 +116,7 @@ describe('createThrottledProgress', () => {
     vi.advanceTimersByTime(40); // total: 200ms
 
     expect(onProgress).toHaveBeenCalledTimes(2);
-    expect(onProgress).toHaveBeenLastCalledWith(
-      expect.objectContaining({ progress: 50 })
-    );
+    expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({ progress: 50 }));
     expect(vi.getTimerCount()).toBe(0);
 
     cleanup();
@@ -139,9 +135,7 @@ describe('createThrottledProgress', () => {
     callback(makeProgress({ progress: 20 })); // fires immediately
 
     expect(onProgress).toHaveBeenCalledTimes(2);
-    expect(onProgress).toHaveBeenLastCalledWith(
-      expect.objectContaining({ progress: 20 })
-    );
+    expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({ progress: 20 }));
 
     cleanup();
   });
@@ -180,9 +174,7 @@ describe('createThrottledProgress', () => {
     flush();
 
     expect(onProgress).toHaveBeenCalledTimes(2);
-    expect(onProgress).toHaveBeenLastCalledWith(
-      expect.objectContaining({ progress: 100 })
-    );
+    expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({ progress: 100 }));
     cleanup();
   });
 
@@ -204,9 +196,7 @@ describe('createThrottledProgress', () => {
     vi.advanceTimersByTime(100);
 
     expect(onProgress).toHaveBeenCalledTimes(3);
-    expect(onProgress).toHaveBeenLastCalledWith(
-      expect.objectContaining({ progress: 30 })
-    );
+    expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({ progress: 30 }));
     cleanup();
   });
 

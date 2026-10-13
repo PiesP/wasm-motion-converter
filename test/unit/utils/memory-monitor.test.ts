@@ -57,8 +57,6 @@ describe('memory monitor', () => {
 
     expect(checkMemoryForConversion(1000, 1000, 10, 'gif').estimatedMB).toBe(61);
     expect(checkMemoryForConversion(1000, 1000, 10, 'webp').estimatedMB).toBe(80);
-    expect(checkMemoryForConversion(1000, 1000, 10, 'webp').availableSource).toBe(
-      'measured-heap'
-    );
+    expect(checkMemoryForConversion(1000, 1000, 10, 'webp').availableSource).toBe('measured-heap');
   });
 });

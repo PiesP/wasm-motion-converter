@@ -9,19 +9,23 @@ const root = resolve(import.meta.dirname, '../../..');
 const classifier = resolve(root, 'scripts/ci/classify-workflow-changes.ts');
 
 function classify(files: string[]): Record<string, string> {
-  const result = spawnSync(process.execPath, ['--experimental-strip-types', classifier, '--files-from-stdin'], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, GITHUB_OUTPUT: '' },
-    input: `${files.join('\n')}\n`,
-  });
+  const result = spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', classifier, '--files-from-stdin'],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, GITHUB_OUTPUT: '' },
+      input: `${files.join('\n')}\n`,
+    }
+  );
 
   expect(result.status, result.stderr).toBe(0);
   return Object.fromEntries(
     result.stdout
       .trim()
       .split('\n')
-      .map((line) => line.split('=', 2)),
+      .map((line) => line.split('=', 2))
   );
 }
 
@@ -42,11 +46,15 @@ function classifyEvent(eventName: string, eventPath?: string): Record<string, st
     result.stdout
       .trim()
       .split('\n')
-      .map((line) => line.split('=', 2)),
+      .map((line) => line.split('=', 2))
   );
 }
 
-function gitFixture(): { directory: string; git: (...args: string[]) => string; write: (path: string, data: string) => void } {
+function gitFixture(): {
+  directory: string;
+  git: (...args: string[]) => string;
+  write: (path: string, data: string) => void;
+} {
   const directory = mkdtempSync(join(tmpdir(), 'wmc routing with spaces '));
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
@@ -84,7 +92,10 @@ function classifyGitEvent(
   });
   expect(result.status, result.stderr).toBe(0);
   return Object.fromEntries(
-    result.stdout.trim().split('\n').map((line) => line.split('=', 2))
+    result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => line.split('=', 2))
   );
 }
 
@@ -202,11 +213,15 @@ describe('Workflow change routing', () => {
       writeFileSync(eventPath, '{"before":');
       expect(new Set(Object.values(classifyEvent('push', eventPath)))).toEqual(new Set(['true']));
 
-      const unsupported = spawnSync(process.execPath, ['--experimental-strip-types', classifier, 'unknown-mode'], {
-        cwd: directory,
-        env: { ...process.env, GITHUB_OUTPUT: '' },
-        encoding: 'utf8',
-      });
+      const unsupported = spawnSync(
+        process.execPath,
+        ['--experimental-strip-types', classifier, 'unknown-mode'],
+        {
+          cwd: directory,
+          env: { ...process.env, GITHUB_OUTPUT: '' },
+          encoding: 'utf8',
+        }
+      );
       expect(unsupported.status).toBe(0);
       expect(unsupported.stderr).toContain('Unsupported classifier mode');
       expect(unsupported.stdout).toContain('security_tools=true\n');
@@ -218,8 +233,17 @@ describe('Workflow change routing', () => {
   it('is import-inert and appends only fixed outputs to GITHUB_OUTPUT', () => {
     const imported = spawnSync(
       process.execPath,
-      ['--experimental-strip-types', '--input-type=module', '-e', `import ${JSON.stringify(pathToFileURL(classifier).href)};`],
-      { cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_EVENT_NAME: 'workflow_dispatch' } }
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '-e',
+        `import ${JSON.stringify(pathToFileURL(classifier).href)};`,
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_EVENT_NAME: 'workflow_dispatch' },
+      }
     );
     expect(imported.status).toBe(0);
     expect(imported.stdout).toBe('');
@@ -229,12 +253,16 @@ describe('Workflow change routing', () => {
     try {
       const output = join(directory, 'github-output');
       writeFileSync(output, 'existing=true\n');
-      const result = spawnSync(process.execPath, ['--experimental-strip-types', classifier, '--files-from-stdin'], {
-        cwd: directory,
-        input: 'docs/path with spaces.md\n',
-        encoding: 'utf8',
-        env: { ...process.env, GITHUB_OUTPUT: output },
-      });
+      const result = spawnSync(
+        process.execPath,
+        ['--experimental-strip-types', classifier, '--files-from-stdin'],
+        {
+          cwd: directory,
+          input: 'docs/path with spaces.md\n',
+          encoding: 'utf8',
+          env: { ...process.env, GITHUB_OUTPUT: output },
+        }
+      );
       expect(result.status).toBe(0);
       expect(result.stdout).toBe('');
       expect(readFileSync(output, 'utf8')).toContain('existing=true\nall=false\n');
@@ -244,55 +272,69 @@ describe('Workflow change routing', () => {
     }
   });
 
-  it.skipIf(process.platform === 'win32')('does not spawn Git or write outputs on import, and runs through a symlink', () => {
-    const { directory } = gitFixture();
-    try {
-      const fakeBin = join(directory, 'fake-bin');
-      mkdirSync(fakeBin);
-      const gitRecord = join(directory, 'git-record');
-      const output = join(directory, 'github-output');
-      const eventPath = join(directory, 'event.json');
-      writeFileSync(join(fakeBin, 'git'), '#!/bin/sh\nprintf invoked > "$GIT_RECORD"\n', { mode: 0o755 });
-      writeFileSync(output, 'existing=true\n');
-      writeFileSync(eventPath, JSON.stringify({ before: 'a'.repeat(40), after: 'b'.repeat(40) }));
+  it.skipIf(process.platform === 'win32')(
+    'does not spawn Git or write outputs on import, and runs through a symlink',
+    () => {
+      const { directory } = gitFixture();
+      try {
+        const fakeBin = join(directory, 'fake-bin');
+        mkdirSync(fakeBin);
+        const gitRecord = join(directory, 'git-record');
+        const output = join(directory, 'github-output');
+        const eventPath = join(directory, 'event.json');
+        writeFileSync(join(fakeBin, 'git'), '#!/bin/sh\nprintf invoked > "$GIT_RECORD"\n', {
+          mode: 0o755,
+        });
+        writeFileSync(output, 'existing=true\n');
+        writeFileSync(eventPath, JSON.stringify({ before: 'a'.repeat(40), after: 'b'.repeat(40) }));
 
-      const imported = spawnSync(
-        process.execPath,
-        ['--experimental-strip-types', '--input-type=module', '-e', `import ${JSON.stringify(pathToFileURL(classifier).href)};`],
-        {
-          cwd: directory,
-          encoding: 'utf8',
-          env: {
-            ...process.env,
-            PATH: fakeBin,
-            GIT_RECORD: gitRecord,
-            GITHUB_OUTPUT: output,
-            GITHUB_EVENT_NAME: 'push',
-            GITHUB_EVENT_PATH: eventPath,
-          },
-        }
-      );
-      expect(imported.status).toBe(0);
-      expect(imported.stdout).toBe('');
-      expect(imported.stderr).toBe('');
-      expect(readFileSync(output, 'utf8')).toBe('existing=true\n');
-      expect(() => readFileSync(gitRecord)).toThrow();
+        const imported = spawnSync(
+          process.execPath,
+          [
+            '--experimental-strip-types',
+            '--input-type=module',
+            '-e',
+            `import ${JSON.stringify(pathToFileURL(classifier).href)};`,
+          ],
+          {
+            cwd: directory,
+            encoding: 'utf8',
+            env: {
+              ...process.env,
+              PATH: fakeBin,
+              GIT_RECORD: gitRecord,
+              GITHUB_OUTPUT: output,
+              GITHUB_EVENT_NAME: 'push',
+              GITHUB_EVENT_PATH: eventPath,
+            },
+          }
+        );
+        expect(imported.status).toBe(0);
+        expect(imported.stdout).toBe('');
+        expect(imported.stderr).toBe('');
+        expect(readFileSync(output, 'utf8')).toBe('existing=true\n');
+        expect(() => readFileSync(gitRecord)).toThrow();
 
-      const linked = join(directory, 'linked-classifier.ts');
-      symlinkSync(classifier, linked);
-      const invoked = spawnSync(process.execPath, ['--experimental-strip-types', linked, '--files-from-stdin'], {
-        cwd: directory,
-        input: 'README.md\n',
-        encoding: 'utf8',
-        env: { ...process.env, GITHUB_OUTPUT: '' },
-      });
-      expect(invoked.status).toBe(0);
-      expect(invoked.stdout).toContain('all=false\n');
-      expect(invoked.stdout).toContain('semgrep=true\n');
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
+        const linked = join(directory, 'linked-classifier.ts');
+        symlinkSync(classifier, linked);
+        const invoked = spawnSync(
+          process.execPath,
+          ['--experimental-strip-types', linked, '--files-from-stdin'],
+          {
+            cwd: directory,
+            input: 'README.md\n',
+            encoding: 'utf8',
+            env: { ...process.env, GITHUB_OUTPUT: '' },
+          }
+        );
+        expect(invoked.status).toBe(0);
+        expect(invoked.stdout).toContain('all=false\n');
+        expect(invoked.stdout).toContain('semgrep=true\n');
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     }
-  });
+  );
 
   it('uses the direct PR base/head diff, including paths absent from the PR head', () => {
     const { directory, git, write } = gitFixture();
@@ -313,8 +355,18 @@ describe('Workflow change routing', () => {
       git('commit', '-qm', 'base moved');
       const base = git('rev-parse', 'HEAD');
 
-      const result = classifyGitEvent(directory, 'pull_request', { pull_request: { base: { sha: base } } }, head);
-      expect(result).toMatchObject({ all: 'false', quality: 'true', dependency: 'true', security_tools: 'true' });
+      const result = classifyGitEvent(
+        directory,
+        'pull_request',
+        { pull_request: { base: { sha: base } } },
+        head
+      );
+      expect(result).toMatchObject({
+        all: 'false',
+        quality: 'true',
+        dependency: 'true',
+        security_tools: 'true',
+      });
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -330,7 +382,11 @@ describe('Workflow change routing', () => {
       git('commit', '-qm', 'initial');
       const before = git('rev-parse', 'HEAD');
 
-      git('mv', 'docs/source with space\nand newline.md', 'src/destination with space\nand newline.ts');
+      git(
+        'mv',
+        'docs/source with space\nand newline.md',
+        'src/destination with space\nand newline.ts'
+      );
       git('rm', 'src/removed.ts');
       rmSync(join(directory, 'src/type.ts'));
       symlinkSync('target.ts', join(directory, 'src/type.ts'));
@@ -338,16 +394,32 @@ describe('Workflow change routing', () => {
       git('commit', '-qm', 'rename delete and type change');
       const after = git('rev-parse', 'HEAD');
 
-      const diff = execFileSync('git', ['diff', '--no-renames', '--name-only', '-z', before, after], { cwd: directory }).toString('utf8');
+      const diff = execFileSync(
+        'git',
+        ['diff', '--no-renames', '--name-only', '-z', before, after],
+        { cwd: directory }
+      ).toString('utf8');
       expect(diff).toContain('docs/source with space\nand newline.md\0');
       expect(diff).toContain('src/destination with space\nand newline.ts\0');
       expect(diff).toContain('src/removed.ts\0');
       expect(diff).toContain('src/type.ts\0');
       expect(classifyGitEvent(directory, 'push', { before, after })).toMatchObject({
-        all: 'false', quality: 'true', build: 'true', semgrep: 'true', semgrep_full: 'true',
+        all: 'false',
+        quality: 'true',
+        build: 'true',
+        semgrep: 'true',
+        semgrep_full: 'true',
       });
-      expect(classifyGitEvent(directory, 'merge_group', { merge_group: { base_sha: before, head_sha: after } })).toMatchObject({
-        all: 'false', quality: 'true', build: 'true', semgrep: 'true', semgrep_full: 'true',
+      expect(
+        classifyGitEvent(directory, 'merge_group', {
+          merge_group: { base_sha: before, head_sha: after },
+        })
+      ).toMatchObject({
+        all: 'false',
+        quality: 'true',
+        build: 'true',
+        semgrep: 'true',
+        semgrep_full: 'true',
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -367,15 +439,25 @@ describe('Workflow change routing', () => {
       git('add', '-A');
       git('commit', '-qm', 'symlink type');
       const linkCommit = git('rev-parse', 'HEAD');
-      expect(classifyGitEvent(directory, 'push', { before: fileCommit, after: linkCommit })).toMatchObject({
-        all: 'false', quality: 'true', build: 'true', dependency: 'false',
+      expect(
+        classifyGitEvent(directory, 'push', { before: fileCommit, after: linkCommit })
+      ).toMatchObject({
+        all: 'false',
+        quality: 'true',
+        build: 'true',
+        dependency: 'false',
       });
 
       git('rm', 'src/type.ts');
       git('commit', '-qm', 'delete symlink');
       const deletionCommit = git('rev-parse', 'HEAD');
-      expect(classifyGitEvent(directory, 'push', { before: linkCommit, after: deletionCommit })).toMatchObject({
-        all: 'false', quality: 'true', build: 'true', dependency: 'false',
+      expect(
+        classifyGitEvent(directory, 'push', { before: linkCommit, after: deletionCommit })
+      ).toMatchObject({
+        all: 'false',
+        quality: 'true',
+        build: 'true',
+        dependency: 'false',
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -394,7 +476,9 @@ describe('Workflow change routing', () => {
         classifyGitEvent(directory, 'push', { before: 'invalid', after: sha }),
         classifyGitEvent(directory, 'push', { before: 'a'.repeat(40), after: sha }),
         classifyGitEvent(directory, 'push', { before: sha, after: sha }),
-        classifyGitEvent(directory, 'merge_group', { merge_group: { base_sha: sha, head_sha: 'bad' } }),
+        classifyGitEvent(directory, 'merge_group', {
+          merge_group: { base_sha: sha, head_sha: 'bad' },
+        }),
       ]) {
         expect(new Set(Object.values(result))).toEqual(new Set(['true']));
       }
@@ -403,27 +487,32 @@ describe('Workflow change routing', () => {
     }
   });
 
-  it.skipIf(process.platform === 'win32')('enables every gate for malformed Git path streams', () => {
-    const { directory } = gitFixture();
-    try {
-      const fakeBin = join(directory, 'fake-bin');
-      mkdirSync(fakeBin);
-      const fakeGit = join(fakeBin, 'git');
-      const before = 'a'.repeat(40);
-      const after = 'b'.repeat(40);
-      for (const output of [
-        'README.md',
-        'test/__screenshots__/e2e/example.png\\377\\0',
-        'test/__screenshots__/e2e/example.png\\0\\0',
-      ]) {
-        writeFileSync(fakeGit, `#!/bin/sh\nprintf '${output}'\n`, { mode: 0o755 });
-        const result = classifyGitEvent(directory, 'push', { before, after }, '', { PATH: fakeBin });
-        expect(new Set(Object.values(result)), output).toEqual(new Set(['true']));
+  it.skipIf(process.platform === 'win32')(
+    'enables every gate for malformed Git path streams',
+    () => {
+      const { directory } = gitFixture();
+      try {
+        const fakeBin = join(directory, 'fake-bin');
+        mkdirSync(fakeBin);
+        const fakeGit = join(fakeBin, 'git');
+        const before = 'a'.repeat(40);
+        const after = 'b'.repeat(40);
+        for (const output of [
+          'README.md',
+          'test/__screenshots__/e2e/example.png\\377\\0',
+          'test/__screenshots__/e2e/example.png\\0\\0',
+        ]) {
+          writeFileSync(fakeGit, `#!/bin/sh\nprintf '${output}'\n`, { mode: 0o755 });
+          const result = classifyGitEvent(directory, 'push', { before, after }, '', {
+            PATH: fakeBin,
+          });
+          expect(new Set(Object.values(result)), output).toEqual(new Set(['true']));
+        }
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
       }
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
     }
-  });
+  );
 
   it('preserves required check names and broad required-workflow triggers', () => {
     const ci = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
@@ -464,7 +553,9 @@ describe('Workflow change routing', () => {
       expect(changes).toContain("if: ${{ steps.routing_checkout.outcome == 'success' }}");
       expect(changes).toContain("steps.routing_runtime.outcome == 'success'");
       expect(changes).toContain("install-dependencies: 'false'");
-      expect(changes).toContain('uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969');
+      expect(changes).toContain(
+        'uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969'
+      );
       expect(changes.indexOf('id: routing_runtime')).toBeLessThan(changes.indexOf('id: classify'));
       expect(changes).toContain('if: ${{ always() }}');
       expect(changes).toContain('CLASSIFY_OUTCOME: ${{ steps.classify.outcome }}');
@@ -478,13 +569,7 @@ describe('Workflow change routing', () => {
     for (const output of ['QUALITY', 'UNIT', 'E2E', 'BUILD']) {
       expect(ciChanges).toContain(`${output}=true`);
     }
-    for (const output of [
-      'DEPENDENCY',
-      'CODEQL',
-      'SEMGREP',
-      'SEMGREP_FULL',
-      'SECURITY_TOOLS',
-    ]) {
+    for (const output of ['DEPENDENCY', 'CODEQL', 'SEMGREP', 'SEMGREP_FULL', 'SECURITY_TOOLS']) {
       expect(securityChanges).toContain(`${output}=true`);
     }
   });

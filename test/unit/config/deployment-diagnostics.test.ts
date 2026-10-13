@@ -1,4 +1,11 @@
-import { appendFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -18,29 +25,81 @@ const state: DeploymentState = {
   sourceDirty: false,
   files: [{ path: asset, size: 1, sha256: 'e'.repeat(64) }],
 };
-const conditional = [{ path: asset, etag: '"abc"', conditionalEtag: null,
-  rfc9110Etag: false, compatibilityException: 'pages-304-etag-omission',
-  status: 304, unmatchedStatus: 200 }];
-const timing = { target: target.href, measuredAt: '2026-10-12T00:00:00.000Z',
-  browserProject: 'chromium', totalTransferSize: 12345,
-  resources: [{ name: new URL(`/${asset}`, target).href, transferSize: 12345 }] };
+const conditional = [
+  {
+    path: asset,
+    etag: '"abc"',
+    conditionalEtag: null,
+    rfc9110Etag: false,
+    compatibilityException: 'pages-304-etag-omission',
+    status: 304,
+    unmatchedStatus: 200,
+  },
+];
+const timing = {
+  target: target.href,
+  measuredAt: '2026-10-12T00:00:00.000Z',
+  browserProject: 'chromium',
+  totalTransferSize: 12345,
+  resources: [{ name: new URL(`/${asset}`, target).href, transferSize: 12345 }],
+};
 
 function report(options: { missing?: string; target?: string; status?: string } = {}) {
   function suite(file: string, title: string, name: string, value: unknown) {
-    return { file, specs: [{ file, title, tests: [{ projectName: 'chromium',
-      status: options.status === 'skipped' ? 'skipped' : 'expected',
-      results: [{ retry: 0, status: options.status ?? 'passed', attachments: options.missing === name
-        ? [] : [{ name, contentType: 'application/json', body: Buffer.from(JSON.stringify(value)).toString('base64') }] }],
-    }] }], suites: [] };
+    return {
+      file,
+      specs: [
+        {
+          file,
+          title,
+          tests: [
+            {
+              projectName: 'chromium',
+              status: options.status === 'skipped' ? 'skipped' : 'expected',
+              results: [
+                {
+                  retry: 0,
+                  status: options.status ?? 'passed',
+                  attachments:
+                    options.missing === name
+                      ? []
+                      : [
+                          {
+                            name,
+                            contentType: 'application/json',
+                            body: Buffer.from(JSON.stringify(value)).toString('base64'),
+                          },
+                        ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      suites: [],
+    };
   }
-  return { stats: { startTime: '2026-10-12T00:00:00.000Z', expected: 2, skipped: 0,
-    unexpected: 0, flaky: 0 }, suites: [
-    suite('e2e/deploy-smoke.spec.ts',
-      'Pages serves one security and cache policy per document, metadata, and fingerprinted asset',
-      'conditional-header-observations', conditional),
-    suite('e2e/dogfood-qa.spec.ts', 'total JS transfer size under 150KB',
-      'js-transfer-timing', { ...timing, target: options.target ?? timing.target }),
-  ] };
+  return {
+    stats: {
+      startTime: '2026-10-12T00:00:00.000Z',
+      expected: 2,
+      skipped: 0,
+      unexpected: 0,
+      flaky: 0,
+    },
+    suites: [
+      suite(
+        'e2e/deploy-smoke.spec.ts',
+        'Pages serves one security and cache policy per document, metadata, and fingerprinted asset',
+        'conditional-header-observations',
+        conditional
+      ),
+      suite('e2e/dogfood-qa.spec.ts', 'total JS transfer size under 150KB', 'js-transfer-timing', {
+        ...timing,
+        target: options.target ?? timing.target,
+      }),
+    ],
+  };
 }
 
 const directories: string[] = [];
@@ -53,7 +112,8 @@ function fixture(value: unknown) {
 }
 
 afterEach(() => {
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0))
+    rmSync(directory, { recursive: true, force: true });
 });
 
 describe('deployment diagnostic artifact', () => {
@@ -64,8 +124,9 @@ describe('deployment diagnostic artifact', () => {
     expect(() => preserveDeploymentDiagnostics(file, state, target, 0, output)).not.toThrow();
     const artifacts = readdirSync(output);
     appendFileSync(file, ' ');
-    expect(() => preserveDeploymentDiagnostics(file, state, target, 0, output))
-      .toThrow('Deployment Playwright report exceeds byte limit');
+    expect(() => preserveDeploymentDiagnostics(file, state, target, 0, output)).toThrow(
+      'Deployment Playwright report exceeds byte limit'
+    );
     expect(readdirSync(output)).toEqual(artifacts);
   });
 
@@ -74,22 +135,36 @@ describe('deployment diagnostic artifact', () => {
     const path = preserveDeploymentDiagnostics(file, state, target, 0, output);
     const artifact = JSON.parse(readFileSync(path, 'utf8'));
     expect(path).toContain(`${state.sourceSha.slice(0, 12)}-`);
-    expect(artifact).toMatchObject({ sourceSha: state.sourceSha, treeSha: state.treeSha,
-      target: target.href, playwrightExitCode: 0,
+    expect(artifact).toMatchObject({
+      sourceSha: state.sourceSha,
+      treeSha: state.treeSha,
+      target: target.href,
+      playwrightExitCode: 0,
       diagnostics: [
-        { project: 'chromium', outcome: 'expected', attempts: [{ retry: 0, status: 'passed', observation: conditional }] },
-        { project: 'chromium', outcome: 'expected', attempts: [{ retry: 0, status: 'passed', observation: timing }] },
-      ] });
+        {
+          project: 'chromium',
+          outcome: 'expected',
+          attempts: [{ retry: 0, status: 'passed', observation: conditional }],
+        },
+        {
+          project: 'chromium',
+          outcome: 'expected',
+          attempts: [{ retry: 0, status: 'passed', observation: timing }],
+        },
+      ],
+    });
     expect(preserveDeploymentDiagnostics(file, state, target, 0, output)).not.toBe(path);
   });
 
   it('rejects a passing test with missing evidence or an observation from another target', () => {
     const missing = fixture(report({ missing: 'conditional-header-observations' }));
-    expect(() => preserveDeploymentDiagnostics(missing.file, state, target, 0, missing.output))
-      .toThrow('no unique conditional-header-observations');
+    expect(() =>
+      preserveDeploymentDiagnostics(missing.file, state, target, 0, missing.output)
+    ).toThrow('no unique conditional-header-observations');
     const stale = fixture(report({ target: 'https://example.test/' }));
-    expect(() => preserveDeploymentDiagnostics(stale.file, state, target, 0, stale.output))
-      .toThrow('Invalid JS transfer timing');
+    expect(() => preserveDeploymentDiagnostics(stale.file, state, target, 0, stale.output)).toThrow(
+      'Invalid JS transfer timing'
+    );
   });
 
   it('retains a successful retry separately from an earlier failed attempt', () => {
@@ -112,7 +187,8 @@ describe('deployment diagnostic artifact', () => {
     const path = preserveDeploymentDiagnostics(skipped.file, state, target, 1, skipped.output);
     const artifact = JSON.parse(readFileSync(path, 'utf8'));
     expect(artifact.diagnostics[0].attempts[0]).toEqual({ retry: 0, status: 'skipped' });
-    expect(() => preserveDeploymentDiagnostics(skipped.file, state, target, 0, skipped.output))
-      .toThrow('did not pass');
+    expect(() =>
+      preserveDeploymentDiagnostics(skipped.file, state, target, 0, skipped.output)
+    ).toThrow('did not pass');
   });
 });

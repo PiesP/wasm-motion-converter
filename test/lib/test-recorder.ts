@@ -129,7 +129,7 @@ export interface Regression {
  */
 export function detectRegressions(
   sizeTolerance = 1.5, // 50% larger than baseline max = regression
-  timingTolerance = 2.0, // 2× slower than baseline = regression
+  timingTolerance = 2.0 // 2× slower than baseline = regression
 ): Regression[] {
   const regressions: Regression[] = [];
   const latest = getLatestResults();
@@ -145,7 +145,7 @@ export function detectRegressions(
             r.format === result.format &&
             r.quality === result.quality &&
             r.scale === result.scale &&
-            r.success,
+            r.success
         )
         .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
 
@@ -230,12 +230,10 @@ export function generateReport(): string {
     const size = result.outputSizeBytes
       ? `${(result.outputSizeBytes / (1024 * 1024)).toFixed(1)}MB`
       : '-';
-    const time = result.conversionTimeMs
-      ? `${(result.conversionTimeMs / 1000).toFixed(1)}s`
-      : '-';
+    const time = result.conversionTimeMs ? `${(result.conversionTimeMs / 1000).toFixed(1)}s` : '-';
     const path = result.path ?? '-';
     lines.push(
-      `| ${result.videoId} | ${result.format} | ${result.quality} | ${result.scale} | ${status} | ${size} | ${time} | ${path} |`,
+      `| ${result.videoId} | ${result.format} | ${result.quality} | ${result.scale} | ${status} | ${size} | ${time} | ${path} |`
     );
   }
 

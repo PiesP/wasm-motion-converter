@@ -14,7 +14,7 @@ export function makeMp4BudgetFixture(original) {
   const containers = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl']);
   const visit = (start, end, depth) => {
     assert(depth <= 8);
-    for (let offset = start; offset + 8 <= end;) {
+    for (let offset = start; offset + 8 <= end; ) {
       assert(++visited <= 4096);
       const length = bytes.readUInt32BE(offset);
       const name = bytes.toString('ascii', offset + 4, offset + 8);

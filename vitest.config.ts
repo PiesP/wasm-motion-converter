@@ -1,7 +1,7 @@
-import { defineConfig } from 'vitest/config';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 import solid from 'vite-plugin-solid';
+import { defineConfig } from 'vitest/config';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const testDir = resolve(__dirname, 'test');

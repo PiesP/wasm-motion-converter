@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { extractVideoMetadata } from '@services/video-metadata';
@@ -15,6 +14,7 @@ import {
   Mp4OutputFormat,
   Output,
 } from 'mediabunny';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 type Table = {
   sampleSizes: number[];
@@ -108,8 +108,11 @@ function readTable(parser: Parser, target: Track, ...parts: Uint8Array[]): Table
 function fragment(id: number, ...counts: number[]): Uint8Array {
   return box(
     'moof',
-    box('traf', box('tfhd', words(0x020038, id, 1, 1, 0)),
-      ...counts.map((count) => box('trun', words(0, count))))
+    box(
+      'traf',
+      box('tfhd', words(0x020038, id, 1, 1, 0)),
+      ...counts.map((count) => box('trun', words(0, count)))
+    )
   );
 }
 
@@ -120,9 +123,12 @@ async function normalMp4(): Promise<ArrayBuffer> {
   output.addVideoTrack(source);
   await output.start();
   for (let index = 0; index < 6; index++) {
-    await source.add(new EncodedPacket(new Uint8Array([0x82, 0, 0, 0]), 'key', index / 30, 1 / 30), {
-      decoderConfig: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
-    });
+    await source.add(
+      new EncodedPacket(new Uint8Array([0x82, 0, 0, 0]), 'key', index / 30, 1 / 30),
+      {
+        decoderConfig: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
+      }
+    );
   }
   await output.finalize();
   if (!target.buffer) throw new Error('MP4 fixture was not finalized');
@@ -156,9 +162,13 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const probe = parser();
     const target = track();
     try {
-      expect(() => readTable(probe.parser, target, sizes(6, width))).toThrow('compact sample-size width');
+      expect(() => readTable(probe.parser, target, sizes(6, width))).toThrow(
+        'compact sample-size width'
+      );
       expect(target.sampleTable?.sampleSizes).toEqual([]);
-      expect(() => probe.parser.getSampleTableForTrack(target)).toThrow('compact sample-size width');
+      expect(() => probe.parser.getSampleTableForTrack(target)).toThrow(
+        'compact sample-size width'
+      );
     } finally {
       probe.input.dispose();
     }
@@ -169,8 +179,12 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const rejected = parser(128 + 96 + 5 * 16);
     const target = track();
     try {
-      expect(readTable(accepted.parser, track(), timing(6), sizes(6, 4)).sampleSizes).toHaveLength(6);
-      expect(() => readTable(rejected.parser, target, timing(6), sizes(6, 4))).toThrow('memory limit');
+      expect(readTable(accepted.parser, track(), timing(6), sizes(6, 4)).sampleSizes).toHaveLength(
+        6
+      );
+      expect(() => readTable(rejected.parser, target, timing(6), sizes(6, 4))).toThrow(
+        'memory limit'
+      );
       expect(target.sampleTable?.sampleSizes).toEqual([]);
     } finally {
       accepted.input.dispose();
@@ -179,7 +193,10 @@ describe('installed MP4 sample metadata allocation policy', () => {
   });
 
   it('rejects truncated compact and ordinary size arrays before sample materialization', () => {
-    for (const table of [box('stz2', words(0, 16, 6), new Uint8Array(2)), box('stsz', words(0, 0, 6, 1))]) {
+    for (const table of [
+      box('stz2', words(0, 16, 6), new Uint8Array(2)),
+      box('stsz', words(0, 0, 6, 1)),
+    ]) {
       const probe = parser();
       const target = track();
       try {
@@ -195,7 +212,9 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const probe = parser(128 + 96 * 2 + 16 + 5 * 128);
     const target = track();
     try {
-      expect(() => readTable(probe.parser, target, timing(6), sizes(6), timing(6, true))).toThrow('memory limit');
+      expect(() => readTable(probe.parser, target, timing(6), sizes(6), timing(6, true))).toThrow(
+        'memory limit'
+      );
       expect(target.sampleTable?.presentationTimestamps).toBeNull();
       expect(target.sampleTable?.presentationTimestampIndexMap).toBeNull();
     } finally {
@@ -217,7 +236,9 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const probe = parser(1500);
     try {
       readTable(probe.parser, track(1), timing(6), sizes(6), timing(6, true));
-      expect(() => readTable(probe.parser, track(2), timing(6), sizes(6), timing(6, true))).toThrow('memory limit');
+      expect(() => readTable(probe.parser, track(2), timing(6), sizes(6), timing(6, true))).toThrow(
+        'memory limit'
+      );
     } finally {
       probe.input.dispose();
     }
@@ -227,7 +248,12 @@ describe('installed MP4 sample metadata allocation policy', () => {
     for (const parts of [
       [timing(6), sizes(6), sizes(6, 4)],
       [timing(6), sizes(6), box('stss', words(0, 1, 0xffffffff))],
-      [timing(6), sizes(6), box('stsc', words(0, 2, 1, 1, 1, 100, 1, 1)), box('stco', words(0, 1, 0))],
+      [
+        timing(6),
+        sizes(6),
+        box('stsc', words(0, 2, 1, 1, 1, 100, 1, 1)),
+        box('stco', words(0, 1, 0)),
+      ],
     ]) {
       const probe = parser();
       try {
@@ -259,8 +285,14 @@ describe('installed MP4 sample metadata allocation policy', () => {
     try {
       const target = track();
       target.info = { type: 'audio', codec: 'pcm-s16', numberOfChannels: 2 };
-      const table = readTable(probe.parser, target, timing(43_200_000), sizes(43_200_000),
-        box('stsc', words(0, 1, 1, 43_200_000, 1)), box('stco', words(0, 1, 0)));
+      const table = readTable(
+        probe.parser,
+        target,
+        timing(43_200_000),
+        sizes(43_200_000),
+        box('stsc', words(0, 1, 1, 43_200_000, 1)),
+        box('stco', words(0, 1, 0))
+      );
       expect(table.sampleSizes).toEqual([43_200_000 * 4]);
       expect(table.sampleTimingEntries).toHaveLength(1);
       expect(table.presentationTimestamps).toBeNull();
@@ -274,7 +306,9 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const target = track();
     probe.parser.tracks.push(target);
     try {
-      expect(() => probe.parser.traverseBox(FileSlice.tempFromBytes(fragment(1, 6, 1)))).toThrow('memory limit');
+      expect(() => probe.parser.traverseBox(FileSlice.tempFromBytes(fragment(1, 6, 1)))).toThrow(
+        'memory limit'
+      );
       expect(probe.parser.lastReadFragment).toBeNull();
       expect(probe.parser.currentFragment?.trackData.get(1)?.samples).toHaveLength(6);
     } finally {
@@ -288,7 +322,9 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const first = fragment(1, 6).slice(8);
     const second = fragment(2, 6).slice(8);
     try {
-      expect(() => probe.parser.traverseBox(FileSlice.tempFromBytes(box('moof', first, second)))).toThrow('memory limit');
+      expect(() =>
+        probe.parser.traverseBox(FileSlice.tempFromBytes(box('moof', first, second)))
+      ).toThrow('memory limit');
       expect(probe.parser.currentFragment?.trackData.get(2)?.samples).toHaveLength(0);
     } finally {
       probe.input.dispose();
@@ -316,7 +352,9 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const bad = normal.slice(0);
     const bytes = new Uint8Array(bad);
     const marker = new TextEncoder().encode('stsz');
-    const offset = bytes.findIndex((_, index) => marker.every((byte, part) => bytes[index + part] === byte));
+    const offset = bytes.findIndex((_, index) =>
+      marker.every((byte, part) => bytes[index + part] === byte)
+    );
     expect(offset).toBeGreaterThan(0);
     const view = new DataView(bad);
     view.setUint32(offset + 8, 1);
@@ -324,7 +362,11 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const dispose = vi.spyOn(Input.prototype, 'dispose');
     await expect(extractVideoMetadata(bad)).rejects.toThrow('sample count');
     expect(dispose).toHaveBeenCalledOnce();
-    await expect(extractVideoMetadata(normal)).resolves.toMatchObject({ width: 16, height: 16, framerate: 30 });
+    await expect(extractVideoMetadata(normal)).resolves.toMatchObject({
+      width: 16,
+      height: 16,
+      framerate: 30,
+    });
     expect(dispose).toHaveBeenCalledTimes(2);
   });
 });

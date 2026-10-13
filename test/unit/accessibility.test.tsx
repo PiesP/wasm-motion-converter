@@ -153,7 +153,9 @@ describe('Accessibility', () => {
       ));
       const fieldset = container.querySelector('fieldset')!;
       const radioGroup = container.querySelector<HTMLElement>('[role="radiogroup"]')!;
-      const radios = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="radio"]'));
+      const radios = Array.from(
+        container.querySelectorAll<HTMLInputElement>('input[type="radio"]')
+      );
 
       expect(fieldset.getAttribute('aria-label')).toBe('Quality');
       expect(radioGroup.getAttribute('aria-labelledby')).toBe('quality-legend');
@@ -229,5 +231,4 @@ describe('Accessibility', () => {
       expect(document.activeElement).toBe(previous);
     });
   });
-
 });

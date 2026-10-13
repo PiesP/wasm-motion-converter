@@ -77,12 +77,21 @@ vi.mock('gifenc', () => ({
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     if (options.maxInputChunks && mocks.state.inputPacketCount > options.maxInputChunks) {
-      throw new Error(`Decoder input packet limit exceeded (${options.maxInputChunks} packet limit)`);
+      throw new Error(
+        `Decoder input packet limit exceeded (${options.maxInputChunks} packet limit)`
+      );
     }
     for (let frame = 0; frame < mocks.state.frameCount; frame++) {
-      await options.onFrameAvailable(new Uint8Array([frame, frame, frame, 255]), 100, frame, undefined, {
-        startUs: frame * 100_000, endUs: (frame + 1) * 100_000,
-      });
+      await options.onFrameAvailable(
+        new Uint8Array([frame, frame, frame, 255]),
+        100,
+        frame,
+        undefined,
+        {
+          startUs: frame * 100_000,
+          endUs: (frame + 1) * 100_000,
+        }
+      );
     }
     return {
       frames: [],

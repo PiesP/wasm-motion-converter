@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   detectInitialLocale,
   detectUserLocale,
@@ -11,6 +10,7 @@ import {
   formatFileSizeLocale,
   updateDocumentLang,
 } from '@utils/format-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 beforeEach(() => {
   const values: Record<string, string> = {};

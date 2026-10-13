@@ -1,21 +1,10 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "types": [
-      "node",
-      "vite/client",
-      "vitest/globals"
-    ],
+    "types": ["node", "vite/client", "vitest/globals"],
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": [
-    "src/**/*.d.ts",
-    "test/unit",
-    "test/native"
-  ],
-  "exclude": [
-    "test/e2e",
-    "test/node_modules"
-  ]
+  "include": ["src/**/*.d.ts", "test/unit", "test/native"],
+  "exclude": ["test/e2e", "test/node_modules"]
 }

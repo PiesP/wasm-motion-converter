@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   cancelDialog,
   confirmDialog,
@@ -9,6 +8,7 @@ import {
   getConfirmationState,
   showConfirmation,
 } from '@stores/confirmation-store';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const warning = (requiresConfirmation: boolean) => ({
   severity: 'warning' as const,

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { checkVideoDecoderSupport } from '@services/video-decoder-support';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const config: VideoDecoderConfig = {
   codec: 'hev1.1.6.L123.90',

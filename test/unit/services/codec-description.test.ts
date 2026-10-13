@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { describe, expect, it } from 'vitest';
 import { copyBoundedCodecDescription } from '@services/codec-description';
 import { MAX_CODEC_DESCRIPTION_BYTES } from '@utils/constants';
+import { describe, expect, it } from 'vitest';
 
 describe('copyBoundedCodecDescription', () => {
   it('copies only the exact view range into an isolated ArrayBuffer', () => {

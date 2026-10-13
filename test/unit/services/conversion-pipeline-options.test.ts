@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversionRequest } from '@t/conversion-types';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   createWorkerPool: vi.fn(),
@@ -47,8 +47,8 @@ vi.mock('@services/worker-pool', () => ({
   WebpWorkerPool: { getOptimalWorkerCount: () => 1 },
 }));
 
-import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import { runConversionPipeline } from '@services/conversion-pipeline';
+import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 
 const baseRequest: ConversionRequest = {
   inputBuffer: new ArrayBuffer(8),
@@ -105,21 +105,29 @@ describe('main conversion pipeline encoder options', () => {
         stubCanvasWebpSupport();
         vi.stubGlobal('Worker', undefined);
       }
-      await runConversionPipeline({
-        ...baseRequest,
-        format: route === 'gif' ? 'gif' : 'webp',
-        forceDecimation: 2,
-        memoryPressureCadenceRatio: 4.2,
-      }, vi.fn());
-      const encoder = route === 'gif'
-        ? mocks.encodeGif
-        : route === 'webp-canvas' ? mocks.encodeWebpOffscreen : mocks.encodeWebp;
+      await runConversionPipeline(
+        {
+          ...baseRequest,
+          format: route === 'gif' ? 'gif' : 'webp',
+          forceDecimation: 2,
+          memoryPressureCadenceRatio: 4.2,
+        },
+        vi.fn()
+      );
+      const encoder =
+        route === 'gif'
+          ? mocks.encodeGif
+          : route === 'webp-canvas'
+            ? mocks.encodeWebpOffscreen
+            : mocks.encodeWebp;
       expect(encoder).toHaveBeenCalledOnce();
-      expect(encoder.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
-        frameDecimation: 2,
-        minimumSourceFrameGap: 2,
-        pressureCadenceRatio: 4.2,
-      }));
+      expect(encoder.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          frameDecimation: 2,
+          minimumSourceFrameGap: 2,
+          pressureCadenceRatio: 4.2,
+        })
+      );
     }
   );
   it('keeps decode ETA unknown when a measurable stream has no total-frame estimate', async () => {
@@ -176,11 +184,18 @@ describe('main conversion pipeline encoder options', () => {
       let elapsedMs = 0;
       const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsedMs);
       mocks.demuxVideo.mockResolvedValueOnce({ ...demuxResult, totalFrames: 13 });
-      const encoder = route === 'gif-main'
-        ? mocks.encodeGif
-        : route === 'webp-serial-canvas' ? mocks.encodeWebpOffscreen : mocks.encodeWebp;
+      const encoder =
+        route === 'gif-main'
+          ? mocks.encodeGif
+          : route === 'webp-serial-canvas'
+            ? mocks.encodeWebpOffscreen
+            : mocks.encodeWebp;
       encoder.mockImplementationOnce(async (_demux, options) => {
-        for (const [time, count] of [[100, 1], [250, 7], [450, 13]] as const) {
+        for (const [time, count] of [
+          [100, 1],
+          [250, 7],
+          [450, 13],
+        ] as const) {
           elapsedMs = time;
           options.onFrameDecoded?.(count, 13);
         }

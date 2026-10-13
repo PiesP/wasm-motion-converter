@@ -42,7 +42,9 @@ describe('extractVideoMetadata cancellation', () => {
       getAverageBitrate: vi.fn(),
       getBitrate: vi.fn(),
       getDecoderConfig: vi.fn().mockResolvedValue({
-        codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16,
+        codec: 'vp09.00.10.08',
+        codedHeight: 16,
+        codedWidth: 16,
       }),
       getRotation: vi.fn().mockResolvedValue(0),
     };

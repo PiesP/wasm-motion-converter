@@ -104,7 +104,8 @@ function paeth(a, b, c) {
 
 /** Decode only PNG screenshot bytes; the page's GIF remains an ordinary animated img. */
 function centerPngRgb(bytes) {
-  if (!Buffer.from(bytes.subarray(0, 8)).equals(PNG_SIGNATURE)) throw new Error('Invalid PNG signature');
+  if (!Buffer.from(bytes.subarray(0, 8)).equals(PNG_SIGNATURE))
+    throw new Error('Invalid PNG signature');
   let offset = 8;
   let width = 0;
   let height = 0;
@@ -124,7 +125,13 @@ function centerPngRgb(bytes) {
       width = data.readUInt32BE(0);
       height = data.readUInt32BE(4);
       colorType = data[9];
-      if (data[8] !== 8 || data[12] !== 0 || width < 1 || height < 1 || width * height > 1_048_576) {
+      if (
+        data[8] !== 8 ||
+        data[12] !== 0 ||
+        width < 1 ||
+        height < 1 ||
+        width * height > 1_048_576
+      ) {
         throw new Error('Unsupported PNG screenshot geometry');
       }
       channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType] ?? 0;
@@ -157,7 +164,13 @@ function centerPngRgb(bytes) {
       const left = index >= channels ? row[index - channels] : 0;
       const above = previous[index];
       const upperLeft = index >= channels ? previous[index - channels] : 0;
-      const predictor = [0, left, above, Math.floor((left + above) / 2), paeth(left, above, upperLeft)][filter];
+      const predictor = [
+        0,
+        left,
+        above,
+        Math.floor((left + above) / 2),
+        paeth(left, above, upperLeft),
+      ][filter];
       if (predictor === undefined) throw new Error(`Unsupported PNG filter ${filter}`);
       row[index] = (raw[cursor++] + predictor) & 255;
     }
@@ -166,7 +179,8 @@ function centerPngRgb(bytes) {
         const pixel = x * channels;
         if (colorType === 3) {
           const entry = row[pixel] * 3;
-          if (!palette || entry + 2 >= palette.byteLength) throw new Error('Invalid PNG palette index');
+          if (!palette || entry + 2 >= palette.byteLength)
+            throw new Error('Invalid PNG palette index');
           reds.push(palette[entry]);
           greens.push(palette[entry + 1]);
           blues.push(palette[entry + 2]);
@@ -236,8 +250,14 @@ export function analyzeGifPlaybackFrames(frames) {
     const current = runs[index];
     const expected = COLORS[(COLORS.indexOf(previous.marker) + 1) % COLORS.length];
     const gapMs = current.startMs - previous.lastMs;
-    transitions.push({ from: previous.marker, to: current.marker, timestampMs: current.startMs, gapMs });
-    if (current.marker !== expected) errors.push(`Missing ${expected} transition before ${current.marker}`);
+    transitions.push({
+      from: previous.marker,
+      to: current.marker,
+      timestampMs: current.startMs,
+      gapMs,
+    });
+    if (current.marker !== expected)
+      errors.push(`Missing ${expected} transition before ${current.marker}`);
     if (!Number.isFinite(gapMs) || gapMs > MAX_SAMPLE_GAP_MS || gapMs < 0) {
       errors.push(`Transition sample gap ${gapMs}ms exceeds ${MAX_SAMPLE_GAP_MS}ms`);
     }
@@ -267,7 +287,10 @@ export function analyzeGifPlaybackFrames(frames) {
     runs,
     transitions,
     cycles,
-    incompleteLead: firstRed < 0 ? runs.map((run) => run.marker) : runs.slice(0, firstRed).map((run) => run.marker),
+    incompleteLead:
+      firstRed < 0
+        ? runs.map((run) => run.marker)
+        : runs.slice(0, firstRed).map((run) => run.marker),
     incompleteTail: runs.slice(Math.max(0, completeEnd + 1)).map((run) => run.marker),
   };
 }
@@ -293,8 +316,11 @@ export function analyzeGifPlaybackCycles(frames) {
       invalidFrameSequences.push(frame.sequence);
       continue;
     }
-    if (!Number.isSafeInteger(frame.sequence) || frame.sequence < 0 ||
-        index && frame.sequence <= frames[index - 1].sequence) {
+    if (
+      !Number.isSafeInteger(frame.sequence) ||
+      frame.sequence < 0 ||
+      (index && frame.sequence <= frames[index - 1].sequence)
+    ) {
       errors.push(`CDP frame sequence is out of order at frame ${index}`);
     }
     if (index && frame.timestampMs <= frames[index - 1].timestampMs) {
@@ -309,11 +335,16 @@ export function analyzeGifPlaybackCycles(frames) {
       previous.lastMs = frame.timestampMs;
       previous.lastSequence = frame.sequence;
     } else {
-      runs.push({ marker, startMs: frame.timestampMs, lastMs: frame.timestampMs,
-        firstSequence: frame.sequence, lastSequence: frame.sequence });
+      runs.push({
+        marker,
+        startMs: frame.timestampMs,
+        lastMs: frame.timestampMs,
+        firstSequence: frame.sequence,
+        lastSequence: frame.sequence,
+      });
     }
   }
-  const redIndices = runs.flatMap((run, index) => run.marker === 'red' ? [index] : []);
+  const redIndices = runs.flatMap((run, index) => (run.marker === 'red' ? [index] : []));
   if (!redIndices.length) errors.push('No red frame was rendered');
   const cycles = [];
   for (let index = 0; index + 1 < redIndices.length; index++) {
@@ -323,14 +354,16 @@ export function analyzeGifPlaybackCycles(frames) {
     const end = runs[lastIndex];
     const middle = runs.slice(firstIndex + 1, lastIndex);
     const markers = [start, ...middle, end].map((run) => run.marker);
-    const validOrder = middle.length === 1 && middle[0].marker === 'lime' ||
-      middle.length === 2 && middle[0].marker === 'lime' && middle[1].marker === 'blue';
+    const validOrder =
+      (middle.length === 1 && middle[0].marker === 'lime') ||
+      (middle.length === 2 && middle[0].marker === 'lime' && middle[1].marker === 'blue');
     const blueObserved = middle.some((run) => run.marker === 'blue');
     const reasons = [];
     const precedingReturn = runs[firstIndex - 1];
-    const startReturnToRedMs = precedingReturn &&
-      (precedingReturn.marker === 'lime' || precedingReturn.marker === 'blue')
-      ? start.startMs - precedingReturn.lastMs : null;
+    const startReturnToRedMs =
+      precedingReturn && (precedingReturn.marker === 'lime' || precedingReturn.marker === 'blue')
+        ? start.startMs - precedingReturn.lastMs
+        : null;
     let redToLimeMs = null;
     let redToBlueMs = null;
     let returnToRedMs = null;
@@ -350,19 +383,30 @@ export function analyzeGifPlaybackCycles(frames) {
         // This fixed GIF holds lime for 50ms. A blue sample within 35ms
         // of the last red sample cannot have skipped that mandatory scene.
         if (redToBlueMs >= 0 && redToBlueMs <= MAX_SAMPLE_GAP_MS) {
-          errors.push(`Mandatory lime scene omitted between red and blue at frame ${middle[0].firstSequence}`);
+          errors.push(
+            `Mandatory lime scene omitted between red and blue at frame ${middle[0].firstSequence}`
+          );
         }
       }
-      reasons.push(hasUnclassified ? 'Unclassified sample in cycle' :
-        hasLime ? 'Observed colors are out of order' : 'Lime transition was not observed');
+      reasons.push(
+        hasUnclassified
+          ? 'Unclassified sample in cycle'
+          : hasLime
+            ? 'Observed colors are out of order'
+            : 'Lime transition was not observed'
+      );
       if (hasLime && !hasUnclassified) {
-        errors.push(`Observed colors are out of order between red frames ${start.firstSequence} and ${end.firstSequence}`);
+        errors.push(
+          `Observed colors are out of order between red frames ${start.firstSequence} and ${end.firstSequence}`
+        );
       }
     } else {
       redToLimeMs = middle[0].startMs - start.lastMs;
       returnToRedMs = end.startMs - middle.at(-1).lastMs;
       if (redToLimeMs < 0 || returnToRedMs < 0) {
-        errors.push(`Negative transition bracket between red frames ${start.firstSequence} and ${end.firstSequence}`);
+        errors.push(
+          `Negative transition bracket between red frames ${start.firstSequence} and ${end.firstSequence}`
+        );
         reasons.push('Transition timestamps are out of order');
       } else {
         if (redToLimeMs > MAX_SAMPLE_GAP_MS) reasons.push('Red-to-lime bracket is sparse');
@@ -396,12 +440,17 @@ export function analyzeGifPlaybackCycles(frames) {
     cycles,
     qualifiedCycleCount: qualifiedCycles.length,
     maxConsecutiveQualifiedCycles: longestQualifiedSequence(cycles),
-    incompleteLead: runs.length && (!redIndices.length || redIndices[0] > 0)
-      ? { status: 'unknown', markers: runs.slice(0, redIndices[0] ?? runs.length).map((run) => run.marker) }
-      : null,
-    incompleteTail: redIndices.length > 0
-      ? { status: 'unknown', markers: runs.slice(redIndices.at(-1)).map((run) => run.marker) }
-      : null,
+    incompleteLead:
+      runs.length && (!redIndices.length || redIndices[0] > 0)
+        ? {
+            status: 'unknown',
+            markers: runs.slice(0, redIndices[0] ?? runs.length).map((run) => run.marker),
+          }
+        : null,
+    incompleteTail:
+      redIndices.length > 0
+        ? { status: 'unknown', markers: runs.slice(redIndices.at(-1)).map((run) => run.marker) }
+        : null,
     blueVisibility: {
       observedFrames: frames.filter((frame) => frame.marker === 'blue').length,
       observedInCapture: frames.some((frame) => frame.marker === 'blue'),
@@ -424,9 +473,14 @@ async function pageVisibility(page) {
       imageComplete: img?.complete ?? false,
       naturalWidth: img?.naturalWidth ?? 0,
       naturalHeight: img?.naturalHeight ?? 0,
-      imageCenterVisible: !!box && box.width >= 100 && box.height >= 100 &&
-        box.left <= innerWidth / 2 && box.right >= innerWidth / 2 &&
-        box.top <= innerHeight / 2 && box.bottom >= innerHeight / 2,
+      imageCenterVisible:
+        !!box &&
+        box.width >= 100 &&
+        box.height >= 100 &&
+        box.left <= innerWidth / 2 &&
+        box.right >= innerWidth / 2 &&
+        box.top <= innerHeight / 2 &&
+        box.bottom >= innerHeight / 2,
     };
   });
 }
@@ -434,7 +488,11 @@ async function pageVisibility(page) {
 /** Collect a bounded, normal-img, installed-Chromium compositor screencast. */
 export async function collectGifPlayback({ context, gifBytes, outputRoot, artifacts, label }) {
   if (!/^[a-z0-9-]+$/.test(label)) throw new Error('GIF playback label must be a safe slug');
-  if (!(gifBytes instanceof Uint8Array) || gifBytes.byteLength < 1 || gifBytes.byteLength > 16 * 1024 * 1024) {
+  if (
+    !(gifBytes instanceof Uint8Array) ||
+    gifBytes.byteLength < 1 ||
+    gifBytes.byteLength > 16 * 1024 * 1024
+  ) {
     throw new RangeError('GIF playback input must be a bounded Uint8Array');
   }
   await mkdir(outputRoot, { recursive: true });
@@ -508,7 +566,8 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
     onFrame = (event) => {
       const ack = session.send('Page.screencastFrameAck', { sessionId: event.sessionId });
       pendingAcks.add(ack);
-      ack.catch((error) => output.errors.push(`Screencast ack: ${error.message}`))
+      ack
+        .catch((error) => output.errors.push(`Screencast ack: ${error.message}`))
         .finally(() => pendingAcks.delete(ack));
       output.captureEventCount++;
       if (!acceptingFrames) return;
@@ -518,7 +577,8 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
       }
       captures.push({
         sequence: captures.length,
-        timestampMs: typeof event.metadata?.timestamp === 'number' ? event.metadata.timestamp * 1000 : null,
+        timestampMs:
+          typeof event.metadata?.timestamp === 'number' ? event.metadata.timestamp * 1000 : null,
         receivedEpochMs: Date.now(),
         data: event.data,
       });
@@ -534,7 +594,10 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
     session.on('Page.screencastFrame', onFrame);
     session.on('Page.screencastVisibilityChanged', onVisibility);
     await session.send('Page.startScreencast', {
-      format: 'png', everyNthFrame: 1, maxWidth: 640, maxHeight: 480,
+      format: 'png',
+      everyNthFrame: 1,
+      maxWidth: 640,
+      maxHeight: 480,
     });
     screencastStarted = true;
     const base64 = Buffer.from(gifBytes).toString('base64');
@@ -544,18 +607,26 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
       globalThis.__gifPlaybackObjectUrl = objectUrl;
       document.querySelector('#playback-gif').src = objectUrl;
     }, base64);
-    await page.waitForFunction(() => {
-      const img = document.querySelector('#playback-gif');
-      return img?.complete && img.naturalWidth > 0;
-    }, null, { timeout: 5_000 });
+    await page.waitForFunction(
+      () => {
+        const img = document.querySelector('#playback-gif');
+        return img?.complete && img.naturalWidth > 0;
+      },
+      null,
+      { timeout: 5_000 }
+    );
     output.visibility.push(await pageVisibility(page));
     visibilityTimer = setInterval(() => {
       if (visibilityPending || output.visibility.length >= 24) return;
       visibilityPending = true;
-      visibilityPromise = pageVisibility(page).then(
-        (value) => output.visibility.push(value),
-        (error) => output.errors.push(`Visibility sample: ${error.message}`)
-      ).finally(() => { visibilityPending = false; });
+      visibilityPromise = pageVisibility(page)
+        .then(
+          (value) => output.visibility.push(value),
+          (error) => output.errors.push(`Visibility sample: ${error.message}`)
+        )
+        .finally(() => {
+          visibilityPending = false;
+        });
     }, 100);
     await new Promise((resolve) => setTimeout(resolve, CAPTURE_MS));
     clearInterval(visibilityTimer);
@@ -568,27 +639,39 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
     if (visibilityPromise) await visibilityPromise;
     acceptingFrames = false;
     if (screencastStarted) {
-      try { await session.send('Page.stopScreencast'); }
-      catch (error) { output.cleanupErrors.push(`stopScreencast: ${error.message}`); }
+      try {
+        await session.send('Page.stopScreencast');
+      } catch (error) {
+        output.cleanupErrors.push(`stopScreencast: ${error.message}`);
+      }
     }
     await Promise.allSettled([...pendingAcks]);
     if (session) {
       if (onFrame) session.off('Page.screencastFrame', onFrame);
       if (onVisibility) session.off('Page.screencastVisibilityChanged', onVisibility);
-      try { await session.detach(); }
-      catch (error) { output.cleanupErrors.push(`CDP detach: ${error.message}`); }
+      try {
+        await session.detach();
+      } catch (error) {
+        output.cleanupErrors.push(`CDP detach: ${error.message}`);
+      }
     }
     if (page) {
       try {
         await page.evaluate(() => {
           const img = document.querySelector('#playback-gif');
           if (img) img.removeAttribute('src');
-          if (globalThis.__gifPlaybackObjectUrl) URL.revokeObjectURL(globalThis.__gifPlaybackObjectUrl);
+          if (globalThis.__gifPlaybackObjectUrl)
+            URL.revokeObjectURL(globalThis.__gifPlaybackObjectUrl);
           delete globalThis.__gifPlaybackObjectUrl;
         });
-      } catch (error) { output.cleanupErrors.push(`Blob revoke: ${error.message}`); }
-      try { await page.close(); }
-      catch (error) { output.cleanupErrors.push(`player page close: ${error.message}`); }
+      } catch (error) {
+        output.cleanupErrors.push(`Blob revoke: ${error.message}`);
+      }
+      try {
+        await page.close();
+      } catch (error) {
+        output.cleanupErrors.push(`player page close: ${error.message}`);
+      }
     }
   }
   for (const capture of captures) {
@@ -607,7 +690,12 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
       };
       output.frameRecords.push(record);
       await writeFile(join(outputRoot, file), bytes);
-      artifacts.push({ kind: 'gif-playback-frame', file, bytes: bytes.byteLength, sha256: record.sha256 });
+      artifacts.push({
+        kind: 'gif-playback-frame',
+        file,
+        bytes: bytes.byteLength,
+        sha256: record.sha256,
+      });
     } catch (error) {
       output.errors.push(`PNG frame ${capture.sequence}: ${error.message}`);
     }
@@ -615,39 +703,71 @@ export async function collectGifPlayback({ context, gifBytes, outputRoot, artifa
   output.analysis = analyzeGifPlaybackFrames(output.frameRecords);
   output.cycleAnalysis = analyzeGifPlaybackCycles(output.frameRecords);
   if (output.overflow) output.errors.push(`Screencast exceeded ${MAX_CAPTURE_FRAMES} frames`);
-  output.status = output.errors.length || output.cleanupErrors.length ||
+  output.status =
+    output.errors.length ||
+    output.cleanupErrors.length ||
     output.cycleAnalysis.errors.length ||
     output.cycleAnalysis.maxConsecutiveQualifiedCycles < MIN_COMPLETE_CYCLES
-    ? 'inconclusive' : 'collected';
+      ? 'inconclusive'
+      : 'collected';
   const summaryFile = `${label}-observation.json`;
   const summaryBytes = Buffer.from(`${JSON.stringify(output, null, 2)}\n`);
   await writeFile(join(outputRoot, summaryFile), summaryBytes);
-  artifacts.push({ kind: 'gif-playback-observation', file: summaryFile, bytes: summaryBytes.byteLength, sha256: digest(summaryBytes) });
+  artifacts.push({
+    kind: 'gif-playback-observation',
+    file: summaryFile,
+    bytes: summaryBytes.byteLength,
+    sha256: digest(summaryBytes),
+  });
   return output;
 }
 
 /** Apply the predeclared cadence threshold after evidence has been retained. */
 export function assertGifPlayback(observation, { expectedCycleMs = 120 } = {}) {
-  const errors = [...observation.errors, ...observation.cleanupErrors,
-    ...(observation.cycleAnalysis?.errors ?? [])];
+  const errors = [
+    ...observation.errors,
+    ...observation.cleanupErrors,
+    ...(observation.cycleAnalysis?.errors ?? []),
+  ];
   if (observation.status !== 'collected') errors.push('Playback collection was inconclusive');
   if (!observation.cycleAnalysis) errors.push('Scoped cycle analysis is missing');
-  if (!Number.isFinite(expectedCycleMs) || expectedCycleMs <= 0) errors.push('Invalid expected cycle duration');
-  if (!observation.browserIdentity.version || !/\bEdg\/\d/.test(observation.browserIdentity.userAgent ?? '')) {
+  if (!Number.isFinite(expectedCycleMs) || expectedCycleMs <= 0)
+    errors.push('Invalid expected cycle duration');
+  if (
+    !observation.browserIdentity.version ||
+    !/\bEdg\/\d/.test(observation.browserIdentity.userAgent ?? '')
+  ) {
     errors.push('Installed Edge browser identity was not observed');
   }
-  if (!observation.rawGceDelaysCs.length || observation.rawGceDelaysCs.some((delay) => delay < 2 || delay > 200)) {
+  if (
+    !observation.rawGceDelaysCs.length ||
+    observation.rawGceDelaysCs.some((delay) => delay < 2 || delay > 200)
+  ) {
     errors.push('GIF contains an unsafe or missing raw GCE delay');
   }
   if (!observation.frameRecords.length) errors.push('No compositor PNG frames were captured');
-  if (!observation.visibility.length || observation.visibility.some((sample) =>
-    sample.visibilityState !== 'visible' || !sample.hasFocus || !sample.imageCenterVisible && sample.imageComplete
-  )) errors.push('Player was hidden, unfocused, or off center');
-  if (!observation.visibility.some((sample) => sample.imageSrcAssigned && sample.imageComplete && sample.naturalWidth > 0) ||
-      observation.visibility.some((sample) => sample.imageSrcAssigned && (!sample.imageComplete || sample.naturalWidth < 1))) {
+  if (
+    !observation.visibility.length ||
+    observation.visibility.some(
+      (sample) =>
+        sample.visibilityState !== 'visible' ||
+        !sample.hasFocus ||
+        (!sample.imageCenterVisible && sample.imageComplete)
+    )
+  )
+    errors.push('Player was hidden, unfocused, or off center');
+  if (
+    !observation.visibility.some(
+      (sample) => sample.imageSrcAssigned && sample.imageComplete && sample.naturalWidth > 0
+    ) ||
+    observation.visibility.some(
+      (sample) => sample.imageSrcAssigned && (!sample.imageComplete || sample.naturalWidth < 1)
+    )
+  ) {
     errors.push('Player image did not load');
   }
-  if (observation.visibilityEvents.some((event) => event.visible === false)) errors.push('CDP reported a hidden player');
+  if (observation.visibilityEvents.some((event) => event.visible === false))
+    errors.push('CDP reported a hidden player');
   const cycles = observation.cycleAnalysis?.cycles ?? [];
   const qualifiedCycles = cycles.filter((cycle) => cycle.status === 'qualified');
   const consecutiveQualifiedCycles = longestQualifiedSequence(cycles);
@@ -655,7 +775,8 @@ export function assertGifPlayback(observation, { expectedCycleMs = 120 } = {}) {
     errors.push(`Only ${consecutiveQualifiedCycles} consecutive qualified cycles observed`);
   }
   const cycleErrors = qualifiedCycles.map((cycle) => Math.abs(cycle.durationMs - expectedCycleMs));
-  if (cycleErrors.some((error) => error > MAX_CYCLE_ERROR_MS)) errors.push('A complete cycle exceeded the 35ms timestamp-error budget');
+  if (cycleErrors.some((error) => error > MAX_CYCLE_ERROR_MS))
+    errors.push('A complete cycle exceeded the 35ms timestamp-error budget');
   if (cycleErrors.length && median(cycleErrors) > MAX_MEDIAN_CYCLE_ERROR_MS) {
     errors.push('Median cycle error exceeded the 20ms budget');
   }

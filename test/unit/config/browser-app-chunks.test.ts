@@ -8,9 +8,9 @@ describe('browser app chunk boundary', () => {
         '/repo/node_modules/.pnpm/wasm-webp@1.0.0/node_modules/wasm-webp/dist/esm/webp-wasm.js'
       )
     ).toBe('wasm-webp');
-    expect(browserAppManualChunk('C:\\repo\\node_modules\\wasm-webp\\dist\\esm\\webp-wasm.js')).toBe(
-      'wasm-webp'
-    );
+    expect(
+      browserAppManualChunk('C:\\repo\\node_modules\\wasm-webp\\dist\\esm\\webp-wasm.js')
+    ).toBe('wasm-webp');
     expect(browserAppManualChunk('/repo/src/services/wasm-webp-singleton.ts')).toBeUndefined();
     expect(browserAppManualChunk('/repo/src/services/webp-encoder-service.ts')).toBeUndefined();
   });

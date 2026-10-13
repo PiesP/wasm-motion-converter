@@ -12,8 +12,11 @@ const logger = vi.hoisted(() => ({
 
 vi.mock('@utils/logger', () => ({ logger }));
 
+import {
+  WORKER_LOG_MAX_EVENTS,
+  WORKER_LOG_MAX_MESSAGE_CHARS,
+} from '@services/conversion-worker/types';
 import { createWorkerLogRelay } from '@services/conversion-worker/worker-log-relay';
-import { WORKER_LOG_MAX_EVENTS, WORKER_LOG_MAX_MESSAGE_CHARS } from '@services/conversion-worker/types';
 
 describe('createWorkerLogRelay', () => {
   beforeEach(() => {

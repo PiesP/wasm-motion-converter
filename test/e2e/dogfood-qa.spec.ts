@@ -10,7 +10,7 @@
 //
 // Last inspection: 2026-07-29
 
-import { test, expect, type Page } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 const SITE_URL = 'https://wasm-motion-converter.pages.dev';
 const DEPLOY_URL = process.env.DEPLOY_URL || SITE_URL;
@@ -54,9 +54,9 @@ test.describe('Page Load & Console Health', () => {
     const pageErrors: string[] = [];
     const requestFailures: string[] = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
-    page.on('requestfailed', (request) => requestFailures.push(
-      `${request.failure()?.errorText ?? 'unknown'} ${request.url()}`,
-    ));
+    page.on('requestfailed', (request) =>
+      requestFailures.push(`${request.failure()?.errorText ?? 'unknown'} ${request.url()}`)
+    );
     await page.addInitScript(() => {
       const violations: string[] = [];
       Object.defineProperty(globalThis, '__dogfoodCspViolations', { value: violations });
@@ -69,9 +69,13 @@ test.describe('Page Load & Console Health', () => {
     expect(errors).toEqual([]);
     expect(pageErrors).toEqual([]);
     expect(requestFailures).toEqual([]);
-    expect(await page.evaluate(() => (
-      (globalThis as typeof globalThis & { __dogfoodCspViolations?: string[] }).__dogfoodCspViolations ?? []
-    ))).toEqual([]);
+    expect(
+      await page.evaluate(
+        () =>
+          (globalThis as typeof globalThis & { __dogfoodCspViolations?: string[] })
+            .__dogfoodCspViolations ?? []
+      )
+    ).toEqual([]);
   });
 
   test('no failed static resource loads', async ({ page }) => {
@@ -102,7 +106,11 @@ test.describe('SEO & Meta Tags', () => {
     const metaChecks = [
       { selector: 'meta[name="description"]', attr: 'content', minLen: 20 },
       { selector: 'meta[name="robots"]', attr: 'content', expected: 'index, follow' },
-      { selector: 'meta[name="viewport"]', attr: 'content', expected: 'width=device-width, initial-scale=1.0' },
+      {
+        selector: 'meta[name="viewport"]',
+        attr: 'content',
+        expected: 'width=device-width, initial-scale=1.0',
+      },
       { selector: 'link[rel="canonical"]', attr: 'href', expected: `${SITE_URL}/` },
     ];
 
@@ -144,8 +152,12 @@ test.describe('SEO & Meta Tags', () => {
   test('has theme-color meta tags', async ({ page }) => {
     await page.goto(DEPLOY_URL);
 
-    const lightTheme = page.locator('meta[name="theme-color"][media="(prefers-color-scheme: light)"]');
-    const darkTheme = page.locator('meta[name="theme-color"][media="(prefers-color-scheme: dark)"]');
+    const lightTheme = page.locator(
+      'meta[name="theme-color"][media="(prefers-color-scheme: light)"]'
+    );
+    const darkTheme = page.locator(
+      'meta[name="theme-color"][media="(prefers-color-scheme: dark)"]'
+    );
     await expect(lightTheme).toHaveAttribute('content', '#f7f8fa');
     await expect(darkTheme).toHaveAttribute('content', '#0b0e13');
   });
@@ -315,25 +327,36 @@ test.describe('Performance', () => {
     const totalSize = measured.reduce((sum, resource) => sum + resource.transferSize, 0);
 
     await testInfo.attach('js-transfer-timing', {
-      body: Buffer.from(JSON.stringify({
-        target: page.url(),
-        measuredAt: new Date().toISOString(),
-        browserProject: testInfo.project.name,
-        serviceWorkers: 'blocked',
-        serviceWorkerControlled: timing.serviceWorkerControlled,
-        context: 'fresh Playwright context, first navigation, networkidle',
-        resourceFilter: 'resource timing name ends with .js; sum positive transferSize only',
-        totalTransferSize: totalSize,
-        resources: timing.resources.map((resource) => ({
-          ...resource,
-          responseContentEncoding: responseContentEncoding.get(resource.name) ?? null,
-        })),
-      }, null, 2)),
+      body: Buffer.from(
+        JSON.stringify(
+          {
+            target: page.url(),
+            measuredAt: new Date().toISOString(),
+            browserProject: testInfo.project.name,
+            serviceWorkers: 'blocked',
+            serviceWorkerControlled: timing.serviceWorkerControlled,
+            context: 'fresh Playwright context, first navigation, networkidle',
+            resourceFilter: 'resource timing name ends with .js; sum positive transferSize only',
+            totalTransferSize: totalSize,
+            resources: timing.resources.map((resource) => ({
+              ...resource,
+              responseContentEncoding: responseContentEncoding.get(resource.name) ?? null,
+            })),
+          },
+          null,
+          2
+        )
+      ),
       contentType: 'application/json',
     });
 
-    expect(timing.resources.length, 'No .js Resource Timing entries were observed').toBeGreaterThan(0);
-    expect(measured.length, 'No .js Resource Timing entries reported positive transferSize').toBeGreaterThan(0);
+    expect(timing.resources.length, 'No .js Resource Timing entries were observed').toBeGreaterThan(
+      0
+    );
+    expect(
+      measured.length,
+      'No .js Resource Timing entries reported positive transferSize'
+    ).toBeGreaterThan(0);
     expect(totalSize).toBeGreaterThan(0);
     expect(totalSize).toBeLessThan(150_000);
   });

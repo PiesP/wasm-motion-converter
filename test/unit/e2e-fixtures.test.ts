@@ -110,9 +110,12 @@ describe('E2E media validation fixtures', () => {
 describe('E2E fixture security', () => {
   const invalidFileSpecs = ['test/e2e/smoke.spec.ts', 'test/e2e/i18n.spec.ts'];
 
-  it.each(invalidFileSpecs)('%s avoids fixed files in shared OS temp directories', (relativePath) => {
-    const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
+  it.each(invalidFileSpecs)(
+    '%s avoids fixed files in shared OS temp directories',
+    (relativePath) => {
+      const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
 
-    expect(source).not.toMatch(/\/tmp(?:\/|['"`])/);
-  });
+      expect(source).not.toMatch(/\/tmp(?:\/|['"`])/);
+    }
+  );
 });

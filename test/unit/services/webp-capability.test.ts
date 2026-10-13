@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { probeCanvasWebpCapability } from '@services/webp-capability';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 function webp(width: number, height: number): Uint8Array<ArrayBuffer> {
   const frame = new Uint8Array([0x10, 0, 0, 0x9d, 0x01, 0x2a, width, 0, height, 0]);
@@ -39,36 +39,60 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('Canvas WebP capability', () => {
   it('accepts a Chromium-style ICCP chunk before opaque VP8', async () => {
-    vi.stubGlobal('OffscreenCanvas', class {
-      getContext(): object { return { fillRect() {}, fillStyle: '' }; }
-      async convertToBlob(): Promise<Blob> { return new Blob([iccWebp(2, 2)], { type: 'image/webp' });
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext(): object {
+          return { fillRect() {}, fillStyle: '' };
+        }
+        async convertToBlob(): Promise<Blob> {
+          return new Blob([iccWebp(2, 2)], { type: 'image/webp' });
+        }
       }
-    });
+    );
     expect(await probeCanvasWebpCapability(0.75)).toBe(true);
   });
   it('accepts only a 2x2 opaque VP8 result', async () => {
-    vi.stubGlobal('OffscreenCanvas', class {
-      getContext(): object { return { fillRect() {}, fillStyle: '' }; }
-      async convertToBlob(options: ImageEncodeOptions): Promise<Blob> {
-        expect(options).toEqual({ type: 'image/webp', quality: 0.75 });
-        return new Blob([webp(2, 2)], { type: 'image/webp' });
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext(): object {
+          return { fillRect() {}, fillStyle: '' };
+        }
+        async convertToBlob(options: ImageEncodeOptions): Promise<Blob> {
+          expect(options).toEqual({ type: 'image/webp', quality: 0.75 });
+          return new Blob([webp(2, 2)], { type: 'image/webp' });
+        }
       }
-    });
+    );
     expect(await probeCanvasWebpCapability(0.75)).toBe(true);
   });
 
   it('rejects a silent PNG fallback or wrong coded dimensions', async () => {
-    vi.stubGlobal('OffscreenCanvas', class {
-      getContext(): object { return { fillRect() {}, fillStyle: '' }; }
-      async convertToBlob(): Promise<Blob> { return new Blob([webp(1, 1)], { type: 'image/webp' }); }
-    });
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext(): object {
+          return { fillRect() {}, fillStyle: '' };
+        }
+        async convertToBlob(): Promise<Blob> {
+          return new Blob([webp(1, 1)], { type: 'image/webp' });
+        }
+      }
+    );
     expect(await probeCanvasWebpCapability(0.75)).toBe(false);
-    vi.stubGlobal('OffscreenCanvas', class {
-      getContext(): object { return { fillRect() {}, fillStyle: '' }; }
-      async convertToBlob(options: ImageEncodeOptions): Promise<Blob> {
-        expect(options).toEqual({ type: 'image/webp', quality: 0.75 });
-        return new Blob([webp(2, 2)], { type: 'image/png' }); }
-    });
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext(): object {
+          return { fillRect() {}, fillStyle: '' };
+        }
+        async convertToBlob(options: ImageEncodeOptions): Promise<Blob> {
+          expect(options).toEqual({ type: 'image/webp', quality: 0.75 });
+          return new Blob([webp(2, 2)], { type: 'image/png' });
+        }
+      }
+    );
     expect(await probeCanvasWebpCapability(0.75)).toBe(false);
   });
 });

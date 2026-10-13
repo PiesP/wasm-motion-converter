@@ -1,27 +1,50 @@
 import AppUpdateNotice from '@components/AppUpdateNotice';
-import type { SWRegisterOptions } from '@/sw-types';
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { SWRegisterOptions } from '@/sw-types';
 
-const registration = vi.hoisted(() => ({ options: {} as SWRegisterOptions, cleanup: vi.fn(), deploymentUpdate: () => {}, deploymentCleanup: vi.fn() }));
-vi.mock('@/deployment-update', () => ({ observeDeploymentUpdates: vi.fn((options: { onUpdate: () => void }) => {
-  registration.deploymentUpdate = options.onUpdate;
-  return registration.deploymentCleanup;
-}) }));
-vi.mock('@/sw-register', () => ({ registerServiceWorker: vi.fn(async (options: SWRegisterOptions) => {
-  registration.options = options;
-  return { cleanup: registration.cleanup };
-}) }));
+const registration = vi.hoisted(() => ({
+  options: {} as SWRegisterOptions,
+  cleanup: vi.fn(),
+  deploymentUpdate: () => {},
+  deploymentCleanup: vi.fn(),
+}));
+vi.mock('@/deployment-update', () => ({
+  observeDeploymentUpdates: vi.fn((options: { onUpdate: () => void }) => {
+    registration.deploymentUpdate = options.onUpdate;
+    return registration.deploymentCleanup;
+  }),
+}));
+vi.mock('@/sw-register', () => ({
+  registerServiceWorker: vi.fn(async (options: SWRegisterOptions) => {
+    registration.options = options;
+    return { cleanup: registration.cleanup };
+  }),
+}));
 let dispose: (() => void) | undefined;
-afterEach(() => { dispose?.(); document.body.replaceChildren(); vi.clearAllMocks(); });
+afterEach(() => {
+  dispose?.();
+  document.body.replaceChildren();
+  vi.clearAllMocks();
+});
 
 it('keeps reload explicit and disabled throughout an operation and while a downloadable result remains', async () => {
   const [busy, setBusy] = createSignal(true);
   const [hasResults, setResults] = createSignal(false);
   const container = document.createElement('div');
   document.body.append(container);
-  dispose = render(() => <AppUpdateNotice busy={busy()} hasResults={hasResults()} onClearResults={() => {}} t={(key) => key} />, container);
+  dispose = render(
+    () => (
+      <AppUpdateNotice
+        busy={busy()}
+        hasResults={hasResults()}
+        onClearResults={() => {}}
+        t={(key) => key}
+      />
+    ),
+    container
+  );
   await Promise.resolve();
   expect(container.querySelector('button')).toBeNull();
   registration.options.onAssetUnavailable?.();
@@ -47,7 +70,17 @@ it('clears a retained result only through an explicit idle action and then allow
   const clearResults = vi.fn(() => setResults(false));
   const container = document.createElement('div');
   document.body.append(container);
-  dispose = render(() => <AppUpdateNotice busy={busy()} hasResults={hasResults()} onClearResults={clearResults} t={(key) => key} />, container);
+  dispose = render(
+    () => (
+      <AppUpdateNotice
+        busy={busy()}
+        hasResults={hasResults()}
+        onClearResults={clearResults}
+        t={(key) => key}
+      />
+    ),
+    container
+  );
   await Promise.resolve();
   registration.deploymentUpdate();
   const buttons = Array.from(container.querySelectorAll('button'));
@@ -73,7 +106,12 @@ it('clears a retained result only through an explicit idle action and then allow
 it('coalesces worker and deployment updates while preserving a distinct unavailable warning', async () => {
   const container = document.createElement('div');
   document.body.append(container);
-  dispose = render(() => <AppUpdateNotice busy={false} hasResults={false} onClearResults={() => {}} t={(key) => key} />, container);
+  dispose = render(
+    () => (
+      <AppUpdateNotice busy={false} hasResults={false} onClearResults={() => {}} t={(key) => key} />
+    ),
+    container
+  );
   await Promise.resolve();
   registration.deploymentUpdate();
   registration.options.onUpdate?.();
@@ -84,7 +122,8 @@ it('coalesces worker and deployment updates while preserving a distinct unavaila
   registration.options.onUpdate?.();
   expect(container.textContent).toContain('update.unavailable');
   expect(container.textContent).not.toContain('update.available');
-  dispose(); dispose = undefined;
+  dispose();
+  dispose = undefined;
   registration.deploymentUpdate();
   registration.options.onAssetUnavailable?.();
   expect(container.childNodes).toHaveLength(0);
@@ -93,8 +132,14 @@ it('coalesces worker and deployment updates while preserving a distinct unavaila
 it('cleans up a registration that resolves after its owner is disposed', async () => {
   const container = document.createElement('div');
   document.body.append(container);
-  dispose = render(() => <AppUpdateNotice busy={false} hasResults={false} onClearResults={() => {}} t={(key) => key} />, container);
-  dispose(); dispose = undefined;
+  dispose = render(
+    () => (
+      <AppUpdateNotice busy={false} hasResults={false} onClearResults={() => {}} t={(key) => key} />
+    ),
+    container
+  );
+  dispose();
+  dispose = undefined;
   await Promise.resolve();
   expect(registration.cleanup).toHaveBeenCalledTimes(1);
 });

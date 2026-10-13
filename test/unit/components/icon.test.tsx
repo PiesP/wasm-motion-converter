@@ -26,13 +26,16 @@ describe('Icon design contract', () => {
     expect(icon?.hasAttribute('aria-label')).toBe(false);
   });
 
-  it.each([false, 'false'] as const)('exposes an accessible name for aria-hidden=%s', (ariaHidden) => {
-    const container = document.createElement('div');
-    document.body.append(container);
-    render(() => <Icon name="info" aria-hidden={ariaHidden} />, container);
+  it.each([false, 'false'] as const)(
+    'exposes an accessible name for aria-hidden=%s',
+    (ariaHidden) => {
+      const container = document.createElement('div');
+      document.body.append(container);
+      render(() => <Icon name="info" aria-hidden={ariaHidden} />, container);
 
-    const icon = container.querySelector('svg');
-    expect(icon?.hasAttribute('aria-hidden')).toBe(false);
-    expect(icon?.getAttribute('aria-label')).toBe('Info');
-  });
+      const icon = container.querySelector('svg');
+      expect(icon?.hasAttribute('aria-hidden')).toBe(false);
+      expect(icon?.getAttribute('aria-label')).toBe('Info');
+    }
+  );
 });

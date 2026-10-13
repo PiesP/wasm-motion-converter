@@ -12,7 +12,9 @@ function git(...args: string[]): string {
 }
 function hook(name: string, input = '') {
   return spawnSync('bash', [join(root, '.githooks', name)], {
-    cwd: fixture, encoding: 'utf8', input,
+    cwd: fixture,
+    encoding: 'utf8',
+    input,
   });
 }
 
@@ -29,7 +31,9 @@ describe('protected PR landing hooks', () => {
   it('allows work-branch commits and pushes', () => {
     expect(hook('pre-commit').status).toBe(0);
     const sha = git('rev-parse', 'HEAD');
-    expect(hook('pre-push', `refs/heads/codex/fixture ${sha} refs/heads/codex/fixture ${sha}\n`).status).toBe(0);
+    expect(
+      hook('pre-push', `refs/heads/codex/fixture ${sha} refs/heads/codex/fixture ${sha}\n`).status
+    ).toBe(0);
   });
   it('rejects default commits even during a merge and rejects detached commits', () => {
     git('switch', '-c', 'master');
@@ -43,7 +47,9 @@ describe('protected PR landing hooks', () => {
     const sha = git('rev-parse', 'HEAD');
     const zero = '0'.repeat(40);
     for (const branch of ['master', 'main']) {
-      expect(hook('pre-push', `refs/heads/codex/fixture ${sha} refs/heads/${branch} ${sha}\n`).status).toBe(1);
+      expect(
+        hook('pre-push', `refs/heads/codex/fixture ${sha} refs/heads/${branch} ${sha}\n`).status
+      ).toBe(1);
       expect(hook('pre-push', `(delete) ${zero} refs/heads/${branch} ${sha}\n`).status).toBe(1);
     }
   });

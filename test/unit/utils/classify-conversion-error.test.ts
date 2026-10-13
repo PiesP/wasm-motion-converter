@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { classifyConversionError } from '@utils/classify-conversion-error';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 describe('classifyConversionError', () => {
   it('classifies output budget failures as memory errors', () => {
@@ -68,14 +68,28 @@ describe('classifyConversionError', () => {
 
   describe('codec errors', () => {
     it('classifies AV1+GIF combination', () => {
-      const meta = { width: 1920, height: 1080, duration: 5, codec: 'av1', framerate: 30, bitrate: 5000000 };
+      const meta = {
+        width: 1920,
+        height: 1080,
+        duration: 5,
+        codec: 'av1',
+        framerate: 30,
+        bitrate: 5000000,
+      };
       const result = classifyConversionError('AV1 codec not supported for GIF', meta);
       expect(result.type).toBe('codec');
       expect(result.phase).toBe('av1_gif_conversion_failure');
     });
 
     it('classifies AV1 decode failure', () => {
-      const meta = { width: 1920, height: 1080, duration: 5, codec: 'av01', framerate: 30, bitrate: 5000000 };
+      const meta = {
+        width: 1920,
+        height: 1080,
+        duration: 5,
+        codec: 'av01',
+        framerate: 30,
+        bitrate: 5000000,
+      };
       const result = classifyConversionError('AV01 codec decode failure', meta);
       expect(result.type).toBe('codec');
       expect(result.phase).toBe('av1_decode_failure');
@@ -100,7 +114,6 @@ describe('classifyConversionError', () => {
       expect(result.type).toBe('format');
       expect(result.suggestion).toContain('WebP');
     });
-
   });
 
   describe('general errors', () => {
@@ -111,7 +124,10 @@ describe('classifyConversionError', () => {
     });
 
     it('classifies cross-origin / SharedArrayBuffer error', () => {
-      const result = classifyConversionError('SharedArrayBuffer not available — check COOP/COEP', null);
+      const result = classifyConversionError(
+        'SharedArrayBuffer not available — check COOP/COEP',
+        null
+      );
       expect(result.type).toBe('general');
       expect(result.phase).toBe('worker_error');
       expect(result.suggestion).toContain('COOP/COEP');
@@ -128,8 +144,18 @@ describe('classifyConversionError', () => {
   describe('video complexity fallback', () => {
     it('classifies overly complex video as memory error', () => {
       // Very high resolution * long duration * high fps = exceeds 500M pixel threshold
-      const meta = { width: 3840, height: 2160, duration: 300, codec: 'h264', framerate: 60, bitrate: 50000000 };
-      const result = classifyConversionError('Some generic error that does not match any rule', meta);
+      const meta = {
+        width: 3840,
+        height: 2160,
+        duration: 300,
+        codec: 'h264',
+        framerate: 60,
+        bitrate: 50000000,
+      };
+      const result = classifyConversionError(
+        'Some generic error that does not match any rule',
+        meta
+      );
       expect(result.type).toBe('memory');
       expect(result.suggestion).toContain('too complex');
     });

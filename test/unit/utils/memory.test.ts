@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getEstimatedHeapLimitBytes, getMemoryInfo } from '@utils/memory-info';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const setPerformanceMemory = (memory: object | undefined) => {
   if (memory === undefined) {

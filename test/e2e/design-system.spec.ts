@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, type Locator, type Page, test } from '@playwright/test';
 
 const LIGHT_THEME = {
   accent: 'rgb(95, 81, 199)',
@@ -175,10 +175,12 @@ test.describe('Quiet Instruments adapter', () => {
     await expect(root).toHaveAttribute('data-pp-theme', 'auto');
     await expect(page.locator('body')).toHaveCSS('background-color', LIGHT_THEME.canvas);
     await expect(page.locator('body')).toHaveCSS('color', LIGHT_THEME.text);
-    await expect.poll(() => readAccentPair(page)).toEqual({
-      background: LIGHT_THEME.accent,
-      foreground: LIGHT_THEME.onAccent,
-    });
+    await expect
+      .poll(() => readAccentPair(page))
+      .toEqual({
+        background: LIGHT_THEME.accent,
+        foreground: LIGHT_THEME.onAccent,
+      });
 
     const targetMinimum = await root.evaluate((element) =>
       getComputedStyle(element).getPropertyValue('--pp-component-target-minimum').trim()
@@ -195,10 +197,12 @@ test.describe('Quiet Instruments adapter', () => {
 
     await expect(page.locator('body')).toHaveCSS('background-color', DARK_THEME.canvas);
     await expect(page.locator('body')).toHaveCSS('color', DARK_THEME.text);
-    await expect.poll(() => readAccentPair(page)).toEqual({
-      background: DARK_THEME.accent,
-      foreground: DARK_THEME.onAccent,
-    });
+    await expect
+      .poll(() => readAccentPair(page))
+      .toEqual({
+        background: DARK_THEME.accent,
+        foreground: DARK_THEME.onAccent,
+      });
 
     const sharedIcon = page.locator('svg[stroke-width="1.75"]').first();
     await expect(sharedIcon).toBeAttached();
@@ -256,7 +260,9 @@ test.describe('Quiet Instruments adapter', () => {
     await expect(page.locator('[data-testid="dropzone"]')).toContainText('9 B');
     await expect(metadata).toBeVisible();
     await expect(metadata).not.toHaveAttribute('open');
-    expect(await metadataSummary.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    expect(
+      await metadataSummary.evaluate((element) => element.getBoundingClientRect().height)
+    ).toBeGreaterThanOrEqual(44);
     await metadataSummary.focus();
     await page.keyboard.press('Enter');
     await expect(metadata).toHaveAttribute('open', '');
@@ -269,7 +275,9 @@ test.describe('Quiet Instruments adapter', () => {
     const advanced = page.locator('[data-testid="advanced-settings"]');
     const advancedSummary = advanced.locator('summary');
     await expect(advanced).not.toHaveAttribute('open');
-    expect(await advancedSummary.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    expect(
+      await advancedSummary.evaluate((element) => element.getBoundingClientRect().height)
+    ).toBeGreaterThanOrEqual(44);
     await expect(advancedSummary).toContainText('Off');
     await advancedSummary.focus();
     await page.keyboard.press('Enter');
@@ -326,7 +334,9 @@ test.describe('Quiet Instruments adapter', () => {
     });
   }
 
-  test('keeps narrow RTL progress usable with reduced motion and forced colors', async ({ page }) => {
+  test('keeps narrow RTL progress usable with reduced motion and forced colors', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.emulateMedia({
       colorScheme: 'dark',
@@ -392,7 +402,10 @@ test.describe('Quiet Instruments adapter', () => {
 
       const dropzone = page.locator('[data-testid="dropzone"]');
       const cancel = page.locator('[data-testid="dropzone-cancel-button"]');
-      await expect(dropzone.locator('[role="progressbar"]')).not.toHaveAttribute('aria-valuenow', /.+/);
+      await expect(dropzone.locator('[role="progressbar"]')).not.toHaveAttribute(
+        'aria-valuenow',
+        /.+/
+      );
       await expect(dropzone).toHaveAttribute('aria-busy', 'true');
       await expect(cancel).toHaveAttribute('aria-label', 'Cancel analysis');
       await expect(dropzone.getByText('0%', { exact: true })).toHaveCount(0);
@@ -423,7 +436,10 @@ test.describe('Quiet Instruments adapter', () => {
         const store = await import(storePath);
         store.setConversionProgress(100);
       });
-      await expect(dropzone.locator('[role="progressbar"]')).toHaveAttribute('aria-valuenow', '100');
+      await expect(dropzone.locator('[role="progressbar"]')).toHaveAttribute(
+        'aria-valuenow',
+        '100'
+      );
       await expect(dropzone).toHaveAttribute('aria-busy', 'true');
       await page.evaluate(async () => {
         const storePath = '/src/stores/conversion-store.ts';
@@ -484,7 +500,9 @@ test.describe('Quiet Instruments adapter', () => {
   }
 
   for (const format of ['gif', 'webp'] as const) {
-    test(`lets keyboard users opt into a reduced-motion ${format.toUpperCase()} result and download after hiding`, async ({ page }) => {
+    test(`lets keyboard users opt into a reduced-motion ${format.toUpperCase()} result and download after hiding`, async ({
+      page,
+    }) => {
       const browserErrors = collectBrowserErrors(page);
       await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto('/');

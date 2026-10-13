@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import type { AppState } from '@t/app-types';
-import type { TFunction } from '@t/i18n-types';
 import {
   setAppState,
   setConversionProgress,
   setConversionStatusMessage,
 } from '@stores/conversion-store';
+import type { AppState } from '@t/app-types';
+import type { TFunction } from '@t/i18n-types';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -112,8 +112,8 @@ describe('App state announcement', () => {
 
     expect(getAppStateAnnouncement).toBeTypeOf('function');
     expect(
-      (['idle', 'analyzing', 'converting', 'cancelling', 'done', 'error'] as const).map(
-        (state) => getAppStateAnnouncement?.(state, t)
+      (['idle', 'analyzing', 'converting', 'cancelling', 'done', 'error'] as const).map((state) =>
+        getAppStateAnnouncement?.(state, t)
       )
     ).toEqual([
       'translated:settings.selectVideo',
@@ -135,7 +135,9 @@ describe('App state announcement', () => {
     const dispose = render(() => App({}), container);
 
     await vi.waitFor(() => {
-      expect(container.querySelector('[data-testid="dropzone"] [data-progress="47"]')).not.toBeNull();
+      expect(
+        container.querySelector('[data-testid="dropzone"] [data-progress="47"]')
+      ).not.toBeNull();
     });
     const progressCard = container.querySelector('[data-testid="dropzone"]');
     const progressBar = container.querySelector('[data-testid="dropzone"] [role="progressbar"]');
@@ -155,7 +157,9 @@ describe('App state announcement', () => {
       expect(container.querySelector('[data-testid="dropzone"] [role="progressbar"]')).toBe(
         progressBar
       );
-      expect(container.querySelector('[data-testid="dropzone"] [data-progress="47"]')).not.toBeNull();
+      expect(
+        container.querySelector('[data-testid="dropzone"] [data-progress="47"]')
+      ).not.toBeNull();
       expect(progressCard?.textContent).toContain('translated:progress.cancelling');
       expect(container.querySelector('[data-testid="conversion-progress"]')).toBeNull();
       expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(1);
@@ -189,7 +193,9 @@ describe('App state announcement', () => {
     const dispose = render(() => App({}), container);
     const dropzone = container.querySelector('[data-testid="dropzone"]');
     const progress = dropzone?.querySelector('[role="progressbar"]');
-    const cancel = container.querySelector<HTMLButtonElement>('[data-testid="dropzone-cancel-button"]');
+    const cancel = container.querySelector<HTMLButtonElement>(
+      '[data-testid="dropzone-cancel-button"]'
+    );
     expect(dropzone?.getAttribute('aria-busy')).toBe('true');
     expect(progress?.hasAttribute('aria-valuenow')).toBe(false);
     expect(dropzone?.textContent).not.toContain('0%');
@@ -205,7 +211,9 @@ describe('App state announcement', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const dispose = render(() => App({}), container);
-    const cancel = container.querySelector<HTMLButtonElement>('[data-testid="dropzone-cancel-button"]');
+    const cancel = container.querySelector<HTMLButtonElement>(
+      '[data-testid="dropzone-cancel-button"]'
+    );
     expect(cancel?.getAttribute('aria-label')).toBe('translated:dropzone.cancelAnalysis');
 
     cancel?.click();
@@ -229,7 +237,9 @@ describe('App state announcement', () => {
       expect(dropzone?.querySelector('[data-testid="progress-diagnostics"]')).toBeNull();
       expect(pendingCancel?.disabled).toBe(true);
       expect(container.querySelector('[data-testid="stop-conversion-button"]')).toBeNull();
-      expect(container.querySelector<HTMLButtonElement>('[data-testid="convert-button"]')?.disabled).toBe(true);
+      expect(
+        container.querySelector<HTMLButtonElement>('[data-testid="convert-button"]')?.disabled
+      ).toBe(true);
     });
 
     setAppState('idle');
@@ -252,7 +262,9 @@ describe('App state announcement', () => {
 
     const dropzone = container.querySelector('[data-testid="dropzone"]');
     const progress = dropzone?.querySelector('[role="progressbar"]');
-    const stop = container.querySelector<HTMLButtonElement>('[data-testid="stop-conversion-button"]');
+    const stop = container.querySelector<HTMLButtonElement>(
+      '[data-testid="stop-conversion-button"]'
+    );
     expect(progress?.getAttribute('aria-valuenow')).toBe('100');
     expect(dropzone?.getAttribute('aria-busy')).toBe('true');
     expect(stop?.disabled).toBe(false);

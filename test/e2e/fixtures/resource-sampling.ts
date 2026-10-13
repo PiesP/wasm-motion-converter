@@ -52,7 +52,7 @@ export async function captureSamplesDuringOperation<T, Sample>({
   if (hasOperationFailure && hasSamplingFailure) {
     throw new AggregateError(
       [operationFailure, samplingFailure],
-      'Resource operation and sampling both failed',
+      'Resource operation and sampling both failed'
     );
   }
   if (hasOperationFailure) throw operationFailure;

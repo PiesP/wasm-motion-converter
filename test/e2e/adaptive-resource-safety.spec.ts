@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { expect, test, type Page } from '@playwright/test';
 import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
+import { expect, type Page, test } from '@playwright/test';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
-
-import { inspectAnimatedWebp } from './fixtures/validate-magic';
 import {
   clickConvert,
   dismissWarningDialog,
@@ -17,6 +15,7 @@ import {
   setSmartFrameSkip,
   waitForConversionComplete,
 } from './fixtures/test-helpers';
+import { inspectAnimatedWebp } from './fixtures/validate-magic';
 import { decodeFileFully, probeFile, validateFileMagic } from './fixtures/verify';
 
 const FIXTURE = 'test-video-ci-high-motion-120fps.mp4';
@@ -45,7 +44,7 @@ function observedCount(value: number | null, name: string): number {
 async function decodeAllFramesInBrowser(
   page: Page,
   output: Uint8Array,
-  format: 'gif' | 'webp',
+  format: 'gif' | 'webp'
 ): Promise<{ frameCount: number; width: number; height: number }> {
   return page.evaluate(
     async ({ base64, mimeType }) => {
@@ -70,7 +69,7 @@ async function decodeAllFramesInBrowser(
         decoder.close();
       }
     },
-    { base64: Buffer.from(output).toString('base64'), mimeType: `image/${format}` },
+    { base64: Buffer.from(output).toString('base64'), mimeType: `image/${format}` }
   );
 }
 
@@ -78,9 +77,10 @@ async function convertAndInspect(
   page: Page,
   format: 'gif' | 'webp',
   smartFrameSkip: 'off' | 'adaptive',
-  scale: '50%' | '100%' = '50%',
+  scale: '50%' | '100%' = '50%'
 ): Promise<OutputMetrics> {
-  const expectedDimensions = scale === '50%' ? { width: 160, height: 90 } : { width: 320, height: 180 };
+  const expectedDimensions =
+    scale === '50%' ? { width: 160, height: 90 } : { width: 320, height: 180 };
   await injectTestFile(page, FIXTURE);
 
   const metadata = await page.evaluate(() => window.__TEST_HELPERS__?.getMetadata() ?? null);
@@ -103,9 +103,11 @@ async function convertAndInspect(
   expect(resultBlob!.size).toBeGreaterThan(100);
 
   const profile = await page.evaluate(() => {
-    const helpers = window.__TEST_HELPERS__ as unknown as {
-      getConversionProfile: () => ConversionProfileReport | null;
-    } | undefined;
+    const helpers = window.__TEST_HELPERS__ as unknown as
+      | {
+          getConversionProfile: () => ConversionProfileReport | null;
+        }
+      | undefined;
     return helpers?.getConversionProfile() ?? null;
   });
   expect(profile?.encoderRoute).toMatch(format === 'gif' ? /^gif-/ : /^webp-/);
@@ -128,7 +130,7 @@ async function convertAndInspect(
       preview.evaluate((image) => ({
         width: (image as HTMLImageElement).naturalWidth,
         height: (image as HTMLImageElement).naturalHeight,
-      })),
+      }))
     )
     .toEqual(expectedDimensions);
 
@@ -213,9 +215,11 @@ test.describe('adaptive frame skipping resource safety', () => {
       for (const result of [fixed, adaptive]) {
         expect(result.counts.emittedFrames).toBe(result.frameCount);
         expect(result.frameCount).toBeGreaterThan(0);
-        expect(result.frameCount).toBeLessThanOrEqual(expectedSelectedFrames + (format === 'gif' ? 1 : 0));
+        expect(result.frameCount).toBeLessThanOrEqual(
+          expectedSelectedFrames + (format === 'gif' ? 1 : 0)
+        );
         expect(result.counts.emittedFrames).toBeLessThanOrEqual(
-          result.counts.encodedFrames + (format === 'gif' ? 1 : 0),
+          result.counts.encodedFrames + (format === 'gif' ? 1 : 0)
         );
         expect(result.durationMs).toBeGreaterThanOrEqual(SOURCE_DURATION_MS - 100);
         expect(result.durationMs).toBeLessThanOrEqual(SOURCE_DURATION_MS + 100);
@@ -252,7 +256,7 @@ test.describe('adaptive frame skipping resource safety', () => {
         expect(result.frameCount).toBeGreaterThan(0);
         expect(result.frameCount).toBeLessThanOrEqual(format === 'gif' ? 46 : 45);
         expect(result.counts.emittedFrames).toBeLessThanOrEqual(
-          result.counts.encodedFrames + (format === 'gif' ? 1 : 0),
+          result.counts.encodedFrames + (format === 'gif' ? 1 : 0)
         );
         expect(result.durationMs).toBeGreaterThanOrEqual(SOURCE_DURATION_MS - 100);
         expect(result.durationMs).toBeLessThanOrEqual(SOURCE_DURATION_MS + 100);

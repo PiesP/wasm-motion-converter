@@ -4,9 +4,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  type ProcessMemoryReading,
   readLinuxProcessMemory,
   summarizeProcessMemory,
-  type ProcessMemoryReading,
 } from '../e2e/fixtures/process-memory';
 
 describe('Linux Chromium process-memory sampling', () => {
@@ -27,7 +27,7 @@ describe('Linux Chromium process-memory sampling', () => {
 
   it('leaves malformed or missing metrics unavailable', async () => {
     const readTextFile = vi.fn(async (path: string) =>
-      path.endsWith('/smaps_rollup') ? 'Pss: unknown\n' : 'Name:\tchromium\n',
+      path.endsWith('/smaps_rollup') ? 'Pss: unknown\n' : 'Name:\tchromium\n'
     );
 
     await expect(readLinuxProcessMemory(202, readTextFile)).resolves.toEqual({
@@ -35,11 +35,7 @@ describe('Linux Chromium process-memory sampling', () => {
       rssMB: null,
       pssSource: 'unavailable',
       rssSource: 'unavailable',
-      errors: [
-        'smaps_rollup: missing Pss',
-        'smaps_rollup: missing Rss',
-        'status: missing VmRSS',
-      ],
+      errors: ['smaps_rollup: missing Pss', 'smaps_rollup: missing Rss', 'status: missing VmRSS'],
     });
   });
 
@@ -63,7 +59,7 @@ describe('Linux Chromium process-memory sampling', () => {
       summarizeProcessMemory([
         { id: 1, type: 'browser', memory: complete },
         { id: 2, type: 'renderer', memory: rssOnly },
-      ]),
+      ])
     ).toEqual({
       pssMB: null,
       rssMB: 120,

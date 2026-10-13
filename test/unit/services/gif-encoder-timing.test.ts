@@ -53,8 +53,14 @@ vi.mock('@services/decoder-service', () => ({
         presentationEndUs: mocks.presentationEndUs,
       };
     }
-    await options.onFrameAvailable(new Uint8Array([1, 1, 1, 255]), 100, 0, undefined, { startUs: 0, endUs: 100_000 });
-    await options.onFrameAvailable(new Uint8Array([2, 2, 2, 255]), 40, 1, undefined, { startUs: 100_000, endUs: 140_000 });
+    await options.onFrameAvailable(new Uint8Array([1, 1, 1, 255]), 100, 0, undefined, {
+      startUs: 0,
+      endUs: 100_000,
+    });
+    await options.onFrameAvailable(new Uint8Array([2, 2, 2, 255]), 40, 1, undefined, {
+      startUs: 100_000,
+      endUs: 140_000,
+    });
     return {
       frames: [],
       outputTotalMs: 0,
@@ -223,11 +229,7 @@ describe('encodeGif timing', () => {
       { width: 1, height: 1, quality: 'low', scale: 1 }
     );
 
-    expect(mocks.writeFrame.mock.calls.map((call) => call[3]?.delay)).toEqual([
-      2000,
-      2000,
-      1000,
-    ]);
+    expect(mocks.writeFrame.mock.calls.map((call) => call[3]?.delay)).toEqual([2000, 2000, 1000]);
   });
 
   it('applies the 20 ms viewer floor to a whole clip shorter than 20 ms', async () => {

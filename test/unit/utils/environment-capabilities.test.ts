@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { describe, expect, it } from 'vitest';
-
 import { assessEnvironmentCapabilities } from '@utils/environment-capabilities';
+import { describe, expect, it } from 'vitest';
 
 describe('assessEnvironmentCapabilities', () => {
   const requiredCapabilities = {
