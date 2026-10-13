@@ -235,6 +235,51 @@ describe('handleConvert conversion ownership', () => {
     expect(mocks.runConversionPipeline).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['cancellation', 'new-file revision'] as const)(
+    'discards a result invalidated by %s at the final rendering microtask',
+    async (reason) => {
+      mocks.settings = { ...mocks.settings, format: 'webp' };
+      mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
+      let resolvePipeline: ((output: ArrayBuffer) => void) | undefined;
+      mocks.runConversionPipeline.mockReturnValueOnce(
+        new Promise<ArrayBuffer>((resolve) => {
+          resolvePipeline = resolve;
+        })
+      );
+      const runtime = createRuntime();
+      const conversion = handleConvert(runtime, localizedProgressT);
+      await vi.waitFor(() => expect(mocks.runConversionPipeline).toHaveBeenCalledOnce());
+      mocks.setConversionResults.mockClear();
+      const stopMonitoring = runtime.stopMemoryMonitoring.bind(runtime);
+      let invalidatedAtBoundary = false;
+      const stop = vi.spyOn(runtime, 'stopMemoryMonitoring').mockImplementationOnce(() => {
+        stopMonitoring();
+        // handleResult has passed its first active-run check; this runs before
+        // its explicit Promise continuation can publish the result.
+        queueMicrotask(() => {
+          invalidatedAtBoundary = true;
+          if (reason === 'cancellation') handleCancelConversion(runtime);
+          else runtime.invalidateActiveConversions();
+        });
+      });
+      try {
+        resolvePipeline?.(
+          new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
+        );
+        await conversion;
+        expect(invalidatedAtBoundary).toBe(true);
+        expect(mocks.setConversionResults).not.toHaveBeenCalled();
+        expect(mocks.transitionToState).not.toHaveBeenCalledWith('done');
+        expect(mocks.focusElementUnlessUserIsEditing).not.toHaveBeenCalledWith(
+          '[data-testid="download-result-button"]'
+        );
+      } finally {
+        stop.mockRestore();
+        runtime.dispose();
+      }
+    }
+  );
+
   it('restores idle after a cancelled direct retry physically settles', async () => {
     mocks.appState = 'error';
     mocks.settings = { ...mocks.settings, format: 'webp' };

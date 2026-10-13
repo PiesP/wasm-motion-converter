@@ -101,6 +101,38 @@ describe('StreamingWebpMuxer', () => {
       expect(muxer.frames).toBe(1);
     });
 
+    it.each(['ordinary', 'shared'] as const)(
+      'preserves every retained VP8 byte when a %s-backed codec view is overwritten',
+      async (backing) => {
+        const muxer = new StreamingWebpMuxer(16, 16);
+        const borrowed = new Uint8Array(
+          backing === 'shared' ? new SharedArrayBuffer(100) : new ArrayBuffer(100)
+        );
+        const first = dummyBitstream(100, 7);
+        const second = dummyBitstream(100, 8);
+        borrowed.set(first);
+        muxer.addPresentationFrame(borrowed, { startUs: 0, endUs: 10_000 });
+        borrowed.set(second);
+        muxer.addPresentationFrame(borrowed, { startUs: 10_000, endUs: 20_000 });
+        borrowed.fill(0);
+        muxer.finishPresentation(20_000);
+
+        const output = await muxer.finish();
+        const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+        const payloads: Uint8Array[] = [];
+        for (let offset = 12; offset < output.length; ) {
+          const size = view.getUint32(offset + 4, true);
+          if (view.getUint32(offset) === 0x414e4d46) {
+            const payloadSize = view.getUint32(offset + 28, true);
+            payloads.push(output.subarray(offset + 32, offset + 32 + payloadSize));
+          }
+          offset += 8 + size + (size & 1);
+        }
+        expect(payloads).toEqual([first, second]);
+        expect(durations(output)).toEqual([10, 10]);
+      }
+    );
+
     it('drops zero-length distinct holds at sub-millisecond source cadence', async () => {
       const muxer = new StreamingWebpMuxer(16, 16);
       for (let index = 0; index < 8; index++) {
