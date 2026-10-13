@@ -431,8 +431,14 @@ describe('decoder-service', () => {
         vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
         FakeVideoFrame.frameDuration = 100_000;
         const demux = deliveryDemux();
-        const cpu = vi.fn((pixels: Uint8Array) => globalBufferPool.release(pixels));
-        const video = vi.fn((frame: VideoFrame) => frame.close());
+        const cpu = vi.fn(function (this: unknown, pixels: Uint8Array) {
+          expect(this).toBeUndefined();
+          globalBufferPool.release(pixels);
+        });
+        const video = vi.fn(function (this: unknown, frame: VideoFrame) {
+          expect(this).toBeUndefined();
+          frame.close();
+        });
         const options: DecodeOptions = {
           width: 8,
           height: 8,
