@@ -266,6 +266,7 @@ async function installOnlineMetadataTransportGate(page) {
         return Reflect.apply(nativeFetch, this, args);
       state.queued++;
       state.queuedAtMs = performance.now();
+      // biome-ignore lint/complexity/noUselessThisAlias: Retain the fetch receiver across the asynchronous transport gate.
       const receiver = this;
       // Retain the original request and signal; only native transport waits for
       // Playwright to finish restoring the controlling service-worker session.
@@ -332,6 +333,7 @@ async function restoreOnlineWithMetadataGate(page, context, record, lifecycleSta
             ...(primaryError.cleanupErrors ?? []),
             `metadata transport gate release: ${String(error)}`,
           ];
+        // biome-ignore lint/correctness/noUnsafeFinally: Cleanup failure is raised only when no primary failure exists.
         else throw error;
       }
     }
@@ -475,6 +477,7 @@ async function measureColdTransfer(browser, started, build) {
             ...(primaryError.cleanupErrors ?? []),
             `cold context close: ${String(error)}`,
           ];
+        // biome-ignore lint/correctness/noUnsafeFinally: Cleanup failure is raised only when no primary failure exists.
         else throw error;
       }
     }
@@ -606,6 +609,7 @@ async function baselineBeforeFix(
     }
     if (primaryError && cleanupErrors.length)
       primaryError.cleanupErrors = [...(primaryError.cleanupErrors ?? []), ...cleanupErrors];
+    // biome-ignore lint/correctness/noUnsafeFinally: Cleanup failure is raised only when no primary failure exists.
     if (!primaryError && cleanupErrors.length) throw new Error(cleanupErrors.join('; '));
   }
 }
@@ -962,6 +966,7 @@ async function observeCleanupCase({
     if (primaryError && result.cleanupErrors.length)
       primaryError.cleanupErrors = [...(primaryError.cleanupErrors ?? []), ...result.cleanupErrors];
     if (!primaryError && result.cleanupErrors.length)
+      // biome-ignore lint/correctness/noUnsafeFinally: Cleanup failure is raised only when no primary failure exists.
       throw new Error(result.cleanupErrors.join('; '));
   }
 }
@@ -1146,6 +1151,7 @@ async function heldFirstMetadata(browser, started, buildA, buildB, outputRoot, a
             ...(primaryError.cleanupErrors ?? []),
             `held-first context close: ${String(error)}`,
           ];
+        // biome-ignore lint/correctness/noUnsafeFinally: Cleanup failure is raised only when no primary failure exists.
         else throw error;
       }
     }
@@ -1771,6 +1777,7 @@ export async function runAppUpdate({
         )
       )
     );
+    // biome-ignore lint/correctness/noUnsafeFinally: Cleanup failure is raised only when no primary failure exists.
     if (!primaryError && cleanupErrors.length) throw new Error(cleanupErrors.join('; '));
   }
 }

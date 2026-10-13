@@ -18,14 +18,14 @@
 
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { isBoundedCodecDescription } from '@services/codec-description';
+import {
+  clearLastConversionProfileReport,
+  setLastConversionProfileReport,
+} from '@services/conversion-profile-store';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import type { ConversionProgress } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
-import {
-  clearLastConversionProfileReport,
-  setLastConversionProfileReport,
-} from '../conversion-profile-store';
 import { buildConversionRequest } from './build-conversion-request';
 import { isWorkerResponse } from './guards';
 import type {
@@ -349,7 +349,7 @@ export async function runPipelineWithFallback(
     logger.warn('general', 'worker.fallback', { error: getErrorMessage(workerError) });
 
     // Dynamic import to avoid circular dependencies
-    const { runConversionPipeline } = await import('../conversion-pipeline');
+    const { runConversionPipeline } = await import('@services/conversion-pipeline');
 
     const request = buildConversionRequest(
       fallbackBuffer,

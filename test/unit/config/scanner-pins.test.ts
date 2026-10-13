@@ -36,7 +36,7 @@ describe('scanner pin workflow contracts', () => {
       ['pin-metadata', 'pinned-tools.ts'],
       ['pinned-tools', 'check-pinned-tools.ts'],
     ] as const) {
-      const match = security.split(`\n  ${job}:\n`)[1]?.split(/\n  [a-z][a-z-]*:\n/u)[0] ?? '';
+      const match = security.split(`\n  ${job}:\n`)[1]?.split(/\n {2}[a-z][a-z-]*:\n/u)[0] ?? '';
       expect(match).toContain(`ref: ${publishedSha}`);
       expect(match).toContain("install-dependencies: 'false'");
       expect(match).toContain('pinned_dir="$(mktemp -d "$RUNNER_TEMP/pinned-tools.XXXXXXXX")"');

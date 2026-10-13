@@ -112,7 +112,7 @@ async function convertAndInspect(
   });
   expect(profile?.encoderRoute).toMatch(format === 'gif' ? /^gif-/ : /^webp-/);
   const stage = profile?.stages.find((candidate) => candidate.stage === 'transcoding');
-  if (!stage || stage.stage !== 'transcoding') {
+  if (stage?.stage !== 'transcoding') {
     throw new Error('Conversion profile did not report transcoding');
   }
   const counts = {

@@ -2558,6 +2558,7 @@ async function exercisePublicTarget(
       await rename(join(publicRoot, file.name), join(outputRoot, `${publicDir}-${file.name}`));
     }
     await rmdir(publicRoot);
+    // biome-ignore lint/correctness/noUnsafeFinally: Cleanup failure is raised only when no primary failure exists.
     if (closeFailure && !primaryFailure) throw closeFailure;
   }
 }

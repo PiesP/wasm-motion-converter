@@ -42,7 +42,7 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
       });
 
       // GIF conversion for all codecs
-      test(`→ GIF (medium, 50%)`, async ({ page }) => {
+      test('→ GIF (medium, 50%)', async ({ page }) => {
         test.skip(
           !(await isVideoFixtureCodecSupported(page, video.file)),
           `${video.codec} decoding is unavailable in this browser runtime`
@@ -118,7 +118,7 @@ test.describe('Matrix: All codecs × formats (manifest-driven)', () => {
       });
 
       // WebP conversion for all codecs
-      test(`→ WebP (medium, 50%)`, async ({ page }) => {
+      test('→ WebP (medium, 50%)', async ({ page }) => {
         test.skip(
           !(await isVideoFixtureCodecSupported(page, video.file)),
           `${video.codec} decoding is unavailable in this browser runtime`

@@ -4,7 +4,7 @@
 // Benchmark: measure conversion times on local dev server.
 // Run with: pnpm test -- debug/benchmark-local.spec.ts
 
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 import {
   clickConvert,
   dismissWarningDialog,
@@ -32,7 +32,7 @@ function record(result: BenchmarkResult) {
   results.push(result);
   const icon = result.success ? '✅' : '❌';
   console.log(
-    `  ${icon} ${result.codec} → ${result.format} (${result.quality}, ${result.scale}) ${(result.totalTimeMs / 1000).toFixed(1)}s${result.error ? ' — ' + result.error : ''}`
+    `  ${icon} ${result.codec} → ${result.format} (${result.quality}, ${result.scale}) ${(result.totalTimeMs / 1000).toFixed(1)}s${result.error ? ` — ${result.error}` : ''}`
   );
 }
 
@@ -65,7 +65,7 @@ test.afterAll(() => {
 });
 
 async function runBenchmark(
-  page: any,
+  page: Page,
   codec: string,
   file: string,
   format: 'gif' | 'webp',

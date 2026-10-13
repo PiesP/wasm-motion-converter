@@ -56,6 +56,7 @@ Object.defineProperty(window, 'ResizeObserver', {
 
 // IntersectionObserver
 class MockIntersectionObserver {
+  // biome-ignore lint/complexity/noUselessConstructor: The inert mock accepts the native constructor arguments.
   constructor(_callback: IntersectionObserverCallback, _options?: IntersectionObserverInit) {
     // noop
   }

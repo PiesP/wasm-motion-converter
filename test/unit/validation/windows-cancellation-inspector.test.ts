@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 // @ts-expect-error The Windows acceptance profile is an executable JavaScript module.
-import {
-  installCancellationInspector,
-  readCancellationInspector,
-} from '../../../validation/windows/profile.mjs';
+import * as profile from '../../../validation/windows/profile.mjs';
+
+const { installCancellationInspector, readCancellationInspector } = profile;
 
 const page = { evaluate: async <T>(callback: () => T): Promise<T> => callback() };
 

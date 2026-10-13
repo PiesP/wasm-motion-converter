@@ -1,8 +1,7 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { ConversionProfileReport } from '../../../src/services/conversion-profiler';
 
 /**
  * E2E test helpers — uses __TEST_HELPERS__ exposed by the app in dev mode.
@@ -15,6 +14,7 @@ import type { Page } from '@playwright/test';
 // ── Types ──────────────────────────────────────────────────────
 
 export interface TestHelpers {
+  getConversionProfile(): ConversionProfileReport | null;
   getAppState(): string;
   getProgress(): number;
   getSettings(): {

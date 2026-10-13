@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import type { ProgressPhase } from '@t/conversion-types';
-import type { TFunction } from '@t/i18n-types';
-import type { Setter } from 'solid-js';
-import { onCleanup } from 'solid-js';
-import { ConversionRuntimeController } from './conversion-handlers/use-conversion-runtime-controller';
-import { handleFileSelected } from './conversion-handlers/use-handle-file-selected';
+import { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
+import { handleFileSelected } from '@hooks/conversion-handlers/use-handle-file-selected';
 import {
   handleCancelAnalysis,
   handleCancelConversion,
@@ -14,7 +10,11 @@ import {
   handleDismissError,
   handleReset,
   handleRetry,
-} from './conversion-handlers/use-perform-conversion';
+} from '@hooks/conversion-handlers/use-perform-conversion';
+import type { ProgressPhase } from '@t/conversion-types';
+import type { TFunction } from '@t/i18n-types';
+import type { Setter } from 'solid-js';
+import { onCleanup } from 'solid-js';
 
 interface ConversionHandlersOptions {
   setConversionStartTime: Setter<number>;

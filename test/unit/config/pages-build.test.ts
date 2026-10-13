@@ -105,7 +105,7 @@ describe('Pages source-build contract', () => {
       const values: string[] = [];
       for (const line of headers.split('\n')) {
         if (line.startsWith('/')) route = line;
-        const value = /^  Cache-Control: (.+)$/.exec(line)?.[1];
+        const value = /^ {2}Cache-Control: (.+)$/.exec(line)?.[1];
         if (value && (route === '/*' || route === path)) values.push(value);
       }
       return values;

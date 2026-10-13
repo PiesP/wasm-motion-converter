@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub Actions expressions are literal workflow assertions.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,7 @@ function jobBlock(workflow: string, jobId: string): string {
   if (start === -1) throw new Error(`Workflow job not found: ${jobId}`);
 
   const afterMarker = start + marker.length;
-  const nextJob = workflow.slice(afterMarker).search(/\n  [a-z][a-z0-9-]*:\n/);
+  const nextJob = workflow.slice(afterMarker).search(/\n {2}[a-z][a-z0-9-]*:\n/);
   return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
 }
 
@@ -185,7 +186,7 @@ describe('Release infrastructure', () => {
     const provenance = jobBlock(workflow, 'provenance');
 
     expect(workflow).toContain('workflow_dispatch:');
-    expect(workflow).not.toMatch(/\n  push:\n\s+tags:/);
+    expect(workflow).not.toMatch(/\n {2}push:\n\s+tags:/);
     expect(provenance).toContain("if: ${{ github.ref == 'refs/heads/master' }}");
     expect(provenance).toContain('ref: ${{ github.sha }}');
     expect(provenance).toContain('fetch-depth: 0');
@@ -254,7 +255,7 @@ describe('Release infrastructure', () => {
 
   it('runs release E2E against its development server without a redundant build', () => {
     const workflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
-    const e2eJob = workflow.match(/\n  e2e:[\s\S]*?\n  mutation:/)?.[0] ?? '';
+    const e2eJob = workflow.match(/\n {2}e2e:[\s\S]*?\n {2}mutation:/)?.[0] ?? '';
 
     expect(e2eJob).toContain('pnpm test:e2e:ci');
     expect(e2eJob).not.toContain('pnpm build:ci');

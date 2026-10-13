@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub Actions expressions are literal workflow assertions.
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -19,7 +20,7 @@ function job(name: string): string {
   const start = workflow.search(new RegExp(`^  ${name}:$`, 'm'));
   if (start < 0) throw new Error(`Missing OSV job: ${name}`);
   const remaining = workflow.slice(start + name.length + 4);
-  const end = remaining.search(/^  [a-z][a-z-]*:/m);
+  const end = remaining.search(/^ {2}[a-z][a-z-]*:/m);
   return workflow.slice(start, end < 0 ? undefined : start + name.length + 4 + end);
 }
 
@@ -62,7 +63,7 @@ describe('shared consumer OSV workflow composition', () => {
       expect(body).toContain(
         "OSV_SCANNER_IMAGE: ${{ needs['pin-metadata'].outputs.OSV_SCANNER_IMAGE }}"
       );
-      const names = [...body.matchAll(/^      - name: (.+)$/gm)].map((match) => match[1]);
+      const names = [...body.matchAll(/^ {6}- name: (.+)$/gm)].map((match) => match[1]);
       for (const name of names.slice(2, -1))
         expect(step(body, name ?? '')).toContain(`if: ${active}`);
     }

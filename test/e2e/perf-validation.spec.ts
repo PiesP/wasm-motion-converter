@@ -12,6 +12,7 @@
 
 import type { Page } from '@playwright/test';
 import { expect, test } from '@playwright/test';
+import type { ConversionProfileReport } from '@services/conversion-profiler';
 import {
   clickConvert,
   dismissWarningDialog,
@@ -31,38 +32,9 @@ import { validateFileMagic } from './fixtures/verify';
 
 // ─── Helper: get conversion profile from browser ───
 
-type ProfileStage = 'demuxing' | 'transcoding' | 'finalizing';
-
-interface StageMetrics {
-  stage: ProfileStage;
-  durationMs: number;
-  heapStartMB: number;
-  heapEndMB: number;
-  heapPeakMB: number;
-  framesProcessed?: number;
-  decodedFrames?: number;
-  encodedFrames?: number;
-  outputBytes?: number;
-  throughputMBps?: number;
-}
-
-interface ConversionProfile {
-  schemaVersion: 3;
-  totalDurationMs: number;
-  heapStartMB: number;
-  heapEndMB: number;
-  heapPeakMB: number;
-  stages: StageMetrics[];
-  operationTotals: Record<string, { wallMs: number; samples: number }>;
-  copyPathCounts: Record<string, number>;
-  stageWallTimePct: Record<ProfileStage, number>;
-  dominantStage: ProfileStage | null;
-  summary: string;
-}
-
-async function getConversionProfile(page: Page): Promise<ConversionProfile | null> {
+async function getConversionProfile(page: Page): Promise<ConversionProfileReport | null> {
   return page.evaluate(() => {
-    const helpers = (window as any).__TEST_HELPERS__;
+    const helpers = window.__TEST_HELPERS__;
     return helpers?.getConversionProfile() ?? null;
   });
 }
@@ -71,7 +43,7 @@ async function getConversionProfile(page: Page): Promise<ConversionProfile | nul
 
 async function getHeapUsageMB(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const mem = (performance as any).memory;
+    const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
     if (!mem) return -1;
     return Math.round(mem.usedJSHeapSize / (1024 * 1024));
   });
@@ -227,7 +199,8 @@ test.describe('Perf: Memory stability', () => {
 
       // Force GC if available (Chrome --js-flags=--expose-gc)
       await page.evaluate(() => {
-        if ((window as any).gc) (window as any).gc();
+        const gc = (window as Window & { gc?: () => void }).gc;
+        if (gc) gc();
       });
       await page.waitForTimeout(500);
 
@@ -363,7 +336,7 @@ test.describe('Perf: Wall-clock stage profiling', () => {
     expect(profile!.totalDurationMs).toBeGreaterThan(0);
     expect(profile!.totalDurationMs).toBeLessThan(120_000);
 
-    console.log(`  Stage wall time %:`, profile!.stageWallTimePct);
+    console.log('  Stage wall time %:', profile!.stageWallTimePct);
     for (const pct of Object.values(profile!.stageWallTimePct)) {
       expect(pct).toBeGreaterThanOrEqual(0);
       expect(pct).toBeLessThanOrEqual(100);

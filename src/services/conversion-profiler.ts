@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { BYTES_PER_MB } from '../utils/constants.js';
-import { getMemoryUsageMB } from '../utils/memory-monitor.js';
+import { BYTES_PER_MB } from '@utils/constants';
+import { getMemoryUsageMB } from '@utils/memory-monitor';
 
 /**
  * Conversion profiler for the pipeline's real, non-overlapping wall-clock

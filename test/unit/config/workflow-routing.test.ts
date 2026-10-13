@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub Actions expressions are literal workflow assertions.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -105,7 +106,7 @@ function jobBlock(workflow: string, jobId: string): string {
   if (start === -1) throw new Error(`Workflow job not found: ${jobId}`);
 
   const afterMarker = start + marker.length;
-  const nextJob = workflow.slice(afterMarker).search(/\n  [a-z][a-z0-9-]*:\n/);
+  const nextJob = workflow.slice(afterMarker).search(/\n {2}[a-z][a-z0-9-]*:\n/);
   return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
 }
 

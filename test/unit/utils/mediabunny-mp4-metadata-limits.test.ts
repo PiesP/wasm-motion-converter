@@ -63,7 +63,9 @@ function concat(...parts: Uint8Array[]): Uint8Array {
 function words(...values: number[]): Uint8Array {
   const bytes = new Uint8Array(values.length * 4);
   const view = new DataView(bytes.buffer);
-  values.forEach((value, index) => view.setUint32(index * 4, value));
+  values.forEach((value, index) => {
+    view.setUint32(index * 4, value);
+  });
   return bytes;
 }
 

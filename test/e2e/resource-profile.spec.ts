@@ -6,7 +6,6 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { type CDPSession, expect, type Page, test } from '@playwright/test';
 import type {
-  ConversionProfileReport,
   ProfileEncoderRoute,
   ProfileOperationTotals,
   TranscodingStageMetrics,
@@ -341,9 +340,9 @@ async function runMeasuredConversion(
   samples.push(await sampleResources(page, browserCdp));
   expect(state).toBe('done');
   const elapsedMs = performance.now() - startedAt;
-  const profile = (await page.evaluate(
-    () => (window as any).__TEST_HELPERS__?.getConversionProfile() ?? null
-  )) as ConversionProfileReport | null;
+  const profile = await page.evaluate(
+    () => window.__TEST_HELPERS__?.getConversionProfile() ?? null
+  );
   expect(profile).not.toBeNull();
   expect(profile!.encoderRoute).toMatch(workload.format === 'gif' ? /^gif-/ : /^webp-/);
   if (workload.backend) {

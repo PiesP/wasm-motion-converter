@@ -80,7 +80,7 @@ function ensureResultsDir(): void {
 export function recordResult(result: ConversionTestResult): void {
   ensureResultsDir();
   const line = JSON.stringify(result);
-  appendFileSync(RESULTS_FILE, line + '\n', 'utf-8');
+  appendFileSync(RESULTS_FILE, `${line}\n`, 'utf-8');
 }
 
 /** Load all recorded results. */

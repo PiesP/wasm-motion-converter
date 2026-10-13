@@ -181,7 +181,7 @@ test.describe('fractional pressure cadence through UI routing', () => {
           return helper.getConversionProfile();
         });
         const stage = profile?.stages.find((entry) => entry.stage === 'transcoding');
-        if (!stage || stage.stage !== 'transcoding') throw new Error('Missing native counts');
+        if (stage?.stage !== 'transcoding') throw new Error('Missing native counts');
         expect(stage.decodedFrames).toBe(21);
         expect(stage.selectedFrames).toBe(critical ? 15 : format === 'gif' ? 20 : 21);
         expect(profile?.encoderRoute).toBe(
@@ -215,8 +215,7 @@ test.describe('fractional pressure cadence through UI routing', () => {
         return helper.getConversionProfile();
       });
       const vfrStage = vfrProfile?.stages.find((entry) => entry.stage === 'transcoding');
-      if (!vfrStage || vfrStage.stage !== 'transcoding')
-        throw new Error('Missing VFR admission counts');
+      if (vfrStage?.stage !== 'transcoding') throw new Error('Missing VFR admission counts');
       expect(vfrStage.decodedFrames).toBe(3);
       expect(vfrStage.selectedFrames).toBe(3);
       await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
@@ -296,8 +295,7 @@ test.describe('fractional pressure cadence through UI routing', () => {
         ).getConversionProfile()
       );
       const longStage = longProfile?.stages.find((entry) => entry.stage === 'transcoding');
-      if (!longStage || longStage.stage !== 'transcoding')
-        throw new Error('Missing native long-stream counts');
+      if (longStage?.stage !== 'transcoding') throw new Error('Missing native long-stream counts');
       expect(longStage.decodedFrames).toBe(360);
       const intermediate = progressObservation.filter(
         (sample) => sample.current > 1 && sample.current < 360 && sample.percent < 100
@@ -361,7 +359,7 @@ test.describe('Canvas pixel-copy fallback', () => {
 
       Object.defineProperty(VideoFrame.prototype, 'copyTo', {
         configurable: true,
-        value: function () {
+        value: () => {
           return Promise.reject(
             new DOMException('Force Canvas pixel copying', 'NotSupportedError')
           );

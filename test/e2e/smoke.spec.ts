@@ -43,7 +43,9 @@ test.describe('Smoke: H.264 → GIF (WebCodecs path)', () => {
     if (state === 'error') {
       console.log('Conversion error:', error);
       const logs = await page.evaluate(() => {
-        return (window as any).__LAST_ERROR__ || 'no error captured';
+        return (
+          (window as Window & { __LAST_ERROR__?: unknown }).__LAST_ERROR__ || 'no error captured'
+        );
       });
       console.log('Browser error:', logs);
     }

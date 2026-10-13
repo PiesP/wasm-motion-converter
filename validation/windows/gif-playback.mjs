@@ -27,7 +27,8 @@ function need(bytes, offset, length, what) {
   }
 }
 
-function skipGifSubblocks(bytes, offset) {
+function skipGifSubblocks(bytes, startOffset) {
+  let offset = startOffset;
   for (;;) {
     need(bytes, offset, 1, 'GIF sub-block size');
     const size = bytes[offset++];

@@ -137,7 +137,7 @@ function expectSecurityHeaders(response: APIResponse, csp: string): void {
 
 async function expectedCsp(): Promise<string> {
   const headers = await readFile(resolve(process.cwd(), 'public/_headers'), 'utf8');
-  const policy = /^  Content-Security-Policy: (.+)$/m.exec(headers)?.[1];
+  const policy = /^ {2}Content-Security-Policy: (.+)$/m.exec(headers)?.[1];
   expect(policy, 'Source _headers must define a CSP').toBeTruthy();
   return policy!;
 }
@@ -288,7 +288,7 @@ test.describe('Deployment: Page Load', () => {
       expectSingleHeader(response, 'cache-control', IMMUTABLE);
       const etag = response.headers().etag;
       if (!etag) throw new Error(`${file.path} has no ETag`);
-      expect(etag, `${file.path} ETag`).toMatch(/^(?:W\/)?"[^\"]+"$/);
+      expect(etag, `${file.path} ETag`).toMatch(/^(?:W\/)?"[^"]+"$/);
       const revalidated = await request.get(url, {
         headers: { 'If-None-Match': etag },
         maxRedirects: 0,

@@ -5,7 +5,7 @@ export function conditionalEtagObservation(
   conditionalEtag: string | undefined,
   wranglerProfile: boolean
 ): { conditionalEtag: string | null; rfc9110Etag: boolean; compatibilityException: string | null } {
-  if (!/^(?:W\/)?"[^\"]+"$/.test(etag)) throw new Error('200 response has no usable ETag');
+  if (!/^(?:W\/)?"[^"]+"$/.test(etag)) throw new Error('200 response has no usable ETag');
   if (conditionalEtag !== undefined) {
     if (conditionalEtag !== etag) throw new Error('304 ETag differs from its 200 validator');
     return { conditionalEtag, rfc9110Etag: true, compatibilityException: null };

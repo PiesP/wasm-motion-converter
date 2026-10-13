@@ -15,10 +15,10 @@
  * 4. Render App component into root container
  */
 
+import { LocaleProvider } from '@hooks/use-locale';
 import { detectInitialLocale } from '@utils/format-utils';
 import { render } from 'solid-js/web';
 import App from './App';
-import { LocaleProvider } from './hooks/use-locale.tsx';
 import './index.css';
 
 // Set the initial document language before rendering. Keeping this in the
