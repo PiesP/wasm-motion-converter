@@ -61,7 +61,7 @@ import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
 } from '@services/conversion-worker/types';
-import { MAX_CODEC_DESCRIPTION_BYTES } from '@utils/constants';
+import { MAX_CODEC_DESCRIPTION_BYTES, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 
 const validDecoderConfig: SerializedDecoderConfig = {
   codec: 'vp09.00.10.08',
@@ -154,6 +154,127 @@ describe('runPipelineViaWorker lifecycle', () => {
     runConversionPipeline.mockReset();
     for (const method of Object.values(logger)) method.mockReset();
   });
+
+  it.each(['complete', 'error'] as const)(
+    'ignores malformed responses and foreign %s terminals before its own completion',
+    async (type) => {
+      const outputBuffer = new ArrayBuffer(4);
+      const foreign =
+        type === 'complete'
+          ? { type, requestId: 'other-request', outputBuffer: new ArrayBuffer(8), durationMs: 1 }
+          : { type, requestId: 'other-request', message: 'foreign failure', code: 'DECODER_ERROR' };
+      ThrowingWorker.response = [
+        null,
+        1,
+        'primitive',
+        [],
+        { type: 'complete', requestId: 'request-1', outputBuffer: 'invalid', durationMs: 1 },
+        foreign,
+        { type: 'complete', requestId: 'request-1', outputBuffer, durationMs: 1 },
+      ];
+      const onProgress = vi.fn();
+      await expect(
+        runPipelineWithFallback(new Blob(['video']), validDecoderConfig, validOptions, onProgress)
+      ).resolves.toBe(outputBuffer);
+      expect(onProgress).not.toHaveBeenCalled();
+      expect(runConversionPipeline).not.toHaveBeenCalled();
+      expect(ThrowingWorker.instance?.terminate).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each(['post-bootstrap error', 'memory limit', 'abort', 'timeout'] as const)(
+    'settles %s without fallback, retained timers/listeners, or late progress',
+    async (terminal) => {
+      vi.useFakeTimers();
+      const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+      const controller = new AbortController();
+      const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+      const onProgress = vi.fn();
+      try {
+        const pending = runPipelineWithFallback(
+          new Blob(['video']),
+          validDecoderConfig,
+          validOptions,
+          onProgress,
+          controller.signal
+        );
+        const rejection = expect(pending).rejects.toThrow(
+          terminal === 'post-bootstrap error'
+            ? 'Worker error: post-bootstrap failure'
+            : terminal === 'memory limit'
+              ? 'Worker ran out of memory'
+              : terminal === 'abort'
+                ? 'Cancelled'
+                : 'Worker timed out'
+        );
+        const worker = ThrowingWorker.instance;
+        if (!worker) throw new Error('Worker did not start');
+        if (terminal === 'post-bootstrap error') {
+          worker.onmessage?.(
+            new MessageEvent('message', {
+              data: {
+                type: 'log',
+                requestId: '',
+                level: 'info',
+                category: 'general',
+                message: 'Worker initialized',
+              },
+            })
+          );
+          worker.onerror?.(new ErrorEvent('error', { message: 'post-bootstrap failure' }));
+        } else if (terminal === 'memory limit') {
+          worker.onmessage?.(
+            new MessageEvent('message', {
+              data: {
+                type: 'error',
+                requestId: 'request-1',
+                code: 'OUT_OF_MEMORY',
+                message: 'budget',
+              },
+            })
+          );
+        } else if (terminal === 'abort') {
+          controller.abort();
+        } else {
+          await vi.advanceTimersByTimeAsync(WORKER_PIPELINE_TIMEOUT_MS);
+        }
+        await rejection;
+        expect(runConversionPipeline).not.toHaveBeenCalled();
+        expect(worker.terminate).toHaveBeenCalledOnce();
+        expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+        expect(vi.getTimerCount()).toBe(0);
+        worker.onmessage?.(
+          new MessageEvent('message', {
+            data: {
+              type: 'progress',
+              requestId: 'request-1',
+              phase: 'encoding',
+              percent: 100,
+              fps: 1,
+              memoryMB: null,
+              etaSeconds: null,
+            },
+          })
+        );
+        worker.onmessage?.(
+          new MessageEvent('message', {
+            data: {
+              type: 'complete',
+              requestId: 'request-1',
+              outputBuffer: new ArrayBuffer(4),
+              durationMs: 1,
+            },
+          })
+        );
+        expect(onProgress).not.toHaveBeenCalled();
+        expect(worker.terminate).toHaveBeenCalledOnce();
+      } finally {
+        post.mockRestore();
+        removeListener.mockRestore();
+        vi.useRealTimers();
+      }
+    }
+  );
 
   it('cleans up the worker when starting the pipeline throws synchronously', async () => {
     vi.useFakeTimers();
