@@ -10,6 +10,7 @@ import { runPipelineWithFallback } from '@services/conversion-worker/main-thread
 import { isWorkerRequest, isWorkerResponse } from '@services/conversion-worker/guards';
 import type { SerializedDecoderConfig, SerializedConversionOptions, WorkerRequest } from '@services/conversion-worker/types';
 import type { ConversionRequest, ProgressCallback } from '@t/conversion-types';
+import type { DecodeOptions } from '@services/decoder-service';
 
 export const config = { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16,
   description: undefined, hardwareAcceleration: undefined, rotation: undefined,
@@ -37,10 +38,20 @@ export function validatedRequest(event: MessageEvent<unknown>) {
   if (!isWorkerRequest(event.data)) return null;
   return event.data.requestId;
 }
+export const decoderOmitted = { width: 8, height: 8 } satisfies DecodeOptions;
+export const decoderUndefined = { ...decoderOmitted, mode: undefined,
+  onFrameAvailable: undefined, onVideoFrameAvailable: undefined,
+} satisfies DecodeOptions;
+// The legacy public API remains permissive; invalid stream delivery is checked at runtime.
+export const decoderStreamWithoutCallback = { ...decoderOmitted, mode: 'stream' } satisfies DecodeOptions;
+export const decoderMixedBatch = { ...decoderOmitted, mode: 'batch',
+  onFrameAvailable: (pixels) => { void pixels; },
+  onVideoFrameAvailable: async (frame) => { frame.close(); },
+} satisfies DecodeOptions;
 `;
 
 describe('conversion boundary type contracts', () => {
-  it('accepts constructed requests and guarded messages, and rejects invalid Worker handoffs', () => {
+  it('accepts compatible conversion/decoder contracts and rejects invalid handoffs', () => {
     const root = mkdtempSync(join(project, '.conversion-types-'));
     try {
       const source = join(root, 'control.ts');
@@ -65,6 +76,14 @@ describe('conversion boundary type contracts', () => {
       const valid = run();
       expect(valid.status, valid.stdout + valid.stderr).toBe(0);
       for (const [suffix, diagnostic] of [
+        [
+          "export const invalid = { ...decoderOmitted, mode: 'unknown' } satisfies DecodeOptions;",
+          /TS2322/,
+        ],
+        [
+          'export const invalid = { ...decoderOmitted, onVideoFrameAvailable: (frame: Uint8Array) => {} } satisfies DecodeOptions;',
+          /TS2322/,
+        ],
         [
           'export const invalid = { ...blobStart, inputBuffer: new ArrayBuffer(8) } satisfies WorkerRequest;',
           /TS2322: Type 'ArrayBuffer' is not assignable to type 'undefined'/,

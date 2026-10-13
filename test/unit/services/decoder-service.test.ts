@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { globalBufferPool } from '@services/buffer-pool';
-import { type DecodeResult, decodeFrames } from '@services/decoder-service';
+import { type DecodeOptions, type DecodeResult, decodeFrames } from '@services/decoder-service';
 import {
   calculateFrameOutputConcurrency,
   calculateStagedFrameSourceCapacity,
@@ -395,6 +395,210 @@ describe('decoder-service', () => {
       QueuedEventDecoder.instance = null;
       QueuedEventDecoder.onDequeueListenerAdded = null;
     });
+
+    function deliveryDemux(frameCount = 1) {
+      return {
+        chunks: Array.from({ length: frameCount }, (_, index) => fixtureChunk(index * 100_000, 40)),
+        config: { codec: 'vp09.00.10.08', codedWidth: 8, codedHeight: 8 },
+        duration: frameCount / 10,
+        framerate: 10,
+        sourceTotalMs: frameCount * 100,
+        totalFrames: frameCount,
+        dispose: vi.fn(),
+      };
+    }
+
+    it.each([
+      ['omitted', 'none', 'batch', false, 1],
+      ['omitted', 'cpu', 'cpu', false, 1],
+      ['omitted', 'video', 'video', false, 1],
+      ['omitted', 'both', 'video', false, 1],
+      ['undefined', 'none', 'batch', false, 1],
+      ['undefined', 'cpu', 'cpu', false, 1],
+      ['undefined', 'video', 'video', false, 1],
+      ['undefined', 'both', 'video', false, 1],
+      ['batch', 'none', 'batch', false, 1],
+      ['batch', 'cpu', 'batch', true, 1],
+      ['batch', 'video', 'video', false, 0],
+      ['batch', 'both', 'video', true, 0],
+      ['stream', 'none', 'reject', false, 0],
+      ['stream', 'cpu', 'cpu', false, 1],
+      ['stream', 'video', 'video', false, 1],
+      ['stream', 'both', 'video', false, 1],
+    ] as const)(
+      'preserves %s mode with %s callbacks through the %s route',
+      async (mode, callbacks, route, warns, selectedFrames) => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        FakeVideoFrame.frameDuration = 100_000;
+        const demux = deliveryDemux();
+        const cpu = vi.fn(function (this: unknown, pixels: Uint8Array) {
+          expect(this).toBeUndefined();
+          globalBufferPool.release(pixels);
+        });
+        const video = vi.fn(function (this: unknown, frame: VideoFrame) {
+          expect(this).toBeUndefined();
+          frame.close();
+        });
+        const options: DecodeOptions = {
+          width: 8,
+          height: 8,
+          ...(mode === 'omitted' ? {} : { mode: mode === 'undefined' ? undefined : mode }),
+          ...(callbacks === 'cpu' || callbacks === 'both' ? { onFrameAvailable: cpu } : {}),
+          ...(callbacks === 'video' || callbacks === 'both'
+            ? { onVideoFrameAvailable: video }
+            : {}),
+        };
+
+        const decoding = decodeFrames(demux, options);
+        if (route === 'reject') {
+          await expect(decoding).rejects.toThrow(
+            'Streaming decode requires an onFrameAvailable callback'
+          );
+          expect(FakeVideoDecoder.configureCalls).toBe(0);
+          expect(FakeVideoFrame.instances).toHaveLength(0);
+          expect(demux.dispose).not.toHaveBeenCalled();
+        } else {
+          const result = await decoding;
+          expect(cpu).toHaveBeenCalledTimes(route === 'cpu' ? 1 : 0);
+          expect(video).toHaveBeenCalledTimes(route === 'video' ? 1 : 0);
+          expect(result.frames).toHaveLength(route === 'batch' ? 1 : 0);
+          expect(result.selectedFrames).toBe(selectedFrames);
+          expect(result.outputTotalMs).toBe(route === 'batch' ? 100 : 0);
+          expect(result.presentationEndUs).toBe(100_000);
+          expect(FakeVideoFrame.copyStarts).toEqual(route === 'video' ? [] : [0]);
+          expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+          expect(demux.dispose).toHaveBeenCalledOnce();
+          for (const frame of result.frames) globalBufferPool.release(frame.data);
+        }
+        expect(logger.warn).toHaveBeenCalledTimes(warns ? 1 : 0);
+        if (warns) {
+          expect(logger.warn).toHaveBeenCalledWith(
+            'decoders',
+            'onFrameAvailable provided but mode is "batch" — streaming callback will be ignored',
+            { mode: 'batch' }
+          );
+        }
+      }
+    );
+
+    it.each([
+      [undefined, 'batch'],
+      ['batch', 'batch'],
+      ['stream', 'reject'],
+      ['stream', 'cpu'],
+      ['batch', 'video'],
+    ] as const)('validates JS callback functions in %s mode (%s)', async (mode, route) => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      FakeVideoFrame.frameDuration = 100_000;
+      const options: DecodeOptions = { width: 8, height: 8, mode };
+      const cpu = vi.fn((pixels: Uint8Array) => globalBufferPool.release(pixels));
+      const video = vi.fn((frame: VideoFrame) => frame.close());
+      // Simulate malformed JavaScript input without changing the public TS contract.
+      Object.assign(options, {
+        onFrameAvailable: route === 'cpu' ? cpu : 'invalid callback',
+        onVideoFrameAvailable: route === 'video' ? video : true,
+      });
+      const decoding = decodeFrames(deliveryDemux(), options);
+      if (route === 'reject') {
+        await expect(decoding).rejects.toThrow(
+          'Streaming decode requires an onFrameAvailable callback'
+        );
+        expect(FakeVideoDecoder.configureCalls).toBe(0);
+      } else {
+        const result = await decoding;
+        expect(result.frames).toHaveLength(route === 'batch' ? 1 : 0);
+        expect(cpu).toHaveBeenCalledTimes(route === 'cpu' ? 1 : 0);
+        expect(video).toHaveBeenCalledTimes(route === 'video' ? 1 : 0);
+        for (const frame of result.frames) globalBufferPool.release(frame.data);
+        for (const frame of FakeVideoFrame.instances) expect(frame.close).toHaveBeenCalledOnce();
+      }
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
+
+    it.each(['low', 'adaptive'] as const)(
+      'gives VideoFrame delivery precedence over CPU work with %s skipping',
+      async (smartFrameSkip) => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        FakeVideoFrame.frameDuration = 100_000;
+        const cpu = vi.fn((pixels: Uint8Array) => globalBufferPool.release(pixels));
+        const video = vi.fn((frame: VideoFrame) => frame.close());
+        const operation = vi.fn();
+        const copyPath = vi.fn();
+        const result = await decodeFrames(deliveryDemux(3), {
+          width: 8,
+          height: 8,
+          smartFrameSkip,
+          onFrameAvailable: cpu,
+          onVideoFrameAvailable: video,
+          profileOperation: operation,
+          profileCopyPath: copyPath,
+        });
+        expect(cpu).not.toHaveBeenCalled();
+        expect(video).toHaveBeenCalledTimes(3);
+        expect(video.mock.calls.map(([frame]) => frame.timestamp)).toEqual([0, 100_000, 200_000]);
+        expect(FakeVideoFrame.copyStarts).toEqual([]);
+        expect(copyPath).not.toHaveBeenCalled();
+        expect(operation.mock.calls.some(([name]) => name === 'motionFeatures')).toBe(false);
+        expect(result.smartSkipped).toBe(0);
+        expect(result.selectedFrames).toBe(3);
+        expect(result.frames).toEqual([]);
+        for (const frame of FakeVideoFrame.instances) expect(frame.close).toHaveBeenCalledOnce();
+      }
+    );
+
+    it.each(['complete', 'cancel'] as const)(
+      'awaits the VideoFrame owner before %s and closes only undelivered frames',
+      async (outcome) => {
+        const { Decoder } = createFlushBurstVideoDecoder(2, 8, 8);
+        vi.stubGlobal('VideoDecoder', Decoder);
+        const cancellation = new AbortController();
+        const gate = Promise.withResolvers<void>();
+        const delivered: VideoFrame[] = [];
+        let settled = false;
+        const decoding = decodeFrames(
+          { ...deliveryDemux(0), duration: 0.034, totalFrames: 2 },
+          {
+            width: 8,
+            height: 8,
+            onVideoFrameAvailable: async (frame) => {
+              delivered.push(frame);
+              if (delivered.length === 1) await gate.promise;
+              frame.close();
+            },
+          },
+          cancellation.signal
+        );
+        void decoding.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          }
+        );
+        try {
+          await vi.waitFor(() => expect(delivered).toHaveLength(1));
+          expect(FakeVideoFrame.instances).toHaveLength(2);
+          expect(delivered[0]?.close).not.toHaveBeenCalled();
+          if (outcome === 'cancel') cancellation.abort();
+          await Promise.resolve();
+          expect(settled).toBe(false);
+          expect(delivered).toHaveLength(1);
+          gate.resolve();
+          if (outcome === 'cancel') await expect(decoding).rejects.toThrow('Cancelled');
+          else {
+            const result = await decoding;
+            expect(result.selectedFrames).toBe(2);
+          }
+          expect(delivered).toHaveLength(outcome === 'cancel' ? 1 : 2);
+          expect(FakeVideoFrame.copyStarts).toEqual([]);
+          for (const frame of FakeVideoFrame.instances) expect(frame.close).toHaveBeenCalledOnce();
+        } finally {
+          gate.resolve();
+          await decoding.catch(() => {});
+        }
+      }
+    );
 
     it('waits for dequeue without zero-delay polling and removes the capacity listener', async () => {
       vi.stubGlobal('VideoDecoder', QueuedEventDecoder);
