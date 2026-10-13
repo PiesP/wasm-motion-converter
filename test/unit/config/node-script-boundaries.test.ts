@@ -170,12 +170,18 @@ describe('direct Node script boundaries', () => {
   it('recognizes a symlinked deep-check CLI entry', () => {
     const { root } = fixture();
     symlinkSync(join(root, 'scripts/ci/deep-check-reuse.ts'), join(root, 'linked-deep.ts'));
-    const result = spawnSync(process.execPath, ['--experimental-strip-types', join(root, 'linked-deep.ts'), 'unknown', 'duplication'], {
-      cwd: root,
-      encoding: 'utf8',
-    });
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain('Unknown command: unknown');
+    const invoke = (gate: string) =>
+      spawnSync(process.execPath, ['--experimental-strip-types', join(root, 'linked-deep.ts'), 'unknown', gate], {
+        cwd: root,
+        encoding: 'utf8',
+      });
+    const unknownCommand = invoke('mutation');
+    expect(unknownCommand.status).not.toBe(0);
+    expect(unknownCommand.stderr).toContain('Unknown command: unknown');
+
+    const retiredGate = invoke('duplication');
+    expect(retiredGate.status).not.toBe(0);
+    expect(retiredGate.stderr).toContain('Unknown deep gate: duplication');
   });
 
   it('generates license text from installed runtime dependencies', () => {
