@@ -66,6 +66,7 @@ test('free-port wrapper keeps package lifecycle and releases the port before chi
       assert.equal(await runE2eOnFreePort(fixture.run), status);
       assert.equal(fixture.calls.length, 1);
       assert.equal(fixture.calls[0]?.script, process.env.npm_execpath);
+      assert.deepEqual(fixture.calls[0]?.options, { signalScope: 'process-group' });
       assert.deepEqual(fixture.calls[0]?.args, ['test:e2e:ci']);
       assert.deepEqual(Object.keys(fixture.calls[0]?.env ?? {}), ['PLAYWRIGHT_DEV_PORT']);
       const port = Number(fixture.calls[0]?.env.PLAYWRIGHT_DEV_PORT);
@@ -338,12 +339,60 @@ console.log(JSON.stringify({code, forwarded, before, after: ['SIGINT', 'SIGTERM'
   }
 });
 
-type Call = { script: string; args: readonly string[]; env: NodeJS.ProcessEnv };
+test('process-group signals use only the dedicated supervised POSIX group', () => {
+  const runner = new URL('./run-child.ts', import.meta.url).href;
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      '--input-type=module',
+      '-e',
+      `import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { EventEmitter } from 'node:events';
+const child = new EventEmitter();
+child.pid = 424242;
+const delivered = [];
+let spawnOptions;
+child.kill = signal => { delivered.push(['child', signal]); return true; };
+childProcess.spawn = (executable, args, options) => { spawnOptions = options; return child; };
+process.kill = (pid, signal) => { delivered.push([pid, signal]); return true; };
+syncBuiltinESMExports();
+const { runChild } = await import(${JSON.stringify(runner)});
+const done = runChild('owned-pnpm', [], {}, {signalScope: 'process-group'});
+process.emit('SIGTERM');
+child.emit('exit', 0, null);
+console.log(JSON.stringify({code: await done, delivered, detached: spawnOptions.detached, stdio: spawnOptions.stdio}));
+`,
+    ],
+    { encoding: 'utf8', timeout: 10_000 }
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const observed = JSON.parse(result.stdout) as {
+    code: number;
+    delivered: unknown[];
+    detached: boolean;
+    stdio: string;
+  };
+  assert.equal(observed.code, 143);
+  assert.equal(observed.detached, process.platform !== 'win32');
+  assert.equal(observed.stdio, 'inherit');
+  assert.deepEqual(observed.delivered, [
+    [process.platform === 'win32' ? 'child' : -424242, 'SIGTERM'],
+  ]);
+});
+
+type Call = {
+  script: string;
+  args: readonly string[];
+  env: NodeJS.ProcessEnv;
+  options: Parameters<typeof runChild>[3];
+};
 
 function recordingRunner(results: number[] = []) {
   const calls: Call[] = [];
-  const run: typeof runChild = async (script, args = [], env = {}) => {
-    calls.push({ script, args, env });
+  const run: typeof runChild = async (script, args = [], env = {}, options) => {
+    calls.push({ script, args, env, options });
     return results.shift() ?? 0;
   };
   return { calls, run };

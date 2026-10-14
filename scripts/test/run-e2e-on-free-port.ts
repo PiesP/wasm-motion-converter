@@ -36,7 +36,12 @@ export async function runE2eOnFreePort(run: typeof runChild = runChild): Promise
   if (failure) throw failure.error;
   if (port === undefined) throw new Error('Could not allocate a local TCP port for Playwright.');
   // Selection releases the probe; Playwright still owns binding and collision errors.
-  return run(packageManagerPath, ['test:e2e:ci'], { PLAYWRIGHT_DEV_PORT: String(port) });
+  return run(
+    packageManagerPath,
+    ['test:e2e:ci'],
+    { PLAYWRIGHT_DEV_PORT: String(port) },
+    { signalScope: 'process-group' }
+  );
 }
 
 if (isCliEntry(import.meta.url)) {
