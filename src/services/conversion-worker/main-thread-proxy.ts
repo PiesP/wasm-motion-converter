@@ -105,6 +105,16 @@ export async function runPipelineViaWorker(
     }
     let workerInitialized = false;
 
+    let lastProgressTime = Number.NEGATIVE_INFINITY;
+    let lastDeliveredPercent = 0;
+    let pendingProgress: ConversionProgress | null = null;
+    let pendingProgressTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearPendingProgress = () => {
+      if (pendingProgressTimer !== null) clearTimeout(pendingProgressTimer);
+      pendingProgressTimer = null;
+      pendingProgress = null;
+    };
+
     // Timeout guard: terminate worker and reject if it hangs
     let timedOut = false;
     const timeoutId = setTimeout(() => {
@@ -117,21 +127,39 @@ export async function runPipelineViaWorker(
     // Clear timeout and remove abort listener — shared cleanup for all terminal paths
     const cleanup = () => {
       clearTimeout(timeoutId);
+      clearPendingProgress();
       if (signal) {
         signal.removeEventListener('abort', onAbort);
       }
     };
 
-    // Throttle progress callbacks to ~100ms
-    let lastProgressTime = Number.NEGATIVE_INFINITY;
-    let lastDeliveredPercent = 0;
+    // Deliver at most one latest update per interval while the conversion is active.
+    const deliverProgress = (update: ConversionProgress) => {
+      lastProgressTime = performance.now();
+      lastDeliveredPercent = Math.max(lastDeliveredPercent, update.progress);
+      onProgress({ ...update, progress: lastDeliveredPercent });
+    };
     const throttledProgress = (update: ConversionProgress) => {
       const now = performance.now();
       if (now - lastProgressTime >= 100 || update.progress === 100) {
-        lastProgressTime = now;
-        lastDeliveredPercent = Math.max(lastDeliveredPercent, update.progress);
-        onProgress({ ...update, progress: lastDeliveredPercent });
+        clearPendingProgress();
+        deliverProgress(update);
+        return;
       }
+      pendingProgress = update;
+      pendingProgressTimer ??= setTimeout(
+        () => {
+          pendingProgressTimer = null;
+          if (settled || timedOut) {
+            pendingProgress = null;
+            return;
+          }
+          const latest = pendingProgress;
+          pendingProgress = null;
+          if (latest) deliverProgress(latest);
+        },
+        Math.max(0, 100 - (now - lastProgressTime))
+      );
     };
 
     // Set up abort signal forwarding.
