@@ -252,6 +252,7 @@ describe('registerServiceWorker', () => {
     dispatch(controller, { ...data, status: -1 });
     dispatch(controller, { ...data, reason: 'forged' });
     dispatch(controller, { ...data, path: '/assets/codec.ABCDef12.js?private=1' });
+    dispatch(controller, { ...data, path: `/assets/${'x'.repeat(256)}.ABCDEFGH.js` });
     expect(onAssetUnavailable).not.toHaveBeenCalled();
     dispatch(controller, data);
     expect(onAssetUnavailable).toHaveBeenCalledTimes(1);

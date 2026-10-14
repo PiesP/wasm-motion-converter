@@ -4,6 +4,7 @@
 /// <reference lib="webworker" />
 
 import { logger } from '@utils/logger';
+import { isAppAssetPath } from './asset-recovery';
 import type { SWRegisterOptions, SWRegistrationState } from './sw-types';
 
 const SW_PATH = '/service-worker.js';
@@ -76,8 +77,7 @@ export async function registerServiceWorker(
       };
       if (
         message.type !== 'dropconvert:asset-unavailable' ||
-        typeof message.path !== 'string' ||
-        !/^\/assets\/[\w.-]+[.-][\w-]{8}\.(?:js|css|wasm)$/.test(message.path) ||
+        !isAppAssetPath(message.path) ||
         typeof message.status !== 'number' ||
         !Number.isInteger(message.status) ||
         message.status < 0 ||

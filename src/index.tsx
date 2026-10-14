@@ -19,14 +19,12 @@ import { LocaleProvider } from '@hooks/use-locale';
 import { detectInitialLocale } from '@utils/format-utils';
 import { render } from 'solid-js/web';
 import App from './App';
-import { observePreloadErrors } from './asset-recovery';
+import { ownPreloadErrors } from './asset-recovery';
 import './index.css';
 
 // Set the initial document language before rendering. Keeping this in the
 // external entry module avoids HTML inline-script/CSP hash drift.
 document.documentElement.lang = detectInitialLocale();
-// Vite rethrows preload failures after notification; installation must precede render.
-observePreloadErrors();
 
 /**
  * Initialize application by rendering App component
@@ -44,11 +42,12 @@ if (!root) {
   );
 }
 
-render(
-  () => (
+render(() => {
+  // Vite rethrows after notification. The root owns one observer across feature resets.
+  ownPreloadErrors();
+  return (
     <LocaleProvider>
       <App />
     </LocaleProvider>
-  ),
-  root
-);
+  );
+}, root);
