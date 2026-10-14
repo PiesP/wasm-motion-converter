@@ -156,11 +156,21 @@ jobs:
         if: ${{ needs.changes.outputs.unit == 'true' }}
         uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
 
-      - name: 🧪 Run unit tests and coverage thresholds
+      # quality owns test:ci when selected; unit retains it for unit-only routing.
+      - name: 🧪 Run policy tests when quality is unaffected
         if: ${{ needs.changes.outputs.unit == 'true' }}
+        env:
+          QUALITY_SELECTED: ${{ needs.changes.outputs.quality }}
         run: |
-          pnpm test:ci
-          pnpm test:cov
+          if [[ "$QUALITY_SELECTED" != "true" ]]; then
+            pnpm test:ci
+          else
+            echo "Policy tests are owned by the selected quality gate."
+          fi
+
+      - name: 🧪 Run unit coverage thresholds
+        if: ${{ needs.changes.outputs.unit == 'true' }}
+        run: pnpm test:cov
 
   e2e:
     name: pr-gate/e2e
