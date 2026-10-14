@@ -80,6 +80,29 @@ const validOptions: SerializedConversionOptions = {
   maxOutputBytes: 1024,
 };
 
+const progressMessage = (
+  phase: 'demuxing' | 'decoding' | 'encoding' | 'assembling',
+  percent: number,
+  fps: number,
+  decodedFrames: number,
+  requestId = 'request-1'
+) => ({
+  type: 'progress' as const,
+  requestId,
+  phase,
+  percent,
+  fps,
+  etaSeconds: null,
+  memoryMB: null,
+  decodedFrames,
+  currentFrame: decodedFrames,
+  totalFrames: 360,
+});
+
+const emitWorkerMessage = (worker: ThrowingWorker, data: unknown): void => {
+  worker.onmessage?.(new MessageEvent('message', { data }));
+};
+
 const invalidPreWorkerConfigs: Array<{
   name: string;
   config: SerializedDecoderConfig;
@@ -153,6 +176,366 @@ describe('runPipelineViaWorker lifecycle', () => {
     ThrowingWorker.workerError = null;
     runConversionPipeline.mockReset();
     for (const method of Object.values(logger)) method.mockReset();
+  });
+
+  it('delivers a valid intermediate update received at 99ms while conversion remains active', async () => {
+    vi.useFakeTimers();
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    try {
+      const onProgress = vi.fn();
+      const pending = runPipelineViaWorker(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        onProgress
+      );
+      const worker = ThrowingWorker.instance!;
+      emitWorkerMessage(worker, progressMessage('demuxing', 5, 0, 0));
+      expect(onProgress).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(99);
+      emitWorkerMessage(worker, progressMessage('encoding', 40, 18, 120));
+      expect(onProgress).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onProgress).toHaveBeenCalledTimes(2);
+      expect(onProgress.mock.calls[1]?.[0]).toMatchObject({
+        phase: 'encoding',
+        progress: 40,
+        fps: 18,
+        decodedFrames: 120,
+      });
+      await vi.advanceTimersByTimeAsync(70);
+      const outputBuffer = new ArrayBuffer(4);
+      emitWorkerMessage(worker, {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer,
+        durationMs: 170,
+      });
+      await expect(pending).resolves.toBe(outputBuffer);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      post.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule a fractional trailing interval before 100ms has elapsed', async () => {
+    vi.useFakeTimers();
+    let clockMs = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => clockMs);
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    try {
+      const deliveredAt: number[] = [];
+      const onProgress = vi.fn(() => deliveredAt.push(clockMs));
+      const pending = runPipelineViaWorker(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        onProgress
+      );
+      const worker = ThrowingWorker.instance!;
+      emitWorkerMessage(worker, progressMessage('demuxing', 5, 0, 0));
+      await vi.advanceTimersByTimeAsync(99);
+      clockMs = 99.5;
+      const schedule = vi.spyOn(globalThis, 'setTimeout');
+      try {
+        emitWorkerMessage(worker, progressMessage('encoding', 40, 18, 120));
+        expect(onProgress).toHaveBeenCalledTimes(1);
+        // Browsers may truncate a fractional timeout. Round up so no engine can run it early.
+        expect(schedule.mock.calls.at(-1)?.[1]).toBeGreaterThanOrEqual(1);
+      } finally {
+        schedule.mockRestore();
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(deliveredAt).toEqual([0]);
+      clockMs = 100.5;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(deliveredAt).toEqual([0, 100.5]);
+      const outputBuffer = new ArrayBuffer(4);
+      emitWorkerMessage(worker, {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer,
+        durationMs: 101,
+      });
+      await expect(pending).resolves.toBe(outputBuffer);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      post.mockRestore();
+      now.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces a burst to its latest phase, count, and fps, then delivers sparse and terminal updates', async () => {
+    vi.useFakeTimers();
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    try {
+      const onProgress = vi.fn();
+      const pending = runPipelineViaWorker(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        onProgress
+      );
+      const worker = ThrowingWorker.instance!;
+      emitWorkerMessage(worker, progressMessage('demuxing', 5, 0, 0));
+      await vi.advanceTimersByTimeAsync(20);
+      emitWorkerMessage(worker, progressMessage('decoding', 10, 2, 2));
+      await vi.advanceTimersByTimeAsync(50);
+      emitWorkerMessage(worker, progressMessage('encoding', 30, 8, 2));
+      await vi.advanceTimersByTimeAsync(29);
+      emitWorkerMessage(worker, {
+        ...progressMessage('encoding', 31, 12, 2),
+        selectedFrames: 2,
+        encodedFrames: 1,
+      });
+      expect(onProgress).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onProgress.mock.calls[1]?.[0]).toMatchObject({
+        phase: 'encoding',
+        progress: 31,
+        fps: 12,
+        decodedFrames: 2,
+        selectedFrames: 2,
+        encodedFrames: 1,
+      });
+      await vi.advanceTimersByTimeAsync(120);
+      emitWorkerMessage(worker, progressMessage('assembling', 80, 0, 360));
+      expect(onProgress.mock.calls[2]?.[0]).toMatchObject({
+        phase: 'assembling',
+        progress: 80,
+        decodedFrames: 360,
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      emitWorkerMessage(worker, progressMessage('assembling', 90, 0, 360));
+      expect(onProgress).toHaveBeenCalledTimes(3);
+      emitWorkerMessage(worker, progressMessage('assembling', 100, 0, 360));
+      expect(onProgress.mock.calls[3]?.[0]).toMatchObject({
+        phase: 'assembling',
+        progress: 100,
+        decodedFrames: 360,
+      });
+      const outputBuffer = new ArrayBuffer(4);
+      emitWorkerMessage(worker, {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer,
+        durationMs: 230,
+      });
+      await expect(pending).resolves.toBe(outputBuffer);
+      expect(onProgress.mock.calls.map(([update]) => update.progress)).toEqual([5, 31, 80, 100]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      post.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['complete', 'error', 'abort', 'bootstrap error'] as const)(
+    'discards a pending update when %s settles a short conversion',
+    async (terminal) => {
+      vi.useFakeTimers();
+      const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+      const controller = new AbortController();
+      try {
+        const onProgress = vi.fn();
+        const outcome = runPipelineViaWorker(
+          new Blob(['video']),
+          validDecoderConfig,
+          validOptions,
+          onProgress,
+          controller.signal
+        ).then(
+          (value) => ({ value }),
+          (error: unknown) => ({ error })
+        );
+        const worker = ThrowingWorker.instance!;
+        emitWorkerMessage(worker, progressMessage('demuxing', 5, 0, 0));
+        await vi.advanceTimersByTimeAsync(20);
+        emitWorkerMessage(worker, progressMessage('encoding', 45, 18, 120));
+        expect(onProgress).toHaveBeenCalledTimes(1);
+        if (terminal === 'complete') {
+          emitWorkerMessage(worker, {
+            type: 'complete',
+            requestId: 'request-1',
+            outputBuffer: new ArrayBuffer(4),
+            durationMs: 30,
+          });
+          expect(await outcome).toHaveProperty('value');
+        } else if (terminal === 'error') {
+          emitWorkerMessage(worker, {
+            type: 'error',
+            requestId: 'request-1',
+            code: 'DECODER_ERROR',
+            message: 'fixture failure',
+          });
+          expect(await outcome).toMatchObject({ error: { name: 'WorkerPipelineError' } });
+        } else if (terminal === 'abort') {
+          controller.abort();
+          expect(await outcome).toMatchObject({ error: { name: 'AbortError' } });
+        } else {
+          worker.onerror?.(new ErrorEvent('error', { message: 'module failed' }));
+          expect(await outcome).toMatchObject({ error: { name: 'WorkerUnavailableError' } });
+        }
+        expect(worker.terminate).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+        await vi.advanceTimersByTimeAsync(200);
+        emitWorkerMessage(worker, progressMessage('encoding', 60, 20, 180));
+        expect(onProgress).toHaveBeenCalledTimes(1);
+      } finally {
+        post.mockRestore();
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it('clears a pending update when the pipeline timeout settles first', async () => {
+    vi.useFakeTimers();
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    try {
+      const onProgress = vi.fn();
+      const outcome = runPipelineViaWorker(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        onProgress
+      ).then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error })
+      );
+      const worker = ThrowingWorker.instance!;
+      await vi.advanceTimersByTimeAsync(WORKER_PIPELINE_TIMEOUT_MS - 2);
+      emitWorkerMessage(worker, progressMessage('demuxing', 5, 0, 0));
+      await vi.advanceTimersByTimeAsync(1);
+      emitWorkerMessage(worker, progressMessage('encoding', 45, 18, 120));
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await outcome).toMatchObject({ error: { name: 'WorkerTimeoutError' } });
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(onProgress).toHaveBeenCalledTimes(1);
+    } finally {
+      post.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects foreign and malformed updates without replacing a valid pending update', async () => {
+    vi.useFakeTimers();
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    try {
+      const onProgress = vi.fn();
+      const pending = runPipelineViaWorker(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        onProgress
+      );
+      const worker = ThrowingWorker.instance!;
+      emitWorkerMessage(worker, progressMessage('demuxing', 5, 0, 0));
+      await vi.advanceTimersByTimeAsync(20);
+      emitWorkerMessage(worker, progressMessage('encoding', 40, 18, 120));
+      emitWorkerMessage(worker, progressMessage('encoding', 90, 20, 300, 'foreign-request'));
+      emitWorkerMessage(worker, { ...progressMessage('encoding', 95, 20, 300), fps: -1 });
+      await vi.advanceTimersByTimeAsync(80);
+      expect(onProgress).toHaveBeenCalledTimes(2);
+      expect(onProgress.mock.calls[1]?.[0]).toMatchObject({
+        phase: 'encoding',
+        progress: 40,
+        fps: 18,
+        decodedFrames: 120,
+      });
+      const outputBuffer = new ArrayBuffer(4);
+      emitWorkerMessage(worker, {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer,
+        durationMs: 110,
+      });
+      await expect(pending).resolves.toBe(outputBuffer);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      post.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears progress queued during a failing postMessage', async () => {
+    vi.useFakeTimers();
+    const now = vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValueOnce(1);
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(function (
+      this: ThrowingWorker
+    ) {
+      emitWorkerMessage(this, progressMessage('demuxing', 5, 0, 0));
+      emitWorkerMessage(this, progressMessage('encoding', 40, 18, 120));
+      throw new Error('structured clone failed');
+    });
+    try {
+      const onProgress = vi.fn();
+      await expect(
+        runPipelineViaWorker(new Blob(['video']), validDecoderConfig, validOptions, onProgress)
+      ).rejects.toMatchObject({ name: 'WorkerUnavailableError' });
+      expect(onProgress).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(onProgress).toHaveBeenCalledTimes(1);
+    } finally {
+      post.mockRestore();
+      now.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not leak an old pending update into a newer run', async () => {
+    vi.useFakeTimers();
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    try {
+      const firstProgress = vi.fn();
+      const first = runPipelineViaWorker(
+        new Blob(['first']),
+        validDecoderConfig,
+        validOptions,
+        firstProgress
+      );
+      const priorWorker = ThrowingWorker.instance!;
+      emitWorkerMessage(priorWorker, progressMessage('demuxing', 5, 0, 0));
+      await vi.advanceTimersByTimeAsync(20);
+      emitWorkerMessage(priorWorker, progressMessage('encoding', 40, 18, 120));
+      const firstOutput = new ArrayBuffer(4);
+      emitWorkerMessage(priorWorker, {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer: firstOutput,
+        durationMs: 30,
+      });
+      await expect(first).resolves.toBe(firstOutput);
+
+      const nextProgress = vi.fn();
+      const next = runPipelineViaWorker(
+        new Blob(['next']),
+        validDecoderConfig,
+        validOptions,
+        nextProgress
+      );
+      const nextWorker = ThrowingWorker.instance!;
+      emitWorkerMessage(priorWorker, progressMessage('encoding', 90, 30, 300));
+      emitWorkerMessage(nextWorker, progressMessage('demuxing', 5, 0, 0));
+      await vi.advanceTimersByTimeAsync(100);
+      expect(firstProgress).toHaveBeenCalledTimes(1);
+      expect(nextProgress).toHaveBeenCalledTimes(1);
+      const nextOutput = new ArrayBuffer(4);
+      emitWorkerMessage(nextWorker, {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer: nextOutput,
+        durationMs: 100,
+      });
+      await expect(next).resolves.toBe(nextOutput);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      post.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it.each(['complete', 'error'] as const)(

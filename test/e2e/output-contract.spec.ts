@@ -11,6 +11,12 @@ import {
   verifyAnimatedOutput,
 } from '../../validation/windows/output-contract.mjs';
 import {
+  finishProgressObservation,
+  installProgressObservation,
+  type ProgressObservation,
+  type ProgressObservationRecord,
+} from './fixtures/progress-observation';
+import {
   clickConvert,
   dismissWarningDialog,
   downloadResult,
@@ -115,6 +121,7 @@ test.describe('deterministic output contracts', () => {
 });
 
 test.describe('fractional pressure cadence through UI routing', () => {
+  test.use({ locale: 'en-US' });
   for (const route of [
     'gif-worker',
     'gif-main',
@@ -125,205 +132,233 @@ test.describe('fractional pressure cadence through UI routing', () => {
     test(`${route} admits fifteen of twenty-one decoded frames under critical pressure`, async ({
       page,
     }) => {
-      await page.addInitScript((backend) => {
-        if (backend === 'gif-main' || backend === 'webp-serial') {
-          Object.defineProperty(globalThis, 'Worker', {
-            configurable: true,
-            value: class UnavailableWorker {
-              constructor() {
-                throw new DOMException(
-                  'Force the selected main-thread contract',
-                  'NotSupportedError'
-                );
-              }
-            },
-          });
-        }
-        if (backend === 'webp-wasm') {
-          Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
-            configurable: true,
-            value: undefined,
-          });
-        }
-      }, route);
-      await page.goto('/');
-      const timeOrigin = await page.evaluate(() => performance.timeOrigin);
       const format = route.startsWith('gif') ? 'gif' : 'webp';
-      const contract = cases.find((entry) => entry.id === `pressure-21fps-${format}`)!;
-      const observations = [];
-      for (const critical of [false, true]) {
-        await page.evaluate((isCritical) => {
+      const observations: Array<{ critical: boolean; profile: ConversionProfileReport | null }> =
+        [];
+      let timeOrigin: number | null = null;
+      let vfrProfile: ConversionProfileReport | null = null;
+      let longProfile: ConversionProfileReport | null = null;
+      let progressObservation: ProgressObservation | null = null;
+      let observationStatus: 'not-started' | 'installing' | 'active' | 'finished' = 'not-started';
+      let observationError: string | null = null;
+      let step = 'page initialization';
+      try {
+        await page.addInitScript((backend) => {
+          if (backend === 'gif-main' || backend === 'webp-serial') {
+            Object.defineProperty(globalThis, 'Worker', {
+              configurable: true,
+              value: class UnavailableWorker {
+                constructor() {
+                  throw new DOMException(
+                    'Force the selected main-thread contract',
+                    'NotSupportedError'
+                  );
+                }
+              },
+            });
+          }
+          if (backend === 'webp-wasm') {
+            Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+              configurable: true,
+              value: undefined,
+            });
+          }
+        }, route);
+        await page.goto('/');
+        timeOrigin = await page.evaluate(() => performance.timeOrigin);
+        const contract = cases.find((entry) => entry.id === `pressure-21fps-${format}`)!;
+        for (const critical of [false, true]) {
+          step = `${critical ? 'critical' : 'normal'} pressure conversion`;
+          await page.evaluate((isCritical) => {
+            window.__TEST_HELPERS__?.resetApp();
+            Object.defineProperty(performance, 'memory', {
+              configurable: true,
+              value: {
+                usedJSHeapSize: 8 * 1024 * 1024,
+                totalJSHeapSize: 16 * 1024 * 1024,
+                jsHeapSizeLimit: (isCritical ? 16 : 1024) * 1024 * 1024,
+              },
+            });
+          }, critical);
+          const activeContract = critical
+            ? {
+                ...contract,
+                expected: {
+                  ...contract.expected,
+                  ...contractData.pressureExpectations[format],
+                },
+              }
+            : contract;
+          const output = await runContractConversion(page, activeContract);
+          await verifyAnimatedOutput(page, output, activeContract, markers);
+          const profile = await page.evaluate(() => {
+            const helper = window.__TEST_HELPERS__ as unknown as {
+              getConversionProfile: () => ConversionProfileReport | null;
+            };
+            return helper.getConversionProfile();
+          });
+          observations.push({ critical, profile });
+          const stage = profile?.stages.find((entry) => entry.stage === 'transcoding');
+          if (stage?.stage !== 'transcoding') throw new Error('Missing native counts');
+          expect(stage.decodedFrames).toBe(21);
+          expect(stage.selectedFrames).toBe(critical ? 15 : format === 'gif' ? 20 : 21);
+          expect(profile?.encoderRoute).toBe(
+            route === 'webp-parallel'
+              ? 'webp-parallel-canvas'
+              : route === 'webp-serial'
+                ? 'webp-serial-canvas'
+                : route
+          );
+          expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
+        }
+        step = 'VFR conversion';
+        await page.evaluate(() => {
           window.__TEST_HELPERS__?.resetApp();
           Object.defineProperty(performance, 'memory', {
             configurable: true,
             value: {
               usedJSHeapSize: 8 * 1024 * 1024,
               totalJSHeapSize: 16 * 1024 * 1024,
-              jsHeapSizeLimit: (isCritical ? 16 : 1024) * 1024 * 1024,
+              jsHeapSizeLimit: 1024 * 1024 * 1024,
             },
           });
-        }, critical);
-        const activeContract = critical
-          ? {
-              ...contract,
-              expected: {
-                ...contract.expected,
-                ...contractData.pressureExpectations[format],
-              },
-            }
-          : contract;
-        const output = await runContractConversion(page, activeContract);
-        await verifyAnimatedOutput(page, output, activeContract, markers);
-        const profile = await page.evaluate(() => {
+        });
+        const integerVfr = cases.find((entry) => entry.id === `integer-vfr-${format}`)!;
+        const vfrOutput = await runContractConversion(page, integerVfr);
+        await verifyAnimatedOutput(page, vfrOutput, integerVfr, markers);
+        vfrProfile = await page.evaluate(() => {
           const helper = window.__TEST_HELPERS__ as unknown as {
             getConversionProfile: () => ConversionProfileReport | null;
           };
           return helper.getConversionProfile();
         });
-        const stage = profile?.stages.find((entry) => entry.stage === 'transcoding');
-        if (stage?.stage !== 'transcoding') throw new Error('Missing native counts');
-        expect(stage.decodedFrames).toBe(21);
-        expect(stage.selectedFrames).toBe(critical ? 15 : format === 'gif' ? 20 : 21);
-        expect(profile?.encoderRoute).toBe(
-          route === 'webp-parallel'
-            ? 'webp-parallel-canvas'
-            : route === 'webp-serial'
-              ? 'webp-serial-canvas'
-              : route
+        const vfrStage = vfrProfile?.stages.find((entry) => entry.stage === 'transcoding');
+        if (vfrStage?.stage !== 'transcoding') throw new Error('Missing VFR admission counts');
+        expect(vfrStage.decodedFrames).toBe(3);
+        expect(vfrStage.selectedFrames).toBe(3);
+        step = 'long-stream configuration';
+        await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
+        await injectTestFile(page, 'test-video-ci-high-motion-120fps.mp4');
+        await setFormat(page, format);
+        await setQuality(page, 'high');
+        await setScale(page, '100%');
+        await setSmartFrameSkip(page, 'off');
+        step = 'progress observation installation';
+        observationStatus = 'installing';
+        await page.evaluate(installProgressObservation, route);
+        observationStatus = 'active';
+        step = 'long-stream conversion';
+        await clickConvert(page);
+        await dismissWarningDialog(page);
+        expect(await waitForConversionComplete(page, 120_000)).toBe('done');
+        if (process.env.WMC_PROGRESS_FAILURE_PROBE === '1' && route === 'gif-worker') {
+          throw new Error('Intentional progress evidence failure probe');
+        }
+        progressObservation = await page.evaluate(finishProgressObservation);
+        observationStatus = 'finished';
+        expect(progressObservation.dropped).toBe(0);
+        expect(progressObservation.cleanupErrors).toEqual([]);
+        longProfile = await page.evaluate(() =>
+          (
+            window.__TEST_HELPERS__ as unknown as {
+              getConversionProfile: () => ConversionProfileReport | null;
+            }
+          ).getConversionProfile()
         );
-        observations.push({ critical, profile });
+        const longStage = longProfile?.stages.find((entry) => entry.stage === 'transcoding');
+        if (longStage?.stage !== 'transcoding')
+          throw new Error('Missing native long-stream counts');
+        expect(longStage.decodedFrames).toBe(360);
+        const progressSamples = progressObservation.records.filter(
+          (sample): sample is ProgressObservationRecord & { current: number; percent: number } =>
+            sample.kind === 'dom' &&
+            sample.current !== null &&
+            sample.current !== undefined &&
+            sample.percent !== null &&
+            sample.percent !== undefined
+        );
+        const intermediate = progressSamples.filter(
+          (sample) => sample.current > 1 && sample.current < 360 && sample.percent < 100
+        );
+        expect(intermediate.length).toBeGreaterThan(0);
+        expect(
+          intermediate.some(
+            (sample) => sample.fps !== null && Number.isFinite(sample.fps) && sample.fps! > 0
+          )
+        ).toBe(true);
+        expect(
+          progressSamples.every(
+            (sample, index) =>
+              index === 0 ||
+              (sample.percent >= progressSamples[index - 1]!.percent &&
+                (sample.phase !== progressSamples[index - 1]!.phase ||
+                  sample.current >= progressSamples[index - 1]!.current))
+          )
+        ).toBe(true);
         expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
-      }
-      await page.evaluate(() => {
-        window.__TEST_HELPERS__?.resetApp();
-        Object.defineProperty(performance, 'memory', {
-          configurable: true,
-          value: {
-            usedJSHeapSize: 8 * 1024 * 1024,
-            totalJSHeapSize: 16 * 1024 * 1024,
-            jsHeapSizeLimit: 1024 * 1024 * 1024,
-          },
-        });
-      });
-      const integerVfr = cases.find((entry) => entry.id === `integer-vfr-${format}`)!;
-      const vfrOutput = await runContractConversion(page, integerVfr);
-      await verifyAnimatedOutput(page, vfrOutput, integerVfr, markers);
-      const vfrProfile = await page.evaluate(() => {
-        const helper = window.__TEST_HELPERS__ as unknown as {
-          getConversionProfile: () => ConversionProfileReport | null;
-        };
-        return helper.getConversionProfile();
-      });
-      const vfrStage = vfrProfile?.stages.find((entry) => entry.stage === 'transcoding');
-      if (vfrStage?.stage !== 'transcoding') throw new Error('Missing VFR admission counts');
-      expect(vfrStage.decodedFrames).toBe(3);
-      expect(vfrStage.selectedFrames).toBe(3);
-      await page.evaluate(() => window.__TEST_HELPERS__?.resetApp());
-      await injectTestFile(page, 'test-video-ci-high-motion-120fps.mp4');
-      await setFormat(page, format);
-      await setQuality(page, 'high');
-      await setScale(page, '100%');
-      await setSmartFrameSkip(page, 'off');
-      await page.evaluate(() => {
-        const samples: Array<{
-          atMs: number;
-          percent: number;
-          current: number;
-          total: number;
-          phase: string;
-          fps: number | null;
-        }> = [];
-        const capture = () => {
-          const diagnostics = document.querySelector('[data-testid="progress-diagnostics"]');
-          const text = diagnostics?.textContent ?? '';
-          const count = /Frame (\d+)\/(\d+)/.exec(text);
-          const rate = /@ ([\d.]+) fps/.exec(text);
-          const phase = /— (\w+)/.exec(text)?.[1] ?? 'unknown';
-          const percent = Number(
-            document.querySelector('[role="progressbar"]')?.getAttribute('data-progress')
+      } finally {
+        let observerActiveAfterCleanup: boolean | null = null;
+        if (observationStatus === 'installing') {
+          observationError ??= 'Progress observation installation did not complete';
+        }
+        if (observationStatus !== 'not-started' && !progressObservation) {
+          try {
+            progressObservation = await page.evaluate(finishProgressObservation);
+            if (observationStatus === 'active') observationStatus = 'finished';
+          } catch (error) {
+            observationError = String(error);
+          }
+        }
+        try {
+          observerActiveAfterCleanup = await page.evaluate(
+            () => '__wmcProgressObservation' in globalThis
           );
-          if (!count || !Number.isFinite(percent)) return;
-          const current = Number(count[1]);
-          if (samples.at(-1)?.current === current && samples.at(-1)?.phase === phase) return;
-          if (samples.length >= 128) throw new Error('Progress observer overflow');
-          samples.push({
-            atMs: performance.now(),
-            percent,
-            current,
-            total: Number(count[2]),
-            phase,
-            fps: rate ? Number(rate[1]) : null,
+        } catch (error) {
+          observationError ??= String(error);
+        }
+        if (observerActiveAfterCleanup) {
+          observationError ??= 'Progress observer remained active after cleanup';
+        }
+        if (progressObservation?.cleanupErrors.length) {
+          observationError ??= `Progress observer cleanup failed: ${progressObservation.cleanupErrors.join('; ')}`;
+        }
+        if ((observationStatus === 'active' || observationStatus === 'finished') && !longProfile) {
+          try {
+            longProfile = await page.evaluate(
+              () => window.__TEST_HELPERS__?.getConversionProfile() ?? null
+            );
+          } catch (error) {
+            observationError ??= String(error);
+          }
+        }
+        try {
+          await test.info().attach(`${route}-admission.json`, {
+            body: JSON.stringify(
+              {
+                route,
+                format,
+                timeOrigin,
+                step,
+                observationStatus:
+                  observationStatus === 'installing' ? 'installation-failed' : observationStatus,
+                observations,
+                vfrProfile,
+                longProfile,
+                progressObservation,
+                observerActiveAfterCleanup,
+                observationError,
+              },
+              null,
+              2
+            ),
+            contentType: 'application/json',
           });
-        };
-        const observer = new MutationObserver(capture);
-        observer.observe(document.body, {
-          attributes: true,
-          characterData: true,
-          childList: true,
-          subtree: true,
-        });
-        (globalThis as unknown as { __wmcProgressObservation: unknown }).__wmcProgressObservation =
-          { samples, observer };
-      });
-      await clickConvert(page);
-      await dismissWarningDialog(page);
-      expect(await waitForConversionComplete(page, 120_000)).toBe('done');
-      const progressObservation = await page.evaluate(() => {
-        const inspector = (
-          globalThis as unknown as {
-            __wmcProgressObservation: {
-              samples: Array<{
-                atMs: number;
-                percent: number;
-                current: number;
-                total: number;
-                phase: string;
-                fps: number | null;
-              }>;
-              observer: MutationObserver;
-            };
-          }
-        ).__wmcProgressObservation;
-        inspector.observer.disconnect();
-        return inspector.samples;
-      });
-      const longProfile = await page.evaluate(() =>
-        (
-          window.__TEST_HELPERS__ as unknown as {
-            getConversionProfile: () => ConversionProfileReport | null;
-          }
-        ).getConversionProfile()
-      );
-      const longStage = longProfile?.stages.find((entry) => entry.stage === 'transcoding');
-      if (longStage?.stage !== 'transcoding') throw new Error('Missing native long-stream counts');
-      expect(longStage.decodedFrames).toBe(360);
-      const intermediate = progressObservation.filter(
-        (sample) => sample.current > 1 && sample.current < 360 && sample.percent < 100
-      );
-      expect(intermediate.length).toBeGreaterThan(0);
-      expect(
-        intermediate.some(
-          (sample) => sample.fps !== null && Number.isFinite(sample.fps) && sample.fps > 0
-        )
-      ).toBe(true);
-      expect(
-        progressObservation.every(
-          (sample, index) =>
-            index === 0 ||
-            (sample.percent >= progressObservation[index - 1]!.percent &&
-              (sample.phase !== progressObservation[index - 1]!.phase ||
-                sample.current >= progressObservation[index - 1]!.current))
-        )
-      ).toBe(true);
-      expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
-      await test.info().attach(`${route}-admission.json`, {
-        body: JSON.stringify(
-          { timeOrigin, observations, vfrProfile, longProfile, progressObservation },
-          null,
-          2
-        ),
-        contentType: 'application/json',
-      });
+        } catch (error) {
+          observationError ??= String(error);
+        }
+      }
+      if (observationError)
+        throw new Error(`Progress evidence collection failed: ${observationError}`);
     });
   }
 });
