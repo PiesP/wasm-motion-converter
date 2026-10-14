@@ -427,7 +427,7 @@ async function workerEvents(page) {
   return page.evaluate(() => globalThis.__appUpdateWorkerEvents ?? []);
 }
 
-async function measureColdTransfer(browser, started, build) {
+export async function measureColdTransfer(browser, started, build) {
   let context;
   let primaryError;
   try {
@@ -468,9 +468,15 @@ async function measureColdTransfer(browser, started, build) {
     const js = resources.filter((entry) => entry.path.endsWith('.js'));
     const positive = js.filter((entry) => entry.transferSize > 0);
     const positiveBytes = positive.reduce((sum, entry) => sum + entry.transferSize, 0);
+    const positiveEncodedBytes = positive.reduce((sum, entry) => sum + entry.encodedBodySize, 0);
+    const positiveDecodedBytes = positive.reduce((sum, entry) => sum + entry.decodedBodySize, 0);
     assert(
       positive.length > 0 && positiveBytes > 0 && positiveBytes < 150_000,
       `Cold initial JS transfer ${positiveBytes} must be positive and below 150000 bytes`
+    );
+    assert(
+      positiveEncodedBytes > 0 && positiveDecodedBytes >= positiveEncodedBytes,
+      'Cold initial JS has no coherent encoded and decoded body sizes'
     );
     const metadataTimings = resources.filter((entry) => entry.path === METADATA_PATH);
     assert.equal(metadataTimings.length, 1, 'Cold context must request metadata exactly once');
@@ -487,6 +493,8 @@ async function measureColdTransfer(browser, started, build) {
       sourceSha: build.state.sourceSha,
       js,
       positiveBytes,
+      positiveEncodedBytes,
+      positiveDecodedBytes,
       metadata: {
         count: metadataTimings.length,
         ...metadataTimings[0],
