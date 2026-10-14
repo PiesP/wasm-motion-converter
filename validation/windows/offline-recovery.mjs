@@ -12,6 +12,25 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+export function assertWorkerUpdateOutcome(
+  priorWorkerSha256,
+  currentWorkerSha256,
+  { resultControllerChanged, activeControllerChanged }
+) {
+  const expectedChange = priorWorkerSha256 !== currentWorkerSha256;
+  assert.equal(
+    resultControllerChanged,
+    expectedChange,
+    'Retained result tab controller did not match the verified worker bytes'
+  );
+  assert.equal(
+    activeControllerChanged,
+    expectedChange,
+    'Active conversion tab controller did not match the verified worker bytes'
+  );
+  return expectedChange ? 'changed-worker-claimed' : 'byte-identical-kept-controller';
+}
+
 async function readResultDownload(page, selector = '[data-testid="download-result-button"]') {
   const [download] = await Promise.all([
     page.waitForEvent('download'),
@@ -32,6 +51,26 @@ async function exerciseBuildUpgrade(
   activeFixture,
   setDistribution
 ) {
+  // readBuild checks each emitted file against deployment-state.json, including
+  // service-worker.js, before the browser uses either distribution.
+  const [priorBuild, currentBuild] = await Promise.all(
+    ['validation/windows/prior-dist', 'dist'].map((relativePath) =>
+      readBuild(bundleRoot, relativePath, (_root, path) => join(bundleRoot, path), {
+        requireCompiledSource: relativePath === 'dist',
+        verifyInventory: true,
+      })
+    )
+  );
+  for (const build of [priorBuild, currentBuild]) {
+    const workerEntry = build.state.files.find((file) => file.path === 'service-worker.js');
+    assert(workerEntry, `${build.relativePath} has no inventoried service worker`);
+    assert.equal(
+      build.workerSha256,
+      workerEntry.sha256,
+      `${build.relativePath} service worker differs from its verified inventory`
+    );
+  }
+  const workerByteIdentical = priorBuild.workerSha256 === currentBuild.workerSha256;
   const context = await browser.newContext({ locale: 'en-US', acceptDownloads: true });
   const page = await context.newPage();
   let activePage;
@@ -172,29 +211,33 @@ async function exerciseBuildUpgrade(
       'High-motion conversion completed or failed before the upgrade could begin'
     );
     const activeDocumentTimeOrigin = await activePage.evaluate(() => performance.timeOrigin);
-    // Capture DOM state synchronously at controllerchange. A later completed
-    // result cannot prove that conversion was still active when the new worker
-    // actually took control of this old-build tab.
+    // Capture DOM state synchronously at controllerchange for changed workers.
+    // An identical worker keeps the controller, so sample the active tab just
+    // after registration.update() instead.
     await activePage.evaluate(() => {
+      globalThis.__wmcUpgradeInitialController = navigator.serviceWorker.controller;
       globalThis.__wmcUpgradeControllerObservation = null;
+      globalThis.__wmcObserveActiveConversion = () => {
+        const visible = (selector) => {
+          const element = document.querySelector(selector);
+          return element instanceof HTMLElement && element.getClientRects().length > 0;
+        };
+        return {
+          timeOrigin: performance.timeOrigin,
+          progress: Number(
+            document
+              .querySelector('[data-testid="dropzone"] [role="progressbar"]')
+              ?.getAttribute('data-progress')
+          ),
+          stopVisible: visible('[data-testid="stop-conversion-button"]'),
+          resultVisible: visible('[data-testid="result-section"]'),
+          errorVisible: visible('[data-testid="error-display"]'),
+        };
+      };
       navigator.serviceWorker.addEventListener(
         'controllerchange',
         () => {
-          const visible = (selector) => {
-            const element = document.querySelector(selector);
-            return element instanceof HTMLElement && element.getClientRects().length > 0;
-          };
-          globalThis.__wmcUpgradeControllerObservation = {
-            timeOrigin: performance.timeOrigin,
-            progress: Number(
-              document
-                .querySelector('[data-testid="dropzone"] [role="progressbar"]')
-                ?.getAttribute('data-progress')
-            ),
-            stopVisible: visible('[data-testid="stop-conversion-button"]'),
-            resultVisible: visible('[data-testid="result-section"]'),
-            errorVisible: visible('[data-testid="error-display"]'),
-          };
+          globalThis.__wmcUpgradeControllerObservation = globalThis.__wmcObserveActiveConversion();
         },
         { once: true }
       );
@@ -203,52 +246,76 @@ async function exerciseBuildUpgrade(
     await setDistribution('dist');
     assert(
       await activePage.locator('[data-testid="stop-conversion-button"]').isVisible(),
-      'High-motion conversion ended before the new worker was requested'
+      'High-motion conversion ended before the worker update was requested'
     );
-    await page.evaluate(async () => {
+    const resultControllerChanged = await page.evaluate(async (expectChange) => {
       const old = navigator.serviceWorker.controller;
       const registration = await navigator.serviceWorker.getRegistration();
       assertRegistration(registration);
+      globalThis.__wmcUpgradeInitialController = old;
+      // Listen before update(): a quick activation must not escape the wait.
+      const changed = expectChange
+        ? new Promise((resolve) =>
+            navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })
+          )
+        : null;
       await registration.update();
-      if (navigator.serviceWorker.controller !== old) return;
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(
-          () => reject(new Error('New worker did not claim retained tab')),
-          15_000
-        );
-        navigator.serviceWorker.addEventListener(
-          'controllerchange',
-          () => {
+      if (expectChange && navigator.serviceWorker.controller === old)
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error('New worker did not claim retained tab')),
+            15_000
+          );
+          changed.then(() => {
             clearTimeout(timeout);
             resolve(undefined);
-          },
-          { once: true }
-        );
-      });
+          });
+        });
+      return navigator.serviceWorker.controller !== old;
       function assertRegistration(value) {
         if (!value) throw new Error('Prior service worker registration disappeared');
       }
-    });
-    await activePage.waitForFunction(
-      () => Boolean(globalThis.__wmcUpgradeControllerObservation),
-      undefined,
-      { timeout: 15_000 }
+    }, !workerByteIdentical);
+    if (!workerByteIdentical)
+      await activePage.waitForFunction(
+        () => Boolean(globalThis.__wmcUpgradeControllerObservation),
+        undefined,
+        { timeout: 15_000 }
+      );
+    const activeUpdate = await activePage.evaluate(
+      (expectChange) => ({
+        observation: expectChange
+          ? globalThis.__wmcUpgradeControllerObservation
+          : globalThis.__wmcObserveActiveConversion(),
+        controllerChanged:
+          navigator.serviceWorker.controller !== globalThis.__wmcUpgradeInitialController,
+        controllerChangeObserved: Boolean(globalThis.__wmcUpgradeControllerObservation),
+      }),
+      !workerByteIdentical
     );
-    const atControllerChange = await activePage.evaluate(
-      () => globalThis.__wmcUpgradeControllerObservation
+    const workerUpdateOutcome = assertWorkerUpdateOutcome(
+      priorBuild.workerSha256,
+      currentBuild.workerSha256,
+      { resultControllerChanged, activeControllerChanged: activeUpdate.controllerChanged }
     );
     assert.equal(
-      atControllerChange.timeOrigin,
+      activeUpdate.controllerChangeObserved,
+      !workerByteIdentical,
+      'Active conversion tab controllerchange did not match the worker update'
+    );
+    const atWorkerUpdate = activeUpdate.observation;
+    assert.equal(
+      atWorkerUpdate.timeOrigin,
       activeDocumentTimeOrigin,
-      'The active tab reloaded before controllerchange was observed'
+      'The active tab reloaded before the worker update was observed'
     );
     assert(
-      atControllerChange.progress > 0 &&
-        atControllerChange.progress < 100 &&
-        atControllerChange.stopVisible &&
-        !atControllerChange.resultVisible &&
-        !atControllerChange.errorVisible,
-      `Conversion was not active at controllerchange: ${JSON.stringify(atControllerChange)}`
+      atWorkerUpdate.progress > 0 &&
+        atWorkerUpdate.progress < 100 &&
+        atWorkerUpdate.stopVisible &&
+        !atWorkerUpdate.resultVisible &&
+        !atWorkerUpdate.errorVisible,
+      `Conversion was not active at worker update: ${JSON.stringify(atWorkerUpdate)}`
     );
     assert.equal(
       await page.evaluate(() => performance.timeOrigin),
@@ -396,6 +463,20 @@ async function exerciseBuildUpgrade(
     assert.match(polluted.contentType, /^(?:text|application)\/javascript\b/i);
     assert.equal(polluted.html, false, 'Polluted JS cache entry was served as executable content');
     assert.equal(await page.evaluate(() => performance.timeOrigin), oldDocumentTimeOrigin);
+    if (workerByteIdentical) {
+      const controllersStillOriginal = await Promise.all(
+        [page, activePage].map((tab) =>
+          tab.evaluate(
+            () => navigator.serviceWorker.controller === globalThis.__wmcUpgradeInitialController
+          )
+        )
+      );
+      assert.deepEqual(
+        controllersStillOriginal,
+        [true, true],
+        'Byte-identical worker update later changed an old tab controller'
+      );
+    }
 
     // The user has downloaded the retained result and explicitly reloads the
     // browser tab. The new document must load the current build and remain usable.
@@ -446,8 +527,15 @@ async function exerciseBuildUpgrade(
       retainedResultBytes: priorResultBytes.length,
       retainedDownloadAfterMissing: true,
       retainedDocument: true,
+      priorSourceSha: priorBuild.state.sourceSha,
+      currentSourceSha: currentBuild.state.sourceSha,
+      priorWorkerSha256: priorBuild.workerSha256,
+      currentWorkerSha256: currentBuild.workerSha256,
+      workerUpdateOutcome,
+      resultControllerChanged,
+      activeControllerChanged: activeUpdate.controllerChanged,
       activeConversionProgressAtSwitch: activeProgressAtSwitch,
-      activeConversionAtControllerChange: atControllerChange,
+      activeConversionAtWorkerUpdate: atWorkerUpdate,
       activeConversionCompletedWithoutReload: true,
       missingChunkStatus: missingAtOrigin.status(),
       missingChunkRequestFailure: requestFailure,
