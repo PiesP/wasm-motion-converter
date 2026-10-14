@@ -1,5 +1,5 @@
 {
-  "app.error.description": "发生意外错误。请刷新页面重试。",
+  "app.error.description": "无法显示应用的这一部分。请使用下方的恢复操作。",
   "app.error.details": "错误详情",
   "app.error.reload": "重新加载页面",
   "app.error.retry": "重试",

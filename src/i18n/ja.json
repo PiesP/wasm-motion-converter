@@ -1,5 +1,5 @@
 {
-  "app.error.description": "予期しないエラーが発生しました。ページを再読み込みしてお試しください。",
+  "app.error.description": "アプリの一部を表示できません。下の復旧操作をご利用ください。",
   "app.error.details": "エラーの詳細",
   "app.error.reload": "ページを再読み込み",
   "app.error.retry": "もう一度試す",

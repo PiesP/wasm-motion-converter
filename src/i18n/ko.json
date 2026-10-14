@@ -1,5 +1,5 @@
 {
-  "app.error.description": "예기치 않은 오류가 발생했습니다. 페이지를 새로고침하여 다시 시도해 주세요.",
+  "app.error.description": "앱의 일부 화면을 표시할 수 없습니다. 아래 복구 기능을 이용해 주세요.",
   "app.error.details": "오류 세부 정보",
   "app.error.reload": "페이지 새로고침",
   "app.error.retry": "다시 시도",

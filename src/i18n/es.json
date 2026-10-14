@@ -1,5 +1,5 @@
 {
-  "app.error.description": "Se ha producido un error inesperado. Actualiza la página para volver a intentarlo.",
+  "app.error.description": "No se ha podido mostrar esta parte de la aplicación. Usa las opciones de recuperación siguientes.",
   "app.error.details": "Detalles del error",
   "app.error.reload": "Recargar página",
   "app.error.retry": "Intentar de nuevo",
