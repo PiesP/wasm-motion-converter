@@ -1095,25 +1095,34 @@ async function createSmallGif(page, fixture) {
   return { bytes: bytes.length, sha256: sha256(bytes) };
 }
 
-async function triggerLocaleFailure(page, started, chunk, mode) {
+async function triggerLocaleFailure(page, started, chunk, mode, events = null) {
   const path = assetPath(chunk);
   await assertNeverFetched(page, path);
   const before = started.observedAssetRequests.length;
   if (mode !== 'missing-after-update') started.setAssetFailure({ path, mode });
   await page.locator('[data-testid="language-selector"]').selectOption('es');
   await waitForOriginAsset(started, path, before);
-  if (mode !== 'missing-after-update') {
-    assert(
-      started.assetFailureRequests.length >= 1 && started.assetFailureRequests.length <= 2,
-      'Injected asset request count is outside the Vite preload/import pair'
-    );
-  }
   await page
     .getByRole('status')
     .filter({
       has: page.getByRole('button', { name: 'Reload page' }),
     })
     .waitFor({ state: 'visible', timeout: 15_000 });
+  if (mode !== 'missing-after-update') {
+    const physical = started.assetFailureRequests.length;
+    const logical = events?.requestedAssets.filter((requested) => requested === path).length;
+    // Chromium may reconnect after the origin destroys a socket. Bound the
+    // page-level import attempt, while retaining the physical count as evidence.
+    assert(
+      physical >= 1 && (mode === 'network' || physical <= 2),
+      `Injected origin attempts invalid: mode=${mode}, physical=${physical}, logical=${logical}`
+    );
+    if (mode === 'network')
+      assert(
+        logical >= 1 && logical <= 2,
+        `Network failure has repeated page-level module requests: physical=${physical}, logical=${logical}, failed=${events?.failedRequests.filter((entry) => entry.path === path).length}`
+      );
+  }
   return path;
 }
 
@@ -1165,7 +1174,12 @@ async function optionalFailureCase(browser, started, build, fixture, outputRoot,
     if (controlled) await captureWorkerAssetMessages(page);
     const origin = await page.evaluate(() => performance.timeOrigin);
     const result = mode === '404' ? await createSmallGif(page, fixture) : null;
-    const path = await triggerLocaleFailure(page, started, chunk, mode);
+    const path = await triggerLocaleFailure(page, started, chunk, mode, events);
+    if (mode === 'network')
+      assert(
+        events.failedRequests.some((entry) => entry.path === path),
+        'Network fault did not fail the page-level optional module request'
+      );
     const workerMessage = controlled
       ? await requireWorkerAssetMessage(
           page,
@@ -1223,6 +1237,7 @@ async function optionalFailureCase(browser, started, build, fixture, outputRoot,
       logExport: { sha256: log.sha256, bytes: log.bytes },
       timeOriginUnchanged: true,
       originRequests: started.assetFailureRequests.length,
+      logicalAssetRequests: events.requestedAssets.filter((requested) => requested === path).length,
       screenshotSha256: sha256(await readFile(screenshot)),
       events,
     };
