@@ -158,7 +158,7 @@ export async function runPipelineViaWorker(
           pendingProgress = null;
           if (latest) deliverProgress(latest);
         },
-        Math.max(0, 100 - (now - lastProgressTime))
+        Math.max(1, Math.ceil(100 - (now - lastProgressTime)))
       );
     };
 

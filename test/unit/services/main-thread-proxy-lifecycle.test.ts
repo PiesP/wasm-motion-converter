@@ -219,6 +219,54 @@ describe('runPipelineViaWorker lifecycle', () => {
     }
   });
 
+  it('does not schedule a fractional trailing interval before 100ms has elapsed', async () => {
+    vi.useFakeTimers();
+    let clockMs = 0;
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => clockMs);
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    try {
+      const deliveredAt: number[] = [];
+      const onProgress = vi.fn(() => deliveredAt.push(clockMs));
+      const pending = runPipelineViaWorker(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        onProgress
+      );
+      const worker = ThrowingWorker.instance!;
+      emitWorkerMessage(worker, progressMessage('demuxing', 5, 0, 0));
+      await vi.advanceTimersByTimeAsync(99);
+      clockMs = 99.5;
+      const schedule = vi.spyOn(globalThis, 'setTimeout');
+      try {
+        emitWorkerMessage(worker, progressMessage('encoding', 40, 18, 120));
+        expect(onProgress).toHaveBeenCalledTimes(1);
+        // Browsers may truncate a fractional timeout. Round up so no engine can run it early.
+        expect(schedule.mock.calls.at(-1)?.[1]).toBeGreaterThanOrEqual(1);
+      } finally {
+        schedule.mockRestore();
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      expect(deliveredAt).toEqual([0]);
+      clockMs = 100.5;
+      await vi.advanceTimersByTimeAsync(1);
+      expect(deliveredAt).toEqual([0, 100.5]);
+      const outputBuffer = new ArrayBuffer(4);
+      emitWorkerMessage(worker, {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer,
+        durationMs: 101,
+      });
+      await expect(pending).resolves.toBe(outputBuffer);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      post.mockRestore();
+      now.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('coalesces a burst to its latest phase, count, and fps, then delivers sparse and terminal updates', async () => {
     vi.useFakeTimers();
     const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
