@@ -663,9 +663,17 @@ export async function decodeFrames(
     // Copies and consumer Promises settle before pending presentation frames and
     // motion reservations are released. Preserve the first failure through cleanup.
     await Promise.allSettled([...pendingConversions]);
-    closePendingPresentationFrame();
+    try {
+      closePendingPresentationFrame();
+    } catch (error) {
+      captureCleanupFailure(error);
+    }
     previousMotion = null;
-    motionMemoryReservation?.release();
+    try {
+      motionMemoryReservation?.release();
+    } catch (error) {
+      captureCleanupFailure(error);
+    }
     motionMemoryReservation = null;
 
     const activeDecoder = decoder;
@@ -1060,6 +1068,7 @@ export async function decodeFrames(
         }
 
         const conversion = (async () => {
+          let pixelData: Uint8Array | null = null;
           let enteredOrderedProcessing = false;
           let sourceFrameClosed = false;
           let sourceFrameTransferred = false;
@@ -1139,7 +1148,6 @@ export async function decodeFrames(
               return;
             }
 
-            let pixelData: Uint8Array;
             const pixelCopyStart = profileOperation ? performance.now() : null;
             try {
               pixelData = await copyFrameToPixels(
@@ -1163,7 +1171,9 @@ export async function decodeFrames(
             await previousProcessing;
             enteredOrderedProcessing = true;
             if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) {
-              globalBufferPool.release(pixelData);
+              const discardedPixels = pixelData;
+              pixelData = null;
+              globalBufferPool.release(discardedPixels);
               return;
             }
 
@@ -1220,7 +1230,9 @@ export async function decodeFrames(
                   // Skip this frame: accumulate duration, release buffer, return
                   consecutiveSkipMs += frameDuration;
                   smartSkippedCount++;
-                  globalBufferPool.release(pixelData);
+                  const skippedPixels = pixelData;
+                  pixelData = null;
+                  globalBufferPool.release(skippedPixels);
                   recordMotionDecision();
                   return;
                 }
@@ -1292,7 +1304,9 @@ export async function decodeFrames(
               if (shouldSkip || !selectFixedFrame(presentation.startUs, frameNum)) {
                 consecutiveSkipMs += frameDuration;
                 smartSkippedCount++;
-                globalBufferPool.release(pixelData);
+                const skippedPixels = pixelData;
+                pixelData = null;
+                globalBufferPool.release(skippedPixels);
                 recordMotionDecision();
                 return;
               }
@@ -1309,7 +1323,9 @@ export async function decodeFrames(
               !selectPressureFrame(presentation.startUs, frameNum)
             ) {
               skippedByDecimation++;
-              globalBufferPool.release(pixelData);
+              const skippedPixels = pixelData;
+              pixelData = null;
+              globalBufferPool.release(skippedPixels);
               recordMotionDecision();
               return;
             }
@@ -1323,8 +1339,10 @@ export async function decodeFrames(
                 keptFrameCount++;
                 let delivery: Promise<void> | void;
                 try {
+                  const deliveredPixels = pixelData;
+                  pixelData = null;
                   delivery = callback(
-                    pixelData,
+                    deliveredPixels,
                     frameDuration,
                     frameNum,
                     targetMemoryHandoff,
@@ -1350,6 +1368,7 @@ export async function decodeFrames(
                   }
                 }
                 batchFrames.push({ data: pixelData, duration: frameDuration });
+                pixelData = null;
                 lastBatchStartUs = presentation.startUs;
                 break;
               default: {
@@ -1359,6 +1378,15 @@ export async function decodeFrames(
             }
           } catch (error) {
             recordConversionError(error);
+            if (pixelData !== null) {
+              const localPixels = pixelData;
+              pixelData = null;
+              try {
+                globalBufferPool.release(localPixels);
+              } catch (releaseError) {
+                recordConversionError(releaseError);
+              }
+            }
           } finally {
             if (!enteredOrderedProcessing) {
               await previousProcessing;
@@ -1734,11 +1762,27 @@ export async function decodeFrames(
   } catch (error) {
     primaryFailure = normalizeFailure(error);
   }
-  const cleanupFailure = await cleanupDecoderLifecycle(primaryFailure);
-  if (cleanupFailure) throw cleanupFailure;
-  reportDecodedProgress(inputFrameCount, true);
-  const progressFailure = getLatchedFailureError();
-  if (progressFailure) throw progressFailure;
+  let finalFailure = await cleanupDecoderLifecycle(primaryFailure);
+  if (!finalFailure) {
+    reportDecodedProgress(inputFrameCount, true);
+    finalFailure = getLatchedFailureError();
+  }
+  if (finalFailure) {
+    // The batch array aliases the result, so only discard it when no result can escape.
+    // Pending copies have settled in lifecycle cleanup. Pool release is not idempotent:
+    // remove each owned frame once and continue if one release itself fails.
+    if (deliveryPlan.kind === 'cpu-batch') {
+      for (const frame of batchFrames) {
+        try {
+          globalBufferPool.release(frame.data);
+        } catch {
+          // Keep the earlier decode failure and attempt the rest of the batch.
+        }
+      }
+      batchFrames.length = 0;
+    }
+    throw finalFailure;
+  }
   return decodeResult as DecodeResult;
 }
 
