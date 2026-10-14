@@ -249,6 +249,43 @@ the new app; they may show their original conversion error and need a
 manual browser reload; updates never reload them automatically or delete their
 result Blob.
 
+### Long-lived tabs and prior build assets
+
+The Pages source build serves the current generation and does not carry earlier
+executable assets into `dist`. The app preserves recoverable in-memory results;
+it does not guarantee that an old tab can load an asset it has never used.
+
+| Situation | Support contract |
+| --- | --- |
+| Fresh navigation | Load the current document and its current asset graph. |
+| Old open tab with loaded modules or a valid cached asset | Continue using available bytes. A worker update does not intentionally discard admitted asset entries, but cache storage is bounded. |
+| Old open tab first requesting an asset after deployment | If its old URL is unavailable, show the asset failure and retain existing results and recovery actions. An update notice does not establish that old bytes still exist. |
+| Offline cache hit, miss or eviction | A valid hit can work. A miss remains unavailable; neither the worker nor a longer HTTP cache lifetime can reconstruct missing bytes. Fully offline conversion is not guaranteed. |
+| Expiry, emergency withdrawal or authorized rollback | An absent asset path must remain a genuine, non-immutable 404 at the origin, without substituting current code under an old URL. Withdrawal and rollback need separate review and do not promise to restore old assets. |
+
+The recovery actions above require the application shell to have loaded. An
+entry or static-module failure before it initializes remains outside that
+boundary. For a recoverable failure, download any retained result, explicitly
+clear it, then choose reload; an active operation must first finish or be safely
+cancelled. The app never reloads or discards a result automatically. A failed
+asset alone does not prove that a deployment occurred; the update notice uses
+validated deployment metadata for that determination.
+
+The measured fixed-recovery A/B comparison used source builds
+`63707a7b404c7ef411a8a94ebd24d75536c5bf00` and
+`3a40e006b1c6ab7e7beab361d73bc4aecaa8a7bb`. Retaining the earlier
+generation's complete asset set in the latter build would add eight files
+(708,328 decoded bytes), eight exact asset-header rules and at least 1,278
+metadata bytes before recording prior-source provenance. Distribution size
+would grow from 1,743,326 to 2,453,578 bytes, about 40.7%. These additions
+fit the current file, header and metadata limits; retention is technically
+possible. It would also require approved immutable prior-build inputs supplied
+identically to CI and the Pages source build, final-byte provenance, collision
+rejection, pruning and a withdrawal procedure. The selected policy is explicit
+recovery without cross-deployment asset retention. Revisit it if measured need
+and an approved delivery contract justify that work. This comparison did not
+compose or deploy retained assets.
+
 ## Release publication order
 
 The manual release workflow accepts a verified `vX.Y.Z` tag from protected
