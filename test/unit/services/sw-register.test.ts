@@ -245,14 +245,26 @@ describe('registerServiceWorker', () => {
       type: 'dropconvert:asset-unavailable',
       path: '/assets/codec.ABCDef12.js',
       status: 404,
+      reason: 'invalid-response',
     };
     dispatch({}, data);
     dispatch(controller, { ...data, path: '/private.mp4' });
     dispatch(controller, { ...data, status: -1 });
+    dispatch(controller, { ...data, reason: 'forged' });
+    dispatch(controller, { ...data, path: '/assets/codec.ABCDef12.js?private=1' });
+    dispatch(controller, { ...data, path: `/assets/${'x'.repeat(256)}.ABCDEFGH.js` });
     expect(onAssetUnavailable).not.toHaveBeenCalled();
     dispatch(controller, data);
     expect(onAssetUnavailable).toHaveBeenCalledTimes(1);
+    expect(onAssetUnavailable).toHaveBeenCalledWith({
+      path: data.path,
+      status: 404,
+      reason: 'invalid-response',
+      source: 'service-worker',
+    });
     result.cleanup?.();
+    dispatch(controller, data);
+    expect(onAssetUnavailable).toHaveBeenCalledTimes(1);
     expect(navigator.serviceWorker.removeEventListener).toHaveBeenCalledWith('message', listener);
     expect(mockRegistration.removeEventListener).toHaveBeenCalledWith(
       'updatefound',

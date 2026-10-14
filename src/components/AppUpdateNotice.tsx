@@ -1,6 +1,8 @@
 import type { TFunction } from '@t/i18n-types';
-import { type Component, createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { type Component, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
+import { assetFailure, reportAssetFailure } from '@/asset-recovery';
 import { observeDeploymentUpdates } from '@/deployment-update';
+import { canReload, reloadWhenSafe } from '@/reload-protection';
 
 /** Vite replaces this with the clean source SHA; unknown local builds receive null. */
 declare const __APP_SOURCE_SHA__: string | null;
@@ -13,13 +15,14 @@ const AppUpdateNotice: Component<{
   onClearResults: () => void;
   t: TFunction;
 }> = (props) => {
-  const [notice, setNotice] = createSignal<'available' | 'unavailable' | null>(null);
+  const [notice, setNotice] = createSignal<'available' | null>(null);
   let disposed = false;
   let cleanup: (() => void) | undefined;
   let cleanupDeployment: (() => void) | undefined;
   const available = (): void => {
-    if (!disposed) setNotice((current) => (current === 'unavailable' ? current : 'available'));
+    if (!disposed) setNotice('available');
   };
+  const currentNotice = createMemo(() => (assetFailure() ? 'unavailable' : notice()));
   onMount(() => {
     cleanupDeployment = observeDeploymentUpdates({
       sourceSha: __APP_SOURCE_SHA__,
@@ -27,8 +30,8 @@ const AppUpdateNotice: Component<{
     });
     void registerServiceWorker({
       onUpdate: available,
-      onAssetUnavailable: () => {
-        if (!disposed) setNotice('unavailable');
+      onAssetUnavailable: (evidence) => {
+        if (!disposed) reportAssetFailure(evidence);
       },
     }).then((registration) => {
       if (disposed) registration.cleanup?.();
@@ -41,18 +44,23 @@ const AppUpdateNotice: Component<{
     cleanup?.();
   });
   const reload = (): void => {
-    if (!props.busy && !props.hasResults) window.location.reload();
+    reloadWhenSafe(
+      () => props.busy,
+      () => props.hasResults
+    );
   };
   const clearResults = (): void => {
     if (!disposed && !props.busy && props.hasResults) props.onClearResults();
   };
   return (
-    <Show when={notice()}>
+    <Show when={currentNotice()}>
       <div
         role="status"
         class="mb-6 space-y-2 rounded-lg border border-border-standard bg-bg-elevated p-4 text-text-primary"
       >
-        <p>{props.t(notice() === 'available' ? 'update.available' : 'update.unavailable')}</p>
+        <p>
+          {props.t(currentNotice() === 'available' ? 'update.available' : 'update.unavailable')}
+        </p>
         <Show when={props.busy}>
           <p>{props.t('update.wait')}</p>
         </Show>
@@ -61,7 +69,7 @@ const AppUpdateNotice: Component<{
         </Show>
         <button
           type="button"
-          disabled={props.busy || props.hasResults}
+          disabled={!canReload(props.busy, props.hasResults)}
           onClick={reload}
           class="rounded-md bg-brand px-4 py-2 font-medium text-brand-foreground disabled:opacity-50"
         >
