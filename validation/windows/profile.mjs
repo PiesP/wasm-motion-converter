@@ -22,7 +22,7 @@ import { gzipSync } from 'node:zlib';
 import { runAppUpdate } from './app-update.mjs';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.mjs';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
-import { exerciseOfflineRecovery } from './offline-recovery.mjs';
+import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.mjs';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.mjs';
 
 const PROFILE_ID = 'wmc-media';
@@ -314,9 +314,27 @@ async function resolveStaticFile(distRoot, requestUrl) {
   return resolvedFile;
 }
 
-async function startStaticServer(bundleRoot, { gzipAssets = false, metadataHandler = null } = {}) {
+export async function startStaticServer(
+  bundleRoot,
+  { gzipAssets = false, metadataHandler = null } = {}
+) {
   let distRoot;
   let headerRules;
+  let assetFailure = null;
+  const assetFailureRequests = [];
+  const observedAssetRequests = [];
+  const missingAssetResponses = [];
+  function setAssetFailure(failure) {
+    assert(
+      failure === null ||
+        (typeof failure === 'object' &&
+          /^\/assets\/[\w-]+[.-][\w-]{8}\.js$/.test(failure.path) &&
+          ['404', 'wrong-mime', 'network'].includes(failure.mode)),
+      'Asset failure must target one emitted JavaScript path and an allowed response'
+    );
+    assetFailure = failure;
+    assetFailureRequests.length = 0;
+  }
   async function setDistribution(relativePath) {
     const nextRoot = await realpath(resolve(bundleRoot, relativePath));
     assert(isWithin(bundleRoot, nextRoot), 'Bundled dist asset resolved outside the bundle root');
@@ -350,9 +368,31 @@ async function startStaticServer(bundleRoot, { gzipAssets = false, metadataHandl
         await metadataHandler(request, response);
         return;
       }
+      const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+      if (/^\/assets\/[\w.-]+\.js$/.test(pathname) && observedAssetRequests.length < 512)
+        observedAssetRequests.push(pathname);
+      if (assetFailure && pathname === assetFailure.path) {
+        if (assetFailureRequests.length < 128)
+          assetFailureRequests.push({ path: pathname, mode: assetFailure.mode });
+        if (assetFailure.mode === 'network') {
+          response.destroy();
+          return;
+        }
+        for (const [name, value] of matchedHeaders(headerRules, pathname))
+          response.setHeader(name, value);
+        response.setHeader('Cache-Control', 'no-store');
+        response.setHeader(
+          'Content-Type',
+          assetFailure.mode === '404' ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8'
+        );
+        const body =
+          assetFailure.mode === '404' ? 'Not found' : '<!doctype html><title>Unavailable</title>';
+        response.writeHead(assetFailure.mode === '404' ? 404 : 200);
+        response.end(request.method === 'HEAD' ? undefined : body);
+        return;
+      }
       const file = await resolveStaticFile(distRoot, request.url);
       const bytes = await readFile(file);
-      const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
       for (const [name, value] of matchedHeaders(headerRules, pathname))
         response.setHeader(name, value);
       response.setHeader(
@@ -376,6 +416,9 @@ async function startStaticServer(bundleRoot, { gzipAssets = false, metadataHandl
         : error?.code === 'ENOENT'
           ? 404
           : 500;
+      const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+      if (/^\/assets\/[\w.-]+\.js$/.test(pathname) && missingAssetResponses.length < 128)
+        missingAssetResponses.push({ path: pathname, status: statusCode });
       for (const [name, value] of matchedHeaders(headerRules, '/', true))
         response.setHeader(name, value);
       response.writeHead(statusCode, {
@@ -395,7 +438,15 @@ async function startStaticServer(bundleRoot, { gzipAssets = false, metadataHandl
   });
   const address = server.address();
   assert(address && typeof address === 'object', 'Local acceptance server has no address');
-  return { server, url: `http://127.0.0.1:${address.port}`, setDistribution };
+  return {
+    server,
+    url: `http://127.0.0.1:${address.port}`,
+    setDistribution,
+    setAssetFailure,
+    assetFailureRequests,
+    observedAssetRequests,
+    missingAssetResponses,
+  };
 }
 
 async function closeServer(server) {
@@ -2578,6 +2629,28 @@ export async function run({ browser, root, output }) {
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const recoveryConfigPath = 'validation/windows/inputs/recovery.json';
+  let recoveryPresent = false;
+  try {
+    recoveryPresent = (await stat(resolve(bundleRoot, recoveryConfigPath))).isFile();
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  if (recoveryPresent) {
+    const selector = await validateBundleFile(bundleRoot, recoveryConfigPath);
+    const config = JSON.parse(await readFile(selector, 'utf8'));
+    const outputRoot = resolve(output);
+    await mkdir(outputRoot, { recursive: true });
+    return runRecoveryBuilds({
+      browser,
+      bundleRoot,
+      outputRoot,
+      config,
+      startStaticServer,
+      closeServer,
+      validateBundleFile,
+    });
+  }
   const appUpdateConfig = 'validation/windows/inputs/app-update.json';
   let appUpdatePresent = false;
   try {
