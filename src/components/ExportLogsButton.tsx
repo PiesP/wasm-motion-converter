@@ -4,7 +4,7 @@
 import { useLocale } from '@hooks/use-locale';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
-import { Show, splitProps } from 'solid-js';
+import { splitProps } from 'solid-js';
 
 type ExportLogsButtonProps = {
   class?: string;
@@ -59,7 +59,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
             exportedAt: now.toISOString(),
             url: (() => {
               try {
-                return location.href;
+                return location.origin;
               } catch {
                 return 'unavailable';
               }
@@ -111,7 +111,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
       lines.push(
         `url: ${(() => {
           try {
-            return location.href;
+            return location.origin;
           } catch {
             return 'unavailable';
           }
@@ -143,40 +143,32 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
       );
 
       downloadText({ filename, text: lines.join('\n') });
-    } catch (error) {
-      logger.warn('general', 'export-failed', { error: String(error) });
+    } catch {
+      logger.warn('general', 'export-failed');
     }
   };
 
   const buttonClass = () => local.class ?? DEFAULT_BUTTON_CLASS;
 
   return (
-    <Show when={import.meta.env.DEV}>
-      <button
-        type="button"
-        onClick={handleExport}
-        class={buttonClass()}
-        aria-label={t('header.exportLogs')}
-        title={t('header.exportLogsTooltip')}
-        data-testid="export-logs-button"
-      >
-        <svg
-          class="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        >
-          <title>Download icon</title>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
-          />
-        </svg>
-      </button>
-    </Show>
+    <button
+      type="button"
+      onClick={handleExport}
+      class={buttonClass()}
+      aria-label={t('header.exportLogs')}
+      title={t('header.exportLogsTooltip')}
+      data-testid="export-logs-button"
+    >
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <title>Download icon</title>
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
+        />
+      </svg>
+    </button>
   );
 };
 

@@ -68,7 +68,12 @@ export async function registerServiceWorker(
       if (event.source !== navigator.serviceWorker.controller || !event.source) return;
       const data = event.data;
       if (!data || typeof data !== 'object') return;
-      const message = data as { type?: unknown; path?: unknown; status?: unknown };
+      const message = data as {
+        type?: unknown;
+        path?: unknown;
+        status?: unknown;
+        reason?: unknown;
+      };
       if (
         message.type !== 'dropconvert:asset-unavailable' ||
         typeof message.path !== 'string' ||
@@ -76,10 +81,16 @@ export async function registerServiceWorker(
         typeof message.status !== 'number' ||
         !Number.isInteger(message.status) ||
         message.status < 0 ||
-        message.status > 599
+        message.status > 599 ||
+        (message.reason !== 'invalid-response' && message.reason !== 'network-error')
       )
         return;
-      onAssetUnavailable?.();
+      onAssetUnavailable?.({
+        path: message.path,
+        status: message.status,
+        reason: message.reason,
+        source: 'service-worker',
+      });
     };
     navigator.serviceWorker.addEventListener('message', handleMessage);
 

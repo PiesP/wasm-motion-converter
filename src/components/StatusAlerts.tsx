@@ -2,12 +2,11 @@
 // Copyright (c) 2025-2026 PiesP
 
 import EnvironmentWarning from '@components/EnvironmentWarning';
+import ErrorDisplay from '@components/ErrorDisplay';
 import OfflineBanner from '@components/OfflineBanner';
 import type { ErrorContext } from '@t/conversion-types';
 import type { Component } from 'solid-js';
-import { lazy, Show, Suspense } from 'solid-js';
-
-const ErrorDisplay = lazy(() => import('@components/ErrorDisplay'));
+import { Show } from 'solid-js';
 
 interface StatusAlertsProps {
   environmentSupported: boolean;
@@ -28,16 +27,14 @@ const StatusAlerts: Component<StatusAlertsProps> = (props) => {
       </Show>
 
       <Show when={props.errorMessage}>
-        <Suspense fallback={<div class="h-32 animate-pulse rounded-lg bg-bg-elevated" />}>
-          <ErrorDisplay
-            message={props.errorMessage!}
-            suggestion={props.errorContext?.suggestion}
-            errorType={props.errorContext?.type}
-            onRetry={props.onRetry}
-            onSelectNewFile={props.onSelectNewFile}
-            onDismiss={props.onDismissError}
-          />
-        </Suspense>
+        <ErrorDisplay
+          message={props.errorMessage!}
+          suggestion={props.errorContext?.suggestion}
+          errorType={props.errorContext?.type}
+          onRetry={props.onRetry}
+          onSelectNewFile={props.onSelectNewFile}
+          onDismiss={props.onDismissError}
+        />
       </Show>
     </div>
   );

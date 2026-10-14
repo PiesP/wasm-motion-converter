@@ -8,6 +8,7 @@ import ExportLogsButton from '@components/ExportLogsButton';
 import FileDropzone from '@components/FileDropzone';
 import LanguageSelector from '@components/LanguageSelector';
 import LicenseAttribution from '@components/LicenseAttribution';
+import MemoryWarning from '@components/MemoryWarning';
 import ResultSection from '@components/ResultSection';
 import SettingsPanel from '@components/SettingsPanel';
 import StatusAlerts from '@components/StatusAlerts';
@@ -51,12 +52,11 @@ import {
   createMemo,
   createSignal,
   ErrorBoundary,
-  lazy,
   onCleanup,
   onMount,
   Show,
-  Suspense,
 } from 'solid-js';
+import { clearAssetFailure } from '@/asset-recovery';
 
 import './index.css';
 
@@ -68,8 +68,6 @@ const attachTestHelpersPromise = import.meta.env.DEV
 
 const SETTINGS_DEBOUNCE_MS = 500;
 const MEMORY_REDUCTION_SCALE = 0.5;
-
-const MemoryWarning = lazy(() => import('@components/MemoryWarning'));
 
 const APP_STATE_LABEL_KEYS = {
   idle: 'settings.selectVideo',
@@ -159,6 +157,7 @@ const App: Component = () => {
 
   onCleanup(() => {
     disposed = true;
+    clearAssetFailure();
     // Revoke video preview blob URL to prevent memory leak on unmount
     const url = videoPreviewUrl();
     if (url) URL.revokeObjectURL(url);
@@ -282,72 +281,88 @@ const App: Component = () => {
     });
   };
 
+  const clearResultsForReload = (): void => {
+    if (!isBusy()) setConversionResults([]);
+  };
+
+  const cancelForRecovery = (): void => {
+    if (appState() === 'analyzing') cancelAnalysis();
+    else if (appState() === 'converting') cancelConversion();
+  };
+
   return (
-    <ErrorBoundary
-      fallback={(error, reset) => <AppErrorFallback error={error} reset={reset} t={t} />}
-    >
-      <div class="flex min-h-screen flex-col bg-bg-base transition-colors" data-testid="app">
-        <a
-          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-brand focus:px-4 focus:py-2 focus:text-brand-foreground focus:shadow-lg"
-          href="#main-content"
-        >
-          {t('app.skipToMain')}
-        </a>
+    <div class="flex min-h-screen flex-col bg-bg-base transition-colors" data-testid="app">
+      <a
+        class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-brand focus:px-4 focus:py-2 focus:text-brand-foreground focus:shadow-lg"
+        href="#main-content"
+      >
+        {t('app.skipToMain')}
+      </a>
 
-        <header class="border-b border-border-standard bg-bg-base">
-          <div class="mx-auto flex max-w-[1200px] items-center justify-between px-4 py-0">
-            <div class="flex-1">
-              <h1
-                class="text-2xl font-bold tracking-tight text-text-primary sm:text-[32px]"
-                style="letter-spacing: -0.704px"
-              >
-                {t('app.title')}
-              </h1>
-              <p class="mt-0.5 text-sm text-text-secondary sm:text-lg">{t('app.subtitle')}</p>
-            </div>
-
-            <nav aria-label={t('app.navigation')} class="flex items-center gap-2">
-              <LanguageSelector />
-              <ExportLogsButton />
-            </nav>
+      <header class="border-b border-border-standard bg-bg-base">
+        <div class="mx-auto flex max-w-[1200px] items-center justify-between px-4 py-0">
+          <div class="flex-1">
+            <h1
+              class="text-2xl font-bold tracking-tight text-text-primary sm:text-[32px]"
+              style="letter-spacing: -0.704px"
+            >
+              {t('app.title')}
+            </h1>
+            <p class="mt-0.5 text-sm text-text-secondary sm:text-lg">{t('app.subtitle')}</p>
           </div>
-        </header>
 
-        <main
-          id="main-content"
-          class="mx-auto w-full max-w-[1200px] flex-1 px-4 py-8 sm:px-6 lg:px-8"
+          <nav aria-label={t('app.navigation')} class="flex items-center gap-2">
+            <LanguageSelector />
+            <ExportLogsButton />
+          </nav>
+        </div>
+      </header>
+
+      <main
+        id="main-content"
+        class="mx-auto w-full max-w-[1200px] flex-1 px-4 py-8 sm:px-6 lg:px-8"
+      >
+        <AppUpdateNotice
+          busy={isBusy()}
+          hasResults={conversionResults().length > 0}
+          onClearResults={clearResultsForReload}
+          t={t}
+        />
+        <StatusAlerts
+          environmentSupported={environmentSupported()}
+          errorContext={errorContext()}
+          errorMessage={appState() === 'error' ? errorMessage() : null}
+          onDismissError={handleDismissError}
+          onRetry={handleRetry}
+          onSelectNewFile={handleReset}
+        />
+
+        <ErrorBoundary
+          fallback={(error, reset) => (
+            <AppErrorFallback
+              error={error}
+              reset={reset}
+              t={t}
+              busy={isBusy()}
+              cancelling={appState() === 'cancelling'}
+              results={conversionResults()}
+              onCancel={cancelForRecovery}
+              onClearResults={clearResultsForReload}
+            />
+          )}
         >
-          <AppUpdateNotice
-            busy={isBusy()}
-            hasResults={conversionResults().length > 0}
-            onClearResults={() => {
-              if (!isBusy()) setConversionResults([]);
-            }}
-            t={t}
-          />
-          <StatusAlerts
-            environmentSupported={environmentSupported()}
-            errorContext={errorContext()}
-            errorMessage={appState() === 'error' ? errorMessage() : null}
-            onDismissError={handleDismissError}
-            onRetry={handleRetry}
-            onSelectNewFile={handleReset}
-          />
-
           {/* Grid: exactly 2 direct children required (left/right columns).
               Do NOT wrap these divs — grid layout depends on direct-child relationship. */}
           <div class="mt-6 grid gap-6 sm:grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-8">
             {/* Left column (desktop): Dropzone + metadata */}
             <div class="space-y-6 order-1">
               <Show when={memoryWarning()}>
-                <Suspense fallback={<div class="h-24 animate-pulse rounded-lg bg-bg-elevated" />}>
-                  <MemoryWarning
-                    isDuringConversion={appState() === 'converting'}
-                    onCancel={cancelConversion}
-                    onDismiss={handleDismissMemoryWarning}
-                    onReduceSettings={handleReduceSettings}
-                  />
-                </Suspense>
+                <MemoryWarning
+                  isDuringConversion={appState() === 'converting'}
+                  onCancel={cancelConversion}
+                  onDismiss={handleDismissMemoryWarning}
+                  onReduceSettings={handleReduceSettings}
+                />
               </Show>
 
               {/* Unified dropzone card with preview + progress (아이디어 1) */}
@@ -432,12 +447,12 @@ const App: Component = () => {
             preferPreviewHidden={preferResultPreviewHidden()}
             onPreviewHidden={() => setPreferResultPreviewHidden(true)}
           />
-        </main>
+        </ErrorBoundary>
+      </main>
 
-        <LicenseAttribution />
-        <ConfirmationModal />
-      </div>
-    </ErrorBoundary>
+      <LicenseAttribution />
+      <ConfirmationModal />
+    </div>
   );
 };
 

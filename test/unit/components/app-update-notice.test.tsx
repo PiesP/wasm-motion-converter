@@ -2,7 +2,15 @@ import AppUpdateNotice from '@components/AppUpdateNotice';
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, expect, it, vi } from 'vitest';
+import { clearAssetFailure } from '@/asset-recovery';
 import type { SWRegisterOptions } from '@/sw-types';
+
+const unavailable = {
+  path: '/assets/codec.ABCDef12.js',
+  status: 404,
+  reason: 'invalid-response',
+  source: 'service-worker',
+} as const;
 
 const registration = vi.hoisted(() => ({
   options: {} as SWRegisterOptions,
@@ -25,6 +33,7 @@ vi.mock('@/sw-register', () => ({
 let dispose: (() => void) | undefined;
 afterEach(() => {
   dispose?.();
+  clearAssetFailure();
   document.body.replaceChildren();
   vi.clearAllMocks();
 });
@@ -47,7 +56,7 @@ it('keeps reload explicit and disabled throughout an operation and while a downl
   );
   await Promise.resolve();
   expect(container.querySelector('button')).toBeNull();
-  registration.options.onAssetUnavailable?.();
+  registration.options.onAssetUnavailable?.(unavailable);
   const button = container.querySelector('button')!;
   expect(button.disabled).toBe(true);
   expect(container.textContent).toContain('update.wait');
@@ -117,7 +126,7 @@ it('coalesces worker and deployment updates while preserving a distinct unavaila
   registration.options.onUpdate?.();
   expect(container.querySelectorAll('[role="status"]')).toHaveLength(1);
   expect(container.textContent).toContain('update.available');
-  registration.options.onAssetUnavailable?.();
+  registration.options.onAssetUnavailable?.(unavailable);
   registration.deploymentUpdate();
   registration.options.onUpdate?.();
   expect(container.textContent).toContain('update.unavailable');
@@ -125,7 +134,7 @@ it('coalesces worker and deployment updates while preserving a distinct unavaila
   dispose();
   dispose = undefined;
   registration.deploymentUpdate();
-  registration.options.onAssetUnavailable?.();
+  registration.options.onAssetUnavailable?.(unavailable);
   expect(container.childNodes).toHaveLength(0);
 });
 
