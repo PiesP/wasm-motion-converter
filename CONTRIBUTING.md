@@ -283,6 +283,11 @@ marker, that marker becomes the branch identity for subsequent runs.
   cross-origin isolation or `SharedArrayBuffer`.
 - Bundle runtime code locally; do not add runtime CDN dependencies.
 - Keep progress, cancellation, error, and cleanup behavior explicit.
+- Keep essential error, warning, and recovery UI eager: after application
+  initialization, its first usable render must not require another network
+  request. Keep heavy conversion code lazy. A feature boundary must preserve
+  cancellation, diagnostics, existing result downloads, and explicit guarded
+  reload outside the failing presentation subtree.
 
 ## Code style
 
