@@ -4,7 +4,7 @@
 import { useLocale } from '@hooks/use-locale';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
-import { onCleanup, splitProps } from 'solid-js';
+import { createSignal, onCleanup, splitProps } from 'solid-js';
 
 type ExportLogsButtonProps = {
   class?: string;
@@ -14,6 +14,7 @@ const DEFAULT_BUTTON_CLASS =
   'p-2 rounded-lg border border-border-standard bg-white/[0.02] text-text-secondary hover:bg-white/[0.05] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 cursor-pointer';
 const LOG_FILENAME_PREFIX = 'motion-converter-logs';
 const DOWNLOAD_URL_LIFETIME_MS = 10_000;
+const MAX_PENDING_DOWNLOADS = 2;
 
 const formatTimestampForFilename = (date: Date): string => {
   const pad = (value: number) => value.toString().padStart(2, '0');
@@ -24,6 +25,8 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
   const [local] = splitProps(props, ['class']);
   const { t } = useLocale();
   const pendingUrls = new Map<string, ReturnType<typeof setTimeout>>();
+  const [pendingCount, setPendingCount] = createSignal(0);
+  let disposed = false;
 
   const releaseUrl = (url: string): void => {
     const timeout = pendingUrls.get(url);
@@ -31,9 +34,11 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
     clearTimeout(timeout);
     pendingUrls.delete(url);
     URL.revokeObjectURL(url);
+    if (!disposed) setPendingCount(pendingUrls.size);
   };
 
   onCleanup(() => {
+    disposed = true;
     for (const url of pendingUrls.keys()) releaseUrl(url);
   });
 
@@ -56,6 +61,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
         url,
         setTimeout(() => releaseUrl(url), DOWNLOAD_URL_LIFETIME_MS)
       );
+      setPendingCount(pendingUrls.size);
     } catch (error) {
       URL.revokeObjectURL(url);
       throw error;
@@ -65,6 +71,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
   };
 
   const handleExport = (event: MouseEvent): void => {
+    if (disposed || pendingUrls.size >= MAX_PENDING_DOWNLOADS) return;
     try {
       const format = event.altKey ? 'jsonl' : 'text';
       const now = new Date();
@@ -175,6 +182,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
     <button
       type="button"
       onClick={handleExport}
+      disabled={pendingCount() >= MAX_PENDING_DOWNLOADS}
       class={buttonClass()}
       aria-label={t('header.exportLogs')}
       title={t('header.exportLogsTooltip')}
