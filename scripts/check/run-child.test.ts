@@ -211,7 +211,9 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     writeFileSync(
       script,
       `import { writeFileSync, renameSync } from 'node:fs';
-process.on(${JSON.stringify(signal)}, () => { writeFileSync(process.env.STOPPED, ${JSON.stringify(signal)}); process.exit(0); });
+const signal = process.env.PROBE_SIGNAL;
+if (!['SIGINT', 'SIGTERM'].includes(signal)) throw new Error('Expected a probe signal.');
+process.on(signal, () => { writeFileSync(process.env.STOPPED, signal); process.exit(0); });
 writeFileSync(process.env.MARKER + '.tmp', JSON.stringify({pid: process.pid}));
 renameSync(process.env.MARKER + '.tmp', process.env.MARKER);
 setInterval(() => {}, 1000);
@@ -221,7 +223,13 @@ setInterval(() => {}, 1000);
       process.execPath,
       ['--experimental-strip-types', fileURLToPath(wrapper)],
       {
-        env: { ...process.env, npm_execpath: script, MARKER: marker, STOPPED: stopped },
+        env: {
+          ...process.env,
+          npm_execpath: script,
+          MARKER: marker,
+          STOPPED: stopped,
+          PROBE_SIGNAL: signal,
+        },
         stdio: 'ignore',
       }
     );
