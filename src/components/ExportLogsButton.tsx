@@ -4,7 +4,7 @@
 import { useLocale } from '@hooks/use-locale';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
-import { Show, splitProps } from 'solid-js';
+import { createSignal, onCleanup, splitProps } from 'solid-js';
 
 type ExportLogsButtonProps = {
   class?: string;
@@ -13,37 +13,65 @@ type ExportLogsButtonProps = {
 const DEFAULT_BUTTON_CLASS =
   'p-2 rounded-lg border border-border-standard bg-white/[0.02] text-text-secondary hover:bg-white/[0.05] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 cursor-pointer';
 const LOG_FILENAME_PREFIX = 'motion-converter-logs';
+const DOWNLOAD_URL_LIFETIME_MS = 10_000;
+const MAX_PENDING_DOWNLOADS = 2;
 
 const formatTimestampForFilename = (date: Date): string => {
   const pad = (value: number) => value.toString().padStart(2, '0');
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 };
 
-const downloadText = (params: { filename: string; text: string; mimeType?: string }): void => {
-  if (typeof document === 'undefined') return;
-
-  const blob = new Blob([params.text], {
-    type: params.mimeType ?? 'text/plain;charset=utf-8',
-  });
-  const url = URL.createObjectURL(blob);
-
-  try {
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = params.filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-};
-
 const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
   const [local] = splitProps(props, ['class']);
   const { t } = useLocale();
+  const pendingUrls = new Map<string, ReturnType<typeof setTimeout>>();
+  const [pendingCount, setPendingCount] = createSignal(0);
+  let disposed = false;
+
+  const releaseUrl = (url: string): void => {
+    const timeout = pendingUrls.get(url);
+    if (timeout === undefined) return;
+    clearTimeout(timeout);
+    pendingUrls.delete(url);
+    URL.revokeObjectURL(url);
+    if (!disposed) setPendingCount(pendingUrls.size);
+  };
+
+  onCleanup(() => {
+    disposed = true;
+    for (const url of pendingUrls.keys()) releaseUrl(url);
+  });
+
+  const downloadText = (params: { filename: string; text: string; mimeType?: string }): void => {
+    if (typeof document === 'undefined') return;
+
+    const blob = new Blob([params.text], {
+      type: params.mimeType ?? 'text/plain;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    let anchor: HTMLAnchorElement | undefined;
+
+    try {
+      anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = params.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      pendingUrls.set(
+        url,
+        setTimeout(() => releaseUrl(url), DOWNLOAD_URL_LIFETIME_MS)
+      );
+      setPendingCount(pendingUrls.size);
+    } catch (error) {
+      URL.revokeObjectURL(url);
+      throw error;
+    } finally {
+      anchor?.remove();
+    }
+  };
 
   const handleExport = (event: MouseEvent): void => {
+    if (disposed || pendingUrls.size >= MAX_PENDING_DOWNLOADS) return;
     try {
       const format = event.altKey ? 'jsonl' : 'text';
       const now = new Date();
@@ -59,7 +87,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
             exportedAt: now.toISOString(),
             url: (() => {
               try {
-                return location.href;
+                return location.origin;
               } catch {
                 return 'unavailable';
               }
@@ -111,7 +139,7 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
       lines.push(
         `url: ${(() => {
           try {
-            return location.href;
+            return location.origin;
           } catch {
             return 'unavailable';
           }
@@ -143,40 +171,33 @@ const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
       );
 
       downloadText({ filename, text: lines.join('\n') });
-    } catch (error) {
-      logger.warn('general', 'export-failed', { error: String(error) });
+    } catch {
+      logger.warn('general', 'export-failed');
     }
   };
 
   const buttonClass = () => local.class ?? DEFAULT_BUTTON_CLASS;
 
   return (
-    <Show when={import.meta.env.DEV}>
-      <button
-        type="button"
-        onClick={handleExport}
-        class={buttonClass()}
-        aria-label={t('header.exportLogs')}
-        title={t('header.exportLogsTooltip')}
-        data-testid="export-logs-button"
-      >
-        <svg
-          class="w-5 h-5"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-        >
-          <title>Download icon</title>
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
-          />
-        </svg>
-      </button>
-    </Show>
+    <button
+      type="button"
+      onClick={handleExport}
+      disabled={pendingCount() >= MAX_PENDING_DOWNLOADS}
+      class={buttonClass()}
+      aria-label={t('header.exportLogs')}
+      title={t('header.exportLogsTooltip')}
+      data-testid="export-logs-button"
+    >
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <title>Download icon</title>
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
+        />
+      </svg>
+    </button>
   );
 };
 

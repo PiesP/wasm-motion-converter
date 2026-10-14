@@ -5,6 +5,7 @@ import Panel from '@components/ui/Panel';
 import { useLocale } from '@hooks/use-locale';
 import type { ConversionSettings } from '@t/conversion-types';
 import { formatBytes, formatDurationSeconds } from '@utils/format-utils';
+import { resultDownloadName } from '@utils/result-download';
 import {
   type Component,
   createEffect,
@@ -161,17 +162,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   });
 
   const downloadFileName = createMemo(() => {
-    const originalName = local.originalName.trim();
-    const lastDotIndex = originalName.lastIndexOf('.');
-    const baseName =
-      originalName && lastDotIndex > 0 ? originalName.slice(0, lastDotIndex) : originalName;
-    const safeBaseName = baseName.trim() ? baseName : 'converted';
-    // Sanitize path separators and control characters to prevent directory traversal
-    const sanitized = safeBaseName
-      .replace(/\.\.+/g, '_')
-      .replace(/[/\\]/g, '_')
-      .replace(/[\x00-\x1f\x7f]/g, '');
-    return `${sanitized || 'converted'}.${outputExtension()}`;
+    return resultDownloadName(local.originalName, local.outputBlob.type);
   });
 
   const ariaLabel = createMemo(() =>

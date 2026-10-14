@@ -1,5 +1,5 @@
 {
-  "app.error.description": "An unexpected error occurred. Please refresh the page to try again.",
+  "app.error.description": "This part of the app could not be displayed. Use the recovery actions below.",
   "app.error.details": "Error details",
   "app.error.reload": "Reload page",
   "app.error.retry": "Try again",
@@ -91,7 +91,7 @@
   "modal.cancel": "Cancel conversion and close modal",
   "modal.confirm": "Proceed with conversion despite warnings",
   "modal.title": "Conversion Warning",
-  "offline.message": "You're offline. Using cached content. Some features may be limited.",
+  "offline.message": "You're offline. Uncached features need a connection.",
   "option.aria.tooltipInfo": "Information about {title}",
   "progress.analyzing": "Analyzing video...",
   "progress.assembling": "Assembling...",

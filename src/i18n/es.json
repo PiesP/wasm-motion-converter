@@ -1,5 +1,5 @@
 {
-  "app.error.description": "Se ha producido un error inesperado. Actualiza la página para volver a intentarlo.",
+  "app.error.description": "No se ha podido mostrar esta parte de la aplicación. Usa las opciones de recuperación siguientes.",
   "app.error.details": "Detalles del error",
   "app.error.reload": "Recargar página",
   "app.error.retry": "Intentar de nuevo",
@@ -91,7 +91,7 @@
   "modal.cancel": "Cancelar conversión y cerrar modal",
   "modal.confirm": "Continuar con la conversión a pesar de las advertencias",
   "modal.title": "Advertencia de conversión",
-  "offline.message": "Estás sin conexión. Usando contenido en caché. Algunas funciones pueden estar limitadas.",
+  "offline.message": "Estás sin conexión. Las funciones no guardadas en caché necesitan una conexión.",
   "option.aria.tooltipInfo": "Información sobre {title}",
   "progress.analyzing": "Analizando vídeo...",
   "progress.assembling": "Ensamblando...",

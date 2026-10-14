@@ -1,5 +1,5 @@
 {
-  "app.error.description": "予期しないエラーが発生しました。ページを再読み込みしてお試しください。",
+  "app.error.description": "アプリの一部を表示できません。下の復旧操作をご利用ください。",
   "app.error.details": "エラーの詳細",
   "app.error.reload": "ページを再読み込み",
   "app.error.retry": "もう一度試す",
@@ -91,7 +91,7 @@
   "modal.cancel": "変換をキャンセルしてモーダルを閉じる",
   "modal.confirm": "警告にもかかわらず変換を続行",
   "modal.title": "変換警告",
-  "offline.message": "オフラインです。キャッシュされたコンテンツを使用しています。一部の機能が制限される場合があります。",
+  "offline.message": "オフラインです。キャッシュされていない機能にはインターネット接続が必要です。",
   "option.aria.tooltipInfo": "{title}について",
   "progress.analyzing": "動画を分析中...",
   "progress.assembling": "組み立て中...",

@@ -36,6 +36,7 @@ vi.mock('@hooks/use-locale', () => ({
 
 vi.mock('@hooks/use-network-state', () => ({
   useNetworkState: vi.fn(),
+  networkState: () => ({ online: true }),
 }));
 
 vi.mock('@hooks/use-conversion-handlers', () => ({

@@ -89,4 +89,7 @@ validation/windows/public-target.json
 validation/windows/inputs/app-update.json
 validation/windows/inputs/deployment-a/
 validation/windows/inputs/cleanup-baseline/
+validation/windows/inputs/recovery.json
+validation/windows/inputs/recovery-a/
+validation/windows/inputs/recovery-baseline/
 deployment-verification.json

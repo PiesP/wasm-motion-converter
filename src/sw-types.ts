@@ -13,7 +13,12 @@ export interface SWRegisterOptions {
   /** Called when a new service worker activates after an update. */
   onUpdate?: () => void;
   /** A fingerprinted app resource was unavailable or failed content validation. */
-  onAssetUnavailable?: () => void;
+  onAssetUnavailable?: (evidence: {
+    path: string;
+    status: number;
+    reason: 'invalid-response' | 'network-error';
+    source: 'service-worker';
+  }) => void;
 }
 
 export interface SWRegistrationState {

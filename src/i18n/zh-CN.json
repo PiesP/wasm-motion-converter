@@ -1,5 +1,5 @@
 {
-  "app.error.description": "发生意外错误。请刷新页面重试。",
+  "app.error.description": "无法显示应用的这一部分。请使用下方的恢复操作。",
   "app.error.details": "错误详情",
   "app.error.reload": "重新加载页面",
   "app.error.retry": "重试",
@@ -91,7 +91,7 @@
   "modal.cancel": "取消转换并关闭对话框",
   "modal.confirm": "尽管有警告仍继续转换",
   "modal.title": "转换警告",
-  "offline.message": "您处于离线状态。正在使用缓存内容。某些功能可能受限。",
+  "offline.message": "您处于离线状态。未缓存的功能需要网络连接。",
   "option.aria.tooltipInfo": "关于{title}的信息",
   "progress.analyzing": "分析视频中...",
   "progress.assembling": "组装中...",

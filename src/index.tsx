@@ -19,6 +19,7 @@ import { LocaleProvider } from '@hooks/use-locale';
 import { detectInitialLocale } from '@utils/format-utils';
 import { render } from 'solid-js/web';
 import App from './App';
+import { ownPreloadErrors } from './asset-recovery';
 import './index.css';
 
 // Set the initial document language before rendering. Keeping this in the
@@ -41,11 +42,12 @@ if (!root) {
   );
 }
 
-render(
-  () => (
+render(() => {
+  // Vite rethrows after notification. The root owns one observer across feature resets.
+  ownPreloadErrors();
+  return (
     <LocaleProvider>
       <App />
     </LocaleProvider>
-  ),
-  root
-);
+  );
+}, root);
