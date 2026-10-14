@@ -11,7 +11,7 @@ const OfflineBanner: Component = () => {
   return (
     <Show when={!networkState().online}>
       <div
-        class="fixed top-0 left-0 right-0 z-50 bg-status-warning text-bg-base px-4 py-2 text-center font-medium"
+        class="mb-4 rounded-lg bg-status-warning text-bg-base px-4 py-2 text-center font-medium"
         role="status"
         aria-live="polite"
         data-testid="offline-banner"
