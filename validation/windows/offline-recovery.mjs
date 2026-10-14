@@ -1127,6 +1127,9 @@ async function firstPipelineImportFailure(
 ) {
   await started.setDistribution(build.relativePath);
   const pipeline = emittedAsset(build, /^assets\/conversion-pipeline[.-][\w-]{8}\.js$/);
+  // The emitted Vite preload graph requests gifenc alongside the pipeline,
+  // including for WebP. Offline rejection therefore fails this dependency too.
+  const pipelineDependency = emittedAsset(build, /^assets\/gifenc[.-][\w-]{8}\.js$/);
   const path = assetPath(pipeline);
   const errorChunk = baseline
     ? emittedAsset(build, /^assets\/ErrorDisplay[.-][\w-]{8}\.js$/)
@@ -1185,6 +1188,7 @@ async function firstPipelineImportFailure(
       assert.equal(await option.locator('input').isChecked(), true);
     }
     await assertNeverFetched(page, path);
+    await assertNeverFetched(page, assetPath(pipelineDependency));
     if (errorChunk) await assertNeverFetched(page, assetPath(errorChunk));
     const timeOrigin = await page.evaluate(() => performance.timeOrigin);
     const beforeOrigin = started.observedAssetRequests.length;
@@ -1225,7 +1229,10 @@ async function firstPipelineImportFailure(
         'Terminal import failure cannot be reloaded explicitly'
       );
     }
-    const expectedPaths = baseline ? [path, assetPath(errorChunk)] : [path];
+    const expectedPaths = baseline
+      ? [path, assetPath(pipelineDependency), assetPath(errorChunk)]
+      : [path];
+    const expectedRequestedPaths = baseline ? expectedPaths : [path, assetPath(pipelineDependency)];
     const deadline = Date.now() + 15_000;
     while (
       Date.now() < deadline &&
@@ -1237,11 +1244,11 @@ async function firstPipelineImportFailure(
     const requested = events.requestedAssets.slice(beforePageRequests);
     assert.deepEqual(
       [...new Set(requested)].sort(),
-      [...expectedPaths].sort(),
+      [...expectedRequestedPaths].sort(),
       'First conversion fetched a different JavaScript asset set'
     );
     assert.equal(requested[0], path, 'Pipeline failure did not precede the error UI request');
-    for (const expected of expectedPaths) {
+    for (const expected of expectedRequestedPaths) {
       const attempts = requested.filter((requestedPath) => requestedPath === expected).length;
       assert(
         attempts >= 1 && attempts <= 2,
@@ -1311,6 +1318,8 @@ async function firstPipelineImportFailure(
       sourceSha: build.state.sourceSha,
       emittedPipeline: path,
       pipelineSha256: pipeline.sha256,
+      pipelineDependency: assetPath(pipelineDependency),
+      pipelineDependencySha256: pipelineDependency.sha256,
       secondaryErrorChunk: errorChunk ? assetPath(errorChunk) : null,
       secondaryErrorChunkSha256: errorChunk?.sha256 ?? null,
       serviceWorkerControlled: controlled,
