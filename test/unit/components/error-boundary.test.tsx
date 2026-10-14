@@ -83,6 +83,26 @@ describe('AppErrorFallback', () => {
     expect(reset).not.toHaveBeenCalled();
   });
 
+  it('keeps wrong-MIME module failures on the protected reload path', () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    render(
+      () => (
+        <AppErrorFallback
+          {...base}
+          error={
+            new TypeError('Failed to load a module script: non-JavaScript MIME type text/html')
+          }
+          reset={() => {}}
+          t={t}
+        />
+      ),
+      container
+    );
+    expect(container.textContent).not.toContain('translated:app.error.retry');
+    expect(container.querySelector('[data-testid="recovery-reload"]')).not.toBeNull();
+  });
+
   it('keeps cancellation and retained Blob download usable after a feature failure', () => {
     const blob = new Blob(['retained output'], { type: 'image/gif' });
     const result: ConversionResult = {

@@ -85,7 +85,7 @@ const AppErrorFallback: Component<AppErrorFallbackProps> = (props) => {
         <div class="mb-4 flex gap-3">
           <Show
             when={
-              !/Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|Unable to preload CSS/i.test(
+              !/Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|Failed to load a module script|non-JavaScript MIME type|Unable to preload CSS/i.test(
                 String(props.error)
               )
             }
