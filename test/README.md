@@ -111,6 +111,11 @@ Fast CI runs the quality gate, unit coverage, the repository-backed E2E profile
 the retained quality checks. Deep verification adds mutation testing. The workflow files
 in `.github/workflows/` are authoritative when this summary changes.
 
+`quality` retains `test:ci` locally and owns that policy suite in CI when selected.
+For unit-only routing, unit runs `test:ci` before its independent `test:cov` step;
+uncertain classification enables every gate. The policy suite is only part of
+unit validation, and `verify` does not run full product coverage or browser E2E.
+
 ## Common pitfalls
 
 - E2E behavior cannot be established by a successful TypeScript build alone.
