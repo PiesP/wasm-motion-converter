@@ -209,9 +209,10 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     const wrapper = new URL('../test/run-e2e-on-free-port.ts', import.meta.url);
     writeFileSync(
       script,
-      `import { writeFileSync } from 'node:fs';
+      `import { writeFileSync, renameSync } from 'node:fs';
 process.on(${JSON.stringify(signal)}, () => { writeFileSync(process.env.STOPPED, ${JSON.stringify(signal)}); process.exit(0); });
-writeFileSync(process.env.MARKER, JSON.stringify({pid: process.pid}));
+writeFileSync(process.env.MARKER + '.tmp', JSON.stringify({pid: process.pid}));
+renameSync(process.env.MARKER + '.tmp', process.env.MARKER);
 setInterval(() => {}, 1000);
 `
     );
