@@ -91,7 +91,7 @@
   "modal.cancel": "Cancel conversion and close modal",
   "modal.confirm": "Proceed with conversion despite warnings",
   "modal.title": "Conversion Warning",
-  "offline.message": "You're offline. Using cached content. Some features may be limited.",
+  "offline.message": "You're offline. Uncached features need a connection.",
   "option.aria.tooltipInfo": "Information about {title}",
   "progress.analyzing": "Analyzing video...",
   "progress.assembling": "Assembling...",

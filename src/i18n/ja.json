@@ -91,7 +91,7 @@
   "modal.cancel": "変換をキャンセルしてモーダルを閉じる",
   "modal.confirm": "警告にもかかわらず変換を続行",
   "modal.title": "変換警告",
-  "offline.message": "オフラインです。キャッシュされたコンテンツを使用しています。一部の機能が制限される場合があります。",
+  "offline.message": "オフラインです。キャッシュされていない機能にはインターネット接続が必要です。",
   "option.aria.tooltipInfo": "{title}について",
   "progress.analyzing": "動画を分析中...",
   "progress.assembling": "組み立て中...",
