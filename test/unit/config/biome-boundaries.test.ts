@@ -33,6 +33,24 @@ afterEach(() => {
 });
 
 describe('installed Biome scope and browser import boundaries', () => {
+  it('rejects warning-only input through the configured lint and quality gates', () => {
+    const source = 'export function control(value: number) {\n  value += 1;\n  return value;\n}\n';
+    const { file, run } = fixture('scripts/control.ts', source);
+    const scripts = JSON.parse(readFileSync(join(project, 'package.json'), 'utf8'))
+      .scripts as Record<string, string>;
+    const advisory = run(['lint', '.']);
+    expect(advisory.status, advisory.output).toBe(0);
+    expect(advisory.output).toContain('noParameterAssign');
+    for (const name of ['lint', 'quality']) {
+      const command = scripts[name]?.split(' && ')[0];
+      if (!command) throw new Error(`Missing ${name} command`);
+      const result = run(command.split(' ').slice(1));
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain('noParameterAssign');
+      expect(readFileSync(file, 'utf8')).toBe(source);
+    }
+  });
+
   it.each([
     'src/style-control.ts',
     'scripts/check/style-control.ts',
