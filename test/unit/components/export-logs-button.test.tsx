@@ -90,3 +90,38 @@ it('releases a pending log URL when the owning button unmounts', () => {
   vi.advanceTimersByTime(10_000);
   expect(revoke).toHaveBeenCalledTimes(2);
 });
+
+it('bounds rapid log exports and re-enables the button after the handoff window', async () => {
+  vi.useFakeTimers();
+  let nextUrl = 0;
+  const create = vi.fn(() => `blob:logs-${++nextUrl}`);
+  const revoke = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: create });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revoke });
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+  const container = document.createElement('div');
+  document.body.append(container);
+  disposeView = render(() => <ExportLogsButton />, container);
+  const button = container.querySelector<HTMLButtonElement>('[data-testid="export-logs-button"]')!;
+
+  button.click();
+  button.dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }));
+  expect(create).toHaveBeenCalledTimes(2);
+  expect(button.disabled).toBe(true);
+  button.click();
+  expect(create).toHaveBeenCalledTimes(2);
+
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(button.disabled).toBe(true);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(revoke).toHaveBeenCalledTimes(2);
+  expect(button.disabled).toBe(false);
+  button.click();
+  expect(create).toHaveBeenCalledTimes(3);
+
+  disposeView?.();
+  disposeView = undefined;
+  expect(revoke).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(revoke).toHaveBeenCalledTimes(3);
+});
