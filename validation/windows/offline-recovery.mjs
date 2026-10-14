@@ -6,7 +6,7 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readBuild } from './app-update.mjs';
+import { measureColdTransfer, readBuild } from './app-update.mjs';
 
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -1135,6 +1135,105 @@ async function optionalFailureCase(browser, started, build, fixture, outputRoot,
   }
 }
 
+async function offlineOptionalMiss(browser, started, build, fixture, outputRoot, controlled) {
+  await started.setDistribution(build.relativePath);
+  const chunk = emittedAsset(build, /^assets\/es[.-][\w-]{8}\.js$/);
+  const path = assetPath(chunk);
+  const context = await browser.newContext({
+    locale: 'en-US',
+    acceptDownloads: true,
+    serviceWorkers: controlled ? 'allow' : 'block',
+  });
+  const page = await context.newPage();
+  const events = observePage(page);
+  try {
+    await requireApp(page, started.url);
+    if (controlled) {
+      await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+      await page.reload();
+      await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+      await captureWorkerAssetMessages(page);
+    }
+    assert.equal(
+      await page.evaluate(() => Boolean(navigator.serviceWorker.controller)),
+      controlled
+    );
+    const origin = await page.evaluate(() => performance.timeOrigin);
+    const result = await createSmallGif(page, fixture);
+    await assertNeverFetched(page, path);
+    const beforeOriginRequests = started.observedAssetRequests.length;
+    await context.setOffline(true);
+    await page.waitForFunction(() => navigator.onLine === false);
+    await page.locator('[data-testid="language-selector"]').selectOption('es');
+    await page
+      .getByRole('status')
+      .filter({ has: page.getByRole('button', { name: 'Reload page' }) })
+      .waitFor({ state: 'visible', timeout: 15_000 });
+    const workerMessage = controlled
+      ? await requireWorkerAssetMessage(page, path, 0, 'network-error')
+      : null;
+    assert.deepEqual(
+      started.observedAssetRequests.slice(beforeOriginRequests),
+      [],
+      'Offline miss unexpectedly received an origin response'
+    );
+    assert.equal(started.observedAssetOverflow, false, 'Origin asset observation overflowed');
+    assert(
+      events.requestedAssets.includes(path),
+      'Offline miss did not attempt the real emitted optional import'
+    );
+    assert(
+      events.failedRequests.some((entry) => entry.path === path),
+      'Offline miss did not fail as a network request'
+    );
+    assert.deepEqual(events.failedResponses, [], 'Offline miss fabricated an HTTP error');
+    const retained = await readResultDownload(page);
+    assert.equal(sha256(retained), result.sha256, 'Offline miss changed retained result');
+    assert.equal(await page.evaluate(() => performance.timeOrigin), origin);
+    assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), true);
+    const log = await readLogExport(page);
+    assert.match(log.text, /i18n\.load-failed/);
+    const assetLogs = log.text.split('\n').filter((line) => line.includes('app.asset-unavailable'));
+    assert(
+      assetLogs.some(
+        (line) =>
+          line.includes(controlled ? '"source":"service-worker"' : '"source":"vite-preload"') &&
+          line.includes(controlled ? '"status":0' : '"status":null')
+      ),
+      'Offline miss lacks network/unknown-status observer evidence'
+    );
+    assert(
+      assetLogs.every((line) => !/"status":404/.test(line)),
+      'Offline cache miss was incorrectly classified as HTTP 404'
+    );
+    assertExpectedNetwork(events, path);
+    const screenshot = join(
+      outputRoot,
+      `recovery-offline-miss-${controlled ? 'controlled' : 'blocked'}.png`
+    );
+    await page.screenshot({ path: screenshot, fullPage: true });
+    return {
+      id: `optional-offline-miss-${controlled ? 'controlled' : 'blocked'}`,
+      status: 'passed',
+      sourceSha: build.state.sourceSha,
+      emittedChunk: path,
+      chunkSha256: chunk.sha256,
+      serviceWorkerControlled: controlled,
+      workerMessage,
+      noOriginResponse: true,
+      result,
+      downloadedAfterFailureSha256: sha256(retained),
+      timeOriginUnchanged: true,
+      logExport: { sha256: log.sha256, bytes: log.bytes },
+      screenshotSha256: sha256(await readFile(screenshot)),
+      events,
+    };
+  } finally {
+    await context.setOffline(false).catch(() => {});
+    await context.close();
+  }
+}
+
 async function loadSpanishThenEnglish(page) {
   await page.locator('[data-testid="language-selector"]').selectOption('es');
   await page
@@ -1462,6 +1561,55 @@ async function busyRenderFailure(browser, started, build, busyFixture, outputRoo
   }
 }
 
+async function observeFreshBWhileARetained(browser, started, buildB, retainedPage, oldDocument) {
+  const context = await browser.newContext({ locale: 'en-US', serviceWorkers: 'block' });
+  try {
+    const page = await context.newPage();
+    const entryPath = assetPath(buildB.main);
+    const pendingEntry = page
+      .waitForResponse((response) => new URL(response.url()).pathname === entryPath, {
+        timeout: 20_000,
+      })
+      .then(
+        (response) => ({ response }),
+        (error) => ({ error })
+      );
+    const document = await page.goto(started.url);
+    assert.equal(document?.status(), 200, 'Fresh B document did not load');
+    assert.equal(
+      sha256(await document.body()),
+      buildB.indexSha256,
+      'Fresh tab did not receive B HTML'
+    );
+    const entryOutcome = await pendingEntry;
+    if (entryOutcome.error) throw entryOutcome.error;
+    const entry = entryOutcome.response;
+    assert.equal(entry.status(), 200, 'Fresh B entry did not load');
+    assert.equal(sha256(await entry.body()), buildB.main.sha256, 'Fresh tab did not receive B JS');
+    await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    const scripts = await page.evaluate(() =>
+      [...document.scripts]
+        .map((script) => (script.src ? new URL(script.src).pathname : null))
+        .filter(Boolean)
+    );
+    assert(scripts.includes(entryPath), 'Fresh B tab did not execute B entry');
+    assert.equal(
+      await retainedPage.evaluate(() => performance.timeOrigin),
+      oldDocument,
+      'Opening B in a fresh tab navigated the retained A document'
+    );
+    return {
+      sourceSha: buildB.state.sourceSha,
+      indexSha256: buildB.indexSha256,
+      entryPath,
+      entrySha256: buildB.main.sha256,
+      retainedATimeOriginUnchanged: true,
+    };
+  } finally {
+    await context.close();
+  }
+}
+
 async function buildUpgradeMissingAsset(
   browser,
   started,
@@ -1505,6 +1653,7 @@ async function buildUpgradeMissingAsset(
     const result = await createSmallGif(page, fixture);
     await assertNeverFetched(page, assetPath(oldChunk));
     await started.setDistribution(buildB.relativePath);
+    const freshB = await observeFreshBWhileARetained(browser, started, buildB, page, oldDocument);
     const path = await triggerLocaleFailure(page, started, oldChunk, 'missing-after-update');
     const workerMessage = controlled
       ? await requireWorkerAssetMessage(page, path, 404, 'invalid-response')
@@ -1557,6 +1706,7 @@ async function buildUpgradeMissingAsset(
       newChunkSha256: newChunk.sha256,
       workerByteIdentical: buildA.workerSha256 === buildB.workerSha256,
       workerMessage,
+      freshB,
       retainedOutputSha256: result.sha256,
       recoveryDownloadedSha256: sha256(retained),
       protectedResultBeforeReload: true,
@@ -1585,6 +1735,7 @@ export async function runRecoveryBuilds({
     status: 'incomplete',
     checks: [],
     builds: {},
+    coldTransfer: { encoding: 'gzip', budgetBytesExclusive: 150_000, baseline: null, B: null },
     activeCheck: null,
     failure: null,
     assertionProbe: false,
@@ -1650,7 +1801,7 @@ export async function runRecoveryBuilds({
       buildB.workerSha256,
       'A/B worker must be byte-identical for missing-asset recovery control'
     );
-    started = await startStaticServer(bundleRoot);
+    started = await startStaticServer(bundleRoot, { gzipAssets: true });
     const add = async (id, promise) => {
       diagnostics.activeCheck = id;
       const check = await promise;
@@ -1660,14 +1811,27 @@ export async function runRecoveryBuilds({
         JSON.stringify(diagnostics, null, 2)
       );
       assert.equal(check.events?.overflow, false, `${id} exceeded bounded event capture`);
+      assert.equal(started.observedAssetOverflow, false, 'Origin asset observation overflowed');
       diagnostics.activeCheck = null;
     };
     await add(
       'baseline-first-error-red',
       baselineFirstError(browser, started, baseline, outputRoot)
     );
+    await started.setDistribution(baseline.relativePath);
+    diagnostics.coldTransfer.baseline = await measureColdTransfer(browser, started, baseline);
+    await writeFile(
+      join(outputRoot, 'recovery-diagnostics.json'),
+      JSON.stringify(diagnostics, null, 2)
+    );
     if (config.assertionProbe === true)
       assert.fail('Controlled recovery assertion probe after persisted baseline evidence');
+    await started.setDistribution(buildB.relativePath);
+    diagnostics.coldTransfer.B = await measureColdTransfer(browser, started, buildB);
+    await writeFile(
+      join(outputRoot, 'recovery-diagnostics.json'),
+      JSON.stringify(diagnostics, null, 2)
+    );
     await add('fixed-first-error-offline', fixedFirstError(browser, started, buildB, outputRoot));
     await add(
       'fixed-memory-warning-offline',
@@ -1687,6 +1851,10 @@ export async function runRecoveryBuilds({
           `optional-${mode}-${controlled ? 'controlled' : 'blocked'}`,
           optionalFailureCase(browser, started, buildB, fixture, outputRoot, mode, controlled)
         );
+      await add(
+        `optional-offline-miss-${controlled ? 'controlled' : 'blocked'}`,
+        offlineOptionalMiss(browser, started, buildB, fixture, outputRoot, controlled)
+      );
     }
     for (const controlled of [false, true])
       await add(
@@ -1706,6 +1874,7 @@ export async function runRecoveryBuilds({
     if (started) {
       diagnostics.server = {
         observedAssetRequests: started.observedAssetRequests,
+        observedAssetOverflow: started.observedAssetOverflow,
         injectedAssetRequests: started.assetFailureRequests,
         missingAssetResponses: started.missingAssetResponses,
       };

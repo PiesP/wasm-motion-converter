@@ -323,6 +323,7 @@ export async function startStaticServer(
   let assetFailure = null;
   const assetFailureRequests = [];
   const observedAssetRequests = [];
+  let observedAssetOverflow = false;
   const missingAssetResponses = [];
   function setAssetFailure(failure) {
     assert(
@@ -369,8 +370,10 @@ export async function startStaticServer(
         return;
       }
       const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
-      if (/^\/assets\/[\w.-]+\.js$/.test(pathname) && observedAssetRequests.length < 512)
-        observedAssetRequests.push(pathname);
+      if (/^\/assets\/[\w.-]+\.js$/.test(pathname)) {
+        if (observedAssetRequests.length < 512) observedAssetRequests.push(pathname);
+        else observedAssetOverflow = true;
+      }
       if (assetFailure && pathname === assetFailure.path) {
         if (assetFailureRequests.length < 128)
           assetFailureRequests.push({ path: pathname, mode: assetFailure.mode });
@@ -445,6 +448,9 @@ export async function startStaticServer(
     setAssetFailure,
     assetFailureRequests,
     observedAssetRequests,
+    get observedAssetOverflow() {
+      return observedAssetOverflow;
+    },
     missingAssetResponses,
   };
 }

@@ -20,10 +20,13 @@ test('owned Pages-compatible server injects one real asset failure at a time', a
       join(distRoot, '_headers'),
       "/*\n  Content-Security-Policy: default-src 'self'\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n"
     );
-    started = await startStaticServer(bundleRoot);
+    started = await startStaticServer(bundleRoot, { gzipAssets: true });
     const path = '/assets/es.Abc123_X.js';
     const url = `${started.url}${path}`;
-    assert.equal(await (await fetch(url)).text(), 'export default "es";');
+    const compressed = await fetch(url);
+    assert.equal(await compressed.text(), 'export default "es";');
+    assert.equal(compressed.headers.get('content-encoding'), 'gzip');
+    assert.equal(compressed.headers.get('vary'), 'Accept-Encoding');
     for (const [mode, status, contentType] of [
       ['404', 404, 'text/plain'],
       ['wrong-mime', 200, 'text/html'],
@@ -42,6 +45,7 @@ test('owned Pages-compatible server injects one real asset failure at a time', a
     assert.equal(await (await fetch(url)).text(), 'export default "es";');
     assert.deepEqual(started.assetFailureRequests, []);
     assert.deepEqual(started.observedAssetRequests, [path, path, path, path, path]);
+    assert.equal(started.observedAssetOverflow, false);
     const nextRoot = join(bundleRoot, 'next');
     await mkdir(nextRoot);
     await writeFile(join(nextRoot, 'index.html'), '<!doctype html><title>Next</title>');
