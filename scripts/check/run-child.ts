@@ -29,7 +29,10 @@ export async function runChild(
   script: string,
   args: readonly string[] = [],
   overrides: NodeJS.ProcessEnv = {},
-  options: { signalScope?: 'child' | 'process-group' } = {}
+  options: {
+    signalScope?: 'child' | 'process-group';
+    gracefulTerminationSignal?: 'SIGINT';
+  } = {}
 ): Promise<number> {
   const nodeArgs = script.endsWith('.ts') ? ['--experimental-strip-types'] : [];
   const signalGroup = options.signalScope === 'process-group' && process.platform !== 'win32';
@@ -44,14 +47,18 @@ export async function runChild(
   let interrupted: NodeJS.Signals | undefined;
   const forward = (signal: NodeJS.Signals): void => {
     interrupted = signal;
+    const deliveredSignal =
+      signal === 'SIGTERM' && process.platform !== 'win32'
+        ? (options.gracefulTerminationSignal ?? signal)
+        : signal;
     if (signalGroup && child.pid) {
       try {
-        process.kill(-child.pid, signal);
+        process.kill(-child.pid, deliveredSignal);
       } catch (error) {
         // The group may have exited just before the parent received the signal.
         if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
       }
-    } else child.kill(signal);
+    } else child.kill(deliveredSignal);
   };
   const onInterrupt = (): void => forward('SIGINT');
   const onTerminate = (): void => forward('SIGTERM');

@@ -359,7 +359,7 @@ childProcess.spawn = (executable, args, options) => { spawnOptions = options; re
 process.kill = (pid, signal) => { delivered.push([pid, signal]); return true; };
 syncBuiltinESMExports();
 const { runChild } = await import(${JSON.stringify(runner)});
-const done = runChild('owned-pnpm', [], {}, {signalScope: 'process-group'});
+const done = runChild('owned-playwright', [], {}, {signalScope: 'process-group', gracefulTerminationSignal:'SIGINT'});
 process.emit('SIGTERM');
 child.emit('exit', 0, null);
 console.log(JSON.stringify({code: await done, delivered, detached: spawnOptions.detached, stdio: spawnOptions.stdio}));
@@ -378,7 +378,10 @@ console.log(JSON.stringify({code: await done, delivered, detached: spawnOptions.
   assert.equal(observed.detached, process.platform !== 'win32');
   assert.equal(observed.stdio, 'inherit');
   assert.deepEqual(observed.delivered, [
-    [process.platform === 'win32' ? 'child' : -424242, 'SIGTERM'],
+    [
+      process.platform === 'win32' ? 'child' : -424242,
+      process.platform === 'win32' ? 'SIGTERM' : 'SIGINT',
+    ],
   ]);
 });
 
@@ -438,6 +441,10 @@ test('Playwright profiles override only their own profile; resource fixture flag
     assert.deepEqual(fixture.calls[0]?.args, ['test', '--list', 'some test']);
     assert.equal(fixture.calls[0]?.env.PLAYWRIGHT_TEST_PROFILE, profile);
     assert.equal(fixture.calls[0]?.env.PREPARE_RESOURCE_FIXTURES, undefined);
+    assert.deepEqual(fixture.calls[0]?.options, {
+      signalScope: 'process-group',
+      gracefulTerminationSignal: 'SIGINT',
+    });
   }
   const fixture = recordingRunner();
   assert.equal(await prepareResourceFixtures(fixture.run), 0);

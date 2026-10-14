@@ -8,10 +8,15 @@ export function runPlaywright(
   run: typeof runChild = runChild,
   overrides: NodeJS.ProcessEnv = {}
 ): Promise<number> {
-  return run(packageBinary('@playwright/test', 'playwright'), ['test', ...args], {
-    PLAYWRIGHT_TEST_PROFILE: profile,
-    ...overrides,
-  });
+  // Playwright 1.64 owns a separate webServer group and tears it down on SIGINT.
+  // Isolate its CLI from the outer pnpm group so SIGTERM can request that cleanup;
+  // runChild still reports the original parent interruption as 143.
+  return run(
+    packageBinary('@playwright/test', 'playwright'),
+    ['test', ...args],
+    { PLAYWRIGHT_TEST_PROFILE: profile, ...overrides },
+    { signalScope: 'process-group', gracefulTerminationSignal: 'SIGINT' }
+  );
 }
 
 if (isCliEntry(import.meta.url)) {
