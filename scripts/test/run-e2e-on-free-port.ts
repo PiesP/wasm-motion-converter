@@ -1,59 +1,57 @@
-import { spawn } from 'node:child_process';
-import { realpathSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { fileURLToPath } from 'node:url';
+import { isCliEntry, runChild } from '../check/run-child.ts';
 
-export async function runE2eOnFreePort(): Promise<void> {
-  const server = createServer();
-
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen({ host: '127.0.0.1', port: 0 }, resolve);
-  });
-
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    throw new Error('Could not allocate a local TCP port for Playwright.');
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-
+export async function runE2eOnFreePort(run: typeof runChild = runChild): Promise<number> {
   const packageManagerPath = process.env.npm_execpath;
   if (!packageManagerPath) {
     throw new Error('npm_execpath is required to run the Playwright package script.');
   }
-
-  const child = spawn(process.execPath, [packageManagerPath, 'test:e2e:ci'], {
-    env: {
-      ...process.env,
-      PLAYWRIGHT_DEV_PORT: String(address.port),
-    },
-    stdio: 'inherit',
-  });
-
-  const exitCode = await new Promise<number>((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', (code, signal) => {
-      if (signal) {
-        reject(new Error(`Playwright exited after receiving ${signal}.`));
-        return;
-      }
-      resolve(code ?? 1);
-    });
-  });
-
-  process.exitCode = exitCode;
-}
-
-function isDirectInvocation(): boolean {
-  if (!process.argv[1]) return false;
+  const server = createServer();
+  let failure: { error: unknown } | undefined;
+  let port: number | undefined;
   try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen({ host: '127.0.0.1', port: 0 }, resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      throw new Error('Could not allocate a local TCP port for Playwright.');
+    }
+    port = address.port;
+  } catch (error) {
+    failure = { error };
   }
+  if (server.listening) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    } catch (error) {
+      if (failure) {
+        console.error('Failed to close the Playwright port probe:', error);
+      } else failure = { error };
+    }
+  }
+  if (failure) throw failure.error;
+  if (port === undefined) throw new Error('Could not allocate a local TCP port for Playwright.');
+  // Selection releases the probe; Playwright still owns binding and collision errors.
+  return run(
+    packageManagerPath,
+    ['test:e2e:ci'],
+    { PLAYWRIGHT_DEV_PORT: String(port) },
+    { signalScope: 'process-group' }
+  );
 }
 
-if (isDirectInvocation()) await runE2eOnFreePort();
+if (isCliEntry(import.meta.url)) {
+  runE2eOnFreePort().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (error: unknown) => {
+      console.error(error);
+      process.exitCode = 1;
+    }
+  );
+}
