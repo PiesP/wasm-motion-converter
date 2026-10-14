@@ -629,16 +629,36 @@ describe('decoder-service', () => {
 
       it('settles active accounting when the pool bucket is full', async () => {
         vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
-        const occupied = Array.from({ length: 4 }, () => globalBufferPool.acquire(256));
-        for (const pixels of occupied) globalBufferPool.release(pixels);
         const baseline = globalBufferPool.totalActiveMemory;
         const { acquired, releases } = observePixels();
+        let owned: Uint8Array[] = [];
+        let disposed = false;
+        const demux = {
+          ...deliveryDemux(2),
+          dispose: vi.fn(() => {
+            owned = acquired.slice();
+            const fillers = Array.from({ length: 4 }, () => globalBufferPool.acquire(256));
+            for (const pixels of fillers) globalBufferPool.release(pixels);
+            disposed = true;
+          }),
+        };
         await expect(
-          decodeFrames(deliveryDemux(3), { ...options, maxInputChunks: 2 })
-        ).rejects.toThrow('Decoder input packet limit exceeded');
-        expectReturnedOnce(acquired, releases);
+          decodeFrames(demux, {
+            ...options,
+            onFrameDecoded: () => {
+              if (disposed) throw new Error('fixture terminal cap rejection');
+            },
+          })
+        ).rejects.toThrow('Frame processing failed: fixture terminal cap rejection');
+        expect(demux.dispose).toHaveBeenCalledOnce();
+        expect(owned).toHaveLength(2);
+        expectReturnedOnce(owned, releases);
         expect(globalBufferPool.totalActiveMemory).toBe(baseline);
         expect(globalBufferPool.totalPooledMemory).toBe(4 * 256);
+        const recycled = Array.from({ length: 4 }, () => globalBufferPool.acquire(256));
+        for (const pixels of recycled) expect(owned).not.toContain(pixels);
+        for (const pixels of recycled) globalBufferPool.release(pixels);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
       });
 
       it('continues returning independent batch pixels if one release throws', async () => {
