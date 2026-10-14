@@ -152,6 +152,99 @@ describe('handleFileSelected conversion settings', () => {
     expect(mocks.setErrorContext).toHaveBeenCalledWith(
       expect.objectContaining({ suggestion: 'error.codecSuggestion' })
     );
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('does not expose a file to the video preview while metadata is pending or rejected', async () => {
+    let rejectMetadata: ((reason: Error) => void) | undefined;
+    mocks.extractVideoMetadata.mockReturnValueOnce(
+      new Promise<never>((_resolve, reject) => {
+        rejectMetadata = reject;
+      })
+    );
+    const runtime = {
+      startNewRun: () => ({ isActive: () => true, signal: new AbortController().signal }),
+      finishAnalysisRun: vi.fn(),
+      resetRuntimeState: vi.fn(),
+    } as unknown as ConversionRuntimeController;
+    const file = new File(['invalid video'], 'invalid.mp4', { type: 'video/mp4' });
+
+    const selection = handleFileSelected(
+      file,
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await vi.waitFor(() => expect(mocks.extractVideoMetadata).toHaveBeenCalledOnce());
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(mocks.setVideoPreviewUrl).not.toHaveBeenCalledWith('blob:test-preview');
+
+    rejectMetadata?.(new Error('Invalid metadata'));
+    await selection;
+    expect(mocks.setInputFile).toHaveBeenLastCalledWith(file);
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(mocks.setVideoPreviewUrl).not.toHaveBeenCalledWith('blob:test-preview');
+  });
+
+  it('does not expose a file to the video preview while decoder support is pending or rejected', async () => {
+    let resolveSupport: ((supported: boolean) => void) | undefined;
+    mocks.checkVideoDecoderSupport.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveSupport = resolve;
+      })
+    );
+    const runtime = {
+      startNewRun: () => ({ isActive: () => true, signal: new AbortController().signal }),
+      finishAnalysisRun: vi.fn(),
+      resetRuntimeState: vi.fn(),
+    } as unknown as ConversionRuntimeController;
+    const file = new File(['unsupported video'], 'unsupported.mp4', { type: 'video/mp4' });
+
+    const selection = handleFileSelected(
+      file,
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await vi.waitFor(() => expect(mocks.checkVideoDecoderSupport).toHaveBeenCalledOnce());
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(mocks.setVideoPreviewUrl).not.toHaveBeenCalledWith('blob:test-preview');
+
+    resolveSupport?.(false);
+    await selection;
+    expect(mocks.setInputFile).toHaveBeenLastCalledWith(file);
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(mocks.setVideoPreviewUrl).not.toHaveBeenCalledWith('blob:test-preview');
+  });
+
+  it('publishes the preview only after both metadata and decoder preflight succeed', async () => {
+    let resolveSupport: ((supported: boolean) => void) | undefined;
+    mocks.checkVideoDecoderSupport.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveSupport = resolve;
+      })
+    );
+    const runtime = {
+      startNewRun: () => ({ isActive: () => true, signal: new AbortController().signal }),
+      finishAnalysisRun: vi.fn(),
+      resetRuntimeState: vi.fn(),
+    } as unknown as ConversionRuntimeController;
+    const file = new File(['valid video'], 'valid.mp4', { type: 'video/mp4' });
+
+    const selection = handleFileSelected(
+      file,
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await vi.waitFor(() => expect(mocks.checkVideoDecoderSupport).toHaveBeenCalledOnce());
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+
+    resolveSupport?.(true);
+    await selection;
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    expect(URL.createObjectURL).toHaveBeenCalledWith(file);
+    expect(mocks.setVideoPreviewUrl).toHaveBeenCalledWith('blob:test-preview');
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('idle');
   });
 
   it('clears the previous selection before reporting a new file validation error', async () => {
@@ -207,8 +300,9 @@ describe('handleFileSelected conversion settings', () => {
       runtime,
       ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
     );
+    const newFile = new File(['new'], 'new.mp4', { type: 'video/mp4' });
     await handleFileSelected(
-      new File(['new'], 'new.mp4', { type: 'video/mp4' }),
+      newFile,
       runtime,
       ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
     );
@@ -222,6 +316,8 @@ describe('handleFileSelected conversion settings', () => {
     expect(mocks.setErrorMessage).not.toHaveBeenCalled();
     expect(mocks.transitionToState).not.toHaveBeenCalled();
     expect(mocks.focusPrimaryErrorAction).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    expect(URL.createObjectURL).toHaveBeenCalledWith(newFile);
   });
 
   it('ignores a stale unsupported-codec result after a newer file is accepted', async () => {
@@ -254,8 +350,9 @@ describe('handleFileSelected conversion settings', () => {
     );
     await vi.waitFor(() => expect(mocks.checkVideoDecoderSupport).toHaveBeenCalledOnce());
 
+    const newFile = new File(['new'], 'new.mp4', { type: 'video/mp4' });
     await handleFileSelected(
-      new File(['new'], 'new.mp4', { type: 'video/mp4' }),
+      newFile,
       runtime,
       ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
     );
@@ -271,6 +368,8 @@ describe('handleFileSelected conversion settings', () => {
     expect(mocks.setErrorMessage).not.toHaveBeenCalled();
     expect(mocks.transitionToState).not.toHaveBeenCalled();
     expect(mocks.focusPrimaryErrorAction).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+    expect(URL.createObjectURL).toHaveBeenCalledWith(newFile);
   });
 
   it('keeps analysis cancellation busy until metadata cleanup settles', async () => {
@@ -293,18 +392,18 @@ describe('handleFileSelected conversion settings', () => {
       ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
     );
     await vi.waitFor(() => expect(mocks.extractVideoMetadata).toHaveBeenCalledOnce());
-    mocks.previewUrl = 'blob:test-preview';
     mocks.appState = 'cancelling';
     abort.abort();
 
     expect(mocks.transitionToState).not.toHaveBeenCalledWith('idle');
-    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:test-preview');
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
 
     finishMetadata?.({});
     await selection;
     expect(mocks.transitionToState).toHaveBeenLastCalledWith('idle');
     expect(mocks.setInputFile).toHaveBeenLastCalledWith(null);
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:test-preview');
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(mocks.setVideoPreviewUrl).not.toHaveBeenCalledWith('blob:test-preview');
     expect(runtime.finishAnalysisRun).toHaveBeenCalledOnce();
   });
 });

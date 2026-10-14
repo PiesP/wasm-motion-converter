@@ -89,8 +89,6 @@ export async function handleFileSelected(
 
   setInputFile(file);
 
-  setVideoPreviewUrl(URL.createObjectURL(file));
-
   try {
     // BlobSource lets MediaBunny read only the ranges needed for metadata.
     const metadata = await extractVideoMetadata(file, DEFAULT_FPS, run.signal);
@@ -120,6 +118,7 @@ export async function handleFileSelected(
       }
     }
 
+    setVideoPreviewUrl(URL.createObjectURL(file));
     setVideoMetadata(metadata);
     transitionToState('idle');
   } catch (error) {
