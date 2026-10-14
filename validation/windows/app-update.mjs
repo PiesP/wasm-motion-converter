@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
@@ -34,11 +34,11 @@ function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function readBuild(
+export async function readBuild(
   bundleRoot,
   relativePath,
   validateBundleFile,
-  { requireCompiledSource = true, verifyInventory = false } = {}
+  { requireCompiledSource = true, verifyInventory = false, exactInventory = false } = {}
 ) {
   const path = await validateBundleFile(bundleRoot, `${relativePath}/deployment-state.json`);
   const bytes = await readFile(path);
@@ -79,6 +79,28 @@ async function readBuild(
       await validateBundleFile(bundleRoot, `${relativePath}/_headers`)
     );
     assert.equal(sha256(headers), state.headersSha256, `${relativePath} _headers hash differs`);
+    if (exactInventory) {
+      const actual = [];
+      let visited = 0;
+      const visit = async (directory, prefix = '') => {
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+          const child = prefix ? `${prefix}/${entry.name}` : entry.name;
+          visited += 1;
+          assert(visited <= 128, `${relativePath} distribution has too many entries`);
+          if (entry.isDirectory()) await visit(join(directory, entry.name), child);
+          else {
+            assert(entry.isFile(), `${relativePath} contains a non-file inventory entry ${child}`);
+            actual.push(child);
+          }
+        }
+      };
+      await visit(join(bundleRoot, relativePath));
+      assert.deepEqual(
+        actual.sort(),
+        [...seen, '_headers', 'deployment-state.json'].sort(),
+        `${relativePath} emitted file inventory differs from its manifest`
+      );
+    }
   }
   const main = state.files.find((file) => /^assets\/index\.[\w-]{8}\.js$/.test(file.path));
   assert(main && DIGEST.test(main.sha256), `${relativePath} has no source-bound app entry`);
@@ -99,7 +121,14 @@ async function readBuild(
     index.toString('utf8').includes(`/${main.path}`),
     `${relativePath} HTML does not load its app entry`
   );
-  return { relativePath, state, main, indexSha256: sha256(index), workerSha256: sha256(worker) };
+  return {
+    relativePath,
+    state,
+    main,
+    manifestSha256: sha256(bytes),
+    indexSha256: sha256(index),
+    workerSha256: sha256(worker),
+  };
 }
 
 function updateNotice(page) {
