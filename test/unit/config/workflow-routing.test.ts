@@ -110,7 +110,223 @@ function jobBlock(workflow: string, jobId: string): string {
   return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
 }
 
+function stepBlock(job: string, name: string): string {
+  const step = job.split('\n      - name: ').find((part) => part.startsWith(`${name}\n`));
+  if (!step) throw new Error(`Workflow step not found: ${name}`);
+  return step;
+}
+
+function runBody(step: string): string {
+  const marker = '        run: |\n';
+  if (step.includes(marker)) return step.split(marker)[1]?.replace(/^ {10}/gm, '') ?? '';
+  const line = step.match(/\n {8}run: (.+)/)?.[1];
+  if (!line) throw new Error('Workflow step has no command');
+  return line;
+}
+
+function policyOwnershipFixture() {
+  const directory = mkdtempSync(join(tmpdir(), 'wmc-policy-owner-'));
+  const bin = join(directory, 'bin');
+  mkdirSync(bin);
+  const log = join(directory, 'calls');
+  writeFileSync(log, '');
+  const ci = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
+  const quality = stepBlock(jobBlock(ci, 'quality'), '✅ Run quality gate');
+  const policy = stepBlock(jobBlock(ci, 'unit'), '🧪 Run policy tests when quality is unaffected');
+  const coverage = stepBlock(jobBlock(ci, 'unit'), '🧪 Run unit coverage thresholds');
+  const normalizer = stepBlock(jobBlock(ci, 'changes'), '🛡️ Resolve fail-open routing');
+  const qualityCommand = (
+    JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>;
+    }
+  ).scripts.quality;
+  expect(qualityCommand).toContain('pnpm -s test:ci');
+  expect(quality).toContain("if: ${{ needs.changes.outputs.quality == 'true' }}");
+  for (const step of [policy, coverage]) {
+    expect(step).toContain("if: ${{ needs.changes.outputs.unit == 'true' }}");
+    expect(step).not.toContain('continue-on-error:');
+  }
+  expect(policy).toContain('QUALITY_SELECTED: ${{ needs.changes.outputs.quality }}');
+  writeFileSync(join(bin, 'biome'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  writeFileSync(
+    join(bin, 'pnpm'),
+    `#!/bin/sh
+if [ "$1" = '-s' ]; then shift; fi
+printf '%s:%s\\n' "$OWNER" "$1" >> "$CALL_LOG"
+case "$1" in
+quality) exec bash -e -c "$QUALITY_COMMAND" ;;
+test:ci) exit "$POLICY_EXIT" ;;
+test:cov) exit "$COVERAGE_EXIT" ;;
+*) exit 0 ;;
+esac
+`,
+    { mode: 0o755 }
+  );
+  const execute = (command: string, env: NodeJS.ProcessEnv = {}) =>
+    spawnSync('bash', ['-e', '-c', command], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        CALL_LOG: log,
+        QUALITY_COMMAND: qualityCommand,
+        POLICY_EXIT: '0',
+        COVERAGE_EXIT: '0',
+        ...env,
+      },
+      encoding: 'utf8',
+      timeout: 5_000,
+    });
+  return {
+    directory,
+    trustedExtraction(event: string) {
+      const step = stepBlock(jobBlock(ci, 'changes'), '🧭 Classify changed paths');
+      return execute(runBody(step), {
+        EVENT_NAME: event,
+        TRUSTED_BASE_SHA: 'a'.repeat(40),
+        RUNNER_TEMP: directory,
+      });
+    },
+    normalize(input: NodeJS.ProcessEnv) {
+      const output = join(directory, 'routing');
+      writeFileSync(output, '');
+      const result = execute(runBody(normalizer), { ...input, GITHUB_OUTPUT: output });
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(0);
+      return Object.fromEntries(
+        readFileSync(output, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => line.split('='))
+      );
+    },
+    run(qualitySelected: string, unitSelected: string, failures: NodeJS.ProcessEnv = {}) {
+      writeFileSync(log, '');
+      const result: { quality?: number | null; policy?: number | null; coverage?: number | null } =
+        {};
+      if (qualitySelected === 'true') {
+        const run = execute(runBody(quality), { OWNER: 'quality', ...failures });
+        expect(run.error).toBeUndefined();
+        result.quality = run.status;
+      }
+      if (unitSelected === 'true') {
+        const run = execute(runBody(policy), {
+          OWNER: 'unit',
+          QUALITY_SELECTED: qualitySelected,
+          ...failures,
+        });
+        expect(run.error).toBeUndefined();
+        result.policy = run.status;
+        // GitHub's default success condition stops this next step on policy failure.
+        if (run.status === 0) {
+          const cov = execute(runBody(coverage), { OWNER: 'unit', ...failures });
+          expect(cov.error).toBeUndefined();
+          result.coverage = cov.status;
+        }
+      }
+      return {
+        statuses: result,
+        calls: readFileSync(log, 'utf8').trim().split('\n').filter(Boolean),
+      };
+    },
+  };
+}
+
 describe('Workflow change routing', () => {
+  it('executes the maintained quality and unit policy commands once for each normal routing pair', () => {
+    const f = policyOwnershipFixture();
+    try {
+      for (const [quality, unit, expectedPolicy, expectedCoverage] of [
+        ['true', 'true', ['quality:test:ci'], ['unit:test:cov']],
+        ['true', 'false', ['quality:test:ci'], []],
+        ['false', 'true', ['unit:test:ci'], ['unit:test:cov']],
+        ['false', 'false', [], []],
+      ] as const) {
+        const routing = f.normalize({
+          CLASSIFY_OUTCOME: 'success',
+          QUALITY: quality,
+          UNIT: unit,
+          E2E: 'false',
+          BUILD: 'false',
+        });
+        const run = f.run(routing.quality ?? '', routing.unit ?? '');
+        expect(Object.values(run.statuses).every((status) => status === 0)).toBe(true);
+        expect(run.calls.filter((call) => call.endsWith(':test:ci'))).toEqual(expectedPolicy);
+        expect(run.calls.filter((call) => call.endsWith(':test:cov'))).toEqual(expectedCoverage);
+      }
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  });
+
+  it('executes conservative routing for missing, malformed or failed classification without losing policy', () => {
+    const f = policyOwnershipFixture();
+    try {
+      for (const input of [
+        {
+          CLASSIFY_OUTCOME: 'failure',
+          QUALITY: 'false',
+          UNIT: 'false',
+          E2E: 'false',
+          BUILD: 'false',
+        },
+        { CLASSIFY_OUTCOME: 'success', QUALITY: '', UNIT: 'false', E2E: 'false', BUILD: 'false' },
+        {
+          CLASSIFY_OUTCOME: 'success',
+          QUALITY: 'invalid',
+          UNIT: 'false',
+          E2E: 'false',
+          BUILD: 'false',
+        },
+        { CLASSIFY_OUTCOME: 'skipped', QUALITY: '', UNIT: '', E2E: '', BUILD: '' },
+      ]) {
+        const routing = f.normalize(input);
+        expect(routing).toEqual({ quality: 'true', unit: 'true', e2e: 'true', build: 'true' });
+        const run = f.run(routing.quality ?? '', routing.unit ?? '');
+        expect(run.calls.filter((call) => call.endsWith(':test:ci'))).toEqual(['quality:test:ci']);
+        expect(run.statuses.coverage).toBe(0);
+      }
+      const unitFallback = f.run('', 'true');
+      expect(unitFallback.calls.filter((call) => call.endsWith(':test:ci'))).toEqual([
+        'unit:test:ci',
+      ]);
+      for (const event of ['pull_request', 'merge_group']) {
+        const unavailable = f.trustedExtraction(event);
+        expect(unavailable.error).toBeUndefined();
+        expect(unavailable.status).not.toBe(0);
+        expect(unavailable.stderr).toMatch(/not a git repository|bad object|invalid object/);
+        const routing = f.normalize({
+          CLASSIFY_OUTCOME: 'failure',
+          QUALITY: '',
+          UNIT: '',
+          E2E: '',
+          BUILD: '',
+        });
+        expect(routing).toEqual({ quality: 'true', unit: 'true', e2e: 'true', build: 'true' });
+      }
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves required owner failures and independent coverage failures', () => {
+    const f = policyOwnershipFixture();
+    try {
+      const qualityFailure = f.run('true', 'true', { POLICY_EXIT: '17' });
+      expect(qualityFailure.statuses.quality).toBe(17);
+      expect(qualityFailure.statuses.coverage).toBe(0);
+      const unitFailure = f.run('false', 'true', { POLICY_EXIT: '19' });
+      expect(unitFailure.statuses.policy).toBe(19);
+      expect(unitFailure.statuses.coverage).toBeUndefined();
+      for (const quality of ['true', 'false']) {
+        const coverageFailure = f.run(quality, 'true', { COVERAGE_EXIT: '23' });
+        expect(coverageFailure.statuses.policy).toBe(0);
+        expect(coverageFailure.statuses.coverage).toBe(23);
+      }
+    } finally {
+      rmSync(f.directory, { recursive: true, force: true });
+    }
+  });
   it('keeps documentation on lightweight secret scanning only', () => {
     expect(classify(['README.md'])).toMatchObject({
       all: 'false',
