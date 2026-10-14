@@ -69,9 +69,10 @@ it('keeps the log Blob URL alive through the browser download handoff, then rele
 it('releases a pending log URL when the owning button unmounts', () => {
   vi.useFakeTimers();
   const revoke = vi.fn();
+  let nextUrl = 0;
   Object.defineProperty(URL, 'createObjectURL', {
     configurable: true,
-    value: vi.fn(() => 'blob:logs-pending'),
+    value: vi.fn(() => `blob:logs-pending-${++nextUrl}`),
   });
   Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revoke });
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
@@ -79,9 +80,13 @@ it('releases a pending log URL when the owning button unmounts', () => {
   document.body.append(container);
   disposeView = render(() => <ExportLogsButton />, container);
   container.querySelector<HTMLButtonElement>('[data-testid="export-logs-button"]')!.click();
+  container.querySelector<HTMLButtonElement>('[data-testid="export-logs-button"]')!.click();
   expect(revoke).not.toHaveBeenCalled();
   disposeView?.();
   disposeView = undefined;
-  expect(revoke).toHaveBeenCalledTimes(1);
-  expect(revoke).toHaveBeenCalledWith('blob:logs-pending');
+  expect(revoke).toHaveBeenCalledTimes(2);
+  expect(revoke).toHaveBeenCalledWith('blob:logs-pending-1');
+  expect(revoke).toHaveBeenCalledWith('blob:logs-pending-2');
+  vi.advanceTimersByTime(10_000);
+  expect(revoke).toHaveBeenCalledTimes(2);
 });

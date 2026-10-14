@@ -4,7 +4,7 @@
 import { useLocale } from '@hooks/use-locale';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
-import { splitProps } from 'solid-js';
+import { onCleanup, splitProps } from 'solid-js';
 
 type ExportLogsButtonProps = {
   class?: string;
@@ -13,35 +13,56 @@ type ExportLogsButtonProps = {
 const DEFAULT_BUTTON_CLASS =
   'p-2 rounded-lg border border-border-standard bg-white/[0.02] text-text-secondary hover:bg-white/[0.05] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 cursor-pointer';
 const LOG_FILENAME_PREFIX = 'motion-converter-logs';
+const DOWNLOAD_URL_LIFETIME_MS = 10_000;
 
 const formatTimestampForFilename = (date: Date): string => {
   const pad = (value: number) => value.toString().padStart(2, '0');
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 };
 
-const downloadText = (params: { filename: string; text: string; mimeType?: string }): void => {
-  if (typeof document === 'undefined') return;
-
-  const blob = new Blob([params.text], {
-    type: params.mimeType ?? 'text/plain;charset=utf-8',
-  });
-  const url = URL.createObjectURL(blob);
-
-  try {
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = params.filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-};
-
 const ExportLogsButton: Component<ExportLogsButtonProps> = (props) => {
   const [local] = splitProps(props, ['class']);
   const { t } = useLocale();
+  const pendingUrls = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const releaseUrl = (url: string): void => {
+    const timeout = pendingUrls.get(url);
+    if (timeout === undefined) return;
+    clearTimeout(timeout);
+    pendingUrls.delete(url);
+    URL.revokeObjectURL(url);
+  };
+
+  onCleanup(() => {
+    for (const url of pendingUrls.keys()) releaseUrl(url);
+  });
+
+  const downloadText = (params: { filename: string; text: string; mimeType?: string }): void => {
+    if (typeof document === 'undefined') return;
+
+    const blob = new Blob([params.text], {
+      type: params.mimeType ?? 'text/plain;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    let anchor: HTMLAnchorElement | undefined;
+
+    try {
+      anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = params.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      pendingUrls.set(
+        url,
+        setTimeout(() => releaseUrl(url), DOWNLOAD_URL_LIFETIME_MS)
+      );
+    } catch (error) {
+      URL.revokeObjectURL(url);
+      throw error;
+    } finally {
+      anchor?.remove();
+    }
+  };
 
   const handleExport = (event: MouseEvent): void => {
     try {
