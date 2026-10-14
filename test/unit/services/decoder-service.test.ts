@@ -408,6 +408,280 @@ describe('decoder-service', () => {
       };
     }
 
+    describe('CPU batch ownership at settlement', () => {
+      const options: DecodeOptions = { width: 8, height: 8, mode: 'batch', pixelFormat: 'rgba' };
+
+      afterEach(() => vi.restoreAllMocks());
+
+      function observePixels() {
+        const acquired: Uint8Array[] = [];
+        const acquire = globalBufferPool.acquire.bind(globalBufferPool);
+        const release = globalBufferPool.release.bind(globalBufferPool);
+        vi.spyOn(globalBufferPool, 'acquire').mockImplementation((size) => {
+          const pixels = acquire(size);
+          if (size === 256) acquired.push(pixels);
+          return pixels;
+        });
+        const releases = vi.spyOn(globalBufferPool, 'release').mockImplementation(release);
+        return { acquired, releases, release };
+      }
+
+      function expectReturnedOnce(
+        acquired: Uint8Array[],
+        releases: ReturnType<typeof observePixels>['releases']
+      ) {
+        expect(acquired.length).toBeGreaterThan(0);
+        for (const pixels of acquired) {
+          expect(releases.mock.calls.filter(([candidate]) => candidate === pixels)).toHaveLength(1);
+        }
+      }
+
+      it('transfers a complete ordered batch only on successful return', async () => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        FakeVideoFrame.frameDuration = 100_000;
+        const baseline = globalBufferPool.totalActiveMemory;
+        const { acquired, releases } = observePixels();
+        const result = await decodeFrames(deliveryDemux(3), options);
+        expect(result.frames.map((frame) => frame.data[0])).toEqual([40, 40, 40]);
+        expect(result.frames.map((frame) => frame.duration)).toEqual([100, 100, 100]);
+        expect(result.frames.map((frame) => frame.data)).toEqual(acquired);
+        expect(result.selectedFrames).toBe(3);
+        expect(result.outputTotalMs).toBe(300);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline + 3 * 256);
+        expect(releases).not.toHaveBeenCalled();
+        for (const frame of result.frames) globalBufferPool.release(frame.data);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+      });
+
+      it.each(['flush', 'input'] as const)(
+        'returns every partial batch pixel after %s rejection while retaining an unrelated owner',
+        async (failure) => {
+          class FlushFailureDecoder extends FakeVideoDecoder {
+            override async flush(): Promise<void> {
+              if (failure === 'flush') throw new Error('fixture flush failure');
+            }
+          }
+          vi.stubGlobal('VideoDecoder', FlushFailureDecoder);
+          const sentinel = globalBufferPool.acquire(1024);
+          const baseline = globalBufferPool.totalActiveMemory;
+          const { acquired, releases } = observePixels();
+          const demux = deliveryDemux(3);
+          const input = {
+            ...demux,
+            chunks:
+              failure === 'input'
+                ? (async function* () {
+                    for (const chunk of demux.chunks) yield chunk;
+                    throw new Error('fixture input failure');
+                  })()
+                : demux.chunks,
+          };
+          await expect(decodeFrames(input, options)).rejects.toThrow(`fixture ${failure} failure`);
+          expect(acquired.length).toBeGreaterThanOrEqual(2);
+          expectReturnedOnce(acquired, releases);
+          expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+          globalBufferPool.release(sentinel);
+        }
+      );
+
+      it('returns a constructed batch when demux cleanup fails', async () => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const sentinel = globalBufferPool.acquire(1024);
+        const baseline = globalBufferPool.totalActiveMemory;
+        const { acquired, releases } = observePixels();
+        const demux = {
+          ...deliveryDemux(3),
+          dispose: vi.fn(() => {
+            throw new Error('fixture dispose failure');
+          }),
+        };
+        await expect(decodeFrames(demux, options)).rejects.toThrow('fixture dispose failure');
+        expect(demux.dispose).toHaveBeenCalledOnce();
+        expect(acquired).toHaveLength(3);
+        expectReturnedOnce(acquired, releases);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+        globalBufferPool.release(sentinel);
+      });
+
+      it('returns a constructed batch when terminal progress rejects after cleanup', async () => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const baseline = globalBufferPool.totalActiveMemory;
+        const { acquired, releases } = observePixels();
+        let disposed = false;
+        const observations: number[] = [];
+        const demux = {
+          ...deliveryDemux(3),
+          dispose: vi.fn(() => {
+            disposed = true;
+          }),
+        };
+        await expect(
+          decodeFrames(demux, {
+            ...options,
+            onFrameDecoded: (count) => {
+              observations.push(count);
+              if (disposed) throw new Error('fixture terminal progress failure');
+            },
+          })
+        ).rejects.toThrow('Frame processing failed: fixture terminal progress failure');
+        expect(demux.dispose).toHaveBeenCalledOnce();
+        expect(observations.at(-1)).toBe(3);
+        expect(acquired).toHaveLength(3);
+        expectReturnedOnce(acquired, releases);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+      });
+
+      it('drains pending copy work before returning an aborted partial batch', async () => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        FakeVideoFrame.controlledCopies = true;
+        const controller = new AbortController();
+        const baseline = globalBufferPool.totalActiveMemory;
+        const { acquired, releases } = observePixels();
+        const decoding = decodeFrames(deliveryDemux(3), options, controller.signal);
+        const rejected = expect(decoding).rejects.toThrow('Cancelled');
+        try {
+          await vi.waitFor(() => expect(FakeVideoFrame.copyResolvers.has(0)).toBe(true));
+          FakeVideoFrame.copyResolvers.get(0)?.();
+          await vi.waitFor(() => expect(FakeVideoFrame.copyResolvers.has(100_000)).toBe(true));
+          await vi.waitFor(() => expect(acquired.length).toBeGreaterThanOrEqual(2));
+          controller.abort();
+          await Promise.resolve();
+          expect(
+            releases.mock.calls.filter(([candidate]) => candidate === acquired[0])
+          ).toHaveLength(0);
+        } finally {
+          for (const resolve of FakeVideoFrame.copyResolvers.values()) resolve();
+          await rejected;
+        }
+        expectReturnedOnce(acquired, releases);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+        for (const frame of FakeVideoFrame.instances) expect(frame.close).toHaveBeenCalledOnce();
+      });
+
+      it('returns a copied target when a profiling callback rejects before batch collection', async () => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const baseline = globalBufferPool.totalActiveMemory;
+        const { acquired, releases } = observePixels();
+        let copies = 0;
+        await expect(
+          decodeFrames(deliveryDemux(2), {
+            ...options,
+            profileCopyPath: () => {
+              if (++copies === 2) throw new Error('fixture copy observer failure');
+            },
+          })
+        ).rejects.toThrow('Frame processing failed: fixture copy observer failure');
+        expect(acquired).toHaveLength(2);
+        expectReturnedOnce(acquired, releases);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+      });
+
+      it('settles repeated failures and recovery without clearing the pool or duplicating a bucket entry', async () => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const sentinel = globalBufferPool.acquire(1024);
+        const baseline = globalBufferPool.totalActiveMemory;
+        const { acquired, releases } = observePixels();
+        for (let cycle = 0; cycle < 2; cycle++) {
+          const priorAcquire = acquired.length;
+          const priorRelease = releases.mock.calls.length;
+          await expect(
+            decodeFrames(deliveryDemux(3), { ...options, maxInputChunks: 2 })
+          ).rejects.toThrow('Decoder input packet limit exceeded');
+          expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+          const cyclePixels = acquired.slice(priorAcquire);
+          for (const pixels of cyclePixels) {
+            expect(
+              releases.mock.calls.slice(priorRelease).filter(([candidate]) => candidate === pixels)
+            ).toHaveLength(1);
+          }
+        }
+        const cancellation = new AbortController();
+        let copies = 0;
+        const priorAcquire = acquired.length;
+        const priorRelease = releases.mock.calls.length;
+        await expect(
+          decodeFrames(
+            deliveryDemux(3),
+            {
+              ...options,
+              profileCopyPath: () => {
+                if (++copies === 2) cancellation.abort();
+              },
+            },
+            cancellation.signal
+          )
+        ).rejects.toThrow('Cancelled');
+        expect(acquired.length - priorAcquire).toBeGreaterThanOrEqual(2);
+        for (const pixels of acquired.slice(priorAcquire)) {
+          expect(
+            releases.mock.calls.slice(priorRelease).filter(([candidate]) => candidate === pixels)
+          ).toHaveLength(1);
+        }
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+        const result = await decodeFrames(deliveryDemux(2), options);
+        expect(result.frames).toHaveLength(2);
+        expect(result.frames[0]?.data).not.toBe(result.frames[1]?.data);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline + 512);
+        for (const frame of result.frames) globalBufferPool.release(frame.data);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+        globalBufferPool.release(sentinel);
+      });
+
+      it('settles active accounting when the pool bucket is full', async () => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const baseline = globalBufferPool.totalActiveMemory;
+        const { acquired, releases } = observePixels();
+        let owned: Uint8Array[] = [];
+        let disposed = false;
+        const demux = {
+          ...deliveryDemux(2),
+          dispose: vi.fn(() => {
+            owned = acquired.slice();
+            const fillers = Array.from({ length: 4 }, () => globalBufferPool.acquire(256));
+            for (const pixels of fillers) globalBufferPool.release(pixels);
+            disposed = true;
+          }),
+        };
+        await expect(
+          decodeFrames(demux, {
+            ...options,
+            onFrameDecoded: () => {
+              if (disposed) throw new Error('fixture terminal cap rejection');
+            },
+          })
+        ).rejects.toThrow('Frame processing failed: fixture terminal cap rejection');
+        expect(demux.dispose).toHaveBeenCalledOnce();
+        expect(owned).toHaveLength(2);
+        expectReturnedOnce(owned, releases);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+        expect(globalBufferPool.totalPooledMemory).toBe(4 * 256);
+        const recycled = Array.from({ length: 4 }, () => globalBufferPool.acquire(256));
+        for (const pixels of recycled) expect(owned).not.toContain(pixels);
+        for (const pixels of recycled) globalBufferPool.release(pixels);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+      });
+
+      it('continues returning independent batch pixels if one release throws', async () => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const baseline = globalBufferPool.totalActiveMemory;
+        const { acquired, releases, release } = observePixels();
+        let injected = false;
+        releases.mockImplementation((pixels) => {
+          release(pixels);
+          if (!injected) {
+            injected = true;
+            throw new Error('fixture release failure');
+          }
+        });
+        await expect(
+          decodeFrames(deliveryDemux(3), { ...options, maxInputChunks: 2 })
+        ).rejects.toThrow('Decoder input packet limit exceeded');
+        expect(injected).toBe(true);
+        expectReturnedOnce(acquired, releases);
+        expect(globalBufferPool.totalActiveMemory).toBe(baseline);
+      });
+    });
+
     it.each([
       ['omitted', 'none', 'batch', false, 1],
       ['omitted', 'cpu', 'cpu', false, 1],
