@@ -19,6 +19,7 @@ afterEach(() => {
   clearAssetFailure();
   setErrorMessage(null);
   vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 it('observes a real Vite event without cancelling its normal rejection', () => {
