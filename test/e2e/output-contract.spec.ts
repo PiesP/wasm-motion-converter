@@ -257,6 +257,7 @@ test.describe('fractional pressure cadence through UI routing', () => {
         progressObservation = await page.evaluate(finishProgressObservation);
         observationStatus = 'finished';
         expect(progressObservation.dropped).toBe(0);
+        expect(progressObservation.cleanupErrors).toEqual([]);
         longProfile = await page.evaluate(() =>
           (
             window.__TEST_HELPERS__ as unknown as {
@@ -317,6 +318,9 @@ test.describe('fractional pressure cadence through UI routing', () => {
         }
         if (observerActiveAfterCleanup) {
           observationError ??= 'Progress observer remained active after cleanup';
+        }
+        if (progressObservation?.cleanupErrors.length) {
+          observationError ??= `Progress observer cleanup failed: ${progressObservation.cleanupErrors.join('; ')}`;
         }
         if ((observationStatus === 'active' || observationStatus === 'finished') && !longProfile) {
           try {
