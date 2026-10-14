@@ -964,8 +964,35 @@ async function fixedFirstError(browser, started, build, outputRoot) {
       'First error requested a JavaScript or locale asset'
     );
     assert.deepEqual(events.failedRequests, [], 'First error requested network while offline');
+    await page.locator('[data-testid="offline-banner"]').waitFor({ state: 'visible' });
     const screenshot = join(outputRoot, 'recovery-fixed-first-error.png');
     await page.screenshot({ path: screenshot, fullPage: true });
+    const exportHitTarget = await page
+      .locator('[data-testid="export-logs-button"]')
+      .evaluate((button) => {
+        const bounds = button.getBoundingClientRect();
+        const x = bounds.left + bounds.width / 2;
+        const y = bounds.top + bounds.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        return {
+          x,
+          y,
+          centerInViewport:
+            bounds.width > 0 &&
+            bounds.height > 0 &&
+            x >= 0 &&
+            y >= 0 &&
+            x < innerWidth &&
+            y < innerHeight,
+          buttonReceivesCenterClick: hit !== null && button.contains(hit),
+          hitTestId: hit?.closest('[data-testid]')?.getAttribute('data-testid') ?? null,
+        };
+      });
+    assert.equal(
+      exportHitTarget.centerInViewport && exportHitTarget.buttonReceivesCenterClick,
+      true,
+      `Offline header export button is obstructed: ${JSON.stringify(exportHitTarget)}`
+    );
     await context.setOffline(false);
     const optional = emittedAsset(build, /^assets\/es[.-][\w-]{8}\.js$/);
     const secondaryPath = await triggerLocaleFailure(page, started, optional, '404');
@@ -990,6 +1017,7 @@ async function fixedFirstError(browser, started, build, outputRoot) {
       primaryAndSecondaryExportSha256: log.sha256,
       primaryAndSecondaryExportBytes: log.bytes,
       secondaryOptionalChunk: secondaryPath,
+      offlineExportHitTarget: exportHitTarget,
       screenshotSha256: sha256(await readFile(screenshot)),
       events,
     };
