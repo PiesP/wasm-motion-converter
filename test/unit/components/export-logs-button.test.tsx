@@ -109,6 +109,7 @@ it('bounds rapid log exports and re-enables the button after the handoff window'
   expect(create).toHaveBeenCalledTimes(2);
   expect(button.disabled).toBe(true);
   button.click();
+  button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   expect(create).toHaveBeenCalledTimes(2);
 
   await vi.advanceTimersByTimeAsync(9_999);
