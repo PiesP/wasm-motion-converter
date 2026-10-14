@@ -787,6 +787,75 @@ async function readLogExport(page) {
   return { sha256: sha256(bytes), bytes: bytes.length, text: bytes.toString('utf8') };
 }
 
+async function observeLogExportInteraction(page) {
+  await page.evaluate(() => {
+    const observation = { buttonClicks: 0, downloadAnchors: [] };
+    document.addEventListener(
+      'click',
+      (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest('[data-testid="export-logs-button"]')) observation.buttonClicks += 1;
+        const anchor = target.closest('a[download]');
+        if (anchor instanceof HTMLAnchorElement && observation.downloadAnchors.length < 4)
+          observation.downloadAnchors.push({
+            blobHref: anchor.href.startsWith('blob:'),
+            logFilename: anchor.download.startsWith('motion-converter-logs-'),
+            connectedAtClick: anchor.isConnected,
+          });
+      },
+      true
+    );
+    globalThis.__wmcLogExportInteraction = observation;
+  });
+}
+
+async function persistOfflineExportFailure(page, outputRoot, controlled, details, events, error) {
+  const id = `recovery-offline-miss-${controlled ? 'controlled' : 'blocked'}`;
+  const screenshot = join(outputRoot, `${id}-export-failed.png`);
+  let screenshotSha256 = null;
+  let screenshotFailure = null;
+  try {
+    await page.screenshot({ path: screenshot, timeout: 5_000 });
+    screenshotSha256 = sha256(await readFile(screenshot));
+  } catch (captureError) {
+    screenshotFailure = String(captureError).slice(0, 500);
+  }
+  const pageState = await page
+    .evaluate(() => {
+      const exportButton = document.querySelector('[data-testid="export-logs-button"]');
+      return {
+        online: navigator.onLine,
+        timeOrigin: performance.timeOrigin,
+        visibility: document.visibilityState,
+        exportButtonPresent: Boolean(exportButton),
+        exportButtonEnabled: exportButton instanceof HTMLButtonElement && !exportButton.disabled,
+        resultVisible: Boolean(document.querySelector('[data-testid="result-section"]')),
+        exportInteraction: globalThis.__wmcLogExportInteraction ?? null,
+      };
+    })
+    .catch((captureError) => ({ captureFailure: String(captureError).slice(0, 500) }));
+  await writeFile(
+    join(outputRoot, `${id}-export-failed.json`),
+    JSON.stringify(
+      {
+        id,
+        failure: String(error).slice(0, 1000),
+        details,
+        pageState,
+        exportFailedWarnings: events.consoleWarnings.filter((line) =>
+          line.includes('export-failed')
+        ),
+        events: JSON.parse(JSON.stringify(events)),
+        screenshotSha256,
+        screenshotFailure,
+      },
+      null,
+      2
+    )
+  );
+}
+
 async function waitForOriginAsset(started, path, priorCount) {
   // SW-originated requests can bypass Playwright page.route; observe the owned
   // loopback server itself and keep the wait bounded.
@@ -1191,7 +1260,32 @@ async function offlineOptionalMiss(browser, started, build, fixture, outputRoot,
     assert.equal(sha256(retained), result.sha256, 'Offline miss changed retained result');
     assert.equal(await page.evaluate(() => performance.timeOrigin), origin);
     assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), true);
-    const log = await readLogExport(page);
+    await observeLogExportInteraction(page);
+    let log;
+    try {
+      log = await readLogExport(page);
+    } catch (error) {
+      try {
+        await persistOfflineExportFailure(
+          page,
+          outputRoot,
+          controlled,
+          {
+            sourceSha: build.state.sourceSha,
+            emittedChunk: path,
+            resultSha256: result.sha256,
+            retainedDownloadSha256: sha256(retained),
+            originalTimeOrigin: origin,
+            noOriginResponse: true,
+          },
+          events,
+          error
+        );
+      } catch (captureError) {
+        error.message += `; export failure diagnostics could not be written: ${String(captureError)}`;
+      }
+      throw error;
+    }
     assert.match(log.text, /i18n\.load-failed/);
     const assetLogs = log.text.split('\n').filter((line) => line.includes('app.asset-unavailable'));
     assert(
