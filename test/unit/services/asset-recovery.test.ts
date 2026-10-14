@@ -102,7 +102,7 @@ it('owns one observer across root rendering and removes it on disposal', () => {
     ownPreloadErrors();
     return document.createElement('div');
   }, root);
-  expect(add.mock.calls.filter(([type]) => type === 'vite:preloadError')).toHaveLength(1);
+  expect(add.mock.calls.filter(([type]) => String(type) === 'vite:preloadError')).toHaveLength(1);
   const event = new Event('vite:preloadError', { cancelable: true }) as Event & {
     payload?: unknown;
   };
@@ -113,7 +113,9 @@ it('owns one observer across root rendering and removes it on disposal', () => {
   expect(assetFailure()?.path).toBe('/assets/codec.ABCDef12.js');
   expect(event.defaultPrevented).toBe(false);
   dispose();
-  expect(remove.mock.calls.filter(([type]) => type === 'vite:preloadError')).toHaveLength(1);
+  expect(remove.mock.calls.filter(([type]) => String(type) === 'vite:preloadError')).toHaveLength(
+    1
+  );
   clearAssetFailure();
   window.dispatchEvent(event);
   expect(assetFailure()).toBeNull();
