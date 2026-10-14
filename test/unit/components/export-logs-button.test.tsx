@@ -6,6 +6,14 @@ vi.mock('@hooks/use-locale', () => ({
   useLocale: () => ({ t: (key: string) => key }),
 }));
 
+vi.mock('@utils/logger', () => ({
+  logger: {
+    getRecentLogs: vi.fn(() => []),
+    getRecentEntries: vi.fn(() => []),
+    warn: vi.fn(),
+  },
+}));
+
 import ExportLogsButton from '@components/ExportLogsButton';
 
 const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
