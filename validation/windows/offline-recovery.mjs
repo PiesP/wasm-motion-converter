@@ -1116,6 +1116,261 @@ async function fixedFirstError(browser, started, build, outputRoot) {
   }
 }
 
+async function firstPipelineImportFailure(
+  browser,
+  started,
+  build,
+  fixture,
+  outputRoot,
+  controlled,
+  baseline
+) {
+  await started.setDistribution(build.relativePath);
+  const pipeline = emittedAsset(build, /^assets\/conversion-pipeline[.-][\w-]{8}\.js$/);
+  // The emitted Vite preload graph requests gifenc alongside the pipeline,
+  // including for WebP. Offline rejection therefore fails this dependency too.
+  const pipelineDependency = emittedAsset(build, /^assets\/gifenc[.-][\w-]{8}\.js$/);
+  const path = assetPath(pipeline);
+  const errorChunk = baseline
+    ? emittedAsset(build, /^assets\/ErrorDisplay[.-][\w-]{8}\.js$/)
+    : null;
+  if (!baseline)
+    assert.equal(
+      build.state.files.some((file) => /^assets\/ErrorDisplay[.-]/.test(file.path)),
+      false,
+      'Fixed error UI unexpectedly requires a separate JavaScript chunk'
+    );
+  const id = `${baseline ? 'baseline-first-pipeline-offline' : 'fixed-first-pipeline-network'}-${controlled ? 'controlled' : 'blocked'}`;
+  const context = await browser.newContext({
+    locale: 'en-US',
+    acceptDownloads: true,
+    serviceWorkers: controlled ? 'allow' : 'block',
+  });
+  const page = await context.newPage();
+  const events = observePage(page);
+  const screenshot = join(outputRoot, `recovery-${id}.png`);
+  const importResponses = [];
+  context.on('response', (response) => {
+    const responsePath = new URL(response.url()).pathname;
+    if (responsePath !== path && responsePath !== (errorChunk && assetPath(errorChunk))) return;
+    if (importResponses.length >= 128) events.overflow = true;
+    else
+      importResponses.push({
+        path: responsePath,
+        status: response.status(),
+        fromServiceWorker: response.fromServiceWorker(),
+      });
+  });
+  try {
+    await requireApp(page, started.url);
+    if (controlled) {
+      await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+      await page.reload();
+      await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+      await captureWorkerAssetMessages(page);
+    }
+    assert.equal(
+      await page.evaluate(() => Boolean(navigator.serviceWorker.controller)),
+      controlled,
+      'Pipeline import did not use the requested service-worker state'
+    );
+    await page.locator('[data-testid="file-input"]').setInputFiles(fixture);
+    for (const [group, value] of [
+      ['format', 'webp'],
+      ['quality', 'high'],
+      ['scale', '1'],
+      ['smart-frame-skip', 'off'],
+    ]) {
+      const option = page.locator(`[data-testid="option-${group}-${value}"]`);
+      if (!(await option.isVisible()))
+        await page.locator('[data-testid="advanced-settings"] summary').click();
+      await option.click();
+      assert.equal(await option.locator('input').isChecked(), true);
+    }
+    await assertNeverFetched(page, path);
+    await assertNeverFetched(page, assetPath(pipelineDependency));
+    if (errorChunk) await assertNeverFetched(page, assetPath(errorChunk));
+    const timeOrigin = await page.evaluate(() => performance.timeOrigin);
+    const beforeOrigin = started.observedAssetRequests.length;
+    const beforePageRequests = events.requestedAssets.length;
+    if (baseline) {
+      await context.setOffline(true);
+      await page.waitForFunction(() => navigator.onLine === false);
+    } else {
+      started.setAssetFailure({ path, mode: 'network' });
+    }
+    await page.locator('[data-testid="convert-button"]').click();
+    const proceed = page.locator('[data-testid="modal-confirm-button"]');
+    if (await proceed.isVisible({ timeout: 1500 }).catch(() => false)) await proceed.click();
+    const display = page.locator('[data-testid="error-display"]');
+    if (baseline) {
+      await page.getByRole('heading', { name: 'Application Error' }).waitFor({ state: 'visible' });
+      assert.equal(await display.count(), 0, 'Pre-fix error UI unexpectedly survived its import');
+    } else {
+      await display.waitFor({ state: 'visible', timeout: 30_000 });
+      assert.match(
+        await display.locator('details pre').textContent(),
+        /Failed to fetch dynamically imported module.*conversion-pipeline/i,
+        'Error UI did not retain the original pipeline import failure'
+      );
+      assert.equal(await page.locator('[data-testid="app-error-fallback"]').count(), 0);
+      assert.equal(
+        await page.locator('[data-testid="error-select-different-button"]').isEnabled(),
+        true
+      );
+      const reload = page
+        .getByRole('status')
+        .filter({ has: page.getByRole('button', { name: 'Reload page' }) })
+        .getByRole('button', { name: 'Reload page' });
+      await reload.waitFor({ state: 'visible' });
+      assert.equal(
+        await reload.isEnabled(),
+        true,
+        'Terminal import failure cannot be reloaded explicitly'
+      );
+    }
+    const expectedPaths = baseline
+      ? [path, assetPath(pipelineDependency), assetPath(errorChunk)]
+      : [path];
+    const expectedRequestedPaths = baseline ? expectedPaths : [path, assetPath(pipelineDependency)];
+    const deadline = Date.now() + 15_000;
+    while (
+      Date.now() < deadline &&
+      !expectedPaths.every((expected) =>
+        events.failedRequests.some((failure) => failure.path === expected)
+      )
+    )
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    const requested = events.requestedAssets.slice(beforePageRequests);
+    assert.deepEqual(
+      [...new Set(requested)].sort(),
+      [...expectedRequestedPaths].sort(),
+      'First conversion fetched a different JavaScript asset set'
+    );
+    assert.equal(requested[0], path, 'Pipeline failure did not precede the error UI request');
+    for (const expected of expectedRequestedPaths) {
+      const attempts = requested.filter((requestedPath) => requestedPath === expected).length;
+      assert(
+        attempts >= 1 && attempts <= 2,
+        'Failed import request count is outside the bounded Vite preload/import pair'
+      );
+    }
+    assert(
+      expectedPaths.every((expected) =>
+        events.failedRequests.some((failure) => failure.path === expected)
+      ),
+      'The emitted module request did not fail at the transport layer'
+    );
+    assert.deepEqual(importResponses, [], 'Transport failure was classified as an HTTP response');
+    if (baseline)
+      assert.deepEqual(
+        started.observedAssetRequests.slice(beforeOrigin),
+        [],
+        'Offline import unexpectedly reached the origin'
+      );
+    else {
+      await waitForOriginAsset(started, path, beforeOrigin);
+      assert(
+        started.assetFailureRequests.some(
+          (request) => request.path === path && request.mode === 'network'
+        ),
+        'The owned origin did not inject the pipeline transport failure'
+      );
+    }
+    const workerMessage = controlled
+      ? await requireWorkerAssetMessage(page, path, 0, 'network-error')
+      : null;
+    assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin);
+    // The pre-fix ErrorBoundary replaces the entire app, including its export
+    // button. Its bounded console record is the surviving primary-error log.
+    const primaryConversionLog = baseline
+      ? events.consoleErrors.find(
+          (entry) => entry.text.includes('Conversion failed') && entry.text.includes(path)
+        )?.text
+      : null;
+    if (baseline)
+      assert(primaryConversionLog, 'Pre-fix primary import failure is absent from the console');
+    const log = baseline ? null : await readLogExport(page);
+    if (!baseline) {
+      assert.match(log.text, /Conversion failed/);
+      assert(
+        log.text.includes(path),
+        'Original pipeline import path is absent from the bounded log'
+      );
+      assert(
+        log.text
+          .split('\n')
+          .some(
+            (line) =>
+              line.includes('app.asset-unavailable') &&
+              line.includes(path) &&
+              line.includes(controlled ? '"source":"service-worker"' : '"source":"vite-preload"') &&
+              line.includes(controlled ? '"status":0' : '"status":null')
+          ),
+        'Asset log did not distinguish the failed transport and observer source'
+      );
+      assertExpectedNetwork(events, path);
+    }
+    await page.screenshot({ path: screenshot, fullPage: true });
+    return {
+      id,
+      status: 'passed',
+      sourceSha: build.state.sourceSha,
+      emittedPipeline: path,
+      pipelineSha256: pipeline.sha256,
+      pipelineDependency: assetPath(pipelineDependency),
+      pipelineDependencySha256: pipelineDependency.sha256,
+      secondaryErrorChunk: errorChunk ? assetPath(errorChunk) : null,
+      secondaryErrorChunkSha256: errorChunk?.sha256 ?? null,
+      serviceWorkerControlled: controlled,
+      workerMessage,
+      originalErrorVisible: !baseline,
+      outerFallback: baseline,
+      requestedAssets: requested,
+      importResponses,
+      originRequests: started.assetFailureRequests.filter((request) => request.path === path)
+        .length,
+      noOriginResponse: true,
+      noAutomaticNavigation: true,
+      primaryConversionLog,
+      logExport: log ? { sha256: log.sha256, bytes: log.bytes } : null,
+      screenshotSha256: sha256(await readFile(screenshot)),
+      events,
+    };
+  } catch (error) {
+    let screenshotSha256 = null;
+    let screenshotFailure = null;
+    try {
+      await page.screenshot({ path: screenshot, timeout: 5_000 });
+      screenshotSha256 = sha256(await readFile(screenshot));
+    } catch (captureError) {
+      screenshotFailure = String(captureError).slice(0, 500);
+    }
+    await writeFile(
+      join(outputRoot, `recovery-${id}-failed.json`),
+      JSON.stringify(
+        {
+          id,
+          failure: String(error).slice(0, 1000),
+          emittedPipeline: path,
+          secondaryErrorChunk: errorChunk ? assetPath(errorChunk) : null,
+          events,
+          importResponses,
+          screenshotSha256,
+          screenshotFailure,
+        },
+        null,
+        2
+      )
+    );
+    throw error;
+  } finally {
+    started.setAssetFailure(null);
+    await context.setOffline(false).catch(() => {});
+    await context.close();
+  }
+}
+
 async function memoryWarningOffline(browser, started, build, smallFixture) {
   await started.setDistribution(build.relativePath);
   const context = await browser.newContext({ locale: 'en-US', serviceWorkers: 'block' });
@@ -2043,6 +2298,10 @@ export async function runRecoveryBuilds({
       'baseline-first-error-red',
       baselineFirstError(browser, started, baseline, outputRoot)
     );
+    await add(
+      'baseline-first-pipeline-offline-blocked',
+      firstPipelineImportFailure(browser, started, baseline, fixture, outputRoot, false, true)
+    );
     await started.setDistribution(baseline.relativePath);
     diagnostics.coldTransfer.baseline = await measureColdTransfer(browser, started, baseline);
     await writeFile(
@@ -2058,6 +2317,11 @@ export async function runRecoveryBuilds({
       JSON.stringify(diagnostics, null, 2)
     );
     await add('fixed-first-error-offline', fixedFirstError(browser, started, buildB, outputRoot));
+    for (const controlled of [false, true])
+      await add(
+        `fixed-first-pipeline-network-${controlled ? 'controlled' : 'blocked'}`,
+        firstPipelineImportFailure(browser, started, buildB, fixture, outputRoot, controlled, false)
+      );
     await add(
       'fixed-memory-warning-offline',
       memoryWarningOffline(browser, started, buildB, fixture)
