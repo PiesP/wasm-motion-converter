@@ -34,6 +34,7 @@ function fixture() {
   roots.push(root);
   for (const path of [
     ...entries,
+    'scripts/check/run-child.ts',
     'scripts/release/legacy-state.ts',
     'scripts/build/deployment-state.ts',
   ]) {
