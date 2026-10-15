@@ -3,12 +3,10 @@
 
 import { getPooledBufferSize } from '@services/buffer-pool';
 import {
-  calculateFrameOutputConcurrency,
   calculateStagedFrameSourceCapacity,
   calculateWebpWorkerCountForBudget,
   estimateActiveFrameBytes,
   estimateDecodedSourceFrameBytes,
-  estimateFrameOutputBytes,
   estimateFrameTaskBytes,
   estimateRuntimeDecodedSourceFrameBytes,
   WebpFrameMemoryBudget,
@@ -89,56 +87,88 @@ describe('frame memory reservations', () => {
     );
   });
 
-  it('reduces 4K live-frame concurrency to the shared byte budget', () => {
-    const bytesPerFrame = estimateActiveFrameBytes(3840, 2160);
-    const concurrency = calculateFrameOutputConcurrency(3840, 2160, 3840, 2160, 10);
+  it('reserves native 4K source frames separately from a 4K target working set', () => {
+    const sourceBytes = estimateDecodedSourceFrameBytes(3840, 2160, 3840, 2160);
+    const targetBytes = estimateActiveFrameBytes(3840, 2160);
+    const capacity = calculateStagedFrameSourceCapacity(3840, 2160, 3840, 2160, 3840, 2160, 10);
 
-    expect(concurrency).toBe(1);
-    expect(bytesPerFrame * concurrency).toBeLessThanOrEqual(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
-    expect(bytesPerFrame * (concurrency + 1)).toBeGreaterThan(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
-  });
-
-  it('includes a 4K source frame when calculating 360p output concurrency', () => {
-    const bytesPerOutput = estimateFrameOutputBytes(3840, 2160, 640, 360);
-
-    expect(calculateFrameOutputConcurrency(640, 360, 640, 360, 10)).toBe(10);
-    expect(calculateFrameOutputConcurrency(3840, 2160, 640, 360, 10)).toBe(5);
-    expect(bytesPerOutput).toBe(3840 * 2160 * 4 + estimateActiveFrameBytes(640, 360));
-    expect(bytesPerOutput).toBeLessThanOrEqual(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
-    expect(bytesPerOutput * 5).toBeLessThanOrEqual(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
-    expect(bytesPerOutput * 6).toBeGreaterThan(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
-  });
-
-  it('does not double count equal source and target dimensions', () => {
-    expect(estimateFrameOutputBytes(3840, 2160, 3840, 2160)).toBe(
-      estimateActiveFrameBytes(3840, 2160)
+    expect(capacity).toBeGreaterThan(0);
+    expect(sourceBytes * capacity + targetBytes).toBeLessThanOrEqual(
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    );
+    expect(sourceBytes * (capacity + 1) + targetBytes).toBeGreaterThan(
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
     );
   });
 
-  it('admits one near-limit scaled frame within the shared byte budget', () => {
+  it('includes a 4K native source beside a 360p target and caps requested work', () => {
+    const sourceBytes = estimateDecodedSourceFrameBytes(3840, 2160, 3840, 2160);
+    const targetBytes = estimateActiveFrameBytes(640, 360);
+    const smallSourceCapacity = calculateStagedFrameSourceCapacity(
+      640,
+      360,
+      640,
+      360,
+      640,
+      360,
+      10
+    );
+    const capacity = calculateStagedFrameSourceCapacity(3840, 2160, 3840, 2160, 640, 360, 10);
+
+    expect(smallSourceCapacity).toBe(10);
+    expect(capacity).toBe(5);
+    expect(sourceBytes * capacity + targetBytes).toBeLessThanOrEqual(
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    );
+    expect(sourceBytes * (capacity + 1) + targetBytes).toBeGreaterThan(
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    );
+  });
+
+  it('admits near-limit scaled native source frames within the shared byte budget', () => {
     const sourceWidth = 4096;
     const sourceHeight = Math.floor(MAX_FRAME_PIXEL_COUNT / sourceWidth);
     const targetWidth = 4095;
     const targetHeight = Math.floor(MAX_FRAME_PIXEL_COUNT / targetWidth);
-    const bytesPerOutput = estimateFrameOutputBytes(
+    const sourceBytes = estimateDecodedSourceFrameBytes(
+      sourceWidth,
+      sourceHeight,
+      sourceWidth,
+      sourceHeight
+    );
+    const targetBytes = estimateActiveFrameBytes(targetWidth, targetHeight);
+    const capacity = calculateStagedFrameSourceCapacity(
+      sourceWidth,
+      sourceHeight,
       sourceWidth,
       sourceHeight,
       targetWidth,
-      targetHeight
+      targetHeight,
+      10
     );
 
-    expect(bytesPerOutput).toBeLessThanOrEqual(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
-    expect(
-      calculateFrameOutputConcurrency(sourceWidth, sourceHeight, targetWidth, targetHeight, 10)
-    ).toBe(1);
+    expect(capacity).toBe(1);
+    expect(sourceBytes * capacity + targetBytes).toBeLessThanOrEqual(
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    );
+    expect(sourceBytes * (capacity + 1) + targetBytes).toBeGreaterThan(
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    );
   });
 
-  it('returns zero when one scaled frame exceeds the shared byte budget', () => {
+  it('returns zero when one native source exceeds the shared byte budget', () => {
     const oversizedSourceWidth = FRAME_PIPELINE_MEMORY_BUDGET_BYTES / 4;
-    const bytesPerOutput = estimateFrameOutputBytes(oversizedSourceWidth, 2, 8, 8);
+    const sourceBytes = estimateDecodedSourceFrameBytes(
+      oversizedSourceWidth,
+      2,
+      oversizedSourceWidth,
+      2
+    );
 
-    expect(bytesPerOutput).toBeGreaterThan(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
-    expect(calculateFrameOutputConcurrency(oversizedSourceWidth, 2, 8, 8, 10)).toBe(0);
+    expect(sourceBytes).toBeGreaterThan(FRAME_PIPELINE_MEMORY_BUDGET_BYTES);
+    expect(
+      calculateStagedFrameSourceCapacity(oversizedSourceWidth, 2, oversizedSourceWidth, 2, 8, 8, 10)
+    ).toBe(0);
   });
 
   it('partitions demux, live frames, and two output copies within one envelope', () => {
@@ -151,7 +181,9 @@ describe('frame memory reservations', () => {
     const width = 4096;
     const height = Math.floor(MAX_FRAME_PIXEL_COUNT / width);
 
-    expect(calculateFrameOutputConcurrency(width, height, width, height, 10)).toBe(1);
+    expect(
+      calculateStagedFrameSourceCapacity(width, height, width, height, width, height, 10)
+    ).toBe(1);
   });
 
   it('uses the same power-of-two RGB bucket as the buffer pool', () => {

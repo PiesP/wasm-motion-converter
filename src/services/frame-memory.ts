@@ -482,60 +482,6 @@ export function estimateCanvasBytes(width: number, height: number): number {
   return bytes;
 }
 
-/** Estimate source-frame ownership plus target conversion working memory. */
-export function estimateFrameOutputBytes(
-  sourceWidth: number,
-  sourceHeight: number,
-  targetWidth: number,
-  targetHeight: number,
-  pixelFormat: CpuPixelFormat = 'rgb'
-): number {
-  if (sourceWidth === targetWidth && sourceHeight === targetHeight) {
-    return estimateActiveFrameBytes(sourceWidth, sourceHeight, pixelFormat);
-  }
-
-  const sourcePixels = sourceWidth * sourceHeight;
-  if (!Number.isSafeInteger(sourcePixels) || sourcePixels <= 0) {
-    throw new RangeError('Source frame dimensions must produce a positive safe pixel count');
-  }
-  const sourceBytes = sourcePixels * DECODED_RGBA_BYTES_PER_PIXEL;
-  if (!Number.isSafeInteger(sourceBytes)) {
-    throw new RangeError('Source frame allocation exceeds the safe integer range');
-  }
-
-  const targetBytes = estimateActiveFrameBytes(targetWidth, targetHeight, pixelFormat);
-  const totalBytes = sourceBytes + targetBytes;
-  if (!Number.isSafeInteger(totalBytes)) {
-    throw new RangeError('Frame output allocation exceeds the safe integer range');
-  }
-  return totalBytes;
-}
-
-/** Derive concurrency while retaining decoded source and converted target frames. */
-export function calculateFrameOutputConcurrency(
-  sourceWidth: number,
-  sourceHeight: number,
-  targetWidth: number,
-  targetHeight: number,
-  requestedMaximum: number,
-  pixelFormat: CpuPixelFormat = 'rgb',
-  analysisBytes = 0
-): number {
-  assertReservationBytes(analysisBytes);
-  const requested = Math.max(1, Math.floor(requestedMaximum));
-  const bytesPerFrame = estimateFrameOutputBytes(
-    sourceWidth,
-    sourceHeight,
-    targetWidth,
-    targetHeight,
-    pixelFormat
-  );
-  return Math.min(
-    requested,
-    Math.max(0, Math.floor((FRAME_PIPELINE_MEMORY_BUDGET_BYTES - analysisBytes) / bytesPerFrame))
-  );
-}
-
 /**
  * Derive the number of decoded source frames that may wait while reserving the
  * requested number of target working sets. Target memory is held aside for the

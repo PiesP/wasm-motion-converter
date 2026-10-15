@@ -4,7 +4,6 @@
 import { globalBufferPool } from '@services/buffer-pool';
 import { type DecodeOptions, type DecodeResult, decodeFrames } from '@services/decoder-service';
 import {
-  calculateFrameOutputConcurrency,
   calculateStagedFrameSourceCapacity,
   estimateActiveFrameBytes,
   estimateRuntimeDecodedSourceFrameBytes,
@@ -3042,7 +3041,9 @@ describe('decoder-service', () => {
 
     it('admits more than ten small flush outputs within the ownership byte budget', async () => {
       const outputCount = 12;
-      const ownershipCapacity = calculateFrameOutputConcurrency(
+      const sourceCapacity = calculateStagedFrameSourceCapacity(
+        8,
+        8,
         8,
         8,
         8,
@@ -3072,9 +3073,9 @@ describe('decoder-service', () => {
         }
       );
 
-      expect(ownershipCapacity).toBeGreaterThan(10);
+      expect(sourceCapacity).toBeGreaterThan(10);
       expect(result.totalInputFrames).toBe(outputCount);
-      expect(stats.maxOutstandingFrames).toBeLessThanOrEqual(ownershipCapacity);
+      expect(stats.maxOutstandingFrames).toBeLessThanOrEqual(sourceCapacity);
       expect(delivered).toEqual(Array.from({ length: outputCount }, (_, index) => index));
       for (const frame of FakeVideoFrame.instances) {
         expect(frame.close).toHaveBeenCalledOnce();
