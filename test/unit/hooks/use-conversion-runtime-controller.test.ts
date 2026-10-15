@@ -23,6 +23,11 @@ describe('ConversionRuntimeController preparation intent', () => {
 
     expect(analysis?.signal.aborted).toBe(true);
     expect(analysis?.isActive()).toBe(false);
+    expect(analysis?.isLatest()).toBe(true);
+
+    const replacement = controller.startNewRun();
+    expect(replacement?.isLatest()).toBe(true);
+    expect(analysis?.isLatest()).toBe(false);
   });
 
   it('finishes an analysis run without aborting its completed signal', () => {

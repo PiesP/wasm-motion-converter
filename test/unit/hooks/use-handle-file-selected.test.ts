@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   checkVideoDecoderSupport: vi.fn(),
   extractVideoMetadata: vi.fn(),
+  metadataModuleGate: null as Promise<void> | null,
+  metadataModuleRequested: vi.fn(),
   focusPrimaryErrorAction: vi.fn(),
   focusElementUnlessUserIsEditing: vi.fn(),
   appState: 'idle',
@@ -62,6 +64,37 @@ vi.mock('@utils/logger', () => ({
 import type { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from '@hooks/conversion-handlers/use-handle-file-selected';
 
+function createRuntime(): ConversionRuntimeController {
+  let sequence = 0;
+  let activeController: AbortController | null = null;
+  return {
+    startNewRun: () => {
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
+      const run = ++sequence;
+      return {
+        signal: controller.signal,
+        isActive: () => run === sequence && !controller.signal.aborted,
+        isLatest: () => run === sequence,
+      };
+    },
+    invalidateActiveConversions: () => activeController?.abort(),
+    finishAnalysisRun: vi.fn(),
+    resetRuntimeState: vi.fn(),
+  } as unknown as ConversionRuntimeController;
+}
+
+async function freshHandleFileSelected(): Promise<typeof handleFileSelected> {
+  vi.doMock('@services/video-metadata', async () => {
+    mocks.metadataModuleRequested();
+    if (mocks.metadataModuleGate) await mocks.metadataModuleGate;
+    return { extractVideoMetadata: mocks.extractVideoMetadata };
+  });
+  vi.resetModules();
+  return (await import('@hooks/conversion-handlers/use-handle-file-selected')).handleFileSelected;
+}
+
 describe('handleFileSelected conversion settings', () => {
   beforeEach(() => {
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:test-preview');
@@ -86,6 +119,8 @@ describe('handleFileSelected conversion settings', () => {
       width: 16,
       height: 16,
     });
+    mocks.metadataModuleGate = null;
+    mocks.metadataModuleRequested.mockReset();
   });
 
   afterEach(() => {
@@ -381,7 +416,11 @@ describe('handleFileSelected conversion settings', () => {
     );
     const abort = new AbortController();
     const runtime = {
-      startNewRun: () => ({ isActive: () => !abort.signal.aborted, signal: abort.signal }),
+      startNewRun: () => ({
+        isActive: () => !abort.signal.aborted,
+        isLatest: () => true,
+        signal: abort.signal,
+      }),
       finishAnalysisRun: vi.fn(),
       resetRuntimeState: vi.fn(),
     } as unknown as ConversionRuntimeController;
@@ -405,5 +444,112 @@ describe('handleFileSelected conversion settings', () => {
     expect(URL.createObjectURL).not.toHaveBeenCalled();
     expect(mocks.setVideoPreviewUrl).not.toHaveBeenCalledWith('blob:test-preview');
     expect(runtime.finishAnalysisRun).toHaveBeenCalledOnce();
+  });
+
+  it('does not request the metadata module for an invalid file', async () => {
+    const selectFile = await freshHandleFileSelected();
+    mocks.validateVideoFile.mockResolvedValueOnce({ valid: false, error: new Error('invalid') });
+
+    await selectFile(
+      new File(['bad'], 'bad.bin'),
+      createRuntime(),
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+
+    expect(mocks.metadataModuleRequested).not.toHaveBeenCalled();
+    expect(mocks.extractVideoMetadata).not.toHaveBeenCalled();
+  });
+
+  it('settles cancellation while module loading remains pending and observes its late rejection', async () => {
+    const selectFile = await freshHandleFileSelected();
+    let rejectLoad: ((reason: Error) => void) | undefined;
+    mocks.metadataModuleGate = new Promise<void>((_resolve, reject) => {
+      rejectLoad = reject;
+    });
+    const runtime = createRuntime();
+    const file = new File(['video'], 'cancel-during-load.mp4', { type: 'video/mp4' });
+
+    const selection = selectFile(
+      file,
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await vi.waitFor(() => expect(mocks.metadataModuleRequested).toHaveBeenCalledOnce());
+    expect(mocks.transitionToState).toHaveBeenCalledWith('analyzing');
+    expect(mocks.extractVideoMetadata).not.toHaveBeenCalled();
+
+    mocks.appState = 'cancelling';
+    runtime.invalidateActiveConversions();
+    await selection;
+
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('idle');
+    expect(mocks.setInputFile).toHaveBeenLastCalledWith(null);
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    rejectLoad?.(new Error('late chunk rejection'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.extractVideoMetadata).not.toHaveBeenCalled();
+    expect(mocks.setErrorMessage).not.toHaveBeenCalledWith('late chunk rejection');
+  });
+
+  it('does not let a retired module load clear the newer selection', async () => {
+    const selectFile = await freshHandleFileSelected();
+    let resolveLoad: (() => void) | undefined;
+    mocks.metadataModuleGate = new Promise<void>((resolve) => {
+      resolveLoad = resolve;
+    });
+    const runtime = createRuntime();
+    const oldFile = new File(['old'], 'old.mp4', { type: 'video/mp4' });
+    const newFile = new File(['new'], 'new.mp4', { type: 'video/mp4' });
+
+    const oldSelection = selectFile(
+      oldFile,
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await vi.waitFor(() => expect(mocks.metadataModuleRequested).toHaveBeenCalledOnce());
+
+    // Keep the cancelling state visible while the replacement starts. The old
+    // run's finally must not clear the replacement's file or preview.
+    mocks.appState = 'cancelling';
+    const newSelection = selectFile(
+      newFile,
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await oldSelection;
+    expect(mocks.setInputFile).toHaveBeenLastCalledWith(newFile);
+    expect(mocks.extractVideoMetadata).not.toHaveBeenCalled();
+
+    resolveLoad?.();
+    await newSelection;
+    expect(mocks.extractVideoMetadata).toHaveBeenCalledOnce();
+    expect(mocks.extractVideoMetadata).toHaveBeenCalledWith(newFile, 30, expect.any(AbortSignal));
+    expect(URL.createObjectURL).toHaveBeenCalledWith(newFile);
+    expect(mocks.setInputFile).toHaveBeenLastCalledWith(newFile);
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('idle');
+  });
+
+  it('surfaces a current module-load rejection through the existing error path', async () => {
+    const selectFile = await freshHandleFileSelected();
+    let rejectLoad: ((reason: Error) => void) | undefined;
+    mocks.metadataModuleGate = new Promise<void>((_resolve, reject) => {
+      rejectLoad = reject;
+    });
+
+    const selection = selectFile(
+      new File(['video'], 'load-error.mp4', { type: 'video/mp4' }),
+      createRuntime(),
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await vi.waitFor(() => expect(mocks.metadataModuleRequested).toHaveBeenCalledOnce());
+    rejectLoad?.(new Error('metadata chunk unavailable'));
+    await selection;
+
+    // Vitest wraps a rejected mock factory; the browser rejection is covered by
+    // the built-chunk failure profile. The handler must still expose an error.
+    expect(mocks.setErrorMessage).toHaveBeenCalledWith(expect.any(String));
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
+    expect(mocks.focusPrimaryErrorAction).toHaveBeenCalledOnce();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 });

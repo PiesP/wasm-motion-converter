@@ -26,6 +26,7 @@ export interface ConversionIntent {
 
 export interface AnalysisRun {
   readonly isActive: () => boolean;
+  readonly isLatest: () => boolean;
   readonly runId: string;
   readonly signal: AbortSignal;
   readonly token: symbol;
@@ -44,6 +45,7 @@ export class ConversionRuntimeController {
     seq: number;
     token: symbol;
   } | null = null;
+  private latestAnalysisToken: symbol | null = null;
   private disposed = false;
 
   readonly progress: ProgressState;
@@ -72,6 +74,7 @@ export class ConversionRuntimeController {
 
     const seq = (this.activeConversionSeq += 1);
     const token = Symbol('analysis-run');
+    this.latestAnalysisToken = token;
     const abortController = new AbortController();
     const runId = `run-${seq}-${performance.now().toString(36)}`;
     this.activeAnalysisRun = { abortController, seq, token };
@@ -83,6 +86,7 @@ export class ConversionRuntimeController {
         !abortController.signal.aborted &&
         seq === this.activeConversionSeq &&
         this.activeAnalysisRun?.token === token,
+      isLatest: () => !this.disposed && this.latestAnalysisToken === token,
       runId,
       signal: abortController.signal,
       token,

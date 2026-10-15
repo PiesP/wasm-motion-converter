@@ -3,7 +3,6 @@
 
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { checkVideoDecoderSupport } from '@services/video-decoder-support';
-import { extractVideoMetadata } from '@services/video-metadata';
 import { conversionSettings, setConversionSettings } from '@stores/conversion-settings-store';
 import {
   appState,
@@ -35,6 +34,26 @@ const resetAnalysisState = (): void => {
   setVideoMetadata(null);
 };
 
+async function loadMetadataModule(
+  signal: AbortSignal
+): Promise<typeof import('@services/video-metadata')> {
+  // The browser cannot abort import(), but the selection must settle promptly
+  // when its run is retired. Promise.race observes a late import rejection.
+  const loading = import('@services/video-metadata');
+  let onAbort: () => void = () => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () =>
+      reject(signal.reason ?? new DOMException('The metadata load was aborted.', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  try {
+    return await Promise.race([loading, aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 export async function handleFileSelected(
   file: File,
   runtime: ConversionRuntimeController,
@@ -42,7 +61,7 @@ export async function handleFileSelected(
 ): Promise<void> {
   const run = runtime.startNewRun();
   if (!run) return;
-  const isStale = () => !run.isActive();
+  const isStale = () => !run.isActive() || run.signal.aborted;
 
   runtime.resetRuntimeState();
   resetErrorState();
@@ -91,6 +110,8 @@ export async function handleFileSelected(
 
   try {
     // BlobSource lets MediaBunny read only the ranges needed for metadata.
+    const { extractVideoMetadata } = await loadMetadataModule(run.signal);
+    if (isStale()) return;
     const metadata = await extractVideoMetadata(file, DEFAULT_FPS, run.signal);
     if (isStale()) return;
 
@@ -136,7 +157,7 @@ export async function handleFileSelected(
     focusPrimaryErrorAction();
   } finally {
     runtime.finishAnalysisRun(run);
-    if (run.signal.aborted && appState() === 'cancelling') {
+    if (run.signal.aborted && run.isLatest() && appState() === 'cancelling') {
       const url = videoPreviewUrl();
       if (url) URL.revokeObjectURL(url);
       batch(() => {
