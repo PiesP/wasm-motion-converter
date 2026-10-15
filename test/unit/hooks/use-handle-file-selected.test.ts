@@ -529,6 +529,39 @@ describe('handleFileSelected conversion settings', () => {
     expect(mocks.transitionToState).toHaveBeenLastCalledWith('idle');
   });
 
+  it('does not turn a stale module rejection into a second error for the replacement', async () => {
+    const selectFile = await freshHandleFileSelected();
+    let rejectLoad: ((reason: Error) => void) | undefined;
+    mocks.metadataModuleGate = new Promise<void>((_resolve, reject) => {
+      rejectLoad = reject;
+    });
+    const runtime = createRuntime();
+
+    const oldSelection = selectFile(
+      new File(['old'], 'old.mp4', { type: 'video/mp4' }),
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await vi.waitFor(() => expect(mocks.metadataModuleRequested).toHaveBeenCalledOnce());
+    const replacement = new File(['new'], 'new.mp4', { type: 'video/mp4' });
+    const newSelection = selectFile(
+      replacement,
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    );
+    await oldSelection;
+    expect(mocks.setInputFile).toHaveBeenLastCalledWith(replacement);
+
+    rejectLoad?.(new Error('chunk unavailable'));
+    await newSelection;
+    expect(mocks.setErrorMessage.mock.calls.filter(([message]) => message !== null)).toHaveLength(
+      1
+    );
+    expect(mocks.focusPrimaryErrorAction).toHaveBeenCalledOnce();
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
+    expect(mocks.extractVideoMetadata).not.toHaveBeenCalled();
+  });
+
   it('surfaces a current module-load rejection through the existing error path', async () => {
     const selectFile = await freshHandleFileSelected();
     let rejectLoad: ((reason: Error) => void) | undefined;
