@@ -5,6 +5,22 @@ import { describe, expect, it } from 'vitest';
 const root = resolve(import.meta.dirname, '../../..');
 
 describe('Fast mutation profile', () => {
+  it('runs mutation on schedule and manual dispatch with opt-in reuse', () => {
+    const workflow = readFileSync(resolve(root, '.github/workflows/deep-checks.yaml'), 'utf8');
+    const dispatch = workflow.match(
+      / {2}workflow_dispatch:\n {4}inputs:\n([\s\S]*?)\npermissions:/
+    )?.[1];
+
+    expect(workflow).toContain('cron: "17 2 * * 0"');
+    expect(dispatch).toMatch(
+      /reuse_success:\n\s+description:.*\n\s+required: true\n\s+default: false/
+    );
+    expect(dispatch).not.toMatch(/\bscope:/);
+    expect(workflow).toMatch(/\n {2}mutation:\n {4}name: 🧬 Mutation\n {4}runs-on:/);
+    expect(workflow).toContain('run: pnpm mut:fast');
+    expect(workflow).toMatch(/REUSE_SUCCESS: \$\{\{ inputs\.reuse_success \}\}/);
+  });
+
   it('fails on regressions, mutates control-flow operators, and preserves reports', () => {
     const config = JSON.parse(readFileSync(resolve(root, 'stryker.conf.fast.json'), 'utf8')) as {
       ignoreStatic?: boolean;

@@ -11,14 +11,6 @@ on:
     - cron: "17 2 * * 0"
   workflow_dispatch:
     inputs:
-      scope:
-        description: "Run mutation verification"
-        required: true
-        default: all
-        type: choice
-        options:
-          - all
-          - mutation
       reuse_success:
         description: "Reuse a prior successful result for identical inputs"
         required: true
@@ -36,7 +28,6 @@ concurrency:
 jobs:
   mutation:
     name: 🧬 Mutation
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.scope == 'all' || inputs.scope == 'mutation' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
