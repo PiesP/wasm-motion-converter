@@ -187,7 +187,6 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
         width: 8,
         height: 8,
         frameDecimation: ratio,
-        mode: 'stream',
         onFrameAvailable: (pixels, _duration, _frameNumber, _handoff, presentation) => {
           selected.push(presentation.startUs);
           globalBufferPool.release(pixels);
@@ -210,7 +209,6 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
       height: 8,
       frameDecimation: 2,
       minimumSourceFrameGap: 2,
-      mode: 'stream',
       onFrameAvailable: (pixels, _duration, _frameNumber, _handoff, presentation) => {
         selected.push(presentation.startUs);
         globalBufferPool.release(pixels);
@@ -291,7 +289,6 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
         minimumSourceFrameGap: policy.minimumSourceFrameGap,
         pressureCadenceRatio: policy.pressureCadenceRatio,
         smartFrameSkip,
-        mode: 'stream',
         onFrameAvailable: (pixels, _duration, frameNumber) => {
           selected.push(frameNumber);
           globalBufferPool.release(pixels);
@@ -332,7 +329,6 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
       await decodeFrames(installDecoder(source, 8, 30), {
         width: 8,
         height: 8,
-        mode: 'stream',
         ...policy,
         onFrameAvailable: (pixels, _duration, frameNumber) => {
           selected.push(frameNumber);
@@ -363,7 +359,6 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
       await decodeFrames(installDecoder(source, 8, 21), {
         width: 8,
         height: 8,
-        mode: 'stream',
         smartFrameSkip: 'high',
         ...policy,
         onFrameAvailable: (pixels, _duration, frameNumber) => {
@@ -380,24 +375,27 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
     expect(critical.every((frameNumber) => normal.includes(frameNumber))).toBe(true);
     expect(critical.length).toBeLessThanOrEqual(normal.length);
   });
-  describe('fixed batch cadence', () => {
-    let frames: Awaited<ReturnType<typeof decodeFrames>>['frames'] = [];
+  describe('fixed streaming cadence', () => {
+    const frameStarts: number[] = [];
+    let presentationEndUs = 0;
     beforeEach(async () => {
-      frames = (
-        await decodeFrames(installDecoder(fourFrames(false)), {
-          width: 8,
-          height: 8,
-          frameDecimation: 2,
-          mode: 'batch',
-        })
-      ).frames;
-      expect(frames.map((frame) => frame.data[0])).toEqual([64, 192]);
-    });
-    afterEach(() => {
-      for (const frame of frames) globalBufferPool.release(frame.data);
+      const intensities: number[] = [];
+      const result = await decodeFrames(installDecoder(fourFrames(false)), {
+        width: 8,
+        height: 8,
+        frameDecimation: 2,
+        onFrameAvailable: (pixels, _duration, _frameNumber, _handoff, presentation) => {
+          intensities.push(pixels[0]!);
+          frameStarts.push(presentation.startUs);
+          globalBufferPool.release(pixels);
+        },
+      });
+      presentationEndUs = result.presentationEndUs;
+      expect(intensities).toEqual([64, 192]);
     });
     it('holds f0 until the original f2 boundary', () => {
-      expect(frames.map((frame) => frame.duration)).toEqual([200, 200]);
+      expect(frameStarts).toEqual([0, 200_000]);
+      expect(presentationEndUs - frameStarts[1]!).toBe(200_000);
     });
   });
 
@@ -420,7 +418,6 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
         width: 8,
         height: 8,
         smartFrameSkip: 'low',
-        mode: 'stream',
         onFrameAvailable: (pixels) => {
           selected.push([...pixels.subarray(0, 3)]);
           globalBufferPool.release(pixels);
@@ -451,7 +448,6 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
         width: size,
         height: size,
         smartFrameSkip: 'high',
-        mode: 'stream',
         onFrameAvailable: (pixels, _duration, frameNumber) => {
           selected.push(frameNumber);
           globalBufferPool.release(pixels);
