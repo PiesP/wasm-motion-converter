@@ -40,7 +40,6 @@ vi.mock('@services/decoder-service', () => ({
         );
       }
       return {
-        frames: [],
         outputTotalMs: 0,
         skippedByDecimation: 0,
         smartSkipped: 0,

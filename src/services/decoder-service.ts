@@ -7,10 +7,10 @@
  * Extracts RGB or opaque RGBA frames from demuxed video chunks using VideoDecoder,
  * with hardware acceleration support, frame decimation, and abort handling.
  *
- * Delivery is independent of the output format: collect CPU pixels in a batch,
- * await a CPU-pixel consumer, or await a VideoFrame consumer without pixel copies.
- * GIF and WebP production callers both use CPU streaming. Legacy explicit batch
- * delivery with a VideoFrame callback keeps its separate batch result accounting.
+ * This internal API supports CPU streaming only; batch results and VideoFrame
+ * callback delivery were retired after the maintained-caller audit. GIF and
+ * WebP callers receive ordered CPU pixels through an awaited callback.
+ * Invocation transfers ownership of the pixels to that callback.
  *
  * Both encoders share the same demux output and frame extraction logic;
  * only the encoding step (gifenc vs wasm-webp) differs.
@@ -45,7 +45,6 @@ import type { ProfileCopyPathRecorder, ProfileOperationRecorder } from './conver
 import { type DemuxResult, getEncodedChunkRetainedBytes } from './demuxer-service';
 import {
   type CpuPixelFormat,
-  calculateFrameOutputConcurrency,
   calculateStagedFrameSourceCapacity,
   estimateActiveFrameBytes,
   estimateDecodedSourceFrameBytes,
@@ -88,46 +87,20 @@ export interface DecodeOptions {
   /** Development-only observer for the frame-copy strategy chosen for each frame. */
   profileCopyPath?: ProfileCopyPathRecorder | undefined;
   /**
-   * CPU streaming consumer, used unless batch is explicit or VideoFrame delivery wins.
+   * CPU streaming consumer.
    * Invocation transfers ownership of pooled pixels; return them to the pool even
    * on failure. The decoder awaits a returned Promise before the next ordered
    * delivery. A consumer retaining work beyond that Promise must take the optional
    * memory handoff and release its reservation when that work finishes; untaken
-   * reservations remain decoder-owned. Batch pixels are returned in frames instead.
+   * reservations remain decoder-owned.
    */
-  onFrameAvailable?:
-    | ((
-        pixelData: Uint8Array,
-        durationMs: number,
-        frameNum: number,
-        memoryHandoff: FrameMemoryHandoff | undefined,
-        presentation: PresentationInterval
-      ) => Promise<void> | void)
-    | undefined;
-  /**
-   * VideoFrame consumer; takes precedence over the CPU callback, including in
-   * explicit batch mode. Delivery bypasses CPU pixel copies and smart/adaptive
-   * pixel-motion processing while retaining fixed/pressure presentation selection.
-   * Invocation transfers ownership; the recipient must close the frame exactly
-   * once even on rejection or cancellation. The returned Promise holds the ordered
-   * delivery turn. The decoder closes frames whose ownership was never transferred.
-   */
-  onVideoFrameAvailable?:
-    | ((
-        frame: VideoFrame,
-        durationMs: number,
-        frameNum: number,
-        presentation: PresentationInterval
-      ) => Promise<void> | void)
-    | undefined;
-  /**
-   * Stream requires a CPU or VideoFrame callback. Explicit batch ignores a CPU
-   * callback with a warning, but still permits VideoFrame delivery with empty
-   * returned frames and legacy batch result accounting.
-   * @default Stream when either callback is a function, batch otherwise.
-   * Omission and explicit undefined have the same inference.
-   */
-  mode?: ('stream' | 'batch') | undefined;
+  onFrameAvailable: (
+    pixelData: Uint8Array,
+    durationMs: number,
+    frameNum: number,
+    memoryHandoff: FrameMemoryHandoff | undefined,
+    presentation: PresentationInterval
+  ) => Promise<void> | void;
   /**
    * Smart frame skip mode — enables similarity-based frame deduplication.
    * When enabled, consecutive similar frames are skipped and their durations
@@ -149,21 +122,13 @@ export interface DecodeOptions {
   maxInputChunks?: number | undefined;
 }
 
-export interface DecodedFrame {
-  /** Owned pooled CPU pixels in the requested format; the batch recipient releases them. */
-  data: Uint8Array;
-  /** Frame display duration in milliseconds */
-  duration: number;
-}
-
 export interface DecodeResult {
-  frames: DecodedFrame[];
   totalInputFrames: number;
   /** Number of compressed packets fed to VideoDecoder. */
   consumedChunks: number;
   /** Number of visible decoded frames before selection. */
   decodedFrames: number;
-  /** Number of frames passed to the encoder or returned in the batch. */
+  /** Number of frames delivered to the consumer. */
   selectedFrames: number;
   /** Visible native output frames discarded for an already seen timestamp. */
   duplicateTimestamps: number;
@@ -184,58 +149,14 @@ export interface DecodeResult {
   tailAccumulatedMs: number;
 }
 
-type DecoderDeliveryPlan =
-  | { kind: 'cpu-batch' }
-  | { kind: 'cpu-stream'; callback: NonNullable<DecodeOptions['onFrameAvailable']> }
-  | { kind: 'video-frame-batch'; callback: NonNullable<DecodeOptions['onVideoFrameAvailable']> }
-  | { kind: 'video-frame-stream'; callback: NonNullable<DecodeOptions['onVideoFrameAvailable']> };
-
-/** Normalize legacy options once, retaining function checks for JavaScript callers. */
-function normalizeDecoderDelivery(
-  mode: DecodeOptions['mode'],
-  onFrameAvailable: DecodeOptions['onFrameAvailable'],
-  onVideoFrameAvailable: DecodeOptions['onVideoFrameAvailable']
-): DecoderDeliveryPlan {
-  const streaming =
-    mode === 'stream' ||
-    (mode !== 'batch' &&
-      (typeof onFrameAvailable === 'function' || typeof onVideoFrameAvailable === 'function'));
-  if (
-    streaming &&
-    typeof onFrameAvailable !== 'function' &&
-    typeof onVideoFrameAvailable !== 'function'
-  ) {
-    throw new Error('Streaming decode requires an onFrameAvailable callback');
-  }
-  if (mode === 'batch' && typeof onFrameAvailable === 'function') {
-    logger.warn(
-      'decoders',
-      'onFrameAvailable provided but mode is "batch" — streaming callback will be ignored',
-      { mode }
-    );
-  }
-  // VideoFrame precedence also applies to explicit batch; its result accounting
-  // remains distinct from inferred/explicit streaming for legacy compatibility.
-  if (typeof onVideoFrameAvailable === 'function') {
-    return {
-      kind: streaming ? 'video-frame-stream' : 'video-frame-batch',
-      callback: onVideoFrameAvailable,
-    };
-  }
-  if (streaming && typeof onFrameAvailable === 'function') {
-    return { kind: 'cpu-stream', callback: onFrameAvailable };
-  }
-  return { kind: 'cpu-batch' };
-}
-
 /**
- * Decode demuxed video chunks into the selected CPU or VideoFrame delivery route.
+ * Decode demuxed video chunks into ordered CPU pixels.
  *
  * Pipeline:
  *   1. Configure VideoDecoder (hwAccel with software fallback)
  *   2. Pull chunks from DemuxResult only as decoder/output capacity becomes available
- *   3. Select presentation intervals; CPU routes copy/filter pixels and retain holds
- *   4. Collect CPU batches or await the selected consumer in presentation order
+ *   3. Select presentation intervals; copy/filter pixels and retain holds
+ *   4. Await the consumer in presentation order
  *   5. Drain created work and release decoder-owned resources before settling
  */
 export async function decodeFrames(
@@ -255,14 +176,16 @@ export async function decodeFrames(
     profileOperation,
     profileCopyPath,
     onFrameAvailable,
-    onVideoFrameAvailable,
-    mode,
     smartFrameSkip: effectiveSmartSkip = 'off',
     processingFailureSignal,
     stagedCopyLookahead = false,
     frameMemoryBudget,
     maxInputChunks,
   } = opts;
+  // Keep a runtime check for JavaScript callers before allocating decoder resources.
+  if (typeof onFrameAvailable !== 'function') {
+    throw new Error('Streaming decode requires an onFrameAvailable callback');
+  }
   const requestedInputChunkLimit = maxInputChunks;
   const inputChunkLimit =
     typeof requestedInputChunkLimit === 'number' &&
@@ -273,15 +196,7 @@ export async function decodeFrames(
 
   // ── Smart frame skip state (must be before parallel decode block) ──
   const skipThreshold = getSkipThreshold(effectiveSmartSkip);
-  const deliveryPlan = normalizeDecoderDelivery(mode, onFrameAvailable, onVideoFrameAvailable);
-  // Preserve legacy summary/timing accounting independently of the delivered value.
-  const streaming =
-    deliveryPlan.kind === 'cpu-stream' || deliveryPlan.kind === 'video-frame-stream';
-  const motionMemoryBytes =
-    deliveryPlan.kind === 'cpu-stream' && effectiveSmartSkip !== 'off'
-      ? MOTION_SIGNATURE_PEAK_BYTES
-      : 0;
-  const batchFrames: DecodedFrame[] = [];
+  const motionMemoryBytes = effectiveSmartSkip !== 'off' ? MOTION_SIGNATURE_PEAK_BYTES : 0;
   const pendingConversions = new Set<Promise<void>>();
 
   // Decoder output promises self-remove from the Set. Ordered delivery and bounded
@@ -320,7 +235,6 @@ export async function decodeFrames(
     (demux.config.displayAspectHeight ?? 0) > 0
       ? (demux.config.displayAspectHeight ?? configuredSourceHeight)
       : configuredSourceHeight;
-  const usesStagedCpuStreaming = deliveryPlan.kind === 'cpu-stream';
   const MAX_DECODE_QUEUE = 8;
   const queuedSourceHeadroomCount = MAX_DECODE_QUEUE + 1;
   const maxPendingConversions = frameMemoryBudget
@@ -334,60 +248,45 @@ export async function decodeFrames(
         10,
         motionMemoryBytes
       )
-    : usesStagedCpuStreaming
-      ? calculateStagedFrameSourceCapacity(
-          configuredSourceWidth,
-          configuredSourceHeight,
-          configuredDisplayWidth,
-          configuredDisplayHeight,
-          width,
-          height,
-          10,
-          1,
-          pixelFormat,
-          motionMemoryBytes
-        )
-      : calculateFrameOutputConcurrency(
-          configuredSourceWidth,
-          configuredSourceHeight,
-          width,
-          height,
-          10,
-          pixelFormat,
-          motionMemoryBytes
-        );
-  if (maxPendingConversions === 0) {
-    throw new Error(
-      'Decoded frame output memory limit exceeded (single frame exceeds byte budget)'
-    );
-  }
-  const outputOwnershipRequestedMaximum = Number.MAX_SAFE_INTEGER;
-  const targetWorkingBytes = usesStagedCpuStreaming
-    ? (frameMemoryBudget?.targetTaskBytes ?? estimateActiveFrameBytes(width, height, pixelFormat))
-    : 0;
-  const queuedSourceHeadroomBytes = usesStagedCpuStreaming
-    ? estimateRuntimeDecodedSourceFrameBytes(
-        configuredSourceWidth,
-        configuredSourceHeight,
-        configuredDisplayWidth,
-        configuredDisplayHeight,
-        null
-      ) * queuedSourceHeadroomCount
-    : 0;
-  const twoTargetSourceCapacity = usesStagedCpuStreaming
-    ? calculateStagedFrameSourceCapacity(
+    : calculateStagedFrameSourceCapacity(
         configuredSourceWidth,
         configuredSourceHeight,
         configuredDisplayWidth,
         configuredDisplayHeight,
         width,
         height,
-        Number.MAX_SAFE_INTEGER,
-        2,
+        10,
+        1,
         pixelFormat,
         motionMemoryBytes
-      )
-    : 0;
+      );
+  if (maxPendingConversions === 0) {
+    throw new Error(
+      'Decoded frame output memory limit exceeded (single frame exceeds byte budget)'
+    );
+  }
+  const targetWorkingBytes =
+    frameMemoryBudget?.targetTaskBytes ?? estimateActiveFrameBytes(width, height, pixelFormat);
+  const queuedSourceHeadroomBytes =
+    estimateRuntimeDecodedSourceFrameBytes(
+      configuredSourceWidth,
+      configuredSourceHeight,
+      configuredDisplayWidth,
+      configuredDisplayHeight,
+      null
+    ) * queuedSourceHeadroomCount;
+  const twoTargetSourceCapacity = calculateStagedFrameSourceCapacity(
+    configuredSourceWidth,
+    configuredSourceHeight,
+    configuredDisplayWidth,
+    configuredDisplayHeight,
+    width,
+    height,
+    Number.MAX_SAFE_INTEGER,
+    2,
+    pixelFormat,
+    motionMemoryBytes
+  );
   let stagedLookaheadEnabled =
     stagedCopyLookahead &&
     (frameMemoryBudget
@@ -400,10 +299,7 @@ export async function decodeFrames(
     slotLimit: 1 | 2;
     resolve: (acquired: boolean) => void;
   }> = [];
-  let activeOutputSlots = 0;
-
   const canAcquireStagedTarget = (slotLimit: 1 | 2): boolean =>
-    usesStagedCpuStreaming &&
     !stagedTargetGateClosed &&
     activeStagedTargetSlots < slotLimit &&
     Math.max(
@@ -424,7 +320,7 @@ export async function decodeFrames(
   };
 
   const acquireStagedTarget = async (slotLimit: 1 | 2): Promise<boolean> => {
-    if (!usesStagedCpuStreaming || stagedTargetGateClosed) return false;
+    if (stagedTargetGateClosed) return false;
     if (canAcquireStagedTarget(slotLimit)) {
       activeStagedTargetSlots++;
       return true;
@@ -442,10 +338,6 @@ export async function decodeFrames(
   const closeStagedTargetGate = (): void => {
     stagedTargetGateClosed = true;
     for (const waiter of stagedTargetWaiters.splice(0)) waiter.resolve(false);
-  };
-
-  const releaseOutputSlot = (): void => {
-    activeOutputSlots = Math.max(0, activeOutputSlots - 1);
   };
 
   let decodeError: Error | null = null;
@@ -468,7 +360,6 @@ export async function decodeFrames(
   let duplicateTimestamps = 0;
   let lastNativeTimestampUs: number | null = null;
   let lastVisibleSourceStartUs: number | null = null;
-  let lastBatchStartUs: number | null = null;
   let trimEndReached = false;
   let wakeDecodeCapacityWait: (() => void) | null = null;
   let skippedByDecimation = 0;
@@ -512,7 +403,7 @@ export async function decodeFrames(
     pressureCadenceRatio > 1
       ? createPresentationSampler(sourceFps, pressureCadenceRatio)
       : null;
-  const canRunAdaptiveAnalysis = isAdaptive && deliveryPlan.kind === 'cpu-stream';
+  const canRunAdaptiveAnalysis = isAdaptive;
   const maxAdaptiveDecimation = Math.max(1, Math.floor(sourceFps / MIN_OUTPUT_FPS));
   let adaptLastMotionClass: AdaptiveMotionClass = 'normal';
 
@@ -724,7 +615,7 @@ export async function decodeFrames(
     resolution: `${width}×${height}`,
     totalFrames: demux.totalFrames,
     frameDecimation,
-    streaming,
+    streaming: true,
   });
 
   interface EncodedChunkReservation {
@@ -778,76 +669,43 @@ export async function decodeFrames(
 
   const retainPresentationFrame = (frame: VideoFrame, knownEndUs: number | null): void => {
     let releaseReservation: () => void;
-    if (usesStagedCpuStreaming) {
-      let runtimeAllocationBytes: number | null = null;
-      if (frame.format != null && typeof frame.allocationSize === 'function') {
-        try {
-          runtimeAllocationBytes = frame.allocationSize();
-        } catch {
-          // Unknown native layout uses the conservative 8-Bpp source floor.
-        }
+    let runtimeAllocationBytes: number | null = null;
+    if (frame.format != null && typeof frame.allocationSize === 'function') {
+      try {
+        runtimeAllocationBytes = frame.allocationSize();
+      } catch {
+        // Unknown native layout uses the conservative 8-Bpp source floor.
       }
-      const sourceBytes = estimateRuntimeDecodedSourceFrameBytes(
-        frame.codedWidth,
-        frame.codedHeight,
-        frame.displayWidth,
-        frame.displayHeight,
-        runtimeAllocationBytes
-      );
-      if (frameMemoryBudget) {
-        const reservation = frameMemoryBudget.tryReserveSource(sourceBytes);
-        if (!reservation) {
-          throw new Error('Unknown-duration frame lookbehind exceeds shared frame byte budget');
-        }
-        releaseReservation = () => reservation.release();
-      } else {
-        if (
-          retainedSourceFrameBytes +
-            sourceBytes +
-            Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes >
-          FRAME_PIPELINE_MEMORY_BUDGET_BYTES - motionMemoryBytes
-        ) {
-          throw new Error('Unknown-duration frame lookbehind exceeds source frame byte budget');
-        }
-        retainedSourceFrameBytes += sourceBytes;
-        let released = false;
-        releaseReservation = () => {
-          if (released) return;
-          released = true;
-          retainedSourceFrameBytes -= sourceBytes;
-          drainStagedTargetWaiters();
-        };
+    }
+    const sourceBytes = estimateRuntimeDecodedSourceFrameBytes(
+      frame.codedWidth,
+      frame.codedHeight,
+      frame.displayWidth,
+      frame.displayHeight,
+      runtimeAllocationBytes
+    );
+    if (frameMemoryBudget) {
+      const reservation = frameMemoryBudget.tryReserveSource(sourceBytes);
+      if (!reservation) {
+        throw new Error('Unknown-duration frame lookbehind exceeds shared frame byte budget');
       }
+      releaseReservation = () => reservation.release();
     } else {
-      const maxOutputSlots = Math.min(
-        calculateFrameOutputConcurrency(
-          frame.codedWidth,
-          frame.codedHeight,
-          width,
-          height,
-          outputOwnershipRequestedMaximum,
-          pixelFormat,
-          motionMemoryBytes
-        ),
-        calculateFrameOutputConcurrency(
-          frame.displayWidth,
-          frame.displayHeight,
-          width,
-          height,
-          outputOwnershipRequestedMaximum,
-          pixelFormat,
-          motionMemoryBytes
-        )
-      );
-      if (activeOutputSlots >= maxOutputSlots) {
-        throw new Error('Unknown-duration frame lookbehind exceeds output frame slot limit');
+      if (
+        retainedSourceFrameBytes +
+          sourceBytes +
+          Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes >
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES - motionMemoryBytes
+      ) {
+        throw new Error('Unknown-duration frame lookbehind exceeds source frame byte budget');
       }
-      activeOutputSlots++;
+      retainedSourceFrameBytes += sourceBytes;
       let released = false;
       releaseReservation = () => {
         if (released) return;
         released = true;
-        releaseOutputSlot();
+        retainedSourceFrameBytes -= sourceBytes;
+        drainStagedTargetWaiters();
       };
     }
     pendingPresentationFrame = { frame, releaseReservation, duplicates: 0, knownEndUs };
@@ -956,8 +814,7 @@ export async function decodeFrames(
         // With no CPU smart selection, a pressure rejection can avoid a frame
         // copy. Otherwise wait until the normal smart/adaptive decision has
         // updated its independent history before applying the pressure filter.
-        const pressureBeforeCopy =
-          !canRunAdaptiveAnalysis && (deliveryPlan.kind !== 'cpu-stream' || skipThreshold < 0);
+        const pressureBeforeCopy = !canRunAdaptiveAnalysis && skipThreshold < 0;
         if (
           pressureBeforeCopy &&
           selectPressureFrame &&
@@ -971,87 +828,52 @@ export async function decodeFrames(
         let sourceReservationBytes = 0;
         let sourceReservationActive = false;
         let sourceMemoryReservation: FrameMemoryReservation | null = null;
-        let outputSlotActive = false;
-        if (usesStagedCpuStreaming) {
-          try {
-            let runtimeAllocationBytes: number | null = null;
-            if (frame.format != null && typeof frame.allocationSize === 'function') {
-              try {
-                runtimeAllocationBytes = frame.allocationSize();
-              } catch {
-                // Unknown runtime layout uses the conservative 8-Bpp fallback below.
-              }
+        try {
+          let runtimeAllocationBytes: number | null = null;
+          if (frame.format != null && typeof frame.allocationSize === 'function') {
+            try {
+              runtimeAllocationBytes = frame.allocationSize();
+            } catch {
+              // Unknown runtime layout uses the conservative 8-Bpp fallback below.
             }
-            sourceReservationBytes = estimateRuntimeDecodedSourceFrameBytes(
-              frame.codedWidth,
-              frame.codedHeight,
-              frame.displayWidth,
-              frame.displayHeight,
-              runtimeAllocationBytes
-            );
-          } catch (error) {
-            recordDecoderError(error);
-            frame.close();
-            return;
           }
-          sourceMemoryReservation =
-            frameMemoryBudget?.tryReserveSource(sourceReservationBytes) ?? null;
-          if (
-            frameMemoryBudget
-              ? sourceMemoryReservation === null
-              : retainedSourceFrameBytes +
-                  sourceReservationBytes +
-                  Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes >
-                FRAME_PIPELINE_MEMORY_BUDGET_BYTES - motionMemoryBytes
-          ) {
-            const memoryLimitDescription = frameMemoryBudget
-              ? 'shared frame byte budget'
-              : `${Math.floor(
-                  (FRAME_PIPELINE_MEMORY_BUDGET_BYTES -
-                    Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes) /
-                    sourceReservationBytes
-                )} source frame limit`;
-            recordDecoderError(
-              new Error(`Decoded frame output memory limit exceeded (${memoryLimitDescription})`)
-            );
-            frame.close();
-            return;
-          }
-          if (!frameMemoryBudget) retainedSourceFrameBytes += sourceReservationBytes;
-          sourceReservationActive = true;
-        } else {
-          const maxOutputSlots = Math.min(
-            calculateFrameOutputConcurrency(
-              frame.codedWidth,
-              frame.codedHeight,
-              width,
-              height,
-              outputOwnershipRequestedMaximum,
-              pixelFormat,
-              motionMemoryBytes
-            ),
-            calculateFrameOutputConcurrency(
-              frame.displayWidth,
-              frame.displayHeight,
-              width,
-              height,
-              outputOwnershipRequestedMaximum,
-              pixelFormat,
-              motionMemoryBytes
-            )
+          sourceReservationBytes = estimateRuntimeDecodedSourceFrameBytes(
+            frame.codedWidth,
+            frame.codedHeight,
+            frame.displayWidth,
+            frame.displayHeight,
+            runtimeAllocationBytes
           );
-          if (activeOutputSlots >= maxOutputSlots) {
-            recordDecoderError(
-              new Error(
-                `Decoded frame output memory limit exceeded (${maxOutputSlots} frame slot limit)`
-              )
-            );
-            frame.close();
-            return;
-          }
-          activeOutputSlots++;
-          outputSlotActive = true;
+        } catch (error) {
+          recordDecoderError(error);
+          frame.close();
+          return;
         }
+        sourceMemoryReservation =
+          frameMemoryBudget?.tryReserveSource(sourceReservationBytes) ?? null;
+        if (
+          frameMemoryBudget
+            ? sourceMemoryReservation === null
+            : retainedSourceFrameBytes +
+                sourceReservationBytes +
+                Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes >
+              FRAME_PIPELINE_MEMORY_BUDGET_BYTES - motionMemoryBytes
+        ) {
+          const memoryLimitDescription = frameMemoryBudget
+            ? 'shared frame byte budget'
+            : `${Math.floor(
+                (FRAME_PIPELINE_MEMORY_BUDGET_BYTES -
+                  Math.max(activeStagedTargetSlots, 1) * targetWorkingBytes) /
+                  sourceReservationBytes
+              )} source frame limit`;
+          recordDecoderError(
+            new Error(`Decoded frame output memory limit exceeded (${memoryLimitDescription})`)
+          );
+          frame.close();
+          return;
+        }
+        if (!frameMemoryBudget) retainedSourceFrameBytes += sourceReservationBytes;
+        sourceReservationActive = true;
 
         const previousProcessing = orderedProcessingTail;
         let releaseProcessing!: () => void;
@@ -1061,23 +883,20 @@ export async function decodeFrames(
         const previousStagedCopy = stagedCopyTail;
         const stagedTargetSlotLimit: 1 | 2 = stagedLookaheadEnabled ? 2 : 1;
         let resolveStagedCopy!: () => void;
-        if (usesStagedCpuStreaming) {
-          stagedCopyTail = new Promise<void>((resolve) => {
-            resolveStagedCopy = resolve;
-          });
-        }
+        stagedCopyTail = new Promise<void>((resolve) => {
+          resolveStagedCopy = resolve;
+        });
 
         const conversion = (async () => {
           let pixelData: Uint8Array | null = null;
           let enteredOrderedProcessing = false;
           let sourceFrameClosed = false;
-          let sourceFrameTransferred = false;
           let stagedTargetActive = false;
           let targetMemoryReservation: FrameMemoryReservation | null = null;
           let targetMemoryHandoff: FrameMemoryHandoff | undefined;
           let stagedCopyReleased = false;
           const releaseStagedCopy = (): void => {
-            if (!usesStagedCpuStreaming || stagedCopyReleased) return;
+            if (stagedCopyReleased) return;
             stagedCopyReleased = true;
             resolveStagedCopy();
           };
@@ -1101,50 +920,21 @@ export async function decodeFrames(
             frame.close();
           };
           try {
-            // VideoFrame delivery bypasses CPU copies and pixel-motion processing.
-            // The recipient owns the frame from invocation through its terminal close;
-            // await its Promise before releasing this ordered processing turn.
-            switch (deliveryPlan.kind) {
-              case 'video-frame-batch':
-              case 'video-frame-stream': {
-                const callback = deliveryPlan.callback;
-                await previousProcessing;
-                enteredOrderedProcessing = true;
-                if (signal?.aborted || decodeError || hasProcessingFailure()) return;
-                keptFrameCount++;
-                sourceFrameTransferred = true;
-                await callback(frame, frameDuration, frameNum, presentation);
-                // Transferred frames remain recipient-owned even if delivery rejects.
-                return;
-              }
-              case 'cpu-batch':
-              case 'cpu-stream':
-                break;
-              default: {
-                const unreachable: never = deliveryPlan;
-                throw new Error(`Unexpected decoder delivery plan: ${unreachable}`);
-              }
+            await previousStagedCopy;
+            if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) return;
+            if (frameMemoryBudget) {
+              targetMemoryReservation = await frameMemoryBudget.acquireTarget();
+              targetMemoryHandoff = frameMemoryBudget.createHandoff(targetMemoryReservation);
+              stagedTargetActive = true;
+            } else {
+              stagedTargetActive = await acquireStagedTarget(stagedTargetSlotLimit);
             }
-
-            if (usesStagedCpuStreaming) {
-              await previousStagedCopy;
-              if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) return;
-              if (frameMemoryBudget) {
-                targetMemoryReservation = await frameMemoryBudget.acquireTarget();
-                targetMemoryHandoff = frameMemoryBudget.createHandoff(targetMemoryReservation);
-                stagedTargetActive = true;
-              } else {
-                stagedTargetActive = await acquireStagedTarget(stagedTargetSlotLimit);
-              }
-              if (
-                !stagedTargetActive ||
-                signal?.aborted ||
-                discardStagedOutputs ||
-                hasProcessingFailure()
-              ) {
-                return;
-              }
-            } else if (signal?.aborted || hasProcessingFailure()) {
+            if (
+              !stagedTargetActive ||
+              signal?.aborted ||
+              discardStagedOutputs ||
+              hasProcessingFailure()
+            ) {
               return;
             }
 
@@ -1163,10 +953,8 @@ export async function decodeFrames(
                 profileOperation?.('pixelCopy', Math.max(0, performance.now() - pixelCopyStart));
               }
               profileCopyPath?.(frameCtx.copyPath ?? 'unknown');
-              if (usesStagedCpuStreaming) {
-                closeSourceFrame();
-                releaseSourceReservation();
-              }
+              closeSourceFrame();
+              releaseSourceReservation();
             }
             await previousProcessing;
             enteredOrderedProcessing = true;
@@ -1177,8 +965,7 @@ export async function decodeFrames(
               return;
             }
 
-            const shouldMeasureMotion =
-              deliveryPlan.kind === 'cpu-stream' && (skipThreshold >= 0 || isAdaptive);
+            const shouldMeasureMotion = skipThreshold >= 0 || isAdaptive;
             const motionFeatureStart =
               profileOperation && shouldMeasureMotion ? performance.now() : null;
             const signature = shouldMeasureMotion
@@ -1214,7 +1001,7 @@ export async function decodeFrames(
             }
 
             // ── Smart frame skip: similarity-based deduplication ──
-            if (deliveryPlan.kind === 'cpu-stream' && skipThreshold >= 0 && signature !== null) {
+            if (skipThreshold >= 0 && signature !== null) {
               if (frameDistance !== null) {
                 // Skip if similar AND consecutive skip time < 500ms
                 // Use max of user threshold and noise-adapted floor
@@ -1249,9 +1036,6 @@ export async function decodeFrames(
             // while fast motion uses only an explicitly requested source-frame gap.
             // Presentation-time cadence remains a separate admission check.
             // Uses bounded RGB tile statistics and a local-change safeguard.
-            //
-            // VideoFrame delivery has already returned without CPU pixels, so only
-            // CPU streaming can reach adaptive pixel-motion analysis.
             //
             // NOTE: The first frame is always classified as adaptLastMotionClass
             // (initially 'normal') because previousMotion is null until at least two frames
@@ -1332,50 +1116,25 @@ export async function decodeFrames(
 
             recordMotionDecision();
 
-            switch (deliveryPlan.kind) {
-              case 'cpu-stream': {
-                const callback = deliveryPlan.callback;
-                // The next retained timestamp determines this frame's final hold.
-                keptFrameCount++;
-                let delivery: Promise<void> | void;
-                try {
-                  const deliveredPixels = pixelData;
-                  pixelData = null;
-                  delivery = callback(
-                    deliveredPixels,
-                    frameDuration,
-                    frameNum,
-                    targetMemoryHandoff,
-                    presentation
-                  );
-                } finally {
-                  releaseStagedCopy();
-                }
-                await delivery;
-                // The consumer owns pixels from invocation, including synchronous throws.
-                // Staged-copy capacity is released on invocation; this turn awaits the Promise.
-                break;
-              }
-              case 'cpu-batch':
-                // Batch collection owns pixels until successful return to its recipient.
-                if (lastBatchStartUs !== null) {
-                  const previous = batchFrames[batchFrames.length - 1];
-                  if (previous) {
-                    previous.duration = Math.max(
-                      0,
-                      (presentation.startUs - lastBatchStartUs) / 1000
-                    );
-                  }
-                }
-                batchFrames.push({ data: pixelData, duration: frameDuration });
-                pixelData = null;
-                lastBatchStartUs = presentation.startUs;
-                break;
-              default: {
-                const unreachable: never = deliveryPlan;
-                throw new Error(`Unexpected decoder delivery plan: ${unreachable}`);
-              }
+            // The next retained timestamp determines this frame's final hold.
+            keptFrameCount++;
+            let delivery: Promise<void> | void;
+            try {
+              const deliveredPixels = pixelData;
+              pixelData = null;
+              delivery = onFrameAvailable(
+                deliveredPixels,
+                frameDuration,
+                frameNum,
+                targetMemoryHandoff,
+                presentation
+              );
+            } finally {
+              releaseStagedCopy();
             }
+            await delivery;
+            // The consumer owns pixels from invocation, including synchronous throws.
+            // Staged-copy capacity is released on invocation; this turn awaits the Promise.
           } catch (error) {
             recordConversionError(error);
             if (pixelData !== null) {
@@ -1393,7 +1152,7 @@ export async function decodeFrames(
             }
             releaseStagedCopy();
             // Taken target reservations belong to downstream work; release only untaken
-            // reservations here. Release native/source ownership once, unless transferred.
+            // reservations here. Release native/source ownership once.
             if (targetMemoryReservation) {
               if (!targetMemoryHandoff?.isTaken) targetMemoryReservation.release();
             } else if (stagedTargetActive) {
@@ -1401,8 +1160,7 @@ export async function decodeFrames(
             }
             releaseProcessing();
             releaseSourceReservation();
-            if (outputSlotActive) releaseOutputSlot();
-            if (!sourceFrameTransferred) closeSourceFrame();
+            closeSourceFrame();
           }
         })();
 
@@ -1661,7 +1419,7 @@ export async function decodeFrames(
 
     // Finish already-emitted lookahead work before entering the decoder flush.
     // Frames emitted by flush capture the serial target limit below.
-    const shouldDrainLookahead = usesStagedCpuStreaming && stagedLookaheadEnabled;
+    const shouldDrainLookahead = stagedLookaheadEnabled;
     stagedLookaheadEnabled = false;
     if (
       (shouldDrainLookahead || frameMemoryBudget) &&
@@ -1720,37 +1478,29 @@ export async function decodeFrames(
     const pipelineFailure = getLatchedFailureError();
     if (pipelineFailure) throw pipelineFailure;
 
-    // The last batch frame owns the visible tail, including skipped frames.
-    if (!streaming && lastBatchStartUs !== null && batchFrames.length > 0) {
-      const last = batchFrames[batchFrames.length - 1];
-      if (last) last.duration = Math.max(0, (presentationEndUs - lastBatchStartUs) / 1000);
-    }
-
     // Compute timing summary
     const sourceTotalMs =
       streamedSourceDurationUs > 0 ? streamedSourceDurationUs / 1000 : demux.sourceTotalMs;
-    // Streaming mode: encoder handles frame timing internally, so outputTotalMs is not
-    // tracked here. GIF/WebP encoders compute their own timing from frame durations.
-    // Non-streaming: sum all retained frame durations.
-    const outputTotalMs = streaming ? 0 : batchFrames.reduce((sum, f) => sum + f.duration, 0);
+    // The encoder handles frame timing from presentation intervals.
+    // Keep this legacy summary field at its production streaming value.
+    const outputTotalMs = 0;
 
     logger.info('decoders', 'Decoding complete', {
       totalInputFrames: inputFrameCount,
-      outputFrames: streaming ? keptFrameCount : batchFrames.length,
+      outputFrames: keptFrameCount,
       skippedByDecimation,
       smartSkipped: smartSkippedCount,
       smartSkipMode: effectiveSmartSkip,
       noiseFloor: Math.round(noiseFloor * 100) / 100,
       resolution: `${width}×${height}`,
-      streaming,
+      streaming: true,
     });
 
     decodeResult = {
-      frames: batchFrames,
       totalInputFrames: inputFrameCount,
       consumedChunks: inputChunkCount,
       decodedFrames: inputFrameCount,
-      selectedFrames: streaming ? keptFrameCount : batchFrames.length,
+      selectedFrames: keptFrameCount,
       duplicateTimestamps,
       presentationEndUs,
       skippedByDecimation,
@@ -1768,19 +1518,6 @@ export async function decodeFrames(
     finalFailure = getLatchedFailureError();
   }
   if (finalFailure) {
-    // The batch array aliases the result, so only discard it when no result can escape.
-    // Pending copies have settled in lifecycle cleanup. Pool release is not idempotent:
-    // remove each owned frame once and continue if one release itself fails.
-    if (deliveryPlan.kind === 'cpu-batch') {
-      for (const frame of batchFrames) {
-        try {
-          globalBufferPool.release(frame.data);
-        } catch {
-          // Keep the earlier decode failure and attempt the rest of the batch.
-        }
-      }
-      batchFrames.length = 0;
-    }
     throw finalFailure;
   }
   return decodeResult as DecodeResult;

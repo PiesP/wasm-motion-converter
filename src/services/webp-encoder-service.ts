@@ -8,15 +8,6 @@
  * interleaving. Frames are encoded immediately upon decoding, so only 1 RGB
  * frame exists in memory at any time during the decode→encode phase.
  *
- * Previous architecture:
- *   1. decodeFrames → ALL RGB frames in array (batch)
- *   2. encodeStreamingWebP → encode one by one
- *   Wall-clock = decode_all + encode_all (sequential)
- *
- * New architecture:
- *   1. decodeFrames with onFrameAvailable → encode each frame immediately
- *   Wall-clock ≈ max(decode_all, encode_all) (pipelined)
- *
  * Pipeline:
  *   1. decodeFrames streams frames via onFrameAvailable callback
  *   2. Per frame: encodeRGB() → VP8 bitstream extraction → collect

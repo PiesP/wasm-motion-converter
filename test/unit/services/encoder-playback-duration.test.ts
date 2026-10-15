@@ -16,7 +16,6 @@ vi.mock('@services/decoder-service', () => ({
     await options.onFrameAvailable(first, 100, 0, undefined, { startUs: 0, endUs: 100000 });
     await options.onFrameAvailable(second, 40, 1, undefined, { startUs: 100000, endUs: 140000 });
     return {
-      frames: [],
       outputTotalMs: 0,
       skippedByDecimation: 0,
       smartSkipped: 0,

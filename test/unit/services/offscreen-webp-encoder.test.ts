@@ -15,7 +15,6 @@ vi.mock('@services/decoder-service', () => ({
     const backing = new Uint8Array([10, 20, 30, 255, 0x7f, 0x7f, 0x7f, 0x7f]);
     await options.onFrameAvailable(backing, 100, 0, undefined, { startUs: 0, endUs: 100_000 });
     return {
-      frames: [],
       outputTotalMs: 0,
       skippedByDecimation: 0,
       smartSkipped: 0,

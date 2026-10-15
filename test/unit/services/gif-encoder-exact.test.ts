@@ -29,7 +29,6 @@ vi.mock('@services/decoder-service', () => ({
     }
     const endUs = mocks.frames.at(-1)?.endUs ?? 0;
     return {
-      frames: [],
       outputTotalMs: endUs / 1000,
       skippedByDecimation: 0,
       smartSkipped: 0,

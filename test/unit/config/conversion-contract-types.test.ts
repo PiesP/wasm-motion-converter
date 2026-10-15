@@ -38,15 +38,12 @@ export function validatedRequest(event: MessageEvent<unknown>) {
   if (!isWorkerRequest(event.data)) return null;
   return event.data.requestId;
 }
-export const decoderOmitted = { width: 8, height: 8 } satisfies DecodeOptions;
-export const decoderUndefined = { ...decoderOmitted, mode: undefined,
-  onFrameAvailable: undefined, onVideoFrameAvailable: undefined,
+export const decoderBase = { width: 8, height: 8 };
+export const decoderCpu = { ...decoderBase,
+  onFrameAvailable: (pixels: Uint8Array) => { void pixels; },
 } satisfies DecodeOptions;
-// The legacy public API remains permissive; invalid stream delivery is checked at runtime.
-export const decoderStreamWithoutCallback = { ...decoderOmitted, mode: 'stream' } satisfies DecodeOptions;
-export const decoderMixedBatch = { ...decoderOmitted, mode: 'batch',
-  onFrameAvailable: (pixels) => { void pixels; },
-  onVideoFrameAvailable: async (frame) => { frame.close(); },
+export const decoderAsyncCpu = { ...decoderBase,
+  onFrameAvailable: async (pixels: Uint8Array) => { void pixels; },
 } satisfies DecodeOptions;
 `;
 
@@ -76,13 +73,18 @@ describe('conversion boundary type contracts', () => {
       const valid = run();
       expect(valid.status, valid.stdout + valid.stderr).toBe(0);
       for (const [suffix, diagnostic] of [
+        ['export const invalid = decoderBase satisfies DecodeOptions;', /TS2741/],
         [
-          "export const invalid = { ...decoderOmitted, mode: 'unknown' } satisfies DecodeOptions;",
+          'export const invalid = { ...decoderBase, onFrameAvailable: undefined } satisfies DecodeOptions;',
           /TS2322/,
         ],
         [
-          'export const invalid = { ...decoderOmitted, onVideoFrameAvailable: (frame: Uint8Array) => {} } satisfies DecodeOptions;',
-          /TS2322/,
+          "export const invalid = { ...decoderCpu, mode: 'batch' } satisfies DecodeOptions;",
+          /TS2353/,
+        ],
+        [
+          'export const invalid = { ...decoderCpu, onVideoFrameAvailable: (frame: VideoFrame) => frame.close() } satisfies DecodeOptions;',
+          /TS2561/,
         ],
         [
           'export const invalid = { ...blobStart, inputBuffer: new ArrayBuffer(8) } satisfies WorkerRequest;',
