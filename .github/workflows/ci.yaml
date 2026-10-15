@@ -188,18 +188,21 @@ jobs:
         with:
           submodules: true
 
+      - name: 📦 Setup project
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
+        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
+
+      - name: 🎭 Resolve installed Playwright version
+        id: playwright
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
+        run: node -p "'version=' + require('@playwright/test/package.json').version" >> "$GITHUB_OUTPUT"
+
       - name: 🎭 Cache Playwright browsers
         if: ${{ needs.changes.outputs.e2e == 'true' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-
-      - name: 📦 Setup project
-        if: ${{ needs.changes.outputs.e2e == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-chromium-firefox-webkit-${{ steps.playwright.outputs.version }}
 
       - name: 🎞️ Install fixture encoder
         if: ${{ needs.changes.outputs.e2e == 'true' }}

@@ -139,18 +139,20 @@ jobs:
           git submodule sync --recursive
           git submodule update --init --recursive
 
-      - name: 🎭 Cache Playwright browsers
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-
       - name: 📦 Setup project
         uses: ./.github/actions/setup-release
         with:
           node-version: ${{ needs.provenance.outputs.node-version }}
+
+      - name: 🎭 Resolve installed Playwright version
+        id: playwright
+        run: node -p "'version=' + require('@playwright/test/package.json').version" >> "$GITHUB_OUTPUT"
+
+      - name: 🎭 Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-chromium-firefox-webkit-${{ steps.playwright.outputs.version }}
 
       - name: 🎞️ Install fixture encoder
         run: |
