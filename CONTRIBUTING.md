@@ -79,6 +79,13 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `.githooks/pre-commit`, `.githooks/pre-push` | Minimal Git-launched Bash guard rejects detached/default-branch commits and direct default-branch pushes before pinned Node setup. | `test/unit/config/git-hooks.test.ts`. Retain as a small pre-runtime Git adapter; revisit if the hook installer guarantees pinned Node for every local Git invocation without loosening the refusal. |
 | Test subprocess callers | `test/unit/config/{command-adapters,workflow-routing,release-runtime,release-publication-guard,git-hooks,node-script-boundaries,playwright-profile}.test.ts`, `scripts/check/run-child.test.ts`, and `scripts/ci/repository-authority.test.ts` exercise CLI, child, Git, and release policy in fixtures. Provider tests own OSV parser/scanner behavior. | Keep callers and NodeNext configs aligned; fixture tests do not prove browser media or publication acceptance. |
 
+CI and release cache Chromium, Firefox, and WebKit under an exact key containing
+the installed Playwright version, runner OS/architecture, and Ubuntu 24.04.
+Both workflows install browser and OS dependencies and run their E2E suite after
+cache restoration. [Issue #324](https://github.com/PiesP/wasm-motion-converter/issues/324)
+records the comparison behind this choice; revisit the cache when the runner
+image, browser set, Playwright installation contract, or cache behavior changes.
+
 ### Windows bundle and retained languages
 
 `validation/windows/profile.json` declares generated `dist`, named generated MP4/WebM fixtures, `output-contract.json` and raw `output-contract.mjs`; the controller imports `profile.mjs` and invokes `run({ browser, root, output })` under its pinned portable Windows Node and installed stable browser. The prepared Windows controller runs `pnpm prepare:e2e:fixture` and `pnpm build:ci` in a **clean Linux checkout**, then bundles `playwright-core` and portable Node. Guest Node/pnpm/FFmpeg on PATH are not prerequisites.
