@@ -72,7 +72,8 @@ describe('Playwright workflow profiles', () => {
     expect(config).toContain("name: 'webkit'");
     expect(config).toContain("'e2e/browser-capability.spec.ts'");
     expect(config).toContain('IS_DEPLOY_PROFILE || IS_RESOURCE_PROFILE');
-    expect(workflow).toContain('playwright install --with-deps chromium firefox webkit');
+    expect(workflow).toContain('playwright install-deps chromium firefox webkit');
+    expect(workflow).toContain('playwright install chromium firefox webkit');
     expect(releaseWorkflow).toContain('playwright install --with-deps chromium firefox webkit');
   });
 });

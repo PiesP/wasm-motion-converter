@@ -21,6 +21,12 @@ on:
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
+    inputs:
+      cache_trial:
+        description: Temporary issue-324 browser-cache comparison
+        type: choice
+        default: normal
+        options: [normal, cache, no-cache]
 
 permissions:
   contents: read
@@ -189,13 +195,12 @@ jobs:
           submodules: true
 
       - name: 🎭 Cache Playwright browsers
-        if: ${{ needs.changes.outputs.e2e == 'true' }}
+        if: ${{ needs.changes.outputs.e2e == 'true' && inputs.cache_trial != 'no-cache' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
+          key: ${{ inputs.cache_trial == 'cache' && format('playwright-issue-324-20261015-{0}-{1}-{2}', runner.os, runner.arch, hashFiles('pnpm-lock.yaml')) || format('playwright-{0}-{1}', runner.os, hashFiles('pnpm-lock.yaml')) }}
+          restore-keys: ${{ inputs.cache_trial != 'cache' && format('playwright-{0}-', runner.os) || '' }}
 
       - name: 📦 Setup project
         if: ${{ needs.changes.outputs.e2e == 'true' }}
@@ -207,11 +212,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
 
+      - name: 🎭 Install browser OS dependencies
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
+        run: pnpm exec playwright install-deps chromium firefox webkit
+
+      - name: 🎭 Install browser binaries
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
+        run: pnpm exec playwright install chromium firefox webkit
+
       - name: 🎭 Run repository-backed E2E tests
         if: ${{ needs.changes.outputs.e2e == 'true' }}
-        run: |
-          pnpm exec playwright install --with-deps chromium firefox webkit
-          pnpm test:e2e:ci
+        run: pnpm test:e2e:ci
 
       - name: 📊 Upload Playwright diagnostics
         if: ${{ needs.changes.outputs.e2e == 'true' && failure() && !cancelled() }}
