@@ -4,6 +4,8 @@
 version: 2
 updates:
   # Root workspace npm packages
+  # Port mediabunny's version-specific memory-limit patch and lockfile together;
+  # a version-only update fails closed with ERR_PNPM_UNUSED_PATCH.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:

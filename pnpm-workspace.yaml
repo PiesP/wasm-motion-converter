@@ -35,5 +35,5 @@ update:
     - "@vitest/coverage-v8"
 
 patchedDependencies:
-  mediabunny@1.59.1: patches/mediabunny@1.59.1.patch
+  mediabunny@1.61.4: patches/mediabunny@1.61.4.patch
   wasm-webp@0.1.0: patches/wasm-webp@0.1.0.patch

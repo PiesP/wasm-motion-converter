@@ -10,7 +10,7 @@ overrides:
   undici@>=7.0.0 <7.29.1: 7.29.1
 
 patchedDependencies:
-  mediabunny@1.59.1: 1c205423eea933b973cdd819901bca5b785f7c2ded9789e45211d4b1599701f8
+  mediabunny@1.61.4: d41a52a731ec570b5d5ee09ebe78dbdeef5d370894017c5febb2fd7e0dec8d5a
   wasm-webp@0.1.0: bef378941329357206c2b92a9ed683d03a25ca0c9331dd09f664fe0392d0b6f5
 
 importers:
@@ -24,8 +24,8 @@ importers:
         specifier: ^1.0.3
         version: 1.0.3
       mediabunny:
-        specifier: 1.59.1
-        version: 1.59.1(patch_hash=1c205423eea933b973cdd819901bca5b785f7c2ded9789e45211d4b1599701f8)
+        specifier: 1.61.4
+        version: 1.61.4(patch_hash=d41a52a731ec570b5d5ee09ebe78dbdeef5d370894017c5febb2fd7e0dec8d5a)
       solid-js:
         specifier: 1.9.17
         version: 1.9.17
@@ -2312,8 +2312,8 @@ packages:
   mdn-data@2.27.1:
     resolution: {integrity: sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==}
 
-  mediabunny@1.59.1:
-    resolution: {integrity: sha512-K6vFvOZ7x36fqP3MaFFWFLYEfGF192qY4LQ6QB+L5eB74SUJjEgq9ZRztYpk9RJOjSyxooPZBV4WE0k8PKcjaQ==}
+  mediabunny@1.61.4:
+    resolution: {integrity: sha512-gZPBi40ldiZGeU2DJxT/Q3hlNiaxfpwNYTfmi0Maq3SoBJT64+W+ySc0Z7t+2JUGxNbkXnLFrDkSS2OQuweOhA==}
 
   merge-anything@5.1.7:
     resolution: {integrity: sha512-eRtbOb1N5iyH0tkQDAoQ4Ipsp/5qSR79Dzrz8hEPxRX10RWWR/iQXdoKmBSRCThY1Fh5EhISDtpSc93fpxUniQ==}
@@ -4802,7 +4802,7 @@ snapshots:
 
   mdn-data@2.27.1: {}
 
-  mediabunny@1.59.1(patch_hash=1c205423eea933b973cdd819901bca5b785f7c2ded9789e45211d4b1599701f8):
+  mediabunny@1.61.4(patch_hash=d41a52a731ec570b5d5ee09ebe78dbdeef5d370894017c5febb2fd7e0dec8d5a):
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13
