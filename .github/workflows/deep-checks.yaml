@@ -98,9 +98,19 @@ jobs:
         if: ${{ steps.marker.outputs.reuse != 'true' }}
         uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
 
+      - name: 🔒 Prepare job-owned mutation checkout
+        if: ${{ steps.marker.outputs.reuse != 'true' }}
+        env:
+          MUTATION_WORKSPACE_CONTRACT: github-job-v1
+          MUTATION_SOURCE_SHA: ${{ github.sha }}
+        run: node --experimental-strip-types scripts/ci/mutation-workspace.ts prepare-hosted
+
       - name: 🧬 Run mutation gate
         id: check
         if: ${{ steps.marker.outputs.reuse != 'true' }}
+        env:
+          MUTATION_WORKSPACE_CONTRACT: github-job-v1
+          MUTATION_SOURCE_SHA: ${{ github.sha }}
         run: pnpm mut:fast
 
       - name: 📊 Upload mutation reports
@@ -111,6 +121,20 @@ jobs:
           name: mutation-report-${{ github.sha }}
           path: reports/mutation/
           if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+
+      - name: 📤 Retain failed mutation diagnostics
+        if: ${{ failure() && !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-diagnostics-${{ github.sha }}
+          path: |
+            .git/wmc-mutation/
+            .stryker-tmp*/
+            reports/mutation/
+          include-hidden-files: true
+          if-no-files-found: warn
           retention-days: 14
           compression-level: 9
 

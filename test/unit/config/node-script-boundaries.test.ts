@@ -22,6 +22,7 @@ const entries = [
   'scripts/build/generate-licenses.ts',
   'scripts/build/postbuild.ts',
   'scripts/ci/deep-check-reuse.ts',
+  'scripts/ci/mutation-workspace.ts',
   'scripts/check/i18n.ts',
   'scripts/release/prepare.ts',
   'scripts/release/publication-guard.ts',

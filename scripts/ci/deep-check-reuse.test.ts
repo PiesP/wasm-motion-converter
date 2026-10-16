@@ -42,6 +42,7 @@ for (const path of [
   'pnpm-lock.yaml',
   'scripts/ci/pinned-tools.ts',
   'scripts/ci/pinned-tools.json',
+  'scripts/ci/mutation-workspace.ts',
   '.github/workflows/deep-checks.yaml',
 ]) {
   write(path, 'original\n');
@@ -76,6 +77,7 @@ test('each tracked source, test, configuration, lock, and tool input invalidates
     'pnpm-lock.yaml',
     'scripts/ci/pinned-tools.ts',
     'scripts/ci/pinned-tools.json',
+    'scripts/ci/mutation-workspace.ts',
     '.github/workflows/deep-checks.yaml',
     'package.json',
   ]) {

@@ -48,7 +48,9 @@ describe('Fast mutation profile', () => {
     expect(config.mutator?.excludedMutations).not.toContain('ConditionalExpression');
     expect(config.mutator?.excludedMutations).not.toContain('EqualityOperator');
     expect(config.mutator?.excludedMutations).not.toContain('BooleanLiteral');
-    expect(packageJson.scripts?.['mut:fast']).toBe('stryker run stryker.conf.fast.json');
+    expect(packageJson.scripts?.['mut:fast']).toBe(
+      'node --experimental-strip-types scripts/ci/mutation-workspace.ts run fast'
+    );
     expect(workflow).not.toContain('\n  push:\n');
     expect(ciWorkflow).not.toContain('name: pr-gate/duplication');
     expect(workflow).toContain('path: reports/mutation/');
