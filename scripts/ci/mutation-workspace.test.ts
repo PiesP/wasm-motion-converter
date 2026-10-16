@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -64,8 +65,9 @@ git(owner, 'init', '-q', maintainer);
 write(join(maintainer, '.gitignore'), 'node_modules/\nreports/\n.stryker-tmp*/\n');
 write(
   join(maintainer, 'package.json'),
-  '{"name":"wasm-motion-converter","private":true,"type":"module"}\n'
+  '{"name":"wasm-motion-converter","private":true,"type":"module","packageManager":"pnpm@11.26.0"}\n'
 );
+write(join(maintainer, 'pnpm-lock.yaml'), 'fixture frozen dependency lock\n');
 write(join(maintainer, 'stryker.conf.json'), '{"inPlace":true}\n');
 write(join(maintainer, 'stryker.conf.fast.json'), '{"inPlace":true}\n');
 write(join(maintainer, 'src/committed.txt'), 'committed source\n');
@@ -159,6 +161,12 @@ function clone(): string {
   const stryker = join(execution, 'node_modules/@stryker-mutator/core');
   write(join(stryker, 'package.json'), '{"name":"@stryker-mutator/core","version":"10.0.0"}\n');
   write(join(stryker, 'bin/stryker.js'), fakeStryker);
+  write(join(execution, 'node_modules/.pnpm/lock.yaml'), 'fixture frozen dependency lock\n');
+  write(
+    join(execution, 'node_modules/@stryker-mutator/vitest-runner/package.json'),
+    '{"version":"10.0.0"}\n'
+  );
+  write(join(execution, 'node_modules/vitest/package.json'), '{"version":"4.1.11"}\n');
   return execution;
 }
 
@@ -267,6 +275,58 @@ test('core common object storage outside the clone is refused before preparation
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Core and object storage must belong/);
   assert.equal(existsSync(join(execution, '.git/wmc-mutation')), false);
+  maintainerUnchanged();
+});
+
+test('empty dependency cache bind mounts cannot write through to the maintainer', (t) => {
+  const capability = spawnSync('unshare', ['--user', '--map-root-user', '--mount', 'true']);
+  if (capability.status !== 0) {
+    t.skip('Private user/mount namespaces are unavailable on this runner.');
+    return;
+  }
+  const execution = clone();
+  const sourceCache = join(maintainer, 'node_modules/.vite');
+  const executionCache = join(execution, 'node_modules/.vite');
+  mkdirSync(sourceCache, { recursive: true });
+  mkdirSync(executionCache, { recursive: true });
+  const result = spawnSync(
+    'unshare',
+    [
+      '--user',
+      '--map-root-user',
+      '--mount',
+      'sh',
+      '-c',
+      'mount --bind "$1" "$2" && exec "$3" --experimental-strip-types "$4" prepare "$5" "$6"',
+      'mount-fixture',
+      sourceCache,
+      executionCache,
+      process.execPath,
+      join(execution, 'scripts/ci/mutation-workspace.ts'),
+      maintainer,
+      selected,
+    ],
+    { cwd: execution, encoding: 'utf8', env: process.env }
+  );
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /shares files or dependencies/);
+  assert.equal(existsSync(join(execution, '.git/wmc-mutation')), false);
+  assert.deepEqual(readdirSync(sourceCache), []);
+  maintainerUnchanged();
+});
+
+test('stale installed lock or changed runner version cannot reuse preparation', () => {
+  const stale = clone();
+  write(join(stale, 'node_modules/.pnpm/lock.yaml'), 'older installed dependency lock\n');
+  assert.notEqual(invoke(stale, ['prepare', maintainer, selected]).status, 0);
+  assert.equal(existsSync(join(stale, '.git/wmc-mutation')), false);
+  const execution = prepared();
+  write(
+    join(execution, 'node_modules/@stryker-mutator/vitest-runner/package.json'),
+    '{"version":"9.0.0"}\n'
+  );
+  assert.notEqual(invoke(execution, ['run', 'fast']).status, 0);
+  assert.equal(existsSync(join(execution, '.git/wmc-mutation/run')), false);
   maintainerUnchanged();
 });
 

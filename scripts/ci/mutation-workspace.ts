@@ -30,7 +30,11 @@ type Prepared = {
   core: string;
   snapshot: string;
   node: string;
+  pnpm: string;
+  lock: string;
   stryker: string;
+  vitestRunner: string;
+  vitest: string;
   context: string;
 };
 
@@ -119,6 +123,7 @@ function files(cwd: string, contained: boolean): Set<string> {
     visited.add(real);
     const stat = lstatSync(real);
     if (stat.isDirectory()) {
+      identities.add(`${stat.dev}:${stat.ino}`);
       for (const entry of readdirSync(real)) {
         visit(join(real, entry));
       }
@@ -136,7 +141,11 @@ function checkout(hosted: boolean): {
   commit: string;
   core: string;
   snapshot: string;
+  pnpm: string;
+  lock: string;
   stryker: string;
+  vitestRunner: string;
+  vitest: string;
 } {
   if (process.platform !== 'linux') {
     fail('Supported runners: Linux/WSL and GitHub-hosted Ubuntu. Native Windows is refused.');
@@ -209,10 +218,28 @@ function checkout(hosted: boolean): {
   if (git(join(root, 'packages/core'), 'rev-parse', 'HEAD') !== core) {
     fail('Initialize the recorded packages/core revision.');
   }
-  for (const path of ['node_modules/@piesp/browser-core', 'node_modules/@stryker-mutator/core']) {
+  for (const path of [
+    'node_modules/@piesp/browser-core',
+    'node_modules/@stryker-mutator/core',
+    'node_modules/@stryker-mutator/vitest-runner',
+    'node_modules/vitest',
+  ]) {
     if (!inside(join(root, 'node_modules'), realpathSync(join(root, path)))) {
       fail(`Dependency resolves outside the owned installed tree: ${path}`);
     }
+  }
+  const lock = hash(readFileSync(join(root, 'pnpm-lock.yaml')));
+  if (hash(readFileSync(join(root, 'node_modules/.pnpm/lock.yaml'))) !== lock) {
+    fail('Installed dependency lock differs. Install with --frozen-lockfile in a fresh clone.');
+  }
+  const manager = spawnSync('pnpm', ['--version'], {
+    cwd: root,
+    env: environment(),
+    encoding: 'utf8',
+  });
+  const pnpm = manager.stdout?.trim();
+  if (manager.status !== 0 || json(join(root, 'package.json')).packageManager !== `pnpm@${pnpm}`) {
+    fail('Use the manifest-selected pnpm runtime for mutation preparation and execution.');
   }
   const installedCore = realpathSync(join(root, 'node_modules/@piesp/browser-core'));
   for (const name of git(join(root, 'packages/core'), 'ls-files', '-z')
@@ -231,7 +258,13 @@ function checkout(hosted: boolean): {
     commit,
     core,
     snapshot: hash(snapshot(root) + snapshot(join(root, 'packages/core'))),
+    pnpm,
+    lock,
     stryker: String(json(join(root, 'node_modules/@stryker-mutator/core/package.json')).version),
+    vitestRunner: String(
+      json(join(root, 'node_modules/@stryker-mutator/vitest-runner/package.json')).version
+    ),
+    vitest: String(json(join(root, 'node_modules/vitest/package.json')).version),
   };
 }
 
@@ -455,7 +488,16 @@ async function run(profile: Profile, args: string[]): Promise<number> {
     }
     verifyIsolation(record.source);
   }
-  for (const key of ['commit', 'core', 'snapshot', 'stryker'] as const) {
+  for (const key of [
+    'commit',
+    'core',
+    'snapshot',
+    'pnpm',
+    'lock',
+    'stryker',
+    'vitestRunner',
+    'vitest',
+  ] as const) {
     if (record[key] !== state[key]) {
       fail(`Prepared ${key} changed; prepare a fresh clone.`);
     }
