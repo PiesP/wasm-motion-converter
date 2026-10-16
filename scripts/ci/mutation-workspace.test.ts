@@ -99,6 +99,8 @@ write(join(maintainer, 'pnpm-lock.yaml'), dependencyLock);
 write(join(maintainer, 'stryker.conf.json'), '{"inPlace":true}\n');
 write(join(maintainer, 'stryker.conf.fast.json'), '{"inPlace":true}\n');
 write(join(maintainer, 'src/committed.txt'), 'committed source\n');
+write(join(maintainer, 'src/fixture.ts'), 'export const fixture = 1;\n');
+write(join(maintainer, 'test/fixture.test.ts'), '// Maintained test selection fixture.\n');
 mkdirSync(join(maintainer, 'scripts/ci'), { recursive: true });
 copyFileSync(sourceLauncher, join(maintainer, 'scripts/ci/mutation-workspace.ts'));
 git(
@@ -458,7 +460,7 @@ test('full and fast profiles forward supported arguments and retain one analysis
     '2',
     '--logLevel=debug',
     '--mutate',
-    'src/*.ts',
+    'src/*.ts:1-1',
     '--testFiles',
     'test/**/*.test.ts',
   ]);
@@ -473,7 +475,7 @@ test('full and fast profiles forward supported arguments and retain one analysis
     '--logLevel',
     'debug',
     '--mutate',
-    'src/*.ts',
+    'src/*.ts:1-1',
     '--testFiles',
     'test/**/*.test.ts',
   ]);
@@ -493,6 +495,7 @@ test('full and fast profiles forward supported arguments and retain one analysis
 
 test('unsafe output and path arguments refuse before a run claim or fake child', () => {
   const execution = prepared();
+  write(join(execution, 'node_modules/ignored.test.ts'), '// Ignored dependency file.\n');
   for (const args of [
     ['--tempDirName', '../../maintainer'],
     ['--reporters', 'html'],
@@ -501,6 +504,11 @@ test('unsafe output and path arguments refuse before a run claim or fake child',
     ['--mutate', 'src/{private,public}.ts'],
     ['--mutate', 'src/[a-z].ts'],
     ['--testFiles', 'test/**/../private.test.ts'],
+    ['--testFiles', 'test/no-such-tests.test.ts'],
+    ['--testFiles', 'test/**/*.test.ts,!test/**/*.test.ts'],
+    ['--testFiles', 'node_modules/ignored.test.ts'],
+    ['--mutate', 'src/no-such-source.ts'],
+    ['--mutate', 'src/*.ts,!src/*.ts'],
   ]) {
     const result = invoke(execution, ['run', 'fast', ...args]);
     assert.notEqual(result.status, 0);

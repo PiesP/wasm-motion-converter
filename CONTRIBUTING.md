@@ -104,8 +104,13 @@ same canonical `pnpm mut:fast` report location and threshold.
 
 Local diagnostic arguments are `--dryRunOnly`, `--concurrency`/`-c` (1–32),
 `--logLevel`, `--mutate`/`-m`, and `--testFiles`/`-t`. Pass paths as relative
-comma-separated globs within the clone. Other configuration and output path
-overrides are refused; hosted gates accept no overrides. The full command keeps
+comma-separated globs within the clone. Diagnostic mutation patterns must select existing regular files under `src/`;
+test patterns must select existing `.test` or `.spec` files under `test/`.
+Positive patterns followed by exclusions must leave a nonempty selection;
+Stryker mutation line ranges are supported. This conservative admission check
+prevents no-match fallback and is not Stryker discovery-equivalence evidence.
+Other configuration and output path overrides are refused; hosted gates accept
+no overrides. The full command keeps
 its progress reporter and the fast command keeps its configured reporters.
 The boundary tests use Linux `unshare` for a private mount experiment when
 available and report that case as skipped when the runner disables namespaces.
