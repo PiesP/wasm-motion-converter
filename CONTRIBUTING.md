@@ -107,6 +107,8 @@ Local diagnostic arguments are `--dryRunOnly`, `--concurrency`/`-c` (1–32),
 comma-separated globs within the clone. Other configuration and output path
 overrides are refused; hosted gates accept no overrides. The full command keeps
 its progress reporter and the fast command keeps its configured reporters.
+The boundary tests use Linux `unshare` for a private mount experiment when
+available and report that case as skipped when the runner disables namespaces.
 
 If a run fails or is interrupted, inspect `.git/wmc-mutation/`, reports, Stryker
 backups, and the checkout's remaining processes before taking action. Preserve
