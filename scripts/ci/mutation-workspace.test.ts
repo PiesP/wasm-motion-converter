@@ -65,9 +65,37 @@ git(owner, 'init', '-q', maintainer);
 write(join(maintainer, '.gitignore'), 'node_modules/\nreports/\n.stryker-tmp*/\n');
 write(
   join(maintainer, 'package.json'),
-  '{"name":"wasm-motion-converter","private":true,"type":"module","packageManager":"pnpm@11.26.0"}\n'
+  '{"name":"wasm-motion-converter","private":true,"type":"module","packageManager":"pnpm@11.26.0","volta":{"node":"26.9.0","pnpm":"11.26.0"},"devDependencies":{"@stryker-mutator/core":"10.0.0","@stryker-mutator/vitest-runner":"10.0.0","vitest":"4.1.11"}}\n'
 );
-write(join(maintainer, 'pnpm-lock.yaml'), 'fixture frozen dependency lock\n');
+const dependencyLock = `lockfileVersion: '9.0'
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+importers:
+  .:
+    devDependencies:
+      '@stryker-mutator/core':
+        specifier: 10.0.0
+        version: 10.0.0
+      '@stryker-mutator/vitest-runner':
+        specifier: 10.0.0
+        version: 10.0.0
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11
+packages:
+  '@stryker-mutator/core@10.0.0':
+    resolution: {integrity: sha512-Zml4dHVyZQ==}
+  '@stryker-mutator/vitest-runner@10.0.0':
+    resolution: {integrity: sha512-Zml4dHVyZQ==}
+  vitest@4.1.11:
+    resolution: {integrity: sha512-Zml4dHVyZQ==}
+snapshots:
+  '@stryker-mutator/core@10.0.0': {}
+  '@stryker-mutator/vitest-runner@10.0.0': {}
+  vitest@4.1.11: {}
+`;
+write(join(maintainer, 'pnpm-lock.yaml'), dependencyLock);
 write(join(maintainer, 'stryker.conf.json'), '{"inPlace":true}\n');
 write(join(maintainer, 'stryker.conf.fast.json'), '{"inPlace":true}\n');
 write(join(maintainer, 'src/committed.txt'), 'committed source\n');
@@ -161,7 +189,7 @@ function clone(): string {
   const stryker = join(execution, 'node_modules/@stryker-mutator/core');
   write(join(stryker, 'package.json'), '{"name":"@stryker-mutator/core","version":"10.0.0"}\n');
   write(join(stryker, 'bin/stryker.js'), fakeStryker);
-  write(join(execution, 'node_modules/.pnpm/lock.yaml'), 'fixture frozen dependency lock\n');
+  write(join(execution, 'node_modules/.pnpm/lock.yaml'), dependencyLock);
   write(
     join(execution, 'node_modules/@stryker-mutator/vitest-runner/package.json'),
     '{"version":"10.0.0"}\n'
@@ -316,6 +344,15 @@ test('empty dependency cache bind mounts cannot write through to the maintainer'
 });
 
 test('stale installed lock or changed runner version cannot reuse preparation', () => {
+  const wrongVersion = clone();
+  write(
+    join(wrongVersion, 'node_modules/@stryker-mutator/core/package.json'),
+    '{"version":"9.0.0"}\n'
+  );
+  const refused = invoke(wrongVersion, ['prepare', maintainer, selected]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /differs from its locked version/);
+  assert.equal(existsSync(join(wrongVersion, '.git/wmc-mutation')), false);
   const stale = clone();
   write(join(stale, 'node_modules/.pnpm/lock.yaml'), 'older installed dependency lock\n');
   assert.notEqual(invoke(stale, ['prepare', maintainer, selected]).status, 0);

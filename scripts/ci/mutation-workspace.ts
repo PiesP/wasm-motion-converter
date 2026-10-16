@@ -241,6 +241,30 @@ function checkout(hosted: boolean): {
   if (manager.status !== 0 || json(join(root, 'package.json')).packageManager !== `pnpm@${pnpm}`) {
     fail('Use the manifest-selected pnpm runtime for mutation preparation and execution.');
   }
+  const listed = spawnSync('pnpm', ['list', '--lockfile-only', '--json', '--depth', '0'], {
+    cwd: root,
+    env: environment(),
+    encoding: 'utf8',
+    timeout: 15_000,
+  });
+  if (listed.status !== 0) {
+    fail('Cannot resolve locked mutation tools with pnpm list --lockfile-only.');
+  }
+  const projects: unknown = JSON.parse(listed.stdout);
+  if (!Array.isArray(projects) || projects.length !== 1) {
+    fail('Expected exactly one locked project for mutation execution.');
+  }
+  const locked = object(object(projects[0]).devDependencies);
+  for (const name of ['@stryker-mutator/core', '@stryker-mutator/vitest-runner', 'vitest']) {
+    const expected = object(locked[name]).version;
+    if (
+      typeof expected !== 'string' ||
+      expected.length === 0 ||
+      expected !== json(join(root, 'node_modules', name, 'package.json')).version
+    ) {
+      fail(`Installed mutation tool differs from its locked version: ${name}`);
+    }
+  }
   const installedCore = realpathSync(join(root, 'node_modules/@piesp/browser-core'));
   for (const name of git(join(root, 'packages/core'), 'ls-files', '-z')
     .split('\0')
