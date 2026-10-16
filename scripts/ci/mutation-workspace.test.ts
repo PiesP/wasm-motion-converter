@@ -460,7 +460,7 @@ test('full and fast profiles forward supported arguments and retain one analysis
     '2',
     '--logLevel=debug',
     '--mutate',
-    'src/*.ts:1-1',
+    'src/fixture.ts:1-1',
     '--testFiles',
     'test/**/*.test.ts',
   ]);
@@ -475,7 +475,7 @@ test('full and fast profiles forward supported arguments and retain one analysis
     '--logLevel',
     'debug',
     '--mutate',
-    'src/*.ts:1-1',
+    'src/fixture.ts:1-1',
     '--testFiles',
     'test/**/*.test.ts',
   ]);
