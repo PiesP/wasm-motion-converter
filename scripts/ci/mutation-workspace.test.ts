@@ -482,6 +482,20 @@ test('full and fast profiles forward supported arguments and retain one analysis
   assert.equal(runRecord(full).status, 'dry-run-only');
   assert.notEqual(invoke(full, ['run', 'fast']).status, 0);
 
+  const reinclude = prepared();
+  const reincludeResult = invoke(reinclude, [
+    'run',
+    'full',
+    '--dryRunOnly',
+    '--mutate',
+    '!src/fixture.ts,src/fixture.ts',
+  ]);
+  assert.equal(reincludeResult.status, 0, reincludeResult.stderr);
+  assert.equal(
+    JSON.parse(readFileSync(join(reinclude, 'fake-argv.json'), 'utf8')).at(-1),
+    '!src/fixture.ts,src/fixture.ts'
+  );
+
   const fast = prepared();
   assert.equal(invoke(fast, ['run', 'fast']).status, 0);
   assert.deepEqual(JSON.parse(readFileSync(join(fast, 'fake-argv.json'), 'utf8')), [

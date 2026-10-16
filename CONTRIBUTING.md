@@ -107,8 +107,7 @@ Local diagnostic arguments are `--dryRunOnly`, `--concurrency`/`-c` (1–32),
 comma-separated globs within the clone. Diagnostic mutation patterns must select
 existing regular files under `src/`;
 test patterns must select existing `.test` or `.spec` files under `test/`.
-Mutation positive patterns followed by exclusions must leave a nonempty
-selection; Stryker mutation line ranges are supported. Test-file selectors
+Mutation patterns are applied in order and must leave a nonempty selection; Stryker mutation line ranges are supported. Test-file selectors
 accept positive globs only, without mutation ranges or `!` exclusions. This
 conservative admission check
 prevents no-match fallback and is not Stryker discovery-equivalence evidence.
