@@ -41,6 +41,27 @@ pnpm dev
 
 COOP/COEP headers are configured in `vite.config.ts` for development and preview.
 
+## Dependency and action updates
+
+Dependabot manages workflow dependencies and the external actions inside
+`.github/actions/setup-release`. CodeQL, `pnpm/setup`, and other Actions use
+separate update groups so a toolchain contract failure does not block unrelated
+scanner maintenance. Updates remain subject to maintainer review and the
+existing minimum 24-hour release age.
+
+For an action update, verify the full commit SHA against the official upstream
+release and update the independent allowed-SHA expectations in
+`test/unit/config/toolchain-action.test.ts` in the same reviewed change. Keep
+the protected checkout, verified runtime, action inputs, cache behavior, locked
+installation, and publication boundaries intact. Do not make the expected SHA
+follow the workflow being tested. Local release recipes retain their separately
+reviewed compatibility contracts.
+
+Run the focused toolchain and dependency-policy tests, then `pnpm verify` and
+the applicable workflow checks. Preserve failed evidence and distinguish a
+reviewed pin-contract update from a runtime failure before splitting or closing
+an update PR. A setup check does not authorize release publication.
+
 ## Command catalog
 
 Run package commands from the repository root with manifest-pinned Node and
