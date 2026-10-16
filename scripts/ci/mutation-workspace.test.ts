@@ -159,12 +159,12 @@ if (process.env.FAKE_MUTATION_MODE === 'hold') {
   while (!existsSync('fake-release') && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
   if (!existsSync('fake-release')) process.exit(8);
 }
-if (args[1] === 'stryker.conf.fast.json' && !args.includes('--dryRunOnly')) {
+if (!args.includes('--dryRunOnly')) {
   mkdirSync(join('reports', 'mutation'), { recursive: true });
   const mode = process.env.FAKE_MUTATION_MODE;
   writeFileSync(join('reports', 'mutation', 'mutation.json'), mode === 'malformed'
     ? '{bad'
-    : JSON.stringify({ files: { 'src/committed.txt': { mutants: mode === 'empty' ? [] : [{ status: 'Killed' }] } } }));
+    : JSON.stringify({ files: { 'src/committed.txt': { mutants: mode === 'empty' ? [] : mode === 'pending' ? [{ status: 'Pending' }] : mode === 'missing-status' ? [{}] : [{ status: 'Killed' }] } } }));
   writeFileSync(join('reports', 'mutation', 'mutation.html'), '<html>fixture</html>');
 }
 `;
@@ -468,7 +468,7 @@ test('full and fast profiles forward supported arguments and retain one analysis
   assert.deepEqual(JSON.parse(readFileSync(join(full, 'fake-argv.json'), 'utf8')), [
     'run',
     'stryker.conf.json',
-    '--reporters=progress',
+    '--reporters=progress,json',
     '--dryRunOnly',
     '-c',
     '2',
@@ -505,6 +505,8 @@ test('unsafe output and path arguments refuse before a run claim or fake child',
     ['--mutate', 'src/[a-z].ts'],
     ['--testFiles', 'test/**/../private.test.ts'],
     ['--testFiles', 'test/no-such-tests.test.ts'],
+    ['--testFiles', 'test/fixture.test.ts:1-2'],
+    ['--testFiles', 'test/**/*.test.ts,!test/no-such.test.ts'],
     ['--testFiles', 'test/**/*.test.ts,!test/**/*.test.ts'],
     ['--testFiles', 'node_modules/ignored.test.ts'],
     ['--mutate', 'src/no-such-source.ts'],
@@ -519,9 +521,13 @@ test('unsafe output and path arguments refuse before a run claim or fake child',
 });
 
 test('child failure and malformed or empty reports never create successful receipts', () => {
-  for (const mode of ['fail', 'malformed', 'empty']) {
+  for (const mode of ['fail', 'malformed', 'empty', 'pending', 'missing-status']) {
     const execution = prepared();
-    const result = invoke(execution, ['run', 'fast'], { FAKE_MUTATION_MODE: mode });
+    const result = invoke(
+      execution,
+      ['run', mode === 'pending' || mode === 'missing-status' ? 'full' : 'fast'],
+      { FAKE_MUTATION_MODE: mode }
+    );
     assert.notEqual(result.status, 0, mode);
     const receipt = runRecord(execution);
     assert.notEqual(receipt.status, 'completed', mode);

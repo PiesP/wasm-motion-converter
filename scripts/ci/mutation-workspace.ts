@@ -434,7 +434,7 @@ function argumentsFor(profile: Profile, args: string[], hosted: boolean): string
   return [
     'run',
     profile === 'fast' ? 'stryker.conf.fast.json' : 'stryker.conf.json',
-    ...(profile === 'full' ? ['--reporters=progress'] : []),
+    ...(profile === 'full' ? ['--reporters=progress,json'] : []),
     ...forwarded,
   ];
 }
@@ -442,11 +442,18 @@ function argumentsFor(profile: Profile, args: string[], hosted: boolean): string
 function requireSelectedFiles(value: string, kind: 'test' | 'mutation'): void {
   const selected = new Set<string>();
   const patterns = value.split(',');
+  if (
+    kind === 'test' &&
+    patterns.some((pattern) => pattern.startsWith('!') || pattern.includes(':'))
+  ) {
+    fail('Test-file selectors support positive globs only, without mutation line ranges.');
+  }
   if (!patterns.some((pattern) => !pattern.startsWith('!'))) {
     fail(`At least one positive ${kind} pattern is required.`);
   }
   for (const pattern of patterns.filter((candidate) => !candidate.startsWith('!'))) {
-    const pathname = pattern.replace(/:\d+(?::\d+)?-\d+(?::\d+)?$/, '');
+    const pathname =
+      kind === 'mutation' ? pattern.replace(/:\d+(?::\d+)?-\d+(?::\d+)?$/, '') : pattern;
     for (const name of globSync(pathname, { cwd: root })) {
       const expectedRoot = kind === 'test' ? 'test/' : 'src/';
       if (
@@ -501,6 +508,7 @@ function profileConfig(profile: Profile): void {
       for (const path of paths) {
         safeRelative(String(path).replace(/^!/, ''));
       }
+      requireSelectedFiles(paths.map(String).join(','), key === 'testFiles' ? 'test' : 'mutation');
     }
   }
   for (const key of ['tempDirName', 'incrementalFile']) {
@@ -678,7 +686,7 @@ async function run(profile: Profile, args: string[]): Promise<number> {
     /* Preserve uncertain restoration. */
   }
   const dryRun = args.includes('--dryRunOnly');
-  let reportsComplete: boolean | null = profile === 'fast' && !dryRun ? false : null;
+  let reportsComplete: boolean | null = !dryRun ? false : null;
   if (reportsComplete === false && outcome.code === 0) {
     try {
       const report = json(join(root, 'reports/mutation/mutation.json'));
@@ -688,8 +696,19 @@ async function run(profile: Profile, args: string[]): Promise<number> {
       });
       reportsComplete =
         mutants.length > 0 &&
-        mutants.every((value) => object(value).status !== 'Pending') &&
-        readFileSync(join(root, 'reports/mutation/mutation.html')).length > 0;
+        mutants.every((value) =>
+          [
+            'Killed',
+            'Survived',
+            'NoCoverage',
+            'Timeout',
+            'Ignored',
+            'CompileError',
+            'RuntimeError',
+          ].includes(String(object(value).status))
+        ) &&
+        (profile === 'full' ||
+          readFileSync(join(root, 'reports/mutation/mutation.html')).length > 0);
     } catch {
       /* A zero exit without complete reports must not pass the hosted gate. */
     }
