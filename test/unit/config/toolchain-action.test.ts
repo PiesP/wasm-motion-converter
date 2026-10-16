@@ -116,7 +116,7 @@ describe('central project setup action', () => {
     const setup = publish.split(setupMarker)[1]?.split('\n      - name:')[0];
 
     expect(setup).toBeDefined();
-    expect(setup).toContain('uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0');
+    expect(setup).toContain('uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1');
     expect(checkout).toContain('ref: ${{ github.sha }}');
     expect(checkout).toContain('persist-credentials: false');
     expect(checkout).not.toContain('release-sha');
