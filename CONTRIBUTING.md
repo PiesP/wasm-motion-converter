@@ -115,6 +115,8 @@ backups, and the checkout's remaining processes before taking action. Preserve
 logs and backups while deciding whether restoration completed. Compare any
 modified content with its **before-run** state; `HEAD` cannot reconstruct dirty
 before-run edits. A forced shutdown can prevent cleanup or final status writes.
+Deep and Release attempt to retain available failure diagnostics for 14 days;
+unconditional hosted cancellation can also prevent artifact upload.
 Use a new disposable checkout for the next run, and discard the old one manually
 only after confirming its ownership, process state, and retained evidence. Do
 not reset or clean the maintainer checkout as a recovery step.
