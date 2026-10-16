@@ -64,8 +64,58 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
 | `pnpm fmt`, `fmt:check`, `lint`, `knip`, `knip:full`, `knip:production`, `circular` | Biome style/lint, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
 | `pnpm quality`, `verify` | Quality runs one read-only `biome ci .` pass for formatting, lint and import organization, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
-| `pnpm mut`, `mut:fast` | Stryker full/fast mutation gates. The weekly and manual deep workflow runs `mut:fast`; manual runs default to fresh analysis, with `reuse_success=true` opting into validated reuse. | Generates temp/reports; use actual mutation receipts. |
+| `pnpm mut:prepare`, `mut`, `mut:fast` | Prepare an independent disposable checkout, then launch full/fast Stryker through `scripts/ci/mutation-workspace.ts`. Deep and Release admit their job-owned checkout; manual Deep runs default to fresh analysis. | One analysis per checkout; reports stay in `reports/mutation/`, diagnostics in `.git/wmc-mutation/`. See Mutation runs below. |
 | `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `legacy-state.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
+
+### Mutation runs
+
+Mutation testing uses Stryker's `inPlace` mode. Even `dryRunOnly` can write source
+and temporary files during instrumentation. Run either profile in a separate,
+independent full clone on Linux or WSL; native Windows invocation is refused.
+Directly invoking the Stryker binary in a maintainer checkout bypasses this
+protection and is unsafe. A run record helps prevent accidental use of the wrong
+checkout; it is not an OS sandbox for hostile code.
+
+Select a committed revision explicitly. The example creates a new directory
+outside the source checkout; replace both absolute paths before running it.
+
+```bash
+MUTATION_SOURCE=/absolute/path/to/wasm-motion-converter
+MUTATION_COMMIT=$(git -C "$MUTATION_SOURCE" rev-parse HEAD)
+MUTATION_CLONE=/absolute/path/outside/source/wmc-mutation-1
+git clone --no-local --no-hardlinks --no-checkout "$MUTATION_SOURCE" "$MUTATION_CLONE"
+git -C "$MUTATION_CLONE" -c advice.detachedHead=false checkout --detach "$MUTATION_COMMIT"
+git -C "$MUTATION_CLONE" submodule sync --recursive
+git -C "$MUTATION_CLONE" submodule update --init --recursive
+(
+  cd "$MUTATION_CLONE"
+  pnpm install --frozen-lockfile --package-import-method=copy
+  pnpm mut:prepare "$MUTATION_SOURCE" "$MUTATION_COMMIT"
+  pnpm mut:fast # or pnpm mut, using a new clone for the other profile
+)
+```
+
+Uncommitted source or core edits are not included in the selected commit and
+must not be described as tested. `pnpm mut` and `pnpm mut:fast` refuse an ordinary
+maintainer checkout before instrumentation. Do not build, probe, or run another
+agent in the disposable checkout during mutation. Deep and Release jobs use
+their own job checkout directly, bound to the selected commit; they keep the
+same canonical `pnpm mut:fast` report location and threshold.
+
+Local diagnostic arguments are `--dryRunOnly`, `--concurrency`/`-c` (1–32),
+`--logLevel`, `--mutate`/`-m`, and `--testFiles`/`-t`. Pass paths as relative
+comma-separated globs within the clone. Other configuration and output path
+overrides are refused; hosted gates accept no overrides. The full command keeps
+its progress reporter and the fast command keeps its configured reporters.
+
+If a run fails or is interrupted, inspect `.git/wmc-mutation/`, reports, Stryker
+backups, and the checkout's remaining processes before taking action. Preserve
+logs and backups while deciding whether restoration completed. Compare any
+modified content with its **before-run** state; `HEAD` cannot reconstruct dirty
+before-run edits. A forced shutdown can prevent cleanup or final status writes.
+Use a new disposable checkout for the next run, and discard the old one manually
+only after confirming its ownership, process state, and retained evidence. Do
+not reset or clean the maintainer checkout as a recovery step.
 
 ### Workflow and subprocess entrypoints
 
