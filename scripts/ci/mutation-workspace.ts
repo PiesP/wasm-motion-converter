@@ -254,7 +254,11 @@ function checkout(hosted: boolean): {
   if (!Array.isArray(projects) || projects.length !== 1) {
     fail('Expected exactly one locked project for mutation execution.');
   }
-  const locked = object(object(projects[0]).devDependencies);
+  const project = object(projects[0]);
+  if (project.path !== root) {
+    fail('Locked mutation tool resolution must belong to the execution checkout.');
+  }
+  const locked = object(project.devDependencies);
   for (const name of ['@stryker-mutator/core', '@stryker-mutator/vitest-runner', 'vitest']) {
     const expected = object(locked[name]).version;
     if (
