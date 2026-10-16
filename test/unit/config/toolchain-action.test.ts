@@ -60,9 +60,20 @@ describe('central project setup action', () => {
       expect(job, label).not.toContain('node-version:');
     }
 
-    for (const workflow of [ciWorkflow, deepChecksWorkflow]) {
-      expect(workflow).not.toContain(localReleaseSetupAction);
-    }
+    expect(deepChecksWorkflow).not.toContain(localReleaseSetupAction);
+    const unit = jobBlock(ciWorkflow, 'unit');
+    expect(ciWorkflow.split(localReleaseSetupAction)).toHaveLength(2);
+    expect(unit).toContain(localReleaseSetupAction);
+    expect(unit.indexOf(centralSetupAction)).toBeLessThan(unit.indexOf(localReleaseSetupAction));
+    expect(unit.indexOf('Record release setup inputs')).toBeLessThan(
+      unit.indexOf(localReleaseSetupAction)
+    );
+    expect(unit.indexOf(localReleaseSetupAction)).toBeLessThan(
+      unit.indexOf('Verify release setup')
+    );
+    expect(unit).toContain('sha256sum --check "$RUNNER_TEMP/release-setup-inputs.sha256"');
+    expect(unit).toContain('test "$(node --version)" = "v$expected_node"');
+    expect(unit).toContain('test "$(pnpm --version)" = "$expected_pnpm"');
   });
 
   it('uses a locally reviewable setup action for every dependency-backed release job', () => {
@@ -76,7 +87,7 @@ describe('central project setup action', () => {
 
     expect(existsSync(releaseSetupActionPath)).toBe(true);
     expect(releaseSetupAction).toContain(
-      'uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0'
+      'uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1'
     );
     expect(releaseSetupAction).toContain('package-json-file: package.json');
     expect(releaseSetupAction).toContain('runtime: "node@${{ steps.runtime.outputs.version }}"');
