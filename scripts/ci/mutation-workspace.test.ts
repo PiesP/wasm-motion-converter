@@ -162,10 +162,14 @@ if (process.env.FAKE_MUTATION_MODE === 'hold') {
 if (!args.includes('--dryRunOnly')) {
   mkdirSync(join('reports', 'mutation'), { recursive: true });
   const mode = process.env.FAKE_MUTATION_MODE;
-  writeFileSync(join('reports', 'mutation', 'mutation.json'), mode === 'malformed'
+  const report = process.env.FAKE_MUTATION_REPORT ?? (mode === 'malformed'
     ? '{bad'
     : JSON.stringify({ files: { 'src/committed.txt': { mutants: mode === 'empty' ? [] : mode === 'pending' ? [{ status: 'Pending' }] : mode === 'missing-status' ? [{}] : [{ status: 'Killed' }] } } }));
-  writeFileSync(join('reports', 'mutation', 'mutation.html'), '<html>fixture</html>');
+  if (mode !== 'missing-json') writeFileSync(join('reports', 'mutation', 'mutation.json'), report);
+  const html = join('reports', 'mutation', 'mutation.html');
+  if (mode === 'html-directory') mkdirSync(html);
+  else if (mode !== 'missing-html') writeFileSync(html, mode === 'empty-html' ? '' : '<html>fixture</html>');
+  if (mode === 'unrestored') writeFileSync('src/committed.txt', 'unrestored child edit');
 }
 `;
 
@@ -480,6 +484,7 @@ test('full and fast profiles forward supported arguments and retain one analysis
     'test/**/*.test.ts',
   ]);
   assert.equal(runRecord(full).status, 'dry-run-only');
+  assert.equal(runRecord(full).reportsComplete, null);
   assert.notEqual(invoke(full, ['run', 'fast']).status, 0);
 
   const reinclude = prepared();
@@ -546,10 +551,149 @@ test('child failure and malformed or empty reports never create successful recei
     const receipt = runRecord(execution);
     assert.notEqual(receipt.status, 'completed', mode);
     assert.equal(receipt.exitCode, mode === 'fail' ? 7 : 1);
+    assert.equal(receipt.status, mode === 'fail' ? 'child-failed' : 'reports-incomplete');
+    assert.equal(receipt.reportsComplete, false);
     assert.equal(existsSync(join(execution, '.git/wmc-mutation/run/start.json')), true);
     assert.equal(existsSync(join(execution, '.git/wmc-mutation/run/child.log')), true);
     maintainerUnchanged();
   }
+});
+
+test('every reported file and string status is required across full and fast', async (t) => {
+  const good = { mutants: [{ status: 'Killed' }] };
+  for (const profile of ['full', 'fast']) {
+    for (const bad of [{}, { mutants: {} }]) {
+      for (const reversed of [false, true]) {
+        const entries = [
+          ['src/ok.ts', good],
+          ['src/bad.ts', bad],
+        ];
+        const report = { files: Object.fromEntries(reversed ? entries.reverse() : entries) };
+        await t.test(`${profile}: ${JSON.stringify(bad)}, reversed=${reversed}`, () => {
+          assertIncompleteReport(profile, JSON.stringify(report));
+        });
+      }
+    }
+    await t.test(`${profile}: array status must not coerce to Killed`, () => {
+      assertIncompleteReport(
+        profile,
+        JSON.stringify({ files: { 'src/bad.ts': { mutants: [{ status: ['Killed'] }] } } })
+      );
+    });
+  }
+});
+
+function assertIncompleteReport(profile: string, report: string, mode = ''): void {
+  const execution = prepared();
+  const result = invoke(execution, ['run', profile], {
+    FAKE_MUTATION_REPORT: report,
+    FAKE_MUTATION_MODE: mode,
+  });
+  const receipt = runRecord(execution);
+  const evidence = JSON.stringify({ profile, mode, report, receipt, stdout: result.stdout });
+  // Inspect retained evidence before the fixture's normal cleanup, including on baseline failures.
+  assert.equal(existsSync(join(execution, '.git/wmc-mutation/run/start.json')), true);
+  assert.equal(existsSync(join(execution, '.git/wmc-mutation/run/child.log')), true);
+  assert.equal(
+    existsSync(join(execution, 'reports/mutation/mutation.json')),
+    mode !== 'missing-json'
+  );
+  assert.deepEqual(receipt.child, { code: 0, signal: null }, evidence);
+  assert.equal(receipt.restored, true, evidence);
+  maintainerUnchanged();
+  assert.equal(result.status, 1, evidence);
+  assert.equal(receipt.status, 'reports-incomplete', evidence);
+  assert.equal(receipt.reportsComplete, false, evidence);
+  assert.equal(receipt.exitCode, 1, evidence);
+}
+
+test('invalid report shapes and mixed incomplete statuses reject the entire completion', () => {
+  const good = { mutants: [{ status: 'Killed' }] };
+  for (const mutants of [null, 0, true, 'mutants']) {
+    assertIncompleteReport(
+      'fast',
+      JSON.stringify({ files: { 'src/ok.ts': good, 'src/bad.ts': { mutants } } })
+    );
+  }
+  for (const status of [undefined, null, {}, 1, true, 'Pending', 'Unknown', ' Killed', 'killed']) {
+    assertIncompleteReport(
+      'fast',
+      JSON.stringify({
+        files: { 'src/bad.ts': { mutants: [{ status: 'Killed' }, { status }] } },
+      })
+    );
+  }
+  for (const report of [
+    null,
+    [],
+    {},
+    { files: null },
+    { files: [] },
+    { files: {} },
+    { files: { 'src/empty.ts': { mutants: [] } } },
+    { files: { 'src/ok.ts': good, 'src/bad.ts': null } },
+    { files: { 'src/ok.ts': good, 'src/bad.ts': [] } },
+    { files: { 'src/bad.ts': { mutants: [null] } } },
+    { files: { 'src/bad.ts': { mutants: [[]] } } },
+    { files: { 'src/bad.ts': { mutants: ['Killed'] } } },
+  ]) {
+    assertIncompleteReport('fast', JSON.stringify(report));
+  }
+  assertIncompleteReport('fast', '{bad');
+  assertIncompleteReport('fast', '{}', 'missing-json');
+});
+
+test('terminal statuses and empty individual files remain valid with profile-specific HTML', () => {
+  const populated = {
+    mutants: [
+      'Killed',
+      'Survived',
+      'NoCoverage',
+      'Timeout',
+      'Ignored',
+      'CompileError',
+      'RuntimeError',
+    ].map((status) => ({ status })),
+  };
+  for (const profile of ['full', 'fast']) {
+    for (const reversed of [false, true]) {
+      const entries = [
+        ['src/populated.ts', populated],
+        ['src/empty.ts', { mutants: [] }],
+      ];
+      const execution = prepared();
+      const result = invoke(execution, ['run', profile], {
+        FAKE_MUTATION_REPORT: JSON.stringify({
+          files: Object.fromEntries(reversed ? entries.reverse() : entries),
+        }),
+        FAKE_MUTATION_MODE: profile === 'full' ? 'missing-html' : '',
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const receipt = runRecord(execution);
+      assert.equal(receipt.status, 'completed');
+      assert.equal(receipt.reportsComplete, true);
+      assert.equal(receipt.exitCode, 0);
+      assert.equal(receipt.restored, true);
+      maintainerUnchanged();
+    }
+  }
+  for (const mode of ['missing-html', 'empty-html', 'html-directory']) {
+    assertIncompleteReport('fast', JSON.stringify({ files: { 'src/ok.ts': populated } }), mode);
+  }
+});
+
+test('valid reports cannot override uncertain restoration', () => {
+  const execution = prepared();
+  const result = invoke(execution, ['run', 'fast'], { FAKE_MUTATION_MODE: 'unrestored' });
+  assert.equal(result.status, 1, result.stderr);
+  const receipt = runRecord(execution);
+  assert.equal(receipt.status, 'restoration-unverified');
+  assert.equal(receipt.restored, false);
+  assert.equal(receipt.reportsComplete, true);
+  assert.equal(receipt.exitCode, 1);
+  assert.equal(existsSync(join(execution, '.git/wmc-mutation/run/child.log')), true);
+  assert.equal(existsSync(join(execution, 'reports/mutation/mutation.json')), true);
+  maintainerUnchanged();
 });
 
 test('an active run owns its single-use claim and a second run refuses', async () => {
@@ -585,6 +729,48 @@ test('an active run owns its single-use claim and a second run refuses', async (
     assert.equal(exit, 0, stderr);
   }
   assert.equal(runRecord(execution).status, 'completed');
+  maintainerUnchanged();
+});
+
+test('interruption retains its exit and receipt precedence over report completion', async () => {
+  const execution = prepared();
+  const child = spawn(
+    process.execPath,
+    ['--experimental-strip-types', 'scripts/ci/mutation-workspace.ts', 'run', 'fast'],
+    {
+      cwd: execution,
+      env: { ...process.env, FAKE_MUTATION_MODE: 'hold' },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    }
+  );
+  const completion = new Promise<number | null>((done) => child.once('close', done));
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+  try {
+    const deadline = Date.now() + 5000;
+    while (
+      !existsSync(join(execution, '.git/wmc-mutation/run/fake-started')) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((done) => setTimeout(done, 20));
+    }
+    assert.equal(existsSync(join(execution, '.git/wmc-mutation/run/fake-started')), true, stderr);
+    assert.equal(child.kill('SIGINT'), true);
+    assert.equal(await completion, 130, stderr);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    await completion;
+  }
+  const receipt = runRecord(execution);
+  assert.equal(receipt.status, 'interrupted');
+  assert.equal(receipt.exitCode, 130);
+  assert.equal(receipt.reportsComplete, false);
+  assert.equal(receipt.restored, true);
+  assert.equal(existsSync(join(execution, '.git/wmc-mutation/run/start.json')), true);
+  assert.equal(existsSync(join(execution, '.git/wmc-mutation/run/child.log')), true);
   maintainerUnchanged();
 });
 

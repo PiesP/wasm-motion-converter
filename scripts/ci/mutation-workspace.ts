@@ -689,23 +689,31 @@ async function run(profile: Profile, args: string[]): Promise<number> {
   if (reportsComplete === false && outcome.code === 0) {
     try {
       const report = json(join(root, 'reports/mutation/mutation.json'));
-      const mutants = Object.values(object(report.files)).flatMap((value) => {
+      const terminal = new Set([
+        'Killed',
+        'Survived',
+        'NoCoverage',
+        'Timeout',
+        'Ignored',
+        'CompileError',
+        'RuntimeError',
+      ]);
+      let mutantCount = 0;
+      for (const value of Object.values(object(report.files))) {
         const items = object(value).mutants;
-        return Array.isArray(items) ? items : [];
-      });
+        if (!Array.isArray(items)) {
+          fail('Expected a mutants array for every reported file');
+        }
+        for (const mutant of items) {
+          const status = object(mutant).status;
+          if (typeof status !== 'string' || !terminal.has(status)) {
+            fail('Expected a terminal string status for every mutant');
+          }
+          mutantCount++;
+        }
+      }
       reportsComplete =
-        mutants.length > 0 &&
-        mutants.every((value) =>
-          [
-            'Killed',
-            'Survived',
-            'NoCoverage',
-            'Timeout',
-            'Ignored',
-            'CompileError',
-            'RuntimeError',
-          ].includes(String(object(value).status))
-        ) &&
+        mutantCount > 0 &&
         (profile === 'full' ||
           readFileSync(join(root, 'reports/mutation/mutation.html')).length > 0);
     } catch {
