@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
+
 import { conditionalEtagObservation } from '../../e2e/lib/conditional-etag';
 
 describe('conditional ETag integration compatibility', () => {

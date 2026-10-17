@@ -3,7 +3,7 @@
 
 import FileDropzone from '@components/FileDropzone';
 import { render } from 'solid-js/web';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@hooks/use-locale', () => ({
   useLocale: () => ({

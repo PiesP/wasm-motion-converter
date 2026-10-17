@@ -4,7 +4,7 @@
 import QualitySelector from '@components/QualitySelector';
 import type { TFunction } from '@t/i18n-types';
 import { render } from 'solid-js/web';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const t = ((key: string, params?: Record<string, string | number>) =>
   params?.fps === undefined ? key : `${key}:${params.fps}`) as TFunction;

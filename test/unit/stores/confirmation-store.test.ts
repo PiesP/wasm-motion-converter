@@ -8,7 +8,7 @@ import {
   getConfirmationState,
   showConfirmation,
 } from '@stores/confirmation-store';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const warning = (requiresConfirmation: boolean) => ({
   severity: 'warning' as const,

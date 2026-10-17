@@ -3,7 +3,7 @@
 
 import { copyBoundedCodecDescription } from '@services/codec-description';
 import { MAX_CODEC_DESCRIPTION_BYTES } from '@utils/constants';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('copyBoundedCodecDescription', () => {
   it('copies only the exact view range into an isolated ArrayBuffer', () => {

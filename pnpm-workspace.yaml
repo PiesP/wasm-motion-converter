@@ -3,6 +3,8 @@ overrides:
   sharp@>=0.35.0 <0.35.5: "0.35.5"
   # Miniflare pins an Undici version with HTTP and TLS security advisories.
   undici@>=7.0.0 <7.29.1: "7.29.1"
+  vite@*: "catalog:"
+  vitest@*: "catalog:"
 
 allowBuilds:
   esbuild: true
@@ -27,3 +29,8 @@ trustPolicyIgnoreAfter: 525600
 patchedDependencies:
   mediabunny@1.61.4: patches/mediabunny@1.61.4.patch
   wasm-webp@0.1.0: patches/wasm-webp@0.1.0.patch
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@1.2.0
+  vitest: 5.0.4
+  vite-plus: 1.2.0
+  "@vitest/coverage-v8": 5.0.4

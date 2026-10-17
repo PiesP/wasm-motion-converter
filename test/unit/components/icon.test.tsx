@@ -3,7 +3,7 @@
 
 import Icon from '@components/ui/Icon';
 import { render } from 'solid-js/web';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@hooks/use-locale', () => ({
   useLocale: () => ({

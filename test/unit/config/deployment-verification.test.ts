@@ -1,10 +1,12 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub Actions expressions are literal workflow assertions.
+// GitHub Actions expressions are literal workflow assertions.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+
+import { describe, expect, it, vi } from 'vite-plus/test';
+
 import type { DeploymentState } from '../../../scripts/build/deployment-state';
 import {
   deploymentUrl,

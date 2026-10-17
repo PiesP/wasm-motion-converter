@@ -2,8 +2,10 @@
 // Copyright (c) 2026 PiesP
 
 import { deflateSync } from 'node:zlib';
+
 import { GIFEncoder } from 'gifenc';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
+
 import {
   analyzeGifPlaybackCycles,
   analyzeGifPlaybackFrames,

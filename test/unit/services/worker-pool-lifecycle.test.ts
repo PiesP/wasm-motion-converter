@@ -1,7 +1,7 @@
 import { globalBufferPool } from '@services/buffer-pool';
 import { WebpFrameMemoryBudget } from '@services/frame-memory';
 import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 class FakeWorker {
   static instances: FakeWorker[] = [];

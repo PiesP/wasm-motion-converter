@@ -75,16 +75,16 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | Public command or family | Purpose; owner, runtime, and stage | Inputs, outputs, side effects; verification |
 | --- | --- | --- |
 | `pnpm install` (`preinstall`) | Dependency-free `scripts/check/bootstrap.ts` checks the core manifest before `node_modules` exists. | Reads `packages/core/package.json`, prints actionable initialization steps and fails if absent; no check writes. `test/unit/config/command-adapters.test.ts`, `pnpm check:scripts`; the package-manager install is separate. |
-| `pnpm dev`, `build`, `build:ci`, `preview` | `scripts/build/run-vite.ts` launches package-local Vite; `prebuild` generates licenses and runs quality, while `build:ci` generates licenses, builds, then postprocesses without repeating quality. `dev`/`preview` start servers. | Reads source/core and installed Vite; builds write `dist/` and may update `public/LICENSES.md`. `scripts/check/run-child.test.ts`, `pnpm verify`, and artifact comparison check execution. |
+| `pnpm dev`, `build`, `build:ci`, `preview` | `scripts/build/run-vite.ts` launches project-local Vite+; `prebuild` generates licenses and runs quality, while `build:ci` generates licenses, builds, then postprocesses without repeating quality. `dev`/`preview` start servers. | Reads source/core and installed Vite+; builds write `dist/` and may update `public/LICENSES.md`. `scripts/check/run-child.test.ts`, `pnpm verify`, and artifact comparison check execution. |
 | `pnpm postbuild`, `clean` | `scripts/build/postbuild.ts` finalizes distribution headers/assets; `scripts/build/clean.ts` removes generated output. | Inspect `dist/_headers`, output manifest and licenses after a build; `test/unit/config/node-script-boundaries.test.ts` checks direct CLI/import behavior. |
 | `pnpm prepare:e2e:fixture`, `pretest:e2e:ci`, `pretest:e2e:resource`, `pretest:e2e:deploy` | `scripts/test/generate-e2e-video.ts` uses host FFmpeg/ffprobe; `scripts/test/prepare-resource-fixtures.ts` selects resource fixtures. | Writes ignored `public/test-video-*` files; requires codec tools on PATH. `test/unit/e2e-fixtures.test.ts`, child adapter tests, and affected E2E profile check outputs. |
 | `pnpm test:e2e`, `test:e2e:ci`, `test:e2e:resource`, `test:e2e:deploy` | Plain `test:e2e` runs Playwright; `scripts/test/run-playwright.ts` selects the named CI, resource or deploy profile in the caller environment. | Requires built app/fixtures and browsers; writes test results/screenshots. `scripts/check/run-child.test.ts` covers argv, cwd, env, exit and signal; browser profiles have distinct scopes. |
 | `pnpm verify:full` | Runs verify, coverage and `scripts/test/run-e2e-on-free-port.ts` CI smoke; chooses an ephemeral loopback port and invokes the package script via `npm_execpath`. | May bind loopback, generate fixtures, build, launch browsers and write reports; `test/unit/config/playwright-profile.test.ts` and CI smoke are checks. It is not all hardware/codec/Windows acceptance. |
-| `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vitest and direct Node `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts` and `scripts/check/run-child.test.ts`. | Watch persists; coverage writes reports. `test:ci` checks repository authority, tagged source and portable child execution, not rendered conversion. |
+| `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vite+ Vitest and direct Node `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts` and `scripts/check/run-child.test.ts`. | Watch persists; coverage writes reports. `test:ci` checks repository authority, tagged source and portable child execution, not rendered conversion. |
 | `pnpm check`, `check:test:unit`, `check:test:e2e`, `check:scripts`, `typecheck` | Browser, Vitest, Playwright and strict NodeNext/erasable TypeScript projects; `tsconfig.scripts.json` includes `scripts/**/*.ts` with ES2022 and Node types. Browser and Playwright projects retain their DOM and worker libraries. | Read-only; `pnpm quality` runs these boundaries. The Node boundary test compiles the full script project with positive Node and negative browser-global probes. Raw Windows `.mjs` is checked separately by that test. |
 | `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
-| `pnpm fmt`, `fmt:check`, `lint`, `knip`, `knip:full`, `knip:production`, `circular` | Biome style/lint, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
-| `pnpm quality`, `verify` | Quality runs one read-only `biome ci .` pass for formatting, lint and import organization, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
+| `pnpm fmt`, `fmt:check`, `lint`, `knip`, `knip:full`, `knip:production`, `circular` | Vite+ Oxfmt/Oxlint, CSS-only Biome formatting, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
+| `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, CSS-only Biome lint, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
 | `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `legacy-state.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
 
 ### Workflow and subprocess entrypoints
@@ -363,29 +363,31 @@ marker, that marker becomes the branch identity for subsequent runs.
 
 ### Formatting and inspection scope
 
-Biome is the single formatter, import organizer, and linter. Use 2-space
-indentation, a 100-column target, LF, single quotes, semicolons, and ES5 trailing
-commas (no trailing comma in function arguments). `quality` runs one read-only
-`biome ci .` pass before the existing type, native-test, i18n, graph, and Knip
-gates. Use the existing `fmt:fix`, `lint:fix`, or `quality:fix` commands for
-repairs; separate mechanical changes from behavior-relevant edits.
+Vite+ runs Oxfmt and Oxlint for maintained JS/TS, configuration, and HTML files.
+Oxfmt keeps two-space indentation, a 100-column target, LF, single quotes,
+semicolons, ES5 trailing commas, and import sorting. The `fmt` block in
+`vite.config.ts` is the formatting authority. Oxlint rules and browser-source
+overrides live in that file too; `lint` denies warnings. Keep the four explicit
+TypeScript project checks because their browser, test, Playwright, and NodeNext
+boundaries differ. Vite+ task caching is not enabled.
 
-`biome.json` includes maintained browser source, Node scripts, tests and helpers,
-Vite tooling, raw Windows validation modules and contracts, the release-runtime
-action module, root TypeScript/JSON/HTML configuration, the service worker, the
-404 page, and bundled dependency metadata. Git ignore rules remain effective.
-The shared `packages/core` checkout, dependencies, generated distributions and
-reports, lockfiles, media, binary snapshots, patches, and generated Windows
-inputs/prior distributions/public targets are outside this inspection scope.
-Fixture strings embedded in test code are still checked as code; their literal
-values and intentionally malformed subjects must remain unchanged. Do not
-exclude ordinary test/helper code to avoid diagnostics.
+The maintained scope covers browser source, Node scripts, tests and helpers,
+Vite tooling, raw Windows validation modules, the release-runtime action
+module, root TypeScript/JSON/HTML configuration, the service worker, 404 page,
+and bundled dependency metadata. The shared `packages/core` checkout,
+dependencies, generated distributions and reports, lockfiles, media, binary
+snapshots, patches, and generated Windows inputs/prior distributions/public
+targets are excluded. Biome remains only for Tailwind-aware formatting and
+lint of `src/index.css`; `biome.json` must stay CSS-only until Oxfmt/Oxlint
+provide equivalent CSS lint. Review that residual checker when updating the
+CSS toolchain. Use `fmt:fix`, `lint:fix`, or `quality:fix` for repairs and review
+their diffs before committing.
 
 ### Modules and TypeScript contracts
 
 - In browser `src/**`, use alias-based leaf imports across folders. Same-folder
-  relative imports and package subpaths are allowed. Biome's built-in
-  `noRestrictedImports` rejects parent-relative imports, `src/` and `/src/`
+  relative imports and package subpaths are allowed. Oxlint's
+  `no-restricted-imports` rejects parent-relative imports, `src/` and `/src/`
   absolute module paths, and child-folder relative imports. This covers static
   imports, type imports, applicable re-exports, and literal dynamic imports.
   Keep dynamic fallback, development-only, and lazy component loads dynamic.
@@ -428,16 +430,18 @@ exclude ordinary test/helper code to avoid diagnostics.
   explain ownership, units, ordering, or platform constraints. Preserve
   serialized protocol names unless making an explicit compatibility change.
 - Fix applicable diagnostics without weakening correctness, accessibility,
-  explicit-any, unused-import, or accumulation-spread checks. Retain narrowly
+  explicit-any, unused-import, or accumulation-spread checks. Solid components
+  do not use React's lint plugin. TypeScript's strict projects catch implicit
+  `any`; Oxlint checks explicit `any`. Oxlint lacks Biome's SVG-title rule, so
+  inspect changed SVG markup and run the accessibility tests. Retain narrowly
   explained exceptions for literal GitHub Actions assertions, inert native
   mocks, asynchronous receiver capture, and cleanup failures raised only when
   there is no primary failure. Do not apply unsafe automatic fixes, broad
   suppressions, automatic async rewrites, or new global warning policies.
 
-The installed Biome boundary tests use disposable valid/invalid controls to
-check actual scope, VCS ignores, import restrictions, read-only behavior, and
-fix convergence. Relevant references are [Biome import restrictions](https://biomejs.dev/linter/rules/no-restricted-imports/javascript/),
-[the React dependency rule](https://biomejs.dev/linter/rules/use-exhaustive-dependencies/javascript/),
+The installed Vite+ boundary tests exercise actual warning failure and browser
+import restrictions. Relevant references are [Oxlint import restrictions](https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-restricted-imports),
+[Oxfmt import sorting](https://oxc.rs/docs/guide/usage/formatter/sorting),
 [Node TypeScript execution](https://nodejs.org/api/typescript.html), and
 [Solid props](https://docs.solidjs.com/concepts/components/props).
 

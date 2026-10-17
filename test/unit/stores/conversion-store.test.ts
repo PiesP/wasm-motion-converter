@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 PiesP
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 // Mock logger before importing stores
 vi.mock('@utils/logger', () => ({
@@ -121,9 +121,8 @@ describe('conversion-store', () => {
   });
 
   it('can set environment supported flag', async () => {
-    const { environmentSupported, setEnvironmentSupported } = await import(
-      '@stores/conversion-store'
-    );
+    const { environmentSupported, setEnvironmentSupported } =
+      await import('@stores/conversion-store');
 
     setEnvironmentSupported(false);
     expect(environmentSupported()).toBe(false);

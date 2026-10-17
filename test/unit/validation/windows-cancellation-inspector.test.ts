@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+
 // @ts-expect-error The Windows acceptance profile is an executable JavaScript module.
 import * as profile from '../../../validation/windows/profile.mjs';
 

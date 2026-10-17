@@ -1,7 +1,8 @@
 import AppUpdateNotice from '@components/AppUpdateNotice';
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vite-plus/test';
+
 import { clearAssetFailure } from '@/asset-recovery';
 import type { SWRegisterOptions } from '@/sw-types';
 

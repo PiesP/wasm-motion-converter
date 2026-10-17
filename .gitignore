@@ -92,3 +92,4 @@ validation/windows/inputs/recovery.json
 validation/windows/inputs/recovery-a/
 validation/windows/inputs/recovery-baseline/
 deployment-verification.json
+.vitest/

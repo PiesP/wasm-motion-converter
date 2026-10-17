@@ -3,7 +3,7 @@
 
 import type { ConversionSettings, ProgressPhase } from '@t/conversion-types';
 import { createComputed, createRoot, createSignal } from 'solid-js';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const mocks = vi.hoisted(() => ({
   confirmation: undefined as { onCancel: () => void; onConfirm: () => void } | undefined,

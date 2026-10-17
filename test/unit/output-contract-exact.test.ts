@@ -2,7 +2,8 @@
 // Copyright (c) 2026 PiesP
 
 import type { Page } from '@playwright/test';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+
 import { compareAnimatedOutputExact } from '../../validation/windows/output-contract.mjs';
 
 interface FixtureFrame {

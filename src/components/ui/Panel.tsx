@@ -26,7 +26,7 @@ const Panel: Component<PanelProps> = (props) => {
     `bg-bg-panel border border-border-standard rounded-panel ${local.class ?? ''}`.trim();
 
   return (
-    // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Panel callers pair ARIA properties with an explicit supported role.
+    // Panel callers pair ARIA properties with an explicit supported role.
     <div
       {...others}
       class={className()}

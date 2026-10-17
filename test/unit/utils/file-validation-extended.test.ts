@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { validateVideoDuration, validateVideoFile } from '@utils/file-validation';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const t = ((key: string) => key) as never;
 

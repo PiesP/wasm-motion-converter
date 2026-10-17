@@ -1,4 +1,5 @@
-import { expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vite-plus/test';
+
 import { reloadWhenSafe } from '@/reload-protection';
 
 it('re-reads busy and retained-result state at activation', () => {

@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { getEstimatedHeapLimitBytes, getMemoryInfo } from '@utils/memory-info';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const setPerformanceMemory = (memory: object | undefined) => {
   if (memory === undefined) {

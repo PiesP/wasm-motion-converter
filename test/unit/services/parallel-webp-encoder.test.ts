@@ -5,7 +5,7 @@ import { globalBufferPool } from '@services/buffer-pool';
 import { WebpFrameMemoryBudget } from '@services/frame-memory';
 import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from '@services/worker-pool';
 import { FRAME_PIPELINE_MEMORY_BUDGET_BYTES } from '@utils/constants';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const mocks = vi.hoisted(() => ({
   pending: new Map<

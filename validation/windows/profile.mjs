@@ -19,6 +19,7 @@ import {
 import { createServer } from 'node:http';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
+
 import { runAppUpdate } from './app-update.mjs';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.mjs';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
@@ -2615,7 +2616,7 @@ async function exercisePublicTarget(
       await rename(join(publicRoot, file.name), join(outputRoot, `${publicDir}-${file.name}`));
     }
     await rmdir(publicRoot);
-    // biome-ignore lint/correctness/noUnsafeFinally: Cleanup failure is raised only when no primary failure exists.
+    // Cleanup failure is raised only when no primary failure exists.
     if (closeFailure && !primaryFailure) throw closeFailure;
   }
 }

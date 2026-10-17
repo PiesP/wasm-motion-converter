@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+
 import { runVite } from '../build/run-vite.ts';
 import { prepareResourceFixtures } from '../test/prepare-resource-fixtures.ts';
 import { runE2eOnFreePort } from '../test/run-e2e-on-free-port.ts';
@@ -199,18 +200,21 @@ catch(error) { console.log(JSON.stringify({error: error.message, closed})); }
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  test(`free-port CLI forwards parent-only ${signal} and observes owned child disappearance`, {
-    skip: process.platform === 'win32',
-    timeout: 15_000,
-  }, async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wmc-free-port-signal-'));
-    const script = join(directory, 'package manager.mjs');
-    const marker = join(directory, 'marker.json');
-    const stopped = join(directory, 'stopped');
-    const wrapper = new URL('../test/run-e2e-on-free-port.ts', import.meta.url);
-    writeFileSync(
-      script,
-      `import { writeFileSync, renameSync } from 'node:fs';
+  test(
+    `free-port CLI forwards parent-only ${signal} and observes owned child disappearance`,
+    {
+      skip: process.platform === 'win32',
+      timeout: 15_000,
+    },
+    async () => {
+      const directory = mkdtempSync(join(tmpdir(), 'wmc-free-port-signal-'));
+      const script = join(directory, 'package manager.mjs');
+      const marker = join(directory, 'marker.json');
+      const stopped = join(directory, 'stopped');
+      const wrapper = new URL('../test/run-e2e-on-free-port.ts', import.meta.url);
+      writeFileSync(
+        script,
+        `import { writeFileSync, renameSync } from 'node:fs';
 const signal = process.env.PROBE_SIGNAL;
 if (!['SIGINT', 'SIGTERM'].includes(signal)) throw new Error('Expected a probe signal.');
 process.on(signal, () => { writeFileSync(process.env.STOPPED, signal); process.exit(0); });
@@ -218,46 +222,47 @@ writeFileSync(process.env.MARKER + '.tmp', JSON.stringify({pid: process.pid}));
 renameSync(process.env.MARKER + '.tmp', process.env.MARKER);
 setInterval(() => {}, 1000);
 `
-    );
-    const supervisor = spawn(
-      process.execPath,
-      ['--experimental-strip-types', fileURLToPath(wrapper)],
-      {
-        env: {
-          ...process.env,
-          npm_execpath: script,
-          MARKER: marker,
-          STOPPED: stopped,
-          PROBE_SIGNAL: signal,
-        },
-        stdio: 'ignore',
-      }
-    );
-    let childPid: number | undefined;
-    try {
-      for (let attempt = 0; attempt < 250 && !existsSync(marker); attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      childPid = (JSON.parse(readFileSync(marker, 'utf8')) as { pid: number }).pid;
-      const closed = closeWithin(supervisor);
-      supervisor.kill(signal);
-      assert.equal(await closed, signal === 'SIGINT' ? 130 : 143);
-      assert.equal(readFileSync(stopped, 'utf8'), signal);
-      const observedPid = childPid;
-      assert.throws(() => process.kill(observedPid, 0), { code: 'ESRCH' });
-    } finally {
-      supervisor.kill('SIGKILL');
-      if (childPid) {
-        try {
-          process.kill(childPid, 'SIGKILL');
-        } catch {
-          /* Already reaped. */
+      );
+      const supervisor = spawn(
+        process.execPath,
+        ['--experimental-strip-types', fileURLToPath(wrapper)],
+        {
+          env: {
+            ...process.env,
+            npm_execpath: script,
+            MARKER: marker,
+            STOPPED: stopped,
+            PROBE_SIGNAL: signal,
+          },
+          stdio: 'ignore',
         }
+      );
+      let childPid: number | undefined;
+      try {
+        for (let attempt = 0; attempt < 250 && !existsSync(marker); attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        childPid = (JSON.parse(readFileSync(marker, 'utf8')) as { pid: number }).pid;
+        const closed = closeWithin(supervisor);
+        supervisor.kill(signal);
+        assert.equal(await closed, signal === 'SIGINT' ? 130 : 143);
+        assert.equal(readFileSync(stopped, 'utf8'), signal);
+        const observedPid = childPid;
+        assert.throws(() => process.kill(observedPid, 0), { code: 'ESRCH' });
+      } finally {
+        supervisor.kill('SIGKILL');
+        if (childPid) {
+          try {
+            process.kill(childPid, 'SIGKILL');
+          } catch {
+            /* Already reaped. */
+          }
+        }
+        await closeWithin(supervisor);
+        rmSync(directory, { recursive: true, force: true });
       }
-      await closeWithin(supervisor);
-      rmSync(directory, { recursive: true, force: true });
     }
-  });
+  );
 }
 
 test('child runner removes listeners after missing child and child-initiated signals', async () => {
@@ -414,7 +419,7 @@ test('build:ci preserves license, Vite, and postbuild order and stops on failure
   assert.equal(await runVite('ci', ['--emptyOutDir'], success.run), 0);
   assert.deepEqual(
     success.calls.map(({ script }) => basename(script)),
-    ['generate-licenses.ts', 'vite.js', 'postbuild.ts']
+    ['generate-licenses.ts', 'vp', 'postbuild.ts']
   );
   assert.deepEqual(success.calls[1]?.args, ['build', '--emptyOutDir']);
   assert.equal(success.calls[1]?.env.NODE_OPTIONS, '--no-deprecation');
@@ -492,43 +497,47 @@ process.exitCode = 17;
   }
 });
 
-test('child runner forwards SIGTERM and preserves the interrupted exit status', {
-  skip: process.platform === 'win32',
-}, async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'wmc-command-signal-'));
-  const childScript = join(dir, 'child.mjs');
-  const marker = join(dir, 'marker');
-  writeFileSync(
-    childScript,
-    `import { writeFileSync } from 'node:fs';
+test(
+  'child runner forwards SIGTERM and preserves the interrupted exit status',
+  {
+    skip: process.platform === 'win32',
+  },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wmc-command-signal-'));
+    const childScript = join(dir, 'child.mjs');
+    const marker = join(dir, 'marker');
+    writeFileSync(
+      childScript,
+      `import { writeFileSync } from 'node:fs';
 writeFileSync(process.argv[2], 'ready');
 process.on('SIGTERM', () => { writeFileSync(process.argv[2], 'stopped'); process.exit(0); });
 setInterval(() => {}, 1000);
 `
-  );
-  const runnerUrl = new URL('./run-child.ts', import.meta.url).href;
-  const supervisor = spawn(
-    process.execPath,
-    [
-      '--experimental-strip-types',
-      '--input-type=module',
-      '-e',
-      `import { runChild } from ${JSON.stringify(runnerUrl)}; process.exitCode = await runChild(${JSON.stringify(childScript)}, [${JSON.stringify(marker)}]);`,
-    ],
-    { stdio: 'ignore' }
-  );
-  try {
-    for (let attempt = 0; attempt < 100 && !existsSync(marker); attempt++) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
+    );
+    const runnerUrl = new URL('./run-child.ts', import.meta.url).href;
+    const supervisor = spawn(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '-e',
+        `import { runChild } from ${JSON.stringify(runnerUrl)}; process.exitCode = await runChild(${JSON.stringify(childScript)}, [${JSON.stringify(marker)}]);`,
+      ],
+      { stdio: 'ignore' }
+    );
+    try {
+      for (let attempt = 0; attempt < 100 && !existsSync(marker); attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.equal(readFileSync(marker, 'utf8'), 'ready');
+      const closed = new Promise<number | null>((resolve) => supervisor.once('close', resolve));
+      supervisor.kill('SIGTERM');
+      const code = await closed;
+      assert.equal(code, 143);
+      assert.equal(readFileSync(marker, 'utf8'), 'stopped');
+    } finally {
+      supervisor.kill('SIGKILL');
+      rmSync(dir, { recursive: true, force: true });
     }
-    assert.equal(readFileSync(marker, 'utf8'), 'ready');
-    const closed = new Promise<number | null>((resolve) => supervisor.once('close', resolve));
-    supervisor.kill('SIGTERM');
-    const code = await closed;
-    assert.equal(code, 143);
-    assert.equal(readFileSync(marker, 'utf8'), 'stopped');
-  } finally {
-    supervisor.kill('SIGKILL');
-    rmSync(dir, { recursive: true, force: true });
   }
-});
+);

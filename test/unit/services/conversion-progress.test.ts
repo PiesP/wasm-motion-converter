@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { buildEncodingProgress } from '@services/conversion-progress';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('conversion encoding progress policy', () => {
   it('maps an encoder frame into the weighted encoding phase', () => {

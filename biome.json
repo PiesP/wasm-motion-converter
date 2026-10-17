@@ -6,132 +6,28 @@
     "defaultBranch": "master"
   },
   "files": {
-    "includes": [
-      "src/**",
-      "scripts/**",
-      "test/**",
-      "tooling/**",
-      "validation/windows/**",
-      ".github/actions/**/*.mjs",
-      "public/service-worker.js",
-      "public/404.html",
-      "public/cdn-integrity.json",
-      "*.ts",
-      "*.json",
-      "*.html",
-      "!!validation/windows/inputs",
-      "!!validation/windows/prior-dist",
-      "!validation/windows/public-target.json"
-    ],
-    "ignoreUnknown": true
+    "includes": ["src/index.css"]
   },
   "formatter": {
-    "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
     "lineWidth": 100,
     "lineEnding": "lf"
-  },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "preset": "recommended",
-      "correctness": {
-        "noUnusedImports": "error",
-        "noUnusedVariables": "warn",
-        "noUnknownMediaFeatureName": "off",
-        "useExhaustiveDependencies": "warn"
-      },
-      "style": {
-        "noNonNullAssertion": "off",
-        "useConst": "error",
-        "noParameterAssign": "warn",
-        "noUnusedTemplateLiteral": "error",
-        "useExponentiationOperator": "error"
-      },
-      "suspicious": {
-        "noExplicitAny": "error",
-        "noConfusingVoidType": "off",
-        "noControlCharactersInRegex": "off",
-        "noUnknownAtRules": "off",
-        "noAssignInExpressions": "off",
-        "noDocumentCookie": "off",
-        "useIterableCallbackReturn": "error",
-        "noImplicitAnyLet": "error",
-        "noSelfCompare": "warn",
-        "noArrayIndexKey": "off"
-      },
-      "complexity": {
-        "noForEach": "off",
-        "noStaticOnlyClass": "off",
-        "noUselessTernary": "error",
-        "noUselessSwitchCase": "error",
-        "noUselessEmptyExport": "error",
-        "noUselessLoneBlockStatements": "error"
-      },
-      "performance": {
-        "noAccumulatingSpread": "error"
-      },
-      "a11y": {
-        "noStaticElementInteractions": "error",
-        "useKeyWithClickEvents": "error",
-        "useMediaCaption": "off",
-        "noSvgWithoutTitle": "error",
-        "useAriaPropsSupportedByRole": "error",
-        "useSemanticElements": "error"
-      }
-    }
-  },
-  "javascript": {
-    "formatter": {
-      "quoteStyle": "single",
-      "semicolons": "always",
-      "trailingCommas": "es5",
-      "arrowParentheses": "always"
-    }
-  },
-  "json": {
-    "formatter": {
-      "indentStyle": "space",
-      "indentWidth": 2
-    }
   },
   "css": {
     "parser": {
       "tailwindDirectives": true
     }
   },
-  "assist": {
-    "enabled": true,
-    "actions": {
-      "source": {
-        "organizeImports": "on"
+  "linter": {
+    "rules": {
+      "preset": "recommended",
+      "correctness": {
+        "noUnknownMediaFeatureName": "off"
+      },
+      "suspicious": {
+        "noUnknownAtRules": "off"
       }
     }
-  },
-  "overrides": [
-    {
-      "includes": ["src/**"],
-      "linter": {
-        "rules": {
-          "correctness": {
-            "useExhaustiveDependencies": "off"
-          },
-          "style": {
-            "noRestrictedImports": {
-              "level": "error",
-              "options": {
-                "patterns": [
-                  {
-                    "group": ["../**", "src/**", "/src/**", "./*/**"],
-                    "message": "Use an alias-based leaf import across folders; same-folder relative imports are allowed."
-                  }
-                ]
-              }
-            }
-          }
-        }
-      }
-    }
-  ]
+  }
 }

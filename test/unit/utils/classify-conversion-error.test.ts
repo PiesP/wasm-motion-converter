@@ -2,7 +2,7 @@
 // Copyright (c) 2025 PiesP
 
 import { classifyConversionError } from '@utils/classify-conversion-error';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 describe('classifyConversionError', () => {
   it('classifies output budget failures as memory errors', () => {

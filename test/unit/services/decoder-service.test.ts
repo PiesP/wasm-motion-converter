@@ -17,7 +17,7 @@ import {
   MAX_FRAME_PIXEL_COUNT,
   STALL_DETECTION_TIMEOUT_MS,
 } from '@utils/constants';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const { logger } = vi.hoisted(() => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

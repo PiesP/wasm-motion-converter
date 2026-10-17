@@ -7,7 +7,8 @@ import esTranslations from '@i18n/es.json';
 import jaTranslations from '@i18n/ja.json';
 import koTranslations from '@i18n/ko.json';
 import zhCnTranslations from '@i18n/zh-CN.json';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
+
 import { LOCALES } from '../../../src/types/i18n-types';
 
 const allTranslations = {

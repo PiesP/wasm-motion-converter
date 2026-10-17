@@ -6,7 +6,7 @@ import { DEFAULT_CONVERSION_SETTINGS } from '@stores/conversion-settings-store';
 import type { TFunction } from '@t/i18n-types';
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@hooks/use-locale', () => ({
   useLocale: () => ({ locale: () => 'en', t: ((key: string) => key) as TFunction }),

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { render } from 'solid-js/web';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@hooks/use-locale', () => ({
   useLocale: () => ({ t: (key: string) => key }),

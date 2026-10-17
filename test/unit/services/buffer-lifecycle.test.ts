@@ -1,6 +1,6 @@
 import { globalBufferPool } from '@services/buffer-pool';
 import { withPooledBuffer } from '@services/pooled-buffer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 describe('withPooledBuffer', () => {
   it('returns the pooled buffer when the operation rejects', async () => {

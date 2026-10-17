@@ -2,7 +2,7 @@
 // Copyright (c) 2025 PiesP
 
 import { createId, formatBytes, formatDurationSeconds } from '@utils/format-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('formatDurationSeconds', () => {
   it('formats 0 seconds as 0:00', () => {

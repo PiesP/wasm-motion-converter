@@ -6,6 +6,7 @@
 // For quick smoke tests, see smoke.spec.ts.
 
 import { expect, test } from '@playwright/test';
+
 import { BASELINE_RESULTS, TEST_VIDEOS, type TestQuality } from '../lib/test-manifest';
 import { recordResult } from '../lib/test-recorder';
 import {

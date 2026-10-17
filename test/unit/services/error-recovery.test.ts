@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { validateOutput } from '@services/error-recovery';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 const bytes = (text: string, length = text.length) => {
   const output = new Uint8Array(length);

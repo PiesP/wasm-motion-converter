@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { assessEnvironmentCapabilities } from '@utils/environment-capabilities';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('assessEnvironmentCapabilities', () => {
   const requiredCapabilities = {

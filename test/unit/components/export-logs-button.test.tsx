@@ -1,6 +1,6 @@
 import { logger } from '@utils/logger';
 import { render } from 'solid-js/web';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@hooks/use-locale', () => ({
   useLocale: () => ({ t: (key: string) => key }),

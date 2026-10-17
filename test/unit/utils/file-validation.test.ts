@@ -9,7 +9,7 @@ vi.mock('@utils/cdn-config', () => ({
 }));
 
 import { validateVideoFile } from '@utils/file-validation';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 // Mock translation function that returns the key with optional params
 const mockT = vi.fn((key: string, params?: Record<string, string | number>) => {

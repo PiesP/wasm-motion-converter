@@ -5,6 +5,7 @@
 // Run with: pnpm test -- debug/benchmark-local.spec.ts
 
 import { expect, type Page, test } from '@playwright/test';
+
 import {
   clickConvert,
   dismissWarningDialog,

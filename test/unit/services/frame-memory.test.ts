@@ -18,7 +18,7 @@ import {
   MAX_FRAME_PIXEL_COUNT,
   WEBP_MAX_OUTPUT_BYTES,
 } from '@utils/constants';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('frame memory reservations', () => {
   it('reserves the maximum coded and display dimensions for a decoded source frame', () => {
