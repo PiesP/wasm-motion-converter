@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { downloadAsset, proveLegacyDeployment } from './legacy-state.ts';
 
 type Identity = { version: string; commit: string };

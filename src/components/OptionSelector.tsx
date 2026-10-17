@@ -5,6 +5,7 @@ import Icon from '@components/ui/Icon';
 import { useLocale } from '@hooks/use-locale';
 import type { JSX } from 'solid-js';
 import { For, Show, splitProps } from 'solid-js';
+
 import Tooltip from './Tooltip';
 
 const BASE_OPTION_CLASS =

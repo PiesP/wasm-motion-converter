@@ -4,6 +4,7 @@
 /// <reference lib="webworker" />
 
 import { logger } from '@utils/logger';
+
 import { isAppAssetPath } from './asset-recovery';
 import type { SWRegisterOptions, SWRegistrationState } from './sw-types';
 

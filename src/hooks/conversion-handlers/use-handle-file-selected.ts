@@ -21,6 +21,7 @@ import { focusElementUnlessUserIsEditing, focusPrimaryErrorAction } from '@utils
 import { validateVideoFile } from '@utils/file-validation';
 import { logger } from '@utils/logger';
 import { batch } from 'solid-js';
+
 import type { ConversionRuntimeController } from './use-conversion-runtime-controller';
 
 const resetErrorState = (): void => {

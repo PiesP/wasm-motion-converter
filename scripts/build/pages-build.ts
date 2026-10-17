@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
 import { isCliEntry } from '../check/run-child.ts';
 
 type Execute = (command: string, args: string[], environment?: NodeJS.ProcessEnv) => string;

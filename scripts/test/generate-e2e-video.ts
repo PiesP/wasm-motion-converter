@@ -27,7 +27,7 @@ function setFinalSampleDuration(path: string, durationMs: number): void {
   const containers = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl', 'edts']);
   const visit = (start: number, end: number, depth: number): void => {
     if (depth > 8) throw new Error('Fixture MP4 nesting exceeds the bounded parser');
-    for (let offset = start; offset + 8 <= end; ) {
+    for (let offset = start; offset + 8 <= end;) {
       const size = bytes.readUInt32BE(offset);
       const type = bytes.toString('ascii', offset + 4, offset + 8);
       if (size < 8 || size > end - offset) throw new Error('Invalid fixture MP4 box');

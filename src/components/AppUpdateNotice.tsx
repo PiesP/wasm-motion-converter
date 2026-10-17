@@ -1,5 +1,6 @@
 import type { TFunction } from '@t/i18n-types';
 import { type Component, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js';
+
 import { assetFailure, reportAssetFailure } from '@/asset-recovery';
 import { observeDeploymentUpdates } from '@/deployment-update';
 import { canReload, reloadWhenSafe } from '@/reload-protection';

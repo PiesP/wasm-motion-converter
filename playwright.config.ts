@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { defineConfig, devices } from '@playwright/test';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));

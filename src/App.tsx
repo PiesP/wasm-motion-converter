@@ -56,6 +56,7 @@ import {
   onMount,
   Show,
 } from 'solid-js';
+
 import { clearAssetFailure } from '@/asset-recovery';
 
 import './index.css';

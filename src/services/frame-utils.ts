@@ -16,6 +16,7 @@
 
 import type { VideoRotation } from '@t/conversion-types';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
+
 import type { BufferPool } from './buffer-pool';
 import { getPooledBufferSize, globalBufferPool } from './buffer-pool';
 import type { CpuPixelFormat } from './frame-memory';

@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
 import type { DeploymentState } from '../build/deployment-state.ts';
 
 const MAX_REPORT_BYTES = 2_000_000;

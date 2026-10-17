@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+
 import type { DeploymentState } from '../build/deployment-state.ts';
 import { isCliEntry, runChild } from '../check/run-child.ts';
 import { preserveDeploymentDiagnostics } from './deployment-diagnostics.ts';

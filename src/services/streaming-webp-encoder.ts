@@ -19,6 +19,7 @@
  */
 
 import { VP8_FOURCC as SHARED_VP8_FOURCC, VP8X_FOURCC } from '@utils/constants';
+
 import type { ProfileOperationRecorder } from './conversion-profiler';
 import type { OutputLimitOverrides, OutputLimits } from './output-limits';
 import { OutputLimitError, resolveOutputLimits } from './output-limits';
