@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import type { DeploymentState } from '../build/deployment-state.ts';
-import { isCliEntry, runChild } from '../check/run-child.ts';
+import { runChild } from '../check/run-child.ts';
 import { preserveDeploymentDiagnostics } from './deployment-diagnostics.ts';
 import { runPlaywright } from './run-playwright.ts';
 
@@ -260,7 +260,7 @@ export async function verifyPublication(): Promise<void> {
     );
 }
 
-if (isCliEntry(import.meta.url))
+if (import.meta.main)
   verifyPublication().catch((error: unknown) => {
     console.error(error);
     process.exitCode = 1;

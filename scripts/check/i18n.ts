@@ -3,7 +3,7 @@
  * Run via: node --experimental-strip-types scripts/check/i18n.ts
  * Expected: silent exit 0. On mismatch, prints missing/extra keys and exits 1.
  */
-import { readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -57,13 +57,4 @@ export function checkI18n(): void {
   );
 }
 
-function isDirectInvocation(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isDirectInvocation()) checkI18n();
+if (import.meta.main) checkI18n();

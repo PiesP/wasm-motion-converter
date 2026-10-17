@@ -2948,6 +2948,92 @@ async function exercisePublicTarget(
 }
 
 /** Run the WMC Windows stable-browser acceptance profile. */
+type MediaNetworkDiagnostics = {
+  pageErrors: string[];
+  consoleErrors: string[];
+  failedRequests: { url: string; error: string }[];
+  failedResponses: { status: number; url: string }[];
+};
+type MediaProfileFailure = { error: unknown };
+
+function describeMediaFailure(error: unknown): string {
+  try {
+    return String(error).slice(0, 1000);
+  } catch {
+    return 'Unprintable thrown value';
+  }
+}
+
+async function writeMediaNetworkDiagnostics(
+  outputRoot: string,
+  diagnostics: MediaNetworkDiagnostics,
+  failure: MediaProfileFailure | undefined,
+  cleanupErrors: string[]
+): Promise<void> {
+  await writeFile(
+    join(outputRoot, 'network-diagnostics.json'),
+    JSON.stringify(
+      {
+        ...diagnostics,
+        primaryError: failure ? describeMediaFailure(failure.error) : null,
+        cleanupErrors,
+      },
+      null,
+      2
+    )
+  );
+}
+
+export async function assertMediaNetworkDiagnostics(
+  outputRoot: string,
+  diagnostics: MediaNetworkDiagnostics
+): Promise<void> {
+  await writeMediaNetworkDiagnostics(outputRoot, diagnostics, undefined, []);
+  const { pageErrors, consoleErrors, failedRequests, failedResponses } = diagnostics;
+  assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);
+  assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(' | ')}`);
+  assert.deepEqual(failedRequests, [], `Failed requests: ${JSON.stringify(failedRequests)}`);
+  assert.deepEqual(
+    failedResponses,
+    [],
+    `Failed HTTP responses: ${JSON.stringify(failedResponses)}`
+  );
+}
+
+/** Finish this profile's owned resources without replacing its original failure. */
+export async function finishMediaProfile({
+  context,
+  server,
+  outputRoot,
+  diagnostics,
+  failure,
+}: {
+  context: Pick<BrowserContext, 'close'> | undefined;
+  server: Server | undefined;
+  outputRoot: string;
+  diagnostics: MediaNetworkDiagnostics;
+  failure: MediaProfileFailure | undefined;
+}): Promise<void> {
+  const cleanupErrors: string[] = [];
+  try {
+    await context?.close();
+  } catch (error) {
+    cleanupErrors.push(`context close: ${describeMediaFailure(error)}`);
+  }
+  try {
+    if (server) await closeServer(server);
+  } catch (error) {
+    cleanupErrors.push(`server close: ${describeMediaFailure(error)}`);
+  }
+  try {
+    await writeMediaNetworkDiagnostics(outputRoot, diagnostics, failure, cleanupErrors);
+  } catch (error) {
+    cleanupErrors.push(`diagnostics write: ${describeMediaFailure(error)}`);
+  }
+  if (failure) throw failure.error;
+  if (cleanupErrors.length) throw new Error(cleanupErrors.join('; '));
+}
+
 export async function run({
   browser,
   root,
@@ -3047,37 +3133,38 @@ export async function run({
       validateBundleFile,
     });
   }
-  const smallFixture = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
-  const publicTargets = await loadPublicTargets(bundleRoot);
-  const cancellationFixture = await validateBundleFile(bundleRoot, CANCELLATION_FIXTURE);
-  const outputContractPath = await validateBundleFile(bundleRoot, OUTPUT_CONTRACT);
-  const outputContract: unknown = JSON.parse(await readFile(outputContractPath, 'utf8'));
-  assertOutputContractConfig(outputContract);
-  assert.equal(outputContract.schemaVersion, 1, 'Unsupported output contract schema');
-  assert(Array.isArray(outputContract.cases) && outputContract.cases.length > 0);
-  const contractFixtures = new Map<string, string>();
-  for (const contract of outputContract.cases) {
-    assert.equal(typeof contract.id, 'string');
-    assert(['gif', 'webp'].includes(contract.format));
-    contractFixtures.set(contract.id, await validateBundleFile(bundleRoot, contract.fixture));
-  }
-  const fixtureFor = (contract: OutputContractCase) => {
-    const fixture = contractFixtures.get(contract.id);
-    assert(fixture, `Missing bundled fixture for ${contract.id}`);
-    return fixture;
-  };
   const outputRoot = resolve(output);
   await mkdir(outputRoot, { recursive: true });
-
   let context: BrowserContext | undefined;
   let server: Server | undefined;
+  let failure: MediaProfileFailure | undefined;
   const artifacts: Artifact[] = [];
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   const failedRequests: { url: string; error: string }[] = [];
   const failedResponses: { status: number; url: string }[] = [];
+  const diagnostics = { pageErrors, consoleErrors, failedRequests, failedResponses };
 
   try {
+    const smallFixture = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
+    const publicTargets = await loadPublicTargets(bundleRoot);
+    const cancellationFixture = await validateBundleFile(bundleRoot, CANCELLATION_FIXTURE);
+    const outputContractPath = await validateBundleFile(bundleRoot, OUTPUT_CONTRACT);
+    const outputContract: unknown = JSON.parse(await readFile(outputContractPath, 'utf8'));
+    assertOutputContractConfig(outputContract);
+    assert.equal(outputContract.schemaVersion, 1, 'Unsupported output contract schema');
+    assert(Array.isArray(outputContract.cases) && outputContract.cases.length > 0);
+    const contractFixtures = new Map<string, string>();
+    for (const contract of outputContract.cases) {
+      assert.equal(typeof contract.id, 'string');
+      assert(['gif', 'webp'].includes(contract.format));
+      contractFixtures.set(contract.id, await validateBundleFile(bundleRoot, contract.fixture));
+    }
+    const fixtureFor = (contract: OutputContractCase) => {
+      const fixture = contractFixtures.get(contract.id);
+      assert(fixture, `Missing bundled fixture for ${contract.id}`);
+      return fixture;
+    };
     const started = await startStaticServer(bundleRoot);
     server = started.server;
     context = await browser.newContext({
@@ -3477,18 +3564,7 @@ export async function run({
       );
     }
 
-    await writeFile(
-      join(outputRoot, 'network-diagnostics.json'),
-      JSON.stringify({ pageErrors, consoleErrors, failedRequests, failedResponses }, null, 2)
-    );
-    assert.deepEqual(pageErrors, [], `Unhandled page errors: ${pageErrors.join(' | ')}`);
-    assert.deepEqual(consoleErrors, [], `Console errors: ${consoleErrors.join(' | ')}`);
-    assert.deepEqual(failedRequests, [], `Failed requests: ${JSON.stringify(failedRequests)}`);
-    assert.deepEqual(
-      failedResponses,
-      [],
-      `Failed HTTP responses: ${JSON.stringify(failedResponses)}`
-    );
+    await assertMediaNetworkDiagnostics(outputRoot, diagnostics);
 
     return {
       profile: PROFILE_ID,
@@ -3507,8 +3583,10 @@ export async function run({
       },
       artifacts,
     };
+  } catch (error) {
+    failure = { error };
+    throw error;
   } finally {
-    await context?.close();
-    if (server) await closeServer(server);
+    await finishMediaProfile({ context, server, outputRoot, diagnostics, failure });
   }
 }
