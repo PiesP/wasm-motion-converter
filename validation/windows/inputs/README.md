@@ -1,5 +1,23 @@
 # Application update acceptance inputs
 
+## Service-worker migration handoff
+
+Place a complete clean baseline distribution at the ignored
+`service-worker-baseline/` path and add `service-worker-handoff.json`:
+
+```json
+{"schemaVersion":1,"mode":"service-worker-handoff","baselineSourceSha":"<40-hex-SHA>","baselineTreeSha":"<40-hex-tree>","candidateSourceSha":"<40-hex-SHA>","candidateTreeSha":"<40-hex-tree>"}
+```
+
+This selector takes priority over other validation modes. The runner verifies
+both complete inventories and distinct worker bytes, observes the new worker
+claiming retained tabs, checks preserved cached assets and unavailable resources,
+then exercises explicit reload and offline document recovery. It writes
+`service-worker-handoff.json` to the external evidence directory. Remove the
+selector after the focused run.
+
+## Application update
+
 The normal Windows media profile runs when `app-update.json` is absent. To select
 the focused application-update profile, create this ignored file:
 

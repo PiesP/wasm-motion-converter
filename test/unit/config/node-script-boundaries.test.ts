@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   copyFileSync,
@@ -36,6 +37,7 @@ function fixture() {
     'scripts/check/run-child.ts',
     'scripts/release/legacy-state.ts',
     'scripts/build/deployment-state.ts',
+    'scripts/build/verify-service-worker-output.ts',
   ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     copyFileSync(join(project, path), join(root, path));
@@ -217,6 +219,14 @@ describe('direct Node script boundaries', () => {
     const { root, run } = fixture();
     mkdirSync(join(root, 'dist/assets'), { recursive: true });
     mkdirSync(join(root, 'public'));
+    mkdirSync(join(root, 'worker'));
+    const workerSource = 'self.addEventListener("fetch", () => {});\n';
+    writeFileSync(join(root, 'worker/service-worker.ts'), workerSource);
+    const workerHash = createHash('sha256').update(workerSource).digest('hex');
+    writeFileSync(
+      join(root, 'dist/service-worker.js'),
+      `/* dropconvert-worker-source-sha256:${workerHash} */\nself.addEventListener("fetch",()=>{});`
+    );
     writeFileSync(join(root, 'public/_headers'), '/*\n  X-Content-Type-Options: nosniff\n');
     writeFileSync(
       join(root, 'dist/index.html'),

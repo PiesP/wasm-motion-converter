@@ -36,6 +36,6 @@
     "stableTypeOrdering": true,
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*", "vite.config.ts", "public/service-worker.js", "index.html"],
+  "include": ["src/**/*", "vite.config.ts", "index.html"],
   "exclude": ["node_modules", "dist", "tmp/**", ".vite-sw-temp/**", ".vscode", "test"]
 }

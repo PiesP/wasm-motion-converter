@@ -59,8 +59,9 @@ Protect these assets:
   memory planning.
 - `src/services/conversion-worker/`, `src/services/worker-pool.ts`, Worker
   protocols, fallback paths, timeouts, cancellation, and cleanup.
-- `public/service-worker.js`, `src/sw-register.ts`, `public/_headers`,
-  `vite.config.ts`, and generated build integrity checks.
+- `worker/service-worker.ts`, emitted `dist/service-worker.js`,
+  `src/sw-register.ts`, `public/_headers`, `vite.config.ts`, and generated build
+  integrity checks.
 - `package.json`, `pnpm-workspace.yaml`, lockfiles, scripts, GitHub Actions,
   release automation, and Cloudflare configuration.
 

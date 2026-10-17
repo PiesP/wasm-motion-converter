@@ -150,15 +150,18 @@ async function exerciseBuildUpgrade(
   bundleRoot: string,
   smallFixture: string,
   activeFixture: string,
-  setDistribution: StartedServer['setDistribution']
+  setDistribution: StartedServer['setDistribution'],
+  priorRelativePath = 'validation/windows/prior-dist',
+  requireChangedWorker = false
 ) {
   // readBuild checks each emitted file against deployment-state.json, including
   // service-worker.js, before the browser uses either distribution.
   const [priorBuild, currentBuild] = await Promise.all(
-    ['validation/windows/prior-dist', 'dist'].map((relativePath) =>
+    [priorRelativePath, 'dist'].map((relativePath) =>
       readBuild(bundleRoot, relativePath, async (_root, path) => join(bundleRoot, path), {
-        requireCompiledSource: relativePath === 'dist',
+        requireCompiledSource: relativePath === 'dist' || requireChangedWorker,
         verifyInventory: true,
+        exactInventory: requireChangedWorker,
       })
     )
   );
@@ -173,11 +176,19 @@ async function exerciseBuildUpgrade(
     );
   }
   const workerByteIdentical = priorBuild.workerSha256 === currentBuild.workerSha256;
+  if (requireChangedWorker) {
+    assert.notEqual(
+      priorBuild.state.sourceSha,
+      currentBuild.state.sourceSha,
+      'Worker handoff requires distinct source builds'
+    );
+    assert(!workerByteIdentical, 'Worker handoff requires distinct emitted worker bytes');
+  }
   const context = await browser.newContext({ locale: 'en-US', acceptDownloads: true });
   const page = await context.newPage();
   let activePage: Page | undefined;
   try {
-    await setDistribution('validation/windows/prior-dist');
+    await setDistribution(priorRelativePath);
     await page.goto(baseUrl);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
@@ -209,7 +220,7 @@ async function exerciseBuildUpgrade(
       }
       throw new Error('Prior build has no cached JS asset');
     });
-    const priorAssets = await readdir(join(bundleRoot, 'validation/windows/prior-dist/assets'));
+    const priorAssets = await readdir(join(bundleRoot, priorRelativePath, 'assets'));
     const nextAssets = new Set(await readdir(join(bundleRoot, 'dist/assets')));
     const oldOnly = priorAssets.filter((name) => name.endsWith('.js') && !nextAssets.has(name));
     await page.locator('[data-testid="file-input"]').setInputFiles(smallFixture);
@@ -248,22 +259,25 @@ async function exerciseBuildUpgrade(
     const neverFetched = oldOnly.find(
       (name) => /^(?:ar|es|ja|ko|zh-CN)\./.test(name) && !cachedPaths.includes(`/assets/${name}`)
     );
-    assert(
-      neverFetched,
-      'Prior build has no removed, never-fetched locale chunk for upgrade acceptance'
-    );
-    const locale = neverFetched.split('.')[0];
-    assert(locale);
+    if (!requireChangedWorker)
+      assert(
+        neverFetched,
+        'Prior build has no removed, never-fetched locale chunk for upgrade acceptance'
+      );
+    const missingAsset = neverFetched ?? 'handoff-control.abcdefgh.js';
+    assert(!nextAssets.has(missingAsset) && !cachedPaths.includes(`/assets/${missingAsset}`));
+    const locale = neverFetched?.split('.')[0];
+    if (neverFetched) assert(locale);
     assert.equal(
       await page.evaluate(
         (path) =>
           performance
             .getEntriesByType('resource')
             .some((entry) => new URL(entry.name).pathname === path),
-        `/assets/${neverFetched}`
+        `/assets/${missingAsset}`
       ),
       false,
-      'Supposed never-fetched locale chunk was already requested'
+      'Uncached control was already requested'
     );
 
     // A second old-build tab runs an actual conversion while the completed
@@ -476,7 +490,7 @@ async function exerciseBuildUpgrade(
     );
     await context.setOffline(false);
 
-    const missingPath = `/assets/${neverFetched}`;
+    const missingPath = `/assets/${missingAsset}`;
     const missingUrl = `${baseUrl}${missingPath}`;
     // The updated worker intentionally turns an invalid 404 asset response
     // into Response.error(). The browser sees requestfailed, not a 404 response.
@@ -484,11 +498,11 @@ async function exerciseBuildUpgrade(
     assert.equal(
       missingAtOrigin.status(),
       404,
-      'Removed locale chunk still exists in the candidate distribution'
+      'Uncached control exists in the candidate distribution'
     );
     assert(
       !/\bimmutable\b/i.test(missingAtOrigin.headers()['cache-control'] ?? ''),
-      'Removed locale chunk received immutable caching at the origin'
+      'Uncached control received immutable caching at the origin'
     );
     // This listener belongs only to the acceptance harness. The old app cannot
     // display a notice introduced by the new bundle while its document stays open.
@@ -505,10 +519,21 @@ async function exerciseBuildUpgrade(
         predicate: (request) => request.url() === missingUrl,
         timeout: 15_000,
       }),
-      page.locator('[data-testid="language-selector"]').selectOption(locale),
+      neverFetched
+        ? page.locator('[data-testid="language-selector"]').selectOption(locale!)
+        : page
+            .evaluate(async (url) => {
+              try {
+                await fetch(url);
+                return 'resolved';
+              } catch {
+                return 'rejected';
+              }
+            }, missingUrl)
+            .then((outcome) => assert.equal(outcome, 'rejected')),
     ]);
     const requestFailure = blockedRequest.failure()?.errorText;
-    assert(requestFailure, 'Removed locale chunk failed without browser failure detail');
+    assert(requestFailure, 'Uncached control failed without browser failure detail');
     await page.waitForFunction(
       (path) =>
         globalThis.__wmcUpgradeAssetMessages?.some(
@@ -522,18 +547,18 @@ async function exerciseBuildUpgrade(
       (path) => globalThis.__wmcUpgradeAssetMessages.find((message) => message.path === path),
       missingPath
     );
-    assert(workerMessage, 'Worker did not report missing old locale chunk');
+    assert(workerMessage, 'Worker did not report the unavailable asset');
     assert.equal(workerMessage.status, 404);
     assert.equal(workerMessage.reason, 'invalid-response');
     assert.equal(
       await page.evaluate(() => performance.timeOrigin),
       oldDocumentTimeOrigin,
-      'Missing old locale chunk reloaded the retained result tab'
+      'Unavailable asset reloaded the retained result tab'
     );
     assert.equal(
       await page.locator('[data-testid="download-result-button"]').getAttribute('href'),
       oldDownloadHref,
-      'Missing old locale chunk discarded the prior result'
+      'Unavailable asset discarded the prior result'
     );
     await page.waitForFunction(
       () =>
@@ -546,7 +571,7 @@ async function exerciseBuildUpgrade(
     assert.equal(
       sha256(retainedAfterMissing),
       priorResultSha256,
-      'Prior result download bytes changed after a missing lazy locale chunk'
+      'Prior result download bytes changed after an unavailable asset'
     );
 
     const currentJs = [...nextAssets].find((name) => name.endsWith('.js'));
@@ -630,7 +655,7 @@ async function exerciseBuildUpgrade(
       id: 'real-build-upgrade',
       status: 'passed',
       priorOnlyNeverFetchedChunk: neverFetched,
-      missingChunkTriggeredBy: `language-selector=${locale}`,
+      missingChunkTriggeredBy: neverFetched ? `language-selector=${locale}` : 'uncached fetch',
       cachedPriorAsset: new URL(cached.url).pathname,
       cachedPriorSha256: sha256(Buffer.from(cached.bytes)),
       retainedResultDownload: true,
@@ -652,7 +677,7 @@ async function exerciseBuildUpgrade(
       missingChunkRequestFailure: requestFailure,
       missingChunkWorkerMessage: workerMessage,
       messageObservedByHarnessOnly: true,
-      oldLocaleFallback: 'English',
+      oldLocaleFallback: neverFetched ? 'English' : null,
       pollutedAssetRejected: true,
       explicitReloadLoadedCurrentBuild: true,
       currentAppSettingsInteraction: true,
@@ -671,7 +696,9 @@ export async function exerciseOfflineRecovery(
   setDistribution: StartedServer['setDistribution'],
   bundleRoot: string,
   smallFixture: string,
-  activeFixture: string
+  activeFixture: string,
+  priorRelativePath = 'validation/windows/prior-dist',
+  requireChangedWorker = false
 ) {
   const upgrade = await exerciseBuildUpgrade(
     browser,
@@ -679,7 +706,9 @@ export async function exerciseOfflineRecovery(
     bundleRoot,
     smallFixture,
     activeFixture,
-    setDistribution
+    setDistribution,
+    priorRelativePath,
+    requireChangedWorker
   );
   const context = await browser.newContext({
     locale: 'en-US',

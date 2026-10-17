@@ -1,10 +1,34 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 
-import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
+import { build } from 'vite';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
+
+import { verifyServiceWorkerOutput } from '../../../scripts/build/verify-service-worker-output';
+
+let emittedWorker: string;
+let workerBuildRoot: string;
+
+beforeAll(async () => {
+  workerBuildRoot = mkdtempSync(join(tmpdir(), 'wmc-service-worker-'));
+  await build({
+    configFile: resolve('vite.config.ts'),
+    publicDir: false,
+    build: { outDir: workerBuildRoot },
+    logLevel: 'error',
+  });
+  verifyServiceWorkerOutput(process.cwd(), workerBuildRoot);
+  emittedWorker = readFileSync(join(workerBuildRoot, 'service-worker.js'), 'utf8');
+});
+
+afterAll(() => {
+  if (workerBuildRoot) rmSync(workerBuildRoot, { recursive: true, force: true });
+});
 
 const origin = 'https://drop.test';
 const assetUrl = (name: string, extension = 'js') =>
@@ -198,7 +222,7 @@ function loadServiceWorker(): {
     skipWaiting: vi.fn(),
   };
 
-  runInNewContext(readFileSync('public/service-worker.js', 'utf8'), {
+  runInNewContext(`'use strict';\n${emittedWorker}`, {
     Promise,
     Headers,
     Response,

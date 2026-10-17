@@ -3,6 +3,7 @@
   "entry": "validation/windows/profile.ts",
   "assets": [
     "dist",
+    "worker/service-worker.ts",
     "validation/windows/inputs",
     "validation/windows/app-update.ts",
     "validation/windows/prior-dist",

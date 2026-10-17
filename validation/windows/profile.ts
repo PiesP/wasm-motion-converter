@@ -30,7 +30,7 @@ import type {
   Request as PlaywrightRequest,
 } from '@playwright/test';
 
-import { runAppUpdate } from './app-update.ts';
+import { readBuild, runAppUpdate } from './app-update.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
 import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
@@ -3051,6 +3051,134 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const handoffConfigPath = 'validation/windows/inputs/service-worker-handoff.json';
+  let handoffPresent = false;
+  try {
+    handoffPresent = (await stat(resolve(bundleRoot, handoffConfigPath))).isFile();
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (handoffPresent) {
+    const configPath = await validateBundleFile(bundleRoot, handoffConfigPath);
+    const config: unknown = JSON.parse(await readFile(configPath, 'utf8'));
+    assert(isRecord(config), 'Invalid service-worker handoff selector');
+    assert.deepEqual(
+      Object.keys(config).sort(),
+      [
+        'schemaVersion',
+        'mode',
+        'baselineSourceSha',
+        'baselineTreeSha',
+        'candidateSourceSha',
+        'candidateTreeSha',
+      ].sort()
+    );
+    assert(config.schemaVersion === 1 && config.mode === 'service-worker-handoff');
+    for (const key of [
+      'baselineSourceSha',
+      'baselineTreeSha',
+      'candidateSourceSha',
+      'candidateTreeSha',
+    ]) {
+      assert(typeof config[key] === 'string' && /^[a-f0-9]{40}$/.test(config[key]));
+    }
+    const baselinePath = 'validation/windows/inputs/service-worker-baseline';
+    const outputRoot = resolve(output);
+    await mkdir(outputRoot, { recursive: true });
+    const diagnostics: Record<string, unknown> = {
+      id: 'service-worker-handoff',
+      status: 'running',
+      browserVersion: browser.version(),
+      nodeVersion: process.version,
+      baselineSourceSha: config.baselineSourceSha,
+      candidateSourceSha: config.candidateSourceSha,
+    };
+    let started: Awaited<ReturnType<typeof startStaticServer>> | undefined;
+    try {
+      const [baseline, candidate, smallFixture, activeFixture] = await Promise.all([
+        readBuild(bundleRoot, baselinePath, validateBundleFile, {
+          verifyInventory: true,
+          exactInventory: true,
+        }),
+        readBuild(bundleRoot, 'dist', validateBundleFile, {
+          verifyInventory: true,
+          exactInventory: true,
+        }),
+        validateBundleFile(bundleRoot, 'public/test-video-ci-h264.mp4'),
+        validateBundleFile(bundleRoot, 'public/test-video-ci-high-motion-120fps.mp4'),
+      ]);
+      assert.equal(baseline.state.sourceSha, config.baselineSourceSha);
+      assert.equal(baseline.state.treeSha, config.baselineTreeSha);
+      assert.equal(candidate.state.sourceSha, config.candidateSourceSha);
+      assert.equal(candidate.state.treeSha, config.candidateTreeSha);
+      assert.notEqual(baseline.workerSha256, candidate.workerSha256);
+      const workerSource = await readFile(
+        await validateBundleFile(bundleRoot, 'worker/service-worker.ts')
+      );
+      const candidateWorker = await readFile(
+        await validateBundleFile(bundleRoot, 'dist/service-worker.js')
+      );
+      assert(
+        candidateWorker
+          .toString('utf8')
+          .startsWith(`/* dropconvert-worker-source-sha256:${sha256(workerSource)} */\n`),
+        'Candidate worker does not match its bundled TypeScript source'
+      );
+      diagnostics.baseline = {
+        inventorySha256: baseline.manifestSha256,
+        workerSha256: baseline.workerSha256,
+      };
+      diagnostics.candidate = {
+        inventorySha256: candidate.manifestSha256,
+        workerSha256: candidate.workerSha256,
+      };
+      started = await startStaticServer(bundleRoot);
+      const probeContext = await browser.newContext({ serviceWorkers: 'block' });
+      try {
+        for (const [distribution, expected] of [
+          [baselinePath, baseline.workerSha256],
+          ['dist', candidate.workerSha256],
+        ] as const) {
+          await started.setDistribution(distribution);
+          const served: APIResponse = await probeContext.request.get(
+            `${started.url}/service-worker.js`
+          );
+          assert.equal(served.status(), 200);
+          assert.match(served.headers()['content-type'] ?? '', /(?:javascript|ecmascript)/i);
+          assert.match(served.headers()['cache-control'] ?? '', /max-age=0.*must-revalidate/i);
+          assert.equal(sha256(await served.body()), expected);
+        }
+      } finally {
+        await probeContext.close();
+      }
+      const check = await exerciseOfflineRecovery(
+        browser,
+        started.url,
+        outputRoot,
+        started.setDistribution,
+        bundleRoot,
+        smallFixture,
+        activeFixture,
+        baselinePath,
+        true
+      );
+      diagnostics.check = check;
+      diagnostics.status = 'passed';
+      return diagnostics;
+    } catch (error) {
+      diagnostics.status = 'failed';
+      diagnostics.error = String(error)
+        .replaceAll(bundleRoot, '<bundle>')
+        .replaceAll(outputRoot, '<evidence>');
+      throw error;
+    } finally {
+      if (started) await closeServer(started.server);
+      await writeFile(
+        join(outputRoot, 'service-worker-handoff.json'),
+        JSON.stringify(diagnostics, null, 2)
+      );
+    }
+  }
   const recoveryConfigPath = 'validation/windows/inputs/recovery.json';
   let recoveryPresent = false;
   try {
