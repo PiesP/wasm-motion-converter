@@ -479,6 +479,19 @@ import restrictions. Relevant references are [Oxlint import restrictions](https:
 - `package.json`, `pnpm-workspace.yaml`, and pinned workflow digests are the
   authoritative versions. Run `pnpm verify:full` after substantive upgrades.
 
+Vite+ owns the Vite, Vitest, coverage, and core-tool versions. Dependabot keeps
+`vite-plus` update PRs visible while omitting ordinary component-version PRs for
+`vite`, `vitest`, `@vitest/*`, and `@voidzero-dev/vite-plus-core`. Security updates
+and alerts remain visible. For a Vite+ update, select an exact stable release
+published at least 24 hours earlier and set `VERSION` to that release. Follow the
+[project upgrade guide](https://viteplus.dev/guide/upgrade-project): run
+`pnpm dlx --package="vite-plus@$VERSION" vp help migrate`, then
+`pnpm dlx --package="vite-plus@$VERSION" vp migrate --no-interactive --no-agent --no-editor --no-hooks`.
+Review the managed Vite alias, Vitest and coverage catalog entries, and exact
+peer-compatibility selectors against the bundled versions. Confirm fresh
+dependency resolution, a frozen install, and `pnpm verify:full` before merging.
+Upgrading a global `vp` installation does not update this project's package graph.
+
 Review the exact dependency/Action diff and its upstream source, release notes,
 security advisory and changed executable/install behavior. Verify the selected
 version or immutable Action SHA, frozen-lock installation and applicable CI at
