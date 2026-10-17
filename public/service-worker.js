@@ -10,48 +10,62 @@
 
 /// <reference lib="webworker" />
 
+/** @type {ServiceWorkerGlobalScope} */
+const workerScope = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
+
 const CACHE_PREFIX = 'dropconvert';
 // Keep the cache name stable: an updated worker must not discard assets used by open tabs.
 const CACHE_VERSION = 'v20261008-documents';
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 const DYNAMIC_CACHE = `${CACHE_PREFIX}-dynamic-${CACHE_VERSION}`;
 const DYNAMIC_CACHE_MAX_ENTRIES = 64;
-const NAVIGATION_CACHE_KEY = new URL('/', self.location.origin).href;
+const NAVIGATION_CACHE_KEY = new URL('/', workerScope.location.origin).href;
 const PRECACHE_URLS = ['/', '/icon.svg', '/robots.txt', '/sitemap.xml'];
 const ASSET_ADMISSION_VERSION = 'body-checked-v1';
 const ASSET_ADMISSION_HEADER = 'x-dropconvert-asset-admission';
 const ASSET_SOURCE_HEADER = 'x-dropconvert-asset-source';
 
+/** @param {URL} url */
 function isStaticAsset(url) {
   return url.pathname.startsWith('/assets/');
 }
 
+/** @param {URL} url */
 function isVideoFile(url) {
   const path = url.pathname.toLowerCase();
   return path.endsWith('.webm') || path.endsWith('.mp4');
 }
 
+/** @param {URL} url */
 function getStaticAssetCacheKey(url) {
-  return new URL(url.pathname, self.location.origin).href;
+  return new URL(url.pathname, workerScope.location.origin).href;
 }
 
+/** @param {URL} url
+ * @returns {'js' | 'css' | 'wasm' | null}
+ */
 function assetKind(url) {
   // Vite emits a content hash before the extension. Other /assets/ URLs are
   // never treated as immutable application assets.
   if (!/[.-][a-zA-Z0-9_-]{8}\.(?:js|css|wasm)$/.test(url.pathname)) return null;
-  return url.pathname.slice(url.pathname.lastIndexOf('.') + 1);
-}
-
-function isAppDocumentUrl(url) {
-  return (
-    url.origin === self.location.origin && (url.pathname === '/' || url.pathname === '/index.html')
+  return /** @type {'js' | 'css' | 'wasm'} */ (
+    url.pathname.slice(url.pathname.lastIndexOf('.') + 1)
   );
 }
 
+/** @param {URL} url */
+function isAppDocumentUrl(url) {
+  return (
+    url.origin === workerScope.location.origin &&
+    (url.pathname === '/' || url.pathname === '/index.html')
+  );
+}
+
+/** @param {Response | undefined} response */
 function isAppDocumentResponse(response) {
   if (response?.status !== 200 || response.type === 'opaque' || response.type === 'opaqueredirect')
     return false;
-  const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+  const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
   if (contentType !== 'text/html') return false;
   try {
     return isAppDocumentUrl(new URL(response.url));
@@ -74,6 +88,9 @@ async function getRecoveryDocument() {
   return undefined;
 }
 
+/** @param {string} key
+ * @param {Response} response
+ */
 async function putInCache(key, response) {
   try {
     const cache = await caches.open(DYNAMIC_CACHE);
@@ -93,6 +110,11 @@ async function putInCache(key, response) {
   }
 }
 
+/** @param {Response | undefined} response
+ * @param {string} key
+ * @param {'js' | 'css' | 'wasm'} kind
+ * @param {boolean} admitted
+ */
 function assetHeadersValid(response, key, kind, admitted = false) {
   if (
     response?.status !== 200 ||
@@ -100,7 +122,7 @@ function assetHeadersValid(response, key, kind, admitted = false) {
     response.redirected
   )
     return false;
-  const mime = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
+  const mime = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
   if (
     (kind === 'js' &&
       ![
@@ -108,7 +130,7 @@ function assetHeadersValid(response, key, kind, admitted = false) {
         'application/javascript',
         'text/ecmascript',
         'application/ecmascript',
-      ].includes(mime)) ||
+      ].includes(mime ?? '')) ||
     (kind === 'css' && mime !== 'text/css') ||
     (kind === 'wasm' && mime !== 'application/wasm')
   )
@@ -122,12 +144,17 @@ function assetHeadersValid(response, key, kind, admitted = false) {
   }
   try {
     const finalUrl = new URL(response.url);
-    return finalUrl.origin === self.location.origin && getStaticAssetCacheKey(finalUrl) === key;
+    return (
+      finalUrl.origin === workerScope.location.origin && getStaticAssetCacheKey(finalUrl) === key
+    );
   } catch {
     return false;
   }
 }
 
+/** @param {Response} response
+ * @param {'js' | 'css' | 'wasm'} kind
+ */
 async function assetBodyValid(response, kind) {
   const reader = response.clone().body?.getReader();
   if (!reader) return false;
@@ -155,10 +182,17 @@ async function assetBodyValid(response, kind) {
   return !prefix.startsWith('<') && !prefix.includes('\0');
 }
 
+/** @param {Response} response
+ * @param {string} key
+ * @param {'js' | 'css' | 'wasm'} kind
+ */
 async function validAsset(response, key, kind) {
   return assetHeadersValid(response, key, kind) && (await assetBodyValid(response, kind));
 }
 
+/** @param {Response} response
+ * @param {string} key
+ */
 function admittedResponse(response, key) {
   const headers = new Headers(response.headers);
   // Fetch exposes a decoded body; its original transfer headers cannot be
@@ -175,6 +209,10 @@ function admittedResponse(response, key) {
   });
 }
 
+/** @param {string} cacheName
+ * @param {string} key
+ * @param {'js' | 'css' | 'wasm'} kind
+ */
 async function matchAsset(cacheName, key, kind) {
   if (!cacheName) return undefined;
   try {
@@ -199,9 +237,14 @@ async function matchAsset(cacheName, key, kind) {
   return undefined;
 }
 
+/** @param {FetchEvent} event
+ * @param {URL} url
+ * @param {number} status
+ * @param {'invalid-response' | 'network-error'} reason
+ */
 async function notifyAssetUnavailable(event, url, status, reason) {
   try {
-    const client = event.clientId && (await self.clients.get(event.clientId));
+    const client = event.clientId ? await workerScope.clients.get(event.clientId) : undefined;
     client?.postMessage({
       type: 'dropconvert:asset-unavailable',
       path: url.pathname,
@@ -213,6 +256,12 @@ async function notifyAssetUnavailable(event, url, status, reason) {
   }
 }
 
+/** @param {FetchEvent} event
+ * @param {Request} request
+ * @param {URL} url
+ * @param {string} key
+ * @param {'js' | 'css' | 'wasm'} kind
+ */
 async function getAsset(event, request, url, key, kind) {
   const cached = await matchAsset(DYNAMIC_CACHE, key, kind);
   if (cached) return cached;
@@ -234,16 +283,16 @@ async function getAsset(event, request, url, key, kind) {
   }
 }
 
-self.addEventListener('install', (event) => {
+workerScope.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(STATIC_CACHE)
       .then((cache) => cache.addAll(PRECACHE_URLS))
-      .then(() => self.skipWaiting())
+      .then(() => workerScope.skipWaiting())
   );
 });
 
-self.addEventListener('activate', (event) => {
+workerScope.addEventListener('activate', (event) => {
   event.waitUntil(
     (async () => {
       try {
@@ -259,12 +308,12 @@ self.addEventListener('activate', (event) => {
       } catch {
         // Activation must survive storage failures.
       }
-      await self.clients.claim();
+      await workerScope.clients.claim();
     })()
   );
 });
 
-self.addEventListener('fetch', (event) => {
+workerScope.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
   if (request.method !== 'GET') return;
@@ -273,7 +322,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.origin === self.location.origin && isStaticAsset(url)) {
+  if (url.origin === workerScope.location.origin && isStaticAsset(url)) {
     const kind = assetKind(url);
     if (!kind) return;
     const expectedDestination = {
