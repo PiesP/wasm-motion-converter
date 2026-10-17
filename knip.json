@@ -5,8 +5,6 @@
     "src/services/conversion-worker/worker.ts!",
     "src/services/webp-encoder-worker.ts!",
     "scripts/ci/classify-workflow-changes.ts",
-    "scripts/ci/repository-authority.test.ts",
-    "scripts/ci/mutation-workspace.test.ts",
     "scripts/check/run-child.test.ts",
     "scripts/release/verify-source.test.ts",
     "scripts/ci/pinned-tools.ts",
@@ -32,7 +30,7 @@
     "@t": ["src/types"],
     "@i18n": ["src/i18n"]
   },
-  "ignoreBinaries": ["ffmpeg", "ffprobe", "unshare"],
+  "ignoreBinaries": ["ffmpeg", "ffprobe"],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": ["@types/dom-webcodecs", "wrangler"],
   "node": false

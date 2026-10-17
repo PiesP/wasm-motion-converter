@@ -11,7 +11,6 @@ const keys = [
   'unit',
   'e2e',
   'build',
-  'mutation',
   'dependency',
   'codeql',
   'semgrep',
@@ -60,7 +59,6 @@ function classifyPath(routes: Routes, path: string): void {
       'unit',
       'e2e',
       'build',
-      'mutation',
       'dependency',
       'codeql',
       'semgrep',
@@ -75,7 +73,6 @@ function classifyPath(routes: Routes, path: string): void {
       'unit',
       'e2e',
       'build',
-      'mutation',
       'dependency',
       'codeql',
       'semgrep',
@@ -83,17 +80,7 @@ function classifyPath(routes: Routes, path: string): void {
       'security_tools'
     );
   } else if (path.startsWith('src/')) {
-    enable(
-      routes,
-      'quality',
-      'unit',
-      'e2e',
-      'build',
-      'mutation',
-      'codeql',
-      'semgrep',
-      'semgrep_full'
-    );
+    enable(routes, 'quality', 'unit', 'e2e', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path.startsWith('functions/') || path.startsWith('tooling/')) {
     enable(routes, 'quality', 'unit', 'e2e', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path.startsWith('public/') || path === 'index.html') {
@@ -104,7 +91,7 @@ function classifyPath(routes: Routes, path: string): void {
     path === 'vitest.config.ts' ||
     path === 'tsconfig.test.json'
   ) {
-    enable(routes, 'quality', 'unit', 'mutation', 'codeql', 'semgrep', 'semgrep_full');
+    enable(routes, 'quality', 'unit', 'codeql', 'semgrep', 'semgrep_full');
   } else if (
     path.startsWith('test/e2e/') ||
     path.startsWith('test/lib/') ||
@@ -135,8 +122,6 @@ function classifyPath(routes: Routes, path: string): void {
     enable(routes, 'quality', 'unit', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path === 'vite.config.ts') {
     enable(routes, 'quality', 'unit', 'e2e', 'build', 'codeql', 'semgrep', 'semgrep_full');
-  } else if (['stryker.conf.json', 'stryker.conf.fast.json'].includes(path)) {
-    enable(routes, 'quality', 'unit', 'mutation', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path === 'wrangler.toml') {
     enable(routes, 'unit', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path === '.gitattributes' || path === '.gitignore') {

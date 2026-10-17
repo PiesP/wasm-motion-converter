@@ -80,83 +80,18 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `pnpm prepare:e2e:fixture`, `pretest:e2e:ci`, `pretest:e2e:resource`, `pretest:e2e:deploy` | `scripts/test/generate-e2e-video.ts` uses host FFmpeg/ffprobe; `scripts/test/prepare-resource-fixtures.ts` selects resource fixtures. | Writes ignored `public/test-video-*` files; requires codec tools on PATH. `test/unit/e2e-fixtures.test.ts`, child adapter tests, and affected E2E profile check outputs. |
 | `pnpm test:e2e`, `test:e2e:ci`, `test:e2e:resource`, `test:e2e:deploy` | Plain `test:e2e` runs Playwright; `scripts/test/run-playwright.ts` selects the named CI, resource or deploy profile in the caller environment. | Requires built app/fixtures and browsers; writes test results/screenshots. `scripts/check/run-child.test.ts` covers argv, cwd, env, exit and signal; browser profiles have distinct scopes. |
 | `pnpm verify:full` | Runs verify, coverage and `scripts/test/run-e2e-on-free-port.ts` CI smoke; chooses an ephemeral loopback port and invokes the package script via `npm_execpath`. | May bind loopback, generate fixtures, build, launch browsers and write reports; `test/unit/config/playwright-profile.test.ts` and CI smoke are checks. It is not all hardware/codec/Windows acceptance. |
-| `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vitest and direct Node `scripts/ci/{deep-check-reuse,repository-authority}.test.ts`, `scripts/release/verify-source.test.ts` and `scripts/check/run-child.test.ts`. | Watch persists; coverage writes reports. `test:ci` checks reuse, repository authority, tagged source and portable child execution, not rendered conversion. |
+| `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vitest and direct Node `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts` and `scripts/check/run-child.test.ts`. | Watch persists; coverage writes reports. `test:ci` checks repository authority, tagged source and portable child execution, not rendered conversion. |
 | `pnpm check`, `check:test:unit`, `check:test:e2e`, `check:scripts`, `typecheck` | Browser, Vitest, Playwright and strict NodeNext/erasable TypeScript projects; `tsconfig.scripts.json` includes `scripts/**/*.ts` with ES2022 and Node types. Browser and Playwright projects retain their DOM and worker libraries. | Read-only; `pnpm quality` runs these boundaries. The Node boundary test compiles the full script project with positive Node and negative browser-global probes. Raw Windows `.mjs` is checked separately by that test. |
 | `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
 | `pnpm fmt`, `fmt:check`, `lint`, `knip`, `knip:full`, `knip:production`, `circular` | Biome style/lint, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
 | `pnpm quality`, `verify` | Quality runs one read-only `biome ci .` pass for formatting, lint and import organization, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
-| `pnpm mut:prepare`, `mut`, `mut:fast` | Prepare an independent disposable checkout, then launch full/fast Stryker through `scripts/ci/mutation-workspace.ts`. Deep and Release admit their job-owned checkout; manual Deep runs default to fresh analysis. | One analysis per checkout; reports stay in `reports/mutation/`, diagnostics in `.git/wmc-mutation/`. See Mutation runs below. |
 | `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `legacy-state.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
-
-### Mutation runs
-
-Mutation testing uses Stryker's `inPlace` mode. Even `dryRunOnly` can write source
-and temporary files during instrumentation. Run either profile in a separate,
-independent full clone on Linux or WSL; native Windows invocation is refused.
-Directly invoking the Stryker binary in a maintainer checkout bypasses this
-protection and is unsafe. A run record helps prevent accidental use of the wrong
-checkout; it is not an OS sandbox for hostile code.
-
-Select a committed revision explicitly. The example creates a new directory
-outside the source checkout; replace both absolute paths before running it.
-
-```bash
-MUTATION_SOURCE=/absolute/path/to/wasm-motion-converter
-MUTATION_COMMIT=$(git -C "$MUTATION_SOURCE" rev-parse HEAD)
-MUTATION_CLONE=/absolute/path/outside/source/wmc-mutation-1
-git clone --no-local --no-hardlinks --no-checkout "$MUTATION_SOURCE" "$MUTATION_CLONE"
-git -C "$MUTATION_CLONE" -c advice.detachedHead=false checkout --detach "$MUTATION_COMMIT"
-git -C "$MUTATION_CLONE" submodule sync --recursive
-git -C "$MUTATION_CLONE" submodule update --init --recursive
-(
-  cd "$MUTATION_CLONE"
-  pnpm install --frozen-lockfile --package-import-method=copy
-  pnpm mut:prepare "$MUTATION_SOURCE" "$MUTATION_COMMIT"
-  pnpm mut:fast # or pnpm mut, using a new clone for the other profile
-)
-```
-
-Uncommitted source or core edits are not included in the selected commit and
-must not be described as tested. `pnpm mut` and `pnpm mut:fast` refuse an ordinary
-maintainer checkout before instrumentation. Do not build, probe, or run another
-agent in the disposable checkout during mutation. Deep and Release jobs use
-their own job checkout directly, bound to the selected commit; they keep the
-same canonical `pnpm mut:fast` report location and threshold.
-
-Local diagnostic arguments are `--dryRunOnly`, `--concurrency`/`-c` (1–32),
-`--logLevel`, `--mutate`/`-m`, and `--testFiles`/`-t`. Pass paths as relative
-comma-separated globs within the clone. Diagnostic mutation patterns must select
-existing regular files under `src/`;
-test patterns must select existing `.test` or `.spec` files under `test/`.
-Mutation patterns are applied in order and must leave a nonempty selection; Stryker mutation line ranges are supported. Test-file selectors
-accept positive globs only, without mutation ranges or `!` exclusions. This
-conservative admission check
-prevents no-match fallback and is not Stryker discovery-equivalence evidence.
-Other configuration and output path overrides are refused; hosted gates accept
-no overrides. The full command keeps its progress display and also writes the
-built-in JSON
-report at `reports/mutation/mutation.json` so an empty or incomplete analysis
-cannot be recorded as complete. The fast command keeps its configured reporters.
-The boundary tests use Linux `unshare` for a private mount experiment when
-available and report that case as skipped when the runner disables namespaces.
-
-If a run fails or is interrupted, inspect `.git/wmc-mutation/`, reports, Stryker
-backups, and the checkout's remaining processes before taking action. Preserve
-logs and backups while deciding whether restoration completed. Compare any
-modified content with its **before-run** state; `HEAD` cannot reconstruct dirty
-before-run edits. A forced shutdown can prevent cleanup or final status writes.
-Deep and Release attempt to retain available failure diagnostics for 14 days;
-unconditional hosted cancellation can also prevent artifact upload.
-Use a new disposable checkout for the next run, and discard the old one manually
-only after confirming its ownership, process state, and retained evidence. Do
-not reset or clean the maintainer checkout as a recovery step.
 
 ### Workflow and subprocess entrypoints
 
 | Surface | Contract; stage and side effects | Verification / status |
 | --- | --- | --- |
 | `.github/workflows/ci.yaml`, `security.yaml` changed-path jobs | `scripts/ci/classify-workflow-changes.ts` uses the trusted base on PR/merge-group and protected checkout on push, reads Git event and NUL-safe no-renames diff, writes conservative fixed gate outputs. | `test/unit/config/workflow-routing.test.ts` exercises real temporary Git repositories; verify exact-SHA hosted gates run relevant jobs. |
-| `.github/workflows/deep-checks.yaml` | Scheduled and manual runs always select mutation. `scripts/ci/deep-check-reuse.ts` owns bounded reuse with source, input, runner, and origin checks. | `scripts/ci/deep-check-reuse.test.ts` and `test/unit/config/mutation-profile.test.ts`; markers require a fresh successful gate and report upload. |
 | `.github/workflows/security.yaml` pinned tools and OSV | `scripts/ci/pinned-tools.json` owns tool versions/digests; trusted private `pinned-tools.ts` and `check-pinned-tools.ts` provide image env and freshness checks. The independently pinned browser-core `automation/actions/prepare-osv` supplies the private `consumer` OSV helper; `packages/core` is the runtime gitlink. | `test/unit/config/pinned-tools-cli.test.ts`, `test/unit/config/osv-workflow-composition.test.ts`, and provider OSV fixtures; `docs/osv-workflow.md` explains trust order and live-container limits. |
 | `.github/workflows/release.yaml` | `scripts/release/verify-source.ts` checks protected tagged source before validation fan-out; `prepare.ts` creates local files and `publication-guard.ts` plus `legacy-state.ts` own the locked public write decision. Short runner `run:` blocks select checkout, append outputs and launch actions. | `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts`, `scripts/release/verify-source.test.ts` and artifact inspection. Preparation is not publication. |
 | `.github/dependabot.yaml`, `update-browser-core.yaml` | Dependabot opens npm and GitHub Actions update PRs for maintainer review; repository workflows do not approve or merge dependency updates. `scripts/ci/update-browser-core.ts` verifies remote SHA/impact and owns gitlink PR preparation/publication. Runner shell passes event inputs and bounded output/checkout glue. | `test/unit/config/{dependency-review-policy,browser-core-automation}.test.ts` and `scripts/ci/repository-authority.test.ts`; hosted exact-SHA checks establish privileged results. |

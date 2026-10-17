@@ -59,7 +59,7 @@ describe('release runtime selection', () => {
     expect(provenance).toContain("install-dependencies: 'false'");
     expect(
       workflow.match(/node-version: \$\{\{ needs.provenance.outputs.node-version \}\}/g)
-    ).toHaveLength(5);
+    ).toHaveLength(4);
   });
 
   it.each([undefined, 26, '26', 'latest', '26.9.0\nextra=value'])(

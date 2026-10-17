@@ -43,13 +43,6 @@ updates:
           - "minor"
           - "patch"
 
-      stryker:
-        patterns:
-          - "@stryker-mutator/*"
-        update-types:
-          - "minor"
-          - "patch"
-
       solid:
         patterns:
           - "solid-js"

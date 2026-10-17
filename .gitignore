@@ -22,7 +22,6 @@ logs/
 tmp/
 temp/
 .cache/
-.stryker-tmp*/
 # Video files (test assets, large binaries)
 *.mp4
 *.webm

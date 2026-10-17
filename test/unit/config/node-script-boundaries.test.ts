@@ -8,7 +8,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,8 +20,6 @@ const entries = [
   'scripts/build/clean.ts',
   'scripts/build/generate-licenses.ts',
   'scripts/build/postbuild.ts',
-  'scripts/ci/deep-check-reuse.ts',
-  'scripts/ci/mutation-workspace.ts',
   'scripts/check/i18n.ts',
   'scripts/release/prepare.ts',
   'scripts/release/publication-guard.ts',
@@ -94,11 +91,7 @@ describe('direct Node script boundaries', () => {
       encoding: 'utf8',
     });
     expect(loaded.status, loaded.stderr).toBe(0);
-    for (const script of [
-      'scripts/build/run-vite.ts',
-      'scripts/ci/deep-check-reuse.ts',
-      'scripts/release/publication-guard.ts',
-    ]) {
+    for (const script of ['scripts/build/run-vite.ts', 'scripts/release/publication-guard.ts']) {
       expect(loaded.stdout).toContain(join(project, script));
     }
     const nodeOnly = run();
@@ -179,27 +172,6 @@ describe('direct Node script boundaries', () => {
     expect(existsSync(join(root, 'dist'))).toBe(false);
     expect(existsSync(join(root, 'node_modules/.vite'))).toBe(false);
     expect(existsSync(join(root, 'node_modules/retain'))).toBe(true);
-  });
-
-  it('recognizes a symlinked deep-check CLI entry', () => {
-    const { root } = fixture();
-    symlinkSync(join(root, 'scripts/ci/deep-check-reuse.ts'), join(root, 'linked-deep.ts'));
-    const invoke = (gate: string) =>
-      spawnSync(
-        process.execPath,
-        ['--experimental-strip-types', join(root, 'linked-deep.ts'), 'unknown', gate],
-        {
-          cwd: root,
-          encoding: 'utf8',
-        }
-      );
-    const unknownCommand = invoke('mutation');
-    expect(unknownCommand.status).not.toBe(0);
-    expect(unknownCommand.stderr).toContain('Unknown command: unknown');
-
-    const retiredGate = invoke('duplication');
-    expect(retiredGate.status).not.toBe(0);
-    expect(retiredGate.stderr).toContain('Unknown deep gate: duplication');
   });
 
   it('generates license text from installed runtime dependencies', () => {
