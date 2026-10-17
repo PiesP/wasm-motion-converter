@@ -8,7 +8,7 @@
 // Usage: node --experimental-strip-types scripts/build/generate-licenses.ts
 // Called automatically during `pnpm build` via the `prebuild` script.
 
-import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -198,13 +198,4 @@ export function generateLicenses(): void {
   console.log(`\n✅ Generated ${outputPath}`);
 }
 
-function isDirectInvocation(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isDirectInvocation()) generateLicenses();
+if (import.meta.main) generateLicenses();

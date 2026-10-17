@@ -1,16 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 const root = resolve(import.meta.dirname, '..', '..');
 const distDir = join(root, 'dist');
@@ -136,13 +127,4 @@ ${changes}
   console.log(`Prepared release-bundle/ for v${version} (${checksumLines.length} release assets).`);
 }
 
-function isDirectInvocation(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isDirectInvocation()) prepareRelease();
+if (import.meta.main) prepareRelease();

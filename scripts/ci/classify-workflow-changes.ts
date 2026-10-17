@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /** Classify workflow changes. Unknown inputs conservatively enable every gate. */
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { argv, env, exit, stdin } from 'node:process';
-import { fileURLToPath } from 'node:url';
 
 const keys = [
   'all',
@@ -104,7 +103,7 @@ function classifyPath(routes: Routes, path: string): void {
   } else if (path.startsWith('scripts/build/') || path.startsWith('scripts/release/')) {
     enable(routes, 'quality', 'unit', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path.startsWith('scripts/ci/')) {
-    if (path === 'scripts/ci/pinned-tools.json' || path === 'scripts/ci/pinned-tools.ts') {
+    if (path === 'scripts/ci/pinned-tools.json') {
       enable(routes, 'dependency');
     }
     enable(routes, 'quality', 'unit', 'codeql', 'semgrep', 'semgrep_full', 'security_tools');
@@ -242,16 +241,7 @@ function main(): void {
   else process.stdout.write(lines);
 }
 
-function isDirectInvocation(): boolean {
-  if (!argv[1]) return false;
-  try {
-    return realpathSync(argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isDirectInvocation()) {
+if (import.meta.main) {
   try {
     main();
   } catch (error) {

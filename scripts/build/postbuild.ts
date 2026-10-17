@@ -6,17 +6,8 @@
  * Provider-side HTML injection is controlled in Pages settings, after build.
  */
 import { createHash } from 'node:crypto';
-import {
-  existsSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { fingerprintedAssetHeaders, writeDeploymentState } from './deployment-state.ts';
 
@@ -114,13 +105,4 @@ export function postbuild(): void {
   writeDeploymentState(resolve('.'), dist);
 }
 
-function isDirectInvocation(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isDirectInvocation()) postbuild();
+if (import.meta.main) postbuild();

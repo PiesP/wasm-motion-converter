@@ -4,9 +4,8 @@
 // Copyright (c) 2026 PiesP
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 interface VideoFixture {
   fileName: string;
@@ -333,13 +332,4 @@ export function generateE2eVideo(): void {
   }
 }
 
-function isDirectInvocation(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isDirectInvocation()) generateE2eVideo();
+if (import.meta.main) generateE2eVideo();

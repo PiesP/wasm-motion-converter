@@ -3,8 +3,6 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { isCliEntry } from '../check/run-child.ts';
-
 type Execute = (command: string, args: string[], environment?: NodeJS.ProcessEnv) => string;
 
 function execute(command: string, args: string[], environment?: NodeJS.ProcessEnv): string {
@@ -48,7 +46,7 @@ export function pagesBuild(root: string, run: Execute = execute): void {
   run('pnpm', ['build'], { NODE_ENV: 'production' });
 }
 
-if (isCliEntry(import.meta.url)) {
+if (import.meta.main) {
   try {
     pagesBuild(process.cwd());
   } catch (error) {

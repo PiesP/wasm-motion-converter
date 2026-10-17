@@ -1,6 +1,6 @@
 import { createServer } from 'node:net';
 
-import { isCliEntry, runChild } from '../check/run-child.ts';
+import { runChild } from '../check/run-child.ts';
 
 export async function runE2eOnFreePort(run: typeof runChild = runChild): Promise<number> {
   const packageManagerPath = process.env.npm_execpath;
@@ -45,7 +45,7 @@ export async function runE2eOnFreePort(run: typeof runChild = runChild): Promise
   );
 }
 
-if (isCliEntry(import.meta.url)) {
+if (import.meta.main) {
   runE2eOnFreePort().then(
     (code) => {
       process.exitCode = code;
