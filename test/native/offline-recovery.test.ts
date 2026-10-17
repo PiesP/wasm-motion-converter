@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { assertWorkerUpdateOutcome } from '../../validation/windows/offline-recovery.mjs';
+import { assertWorkerUpdateOutcome } from '../../validation/windows/offline-recovery.ts';
 
 const prior = 'a'.repeat(64);
 const current = 'b'.repeat(64);

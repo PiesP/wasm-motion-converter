@@ -4,13 +4,13 @@
 import { expect, test } from '@playwright/test';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
 
-import { parseGifDelaysCs } from '../../validation/windows/gif-playback.mjs';
+import { parseGifDelaysCs } from '../../validation/windows/gif-playback.ts';
 import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {
   compareAnimatedOutputExact,
   type OutputContractCase,
   verifyAnimatedOutput,
-} from '../../validation/windows/output-contract.mjs';
+} from '../../validation/windows/output-contract.ts';
 import {
   finishProgressObservation,
   installProgressObservation,

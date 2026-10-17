@@ -6,13 +6,13 @@ import { Buffer } from 'node:buffer';
 
 // A constant-size declaration exceeds the production logical-count policy without
 // constructing a large table or carrying media that could exhaust the test runner.
-export function makeMp4BudgetFixture(original) {
+export function makeMp4BudgetFixture(original: Uint8Array) {
   assert(original.byteLength > 0 && original.byteLength <= 8 * 1024 * 1024);
   const bytes = Buffer.from(original);
   let visited = 0;
-  let sizeTable;
+  let sizeTable: number | undefined;
   const containers = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl']);
-  const visit = (start, end, depth) => {
+  const visit = (start: number, end: number, depth: number): void => {
     assert(depth <= 8);
     for (let offset = start; offset + 8 <= end;) {
       assert(++visited <= 4096);

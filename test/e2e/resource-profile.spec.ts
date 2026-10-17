@@ -18,7 +18,7 @@ import {
   assertAnimatedOutput,
   inspectAnimatedOutput,
   type OutputContractCase,
-} from '../../validation/windows/output-contract.mjs';
+} from '../../validation/windows/output-contract.ts';
 import {
   type ProcessMemorySummary,
   readLinuxProcessMemory,

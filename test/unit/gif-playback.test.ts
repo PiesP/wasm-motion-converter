@@ -12,7 +12,7 @@ import {
   assertGifPlayback,
   inspectPlaybackPng,
   parseGifDelaysCs,
-} from '../../validation/windows/gif-playback.mjs';
+} from '../../validation/windows/gif-playback.ts';
 
 function solidPng(rgb: [number, number, number]): Buffer {
   const crc32 = (bytes: Buffer) => {
@@ -148,6 +148,8 @@ function observation(delaysCs: number[], frames = sampledCycles()) {
       maxCycleErrorMs: 35 as const,
       maxMedianCycleErrorMs: 20 as const,
       minCompleteCycles: 3 as const,
+      samplingPulseCssPx: 16 as const,
+      samplingPulseMs: 48 as const,
     },
     rawGceDelaysCs: delaysCs,
     frameRecords,

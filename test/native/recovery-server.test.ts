@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-import { startStaticServer } from '../../validation/windows/profile.mjs';
+import { startStaticServer } from '../../validation/windows/profile.ts';
 
 test('owned Pages-compatible server injects one real asset failure at a time', async () => {
   const bundleRoot = await mkdtemp(join(tmpdir(), 'wmc-recovery-server-'));
-  let started;
+  let started: Awaited<ReturnType<typeof startStaticServer>> | undefined;
   try {
     const distRoot = join(bundleRoot, 'dist');
     await mkdir(join(distRoot, 'assets'), { recursive: true });
@@ -22,6 +22,7 @@ test('owned Pages-compatible server injects one real asset failure at a time', a
       "/*\n  Content-Security-Policy: default-src 'self'\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n"
     );
     started = await startStaticServer(bundleRoot, { gzipAssets: true });
+    const server = started;
     const path = '/assets/es.Abc123_X.js';
     const url = `${started.url}${path}`;
     const compressed = await fetch(url);
@@ -31,11 +32,11 @@ test('owned Pages-compatible server injects one real asset failure at a time', a
     for (const [mode, status, contentType] of [
       ['404', 404, 'text/plain'],
       ['wrong-mime', 200, 'text/html'],
-    ]) {
+    ] as const) {
       started.setAssetFailure({ path, mode });
       const response = await fetch(url);
       assert.equal(response.status, status);
-      assert(response.headers.get('content-type').startsWith(contentType));
+      assert(response.headers.get('content-type')?.startsWith(contentType));
       assert.deepEqual(started.assetFailureRequests, [{ path, mode }]);
       assert.equal(response.headers.get('cross-origin-opener-policy'), 'same-origin');
     }
@@ -57,13 +58,15 @@ test('owned Pages-compatible server injects one real asset failure at a time', a
     await started.setDistribution('next');
     assert.equal((await fetch(url)).status, 404);
     assert.deepEqual(started.missingAssetResponses, [{ path, status: 404 }]);
-    assert.throws(() => started.setAssetFailure({ path: '/index.html', mode: '404' }));
-    assert.throws(() => started.setAssetFailure({ path, mode: 'script' }));
+    assert.throws(() => server.setAssetFailure({ path: '/index.html', mode: '404' }));
+    // @ts-expect-error Exercise the runtime guard with an invalid mode.
+    assert.throws(() => server.setAssetFailure({ path, mode: 'script' }));
   } finally {
-    if (started)
-      await new Promise((resolve, reject) => {
-        started.server.closeIdleConnections?.();
-        started.server.close((error) => (error ? reject(error) : resolve()));
+    const activeServer = started;
+    if (activeServer)
+      await new Promise<void>((resolve, reject) => {
+        activeServer.server.closeIdleConnections?.();
+        activeServer.server.close((error) => (error ? reject(error) : resolve()));
       });
     await rm(bundleRoot, { recursive: true, force: true });
   }

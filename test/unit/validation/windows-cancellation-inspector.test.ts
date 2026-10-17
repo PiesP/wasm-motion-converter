@@ -1,7 +1,8 @@
+import assert from 'node:assert/strict';
+
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
-// @ts-expect-error The Windows acceptance profile is an executable JavaScript module.
-import * as profile from '../../../validation/windows/profile.mjs';
+import * as profile from '../../../validation/windows/profile.ts';
 
 const { installCancellationInspector, readCancellationInspector } = profile;
 
@@ -41,6 +42,7 @@ describe('Windows cancellation inspector', () => {
 
     await enterCancelling(progress, 81);
     const observation = await readCancellationInspector(page);
+    assert(observation);
 
     expect(observation.progressBeforeClick).toBe(76);
     expect(observation.progressValues).toEqual([81]);
@@ -62,6 +64,7 @@ describe('Windows cancellation inspector', () => {
     progress.setAttribute('aria-valuenow', '82');
     await Promise.resolve();
     const observation = await readCancellationInspector(page);
+    assert(observation);
 
     expect(observation.progressSamples).toEqual([
       { values: [81], ariaValueNow: '81', sameProgressElement: true },

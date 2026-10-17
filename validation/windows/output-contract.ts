@@ -3,8 +3,73 @@
 
 import assert from 'node:assert/strict';
 
+import type { Page } from '@playwright/test';
+
+export interface OutputContractCase {
+  id: string;
+  fixture: string;
+  format: 'gif' | 'webp';
+  sourceRotationClockwise?: number;
+  settings: {
+    quality: 'low' | 'medium' | 'high';
+    scale: '0.5' | '0.75' | '1';
+    trimStart: number;
+    trimEnd: number;
+    smartFrameSkip: 'off' | 'low' | 'medium' | 'high' | 'adaptive';
+  };
+  expected: {
+    width: number;
+    height: number;
+    markers: string[];
+    corners?: {
+      topLeft: string;
+      topRight: string;
+      bottomLeft: string;
+      bottomRight: string;
+    };
+    durationsMs: number[];
+    durationToleranceMs: number;
+    maxColorDistance: number;
+  };
+}
+
+export interface AnimatedOutputObservation {
+  frameCount: number;
+  repetitionCount: number;
+  frames: Array<{
+    width: number;
+    height: number;
+    durationMs: number;
+    complete: boolean;
+    rgb: number[];
+    marker: string | null;
+    markerDistance: number;
+    corners: Record<
+      'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight',
+      { rgb: number[]; marker: string | null; markerDistance: number }
+    >;
+  }>;
+}
+
+export interface ExactAnimatedOutputComparison {
+  width: number;
+  height: number;
+  durationUs: number;
+  repetitionCount: number;
+  referenceFrameCount: number;
+  candidateFrameCount: number;
+  comparedIntervals: number;
+  /** Checked for opaque outputs with a full-canvas, prior-state-independent first frame. */
+  loopTransitionChecked: true;
+}
+
 /** Decode every frame without discarding observations when a contract later fails. */
-export async function inspectAnimatedOutput(page, bytes, format, markers) {
+export async function inspectAnimatedOutput(
+  page: Page,
+  bytes: Uint8Array,
+  format: OutputContractCase['format'],
+  markers: Record<string, number[]>
+): Promise<AnimatedOutputObservation> {
   return page.evaluate(
     async ({ encodedBytes, mimeType, markerColors }) => {
       if (typeof globalThis.ImageDecoder !== 'function') {
@@ -20,15 +85,24 @@ export async function inspectAnimatedOutput(page, bytes, format, markers) {
         const track = decoder.tracks.selectedTrack;
         if (!track) throw new Error('Animated output has no selected image track');
 
-        const frames = [];
+        const frames: AnimatedOutputObservation['frames'] = [];
         for (let frameIndex = 0; frameIndex < track.frameCount; frameIndex++) {
           const decoded = await decoder.decode({ frameIndex, completeFramesOnly: true });
           const image = decoded.image;
           try {
-            const classify = (rgb) => {
+            const classify = (rgb: number[]) => {
+              const channel = (color: number[], index: number) => {
+                const value = color[index];
+                if (value === undefined) throw new Error('Marker color is incomplete');
+                return value;
+              };
               const candidates = Object.entries(markerColors).map(([name, color]) => ({
                 name,
-                distance: Math.hypot(rgb[0] - color[0], rgb[1] - color[1], rgb[2] - color[2]),
+                distance: Math.hypot(
+                  channel(rgb, 0) - channel(color, 0),
+                  channel(rgb, 1) - channel(color, 1),
+                  channel(rgb, 2) - channel(color, 2)
+                ),
               }));
               candidates.sort((left, right) => left.distance - right.distance);
               return {
@@ -37,12 +111,12 @@ export async function inspectAnimatedOutput(page, bytes, format, markers) {
                 markerDistance: candidates[0]?.distance ?? Number.POSITIVE_INFINITY,
               };
             };
-            const averagePixels = (pixels) => {
-              const average = [0, 0, 0];
+            const averagePixels = (pixels: Uint8ClampedArray) => {
+              const average: [number, number, number] = [0, 0, 0];
               for (let offset = 0; offset < pixels.length; offset += 4) {
-                average[0] += pixels[offset];
-                average[1] += pixels[offset + 1];
-                average[2] += pixels[offset + 2];
+                average[0] += pixels[offset] ?? 0;
+                average[1] += pixels[offset + 1] ?? 0;
+                average[2] += pixels[offset + 2] ?? 0;
               }
               const pixelCount = pixels.length / 4;
               return average.map((channel) => Math.round(channel / pixelCount));
@@ -62,7 +136,7 @@ export async function inspectAnimatedOutput(page, bytes, format, markers) {
             const spatialContext = spatialCanvas.getContext('2d', { willReadFrequently: true });
             if (!spatialContext) throw new Error('Unable to sample decoded frame orientation');
             spatialContext.drawImage(image, 0, 0);
-            const sampleCorner = (x, y) =>
+            const sampleCorner = (x: number, y: number) =>
               classify(averagePixels(spatialContext.getImageData(x, y, 6, 6).data));
             const inset = 2;
             const farX = image.displayWidth - inset - 6;
@@ -103,9 +177,12 @@ export async function inspectAnimatedOutput(page, bytes, format, markers) {
 }
 
 /** Validate a retained observation independently of the conversion measurement. */
-export function assertAnimatedOutput(observation, contract) {
+export function assertAnimatedOutput(
+  observation: AnimatedOutputObservation,
+  contract: OutputContractCase
+): AnimatedOutputObservation {
   // Stored frames may be split or merged. Compare source-derived scene intervals.
-  const scenes = [];
+  const scenes: Array<{ marker: string | null; durationMs: number }> = [];
   for (const frame of observation.frames) {
     const prior = scenes[scenes.length - 1];
     if (prior?.marker === frame.marker) prior.durationMs += frame.durationMs;
@@ -145,7 +222,9 @@ export function assertAnimatedOutput(observation, contract) {
   let expectedBoundaryMs = 0;
   for (const [index, scene] of scenes.entries()) {
     actualBoundaryMs += scene.durationMs;
-    expectedBoundaryMs += contract.expected.durationsMs[index];
+    const expectedDuration = contract.expected.durationsMs[index];
+    assert(expectedDuration !== undefined, `${contract.id}: missing scene duration ${index}`);
+    expectedBoundaryMs += expectedDuration;
     assert(
       Math.abs(actualBoundaryMs - expectedBoundaryMs) <= contract.expected.durationToleranceMs,
       `${contract.id}: scene ${index} boundary ${actualBoundaryMs}ms instead of ${expectedBoundaryMs}ms`
@@ -162,7 +241,12 @@ export function assertAnimatedOutput(observation, contract) {
 }
 
 /** Decode every animation frame in the target browser and validate the shared contract. */
-export async function verifyAnimatedOutput(page, bytes, contract, markers) {
+export async function verifyAnimatedOutput(
+  page: Page,
+  bytes: Uint8Array,
+  contract: OutputContractCase,
+  markers: Record<string, number[]>
+): Promise<AnimatedOutputObservation> {
   return assertAnimatedOutput(
     await inspectAnimatedOutput(page, bytes, contract.format, markers),
     contract
@@ -170,11 +254,12 @@ export async function verifyAnimatedOutput(page, bytes, contract, markers) {
 }
 
 /** Prove that the first GIF image replaces the entire opaque logical screen at each loop. */
-function gifLoopStartGeometry(bytes, label) {
-  const fail = () => {
+function gifLoopStartGeometry(bytes: Uint8Array, label: string): { width: number; height: number } {
+  const fail = (): never => {
     throw new Error(`${label} GIF loop start is unsupported or incomplete`);
   };
-  const u16 = (offset) => bytes[offset] | (bytes[offset + 1] << 8);
+  const at = (index: number): number => bytes[index] ?? fail();
+  const u16 = (offset: number) => at(offset) | (at(offset + 1) << 8);
   if (
     bytes.length < 13 ||
     String.fromCharCode(...bytes.subarray(0, 3)) !== 'GIF' ||
@@ -184,13 +269,13 @@ function gifLoopStartGeometry(bytes, label) {
   const width = u16(6);
   const height = u16(8);
   if (width < 1 || height < 1) fail();
-  const packed = bytes[10];
+  const packed = at(10);
   let offset = 13 + (packed & 0x80 ? 3 * (1 << ((packed & 7) + 1)) : 0);
   if (offset > bytes.length) fail();
   let transparent = false;
   let sawControl = false;
   while (offset < bytes.length) {
-    const block = bytes[offset++];
+    const block = at(offset++);
     if (block === 0x2c) {
       if (offset + 9 > bytes.length) fail();
       if (
@@ -204,11 +289,11 @@ function gifLoopStartGeometry(bytes, label) {
       return { width, height };
     }
     if (block !== 0x21 || offset >= bytes.length) fail();
-    const extension = bytes[offset++];
+    const extension = at(offset++);
     if (extension === 0xf9) {
-      if (sawControl || offset + 6 > bytes.length || bytes[offset] !== 4 || bytes[offset + 5] !== 0)
+      if (sawControl || offset + 6 > bytes.length || at(offset) !== 4 || at(offset + 5) !== 0)
         fail();
-      transparent = (bytes[offset + 1] & 1) !== 0;
+      transparent = (at(offset + 1) & 1) !== 0;
       sawControl = true;
       offset += 6;
       continue;
@@ -217,31 +302,32 @@ function gifLoopStartGeometry(bytes, label) {
     if (extension !== 0xff && extension !== 0xfe) fail();
     while (true) {
       if (offset >= bytes.length) fail();
-      const length = bytes[offset++];
+      const length = at(offset++);
       if (length === 0) break;
       if (offset + length > bytes.length) fail();
       offset += length;
     }
   }
-  fail();
+  return fail();
 }
 
 /** Prove the first WebP ANMF covers its canvas without depending on prior pixels. */
-function webpLoopStartGeometry(bytes, label) {
-  const fail = () => {
+function webpLoopStartGeometry(
+  bytes: Uint8Array,
+  label: string
+): { width: number; height: number } {
+  const fail = (): never => {
     throw new Error(`${label} WebP loop start is unsupported or incomplete`);
   };
-  const tag = (offset) => String.fromCharCode(...bytes.subarray(offset, offset + 4));
-  const u24 = (offset) => bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16);
-  const u32 = (offset) =>
-    bytes[offset] +
-    bytes[offset + 1] * 256 +
-    bytes[offset + 2] * 65536 +
-    bytes[offset + 3] * 16777216;
+  const at = (index: number): number => bytes[index] ?? fail();
+  const tag = (offset: number) => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  const u24 = (offset: number) => at(offset) | (at(offset + 1) << 8) | (at(offset + 2) << 16);
+  const u32 = (offset: number) =>
+    at(offset) + at(offset + 1) * 256 + at(offset + 2) * 65536 + at(offset + 3) * 16777216;
   if (bytes.length < 12 || tag(0) !== 'RIFF' || tag(8) !== 'WEBP' || u32(4) + 8 !== bytes.length)
     fail();
   let offset = 12;
-  let canvas = null;
+  let canvas: { width: number; height: number } | null = null;
   let sawAnimation = false;
   while (offset + 8 <= bytes.length) {
     const fourcc = tag(offset);
@@ -250,23 +336,26 @@ function webpLoopStartGeometry(bytes, label) {
     const end = start + size;
     if (end + (size & 1) > bytes.length) fail();
     if (fourcc === 'VP8X') {
-      if (canvas || sawAnimation || size < 10 || !(bytes[start] & 0x02)) fail();
+      if (canvas || sawAnimation || size < 10 || !(at(start) & 0x02)) fail();
       canvas = { width: u24(start + 4) + 1, height: u24(start + 7) + 1 };
     } else if (fourcc === 'ANIM') {
       if (!canvas || sawAnimation || size < 6) fail();
       sawAnimation = true;
     } else if (fourcc === 'ANMF') {
       if (!canvas || !sawAnimation || size < 16) fail();
+      const geometry = canvas;
+      if (geometry === null)
+        throw new Error(`${label} WebP loop start is unsupported or incomplete`);
       if (
         u24(start) !== 0 ||
         u24(start + 3) !== 0 ||
-        u24(start + 6) + 1 !== canvas.width ||
-        u24(start + 9) + 1 !== canvas.height
+        u24(start + 6) + 1 !== geometry.width ||
+        u24(start + 9) + 1 !== geometry.height
       )
         fail();
       // B=0 is safe only for an opaque VP8 image with no ALPH subchunk.
       // B=1 overwrites the full rectangle regardless of previous canvas state.
-      if ((bytes[start + 15] & 0x02) === 0) {
+      if ((at(start + 15) & 0x02) === 0) {
         let child = start + 16;
         let sawVp8 = false;
         while (child + 8 <= end) {
@@ -280,11 +369,11 @@ function webpLoopStartGeometry(bytes, label) {
         }
         if (!sawVp8 || child !== end) fail();
       }
-      return canvas;
+      return geometry;
     }
     offset = end + (size & 1);
   }
-  fail();
+  return fail();
 }
 
 /**
@@ -295,12 +384,12 @@ function webpLoopStartGeometry(bytes, label) {
  * covers the canvas and cannot depend on the previous loop's pixels.
  */
 export async function compareAnimatedOutputExact(
-  page,
-  referenceBytes,
-  candidateBytes,
-  referenceFormat,
-  candidateFormat = referenceFormat
-) {
+  page: Page,
+  referenceBytes: Uint8Array,
+  candidateBytes: Uint8Array,
+  referenceFormat: OutputContractCase['format'],
+  candidateFormat: OutputContractCase['format'] = referenceFormat
+): Promise<ExactAnimatedOutputComparison> {
   const maxInputBytes = 4 * 1024 * 1024;
   if (
     referenceBytes.length === 0 ||
@@ -337,8 +426,25 @@ export async function compareAnimatedOutputExact(
         throw new Error('ImageDecoder is unavailable in the contract browser');
       }
 
-      const decoders = [];
-      const open = async (bytes, mimeType, geometry, label) => {
+      type Side = {
+        decoder: ImageDecoder;
+        track: NonNullable<ImageDecoder['tracks']['selectedTrack']>;
+        label: string;
+        geometry: { width: number; height: number };
+        nextIndex: number;
+        endUs: number;
+        decodedPixels: number;
+        pixels: Uint8ClampedArray | null;
+        canvas: OffscreenCanvas | null;
+        context: OffscreenCanvasRenderingContext2D | null;
+      };
+      const decoders: ImageDecoder[] = [];
+      const open = async (
+        bytes: number[],
+        mimeType: string,
+        geometry: { width: number; height: number },
+        label: string
+      ) => {
         const decoder = new ImageDecoder({
           data: new Uint8Array(bytes),
           type: mimeType,
@@ -355,7 +461,7 @@ export async function compareAnimatedOutputExact(
         ) {
           throw new Error(`${label} frame count exceeds the exact comparison budget`);
         }
-        return {
+        const side: Side = {
           decoder,
           track,
           label,
@@ -367,6 +473,7 @@ export async function compareAnimatedOutputExact(
           canvas: null,
           context: null,
         };
+        return side;
       };
 
       try {
@@ -376,7 +483,7 @@ export async function compareAnimatedOutputExact(
           throw new Error('Animated output loop count differs');
         }
 
-        const readNext = async (side) => {
+        const readNext = async (side: Side) => {
           if (side.nextIndex >= side.track.frameCount) return false;
           const { image, complete } = await side.decoder.decode({
             frameIndex: side.nextIndex++,
@@ -398,6 +505,7 @@ export async function compareAnimatedOutputExact(
               throw new Error(`${side.label} decoded dimensions differ from its container`);
             }
             if (
+              duration === null ||
               !Number.isSafeInteger(duration) ||
               duration <= 0 ||
               side.endUs + duration > maxDurationUs
@@ -418,9 +526,11 @@ export async function compareAnimatedOutputExact(
             } else if (width !== side.canvas.width || height !== side.canvas.height) {
               throw new Error(`${side.label} frame dimensions changed`);
             }
-            side.context.clearRect(0, 0, width, height);
-            side.context.drawImage(image, 0, 0);
-            side.pixels = side.context.getImageData(0, 0, width, height).data;
+            const context = side.context;
+            if (!context) throw new Error('Unable to read composited animation pixels');
+            context.clearRect(0, 0, width, height);
+            context.drawImage(image, 0, 0);
+            side.pixels = context.getImageData(0, 0, width, height).data;
             for (let offset = 3; offset < side.pixels.length; offset += 4) {
               if (side.pixels[offset] !== 255) {
                 throw new Error(`${side.label} contains non-opaque composited pixels`);
@@ -434,6 +544,9 @@ export async function compareAnimatedOutputExact(
         };
 
         const comparePixels = () => {
+          if (!left.canvas || !right.canvas || !left.pixels || !right.pixels) {
+            throw new Error('Animated output has no decoded pixels');
+          }
           if (
             left.canvas.width !== right.canvas.width ||
             left.canvas.height !== right.canvas.height
@@ -479,6 +592,7 @@ export async function compareAnimatedOutputExact(
         await readNext(left);
         await readNext(right);
         comparePixels();
+        if (!left.canvas) throw new Error('Animated output has no decoded canvas');
 
         return {
           width: left.canvas.width,
