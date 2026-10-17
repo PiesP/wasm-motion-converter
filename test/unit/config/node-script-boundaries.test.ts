@@ -120,7 +120,7 @@ describe('direct Node script boundaries', () => {
     const moduleRoot = join(project, 'validation/windows');
     const modules = readdirSync(moduleRoot, { recursive: true })
       .map((path) => path.toString())
-      .filter((path) => path.endsWith('.mjs'))
+      .filter((path) => /\.(?:mjs|ts)$/.test(path) && !/\.d\.[cm]?ts$/.test(path))
       .sort();
     expect(modules.length).toBeGreaterThan(0);
     for (const module of modules) {

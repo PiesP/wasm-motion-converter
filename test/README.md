@@ -73,7 +73,7 @@ intermediate progress in the same document. Pressure inputs are controlled
 preflight values; they are separate from native decode/encode observations.
 
 The prepared Windows profile displays the downloaded short-tail GIF as an
-ordinary Blob-backed `<img>`. `../validation/windows/gif-playback.mjs` records
+ordinary Blob-backed `<img>`. `../validation/windows/gif-playback.ts` records
 bounded, timestamped compositor PNGs and checks repeated visible color cycles.
 It declares display sampling tolerance separately from serialized delay error.
 `ImageDecoder` verifies source-scene timing and the full-composited exact

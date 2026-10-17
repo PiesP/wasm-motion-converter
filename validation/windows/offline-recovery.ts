@@ -5,18 +5,118 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
+import type { Server } from 'node:http';
 import { join } from 'node:path';
 
-import { measureColdTransfer, readBuild } from './app-update.mjs';
+import type { Browser, Page } from '@playwright/test';
 
-function sha256(bytes) {
+import { measureColdTransfer, readBuild } from './app-update.ts';
+
+type Build = Awaited<ReturnType<typeof readBuild>>;
+type AssetFailure = { path: string; mode: '404' | 'wrong-mime' | 'network' };
+type StartedServer = {
+  server: Server;
+  url: string;
+  setDistribution: (relativePath: string) => Promise<void>;
+  setAssetFailure: (failure: AssetFailure | null) => void;
+  assetFailureRequests: { path: string; mode: string }[];
+  observedAssetRequests: string[];
+  observedAssetOverflow: boolean;
+  missingAssetResponses: { path: string; status: number }[];
+};
+type RecoveryConfig = {
+  schemaVersion: number;
+  mode: string;
+  baseline: string;
+  baselineSourceSha: string;
+  baselineTreeSha: string;
+  buildA: string;
+  sourceA: string;
+  treeA: string;
+  sourceB: string;
+  treeB: string;
+  busyFixture: string;
+  busyFixtureSha256: string;
+  assertionProbe?: boolean;
+};
+type PageEvents = {
+  pageErrors: string[];
+  consoleErrors: { text: string; path: string | null }[];
+  consoleWarnings: string[];
+  requestedAssets: string[];
+  failedRequests: { path: string; error: string | undefined }[];
+  failedResponses: { path: string; status: number }[];
+  overflow: boolean;
+};
+type WorkerAssetMessage = { path: string; status: number; reason: string };
+type ActiveConversionObservation = {
+  timeOrigin: number;
+  progress: number;
+  stopVisible: boolean;
+  resultVisible: boolean;
+  errorVisible: boolean;
+};
+type LogExportInteraction = {
+  buttonClicks: number;
+  downloadAnchors: { blobHref: boolean; logFilename: boolean; connectedAtClick: boolean }[];
+};
+type RecoveryCheck = { id: string; status: string; events?: PageEvents };
+type ColdTransfer = Awaited<ReturnType<typeof measureColdTransfer>>;
+type RecoveryDiagnostics = {
+  profile: string;
+  status: string;
+  checks: RecoveryCheck[];
+  builds: Record<string, object>;
+  coldTransfer: {
+    encoding: string;
+    budgetBytesExclusive: number;
+    baseline: ColdTransfer | null;
+    B: ColdTransfer | null;
+  };
+  activeCheck: string | null;
+  failure: string | null;
+  assertionProbe: boolean;
+  busyFixture?: { sha256: string; bytes: number };
+  server?: {
+    observedAssetRequests: string[];
+    observedAssetOverflow: boolean;
+    injectedAssetRequests: StartedServer['assetFailureRequests'];
+    missingAssetResponses: StartedServer['missingAssetResponses'];
+  };
+  cleanupFailure?: string;
+};
+declare global {
+  var __wmcUpgradeInitialController: ServiceWorker | null;
+  var __wmcUpgradeControllerObservation: ActiveConversionObservation | null;
+  var __wmcObserveActiveConversion: () => ActiveConversionObservation;
+  var __wmcUpgradeAssetMessages: WorkerAssetMessage[];
+  var __wmcRecoveryWorkerMessages: WorkerAssetMessage[];
+  var __wmcLogExportInteraction: LogExportInteraction;
+  var __wmcRestoreNumberFormat: () => void;
+  var __wmcBusyRecovery: {
+    record: {
+      sawCancellingState: boolean;
+      sawDisabledCancel: boolean;
+      sawProtectedReload: boolean;
+    };
+    observer: MutationObserver;
+  };
+}
+
+function sha256(bytes: Buffer | string) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
 export function assertWorkerUpdateOutcome(
-  priorWorkerSha256,
-  currentWorkerSha256,
-  { resultControllerChanged, activeControllerChanged }
+  priorWorkerSha256: string,
+  currentWorkerSha256: string,
+  {
+    resultControllerChanged,
+    activeControllerChanged,
+  }: {
+    resultControllerChanged: boolean;
+    activeControllerChanged: boolean;
+  }
 ) {
   const expectedChange = priorWorkerSha256 !== currentWorkerSha256;
   assert.equal(
@@ -32,36 +132,37 @@ export function assertWorkerUpdateOutcome(
   return expectedChange ? 'changed-worker-claimed' : 'byte-identical-kept-controller';
 }
 
-async function readResultDownload(page, selector = '[data-testid="download-result-button"]') {
+async function readResultDownload(page: Page, selector = '[data-testid="download-result-button"]') {
   const [download] = await Promise.all([
     page.waitForEvent('download'),
     page.locator(selector).click(),
   ]);
   const stream = await download.createReadStream();
   assert(stream, 'Retained result download has no readable stream');
-  const chunks = [];
+  const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
   return Buffer.concat(chunks);
 }
 
 async function exerciseBuildUpgrade(
-  browser,
-  baseUrl,
-  bundleRoot,
-  smallFixture,
-  activeFixture,
-  setDistribution
+  browser: Browser,
+  baseUrl: string,
+  bundleRoot: string,
+  smallFixture: string,
+  activeFixture: string,
+  setDistribution: StartedServer['setDistribution']
 ) {
   // readBuild checks each emitted file against deployment-state.json, including
   // service-worker.js, before the browser uses either distribution.
   const [priorBuild, currentBuild] = await Promise.all(
     ['validation/windows/prior-dist', 'dist'].map((relativePath) =>
-      readBuild(bundleRoot, relativePath, (_root, path) => join(bundleRoot, path), {
+      readBuild(bundleRoot, relativePath, async (_root, path) => join(bundleRoot, path), {
         requireCompiledSource: relativePath === 'dist',
         verifyInventory: true,
       })
     )
   );
+  assert(priorBuild && currentBuild);
   for (const build of [priorBuild, currentBuild]) {
     const workerEntry = build.state.files.find((file) => file.path === 'service-worker.js');
     assert(workerEntry, `${build.relativePath} has no inventoried service worker`);
@@ -74,7 +175,7 @@ async function exerciseBuildUpgrade(
   const workerByteIdentical = priorBuild.workerSha256 === currentBuild.workerSha256;
   const context = await browser.newContext({ locale: 'en-US', acceptDownloads: true });
   const page = await context.newPage();
-  let activePage;
+  let activePage: Page | undefined;
   try {
     await setDistribution('validation/windows/prior-dist');
     await page.goto(baseUrl);
@@ -122,7 +223,10 @@ async function exerciseBuildUpgrade(
     const oldDownloadHref = await page
       .locator('[data-testid="download-result-button"]')
       .getAttribute('href');
-    assert(oldDownloadHref?.startsWith('blob:'), 'Prior build result has no downloadable Blob');
+    assert(
+      oldDownloadHref && oldDownloadHref.startsWith('blob:'),
+      'Prior build result has no downloadable Blob'
+    );
     const priorResultBytes = Buffer.from(
       await page.evaluate(
         async (url) => Array.from(new Uint8Array(await (await fetch(url)).arrayBuffer())),
@@ -149,6 +253,7 @@ async function exerciseBuildUpgrade(
       'Prior build has no removed, never-fetched locale chunk for upgrade acceptance'
     );
     const locale = neverFetched.split('.')[0];
+    assert(locale);
     assert.equal(
       await page.evaluate(
         (path) =>
@@ -219,7 +324,7 @@ async function exerciseBuildUpgrade(
       globalThis.__wmcUpgradeInitialController = navigator.serviceWorker.controller;
       globalThis.__wmcUpgradeControllerObservation = null;
       globalThis.__wmcObserveActiveConversion = () => {
-        const visible = (selector) => {
+        const visible = (selector: string) => {
           const element = document.querySelector(selector);
           return element instanceof HTMLElement && element.getClientRects().length > 0;
         };
@@ -252,7 +357,7 @@ async function exerciseBuildUpgrade(
     const resultControllerChanged = await page.evaluate(async (expectChange) => {
       const old = navigator.serviceWorker.controller;
       const registration = await navigator.serviceWorker.getRegistration();
-      assertRegistration(registration);
+      if (!registration) throw new Error('Prior service worker registration disappeared');
       globalThis.__wmcUpgradeInitialController = old;
       // Listen before update(): a quick activation must not escape the wait.
       const changed = expectChange
@@ -263,6 +368,10 @@ async function exerciseBuildUpgrade(
       await registration.update();
       if (expectChange && navigator.serviceWorker.controller === old)
         await new Promise((resolve, reject) => {
+          if (!changed) {
+            reject(new Error('Controller change listener was not installed'));
+            return;
+          }
           const timeout = setTimeout(
             () => reject(new Error('New worker did not claim retained tab')),
             15_000
@@ -273,9 +382,6 @@ async function exerciseBuildUpgrade(
           });
         });
       return navigator.serviceWorker.controller !== old;
-      function assertRegistration(value) {
-        if (!value) throw new Error('Prior service worker registration disappeared');
-      }
     }, !workerByteIdentical);
     if (!workerByteIdentical)
       await activePage.waitForFunction(
@@ -305,6 +411,7 @@ async function exerciseBuildUpgrade(
       'Active conversion tab controllerchange did not match the worker update'
     );
     const atWorkerUpdate = activeUpdate.observation;
+    assert(atWorkerUpdate, 'Active conversion observation was not captured');
     assert.equal(
       atWorkerUpdate.timeOrigin,
       activeDocumentTimeOrigin,
@@ -415,6 +522,7 @@ async function exerciseBuildUpgrade(
       (path) => globalThis.__wmcUpgradeAssetMessages.find((message) => message.path === path),
       missingPath
     );
+    assert(workerMessage, 'Worker did not report missing old locale chunk');
     assert.equal(workerMessage.status, 404);
     assert.equal(workerMessage.reason, 'invalid-response');
     assert.equal(
@@ -445,7 +553,9 @@ async function exerciseBuildUpgrade(
     assert(currentJs, 'Candidate build has no JS assets');
     const polluted = await page.evaluate(async (url) => {
       const names = (await caches.keys()).filter((name) => name.startsWith('dropconvert-dynamic-'));
-      const cache = await caches.open(names.at(-1));
+      const name = names.at(-1);
+      if (!name) throw new Error('No dynamic cache for poisoned response probe');
+      const cache = await caches.open(name);
       await cache.put(
         url,
         new Response('<!doctype html><title>poison</title>', {
@@ -461,7 +571,7 @@ async function exerciseBuildUpgrade(
       };
     }, `${baseUrl}/assets/${currentJs}`);
     assert.equal(polluted.status, 200);
-    assert.match(polluted.contentType, /^(?:text|application)\/javascript\b/i);
+    assert.match(polluted.contentType ?? '', /^(?:text|application)\/javascript\b/i);
     assert.equal(polluted.html, false, 'Polluted JS cache entry was served as executable content');
     assert.equal(await page.evaluate(() => performance.timeOrigin), oldDocumentTimeOrigin);
     if (workerByteIdentical) {
@@ -503,11 +613,11 @@ async function exerciseBuildUpgrade(
       'Explicit reload did not load the current document entry script'
     );
     assert(
-      currentScripts.some((path) => nextAssets.has(path.split('/').at(-1))),
+      currentScripts.some((path) => nextAssets.has(path.split('/').at(-1) ?? '')),
       'Explicit reload did not load a current-build entry script'
     );
     assert(
-      currentScripts.every((path) => !oldOnly.includes(path.split('/').at(-1))),
+      currentScripts.every((path) => !oldOnly.includes(path.split('/').at(-1) ?? '')),
       'Explicit reload retained a removed old-build entry script'
     );
     await page.locator('[data-testid="option-format-webp"]').click();
@@ -555,13 +665,13 @@ async function exerciseBuildUpgrade(
 }
 
 export async function exerciseOfflineRecovery(
-  browser,
-  baseUrl,
-  outputRoot,
-  setDistribution,
-  bundleRoot,
-  smallFixture,
-  activeFixture
+  browser: Browser,
+  baseUrl: string,
+  outputRoot: string,
+  setDistribution: StartedServer['setDistribution'],
+  bundleRoot: string,
+  smallFixture: string,
+  activeFixture: string
 ) {
   const upgrade = await exerciseBuildUpgrade(
     browser,
@@ -576,7 +686,7 @@ export async function exerciseOfflineRecovery(
     viewport: { width: 1280, height: 900 },
   });
   const page = await context.newPage();
-  const pageErrors = [];
+  const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   try {
     // Seed the old poisoned entry before the production worker activates.
@@ -596,11 +706,11 @@ export async function exerciseOfflineRecovery(
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
     const identity = await page.evaluate(async () => ({
-      controller: navigator.serviceWorker.controller.scriptURL,
+      controller: navigator.serviceWorker.controller?.scriptURL ?? null,
       caches: await caches.keys(),
       unrelated: await (
         await (await caches.open('acceptance-unrelated')).match('/unrelated')
-      ).text(),
+      )?.text(),
     }));
     assert.equal(identity.controller, `${baseUrl}/service-worker.js`);
     assert(!identity.caches.includes('dropconvert-dynamic-v20260714'));
@@ -624,7 +734,9 @@ export async function exerciseOfflineRecovery(
       page.evaluate(async () => {
         const names = await caches.keys();
         const cacheName = names.find((name) => name.startsWith('dropconvert-dynamic-'));
+        if (!cacheName) throw new Error('Dynamic recovery cache is missing');
         const response = await (await caches.open(cacheName)).match('/');
+        if (!response) throw new Error('Recovery cache has no root response');
         return {
           cacheName,
           url: response.url,
@@ -634,14 +746,15 @@ export async function exerciseOfflineRecovery(
         };
       });
     const before = await inspect();
-    assert.match(before.contentType, /^text\/html\b/);
+    assert.match(before.contentType ?? '', /^text\/html\b/);
     assert.equal(before.status, 200);
 
     const textResponse = await page.goto(`${baseUrl}/robots.txt`);
+    assert(textResponse);
     assert.equal(textResponse.status(), 200);
     assert.equal(textResponse.fromServiceWorker(), true);
-    assert.match(textResponse.headers()['content-type'], /^text\/plain\b/);
-    assert((await page.locator('body').textContent()).includes('User-agent:'));
+    assert.match(textResponse.headers()['content-type'] ?? '', /^text\/plain\b/);
+    assert((await page.locator('body').textContent())?.includes('User-agent:'));
     const after = await inspect();
     assert.deepEqual(
       after,
@@ -651,6 +764,7 @@ export async function exerciseOfflineRecovery(
 
     await context.setOffline(true);
     const offlineResponse = await page.goto(`${baseUrl}/?offline-acceptance=recovery`);
+    assert(offlineResponse);
     assert.equal(offlineResponse.status(), 200);
     assert.equal(offlineResponse.fromServiceWorker(), true);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
@@ -669,6 +783,7 @@ export async function exerciseOfflineRecovery(
       );
     }, before.cacheName);
     const staticFallback = await page.reload();
+    assert(staticFallback);
     assert.equal(staticFallback.status(), 200);
     assert.equal(staticFallback.fromServiceWorker(), true);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
@@ -688,7 +803,7 @@ export async function exerciseOfflineRecovery(
     await context.setOffline(false);
     await page.locator('[data-testid="offline-banner"]').waitFor({ state: 'hidden' });
     assert.deepEqual(pageErrors, []);
-    const digest = (body) => createHash('sha256').update(body).digest('hex');
+    const digest = (body: string) => createHash('sha256').update(body).digest('hex');
     return {
       id: 'offline-app-recovery',
       status: 'passed',
@@ -739,7 +854,12 @@ const FILE_SHA = /^[a-f0-9]{64}$/;
 // sourceB, treeB, busyFixture:RECOVERY_BUSY_FIXTURE, busyFixtureSha256,
 // assertionProbe?:boolean}. B is always the bundled dist/.
 // Run the optional assertion probe in a separate output directory; it must fail.
-function requireRecoverySelector(config) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requireRecoverySelector(config: unknown): asserts config is RecoveryConfig {
+  assert(isRecord(config), 'Invalid recovery selector');
   const keys = [
     'schemaVersion',
     'mode',
@@ -754,15 +874,19 @@ function requireRecoverySelector(config) {
     'busyFixture',
     'busyFixtureSha256',
   ];
-  const expected = config.assertionProbe === undefined ? keys : [...keys, 'assertionProbe'];
+  const expected = 'assertionProbe' in config ? [...keys, 'assertionProbe'] : keys;
   assert.deepEqual(Object.keys(config).sort(), expected.sort(), 'Invalid recovery selector keys');
-  assert.equal(config.schemaVersion, 1);
-  assert.equal(config.mode, 'recovery');
-  assert.equal(config.baseline, RECOVERY_BASELINE);
-  assert.equal(config.buildA, RECOVERY_A);
-  assert.equal(config.busyFixture, RECOVERY_BUSY_FIXTURE);
-  assert.match(config.busyFixtureSha256, FILE_SHA);
-  if (config.assertionProbe !== undefined) assert.equal(typeof config.assertionProbe, 'boolean');
+  assert('schemaVersion' in config && config.schemaVersion === 1);
+  assert('mode' in config && config.mode === 'recovery');
+  assert('baseline' in config && config.baseline === RECOVERY_BASELINE);
+  assert('buildA' in config && config.buildA === RECOVERY_A);
+  assert('busyFixture' in config && config.busyFixture === RECOVERY_BUSY_FIXTURE);
+  assert(
+    'busyFixtureSha256' in config &&
+      typeof config.busyFixtureSha256 === 'string' &&
+      FILE_SHA.test(config.busyFixtureSha256)
+  );
+  if ('assertionProbe' in config) assert(typeof config.assertionProbe === 'boolean');
   for (const key of [
     'baselineSourceSha',
     'baselineTreeSha',
@@ -770,21 +894,27 @@ function requireRecoverySelector(config) {
     'treeA',
     'sourceB',
     'treeB',
-  ])
-    assert.match(config[key], SOURCE_SHA, `Invalid ${key}`);
+  ] as const) {
+    assert(
+      key in config && typeof config[key] === 'string' && SOURCE_SHA.test(config[key]),
+      `Invalid ${key}`
+    );
+  }
 }
 
-function emittedAsset(build, pattern) {
+function emittedAsset(build: Build, pattern: RegExp) {
   const matches = build.state.files.filter((file) => pattern.test(file.path));
   assert.equal(matches.length, 1, `${build.relativePath} needs exactly one emitted ${pattern}`);
-  return matches[0];
+  const asset = matches[0];
+  assert(asset);
+  return asset;
 }
 
-function assetPath(asset) {
+function assetPath(asset: Build['main']) {
   return `/${asset.path}`;
 }
 
-async function assertNeverFetched(page, path) {
+async function assertNeverFetched(page: Page, path: string) {
   const observed = await page.evaluate(async (assetPathname) => {
     const resource = performance
       .getEntriesByType('resource')
@@ -801,8 +931,8 @@ async function assertNeverFetched(page, path) {
   assert.deepEqual(observed.cache, [], `${path} was cached before the failure`);
 }
 
-function observePage(page) {
-  const events = {
+function observePage(page: Page) {
+  const events: PageEvents = {
     pageErrors: [],
     consoleErrors: [],
     consoleWarnings: [],
@@ -811,11 +941,11 @@ function observePage(page) {
     failedResponses: [],
     overflow: false,
   };
-  const append = (array, value) => {
+  const append = <T>(array: T[], value: T) => {
     if (array.length >= 128) events.overflow = true;
     else array.push(value);
   };
-  const safePath = (url) => {
+  const safePath = (url: string) => {
     try {
       return url ? new URL(url).pathname : null;
     } catch {
@@ -850,7 +980,7 @@ function observePage(page) {
   return events;
 }
 
-function assertExpectedNetwork(events, expectedPath) {
+function assertExpectedNetwork(events: PageEvents, expectedPath: string) {
   const unrelated = [
     ...events.failedRequests.filter((item) => item.path !== expectedPath),
     ...events.failedResponses.filter((item) => item.path !== expectedPath),
@@ -866,7 +996,7 @@ function assertExpectedNetwork(events, expectedPath) {
   );
 }
 
-async function readLogExport(page) {
+async function readLogExport(page: Page) {
   const [download] = await Promise.all([
     page.waitForEvent('download'),
     page.locator('[data-testid="export-logs-button"]').click(),
@@ -876,9 +1006,9 @@ async function readLogExport(page) {
   return { sha256: sha256(bytes), bytes: bytes.length, text: bytes.toString('utf8') };
 }
 
-async function observeLogExportInteraction(page) {
+async function observeLogExportInteraction(page: Page) {
   await page.evaluate(() => {
-    const observation = { buttonClicks: 0, downloadAnchors: [] };
+    const observation: LogExportInteraction = { buttonClicks: 0, downloadAnchors: [] };
     document.addEventListener(
       'click',
       (event) => {
@@ -899,7 +1029,14 @@ async function observeLogExportInteraction(page) {
   });
 }
 
-async function persistOfflineExportFailure(page, outputRoot, controlled, details, events, error) {
+async function persistOfflineExportFailure(
+  page: Page,
+  outputRoot: string,
+  controlled: boolean,
+  details: object,
+  events: PageEvents,
+  error: unknown
+) {
   const id = `recovery-offline-miss-${controlled ? 'controlled' : 'blocked'}`;
   const screenshot = join(outputRoot, `${id}-export-failed.png`);
   let screenshotSha256 = null;
@@ -945,7 +1082,7 @@ async function persistOfflineExportFailure(page, outputRoot, controlled, details
   );
 }
 
-async function waitForOriginAsset(started, path, priorCount) {
+async function waitForOriginAsset(started: StartedServer, path: string, priorCount: number) {
   // SW-originated requests can bypass Playwright page.route; observe the owned
   // loopback server itself and keep the wait bounded.
   const deadline = Date.now() + 15_000;
@@ -956,7 +1093,7 @@ async function waitForOriginAsset(started, path, priorCount) {
   assert.fail(`The owned origin never received ${path}`);
 }
 
-async function requireApp(page, baseUrl) {
+async function requireApp(page: Page, baseUrl: string) {
   const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   assert.equal(response?.status(), 200, 'Built app did not boot');
   await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
@@ -964,7 +1101,7 @@ async function requireApp(page, baseUrl) {
   return await page.evaluate(() => performance.timeOrigin);
 }
 
-async function validationError(page) {
+async function validationError(page: Page) {
   await page.locator('[data-testid="file-input"]').setInputFiles({
     name: 'unsupported.txt',
     mimeType: 'text/plain',
@@ -972,7 +1109,12 @@ async function validationError(page) {
   });
 }
 
-async function baselineFirstError(browser, started, baseline, outputRoot) {
+async function baselineFirstError(
+  browser: Browser,
+  started: StartedServer,
+  baseline: Build,
+  outputRoot: string
+) {
   await started.setDistribution(baseline.relativePath);
   const errorChunk = emittedAsset(baseline, /^assets\/ErrorDisplay[.-][\w-]{8}\.js$/);
   const path = assetPath(errorChunk);
@@ -990,7 +1132,10 @@ async function baselineFirstError(browser, started, baseline, outputRoot) {
     assert.equal(await page.locator('[data-testid="error-display"]').count(), 0);
     assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin);
     const primary = events.consoleWarnings.find((line) => line.includes('File validation failed'));
-    assert(primary?.includes('Unsupported'), 'Primary validation error was not separately logged');
+    assert(
+      primary && primary.includes('Unsupported'),
+      'Primary validation error was not separately logged'
+    );
     assert(
       started.assetFailureRequests.length >= 1 && started.assetFailureRequests.length <= 2,
       'Blocked baseline chunk request count is outside the Vite preload/import pair'
@@ -1017,7 +1162,12 @@ async function baselineFirstError(browser, started, baseline, outputRoot) {
   }
 }
 
-async function fixedFirstError(browser, started, build, outputRoot) {
+async function fixedFirstError(
+  browser: Browser,
+  started: StartedServer,
+  build: Build,
+  outputRoot: string
+) {
   await started.setDistribution(build.relativePath);
   assert.equal(
     build.state.files.some((file) => /^assets\/(?:ErrorDisplay|MemoryWarning)[.-]/.test(file.path)),
@@ -1035,7 +1185,7 @@ async function fixedFirstError(browser, started, build, outputRoot) {
     await validationError(page);
     const display = page.locator('[data-testid="error-display"]');
     await display.waitFor({ state: 'visible' });
-    assert.match(await display.textContent(), /Unsupported/i);
+    assert.match((await display.textContent()) ?? '', /Unsupported/i);
     assert.equal(
       (await page
         .locator(
@@ -1118,13 +1268,13 @@ async function fixedFirstError(browser, started, build, outputRoot) {
 }
 
 async function firstPipelineImportFailure(
-  browser,
-  started,
-  build,
-  fixture,
-  outputRoot,
-  controlled,
-  baseline
+  browser: Browser,
+  started: StartedServer,
+  build: Build,
+  fixture: string,
+  outputRoot: string,
+  controlled: boolean,
+  baseline: boolean
 ) {
   await started.setDistribution(build.relativePath);
   const pipeline = emittedAsset(build, /^assets\/conversion-pipeline[.-][\w-]{8}\.js$/);
@@ -1150,7 +1300,7 @@ async function firstPipelineImportFailure(
   const page = await context.newPage();
   const events = observePage(page);
   const screenshot = join(outputRoot, `recovery-${id}.png`);
-  const importResponses = [];
+  const importResponses: { path: string; status: number; fromServiceWorker: boolean }[] = [];
   context.on('response', (response) => {
     const responsePath = new URL(response.url()).pathname;
     if (responsePath !== path && responsePath !== (errorChunk && assetPath(errorChunk))) return;
@@ -1210,7 +1360,7 @@ async function firstPipelineImportFailure(
     } else {
       await display.waitFor({ state: 'visible', timeout: 30_000 });
       assert.match(
-        await display.locator('details pre').textContent(),
+        (await display.locator('details pre').textContent()) ?? '',
         /Failed to fetch dynamically imported module.*conversion-pipeline/i,
         'Error UI did not retain the original pipeline import failure'
       );
@@ -1230,9 +1380,9 @@ async function firstPipelineImportFailure(
         'Terminal import failure cannot be reloaded explicitly'
       );
     }
-    const expectedPaths = baseline
-      ? [path, assetPath(pipelineDependency), assetPath(errorChunk)]
-      : [path];
+    const errorChunkPath = errorChunk ? assetPath(errorChunk) : null;
+    if (baseline) assert(errorChunkPath);
+    const expectedPaths = baseline ? [path, assetPath(pipelineDependency), errorChunkPath] : [path];
     const expectedRequestedPaths = baseline ? expectedPaths : [path, assetPath(pipelineDependency)];
     const deadline = Date.now() + 15_000;
     while (
@@ -1293,6 +1443,7 @@ async function firstPipelineImportFailure(
       assert(primaryConversionLog, 'Pre-fix primary import failure is absent from the console');
     const log = baseline ? null : await readLogExport(page);
     if (!baseline) {
+      assert(log);
       assert.match(log.text, /Conversion failed/);
       assert(
         log.text.includes(path),
@@ -1372,7 +1523,12 @@ async function firstPipelineImportFailure(
   }
 }
 
-async function memoryWarningOffline(browser, started, build, smallFixture) {
+async function memoryWarningOffline(
+  browser: Browser,
+  started: StartedServer,
+  build: Build,
+  smallFixture: string
+) {
   await started.setDistribution(build.relativePath);
   const context = await browser.newContext({ locale: 'en-US', serviceWorkers: 'block' });
   const page = await context.newPage();
@@ -1423,7 +1579,7 @@ async function memoryWarningOffline(browser, started, build, smallFixture) {
   }
 }
 
-async function createSmallGif(page, fixture) {
+async function createSmallGif(page: Page, fixture: string) {
   await page.locator('[data-testid="file-input"]').setInputFiles(fixture);
   await page.locator('[data-testid="option-format-gif"]').click();
   await page.locator('[data-testid="option-quality-low"]').click();
@@ -1439,7 +1595,13 @@ async function createSmallGif(page, fixture) {
   return { bytes: bytes.length, sha256: sha256(bytes) };
 }
 
-async function triggerLocaleFailure(page, started, chunk, mode, events = null) {
+async function triggerLocaleFailure(
+  page: Page,
+  started: StartedServer,
+  chunk: Build['main'],
+  mode: '404' | 'wrong-mime' | 'network' | 'missing-after-update',
+  events: PageEvents | null = null
+) {
   const path = assetPath(chunk);
   await assertNeverFetched(page, path);
   const before = started.observedAssetRequests.length;
@@ -1454,7 +1616,7 @@ async function triggerLocaleFailure(page, started, chunk, mode, events = null) {
     .waitFor({ state: 'visible', timeout: 15_000 });
   if (mode !== 'missing-after-update') {
     const physical = started.assetFailureRequests.length;
-    const logical = events?.requestedAssets.filter((requested) => requested === path).length;
+    const logical = events?.requestedAssets.filter((requested) => requested === path).length ?? 0;
     // Chromium may reconnect after the origin destroys a socket. Bound the
     // page-level import attempt, while retaining the physical count as evidence.
     assert(
@@ -1470,7 +1632,7 @@ async function triggerLocaleFailure(page, started, chunk, mode, events = null) {
   return path;
 }
 
-async function captureWorkerAssetMessages(page) {
+async function captureWorkerAssetMessages(page: Page) {
   await page.evaluate(() => {
     globalThis.__wmcRecoveryWorkerMessages = [];
     navigator.serviceWorker.addEventListener('message', (event) => {
@@ -1481,7 +1643,7 @@ async function captureWorkerAssetMessages(page) {
   });
 }
 
-async function requireWorkerAssetMessage(page, path, status, reason) {
+async function requireWorkerAssetMessage(page: Page, path: string, status: number, reason: string) {
   await page.waitForFunction(
     ({ path, status, reason }) =>
       globalThis.__wmcRecoveryWorkerMessages?.some(
@@ -1496,7 +1658,15 @@ async function requireWorkerAssetMessage(page, path, status, reason) {
   );
 }
 
-async function optionalFailureCase(browser, started, build, fixture, outputRoot, mode, controlled) {
+async function optionalFailureCase(
+  browser: Browser,
+  started: StartedServer,
+  build: Build,
+  fixture: string,
+  outputRoot: string,
+  mode: '404' | 'wrong-mime' | 'network',
+  controlled: boolean
+) {
   await started.setDistribution(build.relativePath);
   const chunk = emittedAsset(build, /^assets\/es[.-][\w-]{8}\.js$/);
   const context = await browser.newContext({
@@ -1533,12 +1703,14 @@ async function optionalFailureCase(browser, started, build, fixture, outputRoot,
         )
       : null;
     const retained = result ? await readResultDownload(page) : null;
-    if (result)
+    if (result) {
+      assert(retained);
       assert.equal(
         sha256(retained),
         result.sha256,
         'Optional import failure changed result download'
       );
+    }
     assert.equal(await page.evaluate(() => performance.timeOrigin), origin);
     if (result)
       assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), true);
@@ -1591,7 +1763,14 @@ async function optionalFailureCase(browser, started, build, fixture, outputRoot,
   }
 }
 
-async function offlineOptionalMiss(browser, started, build, fixture, outputRoot, controlled) {
+async function offlineOptionalMiss(
+  browser: Browser,
+  started: StartedServer,
+  build: Build,
+  fixture: string,
+  outputRoot: string,
+  controlled: boolean
+) {
   await started.setDistribution(build.relativePath);
   const chunk = emittedAsset(build, /^assets\/es[.-][\w-]{8}\.js$/);
   const path = assetPath(chunk);
@@ -1648,7 +1827,7 @@ async function offlineOptionalMiss(browser, started, build, fixture, outputRoot,
     assert.equal(await page.evaluate(() => performance.timeOrigin), origin);
     assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), true);
     await observeLogExportInteraction(page);
-    let log;
+    let log: Awaited<ReturnType<typeof readLogExport>>;
     try {
       log = await readLogExport(page);
     } catch (error) {
@@ -1669,7 +1848,8 @@ async function offlineOptionalMiss(browser, started, build, fixture, outputRoot,
           error
         );
       } catch (captureError) {
-        error.message += `; export failure diagnostics could not be written: ${String(captureError)}`;
+        if (error instanceof Error)
+          error.message += `; export failure diagnostics could not be written: ${String(captureError)}`;
       }
       throw error;
     }
@@ -1715,7 +1895,7 @@ async function offlineOptionalMiss(browser, started, build, fixture, outputRoot,
   }
 }
 
-async function loadSpanishThenEnglish(page) {
+async function loadSpanishThenEnglish(page: Page) {
   await page.locator('[data-testid="language-selector"]').selectOption('es');
   await page
     .locator('[data-testid="choose-file-button"]')
@@ -1728,19 +1908,23 @@ async function loadSpanishThenEnglish(page) {
     .waitFor({ state: 'visible' });
 }
 
-async function installControlledFormatterFault(page, target) {
+async function installControlledFormatterFault(
+  page: Page,
+  target: ReturnType<typeof resultSizeFormatterTarget> | { kind: 'duration' }
+) {
   await page.evaluate((target) => {
     const original = Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, 'format');
     if (!original?.get || !original.configurable)
       throw new Error('Intl.NumberFormat formatter fault seam is unavailable');
+    const getter = original.get;
     globalThis.__wmcRestoreNumberFormat = () =>
       Object.defineProperty(Intl.NumberFormat.prototype, 'format', original);
     Object.defineProperty(Intl.NumberFormat.prototype, 'format', {
       configurable: true,
       get() {
         const options = this.resolvedOptions();
-        const formatter = original.get.call(this);
-        return (value) => {
+        const formatter = getter.call(this);
+        return (value: number) => {
           const resultSize =
             target.kind === 'result-size' &&
             options.maximumFractionDigits === target.maximumFractionDigits &&
@@ -1758,16 +1942,22 @@ async function installControlledFormatterFault(page, target) {
   }, target);
 }
 
-function resultSizeFormatterTarget(bytes) {
+function resultSizeFormatterTarget(bytes: number) {
   const unitIndex = bytes >= 1024 ** 3 ? 3 : bytes >= 1024 ** 2 ? 2 : bytes >= 1024 ? 1 : 0;
   return {
-    kind: 'result-size',
+    kind: 'result-size' as const,
     maximumFractionDigits: unitIndex === 0 ? 0 : 2,
     value: bytes / 1024 ** unitIndex,
   };
 }
 
-async function ordinaryRenderFailure(browser, started, build, fixture, outputRoot) {
+async function ordinaryRenderFailure(
+  browser: Browser,
+  started: StartedServer,
+  build: Build,
+  fixture: string,
+  outputRoot: string
+) {
   await started.setDistribution(build.relativePath);
   const context = await browser.newContext({
     locale: 'en-US',
@@ -1867,7 +2057,13 @@ async function ordinaryRenderFailure(browser, started, build, fixture, outputRoo
   }
 }
 
-async function busyRenderFailure(browser, started, build, busyFixture, outputRoot) {
+async function busyRenderFailure(
+  browser: Browser,
+  started: StartedServer,
+  build: Build,
+  busyFixture: string,
+  outputRoot: string
+) {
   await started.setDistribution(build.relativePath);
   const context = await browser.newContext({ locale: 'en-US', serviceWorkers: 'block' });
   const page = await context.newPage();
@@ -2042,7 +2238,13 @@ async function busyRenderFailure(browser, started, build, busyFixture, outputRoo
   }
 }
 
-async function observeFreshBWhileARetained(browser, started, buildB, retainedPage, oldDocument) {
+async function observeFreshBWhileARetained(
+  browser: Browser,
+  started: StartedServer,
+  buildB: Build,
+  retainedPage: Page,
+  oldDocument: number
+) {
   const context = await browser.newContext({ locale: 'en-US', serviceWorkers: 'block' });
   try {
     const page = await context.newPage();
@@ -2063,13 +2265,13 @@ async function observeFreshBWhileARetained(browser, started, buildB, retainedPag
       'Fresh tab did not receive B HTML'
     );
     const entryOutcome = await pendingEntry;
-    if (entryOutcome.error) throw entryOutcome.error;
+    if ('error' in entryOutcome) throw entryOutcome.error;
     const entry = entryOutcome.response;
     assert.equal(entry.status(), 200, 'Fresh B entry did not load');
     assert.equal(sha256(await entry.body()), buildB.main.sha256, 'Fresh tab did not receive B JS');
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     const scripts = await page.evaluate(() =>
-      [...document.scripts]
+      [...globalThis.document.scripts]
         .map((script) => (script.src ? new URL(script.src).pathname : null))
         .filter(Boolean)
     );
@@ -2092,13 +2294,13 @@ async function observeFreshBWhileARetained(browser, started, buildB, retainedPag
 }
 
 async function buildUpgradeMissingAsset(
-  browser,
-  started,
-  buildA,
-  buildB,
-  fixture,
-  outputRoot,
-  controlled
+  browser: Browser,
+  started: StartedServer,
+  buildA: Build,
+  buildB: Build,
+  fixture: string,
+  outputRoot: string,
+  controlled: boolean
 ) {
   await started.setDistribution(buildA.relativePath);
   const oldChunk = emittedAsset(buildA, /^assets\/es[.-][\w-]{8}\.js$/);
@@ -2210,8 +2412,16 @@ export async function runRecoveryBuilds({
   startStaticServer,
   closeServer,
   validateBundleFile,
+}: {
+  browser: Browser;
+  bundleRoot: string;
+  outputRoot: string;
+  config: unknown;
+  startStaticServer: (root: string, options?: { gzipAssets?: boolean }) => Promise<StartedServer>;
+  closeServer: (server: Server) => Promise<void>;
+  validateBundleFile: (root: string, relativePath: string) => Promise<string>;
 }) {
-  const diagnostics = {
+  const diagnostics: RecoveryDiagnostics = {
     profile: 'wmc-media-recovery',
     status: 'incomplete',
     checks: [],
@@ -2221,7 +2431,7 @@ export async function runRecoveryBuilds({
     failure: null,
     assertionProbe: false,
   };
-  let started;
+  let started: StartedServer | undefined;
   try {
     requireRecoverySelector(config);
     diagnostics.assertionProbe = config.assertionProbe === true;
@@ -2252,7 +2462,7 @@ export async function runRecoveryBuilds({
       ['baseline', baseline, config.baselineSourceSha, config.baselineTreeSha],
       ['A', buildA, config.sourceA, config.treeA],
       ['B', buildB, config.sourceB, config.treeB],
-    ]) {
+    ] as const) {
       assert.equal(build.state.sourceSha, source, `${name} source differs from selector`);
       assert.equal(build.state.treeSha, tree, `${name} tree differs from selector`);
       diagnostics.builds[name] = {
@@ -2283,7 +2493,8 @@ export async function runRecoveryBuilds({
       'A/B worker must be byte-identical for missing-asset recovery control'
     );
     started = await startStaticServer(bundleRoot, { gzipAssets: true });
-    const add = async (id, promise) => {
+    const ownedStarted = started;
+    const add = async (id: string, promise: Promise<RecoveryCheck>) => {
       diagnostics.activeCheck = id;
       const check = await promise;
       diagnostics.checks.push(check);
@@ -2292,7 +2503,11 @@ export async function runRecoveryBuilds({
         JSON.stringify(diagnostics, null, 2)
       );
       assert.equal(check.events?.overflow, false, `${id} exceeded bounded event capture`);
-      assert.equal(started.observedAssetOverflow, false, 'Origin asset observation overflowed');
+      assert.equal(
+        ownedStarted.observedAssetOverflow,
+        false,
+        'Origin asset observation overflowed'
+      );
       diagnostics.activeCheck = null;
     };
     await add(
@@ -2336,7 +2551,7 @@ export async function runRecoveryBuilds({
       busyRenderFailure(browser, started, buildB, busyFixture, outputRoot)
     );
     for (const controlled of [false, true]) {
-      for (const mode of ['404', 'wrong-mime', 'network'])
+      for (const mode of ['404', 'wrong-mime', 'network'] as const)
         await add(
           `optional-${mode}-${controlled ? 'controlled' : 'blocked'}`,
           optionalFailureCase(browser, started, buildB, fixture, outputRoot, mode, controlled)

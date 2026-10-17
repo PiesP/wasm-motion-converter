@@ -9,6 +9,7 @@
     "scripts/release/verify-source.test.ts",
     "scripts/ci/pinned-tools.ts",
     "scripts/ci/check-pinned-tools.ts",
+    "validation/windows/profile.ts",
     "test/unit/**/*.test.{ts,tsx}",
     "test/native/**/*.test.ts",
     "test/e2e/**/*.spec.ts"
@@ -18,6 +19,7 @@
     "scripts/**/*.ts",
     "test/**/*.{ts,tsx}",
     "tooling/**/*.ts",
+    "validation/windows/**/*.ts",
     "*.config.ts"
   ],
   "paths": {

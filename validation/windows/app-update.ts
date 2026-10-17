@@ -4,8 +4,162 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+
+import type {
+  Browser,
+  BrowserContext,
+  Page,
+  Response as PlaywrightResponse,
+} from '@playwright/test';
+
+type CleanupError = Error & { cleanupErrors?: string[] };
+type ValidateBundleFile = (root: string, relativePath: string) => Promise<string>;
+type Artifact = { kind: string; file: string; bytes: number; sha256: string };
+type InventoryFile = { path: string; size: number; sha256: string };
+type BuildState = {
+  schemaVersion: number;
+  sourceSha: string;
+  treeSha: string;
+  coreSha: string;
+  headersSha256: string;
+  sourceDirty: boolean;
+  version: string;
+  files: InventoryFile[];
+};
+type Build = {
+  relativePath: string;
+  state: BuildState;
+  main: InventoryFile;
+  manifestSha256: string;
+  indexSha256: string;
+  workerSha256: string;
+};
+type StartedServer = {
+  server: Server;
+  url: string;
+  setDistribution: (relativePath: string) => Promise<void>;
+};
+type StaticServerOptions = {
+  gzipAssets?: boolean;
+  metadataHandler?: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
+};
+type StartStaticServer = (root: string, options?: StaticServerOptions) => Promise<StartedServer>;
+type MetadataBody = { bytes: Buffer; error?: never } | { error: string; bytes?: never };
+type MetadataResponse = {
+  status: number;
+  path: string;
+  body: Promise<MetadataBody>;
+  atMs: number;
+};
+type RuntimeRecord = {
+  origin: string;
+  pageErrors: string[];
+  consoleErrors: string[];
+  failedRequests: { path: string; error: string; atMs: number }[];
+  failedResponses: { path: string; status: number }[];
+  uploads: string[];
+  external: string[];
+  metadataRequests: { atMs: number; method: string }[];
+  metadataResponses: MetadataResponse[];
+  metadataOverflow: boolean;
+  offlineMetadataFailures: { path: string; error: string; atMs: number }[];
+  offline: boolean;
+  transportGates?: MetadataGateState[];
+  failurePageState?: {
+    lifecycle: string[];
+    visibility: DocumentVisibilityState;
+    online: boolean;
+    timeOrigin: number;
+  };
+  failurePageStateError?: string;
+};
+type MetadataGateState = {
+  active: boolean;
+  queued: number;
+  queuedAtMs: number | null;
+  releasedAtMs: number | null;
+  nativeStartedAtMs: number | null;
+};
+type AppUpdateConfig = {
+  buildA: string;
+  baseline: string;
+  baselineSourceSha: string;
+  baselineTreeSha: string;
+  cleanupBaseline: string;
+  cleanupBaselineSourceSha: string;
+  cleanupBaselineTreeSha: string;
+};
+type CleanupCaseSpec = {
+  id: string;
+  status: number;
+  contentType: string;
+  contentLength?: number;
+  prefix: string;
+};
+type CleanupResponseRecord = {
+  status: number;
+  kind: string;
+  startedAtMs: number;
+  closedAtMs: number | null;
+  finishedAtMs: number | null;
+  response: ServerResponse;
+  closed: Promise<void>;
+};
+type ResponseWaitOutcome =
+  | { record: CleanupResponseRecord; error?: never }
+  | { error: string; record?: never };
+type ResponseWaiter = {
+  number: number;
+  resolve: (outcome: ResponseWaitOutcome) => void;
+  timer?: ReturnType<typeof setTimeout>;
+};
+type ResponseSnapshot = ReturnType<typeof responseSnapshot>;
+type CleanupCaseResult = {
+  build: string;
+  case: string;
+  responseBodies: ResponseSnapshot[];
+  signalEvents: { startedAtMs: number; abortedAtMs: number | null }[];
+  pageErrors: string[];
+  consoleErrors: { text: string; location: string }[];
+  failedRequests: { path: string; error: string }[];
+  failedResponses: { path: string; status: number }[];
+  cleanupErrors: string[];
+  firstMIMEObservedAfterMs?: number;
+  firstMIMEStillOpenAfterDeadline?: boolean;
+  rejectedCleanup?: {
+    observedAtMs: number;
+    responseBodies: ResponseSnapshot[];
+    unfinishedResponseWork: number;
+    signalEvents: CleanupCaseResult['signalEvents'];
+  };
+  validDetection?: {
+    sourceSha: string;
+    response: ResponseSnapshot;
+    notice: boolean;
+    automaticNavigation: boolean;
+    thirdSignalAborted: boolean;
+  };
+  status?: string;
+  error?: string;
+  observedAtMs?: number;
+  unfinishedBeforeTeardown?: number;
+  signalCaptureError?: string;
+};
+declare global {
+  var __appUpdateCspViolations: string[];
+  var __appUpdateLifecycle: string[];
+  var __appUpdateWorkerEvents: string[];
+  var __appUpdateMetadataTransportGate: {
+    state: MetadataGateState;
+    release: () => MetadataGateState;
+  };
+  var __cleanupCspViolations: string[];
+  var __cleanupFetchOverflow: boolean;
+  var __cleanupFetchSignals: { startedAtMs: number; abortedAtMs: number | null }[];
+}
 
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
 const HIGH_MOTION_FIXTURE = 'validation/windows/inputs/cancel-high-motion.mp4';
@@ -30,30 +184,55 @@ const CLEANUP_CASES = [
   { id: 'status', status: 503, contentType: 'application/json', prefix: '{"unavailable":' },
 ];
 
-function sha256(bytes) {
+function sha256(bytes: Buffer) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+function sourceShaFromJson(value: unknown): string {
+  assert(value && typeof value === 'object' && 'sourceSha' in value, 'Missing source SHA');
+  assert(typeof value.sourceSha === 'string' && SHA.test(value.sourceSha), 'Invalid source SHA');
+  return value.sourceSha;
+}
+
+function assertBuildState(value: unknown): asserts value is BuildState {
+  assert(value && typeof value === 'object', 'Invalid deployment metadata');
+  assert('schemaVersion' in value && value.schemaVersion === 1);
+  assert('sourceSha' in value && typeof value.sourceSha === 'string' && SHA.test(value.sourceSha));
+  assert('treeSha' in value && typeof value.treeSha === 'string' && SHA.test(value.treeSha));
+  assert('coreSha' in value && typeof value.coreSha === 'string' && SHA.test(value.coreSha));
+  assert(
+    'headersSha256' in value &&
+      typeof value.headersSha256 === 'string' &&
+      DIGEST.test(value.headersSha256)
+  );
+  assert('sourceDirty' in value && value.sourceDirty === false);
+  assert(
+    'version' in value && typeof value.version === 'string' && /^\d+\.\d+\.\d+/.test(value.version)
+  );
+  assert('files' in value && Array.isArray(value.files));
+  assert(value.files.length > 0 && value.files.length <= 100);
+  for (const file of value.files) {
+    assert(file && typeof file === 'object');
+    assert('path' in file && typeof file.path === 'string');
+    assert('size' in file && typeof file.size === 'number');
+    assert('sha256' in file && typeof file.sha256 === 'string');
+  }
+}
+
 export async function readBuild(
-  bundleRoot,
-  relativePath,
-  validateBundleFile,
+  bundleRoot: string,
+  relativePath: string,
+  validateBundleFile: ValidateBundleFile,
   { requireCompiledSource = true, verifyInventory = false, exactInventory = false } = {}
 ) {
   const path = await validateBundleFile(bundleRoot, `${relativePath}/deployment-state.json`);
   const bytes = await readFile(path);
   assert(bytes.length > 0 && bytes.length <= MAX_METADATA_BYTES, `${relativePath} metadata size`);
-  const state = JSON.parse(bytes.toString('utf8'));
-  assert.equal(state.schemaVersion, 1);
-  assert.match(state.sourceSha, SHA);
-  assert.match(state.treeSha, SHA);
-  assert.match(state.coreSha, SHA);
-  assert.match(state.headersSha256, DIGEST);
+  const state: unknown = JSON.parse(bytes.toString('utf8'));
+  assertBuildState(state);
   assert.equal(state.sourceDirty, false, `${relativePath} must be built from clean source`);
-  assert.match(state.version, /^\d+\.\d+\.\d+/);
-  assert(Array.isArray(state.files) && state.files.length > 0 && state.files.length <= 100);
   if (verifyInventory) {
-    const seen = new Set();
+    const seen = new Set<string>();
     for (const file of state.files) {
       assert(
         typeof file.path === 'string' &&
@@ -80,9 +259,9 @@ export async function readBuild(
     );
     assert.equal(sha256(headers), state.headersSha256, `${relativePath} _headers hash differs`);
     if (exactInventory) {
-      const actual = [];
+      const actual: string[] = [];
       let visited = 0;
-      const visit = async (directory, prefix = '') => {
+      const visit = async (directory: string, prefix = ''): Promise<void> => {
         for (const entry of await readdir(directory, { withFileTypes: true })) {
           const child = prefix ? `${prefix}/${entry.name}` : entry.name;
           visited += 1;
@@ -131,11 +310,11 @@ export async function readBuild(
   };
 }
 
-function updateNotice(page) {
+function updateNotice(page: Page) {
   return page.getByRole('status').filter({ hasText: NOTICE_TEXT });
 }
 
-function anyUpdateNotice(page) {
+function anyUpdateNotice(page: Page) {
   return page.getByRole('status').filter({
     has: page.getByRole('button', { name: 'Reload page' }),
   });
@@ -143,20 +322,24 @@ function anyUpdateNotice(page) {
 
 // Attach both outcomes immediately: an earlier assertion may close the page
 // before the awaited response arrives.
-export function captureResponseWait(page, predicate, timeout) {
+export function captureResponseWait(
+  page: Page,
+  predicate: (response: PlaywrightResponse) => boolean,
+  timeout: number
+) {
   return page.waitForResponse(predicate, { timeout }).then(
     (response) => ({ response }),
     (error) => ({ error })
   );
 }
 
-async function requireResponse(waiter) {
+async function requireResponse(waiter: ReturnType<typeof captureResponseWait>) {
   const outcome = await waiter;
-  if (outcome.error) throw outcome.error;
+  if ('error' in outcome) throw outcome.error;
   return outcome.response;
 }
 
-async function startGif(page, fixture, { highMotion = false } = {}) {
+async function startGif(page: Page, fixture: string, { highMotion = false } = {}) {
   await page.locator('#file-upload').setInputFiles(fixture);
   await page
     .getByRole('radiogroup', { name: 'Output Format' })
@@ -177,7 +360,7 @@ async function startGif(page, fixture, { highMotion = false } = {}) {
   if (await proceed.isVisible({ timeout: 1_500 }).catch(() => false)) await proceed.click();
 }
 
-async function downloadGif(page) {
+async function downloadGif(page: Page) {
   const link = page.getByRole('link', { name: /^Download GIF file —/ });
   await link.waitFor({ state: 'visible', timeout: 120_000 });
   const href = await link.getAttribute('href');
@@ -188,7 +371,7 @@ async function downloadGif(page) {
   return { bytes, href, filename: download.suggestedFilename() };
 }
 
-async function instrument(page, record) {
+async function instrument(page: Page, record: RuntimeRecord) {
   page.on('pageerror', (error) => record.pageErrors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error') record.consoleErrors.push(message.text());
@@ -250,7 +433,12 @@ async function instrument(page, record) {
   });
 }
 
-async function waitForConnectivityEvent(page, fromIndex, event, online) {
+async function waitForConnectivityEvent(
+  page: Page,
+  fromIndex: number,
+  event: string,
+  online: boolean
+) {
   await page.waitForFunction(
     ({ fromIndex, event, online }) =>
       navigator.onLine === online &&
@@ -260,16 +448,16 @@ async function waitForConnectivityEvent(page, fromIndex, event, online) {
   );
 }
 
-async function installOnlineMetadataTransportGate(page) {
+async function installOnlineMetadataTransportGate(page: Page) {
   await page.evaluate(() => {
     if (globalThis.__appUpdateMetadataTransportGate?.state.active)
       throw new Error('Metadata transport gate was already active');
     const nativeFetch = globalThis.fetch;
-    let open;
-    const restored = new Promise((resolveOpen) => {
+    let open: () => void = () => {};
+    const restored = new Promise<void>((resolveOpen) => {
       open = resolveOpen;
     });
-    const state = {
+    const state: MetadataGateState = {
       active: true,
       queued: 0,
       queuedAtMs: null,
@@ -288,7 +476,7 @@ async function installOnlineMetadataTransportGate(page) {
         return { ...state };
       },
     };
-    globalThis.fetch = function (...args) {
+    globalThis.fetch = function (...args: Parameters<typeof fetch>) {
       const input = args[0];
       const url = new URL(input instanceof Request ? input.url : String(input), location.href);
       if (url.origin !== location.origin || url.pathname !== '/deployment-state.json')
@@ -307,30 +495,39 @@ async function installOnlineMetadataTransportGate(page) {
   });
 }
 
-async function releaseOnlineMetadataTransportGate(page) {
+async function releaseOnlineMetadataTransportGate(page: Page) {
   return page.evaluate(() => {
     const gate = globalThis.__appUpdateMetadataTransportGate;
     return gate?.state.active ? gate.release() : null;
   });
 }
 
-async function assertOnlineMetadataTransportStarted(page, record) {
+async function assertOnlineMetadataTransportStarted(page: Page, record: RuntimeRecord) {
   const gate = await page.evaluate(() => ({
     ...globalThis.__appUpdateMetadataTransportGate?.state,
   }));
+  assert(record.transportGates);
   assert.equal(record.transportGates.length, 1);
   assert.equal(gate.queued, 1);
   assert(
-    gate.nativeStartedAtMs !== null && gate.nativeStartedAtMs >= gate.releasedAtMs,
+    gate.nativeStartedAtMs !== null &&
+      gate.releasedAtMs !== null &&
+      gate.nativeStartedAtMs >= gate.releasedAtMs,
     'Native metadata Fetch started before transport restoration completed'
   );
+  assert(record.transportGates);
   record.transportGates[0] = gate;
 }
 
-async function restoreOnlineWithMetadataGate(page, context, record, lifecycleStart) {
+async function restoreOnlineWithMetadataGate(
+  page: Page,
+  context: BrowserContext,
+  record: RuntimeRecord,
+  lifecycleStart: number
+) {
   await installOnlineMetadataTransportGate(page);
   let released = false;
-  let primaryError;
+  let primaryError: CleanupError | undefined;
   try {
     await context.setOffline(false);
     record.offline = false;
@@ -342,6 +539,7 @@ async function restoreOnlineWithMetadataGate(page, context, record, lifecycleSta
     const gate = await releaseOnlineMetadataTransportGate(page);
     released = true;
     assert(gate, 'Metadata transport gate disappeared before release');
+    assert(record.transportGates);
     record.transportGates.push(gate);
     assert.equal(gate.queued, 1);
     assert(
@@ -349,12 +547,13 @@ async function restoreOnlineWithMetadataGate(page, context, record, lifecycleSta
       'Metadata transport gate has no request/release timestamps'
     );
   } catch (error) {
-    primaryError = error;
+    primaryError = error instanceof Error ? error : new Error(String(error));
     throw error;
   } finally {
     if (!released) {
       try {
         const gate = await releaseOnlineMetadataTransportGate(page);
+        assert(record.transportGates);
         if (gate) record.transportGates.push(gate);
       } catch (error) {
         if (primaryError)
@@ -369,7 +568,7 @@ async function restoreOnlineWithMetadataGate(page, context, record, lifecycleSta
   }
 }
 
-async function assertRuntimeHealth(page, record) {
+async function assertRuntimeHealth(page: Page, record: RuntimeRecord) {
   assert.deepEqual(record.pageErrors, []);
   assert.deepEqual(record.consoleErrors, []);
   assert.deepEqual(record.failedRequests, []);
@@ -380,33 +579,39 @@ async function assertRuntimeHealth(page, record) {
   assert.deepEqual(await page.evaluate(() => globalThis.__appUpdateCspViolations ?? []), []);
 }
 
-async function metadataObservation(record) {
+async function metadataObservation(record: RuntimeRecord) {
   return Promise.all(
     record.metadataResponses.map(async ({ status, path, body, atMs }) => {
       const captured = await body;
       assert(
-        !captured.error,
+        'bytes' in captured,
         `Metadata response body capture failed for ${path}: ${captured.error}`
       );
       const { bytes } = captured;
       assert(bytes.length <= MAX_METADATA_BYTES, 'Observed metadata exceeds 64KiB');
       let sourceSha = null;
-      if (status === 200) sourceSha = JSON.parse(bytes.toString('utf8')).sourceSha;
+      if (status === 200) sourceSha = sourceShaFromJson(JSON.parse(bytes.toString('utf8')));
       return { atMs, status, bytes: bytes.length, sourceSha };
     })
   );
 }
 
-async function writeArtifact(outputRoot, name, bytes, artifacts, kind) {
+async function writeArtifact(
+  outputRoot: string,
+  name: string,
+  bytes: Buffer,
+  artifacts: Artifact[],
+  kind: string
+) {
   await writeFile(join(outputRoot, name), bytes);
   artifacts.push({ kind, file: name, bytes: bytes.length, sha256: sha256(bytes) });
 }
 
-async function screenshot(page, outputRoot, name, artifacts) {
+async function screenshot(page: Page, outputRoot: string, name: string, artifacts: Artifact[]) {
   await writeArtifact(outputRoot, name, await page.screenshot(), artifacts, 'screenshot');
 }
 
-async function watchRegistration(page) {
+async function watchRegistration(page: Page) {
   return page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready;
     globalThis.__appUpdateWorkerEvents = [];
@@ -423,13 +628,13 @@ async function watchRegistration(page) {
   });
 }
 
-async function workerEvents(page) {
+async function workerEvents(page: Page) {
   return page.evaluate(() => globalThis.__appUpdateWorkerEvents ?? []);
 }
 
-export async function measureColdTransfer(browser, started, build) {
-  let context;
-  let primaryError;
+export async function measureColdTransfer(browser: Browser, started: StartedServer, build: Build) {
+  let context: BrowserContext | undefined;
+  let primaryError: CleanupError | undefined;
   try {
     context = await browser.newContext({ serviceWorkers: 'block', locale: 'en-US' });
     const page = await context.newPage();
@@ -449,7 +654,7 @@ export async function measureColdTransfer(browser, started, build) {
     assert.equal(metadata.status(), 200, 'Cold metadata request failed');
     const metadataBytes = await metadata.body();
     assert.equal(
-      JSON.parse(metadataBytes.toString('utf8')).sourceSha,
+      sourceShaFromJson(JSON.parse(metadataBytes.toString('utf8'))),
       build.state.sourceSha,
       'Cold metadata differs from served build'
     );
@@ -480,12 +685,14 @@ export async function measureColdTransfer(browser, started, build) {
     );
     const metadataTimings = resources.filter((entry) => entry.path === METADATA_PATH);
     assert.equal(metadataTimings.length, 1, 'Cold context must request metadata exactly once');
+    const metadataTiming = metadataTimings[0];
+    assert(metadataTiming);
     assert(
-      metadataTimings[0].transferSize > 0 && metadataTimings[0].encodedBodySize > 0,
+      metadataTiming.transferSize > 0 && metadataTiming.encodedBodySize > 0,
       'Cold metadata has no positive network transfer'
     );
     assert.equal(
-      metadataTimings[0].decodedBodySize,
+      metadataTiming.decodedBodySize,
       metadataBytes.length,
       'Cold metadata decoded transfer differs from response body'
     );
@@ -497,12 +704,12 @@ export async function measureColdTransfer(browser, started, build) {
       positiveDecodedBytes,
       metadata: {
         count: metadataTimings.length,
-        ...metadataTimings[0],
+        ...metadataTiming,
         responseBytes: metadataBytes.length,
       },
     };
   } catch (error) {
-    primaryError = error;
+    primaryError = error instanceof Error ? error : new Error(String(error));
     throw error;
   } finally {
     if (context) {
@@ -522,13 +729,13 @@ export async function measureColdTransfer(browser, started, build) {
 }
 
 async function baselineBeforeFix(
-  browser,
-  started,
-  bundleRoot,
-  config,
-  validateBundleFile,
-  outputRoot,
-  artifacts
+  browser: Browser,
+  started: StartedServer,
+  bundleRoot: string,
+  config: AppUpdateConfig,
+  validateBundleFile: ValidateBundleFile,
+  outputRoot: string,
+  artifacts: Artifact[]
 ) {
   const baselineBuild = await readBuild(bundleRoot, config.baseline, validateBundleFile, {
     requireCompiledSource: false,
@@ -550,8 +757,8 @@ async function baselineBeforeFix(
   const baselineWorker = await readFile(
     await validateBundleFile(bundleRoot, `${config.baseline}/service-worker.js`)
   );
-  let context;
-  let primaryError;
+  let context: BrowserContext | undefined;
+  let primaryError: CleanupError | undefined;
   const record = {
     origin: new URL(started.url).origin,
     pageErrors: [],
@@ -628,7 +835,7 @@ async function baselineBeforeFix(
       documentRetained: true,
     };
   } catch (error) {
-    primaryError = error;
+    primaryError = error instanceof Error ? error : new Error(String(error));
     throw error;
   } finally {
     const cleanupErrors = [];
@@ -651,10 +858,18 @@ async function baselineBeforeFix(
   }
 }
 
-function waitForResponseNumber(records, waiters, number) {
-  if (records.length >= number) return Promise.resolve({ record: records[number - 1] });
-  return new Promise((resolveWait) => {
-    const waiter = { number, resolve: resolveWait };
+function waitForResponseNumber(
+  records: CleanupResponseRecord[],
+  waiters: ResponseWaiter[],
+  number: number
+): Promise<ResponseWaitOutcome> {
+  if (records.length >= number) {
+    const record = records[number - 1];
+    assert(record);
+    return Promise.resolve({ record });
+  }
+  return new Promise<ResponseWaitOutcome>((resolveWait) => {
+    const waiter: ResponseWaiter = { number, resolve: resolveWait };
     waiter.timer = setTimeout(() => {
       waiters.splice(waiters.indexOf(waiter), 1);
       resolveWait({ error: `Metadata response ${number} did not start within 20 seconds` });
@@ -663,26 +878,27 @@ function waitForResponseNumber(records, waiters, number) {
   });
 }
 
-async function requireRecord(waiter) {
+async function requireRecord(waiter: Promise<ResponseWaitOutcome>) {
   const outcome = await waiter;
-  if (outcome.error) throw new Error(outcome.error);
+  if (outcome.error !== undefined) throw new Error(outcome.error);
+  assert(outcome.record);
   return outcome.record;
 }
 
-async function waitForClosedResponse(record) {
+async function waitForClosedResponse(record: CleanupResponseRecord) {
   if (record.closedAtMs !== null) return true;
-  let timer;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const closed = await Promise.race([
     record.closed.then(() => true),
-    new Promise((resolveWait) => {
+    new Promise<boolean>((resolveWait) => {
       timer = setTimeout(() => resolveWait(false), CLEANUP_RELEASE_MS);
     }),
   ]);
-  clearTimeout(timer);
+  if (timer) clearTimeout(timer);
   return closed;
 }
 
-function responseSnapshot(record) {
+function responseSnapshot(record: CleanupResponseRecord) {
   return {
     kind: record.kind,
     status: record.status,
@@ -703,18 +919,28 @@ async function observeCleanupCase({
   startStaticServer,
   closeServer,
   diagnostics,
+}: {
+  browser: Browser;
+  bundleRoot: string;
+  build: Build;
+  caseSpec: CleanupCaseSpec;
+  fixed: boolean;
+  validMetadata: Buffer;
+  startStaticServer: StartStaticServer;
+  closeServer: (server: Server) => Promise<void>;
+  diagnostics: CleanupCaseResult[];
 }) {
-  const records = [];
-  const waiters = [];
-  const pageErrors = [];
-  const consoleErrors = [];
-  const failedRequests = [];
-  const failedResponses = [];
-  let started;
-  let context;
-  let page;
-  let primaryError;
-  const result = {
+  const records: CleanupResponseRecord[] = [];
+  const waiters: ResponseWaiter[] = [];
+  const pageErrors: string[] = [];
+  const consoleErrors: CleanupCaseResult['consoleErrors'] = [];
+  const failedRequests: CleanupCaseResult['failedRequests'] = [];
+  const failedResponses: CleanupCaseResult['failedResponses'] = [];
+  let started: StartedServer | undefined;
+  let context: BrowserContext | undefined;
+  let page: Page | undefined;
+  let primaryError: CleanupError | undefined;
+  const result: CleanupCaseResult = {
     build: fixed ? 'fixed' : 'original',
     case: caseSpec.id,
     responseBodies: [],
@@ -732,15 +958,16 @@ async function observeCleanupCase({
         assert.equal(request.method, 'GET', 'Metadata check changed HTTP method');
         assert(records.length < (fixed ? 3 : 2), 'Unexpected extra metadata request');
         const valid = fixed && records.length === 2;
-        const record = {
+        const record: CleanupResponseRecord = {
           status: valid ? 200 : caseSpec.status,
           kind: valid ? 'valid' : 'rejected',
           startedAtMs: performance.now(),
           closedAtMs: null,
           finishedAtMs: null,
           response,
+          closed: Promise.resolve(),
         };
-        record.closed = new Promise((resolveClose) => {
+        record.closed = new Promise<void>((resolveClose) => {
           response.once('close', () => {
             record.closedAtMs = performance.now();
             resolveClose();
@@ -763,9 +990,11 @@ async function observeCleanupCase({
         else response.write(caseSpec.prefix);
         for (const waiter of [...waiters]) {
           if (records.length < waiter.number) continue;
-          clearTimeout(waiter.timer);
+          if (waiter.timer) clearTimeout(waiter.timer);
           waiters.splice(waiters.indexOf(waiter), 1);
-          waiter.resolve({ record: records[waiter.number - 1] });
+          const record = records[waiter.number - 1];
+          assert(record);
+          waiter.resolve({ record });
         }
       },
     });
@@ -800,7 +1029,7 @@ async function observeCleanupCase({
       globalThis.__cleanupFetchSignals = [];
       globalThis.__cleanupFetchOverflow = false;
       globalThis.__cleanupCspViolations = [];
-      document.addEventListener('securitypolicyviolation', (event) => {
+      globalThis.document.addEventListener('securitypolicyviolation', (event) => {
         globalThis.__cleanupCspViolations.push(`${event.effectiveDirective}: ${event.blockedURI}`);
       });
       const nativeFetch = globalThis.fetch;
@@ -809,7 +1038,10 @@ async function observeCleanupCase({
         const url = new URL(input instanceof Request ? input.url : String(input), location.href);
         if (url.pathname === '/deployment-state.json') {
           const signal = args[1]?.signal ?? (input instanceof Request ? input.signal : null);
-          const entry = { startedAtMs: performance.now(), abortedAtMs: null };
+          const entry: { startedAtMs: number; abortedAtMs: number | null } = {
+            startedAtMs: performance.now(),
+            abortedAtMs: null,
+          };
           if (globalThis.__cleanupFetchSignals.length < 8)
             globalThis.__cleanupFetchSignals.push(entry);
           else globalThis.__cleanupFetchOverflow = true;
@@ -844,6 +1076,7 @@ async function observeCleanupCase({
         await waitForClosedResponse(first),
         `${caseSpec.id} first rejected metadata body stayed open beyond ${CLEANUP_RELEASE_MS} ms`
       );
+      assert(first.closedAtMs !== null);
       assert(
         first.closedAtMs - first.startedAtMs <= CLEANUP_RELEASE_MS,
         `${caseSpec.id} first rejected metadata release exceeded ${CLEANUP_RELEASE_MS} ms`
@@ -868,6 +1101,7 @@ async function observeCleanupCase({
         await waitForClosedResponse(second),
         `${caseSpec.id} second rejected metadata body stayed open beyond ${CLEANUP_RELEASE_MS} ms`
       );
+      assert(second.closedAtMs !== null);
       assert(
         second.closedAtMs - second.startedAtMs <= CLEANUP_RELEASE_MS,
         `${caseSpec.id} second rejected metadata release exceeded ${CLEANUP_RELEASE_MS} ms`
@@ -938,13 +1172,11 @@ async function observeCleanupCase({
         result.signalEvents.slice(0, 2).every((entry) => entry.abortedAtMs !== null),
         'Rejected metadata Fetch signals lost their abort evidence'
       );
-      assert.equal(
-        result.signalEvents[2].abortedAtMs,
-        null,
-        'Successful valid metadata Fetch was aborted'
-      );
+      const thirdSignal = result.signalEvents[2];
+      assert(thirdSignal);
+      assert.equal(thirdSignal.abortedAtMs, null, 'Successful valid metadata Fetch was aborted');
       result.validDetection = {
-        sourceSha: JSON.parse(validMetadata.toString('utf8')).sourceSha,
+        sourceSha: sourceShaFromJson(JSON.parse(validMetadata.toString('utf8'))),
         response: responseSnapshot(third),
         notice: true,
         automaticNavigation: false,
@@ -964,7 +1196,7 @@ async function observeCleanupCase({
     result.status = 'passed';
     return result;
   } catch (error) {
-    primaryError = error;
+    primaryError = error instanceof Error ? error : new Error(String(error));
     result.error = String(error);
     throw error;
   } finally {
@@ -997,7 +1229,7 @@ async function observeCleanupCase({
       }
     }
     for (const waiter of waiters) {
-      clearTimeout(waiter.timer);
+      if (waiter.timer) clearTimeout(waiter.timer);
       waiter.resolve({ error: 'Cleanup scenario ended before response arrived' });
     }
     if (primaryError && result.cleanupErrors.length)
@@ -1017,6 +1249,15 @@ async function observeMetadataCleanup({
   closeServer,
   validateBundleFile,
   diagnostics,
+}: {
+  browser: Browser;
+  bundleRoot: string;
+  config: AppUpdateConfig;
+  buildB: Build;
+  startStaticServer: StartStaticServer;
+  closeServer: (server: Server) => Promise<void>;
+  validateBundleFile: ValidateBundleFile;
+  diagnostics: { cleanupResponses?: CleanupCaseResult[] };
 }) {
   const original = await readBuild(bundleRoot, config.cleanupBaseline, validateBundleFile, {
     verifyInventory: true,
@@ -1049,13 +1290,16 @@ async function observeMetadataCleanup({
     validMetadata.length > 0 && validMetadata.length <= MAX_METADATA_BYTES,
     'Valid metadata response exceeds the application size limit'
   );
-  assert.equal(JSON.parse(validMetadata.toString('utf8')).sourceSha, original.state.sourceSha);
-  const observations = [];
+  assert.equal(
+    sourceShaFromJson(JSON.parse(validMetadata.toString('utf8'))),
+    original.state.sourceSha
+  );
+  const observations: CleanupCaseResult[] = [];
   diagnostics.cleanupResponses = observations;
   for (const [build, fixed] of [
     [original, false],
     [buildB, true],
-  ]) {
+  ] as const) {
     const cases = await Promise.allSettled(
       CLEANUP_CASES.map((caseSpec) =>
         observeCleanupCase({
@@ -1085,10 +1329,17 @@ async function observeMetadataCleanup({
   };
 }
 
-async function heldFirstMetadata(browser, started, buildA, buildB, outputRoot, artifacts) {
+async function heldFirstMetadata(
+  browser: Browser,
+  started: StartedServer,
+  buildA: Build,
+  buildB: Build,
+  outputRoot: string,
+  artifacts: Artifact[]
+) {
   await started.setDistribution(buildA.relativePath);
-  let context;
-  let primaryError;
+  let context: BrowserContext | undefined;
+  let primaryError: CleanupError | undefined;
   const record = {
     origin: new URL(started.url).origin,
     pageErrors: [],
@@ -1103,12 +1354,12 @@ async function heldFirstMetadata(browser, started, buildA, buildB, outputRoot, a
     offlineMetadataFailures: [],
     offline: false,
   };
-  let release;
-  const releaseGate = new Promise((resolveRelease) => {
-    release = resolveRelease;
+  const gate = { release: () => {} };
+  const releaseGate = new Promise<void>((resolveRelease) => {
+    gate.release = resolveRelease;
   });
-  let markHeld;
-  const held = new Promise((resolveHeld) => {
+  let markHeld: () => void = () => {};
+  const held = new Promise<void>((resolveHeld) => {
     markHeld = resolveHeld;
   });
   let interceptions = 0;
@@ -1150,10 +1401,10 @@ async function heldFirstMetadata(browser, started, buildA, buildB, outputRoot, a
       (response) => new URL(response.url()).pathname === METADATA_PATH && response.status() === 200,
       10_000
     );
-    release();
-    release = undefined;
+    gate.release();
+    gate.release = () => {};
     assert.equal(
-      (await (await requireResponse(metadata)).json()).sourceSha,
+      sourceShaFromJson(await (await requireResponse(metadata)).json()),
       buildB.state.sourceSha,
       'Held first request did not receive B metadata'
     );
@@ -1175,10 +1426,10 @@ async function heldFirstMetadata(browser, started, buildA, buildB, outputRoot, a
       metadata: await metadataObservation(record),
     };
   } catch (error) {
-    primaryError = error;
+    primaryError = error instanceof Error ? error : new Error(String(error));
     throw error;
   } finally {
-    release?.();
+    gate.release();
     if (context) {
       try {
         await context.close();
@@ -1204,15 +1455,29 @@ export async function runAppUpdate({
   startStaticServer,
   closeServer,
   validateBundleFile,
+}: {
+  browser: Browser;
+  bundleRoot: string;
+  outputRoot: string;
+  config: AppUpdateConfig;
+  startStaticServer: StartStaticServer;
+  closeServer: (server: Server) => Promise<void>;
+  validateBundleFile: ValidateBundleFile;
 }) {
-  const artifacts = [];
-  const diagnostics = { phase: 'inputs', sourceA: null, sourceB: null, records: {} };
-  let started;
-  let resultContext;
-  let busyContext;
-  let resultPage;
-  let busyPage;
-  let primaryError;
+  const artifacts: Artifact[] = [];
+  const diagnostics: {
+    phase: string;
+    sourceA: string | null;
+    sourceB: string | null;
+    records: { result?: RuntimeRecord; busy?: RuntimeRecord };
+    cleanupResponses?: CleanupCaseResult[];
+  } = { phase: 'inputs', sourceA: null, sourceB: null, records: {} };
+  let started: StartedServer | undefined;
+  let resultContext: BrowserContext | undefined;
+  let busyContext: BrowserContext | undefined;
+  let resultPage: Page | undefined;
+  let busyPage: Page | undefined;
+  let primaryError: CleanupError | undefined;
   try {
     const [buildA, buildB, smallFixture, highMotionFixture] = await Promise.all([
       readBuild(bundleRoot, config.buildA, validateBundleFile),
@@ -1292,7 +1557,7 @@ export async function runAppUpdate({
       viewport: { width: 1280, height: 800 },
     });
     resultPage = await resultContext.newPage();
-    const resultRecord = {
+    const resultRecord: RuntimeRecord = {
       origin: new URL(started.url).origin,
       pageErrors: [],
       consoleErrors: [],
@@ -1364,7 +1629,7 @@ export async function runAppUpdate({
       viewport: { width: 1280, height: 800 },
     });
     busyPage = await busyContext.newPage();
-    const busyRecord = {
+    const busyRecord: RuntimeRecord = {
       origin: new URL(started.url).origin,
       pageErrors: [],
       consoleErrors: [],
@@ -1410,8 +1675,10 @@ export async function runAppUpdate({
     diagnostics.phase = 'quiet-cadence';
     assert.equal(resultRecord.metadataRequests.length, 1, 'Result A initial request count');
     assert.equal(busyRecord.metadataRequests.length, 1, 'Busy A initial request count');
-    const quietUntil =
-      Math.max(resultRecord.metadataRequests[0].atMs, busyRecord.metadataRequests[0].atMs) + 61_000;
+    const resultInitialRequest = resultRecord.metadataRequests[0];
+    const busyInitialRequest = busyRecord.metadataRequests[0];
+    assert(resultInitialRequest && busyInitialRequest);
+    const quietUntil = Math.max(resultInitialRequest.atMs, busyInitialRequest.atMs) + 61_000;
     await busyPage.waitForTimeout(Math.max(0, quietUntil - performance.now()));
     assert.equal(
       resultRecord.metadataRequests.length,
@@ -1458,7 +1725,7 @@ export async function runAppUpdate({
     );
     assert(await stop.isVisible(), 'Conversion stopped during connectivity recovery');
     assert.equal(
-      (await (await requireResponse(bMetadata)).json()).sourceSha,
+      sourceShaFromJson(await (await requireResponse(bMetadata)).json()),
       buildB.state.sourceSha,
       'Busy online event did not observe B metadata'
     );
@@ -1528,7 +1795,7 @@ export async function runAppUpdate({
       'Result tab fetched deployment metadata while offline'
     );
     assert.equal(
-      (await (await requireResponse(resultBMetadata)).json()).sourceSha,
+      sourceShaFromJson(await (await requireResponse(resultBMetadata)).json()),
       buildB.state.sourceSha,
       'Result online event did not observe B metadata'
     );
@@ -1591,9 +1858,11 @@ export async function runAppUpdate({
       2,
       'Busy tab did not make exactly one lifecycle-triggered B check'
     );
-    const equalCadenceMs =
-      resultRecord.metadataRequests[1].atMs - resultRecord.metadataRequests[0].atMs;
-    const busyCadenceMs = busyRecord.metadataRequests[1].atMs - busyRecord.metadataRequests[0].atMs;
+    const resultSecondRequest = resultRecord.metadataRequests[1];
+    const busySecondRequest = busyRecord.metadataRequests[1];
+    assert(resultSecondRequest && busySecondRequest);
+    const equalCadenceMs = resultSecondRequest.atMs - resultInitialRequest.atMs;
+    const busyCadenceMs = busySecondRequest.atMs - busyInitialRequest.atMs;
     assert(equalCadenceMs >= 60_000, 'Result metadata checks violated 60s minimum cadence');
     assert(busyCadenceMs >= 60_000, 'Busy metadata checks violated 60s minimum cadence');
     await assertRuntimeHealth(resultPage, resultRecord);
@@ -1614,7 +1883,7 @@ export async function runAppUpdate({
       resultTimeOrigin,
       'Clearing the retained result navigated the document'
     );
-    const reloadedScripts = [];
+    const reloadedScripts: PlaywrightResponse[] = [];
     resultPage.on('response', (response) => {
       if (new URL(response.url()).pathname === `/${buildB.main.path}`)
         reloadedScripts.push(response);
@@ -1631,7 +1900,9 @@ export async function runAppUpdate({
     );
     await resultPage.waitForLoadState('networkidle');
     assert(reloadedScripts.length > 0, 'Explicit reload did not request B app entry');
-    const servedMainSha = sha256(await reloadedScripts[0].body());
+    const reloadedScript = reloadedScripts[0];
+    assert(reloadedScript);
+    const servedMainSha = sha256(await reloadedScript.body());
     assert.equal(
       servedMainSha,
       buildB.main.sha256,
@@ -1730,46 +2001,53 @@ export async function runAppUpdate({
       artifacts,
     };
   } catch (error) {
-    primaryError = error;
+    primaryError = error instanceof Error ? error : new Error(String(error));
     for (const [name, page] of [
       ['result', resultPage],
       ['busy', busyPage],
-    ]) {
-      if (!page || !diagnostics.records[name]) continue;
+    ] as const) {
+      const record = diagnostics.records[name];
+      if (!page || !record) continue;
       try {
-        diagnostics.records[name].failurePageState = await page.evaluate(() => ({
+        record.failurePageState = await page.evaluate(() => ({
           lifecycle: globalThis.__appUpdateLifecycle ?? [],
           visibility: document.visibilityState,
           online: navigator.onLine,
           timeOrigin: performance.timeOrigin,
         }));
       } catch (captureError) {
-        diagnostics.records[name].failurePageStateError = String(captureError);
+        record.failurePageStateError = String(captureError);
       }
     }
     throw error;
   } finally {
-    const cleanupErrors = [];
-    const cleanup = async (name, action) => {
+    const cleanupErrors: string[] = [];
+    const cleanup = async (name: string, action: () => Promise<unknown>) => {
       try {
         await action();
       } catch (error) {
         cleanupErrors.push(`${name}: ${String(error)}`);
       }
     };
-    if (resultPage)
+    const finalResultPage = resultPage;
+    const finalBusyPage = busyPage;
+    const finalResultContext = resultContext;
+    const finalBusyContext = busyContext;
+    const finalStarted = started;
+    if (finalResultPage)
       await cleanup('result metadata gate release', () =>
-        releaseOnlineMetadataTransportGate(resultPage)
+        releaseOnlineMetadataTransportGate(finalResultPage)
       );
-    if (busyPage)
+    if (finalBusyPage)
       await cleanup('busy metadata gate release', () =>
-        releaseOnlineMetadataTransportGate(busyPage)
+        releaseOnlineMetadataTransportGate(finalBusyPage)
       );
-    if (resultContext) await cleanup('result offline reset', () => resultContext.setOffline(false));
-    if (resultContext) await cleanup('result context close', () => resultContext.close());
-    if (busyContext) await cleanup('busy context close', () => busyContext.close());
-    if (started) await cleanup('server close', () => closeServer(started.server));
-    const safeRecords = {};
+    if (finalResultContext)
+      await cleanup('result offline reset', () => finalResultContext.setOffline(false));
+    if (finalResultContext) await cleanup('result context close', () => finalResultContext.close());
+    if (finalBusyContext) await cleanup('busy context close', () => finalBusyContext.close());
+    if (finalStarted) await cleanup('server close', () => closeServer(finalStarted.server));
+    const safeRecords: Record<string, object> = {};
     for (const [name, record] of Object.entries(diagnostics.records)) {
       safeRecords[name] = {
         pageErrors: record.pageErrors,

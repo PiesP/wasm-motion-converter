@@ -17,14 +17,199 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import type { Server } from 'node:http';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
-import { runAppUpdate } from './app-update.mjs';
-import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.mjs';
-import { makeMp4BudgetFixture } from './mp4-budget-fixture.mjs';
-import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.mjs';
-import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.mjs';
+import type {
+  APIResponse,
+  Browser,
+  BrowserContext,
+  Download,
+  Page,
+  Request as PlaywrightRequest,
+} from '@playwright/test';
+
+import { runAppUpdate } from './app-update.ts';
+import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
+import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
+import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
+import type { OutputContractCase } from './output-contract.ts';
+import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
+
+type Artifact = { kind: string; file: string; bytes: number; sha256: string };
+type HeaderRule = { pattern: string; headers: Map<string, string> };
+type AssetFailure = { path: string; mode: '404' | 'wrong-mime' | 'network' };
+type PublicTarget = { url: string; sourceSha: string; deploymentId: string };
+type PublicMetadata = {
+  schemaVersion: number;
+  sourceSha: string;
+  treeSha: string;
+  coreSha: string;
+  branch: string;
+  version: string;
+  files: { path: string; size: number; sha256: string }[];
+};
+type OutputContractConfig = {
+  schemaVersion: number;
+  cases: OutputContractCase[];
+  markers: Record<string, number[]>;
+  pressureExpectations: Record<string, Partial<OutputContractCase['expected']>>;
+};
+type HttpStatusError = Error & { statusCode: number };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function assertPublicMetadata(value: unknown): asserts value is PublicMetadata {
+  assert(isRecord(value), 'Invalid public deployment metadata');
+  assert(typeof value.schemaVersion === 'number');
+  for (const key of ['sourceSha', 'treeSha', 'coreSha', 'branch', 'version'] as const)
+    assert(typeof value[key] === 'string', `Invalid public metadata ${key}`);
+  assert(Array.isArray(value.files), 'Invalid public metadata files');
+  for (const file of value.files) {
+    assert(isRecord(file), 'Invalid public metadata file');
+    assert(typeof file.path === 'string');
+    assert(typeof file.size === 'number');
+    assert(typeof file.sha256 === 'string');
+  }
+}
+
+function assertOutputContractConfig(value: unknown): asserts value is OutputContractConfig {
+  assert(isRecord(value), 'Invalid output contract');
+  assert(typeof value.schemaVersion === 'number');
+  assert(Array.isArray(value.cases) && value.cases.length > 0);
+  for (const contract of value.cases) {
+    assert(isRecord(contract), 'Invalid output contract case');
+    assert(typeof contract.id === 'string' && typeof contract.fixture === 'string');
+    assert(contract.format === 'gif' || contract.format === 'webp');
+    assert(
+      contract.sourceRotationClockwise === undefined ||
+        typeof contract.sourceRotationClockwise === 'number'
+    );
+    const settings = contract.settings;
+    assert(isRecord(settings), 'Invalid output contract settings');
+    assert(['low', 'medium', 'high'].includes(String(settings.quality)));
+    assert(['0.5', '0.75', '1'].includes(String(settings.scale)));
+    assert(typeof settings.trimStart === 'number' && typeof settings.trimEnd === 'number');
+    assert(['off', 'low', 'medium', 'high', 'adaptive'].includes(String(settings.smartFrameSkip)));
+    const expected = contract.expected;
+    assert(isRecord(expected), 'Invalid output contract expectation');
+    assert(typeof expected.width === 'number' && typeof expected.height === 'number');
+    assert(
+      Array.isArray(expected.markers) && expected.markers.every((item) => typeof item === 'string')
+    );
+    assert(
+      Array.isArray(expected.durationsMs) &&
+        expected.durationsMs.every((item) => typeof item === 'number')
+    );
+    assert(typeof expected.durationToleranceMs === 'number');
+    assert(typeof expected.maxColorDistance === 'number');
+    if (expected.corners !== undefined) {
+      assert(isRecord(expected.corners));
+      for (const corner of ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'])
+        assert(typeof expected.corners[corner] === 'string');
+    }
+  }
+  assert(isRecord(value.markers), 'Invalid output contract markers');
+  for (const marker of Object.values(value.markers))
+    assert(Array.isArray(marker) && marker.every((item) => typeof item === 'number'));
+  assert(isRecord(value.pressureExpectations), 'Invalid output contract pressure expectations');
+  for (const expectation of Object.values(value.pressureExpectations)) {
+    assert(isRecord(expectation));
+    for (const [key, entry] of Object.entries(expectation)) {
+      assert(
+        [
+          'width',
+          'height',
+          'markers',
+          'corners',
+          'durationsMs',
+          'durationToleranceMs',
+          'maxColorDistance',
+        ].includes(key)
+      );
+      if (key === 'markers')
+        assert(Array.isArray(entry) && entry.every((item) => typeof item === 'string'));
+      else if (key === 'durationsMs')
+        assert(Array.isArray(entry) && entry.every((item) => typeof item === 'number'));
+      else if (key === 'corners') {
+        assert(isRecord(entry));
+        for (const corner of ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'])
+          assert(typeof entry[corner] === 'string');
+      } else assert(typeof entry === 'number');
+    }
+  }
+}
+function httpStatusError(message: string, statusCode: number): HttpStatusError {
+  return Object.assign(new Error(message), { statusCode });
+}
+type AnalysisObservation = {
+  state: string;
+  busy: string | null | undefined;
+  ariaValueNow: string | null;
+  dataProgress: string | null;
+  cancelLabel: string | null;
+  cancelTitle: string | null;
+  diagnosticsCount: number | undefined;
+  visibleZero: boolean;
+};
+type CancellationSample = {
+  values: number[];
+  ariaValueNow: string | null;
+  sameProgressElement: boolean;
+};
+type CancellationObservation = {
+  stateText: string;
+  progressBeforeClick: number;
+  sameProgressElement: boolean;
+  progressValues: number[];
+  progressSamples: CancellationSample[];
+  sampleOverflow: boolean;
+  visibleProgressBarCount: number;
+  legacyProgressCount: number;
+  settingsCancel: { disabled: boolean | undefined; label: string | null };
+  dropzoneCancel: { disabled: boolean | undefined; label: string | null };
+  dropzoneBusy: string | null;
+  progressBusy: string | null;
+  progressAriaValueNow: string | null;
+  diagnosticsCount: number;
+  diagnosticsOpen: boolean | null;
+  diagnosticsSummaryFontSizePx: number | null;
+  statusFontSizePx: number | null;
+};
+type PressureProbe = {
+  nativeDecoded: number;
+  submittedWebp: number;
+  terminal: {
+    decodedFrames: number;
+    selectedFrames: number;
+    encodedFrames: number;
+    emittedFrames: number;
+  } | null;
+  startRatios: number[];
+  reset: () => void;
+};
+type InspectorPage = { evaluate<T>(callback: () => T): Promise<T> };
+declare global {
+  interface Navigator {
+    readonly deviceMemory?: number;
+  }
+  var __wmcAnalysisInspector:
+    | { observer: MutationObserver; observations: AnalysisObservation[] }
+    | undefined;
+  var __wmcCancellationInspector:
+    | {
+        progressBar: HTMLElement;
+        progress: number;
+        observation: CancellationObservation | null;
+        observer: MutationObserver | null;
+      }
+    | undefined;
+  var __wmcPressureProbe: PressureProbe;
+  var __wmcPublicViolations: string[];
+  var __wmcWorkerConstructionAttempts: number;
+}
 
 const PROFILE_ID = 'wmc-media';
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
@@ -55,38 +240,42 @@ const MIME_TYPES = new Map([
   ['.xml', 'application/xml; charset=utf-8'],
 ]);
 
-function sha256(bytes) {
+function sha256(bytes: Buffer | Uint8Array | string) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-function parseCssColor(value) {
+function parseCssColor(value: string) {
   const rgbMatch = value.match(/^rgba?\(([^)]+)\)$/);
   if (rgbMatch) {
-    const components = rgbMatch[1]
+    const rgbValues = rgbMatch[1];
+    assert(rgbValues);
+    const components = rgbValues
       .split(/[,\s/]+/)
       .filter(Boolean)
       .map(Number);
     assert(components.length >= 3 && components.slice(0, 3).every(Number.isFinite));
     return {
       channels: components.slice(0, 3),
-      alpha: components.length >= 4 ? components[3] : 1,
+      alpha: components[3] ?? 1,
     };
   }
 
   const srgbMatch = value.match(/^color\(srgb\s+([^)]*)\)$/);
   assert(srgbMatch, `Unsupported computed color: ${value}`);
-  const components = srgbMatch[1]
+  const srgbValues = srgbMatch[1];
+  assert(srgbValues);
+  const components = srgbValues
     .split(/[\s/]+/)
     .filter(Boolean)
     .map(Number);
   assert(components.length >= 3 && components.slice(0, 3).every(Number.isFinite));
   return {
     channels: components.slice(0, 3).map((channel) => channel * 255),
-    alpha: components.length >= 4 ? components[3] : 1,
+    alpha: components[3] ?? 1,
   };
 }
 
-function compositeCssBackgrounds(values) {
+function compositeCssBackgrounds(values: string[]) {
   let composite = { channels: [0, 0, 0], alpha: 0 };
   for (const value of values.toReversed()) {
     const layer = parseCssColor(value);
@@ -96,7 +285,7 @@ function compositeCssBackgrounds(values) {
       channels: layer.channels.map(
         (channel, index) =>
           (channel * layer.alpha +
-            composite.channels[index] * composite.alpha * (1 - layer.alpha)) /
+            (composite.channels[index] ?? 0) * composite.alpha * (1 - layer.alpha)) /
           alpha
       ),
       alpha,
@@ -106,20 +295,20 @@ function compositeCssBackgrounds(values) {
   return composite.channels;
 }
 
-function contrastRatio(foreground, background) {
-  const luminance = (color) => {
+function contrastRatio(foreground: number[], background: number[]) {
+  const luminance = (color: number[]) => {
     const channels = color.map((channel) => {
       const srgb = channel / 255;
       return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
     });
-    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    return (channels[0] ?? 0) * 0.2126 + (channels[1] ?? 0) * 0.7152 + (channels[2] ?? 0) * 0.0722;
   };
   const lighter = Math.max(luminance(foreground), luminance(background));
   const darker = Math.min(luminance(foreground), luminance(background));
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-async function settleVisualState(page) {
+async function settleVisualState(page: Page) {
   await page.evaluate(async () => {
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     await Promise.all(
@@ -132,7 +321,7 @@ async function settleVisualState(page) {
   });
 }
 
-async function readResultMetadataContrast(page, selector) {
+async function readResultMetadataContrast(page: Page, selector: string) {
   const computed = await page.locator(selector).evaluate((element) => {
     // The browser converts CSS Color 4 values (including interpolated oklab)
     // to the same sRGB channels used by this contrast measurement.
@@ -140,15 +329,15 @@ async function readResultMetadataContrast(page, selector) {
     canvas.width = canvas.height = 1;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Contrast measurement requires a 2D canvas');
-    const srgb = (value) => {
+    const srgb = (value: string) => {
       context.clearRect(0, 0, 1, 1);
       context.fillStyle = value;
       context.fillRect(0, 0, 1, 1);
       const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
-      return `rgba(${r}, ${g}, ${b}, ${a / 255})`;
+      return `rgba(${r}, ${g}, ${b}, ${(a ?? 0) / 255})`;
     };
     const backgrounds = [];
-    for (let current = element; current; current = current.parentElement) {
+    for (let current: Element | null = element; current; current = current.parentElement) {
       backgrounds.push(srgb(getComputedStyle(current).backgroundColor));
     }
     const style = getComputedStyle(element);
@@ -168,8 +357,9 @@ async function readResultMetadataContrast(page, selector) {
   };
 }
 
-async function readPreviewPresentation(page) {
+async function readPreviewPresentation(page: Page) {
   return page.locator('[data-testid="result-image"]').evaluate((image) => {
+    if (!(image instanceof HTMLImageElement)) throw new Error('Result preview is not an image');
     const element = image;
     const rect = element.getBoundingClientRect();
     const scale = Math.min(rect.width / element.naturalWidth, rect.height / element.naturalHeight);
@@ -189,7 +379,7 @@ async function readPreviewPresentation(page) {
   });
 }
 
-function isWithin(parent, child) {
+function isWithin(parent: string, child: string) {
   const childRelative = relative(parent, child);
   return (
     childRelative === '' ||
@@ -197,7 +387,7 @@ function isWithin(parent, child) {
   );
 }
 
-function parseCatchAllHeaders(contents) {
+function parseCatchAllHeaders(contents: string) {
   const headers = new Map();
   let inCatchAll = false;
 
@@ -225,15 +415,15 @@ function parseCatchAllHeaders(contents) {
   return headers;
 }
 
-function parseHeaderRules(contents) {
-  const rules = [];
-  let current = null;
+function parseHeaderRules(contents: string) {
+  const rules: HeaderRule[] = [];
+  let current: HeaderRule | null = null;
   for (const line of contents.split(/\r?\n/)) {
     if (!line.trim() || line.trimStart().startsWith('#')) continue;
     if (!/^\s/.test(line)) {
       const pattern = line.trim();
       assert(pattern.startsWith('/'), `Invalid _headers path: ${pattern}`);
-      current = { pattern, headers: new Map() };
+      current = { pattern, headers: new Map<string, string>() };
       rules.push(current);
       continue;
     }
@@ -250,8 +440,8 @@ function parseHeaderRules(contents) {
   return rules;
 }
 
-function matchedHeaders(rules, pathname, catchAllOnly = false) {
-  const headers = new Map();
+function matchedHeaders(rules: HeaderRule[], pathname: string, catchAllOnly = false) {
+  const headers = new Map<string, string>();
   for (const rule of rules) {
     if (catchAllOnly && rule.pattern !== '/*') continue;
     const escaped = rule.pattern.replace(/[|\\{}()[\]^$+?.]/g, '\\$&').replaceAll('*', '.*');
@@ -264,69 +454,68 @@ function matchedHeaders(rules, pathname, catchAllOnly = false) {
   return headers;
 }
 
-function decodeRequestPath(requestUrl) {
+function decodeRequestPath(requestUrl: string | undefined) {
   const url = new URL(requestUrl ?? '/', 'http://127.0.0.1');
-  let pathname;
+  let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);
   } catch {
-    const error = new Error('Malformed URL encoding');
-    error.statusCode = 400;
-    throw error;
+    throw httpStatusError('Malformed URL encoding', 400);
   }
   if (pathname.includes('\0') || pathname.includes('\\')) {
-    const error = new Error('Unsafe request path');
-    error.statusCode = 400;
-    throw error;
+    throw httpStatusError('Unsafe request path', 400);
   }
   const segments = pathname.split('/').filter(Boolean);
   if (
     segments.some((segment) => segment === '.' || segment === '..' || /[:*?"<>|]/.test(segment))
   ) {
-    const error = new Error('Unsafe request path');
-    error.statusCode = 400;
-    throw error;
+    throw httpStatusError('Unsafe request path', 400);
   }
   return segments.length === 0 ? 'index.html' : segments.join('/');
 }
 
-async function resolveStaticFile(distRoot, requestUrl) {
+async function resolveStaticFile(distRoot: string, requestUrl: string | undefined) {
   const candidate = resolve(distRoot, decodeRequestPath(requestUrl));
   if (!isWithin(distRoot, candidate)) {
-    const error = new Error('Request escaped the distribution root');
-    error.statusCode = 400;
-    throw error;
+    throw httpStatusError('Request escaped the distribution root', 400);
   }
 
   const candidateStat = await stat(candidate);
   const fileCandidate = candidateStat.isDirectory() ? join(candidate, 'index.html') : candidate;
   const resolvedFile = await realpath(fileCandidate);
   if (!isWithin(distRoot, resolvedFile)) {
-    const error = new Error('Request resolved outside the distribution root');
-    error.statusCode = 400;
-    throw error;
+    throw httpStatusError('Request resolved outside the distribution root', 400);
   }
   const fileStat = await stat(resolvedFile);
   if (!fileStat.isFile()) {
-    const error = new Error('Not a file');
-    error.statusCode = 404;
-    throw error;
+    throw httpStatusError('Not a file', 404);
   }
   return resolvedFile;
 }
 
 export async function startStaticServer(
-  bundleRoot,
-  { gzipAssets = false, metadataHandler = null } = {}
+  bundleRoot: string,
+  {
+    gzipAssets = false,
+    metadataHandler = null,
+  }: {
+    gzipAssets?: boolean;
+    metadataHandler?:
+      | ((
+          request: import('node:http').IncomingMessage,
+          response: import('node:http').ServerResponse
+        ) => void | Promise<void>)
+      | null;
+  } = {}
 ) {
-  let distRoot;
-  let headerRules;
-  let assetFailure = null;
-  const assetFailureRequests = [];
-  const observedAssetRequests = [];
+  let distRoot: string | undefined;
+  let headerRules: HeaderRule[] | undefined;
+  let assetFailure: AssetFailure | null = null;
+  const assetFailureRequests: { path: string; mode: AssetFailure['mode'] }[] = [];
+  const observedAssetRequests: string[] = [];
   let observedAssetOverflow = false;
-  const missingAssetResponses = [];
-  function setAssetFailure(failure) {
+  const missingAssetResponses: { path: string; status: number }[] = [];
+  function setAssetFailure(failure: AssetFailure | null) {
     assert(
       failure === null ||
         (typeof failure === 'object' &&
@@ -337,7 +526,7 @@ export async function startStaticServer(
     assetFailure = failure;
     assetFailureRequests.length = 0;
   }
-  async function setDistribution(relativePath) {
+  async function setDistribution(relativePath: string) {
     const nextRoot = await realpath(resolve(bundleRoot, relativePath));
     assert(isWithin(bundleRoot, nextRoot), 'Bundled dist asset resolved outside the bundle root');
     assert((await stat(nextRoot)).isDirectory(), 'Bundled dist asset is not a directory');
@@ -382,7 +571,7 @@ export async function startStaticServer(
           response.destroy();
           return;
         }
-        for (const [name, value] of matchedHeaders(headerRules, pathname))
+        for (const [name, value] of matchedHeaders(headerRules ?? [], pathname))
           response.setHeader(name, value);
         response.setHeader('Cache-Control', 'no-store');
         response.setHeader(
@@ -395,9 +584,10 @@ export async function startStaticServer(
         response.end(request.method === 'HEAD' ? undefined : body);
         return;
       }
+      assert(distRoot, 'Distribution root was not initialized');
       const file = await resolveStaticFile(distRoot, request.url);
       const bytes = await readFile(file);
-      for (const [name, value] of matchedHeaders(headerRules, pathname))
+      for (const [name, value] of matchedHeaders(headerRules ?? [], pathname))
         response.setHeader(name, value);
       response.setHeader(
         'Content-Type',
@@ -415,15 +605,19 @@ export async function startStaticServer(
       response.writeHead(200);
       response.end(request.method === 'HEAD' ? undefined : wireBytes);
     } catch (error) {
-      const statusCode = Number.isInteger(error?.statusCode)
-        ? error.statusCode
-        : error?.code === 'ENOENT'
-          ? 404
-          : 500;
+      const statusCode =
+        error instanceof Error &&
+        'statusCode' in error &&
+        typeof error.statusCode === 'number' &&
+        Number.isInteger(error.statusCode)
+          ? error.statusCode
+          : error instanceof Error && 'code' in error && error.code === 'ENOENT'
+            ? 404
+            : 500;
       const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
       if (/^\/assets\/[\w.-]+\.js$/.test(pathname) && missingAssetResponses.length < 128)
         missingAssetResponses.push({ path: pathname, status: statusCode });
-      for (const [name, value] of matchedHeaders(headerRules, '/', true))
+      for (const [name, value] of matchedHeaders(headerRules ?? [], '/', true))
         response.setHeader(name, value);
       response.writeHead(statusCode, {
         'Content-Type': 'text/plain; charset=utf-8',
@@ -433,7 +627,7 @@ export async function startStaticServer(
     }
   });
 
-  await new Promise((resolveListen, rejectListen) => {
+  await new Promise<void>((resolveListen, rejectListen) => {
     server.once('error', rejectListen);
     server.listen(0, '127.0.0.1', () => {
       server.off('error', rejectListen);
@@ -456,14 +650,14 @@ export async function startStaticServer(
   };
 }
 
-async function closeServer(server) {
+async function closeServer(server: Server) {
   server.closeIdleConnections?.();
-  await new Promise((resolveClose, rejectClose) => {
+  await new Promise<void>((resolveClose, rejectClose) => {
     server.close((error) => (error ? rejectClose(error) : resolveClose()));
   });
 }
 
-async function validateBundleFile(bundleRoot, relativePath) {
+async function validateBundleFile(bundleRoot: string, relativePath: string) {
   const rootReal = await realpath(bundleRoot);
   const fileReal = await realpath(resolve(rootReal, relativePath));
   assert(isWithin(rootReal, fileReal), `Bundled asset escaped its root: ${relativePath}`);
@@ -475,7 +669,7 @@ async function validateBundleFile(bundleRoot, relativePath) {
   return fileReal;
 }
 
-async function loadApplication(page, url) {
+async function loadApplication(page: Page, url: string) {
   const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   assert(response, 'Application navigation did not return an HTTP response');
   assert.equal(response.status(), 200, `Application returned HTTP ${response.status()}`);
@@ -497,10 +691,10 @@ async function loadApplication(page, url) {
   };
 }
 
-async function selectFixture(page, filePath, inspectAnalysis = false) {
+async function selectFixture(page: Page, filePath: string, inspectAnalysis = false) {
   if (inspectAnalysis) {
     await page.evaluate(() => {
-      const observations = [];
+      const observations: AnalysisObservation[] = [];
       const capture = () => {
         const state = document.querySelector('#app-state')?.textContent?.trim() ?? '';
         const dropzone = document.querySelector('[data-testid="dropzone"]');
@@ -549,7 +743,7 @@ async function selectFixture(page, filePath, inspectAnalysis = false) {
   const observations = await page.evaluate(() => {
     const inspector = globalThis.__wmcAnalysisInspector;
     inspector?.observer.disconnect();
-    delete globalThis.__wmcAnalysisInspector;
+    Reflect.deleteProperty(globalThis, '__wmcAnalysisInspector');
     return inspector?.observations ?? [];
   });
   for (const observation of observations) {
@@ -572,7 +766,7 @@ async function selectFixture(page, filePath, inspectAnalysis = false) {
   return { status: observations.length > 0 ? 'observed' : 'not-observed', observations };
 }
 
-async function chooseOption(page, group, value) {
+async function chooseOption(page: Page, group: string, value: string) {
   const option = page.locator(`[data-testid="option-${group}-${value}"]`);
   if (!(await option.isVisible())) {
     const advanced = page.locator('[data-testid="advanced-settings"]');
@@ -591,15 +785,15 @@ async function chooseOption(page, group, value) {
   );
 }
 
-async function proceedIfPrompted(page) {
+async function proceedIfPrompted(page: Page) {
   const confirmation = page.locator('[data-testid="modal-confirm-button"]');
   if (await confirmation.isVisible()) await confirmation.click();
 }
 
-async function waitForConversionOutcome(page, timeout) {
+async function waitForConversionOutcome(page: Page, timeout: number) {
   await page.waitForFunction(
     () => {
-      const visible = (element) =>
+      const visible = (element: Element | null) =>
         element instanceof HTMLElement && element.getClientRects().length > 0;
       return (
         visible(document.querySelector('[data-testid="result-section"]')) ||
@@ -616,7 +810,7 @@ async function waitForConversionOutcome(page, timeout) {
   await page.locator('[data-testid="result-section"]').waitFor({ state: 'visible' });
 }
 
-async function readDownload(download) {
+async function readDownload(download: Download) {
   const stream = await download.createReadStream();
   assert(stream, 'Browser download did not expose a readable stream');
   const chunks = [];
@@ -624,7 +818,12 @@ async function readDownload(download) {
   return Buffer.concat(chunks);
 }
 
-function validateOutput(bytes, format, expectedWidth = 80, expectedHeight = 45) {
+function validateOutput(
+  bytes: Buffer,
+  format: 'gif' | 'webp',
+  expectedWidth = 80,
+  expectedHeight = 45
+) {
   assert(bytes.byteLength > 100, `${format.toUpperCase()} output is unexpectedly small`);
   if (format === 'gif') {
     assert(
@@ -653,7 +852,13 @@ function validateOutput(bytes, format, expectedWidth = 80, expectedHeight = 45) 
   );
 }
 
-async function recordScreenshot(page, outputRoot, fileName, artifacts, fullPage = true) {
+async function recordScreenshot(
+  page: Page,
+  outputRoot: string,
+  fileName: string,
+  artifacts: Artifact[],
+  fullPage = true
+) {
   const path = join(outputRoot, fileName);
   await page.screenshot({ path, fullPage, animations: 'disabled', caret: 'hide' });
   const bytes = await readFile(path);
@@ -665,7 +870,12 @@ async function recordScreenshot(page, outputRoot, fileName, artifacts, fullPage 
   });
 }
 
-async function recordChromeZoomScreenshot(page, outputRoot, fileName, artifacts) {
+async function recordChromeZoomScreenshot(
+  page: Page,
+  outputRoot: string,
+  fileName: string,
+  artifacts: Artifact[]
+) {
   const session = await page.context().newCDPSession(page);
   try {
     await session.send('Page.bringToFront');
@@ -698,7 +908,7 @@ async function recordChromeZoomScreenshot(page, outputRoot, fileName, artifacts)
   }
 }
 
-async function readForcedColorsControlDiagnostics(page) {
+async function readForcedColorsControlDiagnostics(page: Page) {
   return page.evaluate(() => ({
     viewport: { width: innerWidth, height: innerHeight, scrollY },
     controls: ['download-result-button', 'download-result-label', 'result-preview-toggle'].map(
@@ -732,13 +942,13 @@ async function readForcedColorsControlDiagnostics(page) {
   }));
 }
 
-async function readResultDiscoveryState(page, format) {
+async function readResultDiscoveryState(page: Page, format: 'gif' | 'webp') {
   return page.evaluate((expectedFormat) => {
     const button = document.querySelector('[data-testid="download-result-button"]');
     const image = document.querySelector('[data-testid="result-image"]');
     const summary = document.querySelector('[data-testid="result-summary"]');
     const activeElement = document.activeElement;
-    const serializeRect = (element) => {
+    const serializeRect = (element: Element | null) => {
       if (!(element instanceof HTMLElement)) return null;
       const rect = element.getBoundingClientRect();
       return {
@@ -808,12 +1018,12 @@ async function readResultDiscoveryState(page, format) {
 }
 
 async function convertSmallFixture(
-  page,
-  baseUrl,
-  fixturePath,
-  format,
-  outputRoot,
-  artifacts,
+  page: Page,
+  baseUrl: string,
+  fixturePath: string,
+  format: 'gif' | 'webp',
+  outputRoot: string,
+  artifacts: Artifact[],
   reusePage = false
 ) {
   await page.setViewportSize(
@@ -845,7 +1055,7 @@ async function convertSmallFixture(
     'Reduced-motion emulation was not active in the product page'
   );
 
-  let initialDiscovery;
+  let initialDiscovery: Awaited<ReturnType<typeof readResultDiscoveryState>>;
   try {
     await page.waitForFunction(
       () => {
@@ -900,10 +1110,10 @@ async function convertSmallFixture(
     undefined,
     { timeout: 30_000 }
   );
-  const dimensions = await preview.evaluate((image) => ({
-    width: image.naturalWidth,
-    height: image.naturalHeight,
-  }));
+  const dimensions = await preview.evaluate((image) => {
+    if (!(image instanceof HTMLImageElement)) throw new Error('Result preview is not an image');
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  });
   assert.deepEqual(dimensions, { width: 80, height: 45 });
 
   const discovery = await readResultDiscoveryState(page, format);
@@ -1002,7 +1212,15 @@ async function convertSmallFixture(
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-dark.png`, artifacts);
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce', forcedColors: 'active' });
   await settleVisualState(page);
-  const forcedColors = await page.evaluate(() => ({
+  const forcedColors: {
+    active: boolean;
+    horizontalOverflow: number;
+    previewToggleVisible: boolean;
+    downloadVisible: boolean;
+    beforeFullPageScreenshot?: Awaited<ReturnType<typeof readForcedColorsControlDiagnostics>>;
+    beforeViewportScreenshot?: Awaited<ReturnType<typeof readForcedColorsControlDiagnostics>>;
+    downloadLabelContrast?: Awaited<ReturnType<typeof readResultMetadataContrast>>;
+  } = await page.evaluate(() => ({
     active: matchMedia('(forced-colors: active)').matches,
     horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     previewToggleVisible:
@@ -1017,11 +1235,12 @@ async function convertSmallFixture(
   assert.equal(forcedColors.previewToggleVisible, true);
   assert.equal(forcedColors.downloadVisible, true);
   // DOM styles and geometry are diagnostics, not proof that text pixels are legible.
-  forcedColors.beforeFullPageScreenshot = await readForcedColorsControlDiagnostics(page);
-  const downloadControl = forcedColors.beforeFullPageScreenshot.controls.find(
+  const beforeFullPageScreenshot = await readForcedColorsControlDiagnostics(page);
+  forcedColors.beforeFullPageScreenshot = beforeFullPageScreenshot;
+  const downloadControl = beforeFullPageScreenshot.controls.find(
     (control) => control.testId === 'download-result-button'
   );
-  const downloadLabel = forcedColors.beforeFullPageScreenshot.controls.find(
+  const downloadLabel = beforeFullPageScreenshot.controls.find(
     (control) => control.testId === 'download-result-label'
   );
   assert(downloadControl, 'Forced Colors download control diagnostics are missing');
@@ -1031,14 +1250,15 @@ async function convertSmallFixture(
   assert.equal(downloadLabel.forcedColorAdjust, 'none');
   assert.equal(downloadLabel.color, downloadControl.color);
   assert.equal(parseCssColor(downloadLabel.backgroundColor).alpha, 0);
-  forcedColors.downloadLabelContrast = await readResultMetadataContrast(
+  const downloadLabelContrast = await readResultMetadataContrast(
     page,
     '[data-testid="download-result-label"]'
   );
-  assert.equal(forcedColors.downloadLabelContrast.opacity, 1);
-  assert(forcedColors.downloadLabelContrast.fontSizePx >= 12);
+  forcedColors.downloadLabelContrast = downloadLabelContrast;
+  assert.equal(downloadLabelContrast.opacity, 1);
+  assert(downloadLabelContrast.fontSizePx >= 12);
   assert(
-    forcedColors.downloadLabelContrast.ratio >= 4.5,
+    downloadLabelContrast.ratio >= 4.5,
     'Forced Colors download label and background have insufficient computed contrast'
   );
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-${format}-forced-colors.png`, artifacts);
@@ -1127,13 +1347,13 @@ async function convertSmallFixture(
   };
 }
 
-function formatTrimTime(seconds) {
+function formatTrimTime(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   const remaining = (seconds - minutes * 60).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
   return `${minutes}:${remaining.padStart(2, '0')}`;
 }
 
-async function applyContractSettings(page, contract) {
+async function applyContractSettings(page: Page, contract: OutputContractCase) {
   await chooseOption(page, 'format', contract.format);
   await chooseOption(page, 'quality', contract.settings.quality);
   await chooseOption(page, 'scale', contract.settings.scale);
@@ -1149,13 +1369,13 @@ async function applyContractSettings(page, contract) {
 }
 
 async function convertOutputContract(
-  page,
-  baseUrl,
-  fixturePath,
-  contract,
-  markers,
-  outputRoot,
-  artifacts
+  page: Page,
+  baseUrl: string,
+  fixturePath: string,
+  contract: OutputContractCase,
+  markers: Record<string, number[]>,
+  outputRoot: string,
+  artifacts: Artifact[]
 ) {
   await page.setViewportSize({ width: 1280, height: 900 });
   await loadApplication(page, baseUrl);
@@ -1182,10 +1402,10 @@ async function convertOutputContract(
     { timeout: 30_000 }
   );
   assert.deepEqual(
-    await preview.evaluate((image) => ({
-      width: image.naturalWidth,
-      height: image.naturalHeight,
-    })),
+    await preview.evaluate((image) => {
+      if (!(image instanceof HTMLImageElement)) throw new Error('Result preview is not an image');
+      return { width: image.naturalWidth, height: image.naturalHeight };
+    }),
     { width: contract.expected.width, height: contract.expected.height },
     `${contract.id}: preview geometry`
   );
@@ -1226,21 +1446,33 @@ async function convertOutputContract(
   };
 }
 
-async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, artifacts) {
+async function exerciseUiDisclosures(
+  page: Page,
+  baseUrl: string,
+  fixturePath: string,
+  outputRoot: string,
+  artifacts: Artifact[]
+) {
   await loadApplication(page, baseUrl);
   await selectFixture(page, fixturePath);
 
   const metadata = page.locator('[data-testid="video-metadata"]');
   const metadataSummary = metadata.locator('summary');
   assert.equal(await metadata.evaluate((element) => element.tagName), 'DETAILS');
-  assert.equal(await metadata.evaluate((element) => element.open), false);
+  assert.equal(
+    await metadata.evaluate((element) => element instanceof HTMLDetailsElement && element.open),
+    false
+  );
   assert(
     (await metadataSummary.evaluate((element) => element.getBoundingClientRect().height)) >= 44,
     'Metadata disclosure summary is smaller than the minimum interaction target'
   );
   await metadataSummary.focus();
   await page.keyboard.press('Enter');
-  assert.equal(await metadata.evaluate((element) => element.open), true);
+  assert.equal(
+    await metadata.evaluate((element) => element instanceof HTMLDetailsElement && element.open),
+    true
+  );
   assert.equal(
     await metadataSummary.evaluate((element) => document.activeElement === element),
     true
@@ -1253,14 +1485,20 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
   const advanced = page.locator('[data-testid="advanced-settings"]');
   const advancedSummary = advanced.locator('summary');
   assert.equal(await advanced.evaluate((element) => element.tagName), 'DETAILS');
-  assert.equal(await advanced.evaluate((element) => element.open), false);
+  assert.equal(
+    await advanced.evaluate((element) => element instanceof HTMLDetailsElement && element.open),
+    false
+  );
   assert(
     (await advancedSummary.evaluate((element) => element.getBoundingClientRect().height)) >= 44,
     'Advanced-settings summary is smaller than the minimum interaction target'
   );
   await advancedSummary.focus();
   await page.keyboard.press('Enter');
-  assert.equal(await advanced.evaluate((element) => element.open), true);
+  assert.equal(
+    await advanced.evaluate((element) => element instanceof HTMLDetailsElement && element.open),
+    true
+  );
   assert.equal(
     await advancedSummary.evaluate((element) => document.activeElement === element),
     true
@@ -1302,7 +1540,10 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
   const sharingButton = sharing.locator('[data-testid="sharing-settings-button"]');
   const convertButton = page.locator('[data-testid="convert-button"]');
   assert.equal(await sharing.evaluate((element) => element.tagName), 'DETAILS');
-  assert.equal(await sharing.evaluate((element) => element.open), false);
+  assert.equal(
+    await sharing.evaluate((element) => element instanceof HTMLDetailsElement && element.open),
+    false
+  );
   assert.equal(await sharingButton.isVisible(), false, 'Collapsed sharing action is visible');
   assert.equal(
     await convertButton.evaluate((convert, sharingSelector) => {
@@ -1343,10 +1584,16 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-disclosures.png`, artifacts);
   await advancedSummary.focus();
   await page.keyboard.press('Space');
-  assert.equal(await advanced.evaluate((element) => element.open), false);
+  assert.equal(
+    await advanced.evaluate((element) => element instanceof HTMLDetailsElement && element.open),
+    false
+  );
   await metadataSummary.focus();
   await page.keyboard.press('Space');
-  assert.equal(await metadata.evaluate((element) => element.open), false);
+  assert.equal(
+    await metadata.evaluate((element) => element instanceof HTMLDetailsElement && element.open),
+    false
+  );
 
   return {
     id: 'native-disclosures-keyboard',
@@ -1363,7 +1610,7 @@ async function exerciseUiDisclosures(page, baseUrl, fixturePath, outputRoot, art
   };
 }
 
-async function exerciseLongLocaleResult(page, outputRoot, artifacts) {
+async function exerciseLongLocaleResult(page: Page, outputRoot: string, artifacts: Artifact[]) {
   await page.setViewportSize({ width: 800, height: 800 });
   const toggle = page.locator('[data-testid="result-preview-toggle"]');
   const download = page.locator('[data-testid="download-result-button"]');
@@ -1446,35 +1693,38 @@ async function exerciseLongLocaleResult(page, outputRoot, artifacts) {
 }
 
 async function exerciseBrowserZoom(
-  browser,
-  page,
-  bundleRoot,
-  baseUrl,
-  fixturePath,
-  outputRoot,
-  artifacts
+  browser: Browser,
+  page: Page,
+  bundleRoot: string,
+  baseUrl: string,
+  fixturePath: string,
+  outputRoot: string,
+  artifacts: Artifact[]
 ) {
   const userAgent = await page.evaluate(() => navigator.userAgent);
   if (userAgent.includes('Edg/')) {
     return { id: 'browser-zoom-200', status: 'not-run', reason: 'Chrome Settings adapter only' };
   }
-  const { mode } = JSON.parse(await readFile(join(bundleRoot, 'bundle.json'), 'utf8'));
-  assert(['desktop', 'headless-diagnostic'].includes(mode), 'Unsupported Windows bundle mode');
+  const bundle: unknown = JSON.parse(await readFile(join(bundleRoot, 'bundle.json'), 'utf8'));
+  assert(isRecord(bundle), 'Invalid Windows bundle');
+  const { mode } = bundle;
+  assert(mode === 'desktop' || mode === 'headless-diagnostic', 'Unsupported Windows bundle mode');
   const profilePath = await mkdtemp(join(bundleRoot, ZOOM_PROFILE_PREFIX));
-  let zoomContext;
-  let zoomPage;
-  let settingsPage;
-  let previousZoom;
-  let baseline;
-  let baselineScreenshot;
-  let result;
-  let primaryError;
+  let zoomContext: import('@playwright/test').BrowserContext | undefined;
+  let zoomPage: Page | undefined;
+  let settingsPage: Page | undefined;
+  let previousZoom: string | undefined;
+  let baseline: { devicePixelRatio: number; width: number; scale: number | undefined } | undefined;
+  let baselineScreenshot: Awaited<ReturnType<typeof recordChromeZoomScreenshot>> | undefined;
+  let result: object | undefined;
+  let primaryError: unknown;
+  let caught = false;
   let stage = 'launch-owned-chrome';
   let contextClosed = false;
   let profileRemoved = false;
   let zoomRestored = false;
-  const cleanupErrors = [];
-  const pageErrors = [];
+  const cleanupErrors: unknown[] = [];
+  const pageErrors: string[] = [];
   try {
     zoomContext = await browser.browserType().launchPersistentContext(profilePath, {
       channel: 'chrome',
@@ -1618,11 +1868,17 @@ async function exerciseBrowserZoom(
     });
     for (const control of screenshotControls) {
       assert(
-        control.width > 0 &&
+        control.width !== null &&
+          control.width > 0 &&
+          control.height !== null &&
           control.height > 0 &&
+          control.left !== null &&
           control.left >= -1 &&
+          control.right !== null &&
           control.right <= control.viewportWidth + 1 &&
+          control.top !== null &&
           control.top >= -1 &&
+          control.bottom !== null &&
           control.bottom <= control.viewportHeight + 1,
         `${control.testId} is outside the zoom screenshot viewport`
       );
@@ -1669,11 +1925,13 @@ async function exerciseBrowserZoom(
     };
   } catch (error) {
     primaryError = error;
+    caught = true;
   } finally {
     if (previousZoom !== undefined && settingsPage) {
       try {
         await settingsPage.locator('select#zoomLevel').selectOption(previousZoom);
         if (baseline) {
+          assert(zoomPage);
           await zoomPage.bringToFront();
           await zoomPage.waitForFunction(
             (before) =>
@@ -1750,13 +2008,14 @@ async function exerciseBrowserZoom(
       'Owned Chrome zoom validation or cleanup failed'
     );
   }
-  if (primaryError) throw primaryError;
+  if (caught) throw primaryError;
+  assert(result);
   return { ...result, cleanup: { contextClosed, profileRemoved, zoomRestored } };
 }
 
-export async function installCancellationInspector(page) {
+export async function installCancellationInspector(page: InspectorPage) {
   return page.evaluate(() => {
-    const visible = (element) =>
+    const visible = (element: Element) =>
       element instanceof HTMLElement && element.getClientRects().length > 0;
     const progressBars = [...document.querySelectorAll('[role="progressbar"]')].filter(visible);
     const progressBar = progressBars[0];
@@ -1765,7 +2024,7 @@ export async function installCancellationInspector(page) {
       throw new Error('Cancellation inspector requires one visible non-zero progress bar');
     }
 
-    const inspector = {
+    const inspector: NonNullable<typeof globalThis.__wmcCancellationInspector> = {
       progressBar,
       progress,
       observation: null,
@@ -1786,6 +2045,7 @@ export async function installCancellationInspector(page) {
         const samples = inspector.observation.progressSamples;
         const previous = samples.at(-1);
         if (
+          !previous ||
           previous.values.length !== progressSample.values.length ||
           previous.values.some((value, index) => value !== progressSample.values[index]) ||
           previous.ariaValueNow !== progressSample.ariaValueNow ||
@@ -1833,7 +2093,7 @@ export async function installCancellationInspector(page) {
         progressAriaValueNow: progressSample.ariaValueNow,
         diagnosticsCount:
           dropzone?.querySelectorAll('[data-testid="progress-diagnostics"]').length ?? 0,
-        diagnosticsOpen: diagnostics?.open ?? null,
+        diagnosticsOpen: diagnostics instanceof HTMLDetailsElement ? diagnostics.open : null,
         diagnosticsSummaryFontSizePx: diagnosticsSummary
           ? Number.parseFloat(getComputedStyle(diagnosticsSummary).fontSize)
           : null,
@@ -1842,8 +2102,9 @@ export async function installCancellationInspector(page) {
           : null,
       };
     };
-    inspector.observer = new MutationObserver(capture);
-    inspector.observer.observe(document.body, {
+    const observer = new MutationObserver(capture);
+    inspector.observer = observer;
+    observer.observe(document.body, {
       attributes: true,
       characterData: true,
       childList: true,
@@ -1854,16 +2115,16 @@ export async function installCancellationInspector(page) {
   });
 }
 
-export async function readCancellationInspector(page) {
+export async function readCancellationInspector(page: InspectorPage) {
   return page.evaluate(() => {
     const inspector = globalThis.__wmcCancellationInspector;
     inspector?.observer?.disconnect();
-    delete globalThis.__wmcCancellationInspector;
+    Reflect.deleteProperty(globalThis, '__wmcCancellationInspector');
     return inspector?.observation ?? null;
   });
 }
 
-async function inspectRestoredPreview(page) {
+async function inspectRestoredPreview(page: Page) {
   const preview = page.locator('#selection-preview-video');
   await preview.waitFor({ state: 'visible', timeout: 30_000 });
   await page.waitForFunction(
@@ -1886,18 +2147,19 @@ async function inspectRestoredPreview(page) {
   await settleVisualState(page);
 
   const firstFrame = await preview.evaluate((video) => {
+    if (!(video instanceof HTMLVideoElement)) throw new Error('Restored preview is not a video');
     const element = video;
     const rect = element.getBoundingClientRect();
     const canvas = document.createElement('canvas');
     canvas.width = 8;
     canvas.height = 8;
     const context = canvas.getContext('2d', { willReadFrequently: true });
-    assertContext(context);
+    if (!context) throw new Error('Restored preview canvas has no 2D context');
     context.drawImage(element, 0, 0, canvas.width, canvas.height);
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
     let opaquePixels = 0;
     for (let index = 3; index < pixels.length; index += 4) {
-      if (pixels[index] > 0) opaquePixels++;
+      if ((pixels[index] ?? 0) > 0) opaquePixels++;
     }
     return {
       currentTime: element.currentTime,
@@ -1909,10 +2171,6 @@ async function inspectRestoredPreview(page) {
       opacity: getComputedStyle(element).opacity,
       opaquePixels,
     };
-
-    function assertContext(value) {
-      if (!value) throw new Error('Restored preview canvas has no 2D context');
-    }
   });
   assert(firstFrame.currentTime < 0.05, 'Restored preview did not return to its first frame');
   assert.equal(firstFrame.opacity, '1', 'Restored preview transition did not settle');
@@ -1921,6 +2179,7 @@ async function inspectRestoredPreview(page) {
   assert(firstFrame.renderedWidth > 0 && firstFrame.renderedHeight > 0);
 
   const knownContentPixels = await preview.evaluate(async (video) => {
+    if (!(video instanceof HTMLVideoElement)) throw new Error('Restored preview is not a video');
     const element = video;
     const canvas = document.createElement('canvas');
     canvas.width = 8;
@@ -1928,8 +2187,8 @@ async function inspectRestoredPreview(page) {
     const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context) throw new Error('Restored preview canvas has no 2D context');
 
-    const seek = (time) =>
-      new Promise((resolve, reject) => {
+    const seek = (time: number) =>
+      new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(
           () => reject(new Error('Restored preview seek timed out')),
           3_000
@@ -1948,7 +2207,7 @@ async function inspectRestoredPreview(page) {
       const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
       let nonBlackPixels = 0;
       for (let index = 0; index < pixels.length; index += 4) {
-        if (pixels[index] + pixels[index + 1] + pixels[index + 2] > 24) {
+        if ((pixels[index] ?? 0) + (pixels[index + 1] ?? 0) + (pixels[index + 2] ?? 0) > 24) {
           nonBlackPixels++;
         }
       }
@@ -1962,11 +2221,20 @@ async function inspectRestoredPreview(page) {
   assert(knownContentPixels > 0, 'Restored preview did not render known non-black fixture content');
 
   await settleVisualState(page);
-  const knownContentTime = await preview.evaluate((video) => video.currentTime);
+  const knownContentTime = await preview.evaluate((video) => {
+    if (!(video instanceof HTMLVideoElement)) throw new Error('Restored preview is not a video');
+    return video.currentTime;
+  });
   return { firstFrame, knownContentPixels, knownContentTime };
 }
 
-async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, artifacts) {
+async function exerciseCancellation(
+  page: Page,
+  baseUrl: string,
+  fixturePath: string,
+  outputRoot: string,
+  artifacts: Artifact[]
+) {
   await loadApplication(page, baseUrl);
   await selectFixture(page, fixturePath);
   await chooseOption(page, 'format', 'gif');
@@ -2082,6 +2350,7 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
   assert(cancellationUi, 'Cancellation state was not observable by the UI inspector');
   assert.equal(cancellationUi.sameProgressElement, true);
   const progressAtCancellation = cancellationUi.progressValues[0];
+  assert(progressAtCancellation !== undefined);
   assert(Number.isFinite(progressAtCancellation) && progressAtCancellation > 0);
   assert.equal(cancellationUi.progressBeforeClick, progressBeforeCancel);
   assert.equal(cancellationUi.sampleOverflow, false, 'Cancellation progress samples overflowed');
@@ -2107,8 +2376,11 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
   assert.equal(cancellationUi.progressAriaValueNow, String(progressAtCancellation));
   assert.equal(cancellationUi.diagnosticsCount, 1);
   assert.equal(cancellationUi.diagnosticsOpen, false);
-  assert(cancellationUi.diagnosticsSummaryFontSizePx >= 14);
-  assert(cancellationUi.statusFontSizePx >= 14);
+  assert(
+    cancellationUi.diagnosticsSummaryFontSizePx !== null &&
+      cancellationUi.diagnosticsSummaryFontSizePx >= 14
+  );
+  assert(cancellationUi.statusFontSizePx !== null && cancellationUi.statusFontSizePx >= 14);
   const previewRecovery = await inspectRestoredPreview(page);
   await recordScreenshot(page, outputRoot, `${PROFILE_ID}-cancelled.png`, artifacts);
   return {
@@ -2123,7 +2395,7 @@ async function exerciseCancellation(page, baseUrl, fixturePath, outputRoot, arti
   };
 }
 
-async function observeEnvironment(page, browser) {
+async function observeEnvironment(page: Page, browser: Browser) {
   const pageObservation = await page.evaluate(() => {
     let webglRenderer = null;
     try {
@@ -2162,16 +2434,19 @@ async function observeEnvironment(page, browser) {
   };
 }
 
-async function loadPublicTargets(bundleRoot) {
+async function loadPublicTargets(bundleRoot: string) {
   const path = await validateBundleFile(bundleRoot, PUBLIC_TARGET);
-  const config = JSON.parse(await readFile(path, 'utf8'));
+  const config: unknown = JSON.parse(await readFile(path, 'utf8'));
+  assert(isRecord(config), 'Invalid public target configuration');
   assert.equal(config.schemaVersion, 1, 'Unsupported public target schema');
   assert(
     Array.isArray(config.targets) && config.targets.length <= 2,
     'Expected at most two public targets'
   );
+  const targets: PublicTarget[] = [];
   for (const target of config.targets) {
-    assert.equal(typeof target.url, 'string');
+    assert(isRecord(target), 'Invalid public target');
+    assert(typeof target.url === 'string');
     const url = new URL(target.url);
     assert.equal(url.protocol, 'https:', 'Public target must use HTTPS');
     assert(
@@ -2182,37 +2457,83 @@ async function loadPublicTargets(bundleRoot) {
     assert.equal(url.pathname, '/');
     assert.equal(url.search, '');
     assert.equal(url.hash, '');
-    assert(/^[a-f0-9]{40}$/.test(target.sourceSha), 'Public target source SHA is invalid');
-    assert(/^[a-f0-9-]{36}$/.test(target.deploymentId), 'Public target deployment ID is invalid');
+    assert(
+      typeof target.sourceSha === 'string' && /^[a-f0-9]{40}$/.test(target.sourceSha),
+      'Public target source SHA is invalid'
+    );
+    assert(
+      typeof target.deploymentId === 'string' && /^[a-f0-9-]{36}$/.test(target.deploymentId),
+      'Public target deployment ID is invalid'
+    );
+    targets.push({
+      url: target.url,
+      sourceSha: target.sourceSha,
+      deploymentId: target.deploymentId,
+    });
   }
-  return config.targets;
+  return targets;
 }
 
 async function exercisePublicTarget(
-  browser,
-  target,
-  targetIndex,
-  fixturePath,
-  cancellationFixture,
-  outputRoot,
-  artifacts
+  browser: Browser,
+  target: PublicTarget,
+  targetIndex: number,
+  fixturePath: string,
+  cancellationFixture: string,
+  outputRoot: string,
+  artifacts: Artifact[]
 ) {
   const publicDir = `public-${targetIndex + 1}-${target.deploymentId}`;
   const publicRoot = join(outputRoot, publicDir);
-  const publicArtifacts = [];
-  let context;
-  let primaryFailure;
-  let closeFailure;
-  const errors = { page: [], console: [], request: [], csp: [], uploads: [], external: [] };
-  const browserInternalRequests = [];
-  const assets = new Map();
-  const workers = [];
+  const publicArtifacts: Artifact[] = [];
+  let context: BrowserContext | undefined;
+  let primaryFailure: unknown;
+  let caught = false;
+  let closeFailure: unknown;
+  const errors: {
+    page: string[];
+    console: string[];
+    request: string[];
+    csp: string[];
+    uploads: string[];
+    external: string[];
+  } = {
+    page: [],
+    console: [],
+    request: [],
+    csp: [],
+    uploads: [],
+    external: [],
+  };
+  const browserInternalRequests: string[] = [];
+  const assets = new Map<
+    string,
+    Promise<
+      | {
+          url: string;
+          status: number;
+          headers: Record<string, string>;
+          bytes: Buffer;
+          error?: never;
+        }
+      | {
+          url: string;
+          status: number;
+          headers: Record<string, string>;
+          error: string;
+          bytes?: never;
+        }
+    >
+  >();
+  const workers: string[] = [];
   const origin = new URL(target.url).origin;
-  const resourceTiming = (subject) =>
+  const resourceTiming = (subject: Page) =>
     subject.evaluate(() =>
       performance
         .getEntriesByType('resource')
-        .filter((entry) => entry instanceof PerformanceResourceTiming)
+        .filter(
+          (entry): entry is PerformanceResourceTiming => entry instanceof PerformanceResourceTiming
+        )
         .map((entry) => ({
           name: new URL(entry.name).pathname,
           initiatorType: entry.initiatorType,
@@ -2222,15 +2543,17 @@ async function exercisePublicTarget(
         }))
     );
   const captureAssetRequests = () => {
-    const requests = [];
-    const onRequest = (request) => {
+    const ownedContext = context;
+    assert(ownedContext);
+    const requests: PlaywrightRequest[] = [];
+    const onRequest = (request: PlaywrightRequest) => {
       const url = new URL(request.url());
       if (url.origin === origin && /^\/assets\/.*\.(?:js|css|wasm)$/.test(url.pathname))
         requests.push(request);
     };
-    context.on('request', onRequest);
+    ownedContext.on('request', onRequest);
     return async () => {
-      context.off('request', onRequest);
+      ownedContext.off('request', onRequest);
       return Promise.all(
         requests.map(async (request) => {
           const response = await request.response();
@@ -2298,7 +2621,7 @@ async function exercisePublicTarget(
     });
     await context.addInitScript(() => {
       globalThis.__wmcPublicViolations = [];
-      document.addEventListener('securitypolicyviolation', (event) => {
+      globalThis.document.addEventListener('securitypolicyviolation', (event) => {
         globalThis.__wmcPublicViolations.push(`${event.effectiveDirective}: ${event.blockedURI}`);
       });
     });
@@ -2312,7 +2635,8 @@ async function exercisePublicTarget(
       /^application\/json\b/i,
       'Public deployment metadata has the wrong MIME type'
     );
-    const metadata = await metadataResponse.json();
+    const metadata: unknown = await metadataResponse.json();
+    assertPublicMetadata(metadata);
     assert.equal(metadata.schemaVersion, 1);
     assert.equal(
       metadata.sourceSha,
@@ -2324,7 +2648,7 @@ async function exercisePublicTarget(
     assert.equal(metadata.branch, 'master');
     assert.equal(typeof metadata.version, 'string');
     assert(Array.isArray(metadata.files) && metadata.files.length > 0);
-    const served = [];
+    const served: { path: string; size: number; sha256: string }[] = [];
     for (const file of metadata.files) {
       assert(
         typeof file.path === 'string' &&
@@ -2336,7 +2660,7 @@ async function exercisePublicTarget(
       assert(/^[a-f0-9]{64}$/.test(file.sha256));
       const path =
         file.path === 'index.html' ? '/' : file.path === '404.html' ? '/404' : `/${file.path}`;
-      const response = await context.request.get(new URL(path, target.url).href, {
+      const response: APIResponse = await context.request.get(new URL(path, target.url).href, {
         maxRedirects: 0,
       });
       assert.equal(response.status(), 200, `Public asset ${file.path} did not return 200`);
@@ -2358,7 +2682,7 @@ async function exercisePublicTarget(
     });
     assert.equal(revalidatedAsset.status(), 304, 'Public asset did not preserve ETag revalidation');
     for (const extension of ['js', 'css', 'wasm']) {
-      const missing = await context.request.get(
+      const missing: APIResponse = await context.request.get(
         new URL(`/assets/missing-289.${extension}`, target.url).href
       );
       assert.equal(missing.status(), 404, `Missing ${extension} asset was not a 404`);
@@ -2381,7 +2705,8 @@ async function exercisePublicTarget(
         performance
           .getEntriesByType('resource')
           .filter(
-            (entry) => entry instanceof PerformanceResourceTiming && entry.name.endsWith('.js')
+            (entry): entry is PerformanceResourceTiming =>
+              entry instanceof PerformanceResourceTiming && entry.name.endsWith('.js')
           )
           .map((entry) => ({
             name: new URL(entry.name).pathname,
@@ -2515,7 +2840,7 @@ async function exercisePublicTarget(
     );
     for (const [path, pending] of assets) {
       const response = await pending;
-      assert(!response.error, `Executable ${path} body capture failed: ${response.error}`);
+      assert('bytes' in response, `Executable ${path} body capture failed: ${response.error}`);
       assert.equal(response.status, 200, `Executable ${response.url} status`);
       const type = path.endsWith('.wasm')
         ? /^application\/wasm\b/i
@@ -2580,6 +2905,7 @@ async function exercisePublicTarget(
     };
   } catch (error) {
     primaryFailure = error;
+    caught = true;
     throw error;
   } finally {
     try {
@@ -2617,17 +2943,20 @@ async function exercisePublicTarget(
     }
     await rmdir(publicRoot);
     // Cleanup failure is raised only when no primary failure exists.
-    if (closeFailure && !primaryFailure) throw closeFailure;
+    if (closeFailure && !caught) throw closeFailure;
   }
 }
 
-/**
- * Run the WMC Windows stable-browser acceptance profile.
- *
- * @param {{browser: import('playwright-core').Browser, root: string, output: string}} input
- * @returns {Promise<Record<string, unknown>>} JSON-serializable acceptance result
- */
-export async function run({ browser, root, output }) {
+/** Run the WMC Windows stable-browser acceptance profile. */
+export async function run({
+  browser,
+  root,
+  output,
+}: {
+  browser: Browser;
+  root: string;
+  output: string;
+}) {
   assert(
     browser && typeof browser.newContext === 'function',
     'run.browser must be a launched Playwright Browser'
@@ -2641,11 +2970,11 @@ export async function run({ browser, root, output }) {
   try {
     recoveryPresent = (await stat(resolve(bundleRoot, recoveryConfigPath))).isFile();
   } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
   if (recoveryPresent) {
     const selector = await validateBundleFile(bundleRoot, recoveryConfigPath);
-    const config = JSON.parse(await readFile(selector, 'utf8'));
+    const config: unknown = JSON.parse(await readFile(selector, 'utf8'));
     const outputRoot = resolve(output);
     await mkdir(outputRoot, { recursive: true });
     return runRecoveryBuilds({
@@ -2663,11 +2992,12 @@ export async function run({ browser, root, output }) {
   try {
     appUpdatePresent = (await stat(resolve(bundleRoot, appUpdateConfig))).isFile();
   } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
   if (appUpdatePresent) {
     const configPath = await validateBundleFile(bundleRoot, appUpdateConfig);
-    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    const config: unknown = JSON.parse(await readFile(configPath, 'utf8'));
+    assert(isRecord(config), 'Invalid application-update bundle configuration');
     assert.deepEqual(
       Object.keys(config).sort(),
       [
@@ -2683,22 +3013,35 @@ export async function run({ browser, root, output }) {
       ].sort(),
       'Invalid application-update bundle configuration keys'
     );
-    assert.equal(config.schemaVersion, 1);
-    assert.equal(config.mode, 'application-update');
-    assert.equal(config.buildA, 'validation/windows/inputs/deployment-a');
-    assert.equal(config.baseline, 'validation/windows/prior-dist');
-    assert.equal(config.cleanupBaseline, 'validation/windows/inputs/cleanup-baseline');
-    assert.match(config.baselineSourceSha, /^[a-f0-9]{40}$/);
-    assert.match(config.baselineTreeSha, /^[a-f0-9]{40}$/);
-    assert.equal(config.cleanupBaselineSourceSha, '6d2463937b46df629c406500bb06685ac115a98f');
-    assert.equal(config.cleanupBaselineTreeSha, '3a5c34857aa9e5a9d3dfbb7429d648004fd2fe44');
+    assert(config.schemaVersion === 1);
+    assert(config.mode === 'application-update');
+    assert(config.buildA === 'validation/windows/inputs/deployment-a');
+    assert(config.baseline === 'validation/windows/prior-dist');
+    assert(config.cleanupBaseline === 'validation/windows/inputs/cleanup-baseline');
+    assert(
+      typeof config.baselineSourceSha === 'string' &&
+        /^[a-f0-9]{40}$/.test(config.baselineSourceSha)
+    );
+    assert(
+      typeof config.baselineTreeSha === 'string' && /^[a-f0-9]{40}$/.test(config.baselineTreeSha)
+    );
+    assert(config.cleanupBaselineSourceSha === '6d2463937b46df629c406500bb06685ac115a98f');
+    assert(config.cleanupBaselineTreeSha === '3a5c34857aa9e5a9d3dfbb7429d648004fd2fe44');
     const outputRoot = resolve(output);
     await mkdir(outputRoot, { recursive: true });
     return runAppUpdate({
       browser,
       bundleRoot,
       outputRoot,
-      config,
+      config: {
+        buildA: config.buildA,
+        baseline: config.baseline,
+        baselineSourceSha: config.baselineSourceSha,
+        baselineTreeSha: config.baselineTreeSha,
+        cleanupBaseline: config.cleanupBaseline,
+        cleanupBaselineSourceSha: config.cleanupBaselineSourceSha,
+        cleanupBaselineTreeSha: config.cleanupBaselineTreeSha,
+      },
       startStaticServer,
       closeServer,
       validateBundleFile,
@@ -2708,25 +3051,31 @@ export async function run({ browser, root, output }) {
   const publicTargets = await loadPublicTargets(bundleRoot);
   const cancellationFixture = await validateBundleFile(bundleRoot, CANCELLATION_FIXTURE);
   const outputContractPath = await validateBundleFile(bundleRoot, OUTPUT_CONTRACT);
-  const outputContract = JSON.parse(await readFile(outputContractPath, 'utf8'));
+  const outputContract: unknown = JSON.parse(await readFile(outputContractPath, 'utf8'));
+  assertOutputContractConfig(outputContract);
   assert.equal(outputContract.schemaVersion, 1, 'Unsupported output contract schema');
   assert(Array.isArray(outputContract.cases) && outputContract.cases.length > 0);
-  const contractFixtures = new Map();
+  const contractFixtures = new Map<string, string>();
   for (const contract of outputContract.cases) {
     assert.equal(typeof contract.id, 'string');
     assert(['gif', 'webp'].includes(contract.format));
     contractFixtures.set(contract.id, await validateBundleFile(bundleRoot, contract.fixture));
   }
+  const fixtureFor = (contract: OutputContractCase) => {
+    const fixture = contractFixtures.get(contract.id);
+    assert(fixture, `Missing bundled fixture for ${contract.id}`);
+    return fixture;
+  };
   const outputRoot = resolve(output);
   await mkdir(outputRoot, { recursive: true });
 
-  let context;
-  let server;
-  const artifacts = [];
-  const pageErrors = [];
-  const consoleErrors = [];
-  const failedRequests = [];
-  const failedResponses = [];
+  let context: BrowserContext | undefined;
+  let server: Server | undefined;
+  const artifacts: Artifact[] = [];
+  const pageErrors: string[] = [];
+  const consoleErrors: string[] = [];
+  const failedRequests: { url: string; error: string }[] = [];
+  const failedResponses: { status: number; url: string }[] = [];
 
   try {
     const started = await startStaticServer(bundleRoot);
@@ -2768,7 +3117,7 @@ export async function run({ browser, root, output }) {
       'COOP/COEP did not produce a cross-origin-isolated app'
     );
 
-    const checks = [{ id: 'app-load', status: 'passed', ...appLoad }];
+    const checks: object[] = [{ id: 'app-load', status: 'passed', ...appLoad }];
     checks.push(
       await exerciseOfflineRecovery(
         browser,
@@ -2850,7 +3199,7 @@ export async function run({ browser, root, output }) {
       const check = await convertOutputContract(
         page,
         started.url,
-        contractFixtures.get(contract.id),
+        fixtureFor(contract),
         contract,
         outputContract.markers,
         outputRoot,
@@ -2883,7 +3232,7 @@ export async function run({ browser, root, output }) {
             jsHeapSizeLimit: 16 * 1024 * 1024,
           },
         });
-        const probe = (globalThis.__wmcPressureProbe = {
+        const probe: PressureProbe = (globalThis.__wmcPressureProbe = {
           nativeDecoded: 0,
           submittedWebp: 0,
           terminal: null,
@@ -2897,7 +3246,7 @@ export async function run({ browser, root, output }) {
         });
         const NativeDecoder = VideoDecoder;
         globalThis.VideoDecoder = class ObservedDecoder extends NativeDecoder {
-          constructor(config) {
+          constructor(config: VideoDecoderInit) {
             super({
               ...config,
               output(frame) {
@@ -2909,8 +3258,8 @@ export async function run({ browser, root, output }) {
         };
         const NativeWorker = Worker;
         globalThis.Worker = class ObservedWorker extends NativeWorker {
-          constructor(...args) {
-            super(...args);
+          constructor(scriptURL: string | URL, options?: WorkerOptions) {
+            super(scriptURL, options);
             this.addEventListener('message', ({ data }) => {
               if (data?.type === 'progress' && data.percent === 100) {
                 probe.terminal = {
@@ -2922,25 +3271,47 @@ export async function run({ browser, root, output }) {
               }
             });
           }
-          postMessage(message, ...args) {
-            if (message?.type === 'start') {
+          override postMessage(
+            message: unknown,
+            options?: StructuredSerializeOptions | Transferable[]
+          ) {
+            if (
+              message &&
+              typeof message === 'object' &&
+              'type' in message &&
+              message.type === 'start'
+            ) {
+              if (
+                !('options' in message) ||
+                !message.options ||
+                typeof message.options !== 'object' ||
+                !('memoryPressureCadenceRatio' in message.options) ||
+                typeof message.options.memoryPressureCadenceRatio !== 'number'
+              )
+                throw new Error('Start message omitted memory pressure cadence ratio');
               probe.startRatios.push(message.options.memoryPressureCadenceRatio);
-            } else if (message?.rgbaData instanceof Uint8Array) {
+            } else if (
+              message &&
+              typeof message === 'object' &&
+              'rgbaData' in message &&
+              message.rgbaData instanceof Uint8Array
+            ) {
               probe.submittedWebp++;
             }
-            return super.postMessage(message, ...args);
+            if (Array.isArray(options)) return super.postMessage(message, options);
+            return super.postMessage(message, options);
           }
         };
       });
       for (const format of ['gif', 'webp']) {
-        const contract = outputContract.cases.find(
+        const contract: OutputContractCase | undefined = outputContract.cases.find(
           (candidate) => candidate.id === `pressure-21fps-${format}`
         );
         assert(contract, 'Missing pressure cadence output contract');
         const check = await convertOutputContract(
           pressurePage,
           started.url,
-          contractFixtures.get(contract.id),
+          fixtureFor(contract),
           {
             ...contract,
             id: `critical-${contract.id}`,
@@ -2961,7 +3332,8 @@ export async function run({ browser, root, output }) {
           assert.equal(counts.terminal?.decodedFrames, 21);
           assert.equal(counts.terminal?.selectedFrames, 15);
           assert.equal(counts.startRatios.length, 1);
-          assert(Math.abs(counts.startRatios[0] - 1.4) < 0.000001);
+          const ratio = counts.startRatios[0];
+          assert(ratio !== undefined && Math.abs(ratio - 1.4) < 0.000001);
         } else {
           assert.equal(counts.nativeDecoded, 21);
           assert.equal(counts.submittedWebp, 15);
@@ -3004,7 +3376,7 @@ export async function run({ browser, root, output }) {
       const serial = await convertOutputContract(
         serialPage,
         started.url,
-        contractFixtures.get(contract.id),
+        fixtureFor(contract),
         { ...contract, id: 'integer-vfr-serial-webp' },
         outputContract.markers,
         outputRoot,
@@ -3046,7 +3418,7 @@ export async function run({ browser, root, output }) {
     const wasmCheck = await convertOutputContract(
       page,
       started.url,
-      contractFixtures.get(wasmContract.id),
+      fixtureFor(wasmContract),
       { ...wasmContract, id: 'vfr-par-wasm-webp' },
       outputContract.markers,
       outputRoot,
@@ -3071,7 +3443,7 @@ export async function run({ browser, root, output }) {
       await convertOutputContract(
         page,
         started.url,
-        contractFixtures.get(integerWasmContract.id),
+        fixtureFor(integerWasmContract),
         { ...integerWasmContract, id: 'integer-vfr-wasm-webp' },
         outputContract.markers,
         outputRoot,

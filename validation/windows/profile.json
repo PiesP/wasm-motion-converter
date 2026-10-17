@@ -1,9 +1,10 @@
 {
   "id": "wmc-media",
+  "entry": "validation/windows/profile.ts",
   "assets": [
     "dist",
     "validation/windows/inputs",
-    "validation/windows/app-update.mjs",
+    "validation/windows/app-update.ts",
     "validation/windows/prior-dist",
     "validation/windows/public-target.json",
     "public/test-video-ci-h264.mp4",
@@ -13,14 +14,14 @@
     "public/test-video-contract-vfr-par.mp4",
     "public/test-video-contract-rotate-90.mp4",
     "validation/windows/output-contract.json",
-    "validation/windows/output-contract.mjs",
-    "validation/windows/mp4-budget-fixture.mjs",
+    "validation/windows/output-contract.ts",
+    "validation/windows/mp4-budget-fixture.ts",
     "public/test-video-contract-bframes.mp4",
     "public/test-video-contract-vp9.webm",
-    "validation/windows/offline-recovery.mjs",
+    "validation/windows/offline-recovery.ts",
     "public/test-video-contract-short-tail.mp4",
     "public/test-video-contract-integer-vfr.mp4",
     "public/test-video-contract-pressure-21fps.mp4",
-    "validation/windows/gif-playback.mjs"
+    "validation/windows/gif-playback.ts"
   ]
 }

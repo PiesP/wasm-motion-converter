@@ -60,7 +60,7 @@ tracked-source guarantee.
 
 ## Runner contract
 
-The guest runner imports `profile.mjs` and calls:
+The guest runner imports `profile.ts` and calls:
 
 ```js
 await run({ browser, root, output });
@@ -167,7 +167,7 @@ browser close could not be confirmed. Edge records that case as not run. Physica
 DPI and comprehensive screen-reader behavior require separate source-bound
 observations. VM results must not be used as host-hardware benchmark evidence.
 
-The production service-worker scenario in `offline-recovery.mjs` uses a separate
+The production service-worker scenario in `offline-recovery.ts` uses a separate
 task-owned browser context and loopback origin. It serves the recorded prior
 distribution, creates a downloadable result and caches a prior JS asset, then
 switches the same origin to the candidate distribution. It checks the retained
