@@ -1,17 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-/**
- * Service Worker — DropConvert
- *
- * Fingerprinted assets are cache-first; the application document is
- * network-first with a separately protected offline recovery copy.
- */
+const workerScope = self as unknown as ServiceWorkerGlobalScope;
 
-/// <reference lib="webworker" />
-
-/** @type {ServiceWorkerGlobalScope} */
-const workerScope = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
+type AssetKind = 'js' | 'css' | 'wasm';
 
 const CACHE_PREFIX = 'dropconvert';
 // Keep the cache name stable: an updated worker must not discard assets used by open tabs.
@@ -25,44 +17,35 @@ const ASSET_ADMISSION_VERSION = 'body-checked-v1';
 const ASSET_ADMISSION_HEADER = 'x-dropconvert-asset-admission';
 const ASSET_SOURCE_HEADER = 'x-dropconvert-asset-source';
 
-/** @param {URL} url */
-function isStaticAsset(url) {
+function isStaticAsset(url: URL) {
   return url.pathname.startsWith('/assets/');
 }
 
-/** @param {URL} url */
-function isVideoFile(url) {
+function isVideoFile(url: URL) {
   const path = url.pathname.toLowerCase();
   return path.endsWith('.webm') || path.endsWith('.mp4');
 }
 
-/** @param {URL} url */
-function getStaticAssetCacheKey(url) {
+function getStaticAssetCacheKey(url: URL) {
   return new URL(url.pathname, workerScope.location.origin).href;
 }
 
-/** @param {URL} url
- * @returns {'js' | 'css' | 'wasm' | null}
- */
-function assetKind(url) {
+function assetKind(url: URL): 'js' | 'css' | 'wasm' | null {
   // Vite emits a content hash before the extension. Other /assets/ URLs are
   // never treated as immutable application assets.
   if (!/[.-][a-zA-Z0-9_-]{8}\.(?:js|css|wasm)$/.test(url.pathname)) return null;
-  return /** @type {'js' | 'css' | 'wasm'} */ (
-    url.pathname.slice(url.pathname.lastIndexOf('.') + 1)
-  );
+  const extension = url.pathname.slice(url.pathname.lastIndexOf('.') + 1);
+  return extension === 'js' || extension === 'css' || extension === 'wasm' ? extension : null;
 }
 
-/** @param {URL} url */
-function isAppDocumentUrl(url) {
+function isAppDocumentUrl(url: URL) {
   return (
     url.origin === workerScope.location.origin &&
     (url.pathname === '/' || url.pathname === '/index.html')
   );
 }
 
-/** @param {Response | undefined} response */
-function isAppDocumentResponse(response) {
+function isAppDocumentResponse(response: Response | undefined) {
   if (response?.status !== 200 || response.type === 'opaque' || response.type === 'opaqueredirect')
     return false;
   const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
@@ -88,10 +71,7 @@ async function getRecoveryDocument() {
   return undefined;
 }
 
-/** @param {string} key
- * @param {Response} response
- */
-async function putInCache(key, response) {
+async function putInCache(key: string, response: Response) {
   try {
     const cache = await caches.open(DYNAMIC_CACHE);
     await cache.put(key, response);
@@ -110,12 +90,12 @@ async function putInCache(key, response) {
   }
 }
 
-/** @param {Response | undefined} response
- * @param {string} key
- * @param {'js' | 'css' | 'wasm'} kind
- * @param {boolean} admitted
- */
-function assetHeadersValid(response, key, kind, admitted = false) {
+function assetHeadersValid(
+  response: Response | undefined,
+  key: string,
+  kind: AssetKind,
+  admitted = false
+) {
   if (
     response?.status !== 200 ||
     !['basic', 'default'].includes(response.type) ||
@@ -152,10 +132,7 @@ function assetHeadersValid(response, key, kind, admitted = false) {
   }
 }
 
-/** @param {Response} response
- * @param {'js' | 'css' | 'wasm'} kind
- */
-async function assetBodyValid(response, kind) {
+async function assetBodyValid(response: Response, kind: AssetKind) {
   const reader = response.clone().body?.getReader();
   if (!reader) return false;
   const sample = new Uint8Array(512);
@@ -182,18 +159,11 @@ async function assetBodyValid(response, kind) {
   return !prefix.startsWith('<') && !prefix.includes('\0');
 }
 
-/** @param {Response} response
- * @param {string} key
- * @param {'js' | 'css' | 'wasm'} kind
- */
-async function validAsset(response, key, kind) {
+async function validAsset(response: Response, key: string, kind: AssetKind) {
   return assetHeadersValid(response, key, kind) && (await assetBodyValid(response, kind));
 }
 
-/** @param {Response} response
- * @param {string} key
- */
-function admittedResponse(response, key) {
+function admittedResponse(response: Response, key: string) {
   const headers = new Headers(response.headers);
   // Fetch exposes a decoded body; its original transfer headers cannot be
   // replayed on a synthetic Response without corrupting the decoded bytes.
@@ -209,11 +179,7 @@ function admittedResponse(response, key) {
   });
 }
 
-/** @param {string} cacheName
- * @param {string} key
- * @param {'js' | 'css' | 'wasm'} kind
- */
-async function matchAsset(cacheName, key, kind) {
+async function matchAsset(cacheName: string, key: string, kind: AssetKind) {
   if (!cacheName) return undefined;
   try {
     const cache = await caches.open(cacheName);
@@ -237,12 +203,12 @@ async function matchAsset(cacheName, key, kind) {
   return undefined;
 }
 
-/** @param {FetchEvent} event
- * @param {URL} url
- * @param {number} status
- * @param {'invalid-response' | 'network-error'} reason
- */
-async function notifyAssetUnavailable(event, url, status, reason) {
+async function notifyAssetUnavailable(
+  event: FetchEvent,
+  url: URL,
+  status: number,
+  reason: 'invalid-response' | 'network-error'
+) {
   try {
     const client = event.clientId ? await workerScope.clients.get(event.clientId) : undefined;
     client?.postMessage({
@@ -256,13 +222,13 @@ async function notifyAssetUnavailable(event, url, status, reason) {
   }
 }
 
-/** @param {FetchEvent} event
- * @param {Request} request
- * @param {URL} url
- * @param {string} key
- * @param {'js' | 'css' | 'wasm'} kind
- */
-async function getAsset(event, request, url, key, kind) {
+async function getAsset(
+  event: FetchEvent,
+  request: Request,
+  url: URL,
+  key: string,
+  kind: AssetKind
+) {
   const cached = await matchAsset(DYNAMIC_CACHE, key, kind);
   if (cached) return cached;
   try {

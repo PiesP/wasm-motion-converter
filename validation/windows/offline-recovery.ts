@@ -150,15 +150,18 @@ async function exerciseBuildUpgrade(
   bundleRoot: string,
   smallFixture: string,
   activeFixture: string,
-  setDistribution: StartedServer['setDistribution']
+  setDistribution: StartedServer['setDistribution'],
+  priorRelativePath = 'validation/windows/prior-dist',
+  requireChangedWorker = false
 ) {
   // readBuild checks each emitted file against deployment-state.json, including
   // service-worker.js, before the browser uses either distribution.
   const [priorBuild, currentBuild] = await Promise.all(
-    ['validation/windows/prior-dist', 'dist'].map((relativePath) =>
+    [priorRelativePath, 'dist'].map((relativePath) =>
       readBuild(bundleRoot, relativePath, async (_root, path) => join(bundleRoot, path), {
-        requireCompiledSource: relativePath === 'dist',
+        requireCompiledSource: relativePath === 'dist' || requireChangedWorker,
         verifyInventory: true,
+        exactInventory: requireChangedWorker,
       })
     )
   );
@@ -173,11 +176,19 @@ async function exerciseBuildUpgrade(
     );
   }
   const workerByteIdentical = priorBuild.workerSha256 === currentBuild.workerSha256;
+  if (requireChangedWorker) {
+    assert.notEqual(
+      priorBuild.state.sourceSha,
+      currentBuild.state.sourceSha,
+      'Worker handoff requires distinct source builds'
+    );
+    assert(!workerByteIdentical, 'Worker handoff requires distinct emitted worker bytes');
+  }
   const context = await browser.newContext({ locale: 'en-US', acceptDownloads: true });
   const page = await context.newPage();
   let activePage: Page | undefined;
   try {
-    await setDistribution('validation/windows/prior-dist');
+    await setDistribution(priorRelativePath);
     await page.goto(baseUrl);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
@@ -209,7 +220,7 @@ async function exerciseBuildUpgrade(
       }
       throw new Error('Prior build has no cached JS asset');
     });
-    const priorAssets = await readdir(join(bundleRoot, 'validation/windows/prior-dist/assets'));
+    const priorAssets = await readdir(join(bundleRoot, priorRelativePath, 'assets'));
     const nextAssets = new Set(await readdir(join(bundleRoot, 'dist/assets')));
     const oldOnly = priorAssets.filter((name) => name.endsWith('.js') && !nextAssets.has(name));
     await page.locator('[data-testid="file-input"]').setInputFiles(smallFixture);
@@ -671,7 +682,9 @@ export async function exerciseOfflineRecovery(
   setDistribution: StartedServer['setDistribution'],
   bundleRoot: string,
   smallFixture: string,
-  activeFixture: string
+  activeFixture: string,
+  priorRelativePath = 'validation/windows/prior-dist',
+  requireChangedWorker = false
 ) {
   const upgrade = await exerciseBuildUpgrade(
     browser,
@@ -679,7 +692,9 @@ export async function exerciseOfflineRecovery(
     bundleRoot,
     smallFixture,
     activeFixture,
-    setDistribution
+    setDistribution,
+    priorRelativePath,
+    requireChangedWorker
   );
   const context = await browser.newContext({
     locale: 'en-US',

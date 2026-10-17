@@ -2,6 +2,7 @@ import type { PluginOption } from 'vite-plus';
 import { defineConfig, mergeConfig } from 'vite-plus';
 
 import { applicationSourceSha } from './scripts/build/deployment-state.ts';
+import { emitServiceWorkerPlugin } from './tooling/vite/plugins/emit-service-worker.ts';
 import { stripDataTestIdPlugin } from './tooling/vite/plugins/strip-data-testid.ts';
 import basePreset from './tooling/vite/presets/base.ts';
 import browserAppPreset from './tooling/vite/presets/browser-app.ts';
@@ -24,7 +25,7 @@ export default defineConfig(({ command }) => {
     "worker-src 'self'",
   ].join('; ');
 
-  const commonPlugins: PluginOption[] = [stripDataTestIdPlugin()];
+  const commonPlugins: PluginOption[] = [stripDataTestIdPlugin(), emitServiceWorkerPlugin()];
 
   const modeConfig = {
     fmt: {

@@ -91,5 +91,7 @@ validation/windows/inputs/cleanup-baseline/
 validation/windows/inputs/recovery.json
 validation/windows/inputs/recovery-a/
 validation/windows/inputs/recovery-baseline/
+validation/windows/inputs/service-worker-handoff.json
+validation/windows/inputs/service-worker-baseline/
 deployment-verification.json
 .vitest/
