@@ -371,6 +371,14 @@ overrides live in that file too; `lint` denies warnings. Keep the four explicit
 TypeScript project checks because their browser, test, Playwright, and NodeNext
 boundaries differ. Vite+ task caching is not enabled.
 
+The Vite alias reports Vite+ `1.2.0` and bundles Vite `8.3.4`. Strict peer
+validation stays enabled. `pnpm-workspace.yaml` permits only that exact alias
+for the reviewed Vitest, mocker, Tailwind, Solid plugin and vitefu versions,
+whose declared Vite ranges include 8.3.4. Recheck callers, their original
+ranges and both versions together on updates; never widen this to `allowAny`.
+Validate a fresh dependency resolution as well as the frozen install, since
+a migration lockfile can otherwise hide peer metadata conflicts.
+
 The maintained scope covers browser source, Node scripts, tests and helpers,
 Vite tooling, raw Windows validation modules, the release-runtime action
 module, root TypeScript/JSON/HTML configuration, the service worker, 404 page,
