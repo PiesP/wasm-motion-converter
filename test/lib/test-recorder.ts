@@ -11,7 +11,6 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-
 // ── Types ──────────────────────────────────────────────────────
 
 // Re-export baseline data from manifest for regression detection.

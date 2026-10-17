@@ -18,16 +18,13 @@ import type {
   ErrorContext,
   VideoMetadata,
 } from '@t/conversion-types';
+import type { ErrorCode } from '@t/conversion-types';
 import type { TranslationKeys } from '@t/i18n-types';
-
-import { MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
-
 // ---------------------------------------------------------------------------
 // Error code type — re-exported from conversion-types.ts for convenience.
 // The canonical definition lives in conversion-types.ts (ErrorContext.code).
 // ---------------------------------------------------------------------------
-
-import type { ErrorCode } from '@t/conversion-types';
+import { MAX_TOTAL_PIXEL_COUNT } from '@utils/constants';
 
 // ---------------------------------------------------------------------------
 // Error classification rule system

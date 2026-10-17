@@ -6,7 +6,7 @@
  * Tests module-level constants and import integrity.
  * The main encodeGif function requires WebCodecs APIs and is E2E-only.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('gif-encoder-service (module integrity)', () => {
   it('imports successfully', async () => {

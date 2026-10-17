@@ -5,7 +5,7 @@ import * as TrimSelectorModule from '@components/TrimSelector';
 import type { TFunction } from '@t/i18n-types';
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const translateTrimSummary = ((key: string, params?: Record<string, string | number>) => {
   if (key === 'trim.summary') {

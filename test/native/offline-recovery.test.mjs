@@ -3,6 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
 import { assertWorkerUpdateOutcome } from '../../validation/windows/offline-recovery.mjs';
 
 const prior = 'a'.repeat(64);

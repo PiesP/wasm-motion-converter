@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
+
 import { containsUrlHostname, isCloudflareInsightsResource } from '../../e2e/fixtures/url-utils';
 
 describe('containsUrlHostname', () => {

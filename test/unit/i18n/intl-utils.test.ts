@@ -3,7 +3,7 @@
 
 import { formatBytes } from '@utils/format-utils';
 import { formatNumber, formatPercent } from '@utils/intl-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('formatBytes', () => {
   describe('English locale', () => {

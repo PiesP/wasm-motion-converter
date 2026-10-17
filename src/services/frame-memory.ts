@@ -2,6 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { FRAME_PIPELINE_MEMORY_BUDGET_BYTES } from '@utils/constants';
+
 import { getPooledBufferSize } from './buffer-pool';
 
 const RGB_BYTES_PER_PIXEL = 3;
@@ -76,8 +77,10 @@ export interface WebpFrameMemoryBudgetOptions {
   sourceHeadroomFrames?: number;
 }
 
-export interface WebpWorkerBudgetOptions
-  extends Omit<WebpFrameMemoryBudgetOptions, 'sourceHeadroomFrames' | 'workerCount'> {
+export interface WebpWorkerBudgetOptions extends Omit<
+  WebpFrameMemoryBudgetOptions,
+  'sourceHeadroomFrames' | 'workerCount'
+> {
   requestedWorkers: number;
   analysisBytes?: number;
 }

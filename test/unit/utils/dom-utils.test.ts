@@ -7,7 +7,7 @@ import {
   focusPrimaryErrorAction,
   scheduleTask,
 } from '@utils/dom-utils';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 describe('dom utilities', () => {
   beforeEach(() => vi.useFakeTimers());

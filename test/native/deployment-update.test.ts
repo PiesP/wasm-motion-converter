@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { createServer, type ServerResponse } from 'node:http';
 import { test } from 'node:test';
+
 import { observeDeploymentUpdates } from '../../src/deployment-update.ts';
 
 const sourceSha = 'a'.repeat(40);

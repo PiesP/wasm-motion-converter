@@ -1,14 +1,11 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub Actions expressions are literal workflow assertions.
+// GitHub Actions expressions are literal workflow assertions.
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+
+import { describe, expect, it } from 'vite-plus/test';
 
 const root = resolve(import.meta.dirname, '../../..');
 const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
-const deepChecksWorkflow = readFileSync(
-  resolve(root, '.github/workflows/deep-checks.yaml'),
-  'utf8'
-);
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
 const centralSetupAction =
   'uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969';
@@ -51,7 +48,6 @@ describe('central project setup action', () => {
       ['CI unit', ciWorkflow, 'unit'],
       ['CI E2E', ciWorkflow, 'e2e'],
       ['CI build', ciWorkflow, 'build'],
-      ['Deep mutation', deepChecksWorkflow, 'mutation'],
     ] as const;
 
     for (const [label, workflow, jobId] of expectedJobs) {
@@ -60,7 +56,6 @@ describe('central project setup action', () => {
       expect(job, label).not.toContain('node-version:');
     }
 
-    expect(deepChecksWorkflow).not.toContain(localReleaseSetupAction);
     const unit = jobBlock(ciWorkflow, 'unit');
     expect(ciWorkflow.split(localReleaseSetupAction)).toHaveLength(2);
     expect(unit).toContain(localReleaseSetupAction);
@@ -81,7 +76,6 @@ describe('central project setup action', () => {
       ['Release quality', 'quality'],
       ['Release unit', 'unit'],
       ['Release E2E', 'e2e'],
-      ['Release mutation', 'mutation'],
       ['Release build', 'build'],
     ] as const;
 
@@ -110,7 +104,7 @@ describe('central project setup action', () => {
   });
 
   it('keeps direct toolchain setup and frozen installs out of project workflows', () => {
-    for (const workflow of [ciWorkflow, deepChecksWorkflow, releaseWorkflow]) {
+    for (const workflow of [ciWorkflow, releaseWorkflow]) {
       expect(workflow).not.toContain('uses: ./.github/actions/setup-toolchain');
       expect(workflow).not.toContain('uses: ./.github/actions/setup-project');
       expect(workflow).not.toContain('run: pnpm install --frozen-lockfile');

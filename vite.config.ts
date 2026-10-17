@@ -1,5 +1,6 @@
-import type { PluginOption } from 'vite';
-import { defineConfig, mergeConfig } from 'vite';
+import type { PluginOption } from 'vite-plus';
+import { defineConfig, mergeConfig } from 'vite-plus';
+
 import { applicationSourceSha } from './scripts/build/deployment-state.ts';
 import { stripDataTestIdPlugin } from './tooling/vite/plugins/strip-data-testid.ts';
 import basePreset from './tooling/vite/presets/base.ts';
@@ -26,6 +27,86 @@ export default defineConfig(({ command }) => {
   const commonPlugins: PluginOption[] = [stripDataTestIdPlugin()];
 
   const modeConfig = {
+    fmt: {
+      useTabs: false,
+      tabWidth: 2,
+      endOfLine: 'lf',
+      printWidth: 100,
+      singleQuote: true,
+      jsxSingleQuote: false,
+      quoteProps: 'as-needed',
+      trailingComma: 'es5',
+      semi: true,
+      arrowParens: 'always',
+      bracketSameLine: false,
+      bracketSpacing: true,
+      sortImports: true,
+      sortPackageJson: false,
+      ignorePatterns: [
+        '**/*.md',
+        '**/*.yaml',
+        '**/*.yml',
+        'packages/core/**',
+        'validation/windows/inputs/**',
+        'validation/windows/prior-dist/**',
+        'validation/windows/public-target.json',
+      ],
+    },
+    lint: {
+      ignorePatterns: [
+        'packages/core/**',
+        'validation/windows/inputs/**',
+        'validation/windows/prior-dist/**',
+        'validation/windows/public-target.json',
+      ],
+      plugins: ['typescript', 'jsx-a11y'],
+      options: { typeAware: true, typeCheck: false },
+      rules: {
+        'eslint/no-control-regex': 'off',
+        'eslint/no-unassigned-vars': 'off',
+        'eslint/no-unused-expressions': 'off',
+        'eslint/no-unsafe-finally': 'off',
+        'typescript/no-explicit-any': 'error',
+        'typescript/no-unused-vars': 'warn',
+        'typescript/no-this-alias': 'off',
+        // Existing asynchronous ownership and branded unions are validated by
+        // the project's focused tests and four TypeScript projects.
+        'typescript/no-floating-promises': 'off',
+        'typescript/unbound-method': 'off',
+        'typescript/no-redundant-type-constituents': 'off',
+        'typescript/no-base-to-string': 'off',
+        'typescript/require-array-sort-compare': 'off',
+        'typescript/restrict-template-expressions': 'off',
+        'typescript/no-useless-default-assignment': 'off',
+        'typescript/await-thenable': 'off',
+        'oxc/no-accumulating-spread': 'error',
+        'eslint/no-param-reassign': 'warn',
+        'jsx-a11y/no-static-element-interactions': 'error',
+        'jsx-a11y/click-events-have-key-events': 'error',
+        'jsx-a11y/no-noninteractive-element-interactions': 'off',
+        'jsx-a11y/prefer-tag-over-role': 'off',
+        'jsx-a11y/role-supports-aria-props': 'error',
+      },
+      overrides: [
+        {
+          files: ['src/**'],
+          rules: {
+            'eslint/no-restricted-imports': [
+              'error',
+              {
+                patterns: [
+                  {
+                    group: ['../**', 'src/**', '/src/**', './*/**'],
+                    message:
+                      'Use an alias-based leaf import across folders; same-folder relative imports are allowed.',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    },
     define: {
       __APP_SOURCE_SHA__: JSON.stringify(
         command === 'build' ? applicationSourceSha(process.cwd()) : null

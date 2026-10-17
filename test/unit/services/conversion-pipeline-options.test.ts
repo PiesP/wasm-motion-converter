@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import type { ConversionRequest } from '@t/conversion-types';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const mocks = vi.hoisted(() => ({
   createWorkerPool: vi.fn(),

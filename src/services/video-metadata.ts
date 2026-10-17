@@ -8,6 +8,7 @@ import type { MediabunnyVideoDecoderConfig, VideoMetadata } from '@t/conversion-
 import { DEFAULT_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
+
 import { resolveVideoDimensions } from './frame-utils';
 
 /** Timeout for computePacketStats to prevent mediabunny internal hangs. */

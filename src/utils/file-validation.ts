@@ -25,6 +25,7 @@
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import type { TranslationKeys } from '@t/i18n-types';
 import type { DurationValidationResult } from '@t/validation-types';
+
 import { MAX_FILE_SIZE, SUPPORTED_VIDEO_EXTENSIONS, SUPPORTED_VIDEO_MIMES } from './constants';
 import { logger } from './logger';
 import { assessVideoDuration } from './video-duration-policy';

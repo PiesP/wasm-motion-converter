@@ -35,17 +35,9 @@ updates:
 
     # Group updates by category to reduce PR noise
     groups:
-      vitest:
+      vite-plus:
         patterns:
-          - "vitest"
-          - "@vitest/*"
-        update-types:
-          - "minor"
-          - "patch"
-
-      stryker:
-        patterns:
-          - "@stryker-mutator/*"
+          - "vite-plus"
         update-types:
           - "minor"
           - "patch"
@@ -54,14 +46,6 @@ updates:
         patterns:
           - "solid-js"
           - "vite-plugin-solid"
-        update-types:
-          - "minor"
-          - "patch"
-
-      build:
-        patterns:
-          - "vite"
-          - "@vitejs/*"
         update-types:
           - "minor"
           - "patch"
@@ -83,7 +67,7 @@ updates:
           - "minor"
           - "patch"
 
-      # Linting and formatting (Biome + Knip)
+      # CSS-only Biome and dependency analysis
       quality:
         patterns:
           - "@biomejs/*"
@@ -99,9 +83,30 @@ updates:
           - "minor"
           - "patch"
 
-    # These transitive-only major bumps are not supported by Dependabot's
-    # lockfile update path. Direct major updates remain visible for review.
     ignore:
+      # Vite+ owns these component versions; keep its own update PR visible.
+      - dependency-name: "vite"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      - dependency-name: "vitest"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      - dependency-name: "@vitest/*"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      - dependency-name: "@voidzero-dev/vite-plus-core"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      # These transitive-only major bumps are not supported by Dependabot's
+      # lockfile update path. Direct major updates remain visible for review.
       - dependency-name: "@isaacs/brace-expansion"
         update-types: ["version-update:semver-major"]
       - dependency-name: "minimatch"

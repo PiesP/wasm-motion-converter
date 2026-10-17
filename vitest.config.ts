@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import solid from 'vite-plugin-solid';
-import { defineConfig } from 'vitest/config';
+import { defineConfig } from 'vite-plus';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const srcDir = resolve(__dirname, 'src');
@@ -10,6 +11,11 @@ export default defineConfig({
   define: { __DEV__: true, __APP_SOURCE_SHA__: null },
   plugins: [solid()],
   test: {
+    // Vitest v4 compatibility: preserve mock call history.
+    // Remove after tests no longer rely on calls from setup or earlier tests.
+    // https://viteplus.dev/guide/vitest-v5#remove-unneeded-compatibility-settings
+    // https://vitest.dev/guide/migration/#clearmocks-is-enabled-by-default
+    clearMocks: false,
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./test/setup.ts'],

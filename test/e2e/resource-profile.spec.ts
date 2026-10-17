@@ -4,6 +4,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+
 import { type CDPSession, expect, type Page, test } from '@playwright/test';
 import type {
   ProfileEncoderRoute,
@@ -11,13 +12,13 @@ import type {
   TranscodingStageMetrics,
 } from '@services/conversion-profiler';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
+
 import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {
   assertAnimatedOutput,
   inspectAnimatedOutput,
   type OutputContractCase,
 } from '../../validation/windows/output-contract.mjs';
-
 import {
   type ProcessMemorySummary,
   readLinuxProcessMemory,

@@ -10,6 +10,7 @@
  */
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+
 import { classifyWorkerError } from './classify-worker-error';
 import { isWorkerRequest } from './guards';
 import { runWorkerPipeline } from './pipeline-worker';

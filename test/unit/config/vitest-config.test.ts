@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('Vitest coverage gate', () => {
   it('counts unimported runtime source and enforces positive coverage thresholds', () => {

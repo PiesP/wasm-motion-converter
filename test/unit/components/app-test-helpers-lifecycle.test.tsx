@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { render } from 'solid-js/web';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const helperModule = vi.hoisted(() => {
   let resolveImport: (() => void) | undefined;

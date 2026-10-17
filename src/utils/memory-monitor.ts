@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { ConversionFormat } from '@t/conversion-types';
+
 import {
   BYTES_PER_MB,
   MEMORY_CRITICAL_RATIO,

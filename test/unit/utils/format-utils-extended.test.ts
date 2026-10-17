@@ -10,7 +10,7 @@ import {
   formatFileSizeLocale,
   updateDocumentLang,
 } from '@utils/format-utils';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 beforeEach(() => {
   const values: Record<string, string> = {};

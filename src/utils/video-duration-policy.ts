@@ -2,6 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import type { DurationValidationResult, ValidationWarning } from '@t/validation-types';
+
 import { DEFAULT_FPS, WEBP_MAX_DURATION_MS, WEBP_MAX_FRAMES } from './constants';
 
 export function estimateFrameCount(durationMs: number, fps = DEFAULT_FPS): number {

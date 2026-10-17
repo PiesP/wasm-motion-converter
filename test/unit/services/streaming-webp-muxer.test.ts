@@ -9,7 +9,7 @@
  */
 
 import { StreamingWebpMuxer } from '@services/streaming-webp-encoder';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 /** Create a minimal dummy VP8 bitstream for testing muxer structure only. */
 function dummyBitstream(size = 100, seed = 0): Uint8Array {
@@ -48,7 +48,7 @@ describe('StreamingWebpMuxer', () => {
     const durations = (bytes: Uint8Array): number[] => {
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
       const result: number[] = [];
-      for (let offset = 12; offset < bytes.length; ) {
+      for (let offset = 12; offset < bytes.length;) {
         const size = view.getUint32(offset + 4, true);
         if (view.getUint32(offset) === 0x414e4d46) {
           result.push(
@@ -120,7 +120,7 @@ describe('StreamingWebpMuxer', () => {
         const output = await muxer.finish();
         const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
         const payloads: Uint8Array[] = [];
-        for (let offset = 12; offset < output.length; ) {
+        for (let offset = 12; offset < output.length;) {
           const size = view.getUint32(offset + 4, true);
           if (view.getUint32(offset) === 0x414e4d46) {
             const payloadSize = view.getUint32(offset + 28, true);

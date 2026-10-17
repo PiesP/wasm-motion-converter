@@ -1,7 +1,8 @@
 import { errorMessage, setErrorMessage } from '@stores/conversion-store';
 import { logger } from '@utils/logger';
 import { render } from 'solid-js/web';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vite-plus/test';
+
 import {
   assetFailure,
   clearAssetFailure,

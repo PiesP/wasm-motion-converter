@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { clampToStep, formatTimePrecise, isFullDuration, parseTimeInput } from '@utils/trim-time';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('trim time helpers', () => {
   it('recognizes only the full-duration sentinel', () => {

@@ -10,7 +10,7 @@
 // cannot be reliably mocked at the module level in vitest — the production
 // logic is the meaningful code path under test.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 // ---------------------------------------------------------------------------
 // ServiceWorker mocks

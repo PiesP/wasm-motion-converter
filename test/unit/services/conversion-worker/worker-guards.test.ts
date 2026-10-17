@@ -3,7 +3,7 @@
 
 import { isWorkerRequest, isWorkerResponse } from '@services/conversion-worker/guards';
 import { MAX_CODEC_DESCRIPTION_BYTES } from '@utils/constants';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('isWorkerRequest', () => {
   const validStart = {

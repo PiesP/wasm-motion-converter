@@ -5,6 +5,7 @@
 // The baseline fixture exercises the product's common WebCodecs path.
 
 import { expect, test } from '@playwright/test';
+
 import { getVisibleResultStats, isResultVisible, runConversion } from './fixtures/test-helpers';
 
 // ── Quality Variations ──────────────────────────────────────────

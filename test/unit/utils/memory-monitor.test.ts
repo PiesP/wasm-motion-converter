@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const { getMemoryInfo } = vi.hoisted(() => ({ getMemoryInfo: vi.fn() }));
 vi.mock('@utils/memory-info', () => ({ getMemoryInfo }));

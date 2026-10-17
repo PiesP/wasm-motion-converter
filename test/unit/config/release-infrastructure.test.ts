@@ -1,9 +1,10 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub Actions expressions are literal workflow assertions.
+// GitHub Actions expressions are literal workflow assertions.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+
+import { describe, expect, it } from 'vite-plus/test';
 
 const root = resolve(import.meta.dirname, '../../..');
 
@@ -205,7 +206,6 @@ describe('Release infrastructure', () => {
       quality: 'uses: ./.github/actions/setup-release',
       unit: 'uses: ./.github/actions/setup-release',
       e2e: 'uses: ./.github/actions/setup-release',
-      mutation: 'uses: ./.github/actions/setup-release',
       build: 'uses: ./.github/actions/setup-release',
     } as const;
     for (const [jobId, marker] of Object.entries(localExecutionMarker)) {
@@ -229,7 +229,7 @@ describe('Release infrastructure', () => {
     expect(build).toContain('RELEASE_VERSION: ${{ needs.provenance.outputs.version }}');
     expect(build).toContain('RELEASE_SHA: ${{ needs.provenance.outputs.release-sha }}');
     expect(build).toContain('name: release-bundle-${{ needs.provenance.outputs.release-sha }}');
-    expect(publish).toContain('needs: [provenance, quality, unit, e2e, mutation, build]');
+    expect(publish).toContain('needs: [provenance, quality, unit, e2e, build]');
     expect(publish).toContain('name: release-bundle-${{ needs.provenance.outputs.release-sha }}');
     expect(publish).toContain('tag_name: ${{ inputs.tag }}');
     expect(prepareScript).toContain('const commit = process.env.RELEASE_SHA;');
@@ -255,7 +255,7 @@ describe('Release infrastructure', () => {
 
   it('runs release E2E against its development server without a redundant build', () => {
     const workflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
-    const e2eJob = workflow.match(/\n {2}e2e:[\s\S]*?\n {2}mutation:/)?.[0] ?? '';
+    const e2eJob = workflow.match(/\n {2}e2e:[\s\S]*?\n {2}build:/)?.[0] ?? '';
 
     expect(e2eJob).toContain('pnpm test:e2e:ci');
     expect(e2eJob).not.toContain('pnpm build:ci');

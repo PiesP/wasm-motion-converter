@@ -3,7 +3,7 @@
 
 import { WEBP_MAX_DURATION_MS, WEBP_MAX_FRAMES } from '@utils/constants';
 import { assessVideoDuration, estimateFrameCount } from '@utils/video-duration-policy';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('video duration policy', () => {
   it('estimates frames with the provided FPS and rounds up', () => {

@@ -17,7 +17,7 @@ import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
 import { encodeWebp } from '@services/webp-encoder-service';
 import type { EncodeTask, WebpWorkerPool } from '@services/worker-pool';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 function vp8Frame(color: number): Uint8Array<ArrayBuffer> {
   // A VP8 keyframe with an 8x8 coded canvas and a scene-specific payload byte.
@@ -158,7 +158,7 @@ function gifHolds(bytes: Uint8Array): number[] {
 function webpHolds(bytes: Uint8Array): number[] {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const holds: number[] = [];
-  for (let offset = 12; offset < bytes.length; ) {
+  for (let offset = 12; offset < bytes.length;) {
     const size = view.getUint32(offset + 4, true);
     if (view.getUint32(offset) === 0x414e4d46) {
       holds.push(bytes[offset + 20]! | (bytes[offset + 21]! << 8) | (bytes[offset + 22]! << 16));

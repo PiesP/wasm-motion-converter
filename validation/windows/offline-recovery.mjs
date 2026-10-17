@@ -6,6 +6,7 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+
 import { measureColdTransfer, readBuild } from './app-update.mjs';
 
 function sha256(bytes) {
@@ -2382,7 +2383,7 @@ export async function runRecoveryBuilds({
       join(outputRoot, 'recovery-diagnostics.json'),
       JSON.stringify(diagnostics, null, 2)
     );
-    // biome-ignore lint/correctness/noUnsafeFinally: Raise cleanup failure only when no check already failed.
+    // Raise cleanup failure only when no check already failed.
     if (cleanupFailure && !diagnostics.failure) throw cleanupFailure;
   }
 }

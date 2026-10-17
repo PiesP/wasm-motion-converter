@@ -40,6 +40,7 @@ import { scheduleTask } from '@utils/dom-utils';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
 import { createThrottledProgress } from '@utils/throttled-progress';
+
 import { globalBufferPool } from './buffer-pool';
 import {
   clearLastConversionProfileReport,

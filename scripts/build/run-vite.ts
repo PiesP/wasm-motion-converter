@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+
 import { isCliEntry, packageBinary, runChild } from '../check/run-child.ts';
 
 export type ViteMode = 'dev' | 'build' | 'ci' | 'preview';
@@ -13,9 +14,8 @@ export async function runVite(
     if (licenses !== 0) return licenses;
   }
 
-  const viteArgs =
-    mode === 'dev' ? args : mode === 'preview' ? ['preview', ...args] : ['build', ...args];
-  const result = await run(packageBinary('vite', 'vite'), viteArgs, {
+  const viteArgs = [mode === 'ci' ? 'build' : mode, ...args];
+  const result = await run(packageBinary('vite-plus', 'vp'), viteArgs, {
     NODE_OPTIONS: '--no-deprecation',
   });
   if (result !== 0) return result;

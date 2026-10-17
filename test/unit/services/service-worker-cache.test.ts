@@ -3,7 +3,8 @@
 
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const origin = 'https://drop.test';
 const assetUrl = (name: string, extension = 'js') =>

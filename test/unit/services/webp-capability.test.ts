@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { probeCanvasWebpCapability } from '@services/webp-capability';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 function webp(width: number, height: number): Uint8Array<ArrayBuffer> {
   const frame = new Uint8Array([0x10, 0, 0, 0x9d, 0x01, 0x2a, width, 0, height, 0]);

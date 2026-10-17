@@ -11,7 +11,7 @@ import {
   resolveVideoDimensions,
 } from '@services/frame-utils';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 afterEach(() => {
   clearCanvasCache();

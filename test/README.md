@@ -39,7 +39,6 @@ require FFmpeg on `PATH` to generate their deterministic H.264 fixtures.
 | `pnpm test:e2e:resource` | Generate fixtures and run the opt-in Linux Chromium resource profile (requires FFmpeg) |
 | `pnpm test:e2e` | Run the local Playwright profile |
 | `pnpm exec playwright test test/e2e/smoke.spec.ts` | Run one browser test file |
-| `pnpm mut:fast` | Run the focused mutation profile used by deep CI |
 | `pnpm verify:full` | Run quality, build, coverage, and browser validation |
 
 The Playwright configuration starts a local Vite server unless
@@ -108,8 +107,8 @@ static browser or codec allowlist.
 
 Fast CI runs the quality gate, unit coverage, the repository-backed E2E profile
 (including deterministic output contracts), the production build, and
-the retained quality checks. Deep verification adds mutation testing. The workflow files
-in `.github/workflows/` are authoritative when this summary changes.
+the retained quality checks. The workflow files in `.github/workflows/` are
+authoritative when this summary changes.
 
 `quality` retains `test:ci` locally and owns that policy suite in CI when selected.
 For unit-only routing, unit runs `test:ci` before its independent `test:cov` step;

@@ -12,6 +12,7 @@
 
 import type { SmartFrameSkipMode } from '@t/conversion-types';
 import { FPS_CLAMP_MAX, MEMORY_PRESSURE_TARGET_FPS, MIN_OUTPUT_FPS } from '@utils/constants';
+
 import type { ProfileCopyPathRecorder, ProfileOperationRecorder } from './conversion-profiler';
 
 /** Exact observations at the native decoder, encoder, and container boundaries. */

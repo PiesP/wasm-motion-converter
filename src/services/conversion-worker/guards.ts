@@ -18,6 +18,7 @@ import {
   PROFILE_OPERATIONS,
   type StageMetrics,
 } from '@services/conversion-profiler';
+
 import type { WorkerRequest, WorkerResponse } from './types';
 import { WORKER_LOG_MAX_MESSAGE_CHARS, WORKER_LOG_MAX_REQUEST_ID_CHARS } from './types';
 

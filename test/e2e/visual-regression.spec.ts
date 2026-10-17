@@ -11,6 +11,7 @@
 //   pnpm exec playwright test test/e2e/visual-regression.spec.ts --update-snapshots
 
 import { expect, type Locator, type Page, test } from '@playwright/test';
+
 import { injectTestFile } from './fixtures/test-helpers';
 
 /**

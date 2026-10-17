@@ -2,6 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { logger } from '@utils/logger';
+
 import {
   WORKER_LOG_MAX_EVENTS,
   WORKER_LOG_MAX_MESSAGE_CHARS,

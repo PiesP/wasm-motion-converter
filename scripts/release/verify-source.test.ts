@@ -39,7 +39,7 @@ function fixture() {
     commit(
       pin: unknown,
       version: unknown = '1.2.3',
-      scripts: unknown = { quality: 'biome ci .' }
+      scripts: unknown = { quality: 'pnpm -s fmt && pnpm -s lint' }
     ): string {
       writeFileSync(
         join(source, 'package.json'),

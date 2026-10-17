@@ -22,7 +22,6 @@ logs/
 tmp/
 temp/
 .cache/
-.stryker-tmp*/
 # Video files (test assets, large binaries)
 *.mp4
 *.webm
@@ -93,3 +92,4 @@ validation/windows/inputs/recovery.json
 validation/windows/inputs/recovery-a/
 validation/windows/inputs/recovery-baseline/
 deployment-verification.json
+.vitest/

@@ -26,6 +26,7 @@ import { resolveVideoDimensions } from '@services/frame-utils';
 import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
+
 import { buildConversionRequest } from './build-conversion-request';
 import { isWorkerResponse } from './guards';
 import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerRequest } from './types';

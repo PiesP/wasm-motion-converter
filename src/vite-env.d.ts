@@ -122,7 +122,7 @@ declare global {
    * Browser support: Currently experimental, check caniuse.com before use.
    * Provides an easy way to create a processor for a given track and options.
    */
-  declare var MediaStreamTrackProcessor: {
+  var MediaStreamTrackProcessor: {
     prototype: MediaStreamTrackProcessor;
     new (options: MediaStreamTrackProcessorInit): MediaStreamTrackProcessor;
   };
@@ -179,7 +179,7 @@ declare global {
    * Static method `isTypeSupported` checks if a format is supported
    * before attempting to create an encoder.
    */
-  declare var ImageEncoder: {
+  var ImageEncoder: {
     prototype: ImageEncoder;
     new (init: ImageEncoderInit): ImageEncoder;
     /** Check if image format is supported (optional, browser-dependent) */

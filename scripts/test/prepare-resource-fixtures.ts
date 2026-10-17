@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+
 import { isCliEntry, runChild } from '../check/run-child.ts';
 
 export function prepareResourceFixtures(run: typeof runChild = runChild): Promise<number> {

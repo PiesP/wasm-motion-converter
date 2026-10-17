@@ -8,6 +8,7 @@ import type { TFunction } from '@t/i18n-types';
 import { logger } from '@utils/logger';
 import type { Component } from 'solid-js';
 import { onMount, Show } from 'solid-js';
+
 import { assetFailure } from '@/asset-recovery';
 import { canReload, reloadWhenSafe } from '@/reload-protection';
 

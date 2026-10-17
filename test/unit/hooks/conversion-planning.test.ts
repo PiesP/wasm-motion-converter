@@ -9,7 +9,7 @@ import {
 import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
 import { createPresentationSampler } from '@services/presentation-timing';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 const defaultSettings: ConversionSettings = {
   format: 'gif',

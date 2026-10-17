@@ -9,7 +9,7 @@
 // trim range validation, corrupted data recovery, and error handling.
 
 import type { ConversionSettings } from '@t/conversion-types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 // ── Mock logger to silence warnings ────────────────────────────────────
 vi.mock('@utils/logger', () => ({

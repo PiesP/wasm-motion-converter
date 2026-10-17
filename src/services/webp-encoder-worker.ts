@@ -16,6 +16,7 @@
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { isRecord } from '@piesp/browser-core/util';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
+
 import { extractCanvasWebp } from './webp-bitstream';
 
 // ─── Worker Entry Point ────────────────────────────────────────────

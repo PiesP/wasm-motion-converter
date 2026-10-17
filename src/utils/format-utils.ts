@@ -12,6 +12,7 @@
 import { detectLocale, formatDuration, formatFileSize } from '@piesp/browser-core/locale';
 import type { Locale } from '@t/i18n-types';
 import { DEFAULT_LOCALE, LOCALES } from '@t/i18n-types';
+
 import { BYTES_PER_KB, LOCALE_STORAGE_KEY } from './constants';
 
 export { createId } from '@piesp/browser-core/util';

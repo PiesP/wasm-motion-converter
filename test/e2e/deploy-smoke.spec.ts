@@ -13,7 +13,9 @@
 import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
+
 import { type APIResponse, expect, type Page, type Response, test } from '@playwright/test';
+
 import { conditionalEtagObservation } from './lib/conditional-etag';
 import { assertExecutableBody, assertExecutableResponse } from './lib/deployment-responses';
 

@@ -3,7 +3,7 @@
 
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
 import { DEMUX_MEMORY_BUDGET_BYTES, ENCODED_CHUNK_BUDGET_BYTES } from '@utils/constants';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const mocks = vi.hoisted(() => {
   const keyPacket = {

@@ -6,7 +6,7 @@ import type { ConversionResult } from '@t/conversion-types';
 import type { TFunction } from '@t/i18n-types';
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const t = ((key: string) => `translated:${key}`) as TFunction;
 const originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');

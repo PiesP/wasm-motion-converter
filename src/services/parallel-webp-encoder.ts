@@ -21,6 +21,7 @@
 import type { ProgressCallback } from '@t/conversion-types';
 import { getCanvasWebpQuality } from '@utils/constants';
 import { logger } from '@utils/logger';
+
 import { globalBufferPool } from './buffer-pool';
 import type { ProfileOperationRecorder } from './conversion-profiler';
 import type { BaseEncoderOptions } from './encoder-common';

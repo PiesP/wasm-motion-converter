@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+
+import { describe, expect, it } from 'vite-plus/test';
 
 const project = resolve(import.meta.dirname, '../../..');
 const compiler = join(project, 'node_modules/typescript/bin/tsc');

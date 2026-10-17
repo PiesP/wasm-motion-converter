@@ -6,7 +6,7 @@
 // - Logger mock (silences logs during tests)
 // - Browser API stubs
 
-import { vi } from 'vitest';
+import { vi } from 'vite-plus/test';
 
 // ── DOM Polyfills ─────────────────────────────────────────────
 
@@ -56,7 +56,7 @@ Object.defineProperty(window, 'ResizeObserver', {
 
 // IntersectionObserver
 class MockIntersectionObserver {
-  // biome-ignore lint/complexity/noUselessConstructor: The inert mock accepts the native constructor arguments.
+  // The inert mock accepts the native constructor arguments.
   constructor(_callback: IntersectionObserverCallback, _options?: IntersectionObserverInit) {
     // noop
   }

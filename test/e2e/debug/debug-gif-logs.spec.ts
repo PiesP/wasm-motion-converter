@@ -5,6 +5,7 @@
 // Run with: pnpm test -- debug/debug-gif-logs.spec.ts
 
 import { expect, test } from '@playwright/test';
+
 import {
   clickConvert,
   dismissWarningDialog,

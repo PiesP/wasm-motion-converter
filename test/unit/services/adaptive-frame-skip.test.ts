@@ -8,7 +8,7 @@ import {
   isSignificantMotionIncrease,
   shouldSkipAdaptiveFrame,
 } from '@services/adaptive-frame-skip';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('adaptive frame skip policy', () => {
   it('derives a capped noise floor from valid median samples', () => {

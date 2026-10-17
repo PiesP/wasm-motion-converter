@@ -28,6 +28,7 @@ import {
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { applyPalette, GIFEncoder, quantize } from 'gifenc';
+
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames, type PresentationInterval } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';

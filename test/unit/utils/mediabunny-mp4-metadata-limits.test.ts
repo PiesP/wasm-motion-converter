@@ -3,6 +3,7 @@
 
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+
 import { extractVideoMetadata } from '@services/video-metadata';
 import { MP4_MAX_LOGICAL_SAMPLES, MP4_METADATA_BUDGET_BYTES } from '@utils/constants';
 import { createMediaBunnyInput } from '@utils/mediabunny-utils';
@@ -14,7 +15,7 @@ import {
   Mp4OutputFormat,
   Output,
 } from 'mediabunny';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 type Table = {
   sampleSizes: number[];

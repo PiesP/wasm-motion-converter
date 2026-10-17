@@ -6,7 +6,9 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
+
+import { describe, expect, it } from 'vite-plus/test';
+
 import { proveLegacyDeployment } from '../../../scripts/release/legacy-state';
 import { decidePublication } from '../../../scripts/release/publication-guard';
 

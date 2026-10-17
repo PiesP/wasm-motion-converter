@@ -9,7 +9,7 @@ import {
 import type { AppState } from '@t/app-types';
 import type { TFunction } from '@t/i18n-types';
 import { render } from 'solid-js/web';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@hooks/use-locale', () => ({
   useLocale: () => ({

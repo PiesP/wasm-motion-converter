@@ -4,7 +4,7 @@
 import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
 import type { SerializedConversionOptions } from '@services/conversion-worker/types';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('buildConversionRequest', () => {
   const baseOptions: SerializedConversionOptions = {

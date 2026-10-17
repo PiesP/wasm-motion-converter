@@ -11,6 +11,7 @@ import {
 import { logger } from '@utils/logger';
 import { isInTuple } from '@utils/type-utils';
 import { createSignal } from 'solid-js';
+
 import {
   CONVERSION_SETTINGS_SCHEMA_VERSION,
   CONVERSION_SETTINGS_STORAGE_KEY,

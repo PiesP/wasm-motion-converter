@@ -31,6 +31,7 @@ import {
   STALL_DETECTION_TIMEOUT_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
+
 import {
   ADAPTIVE_NOISE_SAMPLE_COUNT,
   type AdaptiveMotionClass,

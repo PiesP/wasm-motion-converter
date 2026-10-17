@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { checkVideoDecoderSupport } from '@services/video-decoder-support';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const config: VideoDecoderConfig = {
   codec: 'hev1.1.6.L123.90',

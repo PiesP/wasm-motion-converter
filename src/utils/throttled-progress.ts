@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
+
 import { PROGRESS_THROTTLE_MS } from './constants';
 
 /**

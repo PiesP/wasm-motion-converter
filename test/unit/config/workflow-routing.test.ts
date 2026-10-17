@@ -1,10 +1,11 @@
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: GitHub Actions expressions are literal workflow assertions.
+// GitHub Actions expressions are literal workflow assertions.
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { describe, expect, it } from 'vitest';
+
+import { describe, expect, it } from 'vite-plus/test';
 
 const root = resolve(import.meta.dirname, '../../..');
 const classifier = resolve(root, 'scripts/ci/classify-workflow-changes.ts');
@@ -334,7 +335,6 @@ describe('Workflow change routing', () => {
       unit: 'false',
       e2e: 'false',
       build: 'false',
-      mutation: 'false',
       dependency: 'false',
       codeql: 'false',
       semgrep: 'true',
@@ -350,7 +350,6 @@ describe('Workflow change routing', () => {
       unit: 'true',
       e2e: 'true',
       build: 'true',
-      mutation: 'true',
       dependency: 'false',
       codeql: 'true',
       semgrep: 'true',
@@ -365,7 +364,6 @@ describe('Workflow change routing', () => {
         unit: 'true',
         e2e: 'true',
         build: 'true',
-        mutation: 'true',
         dependency: 'true',
         codeql: 'true',
         semgrep_full: 'true',
@@ -406,7 +404,6 @@ describe('Workflow change routing', () => {
       unit: 'false',
       e2e: 'false',
       build: 'false',
-      mutation: 'false',
       dependency: 'false',
       codeql: 'false',
       semgrep: 'false',

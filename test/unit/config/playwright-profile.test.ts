@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+
+import { describe, expect, it } from 'vite-plus/test';
 
 const root = resolve(import.meta.dirname, '../../..');
 
@@ -83,7 +84,7 @@ describe('Playwright workflow profiles', () => {
 
     for (const [name, workflow, end] of [
       ['CI', ci, '\n  build:\n'],
-      ['release', release, '\n  mutation:\n'],
+      ['release', release, '\n  build:\n'],
     ] as const) {
       const e2e = workflow.slice(workflow.indexOf('  e2e:\n'), workflow.indexOf(end));
       const setup = e2e.indexOf('      - name: 📦 Setup project');

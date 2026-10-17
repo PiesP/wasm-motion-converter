@@ -3,7 +3,7 @@
 
 import { ProgressState } from '@hooks/conversion-handlers/use-progress-state';
 import { outputFrames, setOutputFrames } from '@stores/conversion-store';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 describe('ProgressState', () => {
   afterEach(() => setOutputFrames(undefined));

@@ -1,7 +1,7 @@
 /** Quiet Instruments design tokens are scoped to the .pp-design root. */
 
-@import "@piesp/browser-core/design/tokens.css";
-@import "tailwindcss";
+@import '@piesp/browser-core/design/tokens.css';
+@import 'tailwindcss';
 
 /**
  * Tailwind CSS v4 — CSS-first configuration
@@ -100,7 +100,7 @@
 body {
   margin: 0;
   font-family: var(--font-sans);
-  font-feature-settings: "cv01", "ss03";
+  font-feature-settings: 'cv01', 'ss03';
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--color-bg-base);
@@ -221,14 +221,14 @@ html.dark :focus-visible {
   }
 
   /* Ensure borders remain visible in high-contrast mode */
-  [class*="border-red"],
-  [class*="border-yellow"],
-  [class*="border-green"],
-  [class*="border-orange"] {
+  [class*='border-red'],
+  [class*='border-yellow'],
+  [class*='border-green'],
+  [class*='border-orange'] {
     border-color: CanvasText;
   }
   /* Progress bar retains visibility */
-  [role="progressbar"] {
+  [role='progressbar'] {
     border: 1px solid CanvasText;
   }
 }

@@ -20,6 +20,7 @@ import { getErrorMessage } from '@piesp/browser-core/error';
 import { isRecord } from '@piesp/browser-core/util';
 import { WEBP_WORKER_MAX_COUNT, WORKER_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
+
 import { globalBufferPool } from './buffer-pool';
 
 // ─── Types ─────────────────────────────────────────────────────────

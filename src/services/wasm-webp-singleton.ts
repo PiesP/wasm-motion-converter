@@ -36,9 +36,8 @@ async function getModule(): Promise<WasmWebpInstance> {
   initPromise = (async () => {
     // Dynamic import reaches into wasm-webp's internal Emscripten module.
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const mod: { default: () => Promise<WasmWebpInstance> } = await import(
-      'wasm-webp/dist/esm/webp-wasm.js'
-    );
+    const mod: { default: () => Promise<WasmWebpInstance> } =
+      await import('wasm-webp/dist/esm/webp-wasm.js');
     const factory = mod.default;
     if (typeof factory !== 'function') {
       throw new Error('wasm-webp default export is not a factory function');

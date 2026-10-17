@@ -3,6 +3,7 @@
 
 import { expect, test } from '@playwright/test';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
+
 import { parseGifDelaysCs } from '../../validation/windows/gif-playback.mjs';
 import contractData from '../../validation/windows/output-contract.json' with { type: 'json' };
 import {

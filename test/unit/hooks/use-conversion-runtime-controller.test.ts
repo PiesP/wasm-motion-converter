@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 function createController(): ConversionRuntimeController {
   return new ConversionRuntimeController({

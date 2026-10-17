@@ -3,8 +3,10 @@
 
 import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
+
 import { expect, type Page, test } from '@playwright/test';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
+
 import {
   clickConvert,
   dismissWarningDialog,

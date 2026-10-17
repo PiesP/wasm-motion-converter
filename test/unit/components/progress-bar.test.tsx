@@ -4,7 +4,7 @@
 import * as ProgressBarModule from '@components/ProgressBar';
 import type { ProgressPhase } from '@t/conversion-types';
 import { render } from 'solid-js/web';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import { mountCompactProgressHarness, mountResultPreviewHarness } from './rendered-design-harness';
 

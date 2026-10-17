@@ -9,6 +9,7 @@
 //   (Run after matrix.spec.ts to populate results file)
 
 import { expect, test } from '@playwright/test';
+
 import { detectRegressions, generateReport } from '../lib/test-recorder';
 
 test.describe('Regression: Baseline comparison', () => {

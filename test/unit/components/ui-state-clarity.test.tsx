@@ -7,7 +7,7 @@ import VideoMetadataDisplay from '@components/VideoMetadataDisplay';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@hooks/use-locale', () => ({
   useLocale: () => ({

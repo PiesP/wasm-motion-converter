@@ -17,6 +17,7 @@
 import type { ProgressCallback } from '@t/conversion-types';
 import { getCanvasWebpQuality } from '@utils/constants';
 import { logger } from '@utils/logger';
+
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
