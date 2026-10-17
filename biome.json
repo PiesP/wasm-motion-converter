@@ -6,9 +6,22 @@
     "defaultBranch": "master"
   },
   "files": {
-    "includes": ["src/index.css"]
+    "includes": [
+      "src/**",
+      "scripts/**",
+      "test/**",
+      "tooling/**",
+      "validation/windows/**",
+      ".github/actions/**/*.mjs",
+      "public/service-worker.js",
+      "*.ts",
+      "!!validation/windows/inputs",
+      "!!validation/windows/prior-dist",
+      "!validation/windows/public-target.json"
+    ]
   },
   "formatter": {
+    "enabled": false,
     "indentStyle": "space",
     "indentWidth": 2,
     "lineWidth": 100,
@@ -21,13 +34,55 @@
   },
   "linter": {
     "rules": {
-      "preset": "recommended",
+      "preset": "none",
       "correctness": {
-        "noUnknownMediaFeatureName": "off"
+        "useExhaustiveDependencies": "warn"
+      },
+      "a11y": {
+        "noSvgWithoutTitle": "error",
+        "useSemanticElements": "error"
+      },
+      "style": {
+        "noUnusedTemplateLiteral": "error",
+        "useConst": "error",
+        "useExponentiationOperator": "error"
       },
       "suspicious": {
-        "noUnknownAtRules": "off"
+        "noImplicitAnyLet": "error",
+        "noSelfCompare": "warn",
+        "useIterableCallbackReturn": "error"
+      },
+      "complexity": {
+        "noUselessTernary": "error",
+        "noUselessSwitchCase": "error",
+        "noUselessLoneBlockStatements": "error"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "useExhaustiveDependencies": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/index.css"],
+      "linter": {
+        "rules": {
+          "preset": "recommended",
+          "correctness": {
+            "noUnknownMediaFeatureName": "off"
+          },
+          "suspicious": {
+            "noUnknownAtRules": "off"
+          }
+        }
+      }
+    }
+  ]
 }

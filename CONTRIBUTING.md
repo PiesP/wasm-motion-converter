@@ -83,8 +83,8 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vite+ Vitest and direct Node `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts` and `scripts/check/run-child.test.ts`. | Watch persists; coverage writes reports. `test:ci` checks repository authority, tagged source and portable child execution, not rendered conversion. |
 | `pnpm check`, `check:test:unit`, `check:test:e2e`, `check:scripts`, `typecheck` | Browser, Vitest, Playwright and strict NodeNext/erasable TypeScript projects; `tsconfig.scripts.json` includes `scripts/**/*.ts` with ES2022 and Node types. Browser and Playwright projects retain their DOM and worker libraries. | Read-only; `pnpm quality` runs these boundaries. The Node boundary test compiles the full script project with positive Node and negative browser-global probes. Raw Windows `.mjs` is checked separately by that test. |
 | `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
-| `pnpm fmt`, `fmt:check`, `lint`, `knip`, `knip:full`, `knip:production`, `circular` | Vite+ Oxfmt/Oxlint, CSS-only Biome formatting, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
-| `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, CSS-only Biome lint, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
+| `pnpm fmt`, `fmt:check`, `lint`, `lint:residual`, `knip`, `knip:full`, `knip:production`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting, Biome residual lint, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
+| `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, Biome residual lint, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
 | `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `legacy-state.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
 
 ### Workflow and subprocess entrypoints
@@ -363,7 +363,7 @@ marker, that marker becomes the branch identity for subsequent runs.
 
 ### Formatting and inspection scope
 
-Vite+ runs Oxfmt and Oxlint for maintained JS/TS, configuration, and HTML files.
+Vite+ runs Oxfmt and Oxlint for maintained JS/TS, configuration, CSS, and HTML files.
 Oxfmt keeps two-space indentation, a 100-column target, LF, single quotes,
 semicolons, ES5 trailing commas, and import sorting. The `fmt` block in
 `vite.config.ts` is the formatting authority. Oxlint rules and browser-source
@@ -377,11 +377,19 @@ module, root TypeScript/JSON/HTML configuration, the service worker, 404 page,
 and bundled dependency metadata. The shared `packages/core` checkout,
 dependencies, generated distributions and reports, lockfiles, media, binary
 snapshots, patches, and generated Windows inputs/prior distributions/public
-targets are excluded. Biome remains only for Tailwind-aware formatting and
-lint of `src/index.css`; `biome.json` must stay CSS-only until Oxfmt/Oxlint
-provide equivalent CSS lint. Review that residual checker when updating the
-CSS toolchain. Use `fmt:fix`, `lint:fix`, or `quality:fix` for repairs and review
-their diffs before committing.
+targets are excluded. Oxfmt formats `src/index.css`; `pnpm lint:residual` runs
+`biome lint --error-on-warnings .` for recommended CSS lint and the original
+JS/TS rules whose exact behavior is not enabled in Oxlint, including SVG titles,
+semantic elements, unused template literals, implicit-any declarations,
+iterable callback returns, and selected simplifications. Its `biome.json`
+includes browser source, scripts, tests, tooling, raw Windows modules, the
+release action, service worker, and root TypeScript files while excluding
+generated Windows inputs and prior distributions. The residual JS/TS rules
+apply only where their syntax occurs; Oxlint owns the remaining JS/TS rules.
+Review Biome's residual scope whenever Oxlint gains exact rule parity or CSS
+lint, and when changing these source paths or the CSS toolchain.
+Use `fmt:fix`, `lint:fix`, or `quality:fix` for repairs and review their diffs
+before committing.
 
 ### Modules and TypeScript contracts
 
@@ -432,8 +440,13 @@ their diffs before committing.
 - Fix applicable diagnostics without weakening correctness, accessibility,
   explicit-any, unused-import, or accumulation-spread checks. Solid components
   do not use React's lint plugin. TypeScript's strict projects catch implicit
-  `any`; Oxlint checks explicit `any`. Oxlint lacks Biome's SVG-title rule, so
-  inspect changed SVG markup and run the accessibility tests. Retain narrowly
+  `any`; Oxlint checks explicit `any`. The residual Biome gate enforces SVG
+  titles and semantic elements and rejects template literals without
+  interpolation. The existing drag-and-drop `role="group"` has a targeted
+  semantic-elements exception because `fieldset` semantics would affect its
+  file, cancellation, and progress controls. Biome previously disabled
+  `noControlCharactersInRegex`; Oxlint keeps `no-control-regex` disabled, so
+  that policy has not changed. Retain narrowly
   explained exceptions for literal GitHub Actions assertions, inert native
   mocks, asynchronous receiver capture, and cleanup failures raised only when
   there is no primary failure. Do not apply unsafe automatic fixes, broad

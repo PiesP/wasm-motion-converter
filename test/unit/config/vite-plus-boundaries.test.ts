@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vite-plus/test';
 
 const project = resolve(import.meta.dirname, '../../..');
 const vp = join(project, 'node_modules/vite-plus/bin/vp');
+const biome = join(project, 'node_modules/@biomejs/biome/bin/biome');
 const root = mkdtempSync(join(project, 'test/unit/config/__vp_lint_'));
 const configFile = join(root, '.oxlintrc.json');
 
@@ -17,8 +18,17 @@ function run(args: string[]) {
   return { status: result.status, output: result.stdout + result.stderr };
 }
 
-function fixture(source: string) {
-  const file = join(root, 'control.ts');
+function runBiome(path: string) {
+  const result = spawnSync(
+    process.execPath,
+    [biome, 'lint', '--error-on-warnings', '--colors=off', path],
+    { cwd: project, encoding: 'utf8' }
+  );
+  return { status: result.status, output: result.stdout + result.stderr };
+}
+
+function fixture(source: string, name = 'control.ts') {
+  const file = join(root, name);
   writeFileSync(file, source);
   return { file, path: relative(project, file) };
 }
@@ -54,7 +64,9 @@ describe('installed Vite+ lint boundaries', () => {
     expect(readFileSync(file, 'utf8')).toBe(source);
     const scripts = JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')).scripts;
     expect(scripts.lint).toContain('vp lint . --deny-warnings');
+    expect(scripts['lint:residual']).toBe('biome lint --error-on-warnings .');
     expect(scripts.quality).toContain('pnpm -s lint');
+    expect(scripts.quality).toContain('pnpm -s lint:residual');
   });
 
   it.each([
@@ -72,5 +84,44 @@ describe('installed Vite+ lint boundaries', () => {
     const { path } = fixture("export { value } from './same-folder';\n");
     const result = run([path, '--deny-warnings']);
     expect(result.status, result.output).toBe(0);
+  });
+
+  it('rejects an untitled SVG and accepts a titled SVG', () => {
+    const invalid = fixture('export const icon = <svg><path /></svg>;\n', 'svg-control.tsx');
+    const rejected = runBiome(invalid.path);
+    expect(rejected.status, rejected.output).not.toBe(0);
+    expect(rejected.output).toContain('noSvgWithoutTitle');
+
+    const valid = fixture(
+      'export const icon = (\n  <svg>\n    <title>Icon</title>\n    <path />\n  </svg>\n);\n',
+      'svg-control.tsx'
+    );
+    const accepted = runBiome(valid.path);
+    expect(accepted.status, accepted.output).toBe(0);
+  });
+
+  it('rejects an unused template literal and accepts an ordinary string', () => {
+    const invalid = fixture('export const label = `plain text`;\n', 'template-control.ts');
+    const rejected = runBiome(invalid.path);
+    expect(rejected.status, rejected.output).not.toBe(0);
+    expect(rejected.output).toContain('noUnusedTemplateLiteral');
+
+    const valid = fixture("export const label = 'plain text';\n", 'template-control.ts');
+    const accepted = runBiome(valid.path);
+    expect(accepted.status, accepted.output).toBe(0);
+  });
+
+  it('rejects a generic element with a semantic role and accepts its native element', () => {
+    const invalid = fixture(
+      'export const action = <div role="button">Go</div>;\n',
+      'role-control.tsx'
+    );
+    const rejected = runBiome(invalid.path);
+    expect(rejected.status, rejected.output).not.toBe(0);
+    expect(rejected.output).toContain('useSemanticElements');
+
+    const valid = fixture('export const action = <button>Go</button>;\n', 'role-control.tsx');
+    const accepted = runBiome(valid.path);
+    expect(accepted.status, accepted.output).toBe(0);
   });
 });

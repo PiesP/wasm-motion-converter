@@ -218,7 +218,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           </svg>
         </button>
       </Show>
-      {/* This is a drag-and-drop group with its own native file control; fieldset disabled semantics would block cancellation and progress controls. */}
+      {/* biome-ignore lint/a11y/useSemanticElements: This drag-and-drop group needs native file, cancellation, and progress controls; fieldset disabled semantics would block them. */}
       <div
         class={`relative rounded-lg border border-dashed transition-[background-color,border-color] duration-300 ${
           isDragging()

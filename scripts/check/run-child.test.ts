@@ -431,11 +431,14 @@ test('build:ci preserves license, Vite, and postbuild order and stops on failure
   const viteFailure = recordingRunner([0, 9]);
   assert.equal(await runVite('ci', [], viteFailure.run), 9);
   assert.equal(viteFailure.calls.length, 2);
+  const postbuildFailure = recordingRunner([0, 0, 11]);
+  assert.equal(await runVite('ci', [], postbuildFailure.run), 11);
+  assert.equal(postbuildFailure.calls.length, 3);
 });
 
 test('Vite commands keep their arguments and command-specific environment', async () => {
   for (const [mode, expectedArgs] of [
-    ['dev', ['--host', '127.0.0.1']],
+    ['dev', ['dev', '--host', '127.0.0.1']],
     ['build', ['build', '--host', '127.0.0.1']],
     ['preview', ['preview', '--host', '127.0.0.1']],
   ] as const) {
@@ -444,6 +447,11 @@ test('Vite commands keep their arguments and command-specific environment', asyn
     assert.deepEqual(fixture.calls[0]?.args, expectedArgs);
     assert.equal(fixture.calls[0]?.env.NODE_OPTIONS, '--no-deprecation');
     assert.equal(fixture.calls[0]?.env.VITE_ANALYZE_BUNDLE, undefined);
+    assert.equal(fixture.calls.length, 1);
+    const failure = recordingRunner([13]);
+    assert.equal(await runVite(mode, ['--host', '127.0.0.1'], failure.run), 13);
+    assert.deepEqual(failure.calls[0]?.args, expectedArgs);
+    assert.equal(failure.calls.length, 1);
   }
 });
 

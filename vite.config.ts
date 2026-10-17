@@ -50,7 +50,6 @@ export default defineConfig(({ command }) => {
         'validation/windows/inputs/**',
         'validation/windows/prior-dist/**',
         'validation/windows/public-target.json',
-        'src/index.css',
       ],
     },
     lint: {

@@ -14,8 +14,7 @@ export async function runVite(
     if (licenses !== 0) return licenses;
   }
 
-  const viteArgs =
-    mode === 'dev' ? args : mode === 'preview' ? ['preview', ...args] : ['build', ...args];
+  const viteArgs = [mode === 'ci' ? 'build' : mode, ...args];
   const result = await run(packageBinary('vite-plus', 'vp'), viteArgs, {
     NODE_OPTIONS: '--no-deprecation',
   });
