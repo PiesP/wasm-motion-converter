@@ -1,5 +1,5 @@
 diff --git a/dist/modules/src/flac/flac-demuxer.js b/dist/modules/src/flac/flac-demuxer.js
-index 6dd81d4..a64d16a 100644
+index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982209982cc 100644
 --- a/dist/modules/src/flac/flac-demuxer.js
 +++ b/dist/modules/src/flac/flac-demuxer.js
 @@ -14,6 +14,9 @@ import { DEFAULT_TRACK_DISPOSITION } from '../metadata.js';
@@ -77,7 +77,7 @@ index 6dd81d4..a64d16a 100644
                          if (isThenable(pictureBlock))
                              pictureBlock = await pictureBlock;
 diff --git a/dist/modules/src/hls/hls-segmented-input.js b/dist/modules/src/hls/hls-segmented-input.js
-index 51f97a9..d7bbbff 100644
+index 494adfbbd2620d44098c1bdf6fc42ae9eb9210f6..7264572b61eeed552de31b89a7a03e63215c6387 100644
 --- a/dist/modules/src/hls/hls-segmented-input.js
 +++ b/dist/modules/src/hls/hls-segmented-input.js
 @@ -117,7 +117,7 @@ export class HlsSegmentedInput extends SegmentedInput {
@@ -117,7 +117,7 @@ index 51f97a9..d7bbbff 100644
              if ((hlsSegment.encryption?.method === 'SAMPLE-AES' || hlsSegment.encryption?.method === 'SAMPLE-AES-CTR')
                  && !format._isIsobmff) {
 diff --git a/dist/modules/src/input.js b/dist/modules/src/input.js
-index d4bec8f..20cd1b1 100644
+index 5bd4ec6607aaac2f4938363892ee30e28b682ce4..7dacdc47afd9601628323cfd87c03affe71991d1 100644
 --- a/dist/modules/src/input.js
 +++ b/dist/modules/src/input.js
 @@ -72,6 +72,11 @@ export class Input extends EventEmitter {
@@ -132,7 +132,7 @@ index d4bec8f..20cd1b1 100644
          if (options.source instanceof Source) {
              this._rootRef = options.source.ref();
          }
-@@ -141,7 +146,7 @@ export class Input extends EventEmitter {
+@@ -145,7 +150,7 @@ export class Input extends EventEmitter {
      /** @internal */
      _getDemuxer() {
          return this._demuxerPromise ??= (async () => {
@@ -142,7 +142,7 @@ index d4bec8f..20cd1b1 100644
              for (const format of this._formats) {
                  const canRead = await format._canReadInput(this);
 diff --git a/dist/modules/src/isobmff/isobmff-demuxer.js b/dist/modules/src/isobmff/isobmff-demuxer.js
-index 4cc383f..9f74426 100644
+index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8dab92390d 100644
 --- a/dist/modules/src/isobmff/isobmff-demuxer.js
 +++ b/dist/modules/src/isobmff/isobmff-demuxer.js
 @@ -17,6 +17,7 @@ import { readBytes, readF64Be, readI16Be, readI32Be, readI64Be, readU16Be, readU
@@ -565,7 +565,7 @@ index 4cc383f..9f74426 100644
                  const clearLen = readU16Be(slice);
 diff --git a/dist/modules/src/isobmff/sample-budget.js b/dist/modules/src/isobmff/sample-budget.js
 new file mode 100644
-index 0000000..b994275
+index 0000000000000000000000000000000000000000..b994275aca28a8cc3ad933ba369442f61fac1a74
 --- /dev/null
 +++ b/dist/modules/src/isobmff/sample-budget.js
 @@ -0,0 +1,85 @@
@@ -655,7 +655,7 @@ index 0000000..b994275
 +    }
 +}
 diff --git a/dist/modules/src/matroska/matroska-demuxer.js b/dist/modules/src/matroska/matroska-demuxer.js
-index 7fcb549..ac00818 100644
+index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42abf4b3d019 100644
 --- a/dist/modules/src/matroska/matroska-demuxer.js
 +++ b/dist/modules/src/matroska/matroska-demuxer.js
 @@ -489,7 +489,11 @@ export class MatroskaDemuxer extends Demuxer {
@@ -762,7 +762,7 @@ index 7fcb549..ac00818 100644
          if (block.mainAdditional && this.internalTrack.info?.type === 'video' && this.internalTrack.info.alphaMode) {
              sideData.alpha = options.metadataOnly ? PLACEHOLDER_DATA : block.mainAdditional;
 diff --git a/dist/modules/src/media-sink.js b/dist/modules/src/media-sink.js
-index 2501bfe..d221a0b 100644
+index c63156cef3f9c3524ded3f5031ac7e882098179f..ec5280d7631db0aa27dc2e35ec020e46f20bdc19 100644
 --- a/dist/modules/src/media-sink.js
 +++ b/dist/modules/src/media-sink.js
 @@ -184,7 +184,8 @@ export class EncodedPacketSink {
@@ -797,7 +797,7 @@ index 2501bfe..d221a0b 100644
          let { promise: queueNotEmpty, resolve: onQueueNotEmpty } = promiseWithResolvers();
          let { promise: queueDequeue, resolve: onQueueDequeue } = promiseWithResolvers();
 diff --git a/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js b/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js
-index 9baf0a6..42240d2 100644
+index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc94ea53c8 100644
 --- a/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js
 +++ b/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js
 @@ -344,7 +344,12 @@ export class MpegTsDemuxer extends Demuxer {
@@ -951,7 +951,7 @@ index 9baf0a6..42240d2 100644
          if (this.context.suppliedPacket) {
              // Small optimization: there was already a supplied packet in the context, so let's first use that one
 diff --git a/dist/modules/src/ogg/ogg-demuxer.js b/dist/modules/src/ogg/ogg-demuxer.js
-index e83fddb..fbcd7aa 100644
+index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e0438850821 100644
 --- a/dist/modules/src/ogg/ogg-demuxer.js
 +++ b/dist/modules/src/ogg/ogg-demuxer.js
 @@ -14,6 +14,8 @@ import { EncodedPacket, PLACEHOLDER_DATA } from '../packet.js';
@@ -1150,7 +1150,7 @@ index e83fddb..fbcd7aa 100644
              return null; // Invalid packet, treat it as end of stream
          }
 diff --git a/dist/modules/src/reader.d.ts b/dist/modules/src/reader.d.ts
-index da0db97..affc312 100644
+index da0db97b8cfe01f9fc8ea552fdc90c9af3276c3e..affc312bdd8e3d3ae76e517927e93df2781c26b9 100644
 --- a/dist/modules/src/reader.d.ts
 +++ b/dist/modules/src/reader.d.ts
 @@ -9,7 +9,8 @@ import { MaybePromise } from './misc.js';
@@ -1164,7 +1164,7 @@ index da0db97..affc312 100644
      get fileSizeNonStrict(): number | null;
      requestSlice(start: number, length: number): MaybePromise<FileSlice | null>;
 diff --git a/dist/modules/src/reader.js b/dist/modules/src/reader.js
-index 89a7979..c9abe13 100644
+index 89a7979eebda756f9912e8e46952251aaafa282f..c9abe13226184793c346b487614b318d853d7e31 100644
 --- a/dist/modules/src/reader.js
 +++ b/dist/modules/src/reader.js
 @@ -9,8 +9,15 @@ import { InputDisposedError } from './input.js';
@@ -1210,7 +1210,7 @@ index 89a7979..c9abe13 100644
                  chunks.push(chunk);
                  currentSize += slice.length;
 diff --git a/src/flac/flac-demuxer.ts b/src/flac/flac-demuxer.ts
-index 7a581d0..ae070df 100644
+index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a2241777a040b8 100644
 --- a/src/flac/flac-demuxer.ts
 +++ b/src/flac/flac-demuxer.ts
 @@ -66,6 +66,10 @@ type NextFlacFrameResult = {
@@ -1301,7 +1301,7 @@ index 7a581d0..ae070df 100644
  							currentPos,
  							size,
 diff --git a/src/hls/hls-segmented-input.ts b/src/hls/hls-segmented-input.ts
-index 30b8da0..4577d6f 100644
+index 1b80b91c8916502590127575b867aa2a5f9734f2..9d4e435fcbd5f1727bdd4424abf4b691151b598f 100644
 --- a/src/hls/hls-segmented-input.ts
 +++ b/src/hls/hls-segmented-input.ts
 @@ -131,7 +131,7 @@ export class HlsSegmentedInput extends SegmentedInput {
@@ -1346,7 +1346,7 @@ index 30b8da0..4577d6f 100644
  		input._onFormatDetermined = (format) => {
  			if (
 diff --git a/src/input.ts b/src/input.ts
-index a58fd76..7de92d9 100644
+index 76ff20b394b21a4460e8e96b0ca32a9566bb8ece..35c36b6885931a6a78826bf58d65d56f4add51a6 100644
 --- a/src/input.ts
 +++ b/src/input.ts
 @@ -136,6 +136,16 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
@@ -1374,7 +1374,7 @@ index a58fd76..7de92d9 100644
  		this._formats = options.formats;
  		this._initInput = options.initInput ?? null;
  		this._formatOptions = options.formatOptions ?? {};
-@@ -270,7 +279,7 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
+@@ -275,7 +284,7 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
  	/** @internal */
  	_getDemuxer() {
  		return this._demuxerPromise ??= (async () => {
@@ -1384,7 +1384,7 @@ index a58fd76..7de92d9 100644
  
  			for (const format of this._formats) {
 diff --git a/src/isobmff/isobmff-demuxer.ts b/src/isobmff/isobmff-demuxer.ts
-index 484281e..7d11ec1 100644
+index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da038d688a 100644
 --- a/src/isobmff/isobmff-demuxer.ts
 +++ b/src/isobmff/isobmff-demuxer.ts
 @@ -115,6 +115,7 @@ import {
@@ -1738,7 +1738,8 @@ index 484281e..7d11ec1 100644
  				for (let i = 0; i < sampleCount; i++) {
  					let sampleDuration: number;
  					if (sampleDurationPresent) {
-@@ -2421,5 +2553,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2420,6 +2552,11 @@ export class IsobmffDemuxer extends Demuxer {
+ 						sampleCompositionTimeOffset = readI32Be(slice);
  					}
  
 +					if (!Number.isSafeInteger(trackData.currentTimestamp + sampleDuration)
@@ -1821,7 +1822,7 @@ index 484281e..7d11ec1 100644
  				const clearLen = readU16Be(slice);
 diff --git a/src/isobmff/sample-budget.ts b/src/isobmff/sample-budget.ts
 new file mode 100644
-index 0000000..07202d9
+index 0000000000000000000000000000000000000000..07202d96a2abae0cdaf2ec98bb5f5d01186fb7d6
 --- /dev/null
 +++ b/src/isobmff/sample-budget.ts
 @@ -0,0 +1,86 @@
@@ -1912,7 +1913,7 @@ index 0000000..07202d9
 +	}
 +}
 diff --git a/src/matroska/matroska-demuxer.ts b/src/matroska/matroska-demuxer.ts
-index f0524c3..967e00c 100644
+index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f091abd9020 100644
 --- a/src/matroska/matroska-demuxer.ts
 +++ b/src/matroska/matroska-demuxer.ts
 @@ -822,7 +822,11 @@ export class MatroskaDemuxer extends Demuxer {
@@ -2030,7 +2031,7 @@ index f0524c3..967e00c 100644
  		const sideData: EncodedPacketSideData = {};
  		if (block.mainAdditional && this.internalTrack.info?.type === 'video' && this.internalTrack.info.alphaMode) {
 diff --git a/src/media-sink.ts b/src/media-sink.ts
-index 45e4dd8..df71910 100644
+index cf5d812be252ce1708714452acaa6e3606002924..bc77edc5371e3f2e0e890c0b04c13e4b21ab9371 100644
 --- a/src/media-sink.ts
 +++ b/src/media-sink.ts
 @@ -303,7 +303,8 @@ export class EncodedPacketSink {
@@ -2068,7 +2069,7 @@ index 45e4dd8..df71910 100644
  
  		let { promise: queueNotEmpty, resolve: onQueueNotEmpty } = promiseWithResolvers();
 diff --git a/src/mpeg-ts/mpeg-ts-demuxer.ts b/src/mpeg-ts/mpeg-ts-demuxer.ts
-index 0424068..82af71a 100644
+index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d185e54f17c 100644
 --- a/src/mpeg-ts/mpeg-ts-demuxer.ts
 +++ b/src/mpeg-ts/mpeg-ts-demuxer.ts
 @@ -526,7 +526,12 @@ export class MpegTsDemuxer extends Demuxer {
@@ -2246,7 +2247,7 @@ index 0424068..82af71a 100644
  		let suppliedPacket: SuppliedPacket | null;
  		if (this.context.suppliedPacket) {
 diff --git a/src/ogg/ogg-demuxer.ts b/src/ogg/ogg-demuxer.ts
-index 0d6c5aa..fea24fa 100644
+index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5def6f5ea2 100644
 --- a/src/ogg/ogg-demuxer.ts
 +++ b/src/ogg/ogg-demuxer.ts
 @@ -54,6 +54,9 @@ type Packet = {
@@ -2488,7 +2489,7 @@ index 0d6c5aa..fea24fa 100644
  			return null; // Invalid packet, treat it as end of stream
  		}
 diff --git a/src/reader.ts b/src/reader.ts
-index 5865295..115eaf2 100644
+index 5865295104ba8ea7c751ed0387ed502909d0d6f0..115eaf2e5d6e2870e4c664c34e2248b27cdc63ae 100644
 --- a/src/reader.ts
 +++ b/src/reader.ts
 @@ -11,7 +11,16 @@ import { assert, clamp, getUint24, isThenable, MaybePromise, textDecoder, toData

@@ -10,6 +10,7 @@ import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import {
   BufferTarget,
   EncodedPacket,
+  EncodedPacketSink,
   EncodedVideoPacketSource,
   Input,
   Mp4OutputFormat,
@@ -141,6 +142,28 @@ async function normalMp4(): Promise<ArrayBuffer> {
 afterEach(() => vi.restoreAllMocks());
 
 describe('installed MP4 sample metadata allocation policy', () => {
+  it('reads bounded packets on demand from a valid MP4', async () => {
+    const input = createMediaBunnyInput(await normalMp4());
+    try {
+      const [track] = await input.getVideoTracks();
+      expect(track).toBeDefined();
+      const sink = new EncodedPacketSink(track!);
+      const nextPacket = vi.spyOn(sink, 'getNextPacket');
+      const packets = sink.packets();
+
+      const first = await packets.next();
+      expect(first.value?.sequenceNumber).toBe(0);
+      expect(nextPacket).not.toHaveBeenCalled();
+
+      const second = await packets.next();
+      expect(second.value?.sequenceNumber).toBe(1);
+      expect(nextPacket).toHaveBeenCalledOnce();
+      await packets.return?.();
+    } finally {
+      input.dispose();
+    }
+  });
+
   it('applies explicit metadata and logical-count budgets to application inputs', () => {
     const input = createMediaBunnyInput(new ArrayBuffer(0));
     expect(input).toMatchObject({
