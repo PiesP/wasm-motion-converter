@@ -103,7 +103,7 @@ function classifyPath(routes: Routes, path: string): void {
   } else if (path.startsWith('scripts/build/') || path.startsWith('scripts/release/')) {
     enable(routes, 'quality', 'unit', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path.startsWith('scripts/ci/')) {
-    if (path === 'scripts/ci/pinned-tools.json' || path === 'scripts/ci/pinned-tools.ts') {
+    if (path === 'scripts/ci/pinned-tools.json') {
       enable(routes, 'dependency');
     }
     enable(routes, 'quality', 'unit', 'codeql', 'semgrep', 'semgrep_full', 'security_tools');
