@@ -1,4 +1,4 @@
-import { isCliEntry, packageBinary, runChild } from '../check/run-child.ts';
+import { packageBinary, runChild } from '../check/run-child.ts';
 
 export type PlaywrightProfile = 'ci' | 'resource' | 'deploy';
 
@@ -19,7 +19,7 @@ export function runPlaywright(
   );
 }
 
-if (isCliEntry(import.meta.url)) {
+if (import.meta.main) {
   const profile = process.argv[2];
   if (!['ci', 'resource', 'deploy'].includes(profile ?? '')) {
     console.error('Expected ci, resource, or deploy');

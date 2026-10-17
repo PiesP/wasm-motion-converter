@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /** Classify workflow changes. Unknown inputs conservatively enable every gate. */
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { argv, env, exit, stdin } from 'node:process';
-import { fileURLToPath } from 'node:url';
 
 const keys = [
   'all',
@@ -242,16 +241,7 @@ function main(): void {
   else process.stdout.write(lines);
 }
 
-function isDirectInvocation(): boolean {
-  if (!argv[1]) return false;
-  try {
-    return realpathSync(argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isDirectInvocation()) {
+if (import.meta.main) {
   try {
     main();
   } catch (error) {

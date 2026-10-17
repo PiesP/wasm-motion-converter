@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
-import { isCliEntry, runChild } from '../check/run-child.ts';
+import { runChild } from '../check/run-child.ts';
 
 export function prepareResourceFixtures(run: typeof runChild = runChild): Promise<number> {
   return run(fileURLToPath(new URL('./generate-e2e-video.ts', import.meta.url)), [], {
@@ -8,7 +8,7 @@ export function prepareResourceFixtures(run: typeof runChild = runChild): Promis
   });
 }
 
-if (isCliEntry(import.meta.url)) {
+if (import.meta.main) {
   prepareResourceFixtures().then(
     (code) => {
       process.exitCode = code;

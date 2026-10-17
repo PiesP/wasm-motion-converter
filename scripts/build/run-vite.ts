@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
-import { isCliEntry, packageBinary, runChild } from '../check/run-child.ts';
+import { packageBinary, runChild } from '../check/run-child.ts';
 
 export type ViteMode = 'dev' | 'build' | 'ci' | 'preview';
 
@@ -26,7 +26,7 @@ export async function runVite(
   return 0;
 }
 
-if (isCliEntry(import.meta.url)) {
+if (import.meta.main) {
   const mode = process.argv[2];
   if (!['dev', 'build', 'ci', 'preview'].includes(mode ?? '')) {
     console.error('Expected dev, build, ci, or preview');

@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
-import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { downloadAsset, proveLegacyDeployment } from './legacy-state.ts';
 
@@ -336,16 +335,7 @@ async function main(): Promise<void> {
   );
 }
 
-function isDirectInvocation(): boolean {
-  if (!process.argv[1]) return false;
-  try {
-    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
-  } catch {
-    return false;
-  }
-}
-
-if (isDirectInvocation()) {
+if (import.meta.main) {
   main().catch((error: unknown) => {
     console.error(error);
     process.exitCode = 1;
