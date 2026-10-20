@@ -13,9 +13,14 @@ retained data. The reader declaration matches its patched constructor.
 
 WMC does not use Matroska tags or attachments. Its inputs opt into skipping these
 descriptive elements before reading their payloads, including leading metadata
-and tags reached through seek entries in later segments. Structural track, codec,
-timing, and cue elements remain parsed. Inputs without the opt-in retain
-MediaBunny's original metadata behavior.
+and tags reached through seek entries in later segments. The shared element
+traversal also skips descriptive IDs before decoding or retaining them, even in
+malformed nested contexts or while parsing a cluster without a current segment.
+Structural track, codec, timing, and cue elements remain parsed. Inputs without
+the opt-in retain MediaBunny's original metadata behavior. The installed-parser
+test sets its 256-byte Reader limit before format detection and checks reads at
+and beyond that boundary; changing the Input field afterward would not update
+the Reader.
 
 The 1.61.5 port preserves upstream source-disposal, HLS empty-segment, decoder
 queue, conversion-progress, and color-space changes. No existing safety hunk was

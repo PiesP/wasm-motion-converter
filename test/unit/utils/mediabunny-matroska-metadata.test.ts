@@ -78,10 +78,16 @@ function text(value: string): Uint8Array {
   return new TextEncoder().encode(value);
 }
 
-function segment(index: number, location: 'leading' | 'later', attachmentCount = 1): Uint8Array {
+function segment(
+  index: number,
+  location: 'leading' | 'later',
+  attachmentCount = 1,
+  infoChildren: Uint8Array[] = [],
+  clusterChildren: Uint8Array[] = []
+): Uint8Array {
   const duration = new Uint8Array(8);
   new DataView(duration.buffer).setFloat64(0, 1_000);
-  const info = element(ID.info, element(ID.duration, duration));
+  const info = element(ID.info, element(ID.duration, duration), ...infoChildren);
   const tracks = element(
     ID.tracks,
     element(
@@ -100,7 +106,8 @@ function segment(index: number, location: 'leading' | 'later', attachmentCount =
   const cluster = element(
     ID.cluster,
     element(ID.timestamp, Uint8Array.of(0)),
-    element(ID.simpleBlock, Uint8Array.of(0x81, 0, 0, 0x80, 0, 0, 0, 0))
+    element(ID.simpleBlock, Uint8Array.of(0x81, 0, 0, 0x80, 0, 0, 0, 0)),
+    ...clusterChildren
   );
   const tags = element(
     ID.tags,
@@ -214,6 +221,91 @@ async function payloadReads(input: Input): Promise<SliceRequest[]> {
 afterEach(() => vi.restoreAllMocks());
 
 describe('installed Matroska descriptive metadata policy', () => {
+  it('does not decode or retain descriptive children reached through shared traversal', async () => {
+    const privateTitle = 'SKIP_ME_361';
+    const orphanTitle = 'CLUSTER_361';
+    const nestedTag = element(
+      ID.tag,
+      element(
+        ID.simpleTag,
+        element(ID.tagName, text('TITLE')),
+        element(ID.tagString, text(privateTitle))
+      )
+    );
+    const nestedAttachment = element(
+      ID.attachedFile,
+      element(ID.fileUid, Uint8Array.of(7)),
+      element(ID.fileName, text('nested.png')),
+      element(ID.fileMediaType, text('image/png')),
+      element(ID.fileData, Uint8Array.of(1, 2, 3))
+    );
+    const orphanTag = element(
+      ID.tag,
+      element(
+        ID.simpleTag,
+        element(ID.tagName, text('TITLE')),
+        element(ID.tagString, text(orphanTitle))
+      )
+    );
+    const media = matroska(segment(1, 'leading', 1, [nestedTag, nestedAttachment], [orphanTag]));
+    const bounded = createMediaBunnyInput(media);
+    const decoded = vi.spyOn(TextDecoder.prototype, 'decode');
+    const decodedValue = (value: string): boolean =>
+      decoded.mock.calls.some(
+        ([bytes]) =>
+          bytes instanceof Uint8Array &&
+          bytes.length === value.length &&
+          bytes.every((byte, index) => byte === value.charCodeAt(index))
+      );
+    try {
+      const [track] = await bounded.getVideoTracks();
+      expect(track).toBeDefined();
+      expect((await new EncodedPacketSink(track!).getFirstPacket())?.type).toBe('key');
+      const demuxer = await (
+        bounded as Input & {
+          _getDemuxer(): Promise<{
+            currentSimpleTagName: string | null;
+            segments: { metadataTags: Record<string, unknown> }[];
+          }>;
+        }
+      )._getDemuxer();
+      expect(demuxer.segments[0]?.metadataTags).toEqual({});
+      expect(demuxer.currentSimpleTagName).toBeNull();
+      expect(decodedValue(privateTitle)).toBe(false);
+      expect(decodedValue(orphanTitle)).toBe(false);
+      expect(await bounded.getMetadataTags()).toEqual({});
+    } finally {
+      bounded.dispose();
+    }
+
+    const defaultInput = new Input({ formats: ALL_FORMATS, source: new BufferSource(media) });
+    try {
+      const [track] = await defaultInput.getVideoTracks();
+      expect(track).toBeDefined();
+      expect((await new EncodedPacketSink(track!).getFirstPacket())?.type).toBe('key');
+      const demuxer = await (
+        defaultInput as Input & {
+          _getDemuxer(): Promise<{
+            currentSimpleTagName: string | null;
+            segments: { metadataTags: Record<string, unknown> }[];
+          }>;
+        }
+      )._getDemuxer();
+      expect(demuxer.segments[0]?.metadataTags).toMatchObject({
+        title: privateTitle,
+        raw: { '7': expect.any(AttachedFile) },
+      });
+      expect(
+        (demuxer.segments[0]?.metadataTags.images as { data: Uint8Array }[] | undefined)?.[0]?.data
+      ).toEqual(Uint8Array.of(1, 2, 3));
+      expect(demuxer.currentSimpleTagName).toBe('TITLE');
+      expect(decodedValue(privateTitle)).toBe(true);
+      expect(decodedValue(orphanTitle)).toBe(true);
+    } finally {
+      defaultInput.dispose();
+    }
+  });
+
   it('skips leading tags and attachments while preserving video tracks and ordinary parser metadata', async () => {
     const media = matroska(segment(1, 'leading'));
     const spans = descriptivePayloads(media);
@@ -262,17 +354,26 @@ describe('installed Matroska descriptive metadata policy', () => {
     expect(spans.every(({ length }) => length < 256)).toBe(true);
     expect(spans.reduce((sum, { length }) => sum + length, 0)).toBeGreaterThan(256);
     const input = createMediaBunnyInput(media);
-    const reads = await payloadReads(input);
     (input as Input & { _maxContiguousReadBytes: number })._maxContiguousReadBytes = 256;
+    const reads = await payloadReads(input);
     try {
+      const reader = (
+        input as Input & {
+          _reader: { maxReadSize: number; requestSlice(start: number, length: number): unknown };
+        }
+      )._reader;
+      expect(reader.maxReadSize).toBe(256);
       expect(await input.getVideoTracks()).toHaveLength(2);
       expect(await input.getMetadataTags()).toEqual({});
-      expect(reads.every(({ length }) => length <= 256)).toBe(true);
+      expect(reads.filter(({ length }) => length > 256)).toEqual([]);
       expect(
         reads.filter((request) =>
           spans.some((span) => span.start === request.start && span.length === request.length)
         )
       ).toEqual([]);
+      expect(await reader.requestSlice(0, 255)).not.toBeNull();
+      expect(await reader.requestSlice(0, 256)).not.toBeNull();
+      expect(() => reader.requestSlice(0, 257)).toThrow(/configured memory limit of 256 bytes/);
     } finally {
       input.dispose();
     }
