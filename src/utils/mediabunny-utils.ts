@@ -17,6 +17,7 @@ type BoundedInput = Input & {
   _maxBufferedPacketBytes: number;
   _maxIsobmffMetadataBytes: number;
   _maxIsobmffSamples: number;
+  _skipMatroskaDescriptiveMetadata: boolean;
 };
 
 function applyMediaBunnyMemoryLimits(input: Input): Input {
@@ -26,6 +27,7 @@ function applyMediaBunnyMemoryLimits(input: Input): Input {
   bounded._maxBufferedPacketBytes = MEDIA_BUNNY_BUFFER_BUDGET_BYTES;
   bounded._maxIsobmffMetadataBytes = MP4_METADATA_BUDGET_BYTES;
   bounded._maxIsobmffSamples = MP4_MAX_LOGICAL_SAMPLES;
+  bounded._skipMatroskaDescriptiveMetadata = true;
   return input;
 }
 
