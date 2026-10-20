@@ -304,24 +304,47 @@ describe('direct Node script boundaries', () => {
         )
       )
     );
+    const mkvPath = join(root, 'metadata.mkv');
+    const mkvBytes = Buffer.concat([
+      Buffer.from([0x12, 0x54, 0xc3, 0x67]),
+      Buffer.from('fixture-artist'),
+      Buffer.alloc(128, 0x61),
+      Buffer.from([0x1f, 0x43, 0xb6, 0x75]),
+    ]);
+    writeFileSync(mkvPath, mkvBytes);
     stub(
       join(bin, 'ffmpeg'),
-      'for last do :; done\ncase "$last" in\n*short-tail.mp4) cp "$FAKE_MP4" "$last" ;;\n*) printf video > "$last" ;;\nesac'
+      'for last do :; done\ncase "$last" in\n*short-tail.mp4) cp "$FAKE_MP4" "$last" ;;\n*matroska-metadata.mkv) cp "$FAKE_MKV" "$last" ;;\n*) printf video > "$last" ;;\nesac'
     );
     stub(
       join(bin, 'ffprobe'),
-      `printf '%s\\n' '{"streams":[{"has_b_frames":1}],"packets_and_frames":[{"type":"packet","pts":2,"dts":0},{"type":"packet","pts":1,"dts":1},{"type":"frame","pict_type":"B"}]}'`
+      `for last do :; done
+case "$last" in
+*matroska-metadata.mkv)
+  if [ "$FAKE_MKV_METADATA" = missing ]; then
+    printf '%s\\n' '{"format":{"tags":{}},"streams":[]}'
+  else
+    printf '%s\\n' '{"format":{"tags":{"title":"matroska-skip","ARTIST":"fixture-artist"}},"streams":[{"codec_type":"attachment","tags":{"mimetype":"text/plain"}}]}'
+  fi ;;
+*) printf '%s\\n' '{"streams":[{"has_b_frames":1}],"packets_and_frames":[{"type":"packet","pts":2,"dts":0},{"type":"packet","pts":1,"dts":1},{"type":"frame","pict_type":"B"}]}' ;;
+esac`
     );
     const env = {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ''}`,
       PREPARE_RESOURCE_FIXTURES: 'false',
       FAKE_MP4: mp4Path,
+      FAKE_MKV: mkvPath,
+      FAKE_MKV_METADATA: 'present',
     };
     const result = run('scripts/test/generate-e2e-video.ts', env);
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(join(root, 'public/test-video-contract-bframes.mp4'), 'utf8')).toBe(
       'video'
+    );
+    expect(readFileSync(join(root, 'public/test-video-matroska-metadata.mkv'))).toEqual(mkvBytes);
+    expect(existsSync(join(root, 'public/test-video-matroska-metadata.mkv.attachment.txt'))).toBe(
+      false
     );
     const shortTail = readFileSync(join(root, 'public/test-video-contract-short-tail.mp4'));
     const sttsType = shortTail.indexOf(Buffer.from('stts'));
@@ -329,6 +352,12 @@ describe('direct Node script boundaries', () => {
     expect(existsSync(join(root, 'public/test-video-contract-rotate-90.mp4.unrotated.mp4'))).toBe(
       false
     );
+    const missingMetadata = run('scripts/test/generate-e2e-video.ts', {
+      ...env,
+      FAKE_MKV_METADATA: 'missing',
+    });
+    expect(missingMetadata.status).not.toBe(0);
+    expect(missingMetadata.stderr).toContain('Matroska fixture lacks its tag or attachment');
     stub(join(bin, 'ffmpeg'), 'exit 7');
     const failed = run('scripts/test/generate-e2e-video.ts', env);
     expect(failed.status).not.toBe(0);
