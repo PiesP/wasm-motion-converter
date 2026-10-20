@@ -358,6 +358,10 @@ esac`
     });
     expect(missingMetadata.status).not.toBe(0);
     expect(missingMetadata.stderr).toContain('Matroska fixture lacks its tag or attachment');
+    writeFileSync(mkvPath, Buffer.alloc(0));
+    const emptyMatroska = run('scripts/test/generate-e2e-video.ts', env);
+    expect(emptyMatroska.status).not.toBe(0);
+    expect(emptyMatroska.stderr).toContain('Generated an empty E2E codec fixture');
     stub(join(bin, 'ffmpeg'), 'exit 7');
     const failed = run('scripts/test/generate-e2e-video.ts', env);
     expect(failed.status).not.toBe(0);

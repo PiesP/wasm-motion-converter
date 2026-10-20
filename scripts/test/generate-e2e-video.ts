@@ -335,12 +335,13 @@ export function generateE2eVideo(): void {
       if (fixture.finalSampleDurationMs !== undefined) {
         setFinalSampleDuration(outputPath, fixture.finalSampleDurationMs);
       }
-      const size = statSync(outputPath).size;
+      const mediaBytes = attachmentPath ? readFileSync(outputPath) : undefined;
+      const size = mediaBytes?.byteLength ?? statSync(outputPath).size;
       if (size === 0) {
         throw new Error(`Generated an empty E2E codec fixture: ${outputPath}`);
       }
       if (fixture.requiresReorderedFrames) assertReorderedFrames(outputPath);
-      if (attachmentPath) {
+      if (mediaBytes) {
         const probe = spawnSync(
           'ffprobe',
           [
@@ -369,7 +370,6 @@ export function generateE2eVideo(): void {
         ) {
           throw new Error('Matroska fixture lacks its tag or attachment');
         }
-        const mediaBytes = readFileSync(outputPath);
         const clusterOffset = mediaBytes.indexOf(Buffer.from([0x1f, 0x43, 0xb6, 0x75]));
         const tagOffset = mediaBytes.indexOf('fixture-artist');
         const attachmentOffset = mediaBytes.indexOf(Buffer.alloc(attachmentBytes, 0x61));
