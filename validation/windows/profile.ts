@@ -213,6 +213,7 @@ declare global {
 
 const PROFILE_ID = 'wmc-media';
 const SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
+const MATROSKA_METADATA_FIXTURE = 'public/test-video-matroska-metadata.mkv';
 const CANCELLATION_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 const OUTPUT_CONTRACT = 'validation/windows/output-contract.json';
 const PUBLIC_TARGET = 'validation/windows/public-target.json';
@@ -3275,6 +3276,7 @@ export async function run({
 
   try {
     const smallFixture = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
+    const matroskaMetadataFixture = await validateBundleFile(bundleRoot, MATROSKA_METADATA_FIXTURE);
     const publicTargets = await loadPublicTargets(bundleRoot);
     const cancellationFixture = await validateBundleFile(bundleRoot, CANCELLATION_FIXTURE);
     const outputContractPath = await validateBundleFile(bundleRoot, OUTPUT_CONTRACT);
@@ -3401,6 +3403,34 @@ export async function run({
         'Logical-count rejection before size-table expansion; browser heap/RSS not measured',
     });
     checks.push(recoveredGif);
+    await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+    await loadApplication(page, started.url);
+    await selectFixture(page, matroskaMetadataFixture);
+    await chooseOption(page, 'format', 'gif');
+    await chooseOption(page, 'quality', 'low');
+    await chooseOption(page, 'scale', '0.5');
+    await page.locator('[data-testid="convert-button"]').click();
+    await proceedIfPrompted(page);
+    await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
+    await page
+      .locator('[data-testid="result-image"]')
+      .waitFor({ state: 'visible', timeout: 30_000 });
+    const matroskaDownload = page.waitForEvent('download', { timeout: 30_000 });
+    await page.locator('[data-testid="download-result-button"]').click();
+    const matroskaOutput = await readDownload(await matroskaDownload);
+    validateOutput(matroskaOutput, 'gif', 48, 32);
+    await recordScreenshot(page, outputRoot, 'matroska-metadata-result.png', artifacts);
+    const matroskaInput = await readFile(matroskaMetadataFixture);
+    checks.push({
+      id: 'matroska-metadata-skip',
+      status: 'passed',
+      fixtureBytes: matroskaInput.byteLength,
+      fixtureSha256: sha256(matroskaInput),
+      outputBytes: matroskaOutput.byteLength,
+      outputSha256: sha256(matroskaOutput),
+      videoSelected: true,
+      gifDownload: true,
+    });
     checks.push(
       await convertSmallFixture(page, started.url, smallFixture, 'webp', outputRoot, artifacts)
     );
