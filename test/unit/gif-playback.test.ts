@@ -295,6 +295,52 @@ describe('ordinary-image GIF playback evidence', () => {
     expect(() => assertGifPlayback(evidence)).toThrow('Only 2 consecutive qualified cycles');
   });
 
+  it('keeps an unbracketed startup red-to-blue sample unknown despite a narrow gap', () => {
+    // Retained installed-Edge timestamps: the first red-to-blue gap is 33.685ms.
+    const frames: ReturnType<typeof sampledScopedCycles> = [
+      { sequence: 0, timestampMs: 1792469213193.316, marker: 'red' },
+      { sequence: 1, timestampMs: 1792469213227.001, marker: 'blue' },
+      { sequence: 2, timestampMs: 1792469213256.745, marker: 'red' },
+      { sequence: 3, timestampMs: 1792469213287.3782, marker: 'red' },
+      { sequence: 4, timestampMs: 1792469213319.35, marker: 'lime' },
+      { sequence: 5, timestampMs: 1792469213347.2842, marker: 'lime' },
+      { sequence: 6, timestampMs: 1792469213380.99, marker: 'red' },
+      { sequence: 7, timestampMs: 1792469213410.0781, marker: 'red' },
+      { sequence: 8, timestampMs: 1792469213443.517, marker: 'lime' },
+      { sequence: 9, timestampMs: 1792469213476.794, marker: 'red' },
+      { sequence: 10, timestampMs: 1792469213506.113, marker: 'red' },
+      { sequence: 11, timestampMs: 1792469213535.341, marker: 'red' },
+      { sequence: 12, timestampMs: 1792469213568.324, marker: 'lime' },
+      { sequence: 13, timestampMs: 1792469213599.7542, marker: 'red' },
+      { sequence: 14, timestampMs: 1792469213629.711, marker: 'red' },
+      { sequence: 15, timestampMs: 1792469213662.3909, marker: 'lime' },
+      { sequence: 16, timestampMs: 1792469213691.088, marker: 'lime' },
+      { sequence: 17, timestampMs: 1792469213725.208, marker: 'red' },
+    ];
+    const evidence = observation([5, 5, 2], frames);
+    expect(evidence.cycleAnalysis.cycles[0]!.bracketsMs.startReturnToRed).toBeNull();
+    expect(evidence.cycleAnalysis.cycles[0]!.bracketsMs.redToBlue).toBeCloseTo(33.685, 3);
+    expect(evidence.cycleAnalysis.cycles[0]!.status).toBe('unknown');
+    expect(evidence.cycleAnalysis.maxConsecutiveQualifiedCycles).toBe(4);
+    expect(evidence.cycleAnalysis.errors).toEqual([]);
+    expect(assertGifPlayback(evidence)).toBe(evidence);
+  });
+
+  it('keeps a narrow red-to-blue sample unknown when its starting return is sparse', () => {
+    const frames = sampledScopedCycles([128, 128, 128, 128]);
+    frames[0]!.timestampMs = -64;
+    for (const frame of frames) {
+      if (frame.timestampMs === 64 || frame.timestampMs === 96) frame.marker = 'blue';
+    }
+    const evidence = observation([5, 5, 2], frames);
+    expect(evidence.cycleAnalysis.cycles[0]!.bracketsMs.startReturnToRed).toBe(64);
+    expect(evidence.cycleAnalysis.cycles[0]!.bracketsMs.redToBlue).toBe(32);
+    expect(evidence.cycleAnalysis.cycles[0]!.status).toBe('unknown');
+    expect(evidence.cycleAnalysis.maxConsecutiveQualifiedCycles).toBe(3);
+    expect(evidence.cycleAnalysis.errors).toEqual([]);
+    expect(assertGifPlayback(evidence)).toBe(evidence);
+  });
+
   it('keeps an unclassified sample as an unknown cycle without inventing a color-order violation', () => {
     const frames: Array<{
       sequence: number;
@@ -333,6 +379,18 @@ describe('ordinary-image GIF playback evidence', () => {
     expect(evidence.cycleAnalysis.maxConsecutiveQualifiedCycles).toBe(3);
     expect(evidence.cycleAnalysis.cycles[3]!.markers).toEqual(['red', 'blue', 'red']);
     expect(evidence.cycleAnalysis.cycles[3]!.bracketsMs.redToBlue).toBe(32);
+    expect(evidence.cycleAnalysis.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining('Mandatory lime scene omitted')])
+    );
+    expect(() => assertGifPlayback(evidence)).toThrow('Mandatory lime scene omitted');
+  });
+
+  it('still rejects the same narrow omission after a fully bracketed return', () => {
+    const frames = sampledMissingLime();
+    frames.find((frame) => frame.timestampMs === 448)!.timestampMs = 449.685;
+    const evidence = observation([5, 5, 2], frames);
+    expect(evidence.cycleAnalysis.cycles[3]!.bracketsMs.startReturnToRed).toBe(32);
+    expect(evidence.cycleAnalysis.cycles[3]!.bracketsMs.redToBlue).toBeCloseTo(33.685, 3);
     expect(evidence.cycleAnalysis.errors).toEqual(
       expect.arrayContaining([expect.stringContaining('Mandatory lime scene omitted')])
     );

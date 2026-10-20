@@ -571,9 +571,17 @@ export function analyzeGifPlaybackCycles(frames: PlaybackFrameSample[]): GifPlay
       const hasLime = middle.some((run) => run.marker === 'lime');
       if (middle.length === 1 && itemAt(middle, 0).marker === 'blue') {
         redToBlueMs = itemAt(middle, 0).startMs - start.lastMs;
-        // This fixed GIF holds lime for 50ms. A blue sample within 35ms
-        // of the last red sample cannot have skipped that mandatory scene.
-        if (redToBlueMs >= 0 && redToBlueMs <= MAX_SAMPLE_GAP_MS) {
+        // A bracketed return establishes a complete cycle. This fixed GIF
+        // holds lime for 50ms, so a blue sample within 35ms of the last red
+        // sample then proves that mandatory scene was omitted.
+        if (
+          startReturnToRedMs !== null &&
+          Number.isFinite(startReturnToRedMs) &&
+          startReturnToRedMs >= 0 &&
+          startReturnToRedMs <= MAX_SAMPLE_GAP_MS &&
+          redToBlueMs >= 0 &&
+          redToBlueMs <= MAX_SAMPLE_GAP_MS
+        ) {
           errors.push(
             `Mandatory lime scene omitted between red and blue at frame ${itemAt(middle, 0).firstSequence}`
           );
