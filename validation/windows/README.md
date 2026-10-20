@@ -83,6 +83,8 @@ record:
 - production app load with CSP and cross-origin isolation;
 - a compact over-budget MP4 sample declaration rejected before expansion, followed
   by a successful normal GIF conversion/download in the same application document;
+- a small Matroska VP9 fixture with descriptive tags and an attachment selected and
+  converted to a downloadable GIF after the recovery flow;
 - the CI H.264 fixture converted to low-quality, 50% GIF and WebP;
 - observed metadata analysis samples, when its transient state is caught,
   with indeterminate progress, task-correct cancellation labels, and no

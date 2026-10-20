@@ -655,10 +655,57 @@ index 0000000000000000000000000000000000000000..b994275aca28a8cc3ad933ba369442f6
 +    }
 +}
 diff --git a/dist/modules/src/matroska/matroska-demuxer.js b/dist/modules/src/matroska/matroska-demuxer.js
-index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42abf4b3d019 100644
+index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dcd2b0e6a4 100644
 --- a/dist/modules/src/matroska/matroska-demuxer.js
 +++ b/dist/modules/src/matroska/matroska-demuxer.js
-@@ -489,7 +489,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -60,6 +60,9 @@ export class MatroskaDemuxer extends Demuxer {
+         this.isWebM = false;
+         this.reader = input._reader;
+     }
++    get skipDescriptiveMetadata() {
++        return this.input._skipMatroskaDescriptiveMetadata === true;
++    }
+     async getTrackBackings() {
+         await this.readMetadata();
+         return this.segments.flatMap(segment => segment.tracks.map(track => track.trackBacking));
+@@ -77,6 +80,8 @@ export class MatroskaDemuxer extends Demuxer {
+     }
+     async getMetadataTags() {
+         await this.readMetadata();
++        if (this.skipDescriptiveMetadata)
++            return {};
+         // Load metadata tags from each segment lazily (only once)
+         for (const segment of this.segments) {
+             if (!segment.metadataTagsCollected) {
+@@ -221,7 +226,7 @@ export class MatroskaDemuxer extends Demuxer {
+                 }
+             }
+             else if (id === EBMLId.Tags || id === EBMLId.Attachments) {
+-                // Metadata found at the beginning of the segment, great, let's parse it
++                // Descriptive metadata does not affect WMC tracks or packets.
+                 if (id === EBMLId.Tags) {
+                     this.currentSegment.tagsSeen = true;
+                 }
+@@ -229,11 +234,13 @@ export class MatroskaDemuxer extends Demuxer {
+                     this.currentSegment.attachmentsSeen = true;
+                 }
+                 assertDefinedSize(size);
+-                let slice = this.reader.requestSlice(dataStartPos, size);
+-                if (isThenable(slice))
+-                    slice = await slice;
+-                if (slice) {
+-                    this.readContiguousElements(slice);
++                if (!this.skipDescriptiveMetadata) {
++                    let slice = this.reader.requestSlice(dataStartPos, size);
++                    if (isThenable(slice))
++                        slice = await slice;
++                    if (slice) {
++                        this.readContiguousElements(slice);
++                    }
+                 }
+             }
+             else if (id === EBMLId.Cluster) {
+@@ -489,7 +496,11 @@ export class MatroskaDemuxer extends Demuxer {
              }
              // Decode the block data if it hasn't been decoded yet (needed for lacing expansion)
              if (!originalBlock.decoded) {
@@ -671,7 +718,16 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42ab
                  originalBlock.decoded = true;
              }
              const slice = FileSlice.tempFromBytes(originalBlock.data);
-@@ -1323,7 +1327,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -581,6 +592,8 @@ export class MatroskaDemuxer extends Demuxer {
+         }
+     }
+     async loadSegmentMetadata(segment) {
++        if (this.skipDescriptiveMetadata)
++            return;
+         for (const seekEntry of segment.seekEntries) {
+             if (seekEntry.id === EBMLId.Tags && !segment.tagsSeen) {
+                 // We need to load the tags
+@@ -1323,7 +1336,11 @@ export class MatroskaDemuxer extends Demuxer {
                          // https://github.com/Vanilagy/mediabunny/issues/192
                          isKeyFrame = true;
                      }
@@ -684,7 +740,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42ab
                      const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
                      trackData.blocks.push({
                          timestamp: relativeTimestamp, // We'll add the cluster's timestamp to this later
-@@ -1360,7 +1368,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1360,7 +1377,11 @@ export class MatroskaDemuxer extends Demuxer {
                      const relativeTimestamp = readI16Be(slice);
                      const flags = readU8(slice);
                      const lacing = (flags >> 1) & 0x3; // If the block is laced, we'll expand it later
@@ -697,7 +753,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42ab
                      const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
                      this.currentBlock = {
                          timestamp: relativeTimestamp, // We'll add the cluster's timestamp to this later
-@@ -1402,6 +1414,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1402,6 +1423,9 @@ export class MatroskaDemuxer extends Demuxer {
                  {
                      if (!this.currentBlockAdditional)
                          break;
@@ -707,7 +763,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42ab
                      this.currentBlockAdditional.data = readBytes(slice, size);
                  }
                  ;
-@@ -1664,7 +1679,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1664,7 +1688,7 @@ export class MatroskaDemuxer extends Demuxer {
          slice.filePos = dataStartPos + size;
          return true;
      }
@@ -716,7 +772,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42ab
          assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
          let currentData = rawData;
          for (const instruction of track.decodingInstructions) {
-@@ -1677,6 +1692,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1677,6 +1701,9 @@ export class MatroskaDemuxer extends Demuxer {
                                  {
                                      if (instruction.data.settings && instruction.data.settings.length > 0) {
                                          const prefix = instruction.data.settings;
@@ -726,7 +782,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42ab
                                          const newData = new Uint8Array(prefix.length + currentData.length);
                                          newData.set(prefix, 0);
                                          newData.set(currentData, prefix.length);
-@@ -2007,9 +2025,13 @@ class MatroskaTrackBacking {
+@@ -2007,9 +2034,13 @@ class MatroskaTrackBacking {
          const trackData = cluster.trackData.get(this.internalTrack.id);
          const block = trackData.blocks[blockIndex];
          assert(block);
@@ -741,7 +797,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42ab
              block.decoded = true;
          }
          if (!block.postProcessed) {
-@@ -2023,6 +2045,9 @@ class MatroskaTrackBacking {
+@@ -2023,6 +2054,9 @@ class MatroskaTrackBacking {
                      && block.data[7] === 102; // 'f'
                  if (!hasFrameContainer) {
                      // Wrap the frame in a frame container
@@ -751,7 +807,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..ac00818e28f63653b1cea62ecebb42ab
                      const newData = new Uint8Array(block.data.length + 8);
                      const newDataView = toDataView(newData);
                      newDataView.setUint32(0, newData.length, false);
-@@ -2039,6 +2064,9 @@ class MatroskaTrackBacking {
+@@ -2039,6 +2073,9 @@ class MatroskaTrackBacking {
          const data = options.metadataOnly ? PLACEHOLDER_DATA : block.data;
          const timestamp = block.timestamp / this.internalTrack.segment.timestampFactor;
          const duration = block.duration / this.internalTrack.segment.timestampFactor;
@@ -1913,10 +1969,56 @@ index 0000000000000000000000000000000000000000..07202d96a2abae0cdaf2ec98bb5f5d01
 +	}
 +}
 diff --git a/src/matroska/matroska-demuxer.ts b/src/matroska/matroska-demuxer.ts
-index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f091abd9020 100644
+index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf7e36305e 100644
 --- a/src/matroska/matroska-demuxer.ts
 +++ b/src/matroska/matroska-demuxer.ts
-@@ -822,7 +822,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -292,6 +292,10 @@ export class MatroskaDemuxer extends Demuxer {
+ 		this.reader = input._reader;
+ 	}
+ 
++	get skipDescriptiveMetadata() {
++		return (this.input as Input & { _skipMatroskaDescriptiveMetadata?: boolean })._skipMatroskaDescriptiveMetadata === true;
++	}
++
+ 	async getTrackBackings() {
+ 		await this.readMetadata();
+ 		return this.segments.flatMap(segment => segment.tracks.map(track => track.trackBacking!));
+@@ -315,6 +319,7 @@ export class MatroskaDemuxer extends Demuxer {
+ 
+ 	async getMetadataTags() {
+ 		await this.readMetadata();
++		if (this.skipDescriptiveMetadata) return {};
+ 
+ 		// Load metadata tags from each segment lazily (only once)
+ 		for (const segment of this.segments) {
+@@ -491,7 +496,7 @@ export class MatroskaDemuxer extends Demuxer {
+ 					this.readContiguousElements(slice);
+ 				}
+ 			} else if (id === EBMLId.Tags || id === EBMLId.Attachments) {
+-				// Metadata found at the beginning of the segment, great, let's parse it
++				// Descriptive metadata does not affect WMC tracks or packets.
+ 				if (id === EBMLId.Tags) {
+ 					this.currentSegment.tagsSeen = true;
+ 				} else {
+@@ -500,11 +505,13 @@ export class MatroskaDemuxer extends Demuxer {
+ 
+ 				assertDefinedSize(size);
+ 
+-				let slice = this.reader.requestSlice(dataStartPos, size);
+-				if (isThenable(slice)) slice = await slice;
++				if (!this.skipDescriptiveMetadata) {
++					let slice = this.reader.requestSlice(dataStartPos, size);
++					if (isThenable(slice)) slice = await slice;
+ 
+-				if (slice) {
+-					this.readContiguousElements(slice);
++					if (slice) {
++						this.readContiguousElements(slice);
++					}
+ 				}
+ 			} else if (id === EBMLId.Cluster) {
+ 				this.currentSegment.clusterSeekStartPos = elementStartPos;
+@@ -822,7 +829,11 @@ export class MatroskaDemuxer extends Demuxer {
  
  			// Decode the block data if it hasn't been decoded yet (needed for lacing expansion)
  			if (!originalBlock.decoded) {
@@ -1929,7 +2031,15 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f09
  				originalBlock.decoded = true;
  			}
  
-@@ -1591,7 +1595,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -932,6 +943,7 @@ export class MatroskaDemuxer extends Demuxer {
+ 	}
+ 
+ 	async loadSegmentMetadata(segment: Segment) {
++		if (this.skipDescriptiveMetadata) return;
+ 		for (const seekEntry of segment.seekEntries) {
+ 			if (seekEntry.id === EBMLId.Tags && !segment.tagsSeen) {
+ 				// We need to load the tags
+@@ -1591,7 +1603,11 @@ export class MatroskaDemuxer extends Demuxer {
  					isKeyFrame = true;
  				}
  
@@ -1942,7 +2052,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f09
  				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
  
  				trackData.blocks.push({
-@@ -1628,7 +1636,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1628,7 +1644,11 @@ export class MatroskaDemuxer extends Demuxer {
  				const flags = readU8(slice);
  				const lacing = (flags >> 1) & 0x3 as BlockLacing; // If the block is laced, we'll expand it later
  
@@ -1955,7 +2065,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f09
  				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
  
  				this.currentBlock = {
-@@ -1667,6 +1679,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1667,6 +1687,9 @@ export class MatroskaDemuxer extends Demuxer {
  			case EBMLId.BlockAdditional: {
  				if (!this.currentBlockAdditional) break;
  
@@ -1965,7 +2075,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f09
  				this.currentBlockAdditional.data = readBytes(slice, size);
  			}; break;
  
-@@ -1895,7 +1910,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1895,7 +1918,7 @@ export class MatroskaDemuxer extends Demuxer {
  		return true;
  	}
  
@@ -1974,7 +2084,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f09
  		assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
  
  		let currentData = rawData;
-@@ -1909,6 +1924,12 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1909,6 +1932,12 @@ export class MatroskaDemuxer extends Demuxer {
  						case ContentCompAlgo.HeaderStripping: {
  							if (instruction.data.settings && instruction.data.settings.length > 0) {
  								const prefix = instruction.data.settings;
@@ -1987,7 +2097,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f09
  								const newData = new Uint8Array(prefix.length + currentData.length);
  
  								newData.set(prefix, 0);
-@@ -2295,10 +2316,18 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2295,10 +2324,18 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  		const trackData = cluster.trackData.get(this.internalTrack.id)!;
  		const block = trackData.blocks[blockIndex];
  		assert(block);
@@ -2007,7 +2117,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f09
  			block.decoded = true;
  		}
  
-@@ -2315,6 +2344,12 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2315,6 +2352,12 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  
  				if (!hasFrameContainer) {
  					// Wrap the frame in a frame container
@@ -2020,7 +2130,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..967e00c018bcbeb0edb6f63f4a301f09
  					const newData = new Uint8Array(block.data.length + 8);
  					const newDataView = toDataView(newData);
  
-@@ -2334,6 +2369,9 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2334,6 +2377,9 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  		const data = options.metadataOnly ? PLACEHOLDER_DATA : block.data;
  		const timestamp = block.timestamp / this.internalTrack.segment.timestampFactor;
  		const duration = block.duration / this.internalTrack.segment.timestampFactor;

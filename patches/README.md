@@ -11,12 +11,20 @@ cumulative metadata and logical-sample budgets before expanding tables or
 fragments. FLAC, Ogg, Matroska, and MPEG-TS apply the same input budgets to their
 retained data. The reader declaration matches its patched constructor.
 
+WMC does not use Matroska tags or attachments. Its inputs opt into skipping these
+descriptive elements before reading their payloads, including leading metadata
+and tags reached through seek entries in later segments. Structural track, codec,
+timing, and cue elements remain parsed. Inputs without the opt-in retain
+MediaBunny's original metadata behavior.
+
 The 1.61.5 port preserves upstream source-disposal, HLS empty-segment, decoder
 queue, conversion-progress, and color-space changes. No existing safety hunk was
 supplied upstream by this release. The installed-parser tests in
 `test/unit/utils/mediabunny-memory-limits.test.ts` and
 `test/unit/utils/mediabunny-mp4-metadata-limits.test.ts` exercise bounded
 rejection and valid media with the actual patched package.
+`test/unit/utils/mediabunny-matroska-metadata.test.ts` covers the Matroska skip
+policy and the dependency's unchanged default metadata behavior.
 
 For a later MediaBunny update, review the complete published package delta and
 port the patch to its runtime modules, source, and declarations. Update the exact

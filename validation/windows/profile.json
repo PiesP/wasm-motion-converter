@@ -19,6 +19,7 @@
     "validation/windows/mp4-budget-fixture.ts",
     "public/test-video-contract-bframes.mp4",
     "public/test-video-contract-vp9.webm",
+    "public/test-video-matroska-metadata.mkv",
     "validation/windows/offline-recovery.ts",
     "public/test-video-contract-short-tail.mp4",
     "public/test-video-contract-integer-vfr.mp4",

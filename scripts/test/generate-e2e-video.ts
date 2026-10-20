@@ -17,6 +17,7 @@ interface VideoFixture {
   displayRotation?: number;
   requiresReorderedFrames?: boolean;
   finalSampleDurationMs?: number;
+  attachedTextBytes?: number;
 }
 
 /** Adjust only the final singleton sample in the small, ordinary MP4 fixture. */
@@ -164,6 +165,13 @@ export function generateE2eVideo(): void {
       outputArgs: [],
     },
     {
+      fileName: 'test-video-matroska-metadata.mkv',
+      input: CFR_MARKERS,
+      encoderArgs: ['-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '24', '-g', '1'],
+      outputArgs: ['-metadata', 'title=matroska-skip', '-metadata', 'artist=fixture-artist'],
+      attachedTextBytes: 128,
+    },
+    {
       fileName: 'test-video-contract-vfr-par.mp4',
       input:
         'color=c=black:size=96x64:rate=100:duration=1,' +
@@ -251,8 +259,13 @@ export function generateE2eVideo(): void {
     mkdirSync(dirname(outputPath), { recursive: true });
     const encodedPath =
       fixture.displayRotation === undefined ? outputPath : `${outputPath}.unrotated.mp4`;
+    const attachmentBytes = fixture.attachedTextBytes ?? 0;
+    const attachmentPath = attachmentBytes > 0 ? `${outputPath}.attachment.txt` : undefined;
 
     try {
+      if (attachmentPath) {
+        writeFileSync(attachmentPath, new Uint8Array(attachmentBytes).fill(0x61));
+      }
       const result = spawnSync(
         'ffmpeg',
         [
@@ -270,6 +283,9 @@ export function generateE2eVideo(): void {
           '-pix_fmt',
           'yuv420p',
           ...(fixture.outputArgs ?? ['-movflags', '+faststart']),
+          ...(attachmentPath
+            ? ['-attach', attachmentPath, '-metadata:s:t', 'mimetype=text/plain']
+            : []),
           '-y',
           encodedPath,
         ],
@@ -319,15 +335,59 @@ export function generateE2eVideo(): void {
       if (fixture.finalSampleDurationMs !== undefined) {
         setFinalSampleDuration(outputPath, fixture.finalSampleDurationMs);
       }
-      const size = statSync(outputPath).size;
+      const mediaBytes = attachmentPath ? readFileSync(outputPath) : undefined;
+      const size = mediaBytes?.byteLength ?? statSync(outputPath).size;
       if (size === 0) {
         throw new Error(`Generated an empty E2E codec fixture: ${outputPath}`);
       }
       if (fixture.requiresReorderedFrames) assertReorderedFrames(outputPath);
+      if (mediaBytes) {
+        const probe = spawnSync(
+          'ffprobe',
+          [
+            '-v',
+            'error',
+            '-show_entries',
+            'format_tags=title,ARTIST:stream=codec_type:stream_tags=mimetype',
+            '-of',
+            'json',
+            outputPath,
+          ],
+          { encoding: 'utf8' }
+        );
+        if (probe.error) throw probe.error;
+        if (probe.status !== 0) throw new Error(`ffprobe failed: ${probe.stderr.trim()}`);
+        const metadata = JSON.parse(probe.stdout) as {
+          format?: { tags?: { title?: string; ARTIST?: string } };
+          streams?: Array<{ codec_type?: string; tags?: { mimetype?: string } }>;
+        };
+        if (
+          metadata.format?.tags?.title !== 'matroska-skip' ||
+          metadata.format?.tags?.ARTIST !== 'fixture-artist' ||
+          !metadata.streams?.some(
+            (stream) => stream.codec_type === 'attachment' && stream.tags?.mimetype === 'text/plain'
+          )
+        ) {
+          throw new Error('Matroska fixture lacks its tag or attachment');
+        }
+        const clusterOffset = mediaBytes.indexOf(Buffer.from([0x1f, 0x43, 0xb6, 0x75]));
+        const tagOffset = mediaBytes.indexOf('fixture-artist');
+        const attachmentOffset = mediaBytes.indexOf(Buffer.alloc(attachmentBytes, 0x61));
+        if (
+          clusterOffset <= 0 ||
+          tagOffset <= 0 ||
+          attachmentOffset <= 0 ||
+          tagOffset >= clusterOffset ||
+          attachmentOffset >= clusterOffset
+        ) {
+          throw new Error('Matroska fixture metadata must precede the first cluster');
+        }
+      }
 
       console.log(`[e2e-fixture] Generated ${outputPath} (${size} bytes)`);
     } finally {
       if (encodedPath !== outputPath) rmSync(encodedPath, { force: true });
+      if (attachmentPath) rmSync(attachmentPath, { force: true });
     }
   }
 }
