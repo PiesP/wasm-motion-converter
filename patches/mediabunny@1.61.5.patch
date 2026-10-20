@@ -655,10 +655,24 @@ index 0000000000000000000000000000000000000000..b994275aca28a8cc3ad933ba369442f6
 +    }
 +}
 diff --git a/dist/modules/src/matroska/matroska-demuxer.js b/dist/modules/src/matroska/matroska-demuxer.js
-index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dcd2b0e6a4 100644
+index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc3b326a21 100644
 --- a/dist/modules/src/matroska/matroska-demuxer.js
 +++ b/dist/modules/src/matroska/matroska-demuxer.js
-@@ -60,6 +60,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -41,6 +41,13 @@ const METADATA_ELEMENTS = [
+     { id: EBMLId.Tracks, flag: 'tracksSeen' },
+     { id: EBMLId.Cues, flag: 'cuesSeen' },
+ ];
++const DESCRIPTIVE_ELEMENTS = new Set([
++    EBMLId.Tags, EBMLId.Tag, EBMLId.Targets, EBMLId.TargetTypeValue,
++    EBMLId.TagTrackUID, EBMLId.TagEditionUID, EBMLId.TagChapterUID, EBMLId.TagAttachmentUID,
++    EBMLId.SimpleTag, EBMLId.TagName, EBMLId.TagString, EBMLId.TagBinary,
++    EBMLId.Attachments, EBMLId.AttachedFile, EBMLId.FileUID, EBMLId.FileName,
++    EBMLId.FileMediaType, EBMLId.FileData, EBMLId.FileDescription,
++]);
+ const MAX_RESYNC_LENGTH = 10 * 2 ** 20; // 10 MiB
+ export class MatroskaDemuxer extends Demuxer {
+     constructor(input) {
+@@ -60,6 +67,9 @@ export class MatroskaDemuxer extends Demuxer {
          this.isWebM = false;
          this.reader = input._reader;
      }
@@ -668,7 +682,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
      async getTrackBackings() {
          await this.readMetadata();
          return this.segments.flatMap(segment => segment.tracks.map(track => track.trackBacking));
-@@ -77,6 +80,8 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -77,6 +87,8 @@ export class MatroskaDemuxer extends Demuxer {
      }
      async getMetadataTags() {
          await this.readMetadata();
@@ -677,7 +691,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
          // Load metadata tags from each segment lazily (only once)
          for (const segment of this.segments) {
              if (!segment.metadataTagsCollected) {
-@@ -221,7 +226,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -221,7 +233,7 @@ export class MatroskaDemuxer extends Demuxer {
                  }
              }
              else if (id === EBMLId.Tags || id === EBMLId.Attachments) {
@@ -686,7 +700,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
                  if (id === EBMLId.Tags) {
                      this.currentSegment.tagsSeen = true;
                  }
-@@ -229,11 +234,13 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -229,11 +241,13 @@ export class MatroskaDemuxer extends Demuxer {
                      this.currentSegment.attachmentsSeen = true;
                  }
                  assertDefinedSize(size);
@@ -705,7 +719,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
                  }
              }
              else if (id === EBMLId.Cluster) {
-@@ -489,7 +496,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -489,7 +503,11 @@ export class MatroskaDemuxer extends Demuxer {
              }
              // Decode the block data if it hasn't been decoded yet (needed for lacing expansion)
              if (!originalBlock.decoded) {
@@ -718,7 +732,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
                  originalBlock.decoded = true;
              }
              const slice = FileSlice.tempFromBytes(originalBlock.data);
-@@ -581,6 +592,8 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -581,6 +599,8 @@ export class MatroskaDemuxer extends Demuxer {
          }
      }
      async loadSegmentMetadata(segment) {
@@ -727,7 +741,20 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
          for (const seekEntry of segment.seekEntries) {
              if (seekEntry.id === EBMLId.Tags && !segment.tagsSeen) {
                  // We need to load the tags
-@@ -1323,7 +1336,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -640,6 +660,12 @@ export class MatroskaDemuxer extends Demuxer {
+         const { id, size } = header;
+         const dataStartPos = slice.filePos;
+         assertDefinedSize(size);
++        // The shared traversal also sees malformed or nested descriptive elements.
++        // Skip them before their strings or attachment data can be decoded or retained.
++        if (this.skipDescriptiveMetadata && DESCRIPTIVE_ELEMENTS.has(id)) {
++            slice.filePos = dataStartPos + size;
++            return true;
++        }
+         switch (id) {
+             case EBMLId.DocType:
+                 {
+@@ -1323,7 +1349,11 @@ export class MatroskaDemuxer extends Demuxer {
                          // https://github.com/Vanilagy/mediabunny/issues/192
                          isKeyFrame = true;
                      }
@@ -740,7 +767,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
                      const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
                      trackData.blocks.push({
                          timestamp: relativeTimestamp, // We'll add the cluster's timestamp to this later
-@@ -1360,7 +1377,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1360,7 +1390,11 @@ export class MatroskaDemuxer extends Demuxer {
                      const relativeTimestamp = readI16Be(slice);
                      const flags = readU8(slice);
                      const lacing = (flags >> 1) & 0x3; // If the block is laced, we'll expand it later
@@ -753,7 +780,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
                      const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
                      this.currentBlock = {
                          timestamp: relativeTimestamp, // We'll add the cluster's timestamp to this later
-@@ -1402,6 +1423,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1402,6 +1436,9 @@ export class MatroskaDemuxer extends Demuxer {
                  {
                      if (!this.currentBlockAdditional)
                          break;
@@ -763,7 +790,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
                      this.currentBlockAdditional.data = readBytes(slice, size);
                  }
                  ;
-@@ -1664,7 +1688,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1664,7 +1701,7 @@ export class MatroskaDemuxer extends Demuxer {
          slice.filePos = dataStartPos + size;
          return true;
      }
@@ -772,7 +799,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
          assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
          let currentData = rawData;
          for (const instruction of track.decodingInstructions) {
-@@ -1677,6 +1701,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1677,6 +1714,9 @@ export class MatroskaDemuxer extends Demuxer {
                                  {
                                      if (instruction.data.settings && instruction.data.settings.length > 0) {
                                          const prefix = instruction.data.settings;
@@ -782,7 +809,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
                                          const newData = new Uint8Array(prefix.length + currentData.length);
                                          newData.set(prefix, 0);
                                          newData.set(currentData, prefix.length);
-@@ -2007,9 +2034,13 @@ class MatroskaTrackBacking {
+@@ -2007,9 +2047,13 @@ class MatroskaTrackBacking {
          const trackData = cluster.trackData.get(this.internalTrack.id);
          const block = trackData.blocks[blockIndex];
          assert(block);
@@ -797,7 +824,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
              block.decoded = true;
          }
          if (!block.postProcessed) {
-@@ -2023,6 +2054,9 @@ class MatroskaTrackBacking {
+@@ -2023,6 +2067,9 @@ class MatroskaTrackBacking {
                      && block.data[7] === 102; // 'f'
                  if (!hasFrameContainer) {
                      // Wrap the frame in a frame container
@@ -807,7 +834,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..0424b41fd46c47efe5d944bb3c1932dc
                      const newData = new Uint8Array(block.data.length + 8);
                      const newDataView = toDataView(newData);
                      newDataView.setUint32(0, newData.length, false);
-@@ -2039,6 +2073,9 @@ class MatroskaTrackBacking {
+@@ -2039,6 +2086,9 @@ class MatroskaTrackBacking {
          const data = options.metadataOnly ? PLACEHOLDER_DATA : block.data;
          const timestamp = block.timestamp / this.internalTrack.segment.timestampFactor;
          const duration = block.duration / this.internalTrack.segment.timestampFactor;
@@ -1969,10 +1996,24 @@ index 0000000000000000000000000000000000000000..07202d96a2abae0cdaf2ec98bb5f5d01
 +	}
 +}
 diff --git a/src/matroska/matroska-demuxer.ts b/src/matroska/matroska-demuxer.ts
-index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf7e36305e 100644
+index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7a7767990 100644
 --- a/src/matroska/matroska-demuxer.ts
 +++ b/src/matroska/matroska-demuxer.ts
-@@ -292,6 +292,10 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -255,6 +255,13 @@ const METADATA_ELEMENTS = [
+ 	{ id: EBMLId.Tracks, flag: 'tracksSeen' },
+ 	{ id: EBMLId.Cues, flag: 'cuesSeen' },
+ ] as const;
++const DESCRIPTIVE_ELEMENTS = new Set<number>([
++	EBMLId.Tags, EBMLId.Tag, EBMLId.Targets, EBMLId.TargetTypeValue,
++	EBMLId.TagTrackUID, EBMLId.TagEditionUID, EBMLId.TagChapterUID, EBMLId.TagAttachmentUID,
++	EBMLId.SimpleTag, EBMLId.TagName, EBMLId.TagString, EBMLId.TagBinary,
++	EBMLId.Attachments, EBMLId.AttachedFile, EBMLId.FileUID, EBMLId.FileName,
++	EBMLId.FileMediaType, EBMLId.FileData, EBMLId.FileDescription,
++]);
+ const MAX_RESYNC_LENGTH = 10 * 2 ** 20; // 10 MiB
+ 
+ export class MatroskaDemuxer extends Demuxer {
+@@ -292,6 +299,10 @@ export class MatroskaDemuxer extends Demuxer {
  		this.reader = input._reader;
  	}
  
@@ -1983,7 +2024,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  	async getTrackBackings() {
  		await this.readMetadata();
  		return this.segments.flatMap(segment => segment.tracks.map(track => track.trackBacking!));
-@@ -315,6 +319,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -315,6 +326,7 @@ export class MatroskaDemuxer extends Demuxer {
  
  	async getMetadataTags() {
  		await this.readMetadata();
@@ -1991,7 +2032,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  
  		// Load metadata tags from each segment lazily (only once)
  		for (const segment of this.segments) {
-@@ -491,7 +496,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -491,7 +503,7 @@ export class MatroskaDemuxer extends Demuxer {
  					this.readContiguousElements(slice);
  				}
  			} else if (id === EBMLId.Tags || id === EBMLId.Attachments) {
@@ -2000,7 +2041,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  				if (id === EBMLId.Tags) {
  					this.currentSegment.tagsSeen = true;
  				} else {
-@@ -500,11 +505,13 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -500,11 +512,13 @@ export class MatroskaDemuxer extends Demuxer {
  
  				assertDefinedSize(size);
  
@@ -2018,7 +2059,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  				}
  			} else if (id === EBMLId.Cluster) {
  				this.currentSegment.clusterSeekStartPos = elementStartPos;
-@@ -822,7 +829,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -822,7 +836,11 @@ export class MatroskaDemuxer extends Demuxer {
  
  			// Decode the block data if it hasn't been decoded yet (needed for lacing expansion)
  			if (!originalBlock.decoded) {
@@ -2031,7 +2072,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  				originalBlock.decoded = true;
  			}
  
-@@ -932,6 +943,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -932,6 +950,7 @@ export class MatroskaDemuxer extends Demuxer {
  	}
  
  	async loadSegmentMetadata(segment: Segment) {
@@ -2039,7 +2080,20 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  		for (const seekEntry of segment.seekEntries) {
  			if (seekEntry.id === EBMLId.Tags && !segment.tagsSeen) {
  				// We need to load the tags
-@@ -1591,7 +1603,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1001,6 +1020,12 @@ export class MatroskaDemuxer extends Demuxer {
+ 		const { id, size } = header;
+ 		const dataStartPos = slice.filePos;
+ 		assertDefinedSize(size);
++		// The shared traversal also sees malformed or nested descriptive elements.
++		// Skip them before their strings or attachment data can be decoded or retained.
++		if (this.skipDescriptiveMetadata && DESCRIPTIVE_ELEMENTS.has(id)) {
++			slice.filePos = dataStartPos + size;
++			return true;
++		}
+ 
+ 		switch (id) {
+ 			case EBMLId.DocType: {
+@@ -1591,7 +1616,11 @@ export class MatroskaDemuxer extends Demuxer {
  					isKeyFrame = true;
  				}
  
@@ -2052,7 +2106,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
  
  				trackData.blocks.push({
-@@ -1628,7 +1644,11 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1628,7 +1657,11 @@ export class MatroskaDemuxer extends Demuxer {
  				const flags = readU8(slice);
  				const lacing = (flags >> 1) & 0x3 as BlockLacing; // If the block is laced, we'll expand it later
  
@@ -2065,7 +2119,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
  
  				this.currentBlock = {
-@@ -1667,6 +1687,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1667,6 +1700,9 @@ export class MatroskaDemuxer extends Demuxer {
  			case EBMLId.BlockAdditional: {
  				if (!this.currentBlockAdditional) break;
  
@@ -2075,7 +2129,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  				this.currentBlockAdditional.data = readBytes(slice, size);
  			}; break;
  
-@@ -1895,7 +1918,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1895,7 +1931,7 @@ export class MatroskaDemuxer extends Demuxer {
  		return true;
  	}
  
@@ -2084,7 +2138,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  		assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
  
  		let currentData = rawData;
-@@ -1909,6 +1932,12 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1909,6 +1945,12 @@ export class MatroskaDemuxer extends Demuxer {
  						case ContentCompAlgo.HeaderStripping: {
  							if (instruction.data.settings && instruction.data.settings.length > 0) {
  								const prefix = instruction.data.settings;
@@ -2097,7 +2151,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  								const newData = new Uint8Array(prefix.length + currentData.length);
  
  								newData.set(prefix, 0);
-@@ -2295,10 +2324,18 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2295,10 +2337,18 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  		const trackData = cluster.trackData.get(this.internalTrack.id)!;
  		const block = trackData.blocks[blockIndex];
  		assert(block);
@@ -2117,7 +2171,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  			block.decoded = true;
  		}
  
-@@ -2315,6 +2352,12 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2315,6 +2365,12 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  
  				if (!hasFrameContainer) {
  					// Wrap the frame in a frame container
@@ -2130,7 +2184,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..1e4694da3ee4ae2d1e84f18a197691cf
  					const newData = new Uint8Array(block.data.length + 8);
  					const newDataView = toDataView(newData);
  
-@@ -2334,6 +2377,9 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2334,6 +2390,9 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  		const data = options.metadataOnly ? PLACEHOLDER_DATA : block.data;
  		const timestamp = block.timestamp / this.internalTrack.segment.timestampFactor;
  		const duration = block.duration / this.internalTrack.segment.timestampFactor;

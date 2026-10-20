@@ -3421,7 +3421,7 @@ export async function run({
     validateOutput(matroskaOutput, 'gif', 48, 32);
     await recordScreenshot(page, outputRoot, 'matroska-metadata-result.png', artifacts);
     const matroskaInput = await readFile(matroskaMetadataFixture);
-    checks.push({
+    const matroskaCheck = {
       id: 'matroska-metadata-skip',
       status: 'passed',
       fixtureBytes: matroskaInput.byteLength,
@@ -3430,7 +3430,17 @@ export async function run({
       outputSha256: sha256(matroskaOutput),
       videoSelected: true,
       gifDownload: true,
+    };
+    const matroskaCheckFile = 'matroska-metadata-check.json';
+    const matroskaCheckBytes = Buffer.from(`${JSON.stringify(matroskaCheck, null, 2)}\n`);
+    await writeFile(join(outputRoot, matroskaCheckFile), matroskaCheckBytes);
+    artifacts.push({
+      kind: 'check',
+      file: matroskaCheckFile,
+      bytes: matroskaCheckBytes.byteLength,
+      sha256: sha256(matroskaCheckBytes),
     });
+    checks.push(matroskaCheck);
     checks.push(
       await convertSmallFixture(page, started.url, smallFixture, 'webp', outputRoot, artifacts)
     );
