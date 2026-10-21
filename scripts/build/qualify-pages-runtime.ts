@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 /** Opt-in Pages evidence: imported before Corepack/pnpm executes its entrypoint. */
 import { readFileSync, realpathSync } from 'node:fs';
 import https from 'node:https';
+import { dirname, join } from 'node:path';
 
 type Observation = {
   url: string;
@@ -64,6 +66,7 @@ if (process.env.CF_PAGES !== '1' || process.env.PAGES_NODE_QUALIFICATION !== '1'
 const manifest = JSON.parse(
   readFileSync(new URL('../../package.json', import.meta.url), 'utf8')
 ) as {
+  packageManager: string;
   volta: { node: string };
 };
 if (process.versions.node !== manifest.volta.node)
@@ -75,7 +78,9 @@ const entry = process.argv[1];
 if (!entry || !/\.[cm]?js$/u.test(realpathSync(entry))) {
   throw new Error('Pages package manager must use a JavaScript entrypoint');
 }
-const results = await Promise.all(urls.flatMap((url) => [probeHttps(url), probeFetch(url)]));
+const results = (
+  await Promise.all(urls.map(async (url) => [await probeHttps(url), await probeFetch(url)]))
+).flat();
 const passed = results.every((result) =>
   result.url === urls[0] ? result.tls === 'accepted' : certificateErrors.has(result.code ?? '')
 );
@@ -100,3 +105,40 @@ console.error(
   })}`
 );
 if (!passed) throw new Error('Pages package-manager TLS qualification failed');
+
+// Corepack replaces argv before loading pnpm in this same Node process. Bind the
+// receipt to the final package entry, rather than only its initial launcher.
+process.on('exit', () => {
+  try {
+    const finalEntry = realpathSync(process.argv[1] ?? '');
+    const packageRoot = dirname(dirname(finalEntry));
+    const manager = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
+      name: string;
+      version: string;
+    };
+    const managerPassed =
+      /\/bin\/pnpm\.[cm]js$/u.test(finalEntry) &&
+      manager.name === 'pnpm' &&
+      `pnpm@${manager.version}` === manifest.packageManager;
+    console.error(
+      `[pages-package-manager] ${JSON.stringify({
+        version: manager.version,
+        node: process.version,
+        executable: process.execPath,
+        entry: finalEntry,
+        entry_sha256: createHash('sha256').update(readFileSync(finalEntry)).digest('hex'),
+        bundle_sha256: createHash('sha256')
+          .update(readFileSync(join(packageRoot, 'dist/pnpm.mjs')))
+          .digest('hex'),
+        passed: managerPassed,
+      })}`
+    );
+    if (!managerPassed) process.exitCode = 1;
+  } catch (error) {
+    console.error(
+      '[pages-package-manager] Unable to verify the final JavaScript package entry',
+      error
+    );
+    process.exitCode = 1;
+  }
+});

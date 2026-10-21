@@ -192,6 +192,7 @@ Wrangler `[vars]` as well as
 the project settings: Pages projects using a Wrangler file read its variables
 into the build environment before deciding whether to install dependencies.
 Confirm the switch and the absence of an automatic install in the provider log.
+
 The incident Node definition under `scripts/build/node-build-definitions` supplies
 26.12.1 while the provider's upstream version catalog lacks it. Wrangler passes
 `NODE_BUILD_DEFINITIONS` before asdf installation, pointing to the observed
@@ -204,8 +205,8 @@ changing the Node pin or retiring the incident override.
 
 `PAGES_NODE_QUALIFICATION=1` is a temporary provider-only diagnostic switch.
 Combined with `CF_PAGES=1`, it imports the bounded qualifier before Corepack/pnpm's
-version command, records the actual JavaScript entrypoint, Node executable and
-CA settings, and checks normal HTTPS plus one direct and one cross-signed
+version command, records the initial launcher and final pnpm JavaScript entrypoint,
+Node executable, entry/bundle hashes and CA settings, and checks normal HTTPS plus one direct and one cross-signed
 incident sample through https and fetch. DNS/timeouts are inconclusive failures.
 It leaves ordinary unit CI and normal build commands free of live probes when
 unset. Remove the switch after retaining a source-bound successful provider
