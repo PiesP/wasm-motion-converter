@@ -327,6 +327,10 @@ published assets stop the retry and require maintainer review. The workflow
 never replaces existing release assets or retargets tags. An intentional rollback
 needs a separate reviewed procedure.
 
+Defer replaying an immutable historical tag that selects an unremediated runtime
+until that runtime's trust behavior or an environment-specific mitigation is qualified. The current manifest pin
+does not change existing tags.
+
 Each new release-branch artifact contains `release-state.json` with the version and verified
 tagged commit. The downloadable `metadata.json` records that same identity.
 For the existing branch without `release-state.json`, the guard verifies the
