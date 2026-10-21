@@ -194,32 +194,38 @@ into the build environment before deciding whether to install dependencies.
 Confirm the switch and the absence of an automatic install in the provider log.
 
 The incident Node definition under `scripts/build/node-build-definitions` supplies
-26.12.1 while the provider's upstream version catalog lacks it. Set
-`NODE_BUILD_DEFINITIONS` in the production project's build environment as well as
-Wrangler, pointing to `/opt/buildhome/repo/scripts/build/node-build-definitions`.
-The clone phase uses `/opt/buildhome/clone`, but Pages moves that checkout to the
-observed `/opt/buildhome/repo` build root before installing tools. A Wrangler
-variable printed in the log alone does not prove installer environment delivery.
-The definition admits only Linux x64,
-verifies the official binary SHA-256, and rejects compile mode or tarball
-overrides; it has no source-build fallback. Keep the exact manifest and
-`.node-version` checks. A changed provider clone layout must fail installation,
-not select an older runtime. Review this definition and variable together when
-changing the Node pin or retiring the incident override.
+26.12.1 while the provider's upstream version catalog lacks it. Declare
+`NODE_BUILD_DEFINITIONS` in tracked Wrangler `[vars]`, pointing to
+`/opt/buildhome/repo/scripts/build/node-build-definitions`. The clone phase uses
+`/opt/buildhome/clone`, but Pages moves that checkout to `/opt/buildhome/repo`
+before installing tools. A successful production Pages deployment confirmed the
+tracked Wrangler variable is sufficient with the project-only variable absent;
+verify the provider log shows Node 26.12.1 installed before the build proceeds.
+The definition admits only Linux x64, verifies the official binary SHA-256, and
+rejects compile mode or tarball overrides; it has no source-build fallback. Keep
+the exact manifest and `.node-version` checks. A changed provider clone layout
+must fail installation, not select an older runtime. Review this definition and
+variable together when changing the Node pin or retiring the incident override.
 
-`PAGES_NODE_QUALIFICATION=1` is an opt-in provider-only diagnostic switch. Set it
-temporarily in the project's production build environment for qualification;
-leave it unset for normal builds.
-Combined with `CF_PAGES=1`, it imports the bounded qualifier before Corepack/pnpm's
-version command, records the initial launcher and final pnpm JavaScript entrypoint,
-Node executable, entry/bundle hashes and CA settings, and checks normal HTTPS plus one direct and one cross-signed
-incident sample through https and fetch. The direct sample is DV G3B and the
-AAA-cross-signed sample is EV G3B, two of the coordinator's twelve chains.
-The earlier DV G3B cross-sign probe timed out on Pages; its failed receipts remain
-inconclusive. DNS/timeouts are inconclusive failures.
-It leaves ordinary unit CI and normal build commands free of live probes when
-unset. Remove the switch after retaining a source-bound successful provider
-receipt; the helper remains available for explicit future qualification.
+`PAGES_NODE_QUALIFICATION=1` is an opt-in provider-only diagnostic switch. For an
+explicit qualification, temporarily prefix the production build command with
+`PAGES_NODE_QUALIFICATION=1`:
+
+```bash
+PAGES_NODE_QUALIFICATION=1 node --experimental-strip-types scripts/build/pages-build.ts
+```
+
+Restore the exact normal build command after retaining the source-bound receipt;
+do not keep a project-only flag for normal builds. Combined with `CF_PAGES=1`,
+the switch imports the bounded qualifier before Corepack/pnpm's version command,
+records the initial launcher and final pnpm JavaScript entrypoint, Node executable,
+entry/bundle hashes and CA settings, and checks normal HTTPS plus one direct and
+one cross-signed incident sample through https and fetch. The direct sample is DV
+G3B and the AAA-cross-signed sample is EV G3B, two of the coordinator's twelve
+chains. Successful receipts cover only these two samples. Failed timeout/DNS
+receipts remain inconclusive; do not treat them as proof that the client rejected
+the chain. Ordinary unit CI and the normal build command do not run live probes.
+The helper remains available for future explicit qualification.
 
 Source watch paths remain inclusive: runtime, patches, gitlinks, headers and build inputs must
 continue to trigger delivery. No custom-domain rules apply to the Pages-only
