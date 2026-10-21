@@ -11,5 +11,3 @@ NODE_ENV = "production"
 SKIP_DEPENDENCY_INSTALL = "1"
 # Pages moves the source clone into this build root before installing tools.
 NODE_BUILD_DEFINITIONS = "/opt/buildhome/repo/scripts/build/node-build-definitions"
-# Temporary incident qualification; remove after retaining the provider receipt.
-PAGES_NODE_QUALIFICATION = "1"
