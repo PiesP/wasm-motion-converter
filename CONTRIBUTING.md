@@ -194,9 +194,13 @@ into the build environment before deciding whether to install dependencies.
 Confirm the switch and the absence of an automatic install in the provider log.
 
 The incident Node definition under `scripts/build/node-build-definitions` supplies
-26.12.1 while the provider's upstream version catalog lacks it. Wrangler passes
-`NODE_BUILD_DEFINITIONS` before asdf installation, pointing to the observed
-`/opt/buildhome/clone` source checkout. The definition admits only Linux x64,
+26.12.1 while the provider's upstream version catalog lacks it. Set
+`NODE_BUILD_DEFINITIONS` in the production project's build environment as well as
+Wrangler, pointing to `/opt/buildhome/repo/scripts/build/node-build-definitions`.
+The clone phase uses `/opt/buildhome/clone`, but Pages moves that checkout to the
+observed `/opt/buildhome/repo` build root before installing tools. A Wrangler
+variable printed in the log alone does not prove installer environment delivery.
+The definition admits only Linux x64,
 verifies the official binary SHA-256, and rejects compile mode or tarball
 overrides; it has no source-build fallback. Keep the exact manifest and
 `.node-version` checks. A changed provider clone layout must fail installation,
