@@ -53,6 +53,8 @@ The local release action resolves the tagged manifest pin, selects that Node,
 then installs JavaScript pnpm before the frozen dependency install. It disables
 automatic package-manager caching and installation in both setup actions.
 
+Every workflow action job first invokes the [browser-core Node trust preparation](https://github.com/PiesP/browser-core/blob/381b4ca733494cf069212cd0d16458389a83c623/automation/README.md#consumer-contract) at that reviewed SHA, with OpenSSL trust settings inherited by action bootstrap and post steps. The helper supports Ubuntu 24.04 and Alpine 3.23; unsupported systems fail before later actions. Its step boundary does not cover runner downloads or container pulls that happen before steps.
+
 For an action update, verify the full commit SHA against the official upstream
 release and update the independent allowed-SHA expectations in
 `test/unit/config/toolchain-action.test.ts` in the same reviewed change. Keep
