@@ -15,7 +15,7 @@ const runtimePin = 'af19a6597c351f03a65e49532bdec6276e4b5ae9';
 const active = "${{ needs.changes.outputs.dependency == 'true' }}";
 const inactive = "${{ needs.changes.outputs.dependency != 'true' }}";
 const upload =
-  "${{ !cancelled() && steps.osv-report.outputs.sarif-upload == 'true' && (needs.changes.outputs.dependency == 'true') }}";
+  "${{ steps.node_trust.outcome == 'success' && (!cancelled() && steps.osv-report.outputs.sarif-upload == 'true' && (needs.changes.outputs.dependency == 'true')) }}";
 
 function job(name: string): string {
   const start = workflow.search(new RegExp(`^  ${name}:$`, 'm'));
