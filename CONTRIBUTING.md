@@ -49,6 +49,10 @@ separate update groups so a toolchain contract failure does not block unrelated
 scanner maintenance. Updates remain subject to maintainer review and the
 existing minimum 24-hour release age.
 
+The local release action resolves the tagged manifest pin, selects that Node,
+then installs JavaScript pnpm before the frozen dependency install. It disables
+automatic package-manager caching and installation in both setup actions.
+
 For an action update, verify the full commit SHA against the official upstream
 release and update the independent allowed-SHA expectations in
 `test/unit/config/toolchain-action.test.ts` in the same reviewed change. Keep

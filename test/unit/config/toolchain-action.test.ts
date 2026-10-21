@@ -80,14 +80,27 @@ describe('central project setup action', () => {
     ] as const;
 
     expect(existsSync(releaseSetupActionPath)).toBe(true);
-    expect(releaseSetupAction).toContain(
-      'uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1'
+    const resolveStep = releaseSetupAction.indexOf(
+      'run: node "$GITHUB_ACTION_PATH/resolve-runtime.mjs"'
     );
-    expect(releaseSetupAction).toContain('package-json-file: package.json');
-    expect(releaseSetupAction).toContain('runtime: "node@${{ steps.runtime.outputs.version }}"');
-    expect(releaseSetupAction).toContain('cache: true');
-    expect(releaseSetupAction).toContain('install: false');
-    expect(releaseSetupAction).toContain('run: pnpm install --frozen-lockfile --no-runtime');
+    const node = releaseSetupAction.indexOf(
+      'uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0'
+    );
+    const pnpm = releaseSetupAction.indexOf(
+      'uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0'
+    );
+    const install = releaseSetupAction.indexOf('run: pnpm install --frozen-lockfile --no-runtime');
+    expect(resolveStep).toBeGreaterThan(-1);
+    expect(node).toBeGreaterThan(resolveStep);
+    expect(pnpm).toBeGreaterThan(node);
+    expect(install).toBeGreaterThan(pnpm);
+    expect(releaseSetupAction).toContain('node-version: ${{ steps.runtime.outputs.version }}');
+    expect(releaseSetupAction).toContain('package-manager-cache: false');
+    expect(releaseSetupAction).toContain('package_json_file: package.json');
+    expect(releaseSetupAction).toContain('\n        cache: false\n');
+    expect(releaseSetupAction).toContain('run_install: false');
+    expect(releaseSetupAction).toContain('standalone: false');
+    expect(releaseSetupAction).not.toContain('uses: pnpm/setup@');
 
     for (const [label, jobId] of expectedJobs) {
       const job = jobBlock(releaseWorkflow, jobId);
@@ -108,9 +121,13 @@ describe('central project setup action', () => {
       expect(workflow).not.toContain('uses: ./.github/actions/setup-toolchain');
       expect(workflow).not.toContain('uses: ./.github/actions/setup-project');
       expect(workflow).not.toContain('run: pnpm install --frozen-lockfile');
+    }
+    const releaseValidation = releaseWorkflow.replace(jobBlock(releaseWorkflow, 'publish'), '');
+    for (const workflow of [ciWorkflow, releaseValidation]) {
       expect(workflow).not.toContain('uses: pnpm/action-setup@');
       expect(workflow).not.toContain('uses: actions/setup-node@');
     }
+    expect(releaseWorkflow).not.toContain('uses: pnpm/setup@');
   });
 
   it('selects the protected checkout for the direct publication runtime setup', () => {
@@ -119,18 +136,31 @@ describe('central project setup action', () => {
     const checkout = publish.split(checkoutMarker)[1]?.split('\n      - name:')[0];
     const setupMarker = '      - name: 📦 Setup verified Node.js runtime\n';
     const setup = publish.split(setupMarker)[1]?.split('\n      - name:')[0];
+    const pnpmMarker = '      - name: 📦 Install protected-source pnpm\n';
+    const pnpmSetup = publish.split(pnpmMarker)[1]?.split('\n      - name:')[0];
 
     expect(setup).toBeDefined();
-    expect(setup).toContain('uses: pnpm/setup@a0881977cd8ea73b1ed212236c99ca10dcc80cf4 # v3.1.1');
+    expect(pnpmSetup).toBeDefined();
+    expect(setup).toContain(
+      'uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0'
+    );
     expect(checkout).toContain('ref: ${{ github.sha }}');
     expect(checkout).toContain('persist-credentials: false');
     expect(checkout).not.toContain('release-sha');
     expect(publish.indexOf(checkoutMarker)).toBeLessThan(publish.indexOf(setupMarker));
-    expect(setup).toContain('working-directory: .');
-    expect(setup).not.toContain('package-json-file:');
-    expect(setup).toContain('runtime: "node@${{ needs.provenance.outputs.node-version }}"');
-    expect(setup).toContain('install: false');
-    expect(publish.indexOf(setupMarker)).toBeLessThan(
+    expect(setup).toContain('node-version: "${{ needs.provenance.outputs.node-version }}"');
+    expect(setup).toContain('package-manager-cache: false');
+    expect(setup).not.toContain('node-version-file:');
+    expect(pnpmSetup).toContain(
+      'uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0'
+    );
+    expect(pnpmSetup).toContain('package_json_file: package.json');
+    expect(pnpmSetup).toContain('\n          cache: false\n');
+    expect(pnpmSetup).toContain('run_install: false');
+    expect(pnpmSetup).toContain('standalone: false');
+    expect(pnpmSetup).not.toMatch(/^\s+version:/mu);
+    expect(publish.indexOf(setupMarker)).toBeLessThan(publish.indexOf(pnpmMarker));
+    expect(publish.indexOf(pnpmMarker)).toBeLessThan(
       publish.indexOf('      - name: 🔐 Check live publication order')
     );
   });
