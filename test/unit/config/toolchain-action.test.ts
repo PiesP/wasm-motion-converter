@@ -8,7 +8,7 @@ const root = resolve(import.meta.dirname, '../../..');
 const ciWorkflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
 const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
 const centralSetupAction =
-  'uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969';
+  'uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9';
 const releaseSetupActionPath = resolve(root, '.github/actions/setup-release/action.yaml');
 const releaseSetupAction = existsSync(releaseSetupActionPath)
   ? readFileSync(releaseSetupActionPath, 'utf8')

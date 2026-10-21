@@ -44,7 +44,7 @@ COOP/COEP headers are configured in `vite.config.ts` for development and preview
 ## Dependency and action updates
 
 Dependabot manages workflow dependencies and the external actions inside
-`.github/actions/setup-release`. CodeQL, `pnpm/setup`, and other Actions use
+`.github/actions/setup-release`. CodeQL, `pnpm/action-setup`, and other Actions use
 separate update groups so a toolchain contract failure does not block unrelated
 scanner maintenance. Updates remain subject to maintainer review and the
 existing minimum 24-hour release age.

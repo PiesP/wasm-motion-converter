@@ -47,7 +47,7 @@ jobs:
           submodules: false
 
       - name: 📦 Setup reviewed pin runtime
-        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
+        uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9
         with:
           install-dependencies: 'false'
 
@@ -88,7 +88,7 @@ jobs:
         id: routing_runtime
         if: ${{ steps.routing_checkout.outcome == 'success' }}
         continue-on-error: true
-        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
+        uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9
         with:
           install-dependencies: 'false'
 
@@ -166,7 +166,7 @@ jobs:
           submodules: false
 
       - name: 📦 Setup reviewed pin runtime
-        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
+        uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9
         with:
           install-dependencies: 'false'
 
@@ -228,7 +228,7 @@ jobs:
 
       - name: 📦 Setup trusted OSV runtime
         if: ${{ needs.changes.outputs.dependency == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
+        uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9
         with:
           install-dependencies: 'false'
 
@@ -329,7 +329,7 @@ jobs:
 
       - name: 📦 Setup trusted OSV runtime
         if: ${{ needs.changes.outputs.dependency == 'true' }}
-        uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
+        uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9
         with:
           install-dependencies: 'false'
 

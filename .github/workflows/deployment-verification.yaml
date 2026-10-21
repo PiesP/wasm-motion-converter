@@ -30,7 +30,7 @@ jobs:
           persist-credentials: false
           submodules: true
 
-      - uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969
+      - uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9
 
       - name: Read the exact successful source build
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
