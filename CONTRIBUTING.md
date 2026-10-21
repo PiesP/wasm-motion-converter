@@ -44,10 +44,14 @@ COOP/COEP headers are configured in `vite.config.ts` for development and preview
 ## Dependency and action updates
 
 Dependabot manages workflow dependencies and the external actions inside
-`.github/actions/setup-release`. CodeQL, `pnpm/setup`, and other Actions use
+`.github/actions/setup-release`. CodeQL, `pnpm/action-setup`, and other Actions use
 separate update groups so a toolchain contract failure does not block unrelated
 scanner maintenance. Updates remain subject to maintainer review and the
 existing minimum 24-hour release age.
+
+The local release action resolves the tagged manifest pin, selects that Node,
+then installs JavaScript pnpm before the frozen dependency install. It disables
+automatic package-manager caching and installation in both setup actions.
 
 For an action update, verify the full commit SHA against the official upstream
 release and update the independent allowed-SHA expectations in
@@ -326,6 +330,10 @@ their sizes, digests, and the two checksum entries. Incomplete or unverifiable
 published assets stop the retry and require maintainer review. The workflow
 never replaces existing release assets or retargets tags. An intentional rollback
 needs a separate reviewed procedure.
+
+Defer replaying an immutable historical tag that selects an unremediated runtime
+until that runtime's trust behavior or an environment-specific mitigation is qualified. The current manifest pin
+does not change existing tags.
 
 Each new release-branch artifact contains `release-state.json` with the version and verified
 tagged commit. The downloadable `metadata.json` records that same identity.

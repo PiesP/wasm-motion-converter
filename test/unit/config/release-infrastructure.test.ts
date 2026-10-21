@@ -195,7 +195,7 @@ describe('Release infrastructure', () => {
     expect(provenance).toContain('persist-credentials: false');
     expect(provenance).toContain('RELEASE_TAG: ${{ inputs.tag }}');
     expect(provenance).toContain(
-      'uses: PiesP/browser-core/automation/actions/setup-project@279124fa998847bd0184d2de12bdaadcd6d2f969'
+      'uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9'
     );
     expect(provenance).toContain("install-dependencies: 'false'");
     expect(provenance).toContain(
