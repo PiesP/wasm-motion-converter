@@ -1,0 +1,32 @@
+# Pages currently uses node-build before running the project build.
+# Keep this definition binary-only: an unsupported platform must never compile Node.
+case "$(uname -s):$(uname -m)" in
+  Linux:x86_64|Linux:amd64) ;;
+  *)
+    printf 'Node 26.12.1 requires the official Linux x64 binary on Pages.\n' >&2
+    exit 1
+    ;;
+esac
+
+if [ -n "${SKIP_BINARY:-}" ] || [ -n "${ASDF_NODEJS_FORCE_COMPILE:-}" ]; then
+  printf 'Node 26.12.1 source compilation is disabled on Pages.\n' >&2
+  exit 1
+fi
+
+if [ -n "${NODE_BUILD_TARBALL_OVERRIDE:-}" ]; then
+  printf 'Node 26.12.1 tarball overrides are disabled on Pages.\n' >&2
+  exit 1
+fi
+
+# node-build accepts a tarball without checking its digest when SHA-256 is unavailable.
+pages_sha256_self_test="$(printf test | compute_sha2)" || {
+  printf 'Node 26.12.1 requires working SHA-256 verification on Pages.\n' >&2
+  exit 1
+}
+if [ "$pages_sha256_self_test" != "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08" ]; then
+  printf 'Node 26.12.1 requires working SHA-256 verification on Pages.\n' >&2
+  exit 1
+fi
+unset pages_sha256_self_test
+
+install_package "node-v26.12.1-linux-x64" "https://nodejs.org/dist/v26.12.1/node-v26.12.1-linux-x64.tar.gz#0fd1eb7770598f52a21995edf6ed35fc690400fa437c2386af329519e9143132" copy

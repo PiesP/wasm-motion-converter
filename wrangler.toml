@@ -9,3 +9,7 @@ pages_build_output_dir = "dist"
 [vars]
 NODE_ENV = "production"
 SKIP_DEPENDENCY_INSTALL = "1"
+# The source clone exists before asdf/node-build selects the exact Node release.
+NODE_BUILD_DEFINITIONS = "/opt/buildhome/clone/scripts/build/node-build-definitions"
+# Temporary incident qualification; remove after retaining the provider receipt.
+PAGES_NODE_QUALIFICATION = "1"
