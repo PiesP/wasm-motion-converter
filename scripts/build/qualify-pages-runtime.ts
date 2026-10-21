@@ -15,7 +15,7 @@ type Observation = {
 const urls = [
   'https://nodejs.org/',
   'https://dv-g3b-emudhra.we-have-a-problem.com/',
-  'https://dv-g3b-aaa-emudhra.we-have-a-problem.com/',
+  'https://ev-g3b-aaa-emudhra.we-have-a-problem.com/',
 ];
 const certificateErrors = new Set([
   'CERT_REVOKED',

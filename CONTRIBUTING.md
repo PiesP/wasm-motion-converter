@@ -207,11 +207,16 @@ overrides; it has no source-build fallback. Keep the exact manifest and
 not select an older runtime. Review this definition and variable together when
 changing the Node pin or retiring the incident override.
 
-`PAGES_NODE_QUALIFICATION=1` is a temporary provider-only diagnostic switch.
+`PAGES_NODE_QUALIFICATION=1` is an opt-in provider-only diagnostic switch. Set it
+temporarily in the project's production build environment for qualification;
+leave it unset for normal builds.
 Combined with `CF_PAGES=1`, it imports the bounded qualifier before Corepack/pnpm's
 version command, records the initial launcher and final pnpm JavaScript entrypoint,
 Node executable, entry/bundle hashes and CA settings, and checks normal HTTPS plus one direct and one cross-signed
-incident sample through https and fetch. DNS/timeouts are inconclusive failures.
+incident sample through https and fetch. The direct sample is DV G3B and the
+AAA-cross-signed sample is EV G3B, two of the coordinator's twelve chains.
+The earlier DV G3B cross-sign probe timed out on Pages; its failed receipts remain
+inconclusive. DNS/timeouts are inconclusive failures.
 It leaves ordinary unit CI and normal build commands free of live probes when
 unset. Remove the switch after retaining a source-bound successful provider
 receipt; the helper remains available for explicit future qualification.
