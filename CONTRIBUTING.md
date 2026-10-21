@@ -192,6 +192,26 @@ Wrangler `[vars]` as well as
 the project settings: Pages projects using a Wrangler file read its variables
 into the build environment before deciding whether to install dependencies.
 Confirm the switch and the absence of an automatic install in the provider log.
+
+The incident Node definition under `scripts/build/node-build-definitions` supplies
+26.12.1 while the provider's upstream version catalog lacks it. Wrangler passes
+`NODE_BUILD_DEFINITIONS` before asdf installation, pointing to the observed
+`/opt/buildhome/clone` source checkout. The definition admits only Linux x64,
+verifies the official binary SHA-256, and rejects compile mode or tarball
+overrides; it has no source-build fallback. Keep the exact manifest and
+`.node-version` checks. A changed provider clone layout must fail installation,
+not select an older runtime. Review this definition and variable together when
+changing the Node pin or retiring the incident override.
+
+`PAGES_NODE_QUALIFICATION=1` is a temporary provider-only diagnostic switch.
+Combined with `CF_PAGES=1`, it imports the bounded qualifier before Corepack/pnpm's
+version command, records the initial launcher and final pnpm JavaScript entrypoint,
+Node executable, entry/bundle hashes and CA settings, and checks normal HTTPS plus one direct and one cross-signed
+incident sample through https and fetch. DNS/timeouts are inconclusive failures.
+It leaves ordinary unit CI and normal build commands free of live probes when
+unset. Remove the switch after retaining a source-bound successful provider
+receipt; the helper remains available for explicit future qualification.
+
 Source watch paths remain inclusive: runtime, patches, gitlinks, headers and build inputs must
 continue to trigger delivery. No custom-domain rules apply to the Pages-only
 hostname; keep its built-in compression and CDN caching.

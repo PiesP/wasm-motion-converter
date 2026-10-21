@@ -95,6 +95,25 @@ describe('Pages source-build contract', () => {
     expect(calls.some((call) => call.startsWith('install'))).toBe(false);
   });
 
+  it('imports the runtime qualifier only for explicitly opted-in Pages manager execution', () => {
+    const calls: { args: string[]; environment?: NodeJS.ProcessEnv }[] = [];
+    const run = (_command: string, args: string[], environment?: NodeJS.ProcessEnv): string => {
+      calls.push({ args, ...(environment ? { environment } : {}) });
+      return args[0] === '--version' ? '11.26.0' : 'a'.repeat(40);
+    };
+    vi.stubEnv('PAGES_NODE_QUALIFICATION', '1');
+    pagesBuild(fixture(), run);
+    expect(calls[0]?.environment).toBeUndefined();
+    calls.length = 0;
+    vi.stubEnv('CF_PAGES', '1');
+    vi.stubEnv('NODE_OPTIONS', '--use-openssl-ca');
+    pagesBuild(fixture(), run);
+    expect(calls[0]?.environment?.NODE_OPTIONS).toMatch(
+      /^--use-openssl-ca --import=file:.*\/scripts\/build\/qualify-pages-runtime.ts$/u
+    );
+    expect(calls.slice(1).some((call) => call.environment?.NODE_OPTIONS)).toBe(false);
+  });
+
   it('uses cumulative rules without giving missing or unversioned assets an immutable policy', () => {
     const template = readFileSync(resolve('public/_headers'), 'utf8');
     const headers = fingerprintedAssetHeaders(template, [
