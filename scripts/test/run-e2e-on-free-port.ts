@@ -41,7 +41,10 @@ export async function runE2eOnFreePort(run: typeof runChild = runChild): Promise
     packageManagerPath,
     ['test:e2e:ci'],
     { PLAYWRIGHT_DEV_PORT: String(port) },
-    { signalScope: 'process-group' }
+    {
+      signalScope: 'process-group',
+      executable: !/\.[cm]?js$/u.test(packageManagerPath),
+    }
   );
 }
 

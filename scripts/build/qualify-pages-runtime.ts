@@ -1,5 +1,6 @@
+/** Opt-in Pages evidence for the selected Node and native pnpm runtimes. */
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-/** Opt-in Pages evidence: imported before Corepack/pnpm executes its entrypoint. */
 import { readFileSync, realpathSync } from 'node:fs';
 import https from 'node:https';
 import { dirname, join } from 'node:path';
@@ -74,10 +75,46 @@ if (process.versions.node !== manifest.volta.node)
 if (process.env.NODE_TLS_REJECT_UNAUTHORIZED !== undefined) {
   throw new Error('TLS verification overrides are unsupported');
 }
-const entry = process.argv[1];
-if (!entry || !/\.[cm]?js$/u.test(realpathSync(entry))) {
-  throw new Error('Pages package manager must use a JavaScript entrypoint');
+const managerProcess = spawnSync('pnpm', ['exec', 'node', '-p', 'process.env.npm_execpath'], {
+  encoding: 'utf8',
+  timeout: 15_000,
+  stdio: ['ignore', 'pipe', 'inherit'],
+});
+if (managerProcess.error) throw managerProcess.error;
+if (managerProcess.status !== 0) throw new Error('Could not inspect the selected Pages pnpm');
+const managerEntry = realpathSync(managerProcess.stdout.trim());
+const managerBytes = readFileSync(managerEntry);
+let packageRoot = dirname(managerEntry);
+let manager: { name?: string; version?: string } | undefined;
+for (let depth = 0; depth < 4; depth++) {
+  try {
+    const candidate = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
+      name?: string;
+      version?: string;
+    };
+    if (candidate.name === 'pnpm') {
+      manager = candidate;
+      break;
+    }
+  } catch {
+    // Walk only the selected binary's package ancestry.
+  }
+  packageRoot = dirname(packageRoot);
 }
+const managerPassed =
+  managerBytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) &&
+  manager?.name === 'pnpm' &&
+  `pnpm@${manager.version}` === manifest.packageManager;
+console.error(
+  `[pages-package-manager] ${JSON.stringify({
+    version: manager?.version ?? null,
+    entry: managerEntry,
+    binary_sha256: createHash('sha256').update(managerBytes).digest('hex'),
+    format: managerBytes.subarray(0, 4).toString('hex'),
+    passed: managerPassed,
+  })}`
+);
+if (!managerPassed) throw new Error('Pages native pnpm identity qualification failed');
 const results = (
   await Promise.all(urls.map(async (url) => [await probeHttps(url), await probeFetch(url)]))
 ).flat();
@@ -89,7 +126,7 @@ console.error(
     observed_at: new Date().toISOString(),
     version: process.version,
     executable: process.execPath,
-    entry: realpathSync(entry),
+    package_manager: manifest.packageManager,
     ca_settings: Object.fromEntries(
       [
         'NODE_OPTIONS',
@@ -104,41 +141,4 @@ console.error(
     passed,
   })}`
 );
-if (!passed) throw new Error('Pages package-manager TLS qualification failed');
-
-// Corepack replaces argv before loading pnpm in this same Node process. Bind the
-// receipt to the final package entry, rather than only its initial launcher.
-process.on('exit', () => {
-  try {
-    const finalEntry = realpathSync(process.argv[1] ?? '');
-    const packageRoot = dirname(dirname(finalEntry));
-    const manager = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) as {
-      name: string;
-      version: string;
-    };
-    const managerPassed =
-      /\/bin\/pnpm\.[cm]js$/u.test(finalEntry) &&
-      manager.name === 'pnpm' &&
-      `pnpm@${manager.version}` === manifest.packageManager;
-    console.error(
-      `[pages-package-manager] ${JSON.stringify({
-        version: manager.version,
-        node: process.version,
-        executable: process.execPath,
-        entry: finalEntry,
-        entry_sha256: createHash('sha256').update(readFileSync(finalEntry)).digest('hex'),
-        bundle_sha256: createHash('sha256')
-          .update(readFileSync(join(packageRoot, 'dist/pnpm.mjs')))
-          .digest('hex'),
-        passed: managerPassed,
-      })}`
-    );
-    if (!managerPassed) process.exitCode = 1;
-  } catch (error) {
-    console.error(
-      '[pages-package-manager] Unable to verify the final JavaScript package entry',
-      error
-    );
-    process.exitCode = 1;
-  }
-});
+if (!passed) throw new Error('Pages Node TLS qualification failed');

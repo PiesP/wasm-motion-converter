@@ -21,8 +21,8 @@ import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 type Table = {
   sampleSizes: number[];
   sampleTimingEntries: { count: number }[];
-  presentationTimestamps: { sampleIndex: number }[] | null;
-  presentationTimestampIndexMap: number[] | null;
+  sampleCompositionTimeOffsets: { count: number }[];
+  sortedCompositionTimeOffsets: unknown[] | null;
 };
 type Track = {
   id: number;
@@ -36,6 +36,7 @@ type Slice = { filePos: number };
 type Parser = {
   moovSlice: Slice;
   tracks: Track[];
+  idToTrack: Map<number, Track>;
   getSampleTableForTrack(track: Track): Table;
   traverseBox(slice: Slice): boolean;
   currentFragment: { trackData: Map<number, { samples: unknown[] }> } | null;
@@ -105,7 +106,13 @@ function parser(bytes = 4096, samples = 100): { input: Input; parser: Parser } {
 }
 
 function readTable(parser: Parser, target: Track, ...parts: Uint8Array[]): Table {
-  parser.moovSlice = FileSlice.tempFromBytes(box('stbl', ...parts));
+  const hasBox = (name: string): boolean =>
+    parts.some((part) => String.fromCharCode(...part.subarray(4, 8)) === name);
+  const chunks = [
+    ...(hasBox('stsc') ? [] : [box('stsc', words(0, 1, 1, 6, 1))]),
+    ...(hasBox('stco') ? [] : [box('stco', words(0, 1, 0))]),
+  ];
+  parser.moovSlice = FileSlice.tempFromBytes(box('stbl', ...parts, ...chunks));
   return parser.getSampleTableForTrack(target);
 }
 
@@ -178,7 +185,7 @@ describe('installed MP4 sample metadata allocation policy', () => {
     try {
       const table = readTable(probe.parser, track(), timing(6), sizes(6, width), timing(6, true));
       expect(table.sampleSizes).toHaveLength(6);
-      expect(table.presentationTimestampIndexMap).toEqual([0, 1, 2, 3, 4, 5]);
+      expect(table.sampleCompositionTimeOffsets).toEqual([expect.objectContaining({ count: 6 })]);
     } finally {
       probe.input.dispose();
     }
@@ -191,7 +198,7 @@ describe('installed MP4 sample metadata allocation policy', () => {
       expect(() => readTable(probe.parser, target, sizes(6, width))).toThrow(
         'compact sample-size width'
       );
-      expect(target.sampleTable?.sampleSizes).toEqual([]);
+      expect(target.sampleTable).toBeNull();
       expect(() => probe.parser.getSampleTableForTrack(target)).toThrow(
         'compact sample-size width'
       );
@@ -201,8 +208,8 @@ describe('installed MP4 sample metadata allocation policy', () => {
   });
 
   it('admits exactly the size-array budget and rejects its next entry before expansion', () => {
-    const accepted = parser(128 + 96 + 6 * 16);
-    const rejected = parser(128 + 96 + 5 * 16);
+    const accepted = parser(128 + 96 + 6 * 16 + 112);
+    const rejected = parser(128 + 96 + 5 * 16 + 112);
     const target = track();
     try {
       expect(readTable(accepted.parser, track(), timing(6), sizes(6, 4)).sampleSizes).toHaveLength(
@@ -211,7 +218,7 @@ describe('installed MP4 sample metadata allocation policy', () => {
       expect(() => readTable(rejected.parser, target, timing(6), sizes(6, 4))).toThrow(
         'memory limit'
       );
-      expect(target.sampleTable?.sampleSizes).toEqual([]);
+      expect(target.sampleTable).toBeNull();
     } finally {
       accepted.input.dispose();
       rejected.input.dispose();
@@ -227,22 +234,21 @@ describe('installed MP4 sample metadata allocation policy', () => {
       const target = track();
       try {
         expect(() => readTable(probe.parser, target, table)).toThrow('truncated');
-        expect(target.sampleTable?.sampleSizes).toEqual([]);
+        expect(target.sampleTable).toBeNull();
       } finally {
         probe.input.dispose();
       }
     }
   });
 
-  it('rejects timing expansion before presentation arrays and inverse maps are allocated', () => {
-    const probe = parser(128 + 96 * 2 + 16 + 5 * 128);
+  it('rejects composition index allocation before it is retained', () => {
+    const probe = parser(128 + 96 * 2 + 16 + 5 * 128 + 112);
     const target = track();
     try {
       expect(() => readTable(probe.parser, target, timing(6), sizes(6), timing(6, true))).toThrow(
         'memory limit'
       );
-      expect(target.sampleTable?.presentationTimestamps).toBeNull();
-      expect(target.sampleTable?.presentationTimestampIndexMap).toBeNull();
+      expect(target.sampleTable?.sortedCompositionTimeOffsets).toBeNull();
     } finally {
       probe.input.dispose();
     }
@@ -321,7 +327,7 @@ describe('installed MP4 sample metadata allocation policy', () => {
       );
       expect(table.sampleSizes).toEqual([43_200_000 * 4]);
       expect(table.sampleTimingEntries).toHaveLength(1);
-      expect(table.presentationTimestamps).toBeNull();
+      expect(table.sortedCompositionTimeOffsets).toBeNull();
     } finally {
       probe.input.dispose();
     }
@@ -331,12 +337,13 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const probe = parser(128 + 128 + 96 + 6 * 304);
     const target = track();
     probe.parser.tracks.push(target);
+    probe.parser.idToTrack.set(target.id, target);
     try {
       expect(() => probe.parser.traverseBox(FileSlice.tempFromBytes(fragment(1, 6, 1)))).toThrow(
         'memory limit'
       );
       expect(probe.parser.lastReadFragment).toBeNull();
-      expect(probe.parser.currentFragment?.trackData.get(1)?.samples).toHaveLength(6);
+      expect(probe.parser.currentFragment).toBeNull();
     } finally {
       probe.input.dispose();
     }
@@ -344,14 +351,16 @@ describe('installed MP4 sample metadata allocation policy', () => {
 
   it('combines multiple tracks in one fragment before their presentation maps', () => {
     const probe = parser(4096);
-    probe.parser.tracks.push(track(1), track(2));
+    const tracks = [track(1), track(2)];
+    probe.parser.tracks.push(...tracks);
+    for (const current of tracks) probe.parser.idToTrack.set(current.id, current);
     const first = fragment(1, 6).slice(8);
     const second = fragment(2, 6).slice(8);
     try {
       expect(() =>
         probe.parser.traverseBox(FileSlice.tempFromBytes(box('moof', first, second)))
       ).toThrow('memory limit');
-      expect(probe.parser.currentFragment?.trackData.get(2)?.samples).toHaveLength(0);
+      expect(probe.parser.currentFragment).toBeNull();
     } finally {
       probe.input.dispose();
     }
@@ -359,7 +368,9 @@ describe('installed MP4 sample metadata allocation policy', () => {
 
   it('shares fragment work across tracks and unique offsets without charging rereads twice', () => {
     const probe = parser(4096);
-    probe.parser.tracks.push(track(1));
+    const target = track(1);
+    probe.parser.tracks.push(target);
+    probe.parser.idToTrack.set(target.id, target);
     try {
       const bytes = fragment(1, 6);
       expect(probe.parser.traverseBox(FileSlice.tempFromBytes(bytes))).toBe(true);

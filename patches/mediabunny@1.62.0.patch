@@ -1,5 +1,5 @@
 diff --git a/dist/modules/src/flac/flac-demuxer.js b/dist/modules/src/flac/flac-demuxer.js
-index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982209982cc 100644
+index 88de2ca..7470f4f 100644
 --- a/dist/modules/src/flac/flac-demuxer.js
 +++ b/dist/modules/src/flac/flac-demuxer.js
 @@ -14,6 +14,9 @@ import { DEFAULT_TRACK_DISPOSITION } from '../metadata.js';
@@ -35,7 +35,7 @@ index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982
              // Read all ID3v2 tags at the start of the file
              let currentPos = 0;
              while (true) {
-@@ -56,6 +75,8 @@ export class FlacDemuxer extends Demuxer {
+@@ -55,6 +74,8 @@ export class FlacDemuxer extends Demuxer {
                  if (!id3V2Header) {
                      break;
                  }
@@ -44,7 +44,7 @@ index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982
                  let contentSlice = this.reader.requestSlice(headerSlice.filePos, id3V2Header.size);
                  if (isThenable(contentSlice))
                      contentSlice = await contentSlice;
-@@ -78,6 +99,7 @@ export class FlacDemuxer extends Demuxer {
+@@ -77,6 +98,7 @@ export class FlacDemuxer extends Demuxer {
                  const size = readU24Be(sizeSlice);
                  const isLastMetadata = (byte & 0x80) !== 0;
                  const metaBlockType = byte & 0x7f;
@@ -52,7 +52,7 @@ index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982
                  switch (metaBlockType) {
                      case FlacBlockType.STREAMINFO: {
                          // Parse streaminfo block
-@@ -105,6 +127,7 @@ export class FlacDemuxer extends Demuxer {
+@@ -109,6 +131,7 @@ export class FlacDemuxer extends Demuxer {
                          // 2. A metadata block (called the STREAMINFO block) as described in section 7 of [FLAC]
                          // 3. Optionally (sic) other metadata blocks, that are not used by the specification
                          bitstream.skipBits(16 * 8); // md5 hash
@@ -60,7 +60,7 @@ index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982
                          const description = new Uint8Array(42);
                          // 1. "fLaC"
                          description.set(new Uint8Array([0x66, 0x4c, 0x61, 0x43]), 0);
-@@ -128,6 +151,7 @@ export class FlacDemuxer extends Demuxer {
+@@ -132,6 +155,7 @@ export class FlacDemuxer extends Demuxer {
                      case FlacBlockType.VORBIS_COMMENT: {
                          // Parse vorbis comment block
                          // https://www.rfc-editor.org/rfc/rfc9639.html#name-vorbis-comment
@@ -68,7 +68,7 @@ index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982
                          let vorbisCommentBlock = this.reader.requestSlice(currentPos, size);
                          if (isThenable(vorbisCommentBlock))
                              vorbisCommentBlock = await vorbisCommentBlock;
-@@ -138,6 +162,7 @@ export class FlacDemuxer extends Demuxer {
+@@ -144,6 +168,7 @@ export class FlacDemuxer extends Demuxer {
                      case FlacBlockType.PICTURE: {
                          // Parse picture block
                          // https://www.rfc-editor.org/rfc/rfc9639.html#name-picture
@@ -77,19 +77,19 @@ index 6dd81d4bed0d51ad7422c2a1bfe4c5bb1760a573..a64d16a0112f017552a15d80cd40d982
                          if (isThenable(pictureBlock))
                              pictureBlock = await pictureBlock;
 diff --git a/dist/modules/src/hls/hls-segmented-input.js b/dist/modules/src/hls/hls-segmented-input.js
-index 494adfbbd2620d44098c1bdf6fc42ae9eb9210f6..7264572b61eeed552de31b89a7a03e63215c6387 100644
+index cb42611..1e51900 100644
 --- a/dist/modules/src/hls/hls-segmented-input.js
 +++ b/dist/modules/src/hls/hls-segmented-input.js
-@@ -117,7 +117,7 @@ export class HlsSegmentedInput extends SegmentedInput {
+@@ -119,7 +119,7 @@ export class HlsSegmentedInput extends SegmentedInput {
              const env_1 = { stack: [], error: void 0, hasError: false };
              try {
                  const ref = __addDisposableResource(env_1, await this.demuxer.input._getSourceUncached({ path: this.rootPath, isRoot: false }), false);
 -                const reader = new Reader(ref.source);
 +                const reader = new Reader(ref.source, this.input._maxContiguousReadBytes);
-                 const slice = await reader.requestEntireFile();
-                 assert(slice);
-                 lines = readAllLines(slice, slice.length, { ignore: canIgnoreLine });
-@@ -593,12 +593,12 @@ export class HlsSegmentedInput extends SegmentedInput {
+                 // Check the start first, so that we don't read some (potentially huge) file in its entirety that isn't even
+                 // a playlist
+                 let headerSlice = reader.requestSliceRange(0, 0, 64);
+@@ -608,12 +608,12 @@ export class HlsSegmentedInput extends SegmentedInput {
                          ciphertextRef.free();
                          ciphertextRef = sliceRef;
                      }
@@ -104,7 +104,7 @@ index 494adfbbd2620d44098c1bdf6fc42ae9eb9210f6..7264572b61eeed552de31b89a7a03e63
                              const keySlice = await keyReader.requestSlice(0, AES_128_BLOCK_SIZE);
                              if (!keySlice) {
                                  throw new Error('Invalid AES-128 key; expected at least 16 bytes of data.');
-@@ -628,6 +628,11 @@ export class HlsSegmentedInput extends SegmentedInput {
+@@ -643,6 +643,11 @@ export class HlsSegmentedInput extends SegmentedInput {
              initInput: initInput ?? undefined,
              formatOptions,
          });
@@ -117,7 +117,7 @@ index 494adfbbd2620d44098c1bdf6fc42ae9eb9210f6..7264572b61eeed552de31b89a7a03e63
              if ((hlsSegment.encryption?.method === 'SAMPLE-AES' || hlsSegment.encryption?.method === 'SAMPLE-AES-CTR')
                  && !format._isIsobmff) {
 diff --git a/dist/modules/src/input.js b/dist/modules/src/input.js
-index 5bd4ec6607aaac2f4938363892ee30e28b682ce4..7dacdc47afd9601628323cfd87c03affe71991d1 100644
+index 5bd4ec6..7dacdc4 100644
 --- a/dist/modules/src/input.js
 +++ b/dist/modules/src/input.js
 @@ -72,6 +72,11 @@ export class Input extends EventEmitter {
@@ -142,7 +142,7 @@ index 5bd4ec6607aaac2f4938363892ee30e28b682ce4..7dacdc47afd9601628323cfd87c03aff
              for (const format of this._formats) {
                  const canRead = await format._canReadInput(this);
 diff --git a/dist/modules/src/isobmff/isobmff-demuxer.js b/dist/modules/src/isobmff/isobmff-demuxer.js
-index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8dab92390d 100644
+index 1f82883..6e96461 100644
 --- a/dist/modules/src/isobmff/isobmff-demuxer.js
 +++ b/dist/modules/src/isobmff/isobmff-demuxer.js
 @@ -17,6 +17,7 @@ import { readBytes, readF64Be, readI16Be, readI32Be, readI64Be, readU16Be, readU
@@ -152,16 +152,16 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
 +import { IsobmffSampleBudget } from './sample-budget.js';
  import { Aes128CbcContext } from '../aes.js';
  import { Logging } from '../logging.js';
- export class IsobmffDemuxer extends Demuxer {
-@@ -43,6 +44,7 @@ export class IsobmffDemuxer extends Demuxer {
-         this.lastReadFragment = null;
+ // Anything beyond this is malicious
+@@ -49,6 +50,7 @@ export class IsobmffDemuxer extends Demuxer {
          this.decryptionKeyCache = new Map();
+         this.boxNestingDepth = 0;
          this.reader = input._reader;
 +        this.sampleBudget = new IsobmffSampleBudget(input);
      }
      async getTrackBackings() {
          await this.readMetadata();
-@@ -211,10 +213,15 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -234,10 +236,15 @@ export class IsobmffDemuxer extends Demuxer {
          }
      }
      getSampleTableForTrack(internalTrack) {
@@ -177,22 +177,17 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
              sampleTimingEntries: [],
              sampleCompositionTimeOffsets: [],
              sampleSizes: [],
-@@ -232,8 +239,51 @@ export class IsobmffDemuxer extends Demuxer {
-         assert(this.moovSlice);
-         const stblContainerSlice = this.moovSlice.slice(internalTrack.sampleTableByteOffset);
-         this.currentTrack = internalTrack;
--        this.traverseBox(stblContainerSlice);
-+        try {
-+            this.traverseBox(stblContainerSlice);
-+        }
-+        catch (error) {
+@@ -261,11 +268,46 @@ export class IsobmffDemuxer extends Demuxer {
+         }
+         catch (error) {
+             internalTrack.sampleTable = null;
+-            throw error;
 +            this.sampleBudget.error = error instanceof Error ? error : new Error(String(error));
 +            throw this.sampleBudget.error;
-+        }
-+        finally {
-+            this.currentTrack = null;
-+        }
-         this.currentTrack = null;
+         }
+         finally {
+             this.currentTrack = null;
+         }
 +        if ((sampleTable.declaredSampleCount !== null
 +            && sampleTable.declaredSampleCount !== sampleTable.timingSampleCount)
 +            || (sampleTable.compositionSampleCount !== null
@@ -227,10 +222,10 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
 +                previous = index;
 +            }
 +        }
-         const isPcmCodec = internalTrack.info?.type === 'audio'
-             && internalTrack.info.codec
-             && PCM_AUDIO_CODECS.includes(internalTrack.info.codec);
-@@ -247,6 +297,7 @@ export class IsobmffDemuxer extends Demuxer {
+         const lastTimingEntry = last(sampleTable.sampleTimingEntries);
+         const lastChunkEntryIndex = binarySearchLessOrEqual(sampleTable.sampleToChunk, sampleTable.chunkOffsets.length - 1, x => x.startChunkIndex);
+         const lastChunkEntry = sampleTable.sampleToChunk[lastChunkEntryIndex];
+@@ -291,6 +333,7 @@ export class IsobmffDemuxer extends Demuxer {
              // encodes valid audio information.
              assert(internalTrack.info?.type === 'audio');
              const pcmInfo = parsePcmCodec(internalTrack.info.codec);
@@ -238,15 +233,15 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
              const newSampleTimingEntries = [];
              const newSampleSizes = [];
              for (let i = 0; i < sampleTable.sampleToChunk.length; i++) {
-@@ -297,6 +348,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -341,6 +384,7 @@ export class IsobmffDemuxer extends Demuxer {
+             sampleTable.sampleCount = newSampleSizes.length;
+         }
          if (sampleTable.sampleCompositionTimeOffsets.length > 0) {
-             // If composition time offsets are defined, we must build a list of all presentation timestamps and then
-             // sort them
 +            this.sampleBudget.reserve(sampleTable.timingSampleCount, 128);
-             sampleTable.presentationTimestamps = [];
-             for (const entry of sampleTable.sampleTimingEntries) {
-                 for (let i = 0; i < entry.count; i++) {
-@@ -328,6 +380,7 @@ export class IsobmffDemuxer extends Demuxer {
+             // Presentation order differs from decode order. Let's prepare the offset entries for timestamped-keyed
+             // random access later
+             const entries = sampleTable.sampleCompositionTimeOffsets;
+@@ -393,6 +437,7 @@ export class IsobmffDemuxer extends Demuxer {
          return sampleTable;
      }
      async readFragment(startPos) {
@@ -254,15 +249,15 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
          if (this.lastReadFragment?.moofOffset === startPos) {
              return this.lastReadFragment;
          }
-@@ -377,6 +430,7 @@ export class IsobmffDemuxer extends Demuxer {
-             const insertionIndex = binarySearchLessOrEqual(fragmentPositionCache, trackData.startTimestamp, x => x.startTimestamp);
-             if (insertionIndex === -1
-                 || fragmentPositionCache[insertionIndex].moofOffset !== fragment.moofOffset) {
+@@ -442,6 +487,7 @@ export class IsobmffDemuxer extends Demuxer {
+                     // The timestamp in the lookup entry describes the timestamp of the referenced sample
+                     const timestampOffset = lookupEntry.timestamp - sample.presentationTimestamp;
+                     offsetFragmentTrackDataByTimestamp(trackData, timestampOffset);
 +                this.sampleBudget.reserve(1, 96);
-                 fragmentPositionCache.splice(insertionIndex + 1, 0, {
-                     moofOffset: fragment.moofOffset,
-                     startTimestamp: trackData.startTimestamp,
-@@ -385,7 +439,7 @@ export class IsobmffDemuxer extends Demuxer {
+                 }
+                 else {
+                     const lastCacheIndex = binarySearchLessOrEqual(fragmentPositionCache, fragment.moofOffset - 1, x => x.moofOffset);
+@@ -472,7 +518,7 @@ export class IsobmffDemuxer extends Demuxer {
              }
              // If senc wasn't parsed but saiz+saio were, fetch the aux info now and stamp each sample with it
              if (trackData.encryptionAuxInfo && track.encryptionInfo) {
@@ -271,7 +266,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                  for (let i = 0; i < Math.min(trackData.samples.length, entries.length); i++) {
                      const entry = entries[i];
                      trackData.samples[i].encryption = entry;
-@@ -417,6 +471,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -513,6 +559,7 @@ export class IsobmffDemuxer extends Demuxer {
          }
      }
      traverseBox(slice) {
@@ -279,7 +274,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
          const startPos = slice.filePos;
          const boxInfo = readBoxHeader(slice);
          if (!boxInfo) {
-@@ -1442,11 +1497,20 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1518,11 +1565,20 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      slice.skip(4); // Version + flags
                      const entryCount = readU32Be(slice);
@@ -300,7 +295,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                          track.sampleTable.sampleTimingEntries.push({
                              startIndex: currentIndex,
                              startDecodeTimestamp: currentTimestamp,
-@@ -1456,6 +1520,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1532,6 +1588,7 @@ export class IsobmffDemuxer extends Demuxer {
                          currentIndex += sampleCount;
                          currentTimestamp += sampleCount * sampleDelta;
                      }
@@ -308,7 +303,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                  }
                  ;
                  break;
-@@ -1470,10 +1535,16 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1546,10 +1603,16 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      slice.skip(1 + 3); // Version + flags
                      const entryCount = readU32Be(slice);
@@ -325,7 +320,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                          track.sampleTable.sampleCompositionTimeOffsets.push({
                              startIndex: sampleIndex,
                              count: sampleCount,
-@@ -1481,6 +1552,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1560,6 +1623,7 @@ export class IsobmffDemuxer extends Demuxer {
                          });
                          sampleIndex += sampleCount;
                      }
@@ -333,7 +328,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                  }
                  ;
                  break;
-@@ -1496,6 +1568,13 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1575,6 +1639,13 @@ export class IsobmffDemuxer extends Demuxer {
                      slice.skip(4); // Version + flags
                      const sampleSize = readU32Be(slice);
                      const sampleCount = readU32Be(slice);
@@ -347,7 +342,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                      if (sampleSize === 0) {
                          for (let i = 0; i < sampleCount; i++) {
                              const sampleSize = readU32Be(slice);
-@@ -1521,6 +1600,16 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1601,6 +1672,16 @@ export class IsobmffDemuxer extends Demuxer {
                      slice.skip(3); // Reserved
                      const fieldSize = readU8(slice); // in bits
                      const sampleCount = readU32Be(slice);
@@ -361,10 +356,10 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
 +                    }
 +                    this.sampleBudget.encoded(Math.ceil(sampleCount * fieldSize / 8), 1, boxEndPos - slice.filePos);
 +                    this.sampleBudget.reserve(sampleCount, 16);
-                     const bytes = readBytes(slice, Math.ceil(sampleCount * fieldSize / 8));
-                     const bitstream = new Bitstream(bytes);
-                     for (let i = 0; i < sampleCount; i++) {
-@@ -1542,6 +1631,11 @@ export class IsobmffDemuxer extends Demuxer {
+                     if (fieldSize !== 4 && fieldSize !== 8 && fieldSize !== 16) {
+                         throw new Error(`Invalid stz2 box: unsupported field size ${fieldSize}.`);
+                     }
+@@ -1626,6 +1707,11 @@ export class IsobmffDemuxer extends Demuxer {
                      slice.skip(4); // Version + flags
                      track.sampleTable.keySampleIndices = [];
                      const entryCount = readU32Be(slice);
@@ -376,10 +371,10 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                      for (let i = 0; i < entryCount; i++) {
                          const sampleIndex = readU32Be(slice) - 1; // Convert to 0-indexed
                          track.sampleTable.keySampleIndices.push(sampleIndex);
-@@ -1565,10 +1659,19 @@ export class IsobmffDemuxer extends Demuxer {
-                     }
+@@ -1652,10 +1738,19 @@ export class IsobmffDemuxer extends Demuxer {
                      slice.skip(4);
                      const entryCount = readU32Be(slice);
+                     let skippedEntryCount = 0;
 +                    if (track.sampleTable.seenTables.has('stsc'))
 +                        this.sampleBudget.fail('duplicate sample table.');
 +                    track.sampleTable.seenTables.add('stsc');
@@ -393,10 +388,10 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
 +                            || (i > 0 && startChunkIndex <= track.sampleTable.sampleToChunk[i - 1].startChunkIndex)) {
 +                            this.sampleBudget.fail('invalid sample-to-chunk table.');
 +                        }
-                         track.sampleTable.sampleToChunk.push({
-                             startSampleIndex: -1,
-                             startChunkIndex,
-@@ -1584,6 +1687,7 @@ export class IsobmffDemuxer extends Demuxer {
+                         const lastEntry = last(track.sampleTable.sampleToChunk);
+                         if (lastEntry && startChunkIndex <= lastEntry.startChunkIndex) {
+                             // Keeping it would mess up the sample-to-chunk mapping and make chunk iteration blow up
+@@ -1681,6 +1776,7 @@ export class IsobmffDemuxer extends Demuxer {
                              const chunkCount = nextChunk.startChunkIndex
                                  - track.sampleTable.sampleToChunk[i].startChunkIndex;
                              startSampleIndex += chunkCount * track.sampleTable.sampleToChunk[i].samplesPerChunk;
@@ -404,7 +399,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                          }
                      }
                  }
-@@ -1600,6 +1704,11 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1697,6 +1793,11 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      slice.skip(4); // Version + flags
                      const entryCount = readU32Be(slice);
@@ -416,7 +411,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                      for (let i = 0; i < entryCount; i++) {
                          const chunkOffset = readU32Be(slice);
                          track.sampleTable.chunkOffsets.push(chunkOffset);
-@@ -1618,6 +1727,11 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1715,6 +1816,11 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      slice.skip(4); // Version + flags
                      const entryCount = readU32Be(slice);
@@ -428,7 +423,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                      for (let i = 0; i < entryCount; i++) {
                          const chunkOffset = readU64Be(slice);
                          track.sampleTable.chunkOffsets.push(chunkOffset);
-@@ -1678,6 +1792,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1775,6 +1881,8 @@ export class IsobmffDemuxer extends Demuxer {
                      const readTrunNum = functions[lengthSizeOfTrunNum];
                      const readSampleNum = functions[lengthSizeOfSampleNum];
                      const numberOfEntries = readU32Be(slice);
@@ -437,24 +432,24 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                      for (let i = 0; i < numberOfEntries; i++) {
                          const time = version === 1 ? readU64Be(slice) : readU32Be(slice);
                          const moofOffset = version === 1 ? readU64Be(slice) : readU32Be(slice);
-@@ -1705,6 +1821,7 @@ export class IsobmffDemuxer extends Demuxer {
-                 break;
-             case 'moof':
-                 {
+@@ -1802,6 +1910,7 @@ export class IsobmffDemuxer extends Demuxer {
+                     if (this.currentFragment) {
+                         break; // Nested moof boxes make no sense
+                     }
 +                    this.sampleBudget.currentFragmentBytes = 0;
                      this.currentFragment = {
                          moofOffset: startPos,
                          moofSize: boxInfo.totalSize,
-@@ -1714,6 +1831,8 @@ export class IsobmffDemuxer extends Demuxer {
-                     };
-                     this.readContiguousBoxes(slice.slice(contentStartPos, boxInfo.contentSize));
-                     this.lastReadFragment = this.currentFragment;
-+                    this.sampleBudget.lastFragmentBytes = this.sampleBudget.currentFragmentBytes;
-+                    this.sampleBudget.currentFragmentBytes = 0;
-                     this.currentFragment = null;
-                 }
-                 ;
-@@ -1733,6 +1852,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1815,6 +1924,8 @@ export class IsobmffDemuxer extends Demuxer {
+                         this.lastReadFragment = this.currentFragment;
+                     }
+                     finally {
++                        this.sampleBudget.lastFragmentBytes = this.sampleBudget.currentFragmentBytes;
++                        this.sampleBudget.currentFragmentBytes = 0;
+                         this.currentFragment = null;
+                         this.currentTrack = null;
+                     }
+@@ -1844,6 +1955,7 @@ export class IsobmffDemuxer extends Demuxer {
                                  this.currentFragment.trackData.delete(this.currentTrack.id);
                                  break cond;
                              }
@@ -462,10 +457,10 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                              trackData.presentationTimestamps = trackData.samples
                                  .map((x, i) => ({ presentationTimestamp: x.presentationTimestamp, sampleIndex: i }))
                                  .sort((a, b) => a.presentationTimestamp - b.presentationTimestamp);
-@@ -1904,6 +2024,16 @@ export class IsobmffDemuxer extends Demuxer {
-                         };
+@@ -2033,6 +2145,16 @@ export class IsobmffDemuxer extends Demuxer {
                          this.currentFragment.trackData.set(track.id, trackData);
                      }
+                     trackData.trunSampleCounts.push(sampleCount);
 +                    const fieldsPerSample = Number(sampleDurationPresent) + Number(sampleSizePresent)
 +                        + Number(sampleFlagsPresent) + Number(sampleCompositionTimeOffsetsPresent);
 +                    this.sampleBudget.encoded(sampleCount, fieldsPerSample * 4, boxEndPos - slice.filePos);
@@ -479,7 +474,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                      for (let i = 0; i < sampleCount; i++) {
                          let sampleDuration;
                          if (sampleDurationPresent) {
-@@ -1939,6 +2069,11 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2065,6 +2187,11 @@ export class IsobmffDemuxer extends Demuxer {
                              // safe to do this.
                              sampleCompositionTimeOffset = readI32Be(slice);
                          }
@@ -491,7 +486,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                          const isKeyFrame = !(sampleFlags & 0x00010000);
                          trackData.samples.push({
                              presentationTimestamp: trackData.currentTimestamp + sampleCompositionTimeOffset,
-@@ -1974,6 +2109,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2100,6 +2227,8 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      const defaultSampleInfoSize = readU8(slice);
                      const sampleCount = readU32Be(slice);
@@ -500,15 +495,15 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                      let sampleSizes = null;
                      if (defaultSampleInfoSize === 0 && sampleCount > 0) {
                          sampleSizes = readBytes(slice, sampleCount);
-@@ -2037,6 +2174,7 @@ export class IsobmffDemuxer extends Demuxer {
-                     const sampleCount = readU32Be(slice);
-                     const ivSize = track.encryptionInfo.defaultPerSampleIvSize;
-                     assert(ivSize !== null);
+@@ -2164,6 +2293,7 @@ export class IsobmffDemuxer extends Demuxer {
+                     if (ivSize === null) {
+                         throw new Error('Invalid file: encrypted track is missing its tenc box.');
+                     }
 +                    this.sampleBudget.reserve(Math.min(sampleCount, trackData.samples.length), 128, true);
                      for (let i = 0; i < Math.min(sampleCount, trackData.samples.length); i++) {
                          // Normalize the IV to 16 bytes so downstream code can assume a full-length buffer. For CTR with
                          // an 8-byte per-sample IV the lower 8 bytes are zero (that's the CENC spec's block counter start);
-@@ -2051,6 +2189,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2181,6 +2311,8 @@ export class IsobmffDemuxer extends Demuxer {
                          let subsamples = null;
                          if (useSubsamples) {
                              const subsampleCount = readU16Be(slice);
@@ -517,7 +512,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                              subsamples = [];
                              for (let j = 0; j < subsampleCount; j++) {
                                  const clearLen = readU16Be(slice);
-@@ -2655,6 +2795,9 @@ class IsobmffTrackBacking {
+@@ -2789,6 +2921,9 @@ class IsobmffTrackBacking {
              data = PLACEHOLDER_DATA;
          }
          else {
@@ -527,7 +522,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
              let slice = this.internalTrack.demuxer.reader.requestSlice(sampleInfo.sampleOffset, sampleInfo.sampleSize);
              if (isThenable(slice))
                  slice = await slice;
-@@ -2665,7 +2808,7 @@ class IsobmffTrackBacking {
+@@ -2799,7 +2934,7 @@ class IsobmffTrackBacking {
              if (this.internalTrack.encryptionInfo) {
                  let sampleEncryption = null;
                  if (this.internalTrack.encryptionAuxInfo) {
@@ -536,7 +531,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                      if (sampleIndex < entries.length) {
                          sampleEncryption = entries[sampleIndex];
                      }
-@@ -2695,6 +2838,9 @@ class IsobmffTrackBacking {
+@@ -2829,6 +2964,9 @@ class IsobmffTrackBacking {
              data = PLACEHOLDER_DATA;
          }
          else {
@@ -546,7 +541,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
              let slice = this.internalTrack.demuxer.reader.requestSlice(fragmentSample.byteOffset, fragmentSample.byteSize);
              if (isThenable(slice))
                  slice = await slice;
-@@ -3139,7 +3285,7 @@ const getOrCreateEncryptionAuxInfo = (track) => {
+@@ -3341,7 +3479,7 @@ const getOrCreateEncryptionAuxInfo = (track) => {
          };
      }
  };
@@ -555,7 +550,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
      if (aux.resolved) {
          return aux.resolved;
      }
-@@ -3182,6 +3328,7 @@ const resolveEncryptionAuxInfo = async (reader, encryptionInfo, aux) => {
+@@ -3389,6 +3527,7 @@ const resolveEncryptionAuxInfo = async (reader, encryptionInfo, aux) => {
          let subsamples = null;
          if (entrySize > ivSize) {
              const subsampleCount = readU16Be(slice);
@@ -565,7 +560,7 @@ index 4cc383f378c70335f51bbed1c4dbd7862d2c6c8c..9f744265d3702e1a09ab837ec9b33d8d
                  const clearLen = readU16Be(slice);
 diff --git a/dist/modules/src/isobmff/sample-budget.js b/dist/modules/src/isobmff/sample-budget.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..b994275aca28a8cc3ad933ba369442f61fac1a74
+index 0000000..b994275
 --- /dev/null
 +++ b/dist/modules/src/isobmff/sample-budget.js
 @@ -0,0 +1,85 @@
@@ -655,7 +650,7 @@ index 0000000000000000000000000000000000000000..b994275aca28a8cc3ad933ba369442f6
 +    }
 +}
 diff --git a/dist/modules/src/matroska/matroska-demuxer.js b/dist/modules/src/matroska/matroska-demuxer.js
-index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc3b326a21 100644
+index 236459c..18fa798 100644
 --- a/dist/modules/src/matroska/matroska-demuxer.js
 +++ b/dist/modules/src/matroska/matroska-demuxer.js
 @@ -41,6 +41,13 @@ const METADATA_ELEMENTS = [
@@ -670,10 +665,10 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
 +    EBMLId.FileMediaType, EBMLId.FileData, EBMLId.FileDescription,
 +]);
  const MAX_RESYNC_LENGTH = 10 * 2 ** 20; // 10 MiB
+ const MAX_ELEMENT_NESTING_DEPTH = 64;
  export class MatroskaDemuxer extends Demuxer {
-     constructor(input) {
-@@ -60,6 +67,9 @@ export class MatroskaDemuxer extends Demuxer {
-         this.isWebM = false;
+@@ -63,6 +70,9 @@ export class MatroskaDemuxer extends Demuxer {
+         this.elementNestingDepth = 0;
          this.reader = input._reader;
      }
 +    get skipDescriptiveMetadata() {
@@ -682,7 +677,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
      async getTrackBackings() {
          await this.readMetadata();
          return this.segments.flatMap(segment => segment.tracks.map(track => track.trackBacking));
-@@ -77,6 +87,8 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -80,6 +90,8 @@ export class MatroskaDemuxer extends Demuxer {
      }
      async getMetadataTags() {
          await this.readMetadata();
@@ -690,8 +685,8 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
 +            return {};
          // Load metadata tags from each segment lazily (only once)
          for (const segment of this.segments) {
-             if (!segment.metadataTagsCollected) {
-@@ -221,7 +233,7 @@ export class MatroskaDemuxer extends Demuxer {
+             if (!segment.metadataTagsPromise) {
+@@ -228,7 +240,7 @@ export class MatroskaDemuxer extends Demuxer {
                  }
              }
              else if (id === EBMLId.Tags || id === EBMLId.Attachments) {
@@ -700,7 +695,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
                  if (id === EBMLId.Tags) {
                      this.currentSegment.tagsSeen = true;
                  }
-@@ -229,11 +241,13 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -236,11 +248,13 @@ export class MatroskaDemuxer extends Demuxer {
                      this.currentSegment.attachmentsSeen = true;
                  }
                  assertDefinedSize(size);
@@ -719,21 +714,8 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
                  }
              }
              else if (id === EBMLId.Cluster) {
-@@ -489,7 +503,11 @@ export class MatroskaDemuxer extends Demuxer {
-             }
-             // Decode the block data if it hasn't been decoded yet (needed for lacing expansion)
-             if (!originalBlock.decoded) {
--                originalBlock.data = this.decodeBlockData(track, originalBlock.data);
-+                const sideDataByteLength = originalBlock.mainAdditional?.byteLength ?? 0;
-+                if (originalBlock.data.byteLength + sideDataByteLength > this.input._maxEncodedPacketBytes) {
-+                    throw new RangeError('Matroska packet and side data exceed the configured memory limit.');
-+                }
-+                originalBlock.data = this.decodeBlockData(track, originalBlock.data, sideDataByteLength);
-                 originalBlock.decoded = true;
-             }
-             const slice = FileSlice.tempFromBytes(originalBlock.data);
-@@ -581,6 +599,8 @@ export class MatroskaDemuxer extends Demuxer {
-         }
+@@ -608,6 +622,8 @@ export class MatroskaDemuxer extends Demuxer {
+         return expandedBlocks;
      }
      async loadSegmentMetadata(segment) {
 +        if (this.skipDescriptiveMetadata)
@@ -741,7 +723,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
          for (const seekEntry of segment.seekEntries) {
              if (seekEntry.id === EBMLId.Tags && !segment.tagsSeen) {
                  // We need to load the tags
-@@ -640,6 +660,12 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -691,6 +707,12 @@ export class MatroskaDemuxer extends Demuxer {
          const { id, size } = header;
          const dataStartPos = slice.filePos;
          assertDefinedSize(size);
@@ -751,36 +733,30 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
 +            slice.filePos = dataStartPos + size;
 +            return true;
 +        }
-         switch (id) {
-             case EBMLId.DocType:
-                 {
-@@ -1323,7 +1349,11 @@ export class MatroskaDemuxer extends Demuxer {
+         if (dataStartPos + size > slice.end) {
+             return false; // The element doesn't fit into its parent
+         }
+@@ -1396,6 +1418,9 @@ export class MatroskaDemuxer extends Demuxer {
                          // https://github.com/Vanilagy/mediabunny/issues/192
                          isKeyFrame = true;
                      }
--                    const blockData = readBytes(slice, size - (slice.filePos - dataStartPos));
-+                    const blockSize = size - (slice.filePos - dataStartPos);
-+                    if (blockSize > this.input._maxEncodedPacketBytes) {
++                    if (blockSlice.remainingLength > this.input._maxEncodedPacketBytes) {
 +                        throw new RangeError('Matroska packet exceeds the configured memory limit.');
 +                    }
-+                    const blockData = readBytes(slice, blockSize);
+                     const blockData = readBytes(blockSlice, blockSlice.remainingLength);
                      const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
                      trackData.blocks.push({
-                         timestamp: relativeTimestamp, // We'll add the cluster's timestamp to this later
-@@ -1360,7 +1390,11 @@ export class MatroskaDemuxer extends Demuxer {
-                     const relativeTimestamp = readI16Be(slice);
-                     const flags = readU8(slice);
+@@ -1434,6 +1459,9 @@ export class MatroskaDemuxer extends Demuxer {
+                     const relativeTimestamp = readI16Be(blockSlice);
+                     const flags = readU8(blockSlice);
                      const lacing = (flags >> 1) & 0x3; // If the block is laced, we'll expand it later
--                    const blockData = readBytes(slice, size - (slice.filePos - dataStartPos));
-+                    const blockSize = size - (slice.filePos - dataStartPos);
-+                    if (blockSize > this.input._maxEncodedPacketBytes) {
++                    if (blockSlice.remainingLength > this.input._maxEncodedPacketBytes) {
 +                        throw new RangeError('Matroska packet exceeds the configured memory limit.');
 +                    }
-+                    const blockData = readBytes(slice, blockSize);
+                     const blockData = readBytes(blockSlice, blockSlice.remainingLength);
                      const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
                      this.currentBlock = {
-                         timestamp: relativeTimestamp, // We'll add the cluster's timestamp to this later
-@@ -1402,6 +1436,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1479,6 +1507,9 @@ export class MatroskaDemuxer extends Demuxer {
                  {
                      if (!this.currentBlockAdditional)
                          break;
@@ -790,7 +766,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
                      this.currentBlockAdditional.data = readBytes(slice, size);
                  }
                  ;
-@@ -1664,7 +1701,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1747,7 +1778,7 @@ export class MatroskaDemuxer extends Demuxer {
          slice.filePos = dataStartPos + size;
          return true;
      }
@@ -799,7 +775,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
          assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
          let currentData = rawData;
          for (const instruction of track.decodingInstructions) {
-@@ -1677,6 +1714,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1760,6 +1791,9 @@ export class MatroskaDemuxer extends Demuxer {
                                  {
                                      if (instruction.data.settings && instruction.data.settings.length > 0) {
                                          const prefix = instruction.data.settings;
@@ -809,7 +785,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
                                          const newData = new Uint8Array(prefix.length + currentData.length);
                                          newData.set(prefix, 0);
                                          newData.set(currentData, prefix.length);
-@@ -2007,9 +2047,13 @@ class MatroskaTrackBacking {
+@@ -2091,9 +2125,13 @@ class MatroskaTrackBacking {
          const trackData = cluster.trackData.get(this.internalTrack.id);
          const block = trackData.blocks[blockIndex];
          assert(block);
@@ -824,7 +800,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
              block.decoded = true;
          }
          if (!block.postProcessed) {
-@@ -2023,6 +2067,9 @@ class MatroskaTrackBacking {
+@@ -2107,6 +2145,9 @@ class MatroskaTrackBacking {
                      && block.data[7] === 102; // 'f'
                  if (!hasFrameContainer) {
                      // Wrap the frame in a frame container
@@ -834,7 +810,7 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
                      const newData = new Uint8Array(block.data.length + 8);
                      const newDataView = toDataView(newData);
                      newDataView.setUint32(0, newData.length, false);
-@@ -2039,6 +2086,9 @@ class MatroskaTrackBacking {
+@@ -2123,6 +2164,9 @@ class MatroskaTrackBacking {
          const data = options.metadataOnly ? PLACEHOLDER_DATA : block.data;
          const timestamp = block.timestamp / this.internalTrack.segment.timestampFactor;
          const duration = block.duration / this.internalTrack.segment.timestampFactor;
@@ -845,10 +821,10 @@ index 7fcb549cadb05f87a425e4ed5971cf0733b0c7c6..d55747c18816d73c99fd0666860f11dc
          if (block.mainAdditional && this.internalTrack.info?.type === 'video' && this.internalTrack.info.alphaMode) {
              sideData.alpha = options.metadataOnly ? PLACEHOLDER_DATA : block.mainAdditional;
 diff --git a/dist/modules/src/media-sink.js b/dist/modules/src/media-sink.js
-index c63156cef3f9c3524ded3f5031ac7e882098179f..ec5280d7631db0aa27dc2e35ec020e46f20bdc19 100644
+index 009df0f..d11e9ed 100644
 --- a/dist/modules/src/media-sink.js
 +++ b/dist/modules/src/media-sink.js
-@@ -184,7 +184,8 @@ export class EncodedPacketSink {
+@@ -194,7 +194,8 @@ export class EncodedPacketSink {
      }
      /**
       * Creates an async iterator that yields the packets in this track in decode order. To enable fast iteration, this
@@ -858,7 +834,7 @@ index c63156cef3f9c3524ded3f5031ac7e882098179f..ec5280d7631db0aa27dc2e35ec020e46
       *
       * @param startPacket - (optional) The packet from which iteration should begin. This packet will also be yielded.
       * @param endPacket - (optional) The packet at which iteration should end. This packet will _not_ be yielded.
-@@ -203,6 +204,20 @@ export class EncodedPacketSink {
+@@ -213,6 +214,20 @@ export class EncodedPacketSink {
          if (this._track.input._disposed) {
              throw new InputDisposedError();
          }
@@ -880,10 +856,10 @@ index c63156cef3f9c3524ded3f5031ac7e882098179f..ec5280d7631db0aa27dc2e35ec020e46
          let { promise: queueNotEmpty, resolve: onQueueNotEmpty } = promiseWithResolvers();
          let { promise: queueDequeue, resolve: onQueueDequeue } = promiseWithResolvers();
 diff --git a/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js b/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js
-index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc94ea53c8 100644
+index 12b08a5..fffc8e0 100644
 --- a/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js
 +++ b/dist/modules/src/mpeg-ts/mpeg-ts-demuxer.js
-@@ -344,7 +344,12 @@ export class MpegTsDemuxer extends Demuxer {
+@@ -345,7 +345,12 @@ export class MpegTsDemuxer extends Demuxer {
                          if (!pesPacket) {
                              throw new Error(`Couldn't read first PES packet for Elementary Stream with PID ${elementaryStream.pid}`);
                          }
@@ -897,7 +873,7 @@ index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc
                          elementaryStream.canBeTrustedWithKeyPackets = section.randomAccessIndicator === 1;
                          if (this.input._initInput) {
                              const initDemuxer = (await this.input._initInput._getDemuxer());
-@@ -588,7 +593,8 @@ export class MpegTsDemuxer extends Demuxer {
+@@ -589,7 +594,8 @@ export class MpegTsDemuxer extends Demuxer {
          const codecStrings = await Promise.all(this.trackBackingEntries.map(x => x.getDecoderConfig().then(c => c?.codec ?? null)));
          return buildMpegTsMimeType(codecStrings);
      }
@@ -907,7 +883,7 @@ index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc
          let endPos = startPos;
          let currentPos = startPos;
          const chunks = [];
-@@ -633,12 +639,19 @@ export class MpegTsDemuxer extends Demuxer {
+@@ -634,12 +640,19 @@ export class MpegTsDemuxer extends Demuxer {
              }
              if (hasPayload) {
                  if (adaptationFieldLength === 0) {
@@ -929,7 +905,7 @@ index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc
                  }
              }
              endPos = currentPos;
-@@ -921,7 +934,9 @@ class MpegTsTrackBacking {
+@@ -922,7 +935,9 @@ class MpegTsTrackBacking {
          return new EncodedPacket(options.metadataOnly ? PLACEHOLDER_DATA : suppliedPacket.data, packetType, suppliedPacket.pts / TIMESCALE, Math.max(duration / TIMESCALE, 0), suppliedPacket.sequenceNumber, suppliedPacket.data.byteLength);
      }
      async getFirstPacket(options) {
@@ -940,22 +916,22 @@ index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc
          assert(section);
          const pesPacket = readPesPacket(this.elementaryStream.demuxer, section, true);
          assert(pesPacket);
-@@ -1216,7 +1231,13 @@ class MpegTsTrackBacking {
-                         }
+@@ -1220,7 +1235,13 @@ class MpegTsTrackBacking {
                          else {
-                             assert(pesHeaderSection);
--                            const pesPacket = readPesPacket(demuxer, pesHeaderSection, true);
-+                            // The first section is stored as a compact PES header during metadata
-+                            // discovery. Re-read it in full when key detection needs its payload.
-+                            const sectionForKeyCheck = isFirstChunk && pesHeader.sectionStartPos === firstPesPacketHeader.sectionStartPos
-+                                ? await demuxer.readSection(pesHeader.sectionStartPos, true)
-+                                : pesHeaderSection;
-+                            assert(sectionForKeyCheck);
-+                            const pesPacket = readPesPacket(demuxer, sectionForKeyCheck, true);
-                             assert(pesPacket);
-                             const context = new PacketReadingContext(this.elementaryStream, pesPacket);
-                             await context.markNextPacket();
-@@ -1405,6 +1426,9 @@ class PacketReadingContext {
+                             if (!context) {
+                                 assert(pesHeaderSection);
+-                                const pesPacket = readPesPacket(demuxer, pesHeaderSection, true);
++                                // The first section is stored as a compact PES header during metadata
++                                // discovery. Re-read it in full when key detection needs its payload.
++                                const sectionForKeyCheck = isFirstChunk && pesHeader.sectionStartPos === firstPesPacketHeader.sectionStartPos
++                                    ? await demuxer.readSection(pesHeader.sectionStartPos, true)
++                                    : pesHeaderSection;
++                                assert(sectionForKeyCheck);
++                                const pesPacket = readPesPacket(demuxer, sectionForKeyCheck, true);
+                                 assert(pesPacket);
+                                 context = new PacketReadingContext(this.elementaryStream, pesPacket);
+                             }
+@@ -1427,6 +1448,9 @@ class PacketReadingContext {
          this.pid = elementaryStream.pid;
          this.demuxer = elementaryStream.demuxer;
          this.startingPesPacket = startingPesPacket;
@@ -965,7 +941,7 @@ index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc
      }
      ensureBuffered(length) {
          const remaining = this.endPos - this.currentPos;
-@@ -1436,13 +1460,19 @@ class PacketReadingContext {
+@@ -1458,13 +1482,19 @@ class PacketReadingContext {
                          return;
                      }
                      if (packetHeader.pid === this.pid) {
@@ -986,7 +962,7 @@ index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc
                              break;
                          }
                      }
-@@ -1914,6 +1944,12 @@ class PacketReadingContext {
+@@ -1930,6 +1960,12 @@ class PacketReadingContext {
          // The sequence number is the starting position of the section the PES packet is in, PLUS the offset within the
          // PES packet where the packet starts.
          const sequenceNumber = sectionStartPos + (this.currentPos - this.currentPesPacketPos);
@@ -999,7 +975,7 @@ index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc
          const data = this.readBytes(packetLength);
          let randomAccessIndicator = currentPesPacket.randomAccessIndicator;
          if (randomAccessIndicator === 0 && !this.elementaryStream.canBeTrustedWithKeyPackets) {
-@@ -1995,6 +2031,33 @@ class PacketBuffer {
+@@ -2011,6 +2047,33 @@ class PacketBuffer {
          if (this.reachedEnd) {
              return false;
          }
@@ -1034,19 +1010,18 @@ index 9baf0a650aae818e8394726980a0bf22720835d3..42240d23754e1b34d96e92457d6012cc
          if (this.context.suppliedPacket) {
              // Small optimization: there was already a supplied packet in the context, so let's first use that one
 diff --git a/dist/modules/src/ogg/ogg-demuxer.js b/dist/modules/src/ogg/ogg-demuxer.js
-index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e0438850821 100644
+index ec1b65d..63bc82b 100644
 --- a/dist/modules/src/ogg/ogg-demuxer.js
 +++ b/dist/modules/src/ogg/ogg-demuxer.js
-@@ -14,6 +14,8 @@ import { EncodedPacket, PLACEHOLDER_DATA } from '../packet.js';
+@@ -14,6 +14,7 @@ import { EncodedPacket, PLACEHOLDER_DATA } from '../packet.js';
  import { readBytes } from '../reader.js';
- import { buildOggMimeType, computeOggPageCrc, extractSampleMetadata } from './ogg-misc.js';
+ import { buildOggMimeType, extractSampleMetadata } from './ogg-misc.js';
  import { findNextPageHeader, MAX_PAGE_HEADER_SIZE, MAX_PAGE_SIZE, MIN_PAGE_HEADER_SIZE, readPageHeader, } from './ogg-reader.js';
-+const MAX_OGG_LOGICAL_BITSTREAMS = 256;
 +const OGG_COMMENT_EXPANSION_MULTIPLIER = 12;
- export class OggDemuxer extends Demuxer {
-     constructor(input) {
-         super(input);
-@@ -21,8 +23,24 @@ export class OggDemuxer extends Demuxer {
+ const MAX_LOGICAL_BITSTREAMS = 64;
+ const VORBIS_IDENTIFICATION_HEADER_SIZE = 30;
+ const OPUS_IDENTIFICATION_HEADER_MIN_SIZE = 19;
+@@ -24,8 +25,24 @@ export class OggDemuxer extends Demuxer {
          this.bitstreams = [];
          this.trackBackings = [];
          this.metadataTags = {};
@@ -1071,18 +1046,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
      async readMetadata() {
          return this.metadataPromise ??= (async () => {
              let currentPos = 0;
-@@ -42,6 +60,10 @@ export class OggDemuxer extends Demuxer {
-                     // we know we've seen all bitstreams (minus chaining)
-                     break;
-                 }
-+                if (Number.isFinite(this.input._maxBufferedPacketBytes)
-+                    && this.bitstreams.length >= MAX_OGG_LOGICAL_BITSTREAMS) {
-+                    throw new RangeError('Ogg logical bitstream count exceeds the configured safety limit.');
-+                }
-                 this.bitstreams.push({
-                     serialNumber: page.serialNumber,
-                     bosPage: page,
-@@ -58,7 +80,8 @@ export class OggDemuxer extends Demuxer {
+@@ -64,7 +81,8 @@ export class OggDemuxer extends Demuxer {
                  currentPos = page.headerStartPos + page.totalSize;
              }
              for (const bitstream of this.bitstreams) {
@@ -1092,7 +1056,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
                  if (!firstPacket) {
                      continue;
                  }
-@@ -96,11 +119,14 @@ export class OggDemuxer extends Demuxer {
+@@ -102,11 +120,14 @@ export class OggDemuxer extends Demuxer {
          })();
      }
      async readVorbisMetadata(firstPacket, bitstream) {
@@ -1108,7 +1072,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
          if (!secondPacket) {
              return;
          }
-@@ -108,7 +134,17 @@ export class OggDemuxer extends Demuxer {
+@@ -114,7 +135,17 @@ export class OggDemuxer extends Demuxer {
          if (!nextPacketPosition) {
              return;
          }
@@ -1127,7 +1091,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
          if (!thirdPacket) {
              return;
          }
-@@ -128,8 +164,18 @@ export class OggDemuxer extends Demuxer {
+@@ -140,8 +171,18 @@ export class OggDemuxer extends Demuxer {
          addBytesToSegmentTable(firstPacket.data.length);
          addBytesToSegmentTable(secondPacket.data.length);
          // We don't add the last packet to the segment table, as it is assumed to be whatever bytes remain
@@ -1148,7 +1112,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
          description[0] = 2; // Num entries in the segment table
          description.set(lacingValues, 1);
          description.set(firstPacket.data, 1 + lacingValues.length);
-@@ -149,6 +195,7 @@ export class OggDemuxer extends Demuxer {
+@@ -160,6 +201,7 @@ export class OggDemuxer extends Demuxer {
              ],
              modeBlockflags: parseModesFromVorbisSetupPacket(thirdPacket.data).modeBlockflags,
          };
@@ -1156,7 +1120,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
          readVorbisComments(secondPacket.data.subarray(7), this.metadataTags); // Skip header type and 'vorbis'
      }
      async readOpusMetadata(firstPacket, bitstream) {
-@@ -159,10 +206,21 @@ export class OggDemuxer extends Demuxer {
+@@ -170,10 +212,21 @@ export class OggDemuxer extends Demuxer {
          if (!nextPacketPosition) {
              return;
          }
@@ -1179,7 +1143,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
          bitstream.codecInfo.codec = 'opus';
          bitstream.description = firstPacket.data;
          bitstream.lastMetadataPacket = secondPacket;
-@@ -174,7 +232,7 @@ export class OggDemuxer extends Demuxer {
+@@ -185,7 +238,7 @@ export class OggDemuxer extends Demuxer {
          };
          readVorbisComments(secondPacket.data.subarray(8), this.metadataTags); // Skip 'OpusTags'
      }
@@ -1188,7 +1152,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
          assert(startSegmentIndex < startPage.lacingValues.length);
          let startDataOffset = 0;
          for (let i = 0; i < startSegmentIndex; i++) {
-@@ -184,6 +242,19 @@ export class OggDemuxer extends Demuxer {
+@@ -195,6 +248,19 @@ export class OggDemuxer extends Demuxer {
          let currentDataOffset = startDataOffset;
          let currentSegmentIndex = startSegmentIndex;
          const chunks = [];
@@ -1208,7 +1172,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
          outer: while (true) {
              // Load the entire page data
              let pageSlice = this.reader.requestSlice(currentPage.dataStartPos, currentPage.dataSize);
-@@ -193,13 +264,13 @@ export class OggDemuxer extends Demuxer {
+@@ -206,13 +272,13 @@ export class OggDemuxer extends Demuxer {
              const pageData = readBytes(pageSlice, currentPage.dataSize);
              while (true) {
                  if (currentSegmentIndex === currentPage.lacingValues.length) {
@@ -1224,7 +1188,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
                      break outer;
                  }
                  currentSegmentIndex++;
-@@ -227,7 +298,6 @@ export class OggDemuxer extends Demuxer {
+@@ -240,7 +306,6 @@ export class OggDemuxer extends Demuxer {
              currentDataOffset = 0;
              currentSegmentIndex = 0;
          }
@@ -1233,7 +1197,7 @@ index e83fddb2f3b0478ffa6bd41daf1b7835cd63bbc2..fbcd7aaf2978edea4051c82a8e017e04
              return null; // Invalid packet, treat it as end of stream
          }
 diff --git a/dist/modules/src/reader.d.ts b/dist/modules/src/reader.d.ts
-index da0db97b8cfe01f9fc8ea552fdc90c9af3276c3e..affc312bdd8e3d3ae76e517927e93df2781c26b9 100644
+index da0db97..affc312 100644
 --- a/dist/modules/src/reader.d.ts
 +++ b/dist/modules/src/reader.d.ts
 @@ -9,7 +9,8 @@ import { MaybePromise } from './misc.js';
@@ -1247,7 +1211,7 @@ index da0db97b8cfe01f9fc8ea552fdc90c9af3276c3e..affc312bdd8e3d3ae76e517927e93df2
      get fileSizeNonStrict(): number | null;
      requestSlice(start: number, length: number): MaybePromise<FileSlice | null>;
 diff --git a/dist/modules/src/reader.js b/dist/modules/src/reader.js
-index 89a7979eebda756f9912e8e46952251aaafa282f..c9abe13226184793c346b487614b318d853d7e31 100644
+index 9589bba..651e5ff 100644
 --- a/dist/modules/src/reader.js
 +++ b/dist/modules/src/reader.js
 @@ -9,8 +9,15 @@ import { InputDisposedError } from './input.js';
@@ -1293,7 +1257,7 @@ index 89a7979eebda756f9912e8e46952251aaafa282f..c9abe13226184793c346b487614b318d
                  chunks.push(chunk);
                  currentSize += slice.length;
 diff --git a/src/flac/flac-demuxer.ts b/src/flac/flac-demuxer.ts
-index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a2241777a040b8 100644
+index 6f339d5..59b13f1 100644
 --- a/src/flac/flac-demuxer.ts
 +++ b/src/flac/flac-demuxer.ts
 @@ -66,6 +66,10 @@ type NextFlacFrameResult = {
@@ -1333,7 +1297,7 @@ index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a22417
  			// Read all ID3v2 tags at the start of the file
  			let currentPos = 0;
  			while (true) {
-@@ -121,6 +144,11 @@ export class FlacDemuxer extends Demuxer {
+@@ -120,6 +143,11 @@ export class FlacDemuxer extends Demuxer {
  					break;
  				}
  
@@ -1345,7 +1309,7 @@ index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a22417
  				let contentSlice = this.reader.requestSlice(headerSlice.filePos, id3V2Header.size);
  				if (isThenable(contentSlice)) contentSlice = await contentSlice;
  				assert(contentSlice);
-@@ -152,6 +180,7 @@ export class FlacDemuxer extends Demuxer {
+@@ -151,6 +179,7 @@ export class FlacDemuxer extends Demuxer {
  				const size = readU24Be(sizeSlice);
  				const isLastMetadata = (byte & 0x80) !== 0;
  				const metaBlockType = byte & 0x7f;
@@ -1353,7 +1317,7 @@ index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a22417
  
  				switch (metaBlockType) {
  					case FlacBlockType.STREAMINFO: {
-@@ -191,6 +220,7 @@ export class FlacDemuxer extends Demuxer {
+@@ -197,6 +226,7 @@ export class FlacDemuxer extends Demuxer {
  
  						bitstream.skipBits(16 * 8); // md5 hash
  
@@ -1361,7 +1325,7 @@ index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a22417
  						const description = new Uint8Array(42);
  						// 1. "fLaC"
  						description.set(new Uint8Array([0x66, 0x4c, 0x61, 0x43]), 0);
-@@ -216,6 +246,10 @@ export class FlacDemuxer extends Demuxer {
+@@ -222,6 +252,10 @@ export class FlacDemuxer extends Demuxer {
  					case FlacBlockType.VORBIS_COMMENT: {
  						// Parse vorbis comment block
  						// https://www.rfc-editor.org/rfc/rfc9639.html#name-vorbis-comment
@@ -1372,7 +1336,7 @@ index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a22417
  						let vorbisCommentBlock = this.reader.requestSlice(
  							currentPos,
  							size,
-@@ -234,6 +268,10 @@ export class FlacDemuxer extends Demuxer {
+@@ -244,6 +278,10 @@ export class FlacDemuxer extends Demuxer {
  					case FlacBlockType.PICTURE: {
  						// Parse picture block
  						// https://www.rfc-editor.org/rfc/rfc9639.html#name-picture
@@ -1384,19 +1348,19 @@ index 7a581d00eb6712e073d07fd394467b1b6eafc146..ae070df9c2624dedffb9cf7d95a22417
  							currentPos,
  							size,
 diff --git a/src/hls/hls-segmented-input.ts b/src/hls/hls-segmented-input.ts
-index 1b80b91c8916502590127575b867aa2a5f9734f2..9d4e435fcbd5f1727bdd4424abf4b691151b598f 100644
+index 2db4713..f498ca2 100644
 --- a/src/hls/hls-segmented-input.ts
 +++ b/src/hls/hls-segmented-input.ts
-@@ -131,7 +131,7 @@ export class HlsSegmentedInput extends SegmentedInput {
+@@ -138,7 +138,7 @@ export class HlsSegmentedInput extends SegmentedInput {
  
  		if (!lines) {
  			using ref = await this.demuxer.input._getSourceUncached({ path: this.rootPath, isRoot: false });
 -			const reader = new Reader(ref.source);
 +			const reader = new Reader(ref.source, this.input._maxContiguousReadBytes);
  
- 			const slice = await reader.requestEntireFile();
- 			assert(slice);
-@@ -704,14 +704,17 @@ export class HlsSegmentedInput extends SegmentedInput {
+ 			// Check the start first, so that we don't read some (potentially huge) file in its entirety that isn't even
+ 			// a playlist
+@@ -725,14 +725,17 @@ export class HlsSegmentedInput extends SegmentedInput {
  							ciphertextRef = sliceRef;
  						}
  
@@ -1416,7 +1380,7 @@ index 1b80b91c8916502590127575b867aa2a5f9734f2..9d4e435fcbd5f1727bdd4424abf4b691
  							const keySlice = await keyReader.requestSlice(0, AES_128_BLOCK_SIZE);
  							if (!keySlice) {
  								throw new Error('Invalid AES-128 key; expected at least 16 bytes of data.');
-@@ -736,6 +739,11 @@ export class HlsSegmentedInput extends SegmentedInput {
+@@ -757,6 +760,11 @@ export class HlsSegmentedInput extends SegmentedInput {
  			initInput: initInput ?? undefined,
  			formatOptions,
  		});
@@ -1429,7 +1393,7 @@ index 1b80b91c8916502590127575b867aa2a5f9734f2..9d4e435fcbd5f1727bdd4424abf4b691
  		input._onFormatDetermined = (format) => {
  			if (
 diff --git a/src/input.ts b/src/input.ts
-index 76ff20b394b21a4460e8e96b0ca32a9566bb8ece..35c36b6885931a6a78826bf58d65d56f4add51a6 100644
+index 76ff20b..35c36b6 100644
 --- a/src/input.ts
 +++ b/src/input.ts
 @@ -136,6 +136,16 @@ export class Input<S extends Source = Source> extends EventEmitter<InputEvents>
@@ -1467,7 +1431,7 @@ index 76ff20b394b21a4460e8e96b0ca32a9566bb8ece..35c36b6885931a6a78826bf58d65d56f
  
  			for (const format of this._formats) {
 diff --git a/src/isobmff/isobmff-demuxer.ts b/src/isobmff/isobmff-demuxer.ts
-index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da038d688a 100644
+index 9aa50e0..28bc155 100644
 --- a/src/isobmff/isobmff-demuxer.ts
 +++ b/src/isobmff/isobmff-demuxer.ts
 @@ -115,6 +115,7 @@ import {
@@ -1489,9 +1453,9 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  	sampleTimingEntries: SampleTimingEntry[];
  	sampleCompositionTimeOffsets: SampleCompositionTimeOffsetEntry[];
  	sampleSizes: number[];
-@@ -342,10 +347,13 @@ export class IsobmffDemuxer extends Demuxer {
- 
+@@ -355,10 +360,13 @@ export class IsobmffDemuxer extends Demuxer {
  	decryptionKeyCache = new Map<string, Promise<Uint8Array>>();
+ 	boxNestingDepth = 0;
  
 +	sampleBudget: IsobmffSampleBudget;
 +
@@ -1503,7 +1467,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  	}
  
  	override async getTrackBackings() {
-@@ -545,11 +553,16 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -578,11 +586,16 @@ export class IsobmffDemuxer extends Demuxer {
  	}
  
  	getSampleTableForTrack(internalTrack: InternalTrack) {
@@ -1520,20 +1484,16 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  			sampleTimingEntries: [],
  			sampleCompositionTimeOffsets: [],
  			sampleSizes: [],
-@@ -571,9 +584,50 @@ export class IsobmffDemuxer extends Demuxer {
- 		const stblContainerSlice = this.moovSlice.slice(internalTrack.sampleTableByteOffset);
- 
- 		this.currentTrack = internalTrack;
--		this.traverseBox(stblContainerSlice);
-+		try {
-+			this.traverseBox(stblContainerSlice);
-+		} catch (error) {
+@@ -609,11 +622,46 @@ export class IsobmffDemuxer extends Demuxer {
+ 			this.traverseBox(stblContainerSlice);
+ 		} catch (error) {
+ 			internalTrack.sampleTable = null;
+-			throw error;
 +			this.sampleBudget.error = error instanceof Error ? error : new Error(String(error));
 +			throw this.sampleBudget.error;
-+		} finally {
-+			this.currentTrack = null;
-+		}
- 		this.currentTrack = null;
+ 		} finally {
+ 			this.currentTrack = null;
+ 		}
  
 +		if ((sampleTable.declaredSampleCount !== null
 +			&& sampleTable.declaredSampleCount !== sampleTable.timingSampleCount)
@@ -1569,10 +1529,10 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
 +				previous = index;
 +			}
 +		}
- 		const isPcmCodec = internalTrack.info?.type === 'audio'
- 			&& internalTrack.info.codec
- 			&& (PCM_AUDIO_CODECS as readonly string[]).includes(internalTrack.info.codec);
-@@ -590,6 +644,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 		const lastTimingEntry = last(sampleTable.sampleTimingEntries);
+ 		const lastChunkEntryIndex = binarySearchLessOrEqual(
+ 			sampleTable.sampleToChunk,
+@@ -655,6 +703,7 @@ export class IsobmffDemuxer extends Demuxer {
  			assert(internalTrack.info?.type === 'audio');
  			const pcmInfo = parsePcmCodec(internalTrack.info.codec as PcmAudioCodec);
  
@@ -1580,31 +1540,31 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  			const newSampleTimingEntries: SampleTimingEntry[] = [];
  			const newSampleSizes: number[] = [];
  
-@@ -657,6 +712,7 @@ export class IsobmffDemuxer extends Demuxer {
- 		if (sampleTable.sampleCompositionTimeOffsets.length > 0) {
- 			// If composition time offsets are defined, we must build a list of all presentation timestamps and then
- 			// sort them
-+			this.sampleBudget.reserve(sampleTable.timingSampleCount, 128);
- 			sampleTable.presentationTimestamps = [];
- 
- 			for (const entry of sampleTable.sampleTimingEntries) {
-@@ -694,6 +750,7 @@ export class IsobmffDemuxer extends Demuxer {
- 	}
- 
- 	async readFragment(startPos: number): Promise<Fragment> {
-+		this.sampleBudget.check();
- 		if (this.lastReadFragment?.moofOffset === startPos) {
- 			return this.lastReadFragment;
+@@ -725,6 +774,7 @@ export class IsobmffDemuxer extends Demuxer {
  		}
-@@ -759,6 +816,7 @@ export class IsobmffDemuxer extends Demuxer {
- 				insertionIndex === -1
- 				|| fragmentPositionCache[insertionIndex]!.moofOffset !== fragment.moofOffset
+ 
+ 		if (sampleTable.sampleCompositionTimeOffsets.length > 0) {
++			this.sampleBudget.reserve(sampleTable.timingSampleCount, 128);
+ 			// Presentation order differs from decode order. Let's prepare the offset entries for timestamped-keyed
+ 			// random access later
+ 			const entries = sampleTable.sampleCompositionTimeOffsets;
+@@ -759,6 +809,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 			};
+ 
+ 			for (const entry of sortedEntries) {
++				this.sampleBudget.check();
+ 				const lastSampleIndex = entry.startIndex + entry.count - 1;
+ 				entry.startTimestamp = getDecodeTimestampAhead(entry.startIndex) + entry.offset;
+ 				entry.lastTimestamp = getDecodeTimestampAhead(lastSampleIndex) + entry.offset;
+@@ -887,6 +938,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 				(!previousEntry || previousEntry.moofOffset < fragment.moofOffset)
+ 				&& (!nextEntry || nextEntry.moofOffset > fragment.moofOffset)
  			) {
 +				this.sampleBudget.reserve(1, 96);
  				fragmentPositionCache.splice(insertionIndex + 1, 0, {
  					moofOffset: fragment.moofOffset,
  					startTimestamp: trackData.startTimestamp,
-@@ -772,6 +830,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -900,6 +952,7 @@ export class IsobmffDemuxer extends Demuxer {
  					this.reader,
  					track.encryptionInfo,
  					trackData.encryptionAuxInfo,
@@ -1612,7 +1572,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  				);
  
  				for (let i = 0; i < Math.min(trackData.samples.length, entries.length); i++) {
-@@ -813,6 +872,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -950,6 +1003,7 @@ export class IsobmffDemuxer extends Demuxer {
  	}
  
  	traverseBox(slice: FileSlice): boolean {
@@ -1620,7 +1580,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  		const startPos = slice.filePos;
  		const boxInfo = readBoxHeader(slice);
  		if (!boxInfo) {
-@@ -1873,6 +1933,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1986,6 +2040,10 @@ export class IsobmffDemuxer extends Demuxer {
  				slice.skip(4); // Version + flags
  
  				const entryCount = readU32Be(slice);
@@ -1631,7 +1591,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  
  				let currentIndex = 0;
  				let currentTimestamp = 0;
-@@ -1880,6 +1944,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1993,6 +2051,10 @@ export class IsobmffDemuxer extends Demuxer {
  				for (let i = 0; i < entryCount; i++) {
  					const sampleCount = readU32Be(slice);
  					const sampleDelta = readU32Be(slice);
@@ -1642,7 +1602,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  
  					track.sampleTable.sampleTimingEntries.push({
  						startIndex: currentIndex,
-@@ -1891,6 +1959,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2004,6 +2066,7 @@ export class IsobmffDemuxer extends Demuxer {
  					currentIndex += sampleCount;
  					currentTimestamp += sampleCount * sampleDelta;
  				}
@@ -1650,7 +1610,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  			}; break;
  
  			case 'ctts': {
-@@ -1906,11 +1975,16 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2019,11 +2082,16 @@ export class IsobmffDemuxer extends Demuxer {
  				slice.skip(1 + 3); // Version + flags
  
  				const entryCount = readU32Be(slice);
@@ -1667,7 +1627,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  
  					track.sampleTable.sampleCompositionTimeOffsets.push({
  						startIndex: sampleIndex,
-@@ -1920,6 +1994,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2036,6 +2104,7 @@ export class IsobmffDemuxer extends Demuxer {
  
  					sampleIndex += sampleCount;
  				}
@@ -1675,7 +1635,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  			}; break;
  
  			case 'stsz': {
-@@ -1936,6 +2011,12 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2052,6 +2121,12 @@ export class IsobmffDemuxer extends Demuxer {
  
  				const sampleSize = readU32Be(slice);
  				const sampleCount = readU32Be(slice);
@@ -1688,7 +1648,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  
  				if (sampleSize === 0) {
  					for (let i = 0; i < sampleCount; i++) {
-@@ -1962,6 +2043,15 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2080,6 +2155,15 @@ export class IsobmffDemuxer extends Demuxer {
  
  				const fieldSize = readU8(slice); // in bits
  				const sampleCount = readU32Be(slice);
@@ -1702,9 +1662,9 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
 +				this.sampleBudget.encoded(Math.ceil(sampleCount * fieldSize / 8), 1, boxEndPos - slice.filePos);
 +				this.sampleBudget.reserve(sampleCount, 16);
  
- 				const bytes = readBytes(slice, Math.ceil(sampleCount * fieldSize / 8));
- 				const bitstream = new Bitstream(bytes);
-@@ -1987,6 +2077,10 @@ export class IsobmffDemuxer extends Demuxer {
+ 				if (fieldSize !== 4 && fieldSize !== 8 && fieldSize !== 16) {
+ 					throw new Error(`Invalid stz2 box: unsupported field size ${fieldSize}.`);
+@@ -2111,6 +2195,10 @@ export class IsobmffDemuxer extends Demuxer {
  				track.sampleTable.keySampleIndices = [];
  
  				const entryCount = readU32Be(slice);
@@ -1715,10 +1675,10 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  				for (let i = 0; i < entryCount; i++) {
  					const sampleIndex = readU32Be(slice) - 1; // Convert to 0-indexed
  					track.sampleTable.keySampleIndices.push(sampleIndex);
-@@ -2012,11 +2106,19 @@ export class IsobmffDemuxer extends Demuxer {
- 				slice.skip(4);
+@@ -2140,11 +2228,19 @@ export class IsobmffDemuxer extends Demuxer {
  
  				const entryCount = readU32Be(slice);
+ 				let skippedEntryCount = 0;
 +				if (track.sampleTable.seenTables.has('stsc')) this.sampleBudget.fail('duplicate sample table.');
 +				track.sampleTable.seenTables.add('stsc');
 +				this.sampleBudget.encoded(entryCount, 12, boxEndPos - slice.filePos);
@@ -1733,9 +1693,9 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
 +						this.sampleBudget.fail('invalid sample-to-chunk table.');
 +					}
  
- 					track.sampleTable.sampleToChunk.push({
- 						startSampleIndex: -1,
-@@ -2035,6 +2137,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 					const lastEntry = last(track.sampleTable.sampleToChunk);
+ 					if (lastEntry && startChunkIndex <= lastEntry.startChunkIndex) {
+@@ -2177,6 +2273,7 @@ export class IsobmffDemuxer extends Demuxer {
  						const chunkCount = nextChunk.startChunkIndex
  							- track.sampleTable.sampleToChunk[i]!.startChunkIndex;
  						startSampleIndex += chunkCount * track.sampleTable.sampleToChunk[i]!.samplesPerChunk;
@@ -1743,7 +1703,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  					}
  				}
  			}; break;
-@@ -2052,6 +2155,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2194,6 +2291,10 @@ export class IsobmffDemuxer extends Demuxer {
  				slice.skip(4); // Version + flags
  
  				const entryCount = readU32Be(slice);
@@ -1754,7 +1714,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  
  				for (let i = 0; i < entryCount; i++) {
  					const chunkOffset = readU32Be(slice);
-@@ -2072,6 +2179,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2214,6 +2315,10 @@ export class IsobmffDemuxer extends Demuxer {
  				slice.skip(4); // Version + flags
  
  				const entryCount = readU32Be(slice);
@@ -1765,7 +1725,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  
  				for (let i = 0; i < entryCount; i++) {
  					const chunkOffset = readU64Be(slice);
-@@ -2134,6 +2245,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2276,6 +2381,10 @@ export class IsobmffDemuxer extends Demuxer {
  				const readSampleNum = functions[lengthSizeOfSampleNum]!;
  
  				const numberOfEntries = readU32Be(slice);
@@ -1776,24 +1736,24 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  				for (let i = 0; i < numberOfEntries; i++) {
  					const time = version === 1 ? readU64Be(slice) : readU32Be(slice);
  					const moofOffset = version === 1 ? readU64Be(slice) : readU32Be(slice);
-@@ -2164,6 +2279,7 @@ export class IsobmffDemuxer extends Demuxer {
- 			}; break;
+@@ -2304,6 +2413,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 					break; // Nested moof boxes make no sense
+ 				}
  
- 			case 'moof': {
 +				this.sampleBudget.currentFragmentBytes = 0;
  				this.currentFragment = {
  					moofOffset: startPos,
  					moofSize: boxInfo.totalSize,
-@@ -2175,6 +2291,8 @@ export class IsobmffDemuxer extends Demuxer {
- 				this.readContiguousBoxes(slice.slice(contentStartPos, boxInfo.contentSize));
- 
- 				this.lastReadFragment = this.currentFragment;
-+				this.sampleBudget.lastFragmentBytes = this.sampleBudget.currentFragmentBytes;
-+				this.sampleBudget.currentFragmentBytes = 0;
- 				this.currentFragment = null;
- 			}; break;
- 
-@@ -2196,6 +2314,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2317,6 +2427,8 @@ export class IsobmffDemuxer extends Demuxer {
+ 					this.readContiguousBoxes(slice.slice(contentStartPos, boxInfo.contentSize));
+ 					this.lastReadFragment = this.currentFragment;
+ 				} finally {
++					this.sampleBudget.lastFragmentBytes = this.sampleBudget.currentFragmentBytes;
++					this.sampleBudget.currentFragmentBytes = 0;
+ 					this.currentFragment = null;
+ 					this.currentTrack = null;
+ 				}
+@@ -2347,6 +2459,7 @@ export class IsobmffDemuxer extends Demuxer {
  							break cond;
  						}
  
@@ -1801,9 +1761,9 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  						trackData.presentationTimestamps = trackData.samples
  							.map((x, i) => ({ presentationTimestamp: x.presentationTimestamp, sampleIndex: i }))
  							.sort((a, b) => a.presentationTimestamp - b.presentationTimestamp);
-@@ -2384,6 +2503,19 @@ export class IsobmffDemuxer extends Demuxer {
- 					this.currentFragment.trackData.set(track.id, trackData);
- 				}
+@@ -2559,6 +2672,19 @@ export class IsobmffDemuxer extends Demuxer {
+ 
+ 				trackData.trunSampleCounts.push(sampleCount);
  
 +				const fieldsPerSample = Number(sampleDurationPresent) + Number(sampleSizePresent)
 +					+ Number(sampleFlagsPresent) + Number(sampleCompositionTimeOffsetsPresent);
@@ -1821,7 +1781,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  				for (let i = 0; i < sampleCount; i++) {
  					let sampleDuration: number;
  					if (sampleDurationPresent) {
-@@ -2420,6 +2552,11 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2592,6 +2718,11 @@ export class IsobmffDemuxer extends Demuxer {
  						sampleCompositionTimeOffset = readI32Be(slice);
  					}
  
@@ -1833,7 +1793,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  					const isKeyFrame = !(sampleFlags & 0x00010000);
  
  					trackData.samples.push({
-@@ -2459,6 +2596,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2631,6 +2762,8 @@ export class IsobmffDemuxer extends Demuxer {
  
  				const defaultSampleInfoSize = readU8(slice);
  				const sampleCount = readU32Be(slice);
@@ -1842,15 +1802,15 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  
  				let sampleSizes: Uint8Array | null = null;
  				if (defaultSampleInfoSize === 0 && sampleCount > 0) {
-@@ -2530,6 +2669,7 @@ export class IsobmffDemuxer extends Demuxer {
- 				const ivSize = track.encryptionInfo.defaultPerSampleIvSize;
- 				assert(ivSize !== null);
+@@ -2703,6 +2836,7 @@ export class IsobmffDemuxer extends Demuxer {
+ 					throw new Error('Invalid file: encrypted track is missing its tenc box.');
+ 				}
  
 +				this.sampleBudget.reserve(Math.min(sampleCount, trackData.samples.length), 128, true);
  				for (let i = 0; i < Math.min(sampleCount, trackData.samples.length); i++) {
  					// Normalize the IV to 16 bytes so downstream code can assume a full-length buffer. For CTR with
  					// an 8-byte per-sample IV the lower 8 bytes are zero (that's the CENC spec's block counter start);
-@@ -2544,6 +2684,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2719,6 +2853,8 @@ export class IsobmffDemuxer extends Demuxer {
  					let subsamples: SampleEncryptionInfo['subsamples'] = null;
  					if (useSubsamples) {
  						const subsampleCount = readU16Be(slice);
@@ -1859,7 +1819,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  						subsamples = [];
  						for (let j = 0; j < subsampleCount; j++) {
  							const clearLen = readU16Be(slice);
-@@ -3199,6 +3341,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+@@ -3377,6 +3513,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
  		if (options.metadataOnly) {
  			data = PLACEHOLDER_DATA;
  		} else {
@@ -1869,7 +1829,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  			let slice = this.internalTrack.demuxer.reader.requestSlice(
  				sampleInfo.sampleOffset,
  				sampleInfo.sampleSize,
-@@ -3218,6 +3363,7 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+@@ -3396,6 +3535,7 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
  						this.internalTrack.demuxer.reader,
  						this.internalTrack.encryptionInfo,
  						this.internalTrack.encryptionAuxInfo,
@@ -1877,7 +1837,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  					);
  
  					if (sampleIndex < entries.length) {
-@@ -3262,6 +3408,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+@@ -3440,6 +3580,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
  		if (options.metadataOnly) {
  			data = PLACEHOLDER_DATA;
  		} else {
@@ -1887,7 +1847,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  			let slice = this.internalTrack.demuxer.reader.requestSlice(
  				fragmentSample.byteOffset,
  				fragmentSample.byteSize,
-@@ -3854,6 +4003,7 @@ const resolveEncryptionAuxInfo = async (
+@@ -4124,6 +4267,7 @@ const resolveEncryptionAuxInfo = async (
  	reader: Reader,
  	encryptionInfo: TrackEncryptionInfo,
  	aux: SampleEncryptionAuxInfo,
@@ -1895,7 +1855,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  ) => {
  	if (aux.resolved) {
  		return aux.resolved;
-@@ -3901,6 +4051,7 @@ const resolveEncryptionAuxInfo = async (
+@@ -4175,6 +4319,7 @@ const resolveEncryptionAuxInfo = async (
  		let subsamples: { clearLen: number; protectedLen: number }[] | null = null;
  		if (entrySize > ivSize) {
  			const subsampleCount = readU16Be(slice);
@@ -1905,7 +1865,7 @@ index 484281eddde5d038faf3d646a03207443ac5405a..7d11ec177ac08afced5151b85ff4a6da
  				const clearLen = readU16Be(slice);
 diff --git a/src/isobmff/sample-budget.ts b/src/isobmff/sample-budget.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..07202d96a2abae0cdaf2ec98bb5f5d01186fb7d6
+index 0000000..07202d9
 --- /dev/null
 +++ b/src/isobmff/sample-budget.ts
 @@ -0,0 +1,86 @@
@@ -1996,10 +1956,10 @@ index 0000000000000000000000000000000000000000..07202d96a2abae0cdaf2ec98bb5f5d01
 +	}
 +}
 diff --git a/src/matroska/matroska-demuxer.ts b/src/matroska/matroska-demuxer.ts
-index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7a7767990 100644
+index 29a845a..db27b9d 100644
 --- a/src/matroska/matroska-demuxer.ts
 +++ b/src/matroska/matroska-demuxer.ts
-@@ -255,6 +255,13 @@ const METADATA_ELEMENTS = [
+@@ -262,6 +262,13 @@ const METADATA_ELEMENTS = [
  	{ id: EBMLId.Tracks, flag: 'tracksSeen' },
  	{ id: EBMLId.Cues, flag: 'cuesSeen' },
  ] as const;
@@ -2011,9 +1971,9 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
 +	EBMLId.FileMediaType, EBMLId.FileData, EBMLId.FileDescription,
 +]);
  const MAX_RESYNC_LENGTH = 10 * 2 ** 20; // 10 MiB
+ const MAX_ELEMENT_NESTING_DEPTH = 64;
  
- export class MatroskaDemuxer extends Demuxer {
-@@ -292,6 +299,10 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -302,6 +309,10 @@ export class MatroskaDemuxer extends Demuxer {
  		this.reader = input._reader;
  	}
  
@@ -2024,7 +1984,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  	async getTrackBackings() {
  		await this.readMetadata();
  		return this.segments.flatMap(segment => segment.tracks.map(track => track.trackBacking!));
-@@ -315,6 +326,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -325,6 +336,7 @@ export class MatroskaDemuxer extends Demuxer {
  
  	async getMetadataTags() {
  		await this.readMetadata();
@@ -2032,7 +1992,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  
  		// Load metadata tags from each segment lazily (only once)
  		for (const segment of this.segments) {
-@@ -491,7 +503,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -505,7 +517,7 @@ export class MatroskaDemuxer extends Demuxer {
  					this.readContiguousElements(slice);
  				}
  			} else if (id === EBMLId.Tags || id === EBMLId.Attachments) {
@@ -2041,7 +2001,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  				if (id === EBMLId.Tags) {
  					this.currentSegment.tagsSeen = true;
  				} else {
-@@ -500,11 +512,13 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -514,11 +526,13 @@ export class MatroskaDemuxer extends Demuxer {
  
  				assertDefinedSize(size);
  
@@ -2059,20 +2019,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  				}
  			} else if (id === EBMLId.Cluster) {
  				this.currentSegment.clusterSeekStartPos = elementStartPos;
-@@ -822,7 +836,11 @@ export class MatroskaDemuxer extends Demuxer {
- 
- 			// Decode the block data if it hasn't been decoded yet (needed for lacing expansion)
- 			if (!originalBlock.decoded) {
--				originalBlock.data = this.decodeBlockData(track, originalBlock.data);
-+				const sideDataByteLength = originalBlock.mainAdditional?.byteLength ?? 0;
-+				if (originalBlock.data.byteLength + sideDataByteLength > this.input._maxEncodedPacketBytes) {
-+					throw new RangeError('Matroska packet and side data exceed the configured memory limit.');
-+				}
-+				originalBlock.data = this.decodeBlockData(track, originalBlock.data, sideDataByteLength);
- 				originalBlock.decoded = true;
- 			}
- 
-@@ -932,6 +950,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -961,6 +975,7 @@ export class MatroskaDemuxer extends Demuxer {
  	}
  
  	async loadSegmentMetadata(segment: Segment) {
@@ -2080,7 +2027,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  		for (const seekEntry of segment.seekEntries) {
  			if (seekEntry.id === EBMLId.Tags && !segment.tagsSeen) {
  				// We need to load the tags
-@@ -1001,6 +1020,12 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1056,6 +1071,12 @@ export class MatroskaDemuxer extends Demuxer {
  		const { id, size } = header;
  		const dataStartPos = slice.filePos;
  		assertDefinedSize(size);
@@ -2091,35 +2038,29 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
 +			return true;
 +		}
  
- 		switch (id) {
- 			case EBMLId.DocType: {
-@@ -1591,7 +1616,11 @@ export class MatroskaDemuxer extends Demuxer {
+ 		if (dataStartPos + size > slice.end) {
+ 			return false; // The element doesn't fit into its parent
+@@ -1674,6 +1695,9 @@ export class MatroskaDemuxer extends Demuxer {
  					isKeyFrame = true;
  				}
  
--				const blockData = readBytes(slice, size - (slice.filePos - dataStartPos));
-+				const blockSize = size - (slice.filePos - dataStartPos);
-+				if (blockSize > this.input._maxEncodedPacketBytes) {
++				if (blockSlice.remainingLength > this.input._maxEncodedPacketBytes) {
 +					throw new RangeError('Matroska packet exceeds the configured memory limit.');
 +				}
-+				const blockData = readBytes(slice, blockSize);
+ 				const blockData = readBytes(blockSlice, blockSlice.remainingLength);
  				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
  
- 				trackData.blocks.push({
-@@ -1628,7 +1657,11 @@ export class MatroskaDemuxer extends Demuxer {
- 				const flags = readU8(slice);
+@@ -1713,6 +1737,9 @@ export class MatroskaDemuxer extends Demuxer {
+ 				const flags = readU8(blockSlice);
  				const lacing = (flags >> 1) & 0x3 as BlockLacing; // If the block is laced, we'll expand it later
  
--				const blockData = readBytes(slice, size - (slice.filePos - dataStartPos));
-+				const blockSize = size - (slice.filePos - dataStartPos);
-+				if (blockSize > this.input._maxEncodedPacketBytes) {
++				if (blockSlice.remainingLength > this.input._maxEncodedPacketBytes) {
 +					throw new RangeError('Matroska packet exceeds the configured memory limit.');
 +				}
-+				const blockData = readBytes(slice, blockSize);
+ 				const blockData = readBytes(blockSlice, blockSlice.remainingLength);
  				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
  
- 				this.currentBlock = {
-@@ -1667,6 +1700,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1755,6 +1782,9 @@ export class MatroskaDemuxer extends Demuxer {
  			case EBMLId.BlockAdditional: {
  				if (!this.currentBlockAdditional) break;
  
@@ -2129,7 +2070,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  				this.currentBlockAdditional.data = readBytes(slice, size);
  			}; break;
  
-@@ -1895,7 +1931,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1989,7 +2019,7 @@ export class MatroskaDemuxer extends Demuxer {
  		return true;
  	}
  
@@ -2138,7 +2079,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  		assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
  
  		let currentData = rawData;
-@@ -1909,6 +1945,12 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -2003,6 +2033,12 @@ export class MatroskaDemuxer extends Demuxer {
  						case ContentCompAlgo.HeaderStripping: {
  							if (instruction.data.settings && instruction.data.settings.length > 0) {
  								const prefix = instruction.data.settings;
@@ -2151,7 +2092,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  								const newData = new Uint8Array(prefix.length + currentData.length);
  
  								newData.set(prefix, 0);
-@@ -2295,10 +2337,18 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2388,10 +2424,18 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  		const trackData = cluster.trackData.get(this.internalTrack.id)!;
  		const block = trackData.blocks[blockIndex];
  		assert(block);
@@ -2171,7 +2112,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  			block.decoded = true;
  		}
  
-@@ -2315,6 +2365,12 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2408,6 +2452,12 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  
  				if (!hasFrameContainer) {
  					// Wrap the frame in a frame container
@@ -2184,7 +2125,7 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  					const newData = new Uint8Array(block.data.length + 8);
  					const newDataView = toDataView(newData);
  
-@@ -2334,6 +2390,9 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2427,6 +2477,9 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  		const data = options.metadataOnly ? PLACEHOLDER_DATA : block.data;
  		const timestamp = block.timestamp / this.internalTrack.segment.timestampFactor;
  		const duration = block.duration / this.internalTrack.segment.timestampFactor;
@@ -2195,10 +2136,10 @@ index f0524c32fc45447b6ea89d991735dcc7cdc3466f..182709d58d008630115959e29ab05cc7
  		const sideData: EncodedPacketSideData = {};
  		if (block.mainAdditional && this.internalTrack.info?.type === 'video' && this.internalTrack.info.alphaMode) {
 diff --git a/src/media-sink.ts b/src/media-sink.ts
-index cf5d812be252ce1708714452acaa6e3606002924..bc77edc5371e3f2e0e890c0b04c13e4b21ab9371 100644
+index b62adde..f2b76fb 100644
 --- a/src/media-sink.ts
 +++ b/src/media-sink.ts
-@@ -303,7 +303,8 @@ export class EncodedPacketSink {
+@@ -317,7 +317,8 @@ export class EncodedPacketSink {
  
  	/**
  	 * Creates an async iterator that yields the packets in this track in decode order. To enable fast iteration, this
@@ -2208,7 +2149,7 @@ index cf5d812be252ce1708714452acaa6e3606002924..bc77edc5371e3f2e0e890c0b04c13e4b
  	 *
  	 * @param startPacket - (optional) The packet from which iteration should begin. This packet will also be yielded.
  	 * @param endPacket - (optional) The packet at which iteration should end. This packet will _not_ be yielded.
-@@ -328,6 +329,23 @@ export class EncodedPacketSink {
+@@ -342,6 +343,23 @@ export class EncodedPacketSink {
  			throw new InputDisposedError();
  		}
  
@@ -2233,10 +2174,10 @@ index cf5d812be252ce1708714452acaa6e3606002924..bc77edc5371e3f2e0e890c0b04c13e4b
  
  		let { promise: queueNotEmpty, resolve: onQueueNotEmpty } = promiseWithResolvers();
 diff --git a/src/mpeg-ts/mpeg-ts-demuxer.ts b/src/mpeg-ts/mpeg-ts-demuxer.ts
-index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d185e54f17c 100644
+index 990b91e..db4cf9c 100644
 --- a/src/mpeg-ts/mpeg-ts-demuxer.ts
 +++ b/src/mpeg-ts/mpeg-ts-demuxer.ts
-@@ -526,7 +526,12 @@ export class MpegTsDemuxer extends Demuxer {
+@@ -529,7 +529,12 @@ export class MpegTsDemuxer extends Demuxer {
  							);
  						}
  
@@ -2250,7 +2191,7 @@ index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d18
  						elementaryStream.canBeTrustedWithKeyPackets = section.randomAccessIndicator === 1;
  
  						if (this.input._initInput) {
-@@ -860,7 +865,13 @@ export class MpegTsDemuxer extends Demuxer {
+@@ -863,7 +868,13 @@ export class MpegTsDemuxer extends Demuxer {
  		return buildMpegTsMimeType(codecStrings);
  	}
  
@@ -2265,7 +2206,7 @@ index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d18
  		let endPos = startPos;
  		let currentPos = startPos;
  		const chunks: Uint8Array[] = [];
-@@ -912,11 +923,18 @@ export class MpegTsDemuxer extends Demuxer {
+@@ -915,11 +926,18 @@ export class MpegTsDemuxer extends Demuxer {
  
  			if (hasPayload) {
  				if (adaptationFieldLength === 0) {
@@ -2286,7 +2227,7 @@ index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d18
  				}
  			}
  
-@@ -1308,7 +1326,9 @@ abstract class MpegTsTrackBacking implements InputTrackBacking {
+@@ -1311,7 +1329,9 @@ abstract class MpegTsTrackBacking implements InputTrackBacking {
  	}
  
  	async getFirstPacket(options: PacketRetrievalOptions): Promise<EncodedPacket | null> {
@@ -2297,23 +2238,23 @@ index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d18
  		assert(section);
  
  		const pesPacket = readPesPacket(this.elementaryStream.demuxer, section, true);
-@@ -1700,7 +1720,14 @@ abstract class MpegTsTrackBacking implements InputTrackBacking {
- 							isKeyPacket = pesHeader.randomAccessIndicator === 1;
+@@ -1707,7 +1727,14 @@ abstract class MpegTsTrackBacking implements InputTrackBacking {
  						} else {
- 							assert(pesHeaderSection);
--							const pesPacket = readPesPacket(demuxer, pesHeaderSection, true);
-+							// The first section is stored as a compact PES header during metadata
-+							// discovery. Re-read it in full when key detection needs its payload.
-+							const sectionForKeyCheck = isFirstChunk
-+								&& pesHeader.sectionStartPos === firstPesPacketHeader.sectionStartPos
-+								? await demuxer.readSection(pesHeader.sectionStartPos, true)
-+								: pesHeaderSection;
-+							assert(sectionForKeyCheck);
-+							const pesPacket = readPesPacket(demuxer, sectionForKeyCheck, true);
- 							assert(pesPacket);
+ 							if (!context) {
+ 								assert(pesHeaderSection);
+-								const pesPacket = readPesPacket(demuxer, pesHeaderSection, true);
++								// The first section is stored as a compact PES header during metadata
++								// discovery. Re-read it in full when key detection needs its payload.
++								const sectionForKeyCheck = isFirstChunk
++									&& pesHeader.sectionStartPos === firstPesPacketHeader.sectionStartPos
++									? await demuxer.readSection(pesHeader.sectionStartPos, true)
++									: pesHeaderSection;
++								assert(sectionForKeyCheck);
++								const pesPacket = readPesPacket(demuxer, sectionForKeyCheck, true);
+ 								assert(pesPacket);
  
- 							const context = new PacketReadingContext(this.elementaryStream, pesPacket);
-@@ -1967,12 +1994,20 @@ class PacketReadingContext {
+ 								context = new PacketReadingContext(this.elementaryStream, pesPacket);
+@@ -1995,12 +2022,20 @@ class PacketReadingContext {
  	nextPts: number | null = null;
  
  	suppliedPacket: SuppliedPacket | null = null;
@@ -2334,7 +2275,7 @@ index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d18
  	}
  
  	ensureBuffered(length: number) {
-@@ -2011,14 +2046,25 @@ class PacketReadingContext {
+@@ -2039,14 +2074,25 @@ class PacketReadingContext {
  					}
  
  					if (packetHeader.pid === this.pid) {
@@ -2361,7 +2302,7 @@ index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d18
  							break;
  						}
  					}
-@@ -2594,6 +2640,14 @@ class PacketReadingContext {
+@@ -2613,6 +2659,14 @@ class PacketReadingContext {
  		// The sequence number is the starting position of the section the PES packet is in, PLUS the offset within the
  		// PES packet where the packet starts.
  		const sequenceNumber = sectionStartPos + (this.currentPos - this.currentPesPacketPos);
@@ -2376,7 +2317,7 @@ index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d18
  		const data = this.readBytes(packetLength);
  
  		let randomAccessIndicator = currentPesPacket.randomAccessIndicator;
-@@ -2697,6 +2751,33 @@ class PacketBuffer {
+@@ -2716,6 +2770,33 @@ class PacketBuffer {
  		if (this.reachedEnd) {
  			return false;
  		}
@@ -2411,20 +2352,19 @@ index 0424068cd9a1c6850cc1d72e8b25ffe273d845d0..82af71ab3206bb112511ff0f824f9d18
  		let suppliedPacket: SuppliedPacket | null;
  		if (this.context.suppliedPacket) {
 diff --git a/src/ogg/ogg-demuxer.ts b/src/ogg/ogg-demuxer.ts
-index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5def6f5ea2 100644
+index 5d71918..8b792c7 100644
 --- a/src/ogg/ogg-demuxer.ts
 +++ b/src/ogg/ogg-demuxer.ts
-@@ -54,6 +54,9 @@ type Packet = {
+@@ -58,6 +58,8 @@ type Packet = {
  	endSegmentIndex: number;
  };
  
-+const MAX_OGG_LOGICAL_BITSTREAMS = 256;
 +const OGG_COMMENT_EXPANSION_MULTIPLIER = 12;
 +
  export class OggDemuxer extends Demuxer {
  	reader: Reader;
  
-@@ -61,6 +64,7 @@ export class OggDemuxer extends Demuxer {
+@@ -65,6 +67,7 @@ export class OggDemuxer extends Demuxer {
  	bitstreams: LogicalBitstream[] = [];
  	trackBackings: OggAudioTrackBacking[] = [];
  	metadataTags: MetadataTags = {};
@@ -2432,7 +2372,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  
  	constructor(input: Input) {
  		super(input);
-@@ -68,6 +72,24 @@ export class OggDemuxer extends Demuxer {
+@@ -72,6 +75,24 @@ export class OggDemuxer extends Demuxer {
  		this.reader = input._reader;
  	}
  
@@ -2457,21 +2397,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  	async readMetadata() {
  		return this.metadataPromise ??= (async () => {
  			let currentPos = 0;
-@@ -89,6 +111,13 @@ export class OggDemuxer extends Demuxer {
- 					break;
- 				}
- 
-+				if (
-+					Number.isFinite(this.input._maxBufferedPacketBytes)
-+					&& this.bitstreams.length >= MAX_OGG_LOGICAL_BITSTREAMS
-+				) {
-+					throw new RangeError('Ogg logical bitstream count exceeds the configured safety limit.');
-+				}
-+
- 				this.bitstreams.push({
- 					serialNumber: page.serialNumber,
- 					bosPage: page,
-@@ -107,7 +136,8 @@ export class OggDemuxer extends Demuxer {
+@@ -115,7 +136,8 @@ export class OggDemuxer extends Demuxer {
  			}
  
  			for (const bitstream of this.bitstreams) {
@@ -2481,7 +2407,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  				if (!firstPacket) {
  					continue;
  				}
-@@ -147,12 +177,19 @@ export class OggDemuxer extends Demuxer {
+@@ -155,12 +177,19 @@ export class OggDemuxer extends Demuxer {
  	}
  
  	async readVorbisMetadata(firstPacket: Packet, bitstream: LogicalBitstream) {
@@ -2502,7 +2428,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  		if (!secondPacket) {
  			return;
  		}
-@@ -162,7 +199,26 @@ export class OggDemuxer extends Demuxer {
+@@ -170,7 +199,26 @@ export class OggDemuxer extends Demuxer {
  			return;
  		}
  
@@ -2530,7 +2456,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  		if (!thirdPacket) {
  			return;
  		}
-@@ -188,10 +244,19 @@ export class OggDemuxer extends Demuxer {
+@@ -203,10 +251,19 @@ export class OggDemuxer extends Demuxer {
  		addBytesToSegmentTable(secondPacket.data.length);
  		// We don't add the last packet to the segment table, as it is assumed to be whatever bytes remain
  
@@ -2554,7 +2480,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  		description[0] = 2; // Num entries in the segment table
  		description.set(
  			lacingValues, 1,
-@@ -223,6 +288,7 @@ export class OggDemuxer extends Demuxer {
+@@ -237,6 +294,7 @@ export class OggDemuxer extends Demuxer {
  			modeBlockflags: parseModesFromVorbisSetupPacket(thirdPacket.data).modeBlockflags,
  		};
  
@@ -2562,7 +2488,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  		readVorbisComments(secondPacket.data.subarray(7), this.metadataTags); // Skip header type and 'vorbis'
  	}
  
-@@ -235,13 +301,26 @@ export class OggDemuxer extends Demuxer {
+@@ -249,13 +307,26 @@ export class OggDemuxer extends Demuxer {
  			return;
  		}
  
@@ -2589,7 +2515,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  
  		bitstream.codecInfo.codec = 'opus';
  		bitstream.description = firstPacket.data;
-@@ -258,7 +337,11 @@ export class OggDemuxer extends Demuxer {
+@@ -272,7 +343,11 @@ export class OggDemuxer extends Demuxer {
  		readVorbisComments(secondPacket.data.subarray(8), this.metadataTags); // Skip 'OpusTags'
  	}
  
@@ -2602,7 +2528,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  		assert(startSegmentIndex < startPage.lacingValues.length);
  
  		let startDataOffset = 0;
-@@ -271,6 +354,23 @@ export class OggDemuxer extends Demuxer {
+@@ -285,6 +360,23 @@ export class OggDemuxer extends Demuxer {
  		let currentSegmentIndex = startSegmentIndex;
  
  		const chunks: Uint8Array[] = [];
@@ -2626,7 +2552,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  
  		outer:
  		while (true) {
-@@ -282,7 +382,7 @@ export class OggDemuxer extends Demuxer {
+@@ -299,7 +391,7 @@ export class OggDemuxer extends Demuxer {
  
  			while (true) {
  				if (currentSegmentIndex === currentPage.lacingValues.length) {
@@ -2635,7 +2561,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  					break;
  				}
  
-@@ -290,7 +390,7 @@ export class OggDemuxer extends Demuxer {
+@@ -307,7 +399,7 @@ export class OggDemuxer extends Demuxer {
  				currentDataOffset += lacingValue;
  
  				if (lacingValue < 255) {
@@ -2644,7 +2570,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  					break outer;
  				}
  
-@@ -323,7 +423,6 @@ export class OggDemuxer extends Demuxer {
+@@ -340,7 +432,6 @@ export class OggDemuxer extends Demuxer {
  			currentSegmentIndex = 0;
  		}
  
@@ -2653,7 +2579,7 @@ index 0d6c5aaae1ccd10f418ea9aae423a7c700f7f84c..fea24fa2dd81c82a3b9b7ae0ba0cde5d
  			return null; // Invalid packet, treat it as end of stream
  		}
 diff --git a/src/reader.ts b/src/reader.ts
-index 5865295104ba8ea7c751ed0387ed502909d0d6f0..115eaf2e5d6e2870e4c664c34e2248b27cdc63ae 100644
+index bb8402a..d7ebc6f 100644
 --- a/src/reader.ts
 +++ b/src/reader.ts
 @@ -11,7 +11,16 @@ import { assert, clamp, getUint24, isThenable, MaybePromise, textDecoder, toData

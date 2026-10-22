@@ -50,7 +50,7 @@ scanner maintenance. Updates remain subject to maintainer review and the
 existing minimum 24-hour release age.
 
 The local release action resolves the tagged manifest pin, selects that Node,
-then installs JavaScript pnpm before the frozen dependency install. It disables
+then installs the manifest-pinned pnpm before the frozen dependency install. It disables
 automatic package-manager caching and installation in both setup actions.
 
 Every workflow action job first invokes the [browser-core Node trust preparation](https://github.com/PiesP/browser-core/blob/381b4ca733494cf069212cd0d16458389a83c623/automation/README.md#consumer-contract) at that reviewed SHA, with OpenSSL trust settings inherited by action bootstrap and post steps. The helper supports Ubuntu 24.04 and Alpine 3.23; unsupported systems fail before later actions. Its step boundary does not cover runner downloads or container pulls that happen before steps.
@@ -85,7 +85,7 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `pnpm postbuild`, `clean` | `scripts/build/postbuild.ts` finalizes distribution headers/assets; `scripts/build/clean.ts` removes generated output. | Inspect `dist/_headers`, output manifest and licenses after a build; `test/unit/config/node-script-boundaries.test.ts` checks direct CLI/import behavior. |
 | `pnpm prepare:e2e:fixture`, `pretest:e2e:ci`, `pretest:e2e:resource`, `pretest:e2e:deploy` | `scripts/test/generate-e2e-video.ts` uses host FFmpeg/ffprobe; `scripts/test/prepare-resource-fixtures.ts` selects resource fixtures. | Writes ignored `public/test-video-*` files; requires codec tools on PATH. `test/unit/e2e-fixtures.test.ts`, child adapter tests, and affected E2E profile check outputs. |
 | `pnpm test:e2e`, `test:e2e:ci`, `test:e2e:resource`, `test:e2e:deploy` | Plain `test:e2e` runs Playwright; `scripts/test/run-playwright.ts` selects the named CI, resource or deploy profile in the caller environment. | Requires built app/fixtures and browsers; writes test results/screenshots. `scripts/check/run-child.test.ts` covers argv, cwd, env, exit and signal; browser profiles have distinct scopes. |
-| `pnpm verify:full` | Runs verify, coverage and `scripts/test/run-e2e-on-free-port.ts` CI smoke; chooses an ephemeral loopback port and invokes the package script via `npm_execpath`. | May bind loopback, generate fixtures, build, launch browsers and write reports; `test/unit/config/playwright-profile.test.ts` and CI smoke are checks. It is not all hardware/codec/Windows acceptance. |
+| `pnpm verify:full` | Runs verify, coverage and `scripts/test/run-e2e-on-free-port.ts` CI smoke; chooses an ephemeral loopback port and invokes the package script via the pinned native `npm_execpath`. | May bind loopback, generate fixtures, build, launch browsers and write reports; `test/unit/config/playwright-profile.test.ts` and CI smoke are checks. It is not all hardware/codec/Windows acceptance. |
 | `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vite+ Vitest and direct Node `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts`, `scripts/check/run-child.test.ts`, and the native HTTP/recovery tests. | Watch persists; coverage writes reports. `test:ci` checks repository authority, tagged source, portable child execution and loopback server behavior, not rendered conversion. |
 | `pnpm check`, `check:test:unit`, `check:test:e2e`, `check:scripts`, `check:windows`, `typecheck` | Browser, Vitest, Playwright, strict NodeNext/erasable script TypeScript, and the Windows validation TypeScript project. `tsconfig.scripts.json` retains its Node-only ES2022 boundary; `tsconfig.windows.json` adds DOM types only for Playwright-evaluated code. | Read-only; `pnpm quality` runs these boundaries. The Node boundary test compiles the full script project with positive Node and negative browser-global probes and checks every Windows module's syntax. |
 | `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
@@ -217,12 +217,14 @@ PAGES_NODE_QUALIFICATION=1 node --experimental-strip-types scripts/build/pages-b
 
 Restore the exact normal build command after retaining the source-bound receipt;
 do not keep a project-only flag for normal builds. Combined with `CF_PAGES=1`,
-the switch imports the bounded qualifier before Corepack/pnpm's version command,
-records the initial launcher and final pnpm JavaScript entrypoint, Node executable,
-entry/bundle hashes and CA settings, and checks normal HTTPS plus one direct and
-one cross-signed incident sample through https and fetch. The direct sample is DV
+the switch runs the bounded qualifier before installation, records the selected
+native pnpm executable, its version and binary hash, the Node executable and CA
+settings, and checks Node HTTPS plus one direct and one cross-signed incident
+sample through https and fetch. The direct sample is DV
 G3B and the AAA-cross-signed sample is EV G3B, two of the coordinator's twelve
-chains. Successful receipts cover only these two samples. Failed timeout/DNS
+chains. These TLS samples describe Node, while the pnpm receipt proves native
+binary identity; they do not measure pnpm's own TLS client. Successful receipts
+cover only these two samples. Failed timeout/DNS
 receipts remain inconclusive; do not treat them as proof that the client rejected
 the chain. Ordinary unit CI and the normal build command do not run live probes.
 The helper remains available for future explicit qualification.
@@ -416,7 +418,7 @@ overrides live in that file too; `lint` denies warnings. Keep the four explicit
 TypeScript project checks because their browser, test, Playwright, and NodeNext
 boundaries differ. Vite+ task caching is not enabled.
 
-The Vite alias reports Vite+ `1.2.0` and bundles Vite `8.3.4`. Strict peer
+The Vite alias reports Vite+ `1.3.0` and bundles Vite `8.3.4`. Strict peer
 validation stays enabled. `pnpm-workspace.yaml` permits only that exact alias
 for the reviewed Vitest, mocker, Tailwind, Solid plugin and vitefu versions,
 whose declared Vite ranges include 8.3.4. Recheck callers, their original
