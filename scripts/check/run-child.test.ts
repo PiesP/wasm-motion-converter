@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -103,6 +103,10 @@ test('free-port wrapper keeps package lifecycle and releases the port before chi
       signalScope: 'process-group',
       executable: true,
     });
+    assert.equal(
+      native.calls[0]?.env.PATH,
+      `${dirname(process.env.npm_execpath)}${delimiter}${process.env.PATH ?? ''}`
+    );
     delete process.env.npm_execpath;
     const missing = recordingRunner();
     await assert.rejects(runE2eOnFreePort(missing.run), /npm_execpath is required/);
