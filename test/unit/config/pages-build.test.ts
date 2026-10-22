@@ -20,7 +20,7 @@ function fixture(): string {
     join(root, 'package.json'),
     JSON.stringify({
       version: '0.2.3',
-      packageManager: 'pnpm@11.26.0',
+      packageManager: 'pnpm@12.14.0',
       volta: { node: process.versions.node },
     })
   );
@@ -58,7 +58,7 @@ describe('Pages source-build contract', () => {
     const calls: { command: string; args: string[]; environment?: NodeJS.ProcessEnv }[] = [];
     const run = (command: string, args: string[], environment?: NodeJS.ProcessEnv): string => {
       calls.push({ command, args, ...(environment ? { environment } : {}) });
-      if (args[0] === '--version') return '11.26.0';
+      if (args[0] === '--version') return '12.14.0';
       if (args.includes('rev-parse')) return 'a'.repeat(40);
       return '';
     };
@@ -86,7 +86,7 @@ describe('Pages source-build contract', () => {
       pagesBuild(root, (_command, args) => {
         calls.push(args.join(' '));
         return args[0] === '--version'
-          ? '11.26.0'
+          ? '12.14.0'
           : args[0] === '-C'
             ? 'b'.repeat(40)
             : 'a'.repeat(40);
@@ -95,23 +95,27 @@ describe('Pages source-build contract', () => {
     expect(calls.some((call) => call.startsWith('install'))).toBe(false);
   });
 
-  it('imports the runtime qualifier only for explicitly opted-in Pages manager execution', () => {
-    const calls: { args: string[]; environment?: NodeJS.ProcessEnv }[] = [];
-    const run = (_command: string, args: string[], environment?: NodeJS.ProcessEnv): string => {
-      calls.push({ args, ...(environment ? { environment } : {}) });
-      return args[0] === '--version' ? '11.26.0' : 'a'.repeat(40);
+  it('runs the runtime qualifier only for explicitly opted-in Pages builds', () => {
+    const calls: { command: string; args: string[] }[] = [];
+    const run = (command: string, args: string[]): string => {
+      calls.push({ command, args });
+      return args[0] === '--version' ? '12.14.0' : 'a'.repeat(40);
     };
     vi.stubEnv('PAGES_NODE_QUALIFICATION', '1');
     pagesBuild(fixture(), run);
-    expect(calls[0]?.environment).toBeUndefined();
+    const hasQualifier = ({ args }: { args: string[] }): boolean =>
+      args.some((arg) => arg.endsWith('/scripts/build/qualify-pages-runtime.ts'));
+    expect(calls.some(hasQualifier)).toBe(false);
     calls.length = 0;
     vi.stubEnv('CF_PAGES', '1');
-    vi.stubEnv('NODE_OPTIONS', '--use-openssl-ca');
     pagesBuild(fixture(), run);
-    expect(calls[0]?.environment?.NODE_OPTIONS).toMatch(
-      /^--use-openssl-ca --import=file:.*\/scripts\/build\/qualify-pages-runtime.ts$/u
-    );
-    expect(calls.slice(1).some((call) => call.environment?.NODE_OPTIONS)).toBe(false);
+    expect(calls[0]).toEqual({ command: 'pnpm', args: ['--version'] });
+    expect(calls[1]?.command).toBe(process.execPath);
+    expect(calls[1]?.args).toEqual([
+      '--experimental-strip-types',
+      expect.stringMatching(/\/scripts\/build\/qualify-pages-runtime\.ts$/u),
+    ]);
+    expect(calls.slice(2).some(hasQualifier)).toBe(false);
   });
 
   it('uses cumulative rules without giving missing or unversioned assets an immutable policy', () => {

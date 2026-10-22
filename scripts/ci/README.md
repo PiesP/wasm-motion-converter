@@ -1,6 +1,8 @@
 # Pinned security tools
 
 `pinned-tools.json` records the OSV scanner and Semgrep image versions and digests.
+The OSV digest is the multiarch tag index; the Ubuntu 24.04 runner selects its
+Linux x64 child image. Keep the tag digest aligned with the provider check.
 The reviewed `browser-core/automation/actions/prepare-scanner-pins` Action
 copies its dependency-free CLI into private runner storage. The security
 workflow separately copies this repository's reviewed JSON to a private file

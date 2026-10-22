@@ -44,14 +44,18 @@ function runSecuritySummary(event: string, results: Record<string, string> = {})
 }
 
 describe('Release infrastructure', () => {
-  it('keeps the Cloudflare Pages build runtime aligned with Volta', () => {
+  it('keeps the Cloudflare Pages toolchain aligned with repository pins', () => {
     const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
       volta?: { node?: string };
+      packageManager: string;
     };
     const nodeVersion = readFileSync(resolve(root, '.node-version'), 'utf8').trim();
     const wrangler = readFileSync(resolve(root, 'wrangler.toml'), 'utf8');
 
     expect(nodeVersion).toBe(packageJson.volta?.node);
+    expect(wrangler.match(/^PNPM_VERSION\s*=\s*"([^"]+)"/m)?.[1]).toBe(
+      packageJson.packageManager.replace(/^pnpm@/, '')
+    );
     expect(wrangler).not.toMatch(/^NODE_VERSION\s*=/m);
   });
 

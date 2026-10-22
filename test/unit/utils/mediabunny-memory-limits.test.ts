@@ -50,6 +50,10 @@ class ProbeFormat extends InputFormat {
     return 'application/x-read-limit-probe';
   }
 
+  get supportsTimestampedMediaData(): boolean {
+    return false;
+  }
+
   async _canReadInput(input: Input): Promise<boolean> {
     const reader = (
       input as unknown as {
@@ -112,7 +116,7 @@ function makeOggPage(packet: Uint8Array, sequence: number, headerType: number): 
 }
 
 function makeOversizedVorbisHeaders(): ArrayBuffer {
-  const first = new Uint8Array(24);
+  const first = new Uint8Array(30);
   first.set([0x01, 0x76, 0x6f, 0x72, 0x62, 0x69, 0x73]);
   const second = new Uint8Array(24);
   second[0] = 0x03;
@@ -161,7 +165,9 @@ function makeFlacFile(blocks: Uint8Array[], leadingBytes = new Uint8Array()): Ar
 }
 
 function makeFlacStreamInfoBlock(): Uint8Array {
-  return makeFlacMetadataBlock(0, new Uint8Array(34));
+  const info = new Uint8Array(34);
+  info.set([0x0b, 0xb8, 0x00], 10); // 48 kHz in the 20-bit STREAMINFO sample-rate field.
+  return makeFlacMetadataBlock(0, info);
 }
 
 function makeEmptyVorbisCommentBlock(isLast = false): Uint8Array {
@@ -277,8 +283,8 @@ describe('MediaBunny input memory limits', () => {
     }
   });
 
-  it('limits Ogg logical bitstreams when a finite memory budget is configured', async () => {
-    const pages = Array.from({ length: 257 }, (_, index) =>
+  it('retains the upstream Ogg logical bitstream limit with a finite memory budget', async () => {
+    const pages = Array.from({ length: 65 }, (_, index) =>
       makeOggPage(new Uint8Array([0]), index, 0x02)
     );
     const input = new Input({
@@ -288,16 +294,14 @@ describe('MediaBunny input memory limits', () => {
     setInputMemoryLimits(input, 512);
 
     try {
-      await expect(input.getAudioTracks()).rejects.toThrow(
-        'Ogg logical bitstream count exceeds the configured safety limit.'
-      );
+      await expect(input.getAudioTracks()).rejects.toThrow('Too many (> 64) logical bitstreams.');
     } finally {
       input.dispose();
     }
   });
 
-  it('preserves the default Ogg logical bitstream behavior without a finite memory budget', async () => {
-    const pages = Array.from({ length: 257 }, (_, index) =>
+  it('accepts the upstream Ogg logical bitstream limit without a finite memory budget', async () => {
+    const pages = Array.from({ length: 64 }, (_, index) =>
       makeOggPage(new Uint8Array([0]), index, 0x02)
     );
     const input = new Input({

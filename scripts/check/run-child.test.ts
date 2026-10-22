@@ -1,9 +1,17 @@
 import assert from 'node:assert/strict';
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -67,7 +75,10 @@ test('free-port wrapper keeps package lifecycle and releases the port before chi
       assert.equal(await runE2eOnFreePort(fixture.run), status);
       assert.equal(fixture.calls.length, 1);
       assert.equal(fixture.calls[0]?.script, process.env.npm_execpath);
-      assert.deepEqual(fixture.calls[0]?.options, { signalScope: 'process-group' });
+      assert.deepEqual(fixture.calls[0]?.options, {
+        signalScope: 'process-group',
+        executable: false,
+      });
       assert.deepEqual(fixture.calls[0]?.args, ['test:e2e:ci']);
       assert.deepEqual(Object.keys(fixture.calls[0]?.env ?? {}), ['PLAYWRIGHT_DEV_PORT']);
       const port = Number(fixture.calls[0]?.env.PLAYWRIGHT_DEV_PORT);
@@ -84,6 +95,18 @@ test('free-port wrapper keeps package lifecycle and releases the port before chi
         });
       }
     }
+    process.env.npm_execpath = '/package manager with spaces/pnpm';
+    const native = recordingRunner();
+    assert.equal(await runE2eOnFreePort(native.run), 0);
+    assert.equal(native.calls[0]?.script, process.env.npm_execpath);
+    assert.deepEqual(native.calls[0]?.options, {
+      signalScope: 'process-group',
+      executable: true,
+    });
+    assert.equal(
+      native.calls[0]?.env.PATH,
+      `${dirname(process.env.npm_execpath)}${delimiter}${process.env.PATH ?? ''}`
+    );
     delete process.env.npm_execpath;
     const missing = recordingRunner();
     await assert.rejects(runE2eOnFreePort(missing.run), /npm_execpath is required/);
@@ -504,6 +527,26 @@ process.exitCode = 17;
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test(
+  'child runner executes a native package manager without a Node launcher',
+  {
+    skip: process.platform === 'win32',
+  },
+  async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wmc-native-manager-'));
+    try {
+      const manager = join(directory, 'pnpm');
+      const output = join(directory, 'args');
+      writeFileSync(manager, '#!/bin/sh\nprintf "%s" "$1" > "$2"\nexit 23\n');
+      chmodSync(manager, 0o755);
+      assert.equal(await runChild(manager, ['test:e2e:ci', output], {}, { executable: true }), 23);
+      assert.equal(readFileSync(output, 'utf8'), 'test:e2e:ci');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+);
 
 test(
   'child runner forwards SIGTERM and preserves the interrupted exit status',

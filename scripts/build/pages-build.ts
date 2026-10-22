@@ -2,7 +2,6 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 type Execute = (command: string, args: string[], environment?: NodeJS.ProcessEnv) => string;
 
@@ -32,19 +31,14 @@ export function pagesBuild(root: string, run: Execute = execute): void {
   }
   if (process.versions.node !== manifest.volta.node)
     throw new Error('Pages Node version does not match volta.node');
-  const qualification =
-    process.env.CF_PAGES === '1' && process.env.PAGES_NODE_QUALIFICATION === '1'
-      ? {
-          NODE_OPTIONS: [
-            process.env.NODE_OPTIONS,
-            `--import=${pathToFileURL(join(root, 'scripts/build/qualify-pages-runtime.ts')).href}`,
-          ]
-            .filter(Boolean)
-            .join(' '),
-        }
-      : undefined;
-  if (run('pnpm', ['--version'], qualification) !== pnpmPin)
+  if (run('pnpm', ['--version']) !== pnpmPin)
     throw new Error('Pages pnpm version does not match packageManager');
+  if (process.env.CF_PAGES === '1' && process.env.PAGES_NODE_QUALIFICATION === '1') {
+    run(process.execPath, [
+      '--experimental-strip-types',
+      join(root, 'scripts/build/qualify-pages-runtime.ts'),
+    ]);
+  }
   console.log(
     `[pages] Node ${process.versions.node}; executable ${process.execPath}; pnpm ${pnpmPin}`
   );
