@@ -32,8 +32,14 @@ Use the toolchain pinned in `package.json`, or versions that satisfy its
 
 ```bash
 git submodule update --init --recursive
-pnpm install
+npm install --global "$(node -p "require('./package.json').packageManager")" --allow-scripts=pnpm
+pnpm install --frozen-lockfile
 ```
+
+Volta selects Node.js; `packageManager` selects native pnpm. Follow the
+[shared bootstrap](https://github.com/PiesP/browser-core/blob/master/README.md#development)
+when retiring an existing global Volta pnpm selection; PATH order alone does not
+prevent Volta's Node launcher from selecting that obsolete manager.
 
 ```bash
 pnpm dev
