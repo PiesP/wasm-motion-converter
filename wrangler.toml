@@ -9,5 +9,6 @@ pages_build_output_dir = "dist"
 [vars]
 NODE_ENV = "production"
 SKIP_DEPENDENCY_INSTALL = "1"
+PNPM_VERSION = "12.14.0"
 # Pages moves the source clone into this build root before installing tools.
 NODE_BUILD_DEFINITIONS = "/opt/buildhome/repo/scripts/build/node-build-definitions"

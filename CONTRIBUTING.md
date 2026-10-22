@@ -198,6 +198,11 @@ Wrangler `[vars]` as well as
 the project settings: Pages projects using a Wrangler file read its variables
 into the build environment before deciding whether to install dependencies.
 Confirm the switch and the absence of an automatic install in the provider log.
+The tracked `PNPM_VERSION` selects the exact native pnpm release before the
+build command starts; keep it aligned with `packageManager`. Node 26 does not
+bundle Corepack, and older separately installed Corepack shims select a JavaScript
+entrypoint absent from pnpm 12. Confirm the effective pnpm version in the provider
+log as well as the bootstrap receipt.
 
 The incident Node definition under `scripts/build/node-build-definitions` supplies
 26.12.1 while the provider's upstream version catalog lacks it. Declare
