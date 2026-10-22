@@ -11,7 +11,7 @@ const metadata = JSON.parse(metadataBytes.toString('utf8')) as {
   semgrep: { version: string; image: string };
 };
 const security = readFileSync(resolve(root, '.github/workflows/security.yaml'), 'utf8');
-const reviewedConsumerSha = 'e474c313673dbdb717156b8df3b0febf1b89f19a';
+const reviewedConsumerSha = 'e985fce5c0bce5ea9fb86b313afc6a6339af37a9';
 const reviewedProviderSha = '4ab0442d8d2e3cf640767b499b6444c92f6479b5';
 const action = `uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@${reviewedProviderSha}`;
 
