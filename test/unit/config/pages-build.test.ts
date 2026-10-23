@@ -20,7 +20,7 @@ function fixture(): string {
     join(root, 'package.json'),
     JSON.stringify({
       version: '0.2.3',
-      packageManager: 'pnpm@12.14.0',
+      packageManager: 'pnpm@12.15.0',
       volta: { node: process.versions.node },
     })
   );
@@ -58,7 +58,7 @@ describe('Pages source-build contract', () => {
     const calls: { command: string; args: string[]; environment?: NodeJS.ProcessEnv }[] = [];
     const run = (command: string, args: string[], environment?: NodeJS.ProcessEnv): string => {
       calls.push({ command, args, ...(environment ? { environment } : {}) });
-      if (args[0] === '--version') return '12.14.0';
+      if (args[0] === '--version') return '12.15.0';
       if (args.includes('rev-parse')) return 'a'.repeat(40);
       return '';
     };
@@ -86,7 +86,7 @@ describe('Pages source-build contract', () => {
       pagesBuild(root, (_command, args) => {
         calls.push(args.join(' '));
         return args[0] === '--version'
-          ? '12.14.0'
+          ? '12.15.0'
           : args[0] === '-C'
             ? 'b'.repeat(40)
             : 'a'.repeat(40);
@@ -99,7 +99,7 @@ describe('Pages source-build contract', () => {
     const calls: { command: string; args: string[] }[] = [];
     const run = (command: string, args: string[]): string => {
       calls.push({ command, args });
-      return args[0] === '--version' ? '12.14.0' : 'a'.repeat(40);
+      return args[0] === '--version' ? '12.15.0' : 'a'.repeat(40);
     };
     vi.stubEnv('PAGES_NODE_QUALIFICATION', '1');
     pagesBuild(fixture(), run);
