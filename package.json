@@ -91,7 +91,6 @@
     "vite": "catalog:",
     "vite-plugin-solid": "2.11.14",
     "vite-plus": "catalog:",
-    "vitest": "catalog:",
-    "wrangler": "^4.151.3"
+    "vitest": "catalog:"
   }
 }

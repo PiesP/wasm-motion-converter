@@ -179,6 +179,15 @@ Pages project, whose public subdomain is `wasm-motion-converter.pages.dev`.
 Git integration, the production/preview controls, build image, install switch,
 build cache and Web Analytics injection are provider settings; `wrangler.toml`
 owns the Pages name, output directory, compatibility date and declared variables.
+The project does not install the Wrangler CLI: no maintained package script, CI
+job, local preview or deployment step calls it. Git-integrated Pages consumes
+the tracked [Wrangler configuration](https://developers.cloudflare.com/pages/functions/wrangler-configuration/)
+and runs the source-build command independently of a checkout CLI. The
+installed-Wrangler build-environment projection in [#291](https://github.com/PiesP/wasm-motion-converter/pull/291)
+was a one-off diagnostic; the source-build bootstrap receipt and provider log
+remain the ongoing checks. An occasional CLI investigation should use an
+explicitly reviewed, pinned tool for that investigation, not an implicit download
+in project scripts.
 Keep previews disabled unless a separate change approves their intended layout.
 The generated `release` branch has a different root layout and release cadence;
 it is not the production source. A prebuilt migration requires a current,
