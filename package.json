@@ -77,7 +77,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.2",
     "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "4.3.3",
     "@types/dom-webcodecs": "^0.1.19",
