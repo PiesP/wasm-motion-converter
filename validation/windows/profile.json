@@ -25,6 +25,7 @@
     "public/test-video-contract-integer-vfr.mp4",
     "public/test-video-contract-pressure-21fps.mp4",
     "validation/windows/gif-playback.ts",
+    "validation/windows/trim-submission.ts",
     "validation/windows/webp-initialization.ts"
   ]
 }

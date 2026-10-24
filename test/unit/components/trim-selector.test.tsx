@@ -121,6 +121,77 @@ describe('TrimSelector localized summary', () => {
     expect(container.querySelector<HTMLInputElement>('#trim-end-input')?.value).toBe('1:01:01.2');
   });
 
+  it('preserves an untouched fractional full-duration end through focus and submission', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    let prepare: (() => boolean) | undefined;
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={9.96}
+          trimStart={0}
+          trimEnd={0}
+          onChange={onChange}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return () => {};
+          }}
+        />
+      ),
+      container
+    );
+    const end = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    expect(end.value).toBe('0:10.0');
+    end.focus();
+    end.blur();
+    expect(end.getAttribute('aria-invalid')).toBeNull();
+    expect(prepare?.()).toBe(true);
+    expect(onChange).not.toHaveBeenCalled();
+
+    end.focus();
+    end.value = '0:10.0';
+    end.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    expect(prepare?.()).toBe(false);
+    expect(end.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(end);
+    expect(onChange).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it('does not round untouched fractional non-full boundaries on submission', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    let prepare: (() => boolean) | undefined;
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={9.96}
+          trimStart={2.04}
+          trimEnd={8.96}
+          onChange={onChange}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return () => {};
+          }}
+        />
+      ),
+      container
+    );
+    const start = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    const end = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    expect(start.value).toBe('0:02.0');
+    expect(end.value).toBe('0:09.0');
+    start.focus();
+    start.blur();
+    end.focus();
+    end.blur();
+    expect(prepare?.()).toBe(true);
+    expect(onChange).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it('supports standard slider keys and seeks to the adjusted boundary', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -170,6 +241,208 @@ describe('TrimSelector localized summary', () => {
     expect(endInput.getAttribute('aria-invalid')).toBe('true');
     expect(container.querySelector('#trim-end-error')).not.toBeNull();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stale range at submission and focuses the invalid draft', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    let prepare: (() => boolean) | undefined;
+    const unregister = vi.fn();
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={10}
+          trimStart={2}
+          trimEnd={8}
+          onChange={onChange}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return unregister;
+          }}
+        />
+      ),
+      container
+    );
+
+    const input = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    input.focus();
+    input.value = '9.0';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    input.blur();
+    expect(prepare?.()).toBe(false);
+    expect(input.value).toBe('9.0');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(input);
+    expect(onChange).not.toHaveBeenCalled();
+
+    dispose();
+    expect(unregister).toHaveBeenCalledOnce();
+  });
+
+  it('attributes an End-before-Start conflict to the edited End field', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    let prepare: (() => boolean) | undefined;
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={10}
+          trimStart={2}
+          trimEnd={8}
+          onChange={onChange}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return () => {};
+          }}
+        />
+      ),
+      container
+    );
+
+    const start = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    const end = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    end.focus();
+    end.value = '1.0';
+    end.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    expect(prepare?.()).toBe(false);
+    expect(document.activeElement).toBe(end);
+    end.blur();
+    expect(prepare?.()).toBe(false);
+    expect(end.value).toBe('1.0');
+    expect(end.getAttribute('aria-invalid')).toBe('true');
+    expect(start.getAttribute('aria-invalid')).toBeNull();
+    expect(document.activeElement).toBe(end);
+    expect(onChange).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it('attributes malformed and out-of-bounds drafts to their own fields', () => {
+    for (const [field, value] of [
+      ['start', 'not-a-time'],
+      ['start', '11.0'],
+      ['end', 'not-a-time'],
+      ['end', '11.0'],
+    ] as const) {
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const onChange = vi.fn();
+      let prepare: (() => boolean) | undefined;
+      const dispose = render(
+        () => (
+          <TrimSelector
+            duration={10}
+            trimStart={2}
+            trimEnd={8}
+            onChange={onChange}
+            onRegisterSubmission={(callback) => {
+              prepare = callback;
+              return () => {};
+            }}
+          />
+        ),
+        container
+      );
+      const input = container.querySelector<HTMLInputElement>(`#trim-${field}-input`)!;
+      input.focus();
+      input.value = value;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      expect(prepare?.()).toBe(false);
+      expect(input.value).toBe(value);
+      expect(input.getAttribute('aria-invalid')).toBe('true');
+      expect(document.activeElement).toBe(input);
+      expect(onChange).not.toHaveBeenCalled();
+      dispose();
+      container.remove();
+    }
+  });
+
+  it('focuses Start when both edited boundaries already have relation errors', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let prepare: (() => boolean) | undefined;
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={10}
+          trimStart={2}
+          trimEnd={8}
+          onChange={() => {}}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return () => {};
+          }}
+        />
+      ),
+      container
+    );
+    const start = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    const end = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    start.focus();
+    start.value = '9.0';
+    start.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    start.blur();
+    end.focus();
+    end.value = '1.0';
+    end.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    end.blur();
+
+    expect(prepare?.()).toBe(false);
+    expect(start.getAttribute('aria-invalid')).toBe('true');
+    expect(end.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(start);
+    dispose();
+  });
+
+  it('submits two pending valid drafts as one range, including the full-duration end', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const changes: Array<[number, number]> = [];
+    const [range, setRange] = createSignal<[number, number]>([2, 8]);
+    let prepare: (() => boolean) | undefined;
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={10}
+          trimStart={range()[0]}
+          trimEnd={range()[1]}
+          onChange={(start, end) => {
+            changes.push([start, end]);
+            setRange([start, end]);
+          }}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return () => {
+              prepare = undefined;
+            };
+          }}
+        />
+      ),
+      container
+    );
+
+    const start = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    const end = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    start.focus();
+    start.value = '9.0';
+    start.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    start.blur();
+    expect(start.getAttribute('aria-invalid')).toBe('true');
+    end.focus();
+    end.value = '10.0';
+    end.dispatchEvent(new InputEvent('input', { bubbles: true }));
+
+    expect(prepare?.()).toBe(true);
+    expect(changes).toEqual([[9, 0]]);
+    expect(start.value).toBe('0:09.0');
+    expect(end.value).toBe('0:10.0');
+    expect(start.getAttribute('aria-invalid')).toBeNull();
+    expect(end.getAttribute('aria-invalid')).toBeNull();
+
+    dispose();
+    expect(prepare).toBeUndefined();
   });
 
   it('keeps per-input error slots stable and associated across validation states', () => {

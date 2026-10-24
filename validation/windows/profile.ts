@@ -36,6 +36,7 @@ import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
 import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
 import type { OutputContractCase } from './output-contract.ts';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
+import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
 
 type Artifact = { kind: string; file: string; bytes: number; sha256: string };
@@ -3053,6 +3054,27 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const trimSelector = resolve(bundleRoot, 'validation/windows/inputs/trim-submission.json');
+  let trimSelectorText: string | undefined;
+  try {
+    trimSelectorText = await readFile(trimSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (trimSelectorText !== undefined) {
+    const selector: unknown = JSON.parse(trimSelectorText);
+    assert.deepEqual(selector, { scenario: 'trim-submission' });
+    const fixture = await validateBundleFile(
+      bundleRoot,
+      'validation/windows/inputs/trim-submission.mp4'
+    );
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseTrimSubmission(browser, started.url, fixture, output);
+    } finally {
+      await closeServer(started.server);
+    }
+  }
   const webpSelector = resolve(bundleRoot, 'validation/windows/inputs/webp-initialization.json');
   let webpSelectorText: string | undefined;
   try {

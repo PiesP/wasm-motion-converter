@@ -38,6 +38,7 @@ interface FileDropzoneProps {
   trimStart?: number | undefined;
   trimEnd?: number | undefined;
   onTrimChange?: ((start: number, end: number) => void) | undefined;
+  onRegisterTrimSubmission?: ((prepare: () => boolean) => () => void) | undefined;
 }
 
 const FileDropzone: Component<FileDropzoneProps> = (props) => {
@@ -69,6 +70,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     'trimStart',
     'trimEnd',
     'onTrimChange',
+    'onRegisterTrimSubmission',
   ]);
   const [isDragging, setIsDragging] = createSignal(false);
   const [justSelected, setJustSelected] = createSignal(false);
@@ -425,6 +427,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     disabled={local.disabled}
                     onChange={handleTrimChange}
                     onSeek={seekPreview}
+                    onRegisterSubmission={local.onRegisterTrimSubmission}
                   />
                 </div>
               </Show>

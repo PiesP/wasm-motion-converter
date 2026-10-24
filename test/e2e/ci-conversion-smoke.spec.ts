@@ -3,6 +3,7 @@
 
 import { expect, test } from '@playwright/test';
 
+import { parseGifDelaysCs } from '../../validation/windows/gif-playback.ts';
 import {
   clickConvert,
   downloadResult,
@@ -22,6 +23,44 @@ const PREVIEW_VIEWPORTS = [
   { name: 'desktop', width: 1280, height: 800 },
   { name: 'narrow', width: 390, height: 844 },
 ] as const;
+
+test('invalid visible trim blocks Convert until the edited range is submitted', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await injectTestFile(page, FIXTURE);
+  await setFormat(page, 'gif');
+  await setQuality(page, 'low');
+  await setScale(page, '50%');
+
+  const start = page.locator('#trim-start-input');
+  const end = page.locator('#trim-end-input');
+  await start.fill('0.2');
+  await start.press('Enter');
+  await end.fill('0.9');
+  await end.press('Enter');
+  await start.fill('0.95');
+  await start.press('Tab');
+  await expect(start).toHaveAttribute('aria-invalid', 'true');
+
+  await clickConvert(page);
+  await expect(start).toBeFocused();
+  await expect(start).toHaveValue('0.95');
+  await expect(page.getByTestId('result-section')).toHaveCount(0);
+  await expect(page.getByTestId('stop-conversion-button')).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => window.__TEST_HELPERS__?.getSettings().trimStart))
+    .toBe(0.2);
+
+  await start.fill('0.4');
+  await clickConvert(page);
+  expect(await waitForConversionComplete(page)).toBe('done');
+  const gif = await downloadResult(page);
+  expect(validateFileMagic(gif, 'gif')).toMatchObject({ valid: true });
+  const durationSeconds = parseGifDelaysCs(gif).reduce((sum, delay) => sum + delay, 0) / 100;
+  expect(durationSeconds).toBeGreaterThanOrEqual(0.4);
+  expect(durationSeconds).toBeLessThanOrEqual(0.7);
+});
 
 test('sharing settings preserve the selected format and clip and allow manual changes', async ({
   page,
