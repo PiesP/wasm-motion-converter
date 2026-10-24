@@ -55,7 +55,8 @@ export async function exerciseWebpInitialization(
     const path = new URL(route.request().url()).pathname;
     const target =
       mode === 'import'
-        ? /\/webp-wasm[.-].*\.js$/.test(path) || /wasm-webp_dist_esm_webp-wasm_+js\.js$/.test(path)
+        ? /\/(?:webp-wasm|wasm-webp)[.-].*\.js$/.test(path) ||
+          /wasm-webp_dist_esm_webp-wasm_+js\.js$/.test(path)
         : path.endsWith('.wasm');
     if (!target || failures > 0) return route.continue();
     failures++;
@@ -188,6 +189,15 @@ export async function exerciseWebpInitialization(
       pageErrors,
       consoleErrors,
     };
+  } catch (error) {
+    const state = await page
+      .locator('#app-state')
+      .textContent()
+      .catch(() => null);
+    throw new Error(
+      `WebP ${mode} recovery failed; injected=${failures}; state=${state}; pageErrors=${pageErrors.join('; ').slice(0, 2000)}; consoleErrors=${consoleErrors.join('; ').slice(0, 2000)}`,
+      { cause: error }
+    );
   } finally {
     release();
   }

@@ -47,10 +47,11 @@ export function findWasmWebpInitializationError(
   error: unknown
 ): WasmWebpInitializationError | null {
   const seen = new Set<object>();
-  for (let depth = 0; depth < 16 && error instanceof Error && !seen.has(error); depth++) {
-    if (error instanceof WasmWebpInitializationError) return error;
-    seen.add(error);
-    error = error.cause;
+  let current = error;
+  for (let depth = 0; depth < 16 && current instanceof Error && !seen.has(current); depth++) {
+    if (current instanceof WasmWebpInitializationError) return current;
+    seen.add(current);
+    current = current.cause;
   }
   return null;
 }
