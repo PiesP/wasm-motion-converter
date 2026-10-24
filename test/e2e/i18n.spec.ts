@@ -17,7 +17,8 @@ const EN = {
   formatTitle: 'Output Format',
   qualityTitle: 'Quality Preset',
   convert: 'Convert',
-  dropHere: 'Drop a video file here',
+  chooseVideo: 'Choose video',
+  dropHere: 'Or drop a video file here',
   scaleTitle: 'Output Scale',
 } as const;
 
@@ -27,7 +28,8 @@ const KO = {
   formatTitle: '출력 형식',
   qualityTitle: '품질 프리셋',
   convert: '변환',
-  dropHere: '여기에 비디오 파일을 드롭하세요',
+  chooseVideo: '동영상 선택',
+  dropHere: '또는 여기에 동영상 파일을 끌어다 놓으세요',
   scaleTitle: '출력 크기',
 } as const;
 
@@ -233,8 +235,9 @@ test.describe('i18n: All UI elements translated', () => {
     await expect(btn).toContainText('변환');
   });
 
-  test('dropzone text is translated', async ({ page }) => {
-    await expect(page.getByText(KO.dropHere)).toBeVisible();
+  test('video selection action and drag hint are translated', async ({ page }) => {
+    await expect(page.getByRole('button', { name: KO.chooseVideo, exact: true })).toBeVisible();
+    await expect(page.getByText(KO.dropHere, { exact: true })).toBeVisible();
   });
 });
 

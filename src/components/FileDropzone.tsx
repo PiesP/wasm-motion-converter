@@ -309,8 +309,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
           accept="video/*"
           onChange={handleFileInput}
           disabled={!isInteractive()}
+          aria-hidden="true"
           tabIndex={-1}
-          aria-label={t('dropzone.selectFile')}
           data-testid="file-input"
           autocomplete="off"
         />

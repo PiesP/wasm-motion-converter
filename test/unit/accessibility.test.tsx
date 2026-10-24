@@ -112,7 +112,9 @@ describe('Accessibility', () => {
       expect(dropzone.getAttribute('role')).toBe('group');
       expect(dropzone.getAttribute('aria-label')).toBe('dropzone.selectFile');
       expect(chooseButton.textContent).toContain('dropzone.chooseVideo');
-      expect(fileInput.getAttribute('aria-label')).toBe('dropzone.selectFile');
+      expect(fileInput.getAttribute('aria-hidden')).toBe('true');
+      expect(fileInput.tabIndex).toBe(-1);
+      expect(fileInput.hasAttribute('aria-label')).toBe(false);
       expect(container.textContent).toContain('dropzone.dropHere');
     });
 
