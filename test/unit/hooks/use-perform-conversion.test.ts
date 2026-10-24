@@ -89,7 +89,6 @@ vi.mock('@utils/file-validation', () => ({
   validateVideoDuration: mocks.validateVideoDuration,
 }));
 vi.mock('@utils/dom-utils', () => ({
-  focusElement: vi.fn(),
   focusElementUnlessUserIsEditing: mocks.focusElementUnlessUserIsEditing,
   focusPrimaryErrorAction: vi.fn(),
 }));

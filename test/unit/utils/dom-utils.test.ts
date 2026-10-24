@@ -2,7 +2,6 @@
 // Copyright (c) 2025-2026 PiesP
 
 import {
-  focusElement,
   focusElementUnlessUserIsEditing,
   focusPrimaryErrorAction,
   scheduleTask,
@@ -11,7 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test'
 
 describe('dom utilities', () => {
   beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.replaceChildren();
+  });
 
   it('runs scheduled work on the fallback timer and propagates results', async () => {
     const task = vi.fn(() => 42);
@@ -30,18 +32,14 @@ describe('dom utilities', () => {
     await assertion;
   });
 
-  it('focuses a selector on the next microtask', async () => {
+  it('focuses the retry action on the next microtask', async () => {
     const element = document.createElement('button');
     element.dataset.testid = 'error-retry-button';
     const focus = vi.spyOn(element, 'focus');
     document.body.append(element);
 
-    focusElement('[data-testid="error-retry-button"]');
-    await Promise.resolve();
-    expect(focus).toHaveBeenCalled();
-
-    focus.mockClear();
     focusPrimaryErrorAction();
+    expect(focus).not.toHaveBeenCalled();
     await Promise.resolve();
     expect(focus).toHaveBeenCalled();
   });
@@ -57,6 +55,56 @@ describe('dom utilities', () => {
 
     expect(focus).toHaveBeenCalled();
   });
+
+  it('resolves the current action after a queued target is replaced', async () => {
+    const removedAction = document.createElement('button');
+    removedAction.dataset.testid = 'error-retry-button';
+    document.body.append(removedAction);
+
+    focusPrimaryErrorAction();
+    removedAction.remove();
+    const currentAction = document.createElement('button');
+    currentAction.dataset.testid = 'error-select-different-fallback-button';
+    document.body.append(currentAction);
+    await Promise.resolve();
+
+    expect(document.activeElement).toBe(currentAction);
+  });
+
+  it('skips an error action disabled by its fieldset and uses an available reload', async () => {
+    const fieldset = document.createElement('fieldset');
+    fieldset.disabled = true;
+    const retry = document.createElement('button');
+    retry.dataset.testid = 'error-retry-button';
+    fieldset.append(retry);
+    const reload = document.createElement('button');
+    reload.dataset.testid = 'app-recovery-reload';
+    document.body.append(fieldset, reload);
+
+    focusPrimaryErrorAction();
+    await Promise.resolve();
+
+    expect(document.activeElement).toBe(reload);
+    expect(fieldset.disabled).toBe(true);
+  });
+
+  it.each(['disabled', 'removed'] as const)(
+    'preserves focus when the only action becomes %s before the microtask',
+    async (state) => {
+      const previousAction = document.createElement('button');
+      const reload = document.createElement('button');
+      reload.dataset.testid = 'app-recovery-reload';
+      document.body.append(previousAction, reload);
+      previousAction.focus();
+
+      focusPrimaryErrorAction();
+      if (state === 'disabled') reload.disabled = true;
+      else reload.remove();
+      await Promise.resolve();
+
+      expect(document.activeElement).toBe(previousAction);
+    }
+  );
 
   it('preserves an input the user is editing when a result action appears', async () => {
     const input = document.createElement('input');
