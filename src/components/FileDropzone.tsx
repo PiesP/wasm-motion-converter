@@ -118,6 +118,15 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     video.currentTime = Math.max(0, Math.min(frameTime, duration));
   };
 
+  const handlePreviewLoadedMetadata = (event: Event): void => {
+    const video = event.currentTarget;
+    if (disposed || video !== previewVideoElement || !local.previewUrl) return;
+    if (previewVideoElement.currentSrc && previewVideoElement.currentSrc !== local.previewUrl)
+      return;
+    setPreviewUnavailable(false);
+    revealInitialPreviewFrame();
+  };
+
   const handleTrimChange = (start: number, end: number): void => {
     const previousStart = local.trimStart ?? 0;
     const previewTime =
@@ -421,10 +430,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     playsinline
                     preload="metadata"
                     aria-label={t('dropzone.preview')}
-                    onLoadedMetadata={() => {
-                      setPreviewUnavailable(false);
-                      revealInitialPreviewFrame();
-                    }}
+                    onLoadedMetadata={handlePreviewLoadedMetadata}
                     onError={handlePreviewError}
                     onTimeUpdate={handlePreviewTimeUpdate}
                     onEnded={() => setIsSelectionPreviewing(false)}
