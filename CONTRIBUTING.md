@@ -92,7 +92,7 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `pnpm prepare:e2e:fixture`, `pretest:e2e:ci`, `pretest:e2e:resource`, `pretest:e2e:deploy` | `scripts/test/generate-e2e-video.ts` uses host FFmpeg/ffprobe; `scripts/test/prepare-resource-fixtures.ts` selects resource fixtures. | Writes ignored `public/test-video-*` files; requires codec tools on PATH. `test/unit/e2e-fixtures.test.ts`, child adapter tests, and affected E2E profile check outputs. |
 | `pnpm test:e2e`, `test:e2e:ci`, `test:e2e:resource`, `test:e2e:deploy` | Plain `test:e2e` runs Playwright; `scripts/test/run-playwright.ts` selects the named CI, resource or deploy profile in the caller environment. | Requires built app/fixtures and browsers; writes test results/screenshots. `scripts/check/run-child.test.ts` covers argv, cwd, env, exit and signal; browser profiles have distinct scopes. |
 | `pnpm verify:full` | Runs verify, coverage and `scripts/test/run-e2e-on-free-port.ts` CI smoke; chooses an ephemeral loopback port and invokes the package script via the pinned native `npm_execpath`. | May bind loopback, generate fixtures, build, launch browsers and write reports; `test/unit/config/playwright-profile.test.ts` and CI smoke are checks. It is not all hardware/codec/Windows acceptance. |
-| `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vite+ Vitest and direct Node `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts`, `scripts/check/run-child.test.ts`, and the native HTTP/recovery tests. | Watch persists; coverage writes reports. `test:ci` checks repository authority, tagged source, portable child execution and loopback server behavior, not rendered conversion. |
+| `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vite+ Vitest and direct Node `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts`, `scripts/check/run-child.test.ts`, and the native HTTP/recovery tests. | `test` and `test:cov` run once; `test:watch` uses explicit `vp test watch` and stays active to rerun changed tests. Coverage writes reports. `test:ci` checks repository authority, tagged source, portable child execution and loopback server behavior, not rendered conversion. |
 | `pnpm check`, `check:test:unit`, `check:test:e2e`, `check:scripts`, `check:windows`, `typecheck` | Browser, Vitest, Playwright, strict NodeNext/erasable script TypeScript, and the Windows validation TypeScript project. `tsconfig.scripts.json` retains its Node-only ES2022 boundary; `tsconfig.windows.json` adds DOM types only for Playwright-evaluated code. | Read-only; `pnpm quality` runs these boundaries. The Node boundary test compiles the full script project with positive Node and negative browser-global probes and checks every Windows module's syntax. |
 | `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
 | `pnpm fmt`, `fmt:check`, `lint`, `lint:residual`, `knip`, `knip:full`, `knip:production`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting, Biome residual lint, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
@@ -438,10 +438,10 @@ overrides live in that file too; `lint` denies warnings. Keep the four explicit
 TypeScript project checks because their browser, test, Playwright, and NodeNext
 boundaries differ. Vite+ task caching is not enabled.
 
-The Vite alias reports Vite+ `1.3.0` and bundles Vite `8.3.4`. Strict peer
+The Vite alias reports Vite+ `1.4.0` and bundles Vite `8.3.5`. Strict peer
 validation stays enabled. `pnpm-workspace.yaml` permits only that exact alias
 for the reviewed Vitest, mocker, Tailwind, Solid plugin and vitefu versions,
-whose declared Vite ranges include 8.3.4. Recheck callers, their original
+whose declared Vite ranges include 8.3.5. Recheck callers, their original
 ranges and both versions together on updates; never widen this to `allowAny`.
 Validate a fresh dependency resolution as well as the frozen install, since
 a migration lockfile can otherwise hide peer metadata conflicts.
