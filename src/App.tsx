@@ -43,6 +43,7 @@ import {
 import type { AppState } from '@t/app-types';
 import type { ProgressPhase } from '@t/conversion-types';
 import type { TFunction, TranslationKey } from '@t/i18n-types';
+import { focusElementUnlessUserIsEditing } from '@utils/dom-utils';
 import { assessEnvironmentCapabilities } from '@utils/environment-capabilities';
 import { formatBytes } from '@utils/format-utils';
 import { logger } from '@utils/logger';
@@ -302,6 +303,11 @@ const App: Component = () => {
     if (prepareCurrentTrim()) handleRetry();
   };
 
+  const selectNewFile = (): void => {
+    handleReset();
+    focusElementUnlessUserIsEditing('[data-testid="choose-file-button"]');
+  };
+
   const cancelForRecovery = (): void => {
     if (appState() === 'analyzing') cancelAnalysis();
     else if (appState() === 'converting') cancelConversion();
@@ -352,7 +358,8 @@ const App: Component = () => {
           errorMessage={appState() === 'error' ? errorMessage() : null}
           onDismissError={handleDismissError}
           onRetry={retryWithCurrentTrim}
-          onSelectNewFile={handleReset}
+          canRetry={Boolean(inputFile())}
+          onSelectNewFile={selectNewFile}
         />
 
         <ErrorBoundary
@@ -399,7 +406,6 @@ const App: Component = () => {
                           : 'dropzone.cancelConversion'
                       )
                 }
-                onClear={handleReset}
                 onFileSelected={handleFileSelected}
                 previewUrl={videoPreviewUrl()}
                 progress={dropzoneStatus()?.progress}

@@ -12,6 +12,7 @@ interface StatusAlertsProps {
   environmentSupported: boolean;
   errorMessage: string | null;
   errorContext: ErrorContext | null;
+  canRetry?: boolean | undefined;
   onRetry: () => void;
   onSelectNewFile: () => void;
   onDismissError: () => void;
@@ -31,6 +32,7 @@ const StatusAlerts: Component<StatusAlertsProps> = (props) => {
           message={props.errorMessage!}
           suggestion={props.errorContext?.suggestion}
           errorType={props.errorContext?.type}
+          canRetry={props.canRetry}
           reloadRequired={props.errorContext?.phase === 'wasm_webp_initialization'}
           onRetry={props.onRetry}
           onSelectNewFile={props.onSelectNewFile}

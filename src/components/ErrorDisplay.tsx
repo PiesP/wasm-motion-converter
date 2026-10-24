@@ -18,6 +18,7 @@ interface ErrorDisplayProps {
   message: string;
   suggestion?: string | undefined;
   errorType?: ConversionErrorType | undefined;
+  canRetry?: boolean | undefined;
   reloadRequired?: boolean;
   onRetry: () => void;
   onSelectNewFile: () => void;
@@ -30,6 +31,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     'message',
     'suggestion',
     'errorType',
+    'canRetry',
     'reloadRequired',
     'onRetry',
     'onSelectNewFile',
@@ -43,7 +45,9 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     });
   });
 
-  const canRetry = createMemo(() => local.errorType !== 'format' && local.errorType !== 'codec');
+  const canRetry = createMemo(
+    () => local.canRetry !== false && local.errorType !== 'format' && local.errorType !== 'codec'
+  );
 
   const userFriendlyMessage = createMemo((): string => {
     if (!local.errorType || local.errorType === 'general') {

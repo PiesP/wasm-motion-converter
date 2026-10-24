@@ -111,9 +111,9 @@ describe('Accessibility', () => {
 
       expect(dropzone.getAttribute('role')).toBe('group');
       expect(dropzone.getAttribute('aria-label')).toBe('dropzone.selectFile');
-      expect(chooseButton.textContent).toContain('dropzone.dropHere');
+      expect(chooseButton.textContent).toContain('dropzone.chooseVideo');
       expect(fileInput.getAttribute('aria-label')).toBe('dropzone.selectFile');
-      expect(container.textContent).toContain('dropzone.clickSelect');
+      expect(container.textContent).toContain('dropzone.dropHere');
     });
 
     it('labels the preview and cancel action during conversion', () => {
