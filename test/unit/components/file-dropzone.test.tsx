@@ -24,6 +24,45 @@ function selectFile(input: HTMLInputElement, name: string): void {
   input.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
+function mountControllablePreview() {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+  const [url, setUrl] = createSignal('blob:first');
+  const dispose = render(
+    () => (
+      <FileDropzone
+        onFileSelected={() => {}}
+        previewUrl={url()}
+        duration={10}
+        trimStart={2}
+        trimEnd={3}
+        onTrimChange={() => {}}
+      />
+    ),
+    container
+  );
+  const video = container.querySelector<HTMLVideoElement>('#selection-preview-video')!;
+  const button = container.querySelector<HTMLButtonElement>('[data-testid="trim-preview-button"]')!;
+  Object.defineProperty(video, 'readyState', {
+    configurable: true,
+    value: HTMLMediaElement.HAVE_METADATA,
+  });
+  const attempts: { resolve: () => void; reject: (error: Error) => void }[] = [];
+  vi.spyOn(video, 'play').mockImplementation(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        attempts.push({ resolve, reject });
+      })
+  );
+  vi.spyOn(video, 'pause').mockImplementation(() => {
+    video.dispatchEvent(new Event('pause'));
+  });
+  const unavailable = () =>
+    container.querySelector('[data-testid="selection-preview-unavailable"]') !== null;
+  return { container, video, button, attempts, setUrl, dispose, unavailable };
+}
+
 describe('FileDropzone', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -195,6 +234,171 @@ describe('FileDropzone', () => {
 
     video.dispatchEvent(new Event('error'));
     expect(container.querySelector('[data-testid="selection-preview-unavailable"]')).not.toBeNull();
+    dispose();
+  });
+
+  it('clears same-source failure only after successful retry, then restores the ordinary stop and end label', async () => {
+    const { video, button, attempts, unavailable, dispose } = mountControllablePreview();
+    button.click();
+    attempts[0]!.reject(new Error('first attempt rejected'));
+    await Promise.resolve();
+    expect(unavailable()).toBe(true);
+    expect(button.textContent).toContain('dropzone.retryPreview');
+
+    button.click();
+    expect(unavailable()).toBe(true);
+    attempts[1]!.resolve();
+    await Promise.resolve();
+    expect(unavailable()).toBe(false);
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+
+    button.click();
+    expect(button.textContent).toContain('trim.previewSelection');
+    button.click();
+    attempts[2]!.resolve();
+    await Promise.resolve();
+    Object.defineProperty(video, 'ended', { configurable: true, value: true });
+    video.dispatchEvent(new Event('ended'));
+    expect(button.textContent).toContain('trim.previewSelection');
+    expect(unavailable()).toBe(false);
+    dispose();
+  });
+
+  it('keeps retry feedback when another attempt fails and ignores old outcomes after stop', async () => {
+    const { button, attempts, unavailable, dispose } = mountControllablePreview();
+    button.click();
+    button.click();
+    attempts[0]!.reject(new Error('stopped attempt rejected late'));
+    await Promise.resolve();
+    expect(unavailable()).toBe(false);
+
+    button.click();
+    attempts[1]!.reject(new Error('retry rejected'));
+    await Promise.resolve();
+    expect(unavailable()).toBe(true);
+    button.click();
+    expect(unavailable()).toBe(true);
+    attempts[2]!.reject(new Error('retry rejected again'));
+    await Promise.resolve();
+    expect(unavailable()).toBe(true);
+    expect(button.textContent).toContain('dropzone.retryPreview');
+    dispose();
+  });
+
+  it('does not let an old success clear a newer failure, a media error, or a replacement', async () => {
+    const { video, button, attempts, setUrl, unavailable, dispose } = mountControllablePreview();
+    button.click();
+    button.click();
+    button.click();
+    attempts[1]!.reject(new Error('newer attempt rejected'));
+    await Promise.resolve();
+    expect(unavailable()).toBe(true);
+    attempts[0]!.resolve();
+    await Promise.resolve();
+    expect(unavailable()).toBe(true);
+
+    button.click();
+    video.dispatchEvent(new Event('error'));
+    expect(unavailable()).toBe(true);
+    attempts[2]!.resolve();
+    await Promise.resolve();
+    expect(unavailable()).toBe(true);
+
+    button.click();
+    setUrl('blob:second');
+    attempts[3]!.resolve();
+    await Promise.resolve();
+    expect(unavailable()).toBe(false);
+    dispose();
+  });
+
+  it('ignores late rejection after a newer success, native end, and disposal', async () => {
+    const { container, video, button, attempts, unavailable, dispose } = mountControllablePreview();
+    let ended = false;
+    Object.defineProperty(video, 'ended', { configurable: true, get: () => ended });
+    button.click();
+    button.click();
+    button.click();
+    attempts[1]!.resolve();
+    await Promise.resolve();
+    attempts[0]!.reject(new Error('older attempt rejected'));
+    await Promise.resolve();
+    expect(unavailable()).toBe(false);
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+
+    ended = true;
+    video.dispatchEvent(new Event('ended'));
+    expect(button.getAttribute('aria-pressed')).toBe('false');
+    ended = false;
+    button.click();
+    ended = true;
+    video.dispatchEvent(new Event('ended'));
+    attempts[2]!.reject(new Error('ended attempt rejected'));
+    await Promise.resolve();
+    expect(unavailable()).toBe(false);
+
+    button.click();
+    dispose();
+    attempts[3]!.reject(new Error('disposed attempt rejected'));
+    await Promise.resolve();
+    expect(container.textContent).toBe('');
+  });
+
+  it('keeps a new attempt active when previous pause and end events arrive late', async () => {
+    const { video, button, unavailable, dispose } = mountControllablePreview();
+    let paused = true;
+    Object.defineProperties(video, {
+      paused: { configurable: true, get: () => paused },
+      ended: { configurable: true, get: () => false },
+    });
+    const pendingPauses: (() => void)[] = [];
+    vi.spyOn(video, 'pause').mockImplementation(() => {
+      paused = true;
+      pendingPauses.push(() => video.dispatchEvent(new Event('pause')));
+    });
+    const attempts: { resolve: () => void; reject: (error: Error) => void }[] = [];
+    vi.spyOn(video, 'play').mockImplementation(() => {
+      paused = false;
+      return new Promise<void>((resolve, reject) => attempts.push({ resolve, reject }));
+    });
+
+    button.click();
+    button.click();
+    button.click();
+    expect(paused).toBe(false);
+    pendingPauses.at(-1)!();
+    video.dispatchEvent(new Event('ended'));
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    attempts[1]!.resolve();
+    await Promise.resolve();
+    attempts[0]!.reject(new Error('old stopped attempt'));
+    await Promise.resolve();
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    expect(unavailable()).toBe(false);
+    dispose();
+  });
+
+  it('keeps the low-readiness retry route as a metadata reload', async () => {
+    const { video, button, attempts, unavailable, dispose } = mountControllablePreview();
+    let readyState: number = HTMLMediaElement.HAVE_METADATA;
+    Object.defineProperty(video, 'readyState', {
+      configurable: true,
+      get: () => readyState,
+    });
+    const load = vi.spyOn(video, 'load').mockImplementation(() => {});
+    button.click();
+    attempts[0]!.reject(new Error('preview rejected'));
+    await Promise.resolve();
+    expect(unavailable()).toBe(true);
+
+    readyState = HTMLMediaElement.HAVE_NOTHING;
+    button.click();
+    expect(load).toHaveBeenCalledOnce();
+    expect(attempts).toHaveLength(1);
+    expect(unavailable()).toBe(false);
+    readyState = HTMLMediaElement.HAVE_METADATA;
+    video.dispatchEvent(new Event('loadedmetadata'));
+    expect(button.textContent).toContain('trim.previewSelection');
     dispose();
   });
 
