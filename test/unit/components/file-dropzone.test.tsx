@@ -257,6 +257,7 @@ describe('FileDropzone', () => {
     button.click();
     attempts[2]!.resolve();
     await Promise.resolve();
+    Object.defineProperty(video, 'ended', { configurable: true, value: true });
     video.dispatchEvent(new Event('ended'));
     expect(button.textContent).toContain('trim.previewSelection');
     expect(unavailable()).toBe(false);
@@ -313,6 +314,8 @@ describe('FileDropzone', () => {
 
   it('ignores late rejection after a newer success, native end, and disposal', async () => {
     const { container, video, button, attempts, unavailable, dispose } = mountControllablePreview();
+    let ended = false;
+    Object.defineProperty(video, 'ended', { configurable: true, get: () => ended });
     button.click();
     button.click();
     button.click();
@@ -323,9 +326,12 @@ describe('FileDropzone', () => {
     expect(unavailable()).toBe(false);
     expect(button.getAttribute('aria-pressed')).toBe('true');
 
+    ended = true;
     video.dispatchEvent(new Event('ended'));
     expect(button.getAttribute('aria-pressed')).toBe('false');
+    ended = false;
     button.click();
+    ended = true;
     video.dispatchEvent(new Event('ended'));
     attempts[2]!.reject(new Error('ended attempt rejected'));
     await Promise.resolve();
@@ -336,6 +342,40 @@ describe('FileDropzone', () => {
     attempts[3]!.reject(new Error('disposed attempt rejected'));
     await Promise.resolve();
     expect(container.textContent).toBe('');
+  });
+
+  it('keeps a new attempt active when previous pause and end events arrive late', async () => {
+    const { video, button, unavailable, dispose } = mountControllablePreview();
+    let paused = true;
+    Object.defineProperties(video, {
+      paused: { configurable: true, get: () => paused },
+      ended: { configurable: true, get: () => false },
+    });
+    const pendingPauses: (() => void)[] = [];
+    vi.spyOn(video, 'pause').mockImplementation(() => {
+      paused = true;
+      pendingPauses.push(() => video.dispatchEvent(new Event('pause')));
+    });
+    const attempts: { resolve: () => void; reject: (error: Error) => void }[] = [];
+    vi.spyOn(video, 'play').mockImplementation(() => {
+      paused = false;
+      return new Promise<void>((resolve, reject) => attempts.push({ resolve, reject }));
+    });
+
+    button.click();
+    button.click();
+    button.click();
+    expect(paused).toBe(false);
+    pendingPauses.at(-1)!();
+    video.dispatchEvent(new Event('ended'));
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    attempts[1]!.resolve();
+    await Promise.resolve();
+    attempts[0]!.reject(new Error('old stopped attempt'));
+    await Promise.resolve();
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    expect(unavailable()).toBe(false);
+    dispose();
   });
 
   it('keeps the low-readiness retry route as a metadata reload', async () => {

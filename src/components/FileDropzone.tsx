@@ -194,6 +194,20 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     video.currentTime = local.trimStart ?? 0;
   };
 
+  const handlePreviewPause = (event: Event): void => {
+    const video = previewVideoElement;
+    if (disposed || !video || event.currentTarget !== video || !video.paused) return;
+    if (video.currentSrc && video.currentSrc !== local.previewUrl) return;
+    endSelectionPreview();
+  };
+
+  const handlePreviewEnded = (event: Event): void => {
+    const video = previewVideoElement;
+    if (disposed || !video || event.currentTarget !== video || !video.ended) return;
+    if (video.currentSrc && video.currentSrc !== local.previewUrl) return;
+    endSelectionPreview();
+  };
+
   createEffect(() => {
     local.previewUrl;
     stopSelectionPreview();
@@ -465,8 +479,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     onLoadedMetadata={handlePreviewLoadedMetadata}
                     onError={handlePreviewError}
                     onTimeUpdate={handlePreviewTimeUpdate}
-                    onEnded={endSelectionPreview}
-                    onPause={endSelectionPreview}
+                    onEnded={handlePreviewEnded}
+                    onPause={handlePreviewPause}
                   />
                   <Show when={hasSelectionPreview()}>
                     <button
