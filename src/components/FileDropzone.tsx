@@ -81,6 +81,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   let selectionFeedbackTimeout: ReturnType<typeof setTimeout> | undefined;
   let previewUrlBeforeSelection: string | null | undefined;
   let disposed = false;
+  let previewAttempt = 0;
 
   const isBusy = createMemo(() => local.busy ?? !!local.status);
   const isInteractive = createMemo(() => !local.disabled && !isBusy());
@@ -97,9 +98,14 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     return trimEnd === 0 || trimEnd > duration ? duration : trimEnd;
   });
 
-  const stopSelectionPreview = (): void => {
-    previewVideoElement?.pause();
+  const endSelectionPreview = (): void => {
+    previewAttempt++;
     setIsSelectionPreviewing(false);
+  };
+
+  const stopSelectionPreview = (): void => {
+    endSelectionPreview();
+    previewVideoElement?.pause();
   };
 
   const seekPreview = (seconds: number): void => {
@@ -152,11 +158,23 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     video.currentTime = local.trimStart ?? 0;
     setIsSelectionPreviewing(true);
     const selectedUrl = local.previewUrl;
-    void video.play().catch(() => {
-      if (disposed || video !== previewVideoElement || selectedUrl !== local.previewUrl) return;
-      setIsSelectionPreviewing(false);
-      setPreviewUnavailable(true);
-    });
+    const attempt = ++previewAttempt;
+    const ownsPreview = () =>
+      !disposed &&
+      attempt === previewAttempt &&
+      video === previewVideoElement &&
+      selectedUrl === local.previewUrl;
+    void video.play().then(
+      () => {
+        if (!ownsPreview()) return;
+        setPreviewUnavailable(false);
+      },
+      () => {
+        if (!ownsPreview()) return;
+        endSelectionPreview();
+        setPreviewUnavailable(true);
+      }
+    );
   };
 
   const handlePreviewError = (event: Event): void => {
@@ -172,9 +190,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     const video = previewVideoElement;
     if (!video || !isSelectionPreviewing()) return;
     if (video.currentTime < effectiveTrimEnd() - 0.02) return;
-    video.pause();
+    stopSelectionPreview();
     video.currentTime = local.trimStart ?? 0;
-    setIsSelectionPreviewing(false);
   };
 
   createEffect(() => {
@@ -448,8 +465,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     onLoadedMetadata={handlePreviewLoadedMetadata}
                     onError={handlePreviewError}
                     onTimeUpdate={handlePreviewTimeUpdate}
-                    onEnded={() => setIsSelectionPreviewing(false)}
-                    onPause={() => setIsSelectionPreviewing(false)}
+                    onEnded={endSelectionPreview}
+                    onPause={endSelectionPreview}
                   />
                   <Show when={hasSelectionPreview()}>
                     <button
