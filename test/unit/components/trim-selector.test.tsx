@@ -209,6 +209,122 @@ describe('TrimSelector localized summary', () => {
     expect(unregister).toHaveBeenCalledOnce();
   });
 
+  it('attributes an End-before-Start conflict to the edited End field', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    let prepare: (() => boolean) | undefined;
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={10}
+          trimStart={2}
+          trimEnd={8}
+          onChange={onChange}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return () => {};
+          }}
+        />
+      ),
+      container
+    );
+
+    const start = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    const end = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    end.focus();
+    end.value = '1.0';
+    end.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    expect(prepare?.()).toBe(false);
+    expect(document.activeElement).toBe(end);
+    end.blur();
+    expect(prepare?.()).toBe(false);
+    expect(end.value).toBe('1.0');
+    expect(end.getAttribute('aria-invalid')).toBe('true');
+    expect(start.getAttribute('aria-invalid')).toBeNull();
+    expect(document.activeElement).toBe(end);
+    expect(onChange).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
+  it('attributes malformed and out-of-bounds drafts to their own fields', () => {
+    for (const [field, value] of [
+      ['start', 'not-a-time'],
+      ['start', '11.0'],
+      ['end', 'not-a-time'],
+      ['end', '11.0'],
+    ] as const) {
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const onChange = vi.fn();
+      let prepare: (() => boolean) | undefined;
+      const dispose = render(
+        () => (
+          <TrimSelector
+            duration={10}
+            trimStart={2}
+            trimEnd={8}
+            onChange={onChange}
+            onRegisterSubmission={(callback) => {
+              prepare = callback;
+              return () => {};
+            }}
+          />
+        ),
+        container
+      );
+      const input = container.querySelector<HTMLInputElement>(`#trim-${field}-input`)!;
+      input.focus();
+      input.value = value;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      expect(prepare?.()).toBe(false);
+      expect(input.value).toBe(value);
+      expect(input.getAttribute('aria-invalid')).toBe('true');
+      expect(document.activeElement).toBe(input);
+      expect(onChange).not.toHaveBeenCalled();
+      dispose();
+      container.remove();
+    }
+  });
+
+  it('focuses Start when both edited boundaries already have relation errors', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    let prepare: (() => boolean) | undefined;
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={10}
+          trimStart={2}
+          trimEnd={8}
+          onChange={() => {}}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return () => {};
+          }}
+        />
+      ),
+      container
+    );
+    const start = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    const end = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    start.focus();
+    start.value = '9.0';
+    start.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    start.blur();
+    end.focus();
+    end.value = '1.0';
+    end.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    end.blur();
+
+    expect(prepare?.()).toBe(false);
+    expect(start.getAttribute('aria-invalid')).toBe('true');
+    expect(end.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(start);
+    dispose();
+  });
+
   it('submits two pending valid drafts as one range, including the full-duration end', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

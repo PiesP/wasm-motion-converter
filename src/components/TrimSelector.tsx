@@ -91,6 +91,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   let trackRef: HTMLFieldSetElement | undefined;
   let startInputRef: HTMLInputElement | undefined;
   let endInputRef: HTMLInputElement | undefined;
+  let lastEditedField: 'start' | 'end' | undefined;
 
   createEffect(() => {
     if (!startFocused() && !startError()) setStartText(formatTimePrecise(props.trimStart));
@@ -361,7 +362,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       end > 0 &&
       end <= props.duration;
 
-    if (!startValid || (endValid && start !== null && end !== null && start >= end)) {
+    if (!startValid || start === null) {
       setStartError(
         t('trim.invalidStart', {
           end: formatTimePrecise(endValid && end !== null ? end : effectiveEnd()),
@@ -370,7 +371,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       startInputRef?.focus();
       return false;
     }
-    if (!endValid || start === null || end === null || end <= start) {
+    if (!endValid || end === null) {
       setEndError(
         t('trim.invalidEnd', {
           start: formatTimePrecise(start ?? props.trimStart),
@@ -378,6 +379,21 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
         })
       );
       endInputRef?.focus();
+      return false;
+    }
+    if (start >= end) {
+      if (startError() || (!endError() && lastEditedField !== 'end')) {
+        setStartError(t('trim.invalidStart', { end: formatTimePrecise(end) }));
+        startInputRef?.focus();
+      } else {
+        setEndError(
+          t('trim.invalidEnd', {
+            start: formatTimePrecise(start),
+            duration: formatTimePrecise(props.duration),
+          })
+        );
+        endInputRef?.focus();
+      }
       return false;
     }
 
@@ -587,6 +603,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
               aria-invalid={startError() ? 'true' : undefined}
               aria-describedby="trim-start-error"
               onInput={(event) => {
+                lastEditedField = 'start';
                 setStartText(event.currentTarget.value);
                 setStartError(null);
               }}
@@ -620,6 +637,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
               aria-invalid={endError() ? 'true' : undefined}
               aria-describedby="trim-end-error"
               onInput={(event) => {
+                lastEditedField = 'end';
                 setEndText(event.currentTarget.value);
                 setEndError(null);
               }}
