@@ -33,6 +33,12 @@ import type {
 import { readBuild, runAppUpdate } from './app-update.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
+import {
+  exerciseNarrowOutput,
+  NARROW_CANCEL_FIXTURE,
+  NARROW_OUTPUT_FIXTURE,
+  NARROW_OUTPUT_SCENARIO,
+} from './narrow-output.ts';
 import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
 import type { OutputContractCase } from './output-contract.ts';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
@@ -3055,6 +3061,56 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const narrowSelector = resolve(bundleRoot, 'validation/windows/inputs/narrow-output.json');
+  let narrowSelectorText: string | undefined;
+  try {
+    narrowSelectorText = await readFile(narrowSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (narrowSelectorText !== undefined) {
+    const selector: unknown = JSON.parse(narrowSelectorText);
+    assert.deepEqual(selector, { scenario: NARROW_OUTPUT_SCENARIO });
+    for (const other of [
+      'selection-preview.json',
+      'trim-submission.json',
+      'webp-initialization.json',
+      'service-worker-handoff.json',
+      'recovery.json',
+      'app-update.json',
+    ]) {
+      const path = resolve(bundleRoot, 'validation/windows/inputs', other);
+      try {
+        assert.equal((await stat(path)).isFile(), false, `Conflicting Windows selector: ${other}`);
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+    }
+    const bundle: unknown = JSON.parse(await readFile(join(bundleRoot, 'bundle.json'), 'utf8'));
+    assert(isRecord(bundle));
+    assert.equal(bundle.browser, 'chrome', 'Narrow-output requires installed Chrome');
+    assert.equal(bundle.mode, 'desktop', 'Actual Chrome zoom requires headed desktop mode');
+    const paths = {
+      main: await validateBundleFile(
+        bundleRoot,
+        `validation/windows/inputs/${NARROW_OUTPUT_FIXTURE}`
+      ),
+      cancel: await validateBundleFile(
+        bundleRoot,
+        `validation/windows/inputs/${NARROW_CANCEL_FIXTURE}`
+      ),
+      manifest: await validateBundleFile(
+        bundleRoot,
+        'validation/windows/inputs/narrow-output-fixtures.json'
+      ),
+    };
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseNarrowOutput(browser, bundleRoot, started.url, paths, output);
+    } finally {
+      await closeServer(started.server);
+    }
+  }
   const selectionSelector = resolve(bundleRoot, 'validation/windows/inputs/selection-preview.json');
   let selectionSelectorText: string | undefined;
   try {

@@ -4,6 +4,7 @@
 // Copyright (c) 2026 PiesP
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
@@ -20,6 +21,10 @@ interface VideoFixture {
   finalSampleDurationMs?: number;
   attachedTextBytes?: number;
 }
+
+const NARROW_OUTPUT_FIXTURE =
+  'narrow-output-timecoded-1920x1080-30fps-long-filename-conversion-walkthrough.mp4';
+const NARROW_CANCEL_FIXTURE = 'narrow-output-cancel.mp4';
 
 /** Adjust only the final singleton sample in the small, ordinary MP4 fixture. */
 function setFinalSampleDuration(path: string, durationMs: number): void {
@@ -212,6 +217,30 @@ export function generateE2eVideo(): void {
     });
   }
 
+  if (process.env.PREPARE_NARROW_OUTPUT_FIXTURE === 'true') {
+    fixtures.push(
+      {
+        fileName: NARROW_OUTPUT_FIXTURE,
+        outputDirectory: 'validation/windows/inputs',
+        input:
+          'testsrc2=size=1920x1080:rate=30:duration=10,' +
+          "drawtext=font=Sans:text='%{pts\\:hms}':fontsize=112:fontcolor=white:" +
+          'box=1:boxcolor=black@0.8:x=48:y=48',
+        extraEncoderArgs: ['-preset', 'ultrafast', '-crf', '30'],
+      },
+      {
+        fileName: NARROW_CANCEL_FIXTURE,
+        outputDirectory: 'validation/windows/inputs',
+        input:
+          'color=c=black:size=320x180:rate=120:duration=1[still];' +
+          'nullsrc=size=320x180:rate=120:duration=23,' +
+          "geq=lum='if(mod(N,2),255,0)':cb=128:cr=128[fast];" +
+          '[still][fast]concat=n=2:v=1:a=0,fps=120',
+        extraEncoderArgs: ['-preset', 'ultrafast', '-crf', '18'],
+      }
+    );
+  }
+
   if (process.env.PREPARE_RESOURCE_FIXTURES === 'true') {
     fixtures.push({
       fileName: 'test-video-resource-hostile-par.webm',
@@ -267,7 +296,13 @@ export function generateE2eVideo(): void {
       throw new Error(`Fixture lacks verified B-frame presentation/decode reordering: ${path}`);
     }
   }
-  for (const fixture of fixtures) {
+  const selectedFixtures =
+    process.env.PREPARE_NARROW_OUTPUT_FIXTURE === 'true'
+      ? fixtures.filter((fixture) =>
+          [NARROW_OUTPUT_FIXTURE, NARROW_CANCEL_FIXTURE].includes(fixture.fileName)
+        )
+      : fixtures;
+  for (const fixture of selectedFixtures) {
     const outputPath = resolve(fixture.outputDirectory ?? 'public', fixture.fileName);
     mkdirSync(dirname(outputPath), { recursive: true });
     const encodedPath =
@@ -402,6 +437,72 @@ export function generateE2eVideo(): void {
       if (encodedPath !== outputPath) rmSync(encodedPath, { force: true });
       if (attachmentPath) rmSync(attachmentPath, { force: true });
     }
+  }
+
+  if (process.env.PREPARE_NARROW_OUTPUT_FIXTURE === 'true') {
+    const files = [NARROW_OUTPUT_FIXTURE, NARROW_CANCEL_FIXTURE].map((name) => {
+      const path = resolve('validation/windows/inputs', name);
+      const probe = spawnSync(
+        'ffprobe',
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-show_entries',
+          'stream=codec_name,width,height,avg_frame_rate,sample_aspect_ratio:format=duration',
+          '-of',
+          'json',
+          path,
+        ],
+        { encoding: 'utf8' }
+      );
+      if (probe.error) throw probe.error;
+      if (probe.status !== 0) throw new Error(`ffprobe failed: ${probe.stderr.trim()}`);
+      const metadata = JSON.parse(probe.stdout) as {
+        streams?: Array<{
+          codec_name?: string;
+          width?: number;
+          height?: number;
+          avg_frame_rate?: string;
+          sample_aspect_ratio?: string;
+        }>;
+        format?: { duration?: string };
+      };
+      const stream = metadata.streams?.[0];
+      const expected =
+        name === NARROW_OUTPUT_FIXTURE
+          ? { width: 1920, height: 1080, rate: '30/1', duration: 10 }
+          : { width: 320, height: 180, rate: '120/1', duration: 24 };
+      const duration = Number(metadata.format?.duration);
+      if (
+        stream?.codec_name !== 'h264' ||
+        stream.width !== expected.width ||
+        stream.height !== expected.height ||
+        stream.avg_frame_rate !== expected.rate ||
+        stream.sample_aspect_ratio !== '1:1' ||
+        !Number.isFinite(duration) ||
+        Math.abs(duration - expected.duration) > 0.05
+      ) {
+        throw new Error(`Narrow-output fixture metadata disagrees with its contract: ${name}`);
+      }
+      const bytes = readFileSync(path);
+      return {
+        file: name,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        bytes: bytes.byteLength,
+        codec: stream.codec_name,
+        width: stream.width,
+        height: stream.height,
+        frameRate: stream.avg_frame_rate,
+        sampleAspectRatio: stream.sample_aspect_ratio,
+        durationSeconds: duration,
+      };
+    });
+    writeFileSync(
+      resolve('validation/windows/inputs/narrow-output-fixtures.json'),
+      `${JSON.stringify({ schemaVersion: 1, files }, null, 2)}\n`
+    );
   }
 }
 

@@ -84,6 +84,36 @@ that a native Windows picker was cancelled. The synthetic play rejection and
 media-error event do not reproduce a field incident or change the conversion
 pipeline. The probe preserves partial observations and screenshots externally.
 
+For the narrow-layout and output-comprehension evaluation, prepare the ignored
+1920×1080, 30 fps, 10-second timecoded video with a long filename and a separate
+24-second cancellation input using
+`PREPARE_NARROW_OUTPUT_FIXTURE=true pnpm prepare:e2e:fixture`. This gated command
+generates only those two inputs and an FFprobe-verified, SHA-256-bound
+`validation/windows/inputs/narrow-output-fixtures.json`. Add the ignored
+`validation/windows/inputs/narrow-output.json` selector with
+`{"scenario":"narrow-output"}`. No other focused selector may be present in
+`validation/windows/inputs/` for this run. The selector requires the source-bound
+**Chrome desktop** route, `--browser chrome --mode desktop`; Edge and headless
+diagnostics cannot satisfy the actual Chrome 200% zoom case.
+
+The focused profile runs the real built app at 390×844 and 320×844 CSS viewports,
+then uses an owned persistent Chrome profile to set 200% page zoom **before**
+file import. It checks the zoom factor with device-pixel ratio, layout width and
+visual-viewport scale, and restores the prior zoom during cleanup. Each layout
+uses the owned cancellation input, then selects the long timecoded input,
+commits a 1–6 second clip, evaluates the sharing preset's format/clip retention,
+and converts low-quality 50% GIF. Expected output is 960×540 and approximately
+five seconds within the existing 0.3-second trim tolerance; low GIF targets 8
+fps while the displayed ~150-frame estimate is the 30 fps source upper bound.
+The report records actual GIF dimensions, delays, bytes, first/last decoded
+timecode images, focus/scroll/overflow, progress, cancellation, and downloads.
+A completion race or unobserved focused-edit transition is reported as
+`incomplete`, not a pass. `narrow-output-expected.json` records the scripted
+predictions before output; action discovery, readability and proposed UI changes
+remain pending operator review. The probe supplies no participant evidence or
+deployed-app claim. Preserve every attempt's external receipt and inspect the
+screenshots before deciding whether a UI change is justified.
+
 ## Runner contract
 
 The guest runner imports `profile.ts` and calls:
