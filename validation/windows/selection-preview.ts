@@ -10,6 +10,8 @@ import type { Browser, Download, FileChooser, Page } from '@playwright/test';
 
 import { parseGifDelaysCs } from './gif-playback.ts';
 
+const HAVE_METADATA_READY_STATE = 1;
+
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
@@ -743,7 +745,7 @@ export async function exercisePreviewRetry(
     assert(healthy.video && healthy.video.currentTime > 0.12 && !healthy.video.paused);
     assert(rejected.previewUnavailable?.includes('preview is unavailable'));
     assert(rejected.previewButton?.text.includes('Retry preview'));
-    assert((rejected.video?.readyState ?? 0) >= HTMLMediaElement.HAVE_METADATA);
+    assert((rejected.video?.readyState ?? 0) >= HAVE_METADATA_READY_STATE);
     assert.equal(rejected.video?.errorCode, null);
     assert.equal(probe.rejections, 1);
     assert.equal(probe.sameElement, true);
@@ -752,7 +754,7 @@ export async function exercisePreviewRetry(
     assert.equal(probe.events.filter((event) => event.type === 'loadedmetadata').length, 0);
     assert(probe.events.filter((event) => event.type === 'playing').length >= 2);
     assert(playing.video && playing.video.currentTime > 0.12 && !playing.video.paused);
-    assert(playing.video.readyState >= HTMLMediaElement.HAVE_METADATA);
+    assert(playing.video.readyState >= HAVE_METADATA_READY_STATE);
     assert.equal(playing.video.errorCode, null);
     assert.equal(
       playing.previewUnavailable,
