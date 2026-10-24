@@ -36,6 +36,33 @@ describe('ErrorDisplay focus', () => {
       container.querySelector('[data-testid="error-select-different-fallback-button"]')
     );
   });
+
+  it('offers a different file and focuses it when no current file can be retried', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const onRetry = vi.fn();
+    const onSelectNewFile = vi.fn();
+    render(
+      () => (
+        <ErrorDisplay
+          message="unsupported input"
+          canRetry={false}
+          onRetry={onRetry}
+          onSelectNewFile={onSelectNewFile}
+        />
+      ),
+      container
+    );
+    await Promise.resolve();
+    expect(container.querySelector('[data-testid="error-retry-button"]')).toBeNull();
+    const select = container.querySelector<HTMLButtonElement>(
+      '[data-testid="error-select-different-fallback-button"]'
+    )!;
+    expect(document.activeElement).toBe(select);
+    select.click();
+    expect(onSelectNewFile).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+  });
 });
 
 it('does not advertise retry or a new file for terminal WASM initialization', () => {

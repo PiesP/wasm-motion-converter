@@ -2,6 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import FileDropzone from '@components/FileDropzone';
+import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
@@ -37,8 +38,12 @@ describe('FileDropzone', () => {
   it('replaces the pending timeout when another file is selected', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
-    const onFileSelected = vi.fn();
-    const dispose = render(() => <FileDropzone onFileSelected={onFileSelected} />, container);
+    const [url, setUrl] = createSignal<string | null>(null);
+    const onFileSelected = vi.fn((file: File) => setUrl(`blob:${file.name}`));
+    const dispose = render(
+      () => <FileDropzone onFileSelected={onFileSelected} previewUrl={url()} />,
+      container
+    );
     const input = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!;
 
     selectFile(input, 'first.mp4');
@@ -54,7 +59,13 @@ describe('FileDropzone', () => {
   it('clears pending selection feedback when unmounted', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
-    const dispose = render(() => <FileDropzone onFileSelected={() => {}} />, container);
+    const [url, setUrl] = createSignal<string | null>(null);
+    const dispose = render(
+      () => (
+        <FileDropzone onFileSelected={(file) => setUrl(`blob:${file.name}`)} previewUrl={url()} />
+      ),
+      container
+    );
     const input = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!;
 
     selectFile(input, 'video.mp4');
@@ -63,6 +74,128 @@ describe('FileDropzone', () => {
     dispose();
 
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('confirms an accepted preview only, not an unsupported replacement', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const [url, setUrl] = createSignal<string | null>('blob:previous');
+    const dispose = render(
+      () => (
+        <FileDropzone
+          onFileSelected={(file) => {
+            setUrl(null);
+            if (file.name !== 'unsupported.txt') {
+              setTimeout(() => setUrl(`blob:${file.name}`), 600);
+            }
+          }}
+          previewUrl={url()}
+        />
+      ),
+      container
+    );
+    const input = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!;
+
+    selectFile(input, 'unsupported.txt');
+    expect(container.textContent).not.toContain('dropzone.selectedVideo');
+    expect(container.querySelector('[data-testid="choose-file-button"]')).not.toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+
+    selectFile(input, 'accepted.mp4');
+    vi.advanceTimersByTime(600);
+    expect(container.textContent).toContain('dropzone.selectedVideo');
+    vi.advanceTimersByTime(500);
+    expect(container.textContent).not.toContain('dropzone.selectedVideo');
+    dispose();
+  });
+
+  it('opens the persistent picker for Change and keeps selection on empty picker input', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const onFileSelected = vi.fn();
+    const dispose = render(
+      () => (
+        <FileDropzone
+          onFileSelected={onFileSelected}
+          previewUrl="blob:selected"
+          fileName="selected.mp4"
+          duration={10}
+          onTrimChange={() => {}}
+        />
+      ),
+      container
+    );
+    const input = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!;
+    const change = container.querySelector<HTMLButtonElement>(
+      '[data-testid="change-file-button"]'
+    )!;
+    const openPicker = vi.spyOn(input, 'click').mockImplementation(() => {});
+    expect(input).not.toBeNull();
+    change.click();
+    expect(openPicker).toHaveBeenCalledOnce();
+    expect(container.querySelector('#selection-preview-video')).not.toBeNull();
+
+    Object.defineProperty(input, 'files', { configurable: true, value: { length: 0 } });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(onFileSelected).not.toHaveBeenCalled();
+    expect(container.querySelector('#selection-preview-video')).not.toBeNull();
+
+    selectFile(input, 'selected.mp4');
+    selectFile(input, 'selected.mp4');
+    expect(onFileSelected).toHaveBeenCalledTimes(2);
+    dispose();
+  });
+
+  it('shows preview failure without discarding trim and ignores an old play rejection', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const [url, setUrl] = createSignal('blob:first');
+    const dispose = render(
+      () => (
+        <FileDropzone
+          onFileSelected={() => {}}
+          previewUrl={url()}
+          duration={10}
+          trimStart={2}
+          trimEnd={3}
+          onTrimChange={() => {}}
+        />
+      ),
+      container
+    );
+    const video = container.querySelector<HTMLVideoElement>('#selection-preview-video')!;
+    Object.defineProperty(video, 'readyState', {
+      configurable: true,
+      value: HTMLMediaElement.HAVE_METADATA,
+    });
+    let rejectPlay: (error: Error) => void = () => {};
+    vi.spyOn(video, 'play').mockImplementation(
+      () => new Promise<void>((_resolve, reject) => (rejectPlay = reject))
+    );
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="trim-preview-button"]'
+    )!;
+    button.click();
+    rejectPlay(new Error('preview rejected'));
+    await Promise.resolve();
+    expect(container.querySelector('[data-testid="selection-preview-unavailable"]')).not.toBeNull();
+    expect(button.textContent).toContain('dropzone.retryPreview');
+    expect(container.querySelector('#trim-start-input')).not.toBeNull();
+
+    video.dispatchEvent(new Event('loadedmetadata'));
+    expect(container.querySelector('[data-testid="selection-preview-unavailable"]')).toBeNull();
+    button.click();
+    setUrl('blob:second');
+    rejectPlay(new Error('old preview rejected'));
+    await Promise.resolve();
+    expect(container.querySelector('[data-testid="selection-preview-unavailable"]')).toBeNull();
+
+    video.dispatchEvent(new Event('error'));
+    expect(container.querySelector('[data-testid="selection-preview-unavailable"]')).not.toBeNull();
+    dispose();
   });
 
   it('keeps selected-range playback control with the video and preserves focus', async () => {

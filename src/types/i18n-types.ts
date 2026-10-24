@@ -76,12 +76,15 @@ export interface TranslationKeys {
 
   // Dropzone
   'dropzone.dropHere': string;
-  'dropzone.clickSelect': string;
+  'dropzone.chooseVideo': string;
   'dropzone.selectFile': string;
+  'dropzone.selectedVideo': string;
   'dropzone.cancelConversion': string;
   'dropzone.cancelAnalysis': string;
   'dropzone.cancel': string;
   'dropzone.preview': string;
+  'dropzone.previewUnavailable': string;
+  'dropzone.retryPreview': string;
   'dropzone.processing': string;
   'dropzone.changeFile': string;
   'dropzone.formats': string;

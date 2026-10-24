@@ -16,7 +16,6 @@ interface FileDropzoneProps {
   onCancel?: (() => void) | undefined;
   cancelDisabled?: boolean | undefined;
   cancelLabel?: string | undefined;
-  onClear?: (() => void) | undefined;
   disabled?: boolean | undefined;
   progress?: number | null | undefined;
   busy?: boolean | undefined;
@@ -48,7 +47,6 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     'onCancel',
     'cancelDisabled',
     'cancelLabel',
-    'onClear',
     'disabled',
     'progress',
     'busy',
@@ -75,9 +73,14 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   const [isDragging, setIsDragging] = createSignal(false);
   const [justSelected, setJustSelected] = createSignal(false);
   const [isSelectionPreviewing, setIsSelectionPreviewing] = createSignal(false);
+  const [focusAfterSelection, setFocusAfterSelection] = createSignal(false);
+  const [previewUnavailable, setPreviewUnavailable] = createSignal(false);
   let fileInputElement: HTMLInputElement | undefined;
   let previewVideoElement: HTMLVideoElement | undefined;
+  let changeFileButton: HTMLButtonElement | undefined;
   let selectionFeedbackTimeout: ReturnType<typeof setTimeout> | undefined;
+  let previewUrlBeforeSelection: string | null | undefined;
+  let disposed = false;
 
   const isBusy = createMemo(() => local.busy ?? !!local.status);
   const isInteractive = createMemo(() => !local.disabled && !isBusy());
@@ -116,6 +119,15 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     video.currentTime = Math.max(0, Math.min(frameTime, duration));
   };
 
+  const handlePreviewLoadedMetadata = (event: Event): void => {
+    const video = event.currentTarget;
+    if (disposed || video !== previewVideoElement || !local.previewUrl) return;
+    if (previewVideoElement.currentSrc && previewVideoElement.currentSrc !== local.previewUrl)
+      return;
+    setPreviewUnavailable(false);
+    revealInitialPreviewFrame();
+  };
+
   const handleTrimChange = (start: number, end: number): void => {
     const previousStart = local.trimStart ?? 0;
     const previewTime =
@@ -126,14 +138,34 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
 
   const toggleSelectionPreview = (): void => {
     const video = previewVideoElement;
-    if (!video || video.readyState < HTMLMediaElement.HAVE_METADATA) return;
+    if (!video) return;
+    if (previewUnavailable() && video.readyState < HTMLMediaElement.HAVE_METADATA) {
+      setPreviewUnavailable(false);
+      video.load();
+      return;
+    }
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA) return;
     if (isSelectionPreviewing()) {
       stopSelectionPreview();
       return;
     }
     video.currentTime = local.trimStart ?? 0;
     setIsSelectionPreviewing(true);
-    void video.play().catch(() => setIsSelectionPreviewing(false));
+    const selectedUrl = local.previewUrl;
+    void video.play().catch(() => {
+      if (disposed || video !== previewVideoElement || selectedUrl !== local.previewUrl) return;
+      setIsSelectionPreviewing(false);
+      setPreviewUnavailable(true);
+    });
+  };
+
+  const handlePreviewError = (event: Event): void => {
+    const video = event.currentTarget;
+    if (disposed || video !== previewVideoElement || !local.previewUrl) return;
+    if (previewVideoElement.currentSrc && previewVideoElement.currentSrc !== local.previewUrl)
+      return;
+    stopSelectionPreview();
+    setPreviewUnavailable(true);
   };
 
   const handlePreviewTimeUpdate = (): void => {
@@ -148,6 +180,19 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   createEffect(() => {
     local.previewUrl;
     stopSelectionPreview();
+    setPreviewUnavailable(false);
+  });
+
+  createEffect(() => {
+    if (!focusAfterSelection() || !hasFile() || !isInteractive()) return;
+    queueMicrotask(() => {
+      if (disposed || !focusAfterSelection() || !hasFile() || !isInteractive()) return;
+      const active = document.activeElement;
+      if (active === document.body || active === fileInputElement || !active?.isConnected) {
+        changeFileButton?.focus();
+      }
+      setFocusAfterSelection(false);
+    });
   });
 
   const clearSelectionFeedbackTimeout = (): void => {
@@ -156,7 +201,25 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     selectionFeedbackTimeout = undefined;
   };
 
+  createEffect(() => {
+    const acceptedUrl = local.previewUrl;
+    if (
+      previewUrlBeforeSelection === undefined ||
+      !acceptedUrl ||
+      acceptedUrl === previewUrlBeforeSelection
+    )
+      return;
+
+    previewUrlBeforeSelection = undefined;
+    setJustSelected(true);
+    selectionFeedbackTimeout = setTimeout(() => {
+      selectionFeedbackTimeout = undefined;
+      setJustSelected(false);
+    }, SELECTION_FEEDBACK_DURATION_MS);
+  });
+
   onCleanup(() => {
+    disposed = true;
     stopSelectionPreview();
     clearSelectionFeedbackTimeout();
   });
@@ -166,12 +229,10 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     if (!file) return;
 
     clearSelectionFeedbackTimeout();
-    setJustSelected(true);
-    selectionFeedbackTimeout = setTimeout(() => {
-      selectionFeedbackTimeout = undefined;
-      setJustSelected(false);
-    }, SELECTION_FEEDBACK_DURATION_MS);
+    setJustSelected(false);
+    previewUrlBeforeSelection = local.previewUrl ?? null;
     local.onFileSelected(file);
+    setFocusAfterSelection(true);
   };
 
   const openFilePicker = (): void => {
@@ -237,6 +298,22 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
         aria-busy={isBusy()}
         data-testid="dropzone"
       >
+        <input
+          ref={(el) => {
+            fileInputElement = el;
+          }}
+          id="file-upload"
+          name="file-upload"
+          type="file"
+          class="absolute opacity-0 w-0 h-0 overflow-hidden"
+          accept="video/*"
+          onChange={handleFileInput}
+          disabled={!isInteractive()}
+          aria-hidden="true"
+          tabIndex={-1}
+          data-testid="file-input"
+          autocomplete="off"
+        />
         {/* Busy state: compact progress card (아이디어 1 — 통합 카드) */}
         <Show when={isBusy()}>
           <div class="space-y-3">
@@ -333,12 +410,14 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                 </svg>
                 <span class="min-w-0 truncate font-medium">{local.fileName}</span>
                 <button
+                  ref={changeFileButton}
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    local.onClear?.();
+                    openFilePicker();
                   }}
-                  class="ml-auto shrink-0 text-brand hover:text-brand-hover cursor-pointer"
+                  class="ml-auto inline-flex min-w-target-minimum min-h-target-minimum shrink-0 items-center justify-center rounded-md px-2 text-brand hover:text-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus cursor-pointer"
+                  data-testid="change-file-button"
                 >
                   {t('dropzone.changeFile')}
                 </button>
@@ -366,7 +445,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                     playsinline
                     preload="metadata"
                     aria-label={t('dropzone.preview')}
-                    onLoadedMetadata={revealInitialPreviewFrame}
+                    onLoadedMetadata={handlePreviewLoadedMetadata}
+                    onError={handlePreviewError}
                     onTimeUpdate={handlePreviewTimeUpdate}
                     onEnded={() => setIsSelectionPreviewing(false)}
                     onPause={() => setIsSelectionPreviewing(false)}
@@ -410,11 +490,23 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                       <span class="truncate">
                         {isSelectionPreviewing()
                           ? t('trim.stopPreview')
-                          : t('trim.previewSelection')}
+                          : previewUnavailable()
+                            ? t('dropzone.retryPreview')
+                            : t('trim.previewSelection')}
                       </span>
                     </button>
                   </Show>
                 </div>
+              </Show>
+
+              <Show when={previewUnavailable()}>
+                <p
+                  role="status"
+                  class="rounded-md border border-border-standard bg-bg-elevated px-3 py-2 text-sm text-text-secondary"
+                  data-testid="selection-preview-unavailable"
+                >
+                  {t('dropzone.previewUnavailable')}
+                </p>
               </Show>
 
               <Show when={hasSelectionPreview()}>
@@ -467,33 +559,19 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
                   disabled={!isInteractive()}
                   data-testid="choose-file-button"
                 >
-                  {t('dropzone.dropHere')}
+                  {t('dropzone.chooseVideo')}
                 </button>
-                <input
-                  ref={(el) => {
-                    fileInputElement = el;
-                  }}
-                  id="file-upload"
-                  name="file-upload"
-                  type="file"
-                  class="absolute opacity-0 w-0 h-0 overflow-hidden"
-                  accept="video/*"
-                  onChange={handleFileInput}
-                  disabled={local.disabled}
-                  tabIndex={-1}
-                  aria-label={t('dropzone.selectFile')}
-                  data-testid="file-input"
-                  autocomplete="off"
-                />
               </div>
-              <p class="mt-2 text-sm text-text-tertiary">{t('dropzone.clickSelect')}</p>
+              <p class="mt-2 text-sm text-text-tertiary">{t('dropzone.dropHere')}</p>
               <p class="mt-1 text-xs text-text-tertiary">{t('dropzone.formats')}</p>
             </div>
           </Show>
         </Show>
 
         <Show when={justSelected()}>
-          <div class="mt-2 text-center text-sm text-status-success">{t('dropzone.dropHere')}</div>
+          <div class="mt-2 text-center text-sm text-status-success">
+            {t('dropzone.selectedVideo')}
+          </div>
         </Show>
       </div>
     </div>

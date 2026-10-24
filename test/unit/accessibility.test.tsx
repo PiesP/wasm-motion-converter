@@ -111,9 +111,11 @@ describe('Accessibility', () => {
 
       expect(dropzone.getAttribute('role')).toBe('group');
       expect(dropzone.getAttribute('aria-label')).toBe('dropzone.selectFile');
-      expect(chooseButton.textContent).toContain('dropzone.dropHere');
-      expect(fileInput.getAttribute('aria-label')).toBe('dropzone.selectFile');
-      expect(container.textContent).toContain('dropzone.clickSelect');
+      expect(chooseButton.textContent).toContain('dropzone.chooseVideo');
+      expect(fileInput.getAttribute('aria-hidden')).toBe('true');
+      expect(fileInput.tabIndex).toBe(-1);
+      expect(fileInput.hasAttribute('aria-label')).toBe(false);
+      expect(container.textContent).toContain('dropzone.dropHere');
     });
 
     it('labels the preview and cancel action during conversion', () => {

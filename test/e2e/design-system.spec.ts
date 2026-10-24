@@ -355,7 +355,12 @@ test.describe('Quiet Instruments adapter', () => {
     await expect(disclosure).toHaveAttribute('open', '');
     await expect(harness.getByText(/64 MB \/ 512 MB/)).toBeVisible();
     await expect(harness.locator('[role="progressbar"]')).toHaveCount(1);
-    await expect(harness.getByRole('button')).toBeVisible();
+    await expect(harness.getByTestId('file-input')).toHaveAttribute('aria-hidden', 'true');
+    await expect(harness.getByRole('button')).toHaveCount(1);
+    const cancel = harness.getByRole('button', { name: 'إلغاء التحويل' });
+    await expect(cancel).toBeVisible();
+    await cancel.focus();
+    await expect(cancel).toBeFocused();
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth

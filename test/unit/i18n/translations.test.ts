@@ -28,14 +28,16 @@ describe('translations', () => {
       expect(enKeys.length).toBe(koKeys.length);
     });
 
-    it('has all translation keys in en.json', () => {
-      const enKeys = Object.keys(enTranslations);
-      expect(enKeys.length).toBe(201);
-    });
-
-    it('has all translation keys in ko.json', () => {
-      const koKeys = Object.keys(koTranslations);
-      expect(koKeys.length).toBe(201);
+    it('provides the video selection action and feedback in every locale', () => {
+      for (const translations of Object.values(allTranslations)) {
+        for (const key of [
+          'dropzone.chooseVideo',
+          'dropzone.dropHere',
+          'dropzone.selectedVideo',
+        ] as const) {
+          expect(translations[key]).toBeTruthy();
+        }
+      }
     });
 
     it('en.json keys are a subset of ko.json keys', () => {

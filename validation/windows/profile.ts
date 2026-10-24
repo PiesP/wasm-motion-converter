@@ -36,6 +36,7 @@ import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
 import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
 import type { OutputContractCase } from './output-contract.ts';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
+import { exerciseSelectionPreviewBaseline } from './selection-preview.ts';
 import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
 
@@ -3054,6 +3055,37 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const selectionSelector = resolve(bundleRoot, 'validation/windows/inputs/selection-preview.json');
+  let selectionSelectorText: string | undefined;
+  try {
+    selectionSelectorText = await readFile(selectionSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (selectionSelectorText !== undefined) {
+    const selector: unknown = JSON.parse(selectionSelectorText);
+    assert.deepEqual(selector, { scenario: 'selection-preview' });
+    const fixture = await validateBundleFile(
+      bundleRoot,
+      'validation/windows/inputs/trim-submission.mp4'
+    );
+    const matroska = await validateBundleFile(
+      bundleRoot,
+      'public/test-video-matroska-metadata.mkv'
+    );
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseSelectionPreviewBaseline(
+        browser,
+        started.url,
+        fixture,
+        matroska,
+        output
+      );
+    } finally {
+      await closeServer(started.server);
+    }
+  }
   const trimSelector = resolve(bundleRoot, 'validation/windows/inputs/trim-submission.json');
   let trimSelectorText: string | undefined;
   try {
