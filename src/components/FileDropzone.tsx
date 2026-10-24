@@ -79,6 +79,7 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
   let previewVideoElement: HTMLVideoElement | undefined;
   let changeFileButton: HTMLButtonElement | undefined;
   let selectionFeedbackTimeout: ReturnType<typeof setTimeout> | undefined;
+  let previewUrlBeforeSelection: string | null | undefined;
   let disposed = false;
 
   const isBusy = createMemo(() => local.busy ?? !!local.status);
@@ -200,6 +201,23 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     selectionFeedbackTimeout = undefined;
   };
 
+  createEffect(() => {
+    const acceptedUrl = local.previewUrl;
+    if (
+      previewUrlBeforeSelection === undefined ||
+      !acceptedUrl ||
+      acceptedUrl === previewUrlBeforeSelection
+    )
+      return;
+
+    previewUrlBeforeSelection = undefined;
+    setJustSelected(true);
+    selectionFeedbackTimeout = setTimeout(() => {
+      selectionFeedbackTimeout = undefined;
+      setJustSelected(false);
+    }, SELECTION_FEEDBACK_DURATION_MS);
+  });
+
   onCleanup(() => {
     disposed = true;
     stopSelectionPreview();
@@ -211,11 +229,8 @@ const FileDropzone: Component<FileDropzoneProps> = (props) => {
     if (!file) return;
 
     clearSelectionFeedbackTimeout();
-    setJustSelected(true);
-    selectionFeedbackTimeout = setTimeout(() => {
-      selectionFeedbackTimeout = undefined;
-      setJustSelected(false);
-    }, SELECTION_FEEDBACK_DURATION_MS);
+    setJustSelected(false);
+    previewUrlBeforeSelection = local.previewUrl ?? null;
     local.onFileSelected(file);
     setFocusAfterSelection(true);
   };

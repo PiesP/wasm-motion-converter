@@ -65,6 +65,7 @@ test('invalid visible trim blocks Convert until the edited range is submitted', 
 test('Change video keeps the current selection on picker cancellation and preserves the result', async ({
   page,
 }) => {
+  await page.addInitScript(() => localStorage.setItem('dropconvert.locale', 'en'));
   await page.goto('/');
   await injectTestFile(page, FIXTURE);
   await setFormat(page, 'gif');
@@ -113,6 +114,7 @@ test('Change video keeps the current selection on picker cancellation and preser
     buffer: Buffer.from('not video'),
   });
   await expect(page.getByTestId('error-display')).toBeVisible();
+  await expect(page.getByText('Video selected')).toHaveCount(0);
   await expect(page.getByTestId('error-retry-button')).toHaveCount(0);
   const selectDifferent = page.getByTestId('error-select-different-fallback-button');
   await expect(selectDifferent).toBeFocused();

@@ -38,8 +38,12 @@ describe('FileDropzone', () => {
   it('replaces the pending timeout when another file is selected', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
-    const onFileSelected = vi.fn();
-    const dispose = render(() => <FileDropzone onFileSelected={onFileSelected} />, container);
+    const [url, setUrl] = createSignal<string | null>(null);
+    const onFileSelected = vi.fn((file: File) => setUrl(`blob:${file.name}`));
+    const dispose = render(
+      () => <FileDropzone onFileSelected={onFileSelected} previewUrl={url()} />,
+      container
+    );
     const input = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!;
 
     selectFile(input, 'first.mp4');
@@ -55,7 +59,13 @@ describe('FileDropzone', () => {
   it('clears pending selection feedback when unmounted', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
-    const dispose = render(() => <FileDropzone onFileSelected={() => {}} />, container);
+    const [url, setUrl] = createSignal<string | null>(null);
+    const dispose = render(
+      () => (
+        <FileDropzone onFileSelected={(file) => setUrl(`blob:${file.name}`)} previewUrl={url()} />
+      ),
+      container
+    );
     const input = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!;
 
     selectFile(input, 'video.mp4');
@@ -64,6 +74,40 @@ describe('FileDropzone', () => {
     dispose();
 
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('confirms an accepted preview only, not an unsupported replacement', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const [url, setUrl] = createSignal<string | null>('blob:previous');
+    const dispose = render(
+      () => (
+        <FileDropzone
+          onFileSelected={(file) => {
+            setUrl(null);
+            if (file.name !== 'unsupported.txt') {
+              setTimeout(() => setUrl(`blob:${file.name}`), 600);
+            }
+          }}
+          previewUrl={url()}
+        />
+      ),
+      container
+    );
+    const input = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!;
+
+    selectFile(input, 'unsupported.txt');
+    expect(container.textContent).not.toContain('dropzone.selectedVideo');
+    expect(container.querySelector('[data-testid="choose-file-button"]')).not.toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+
+    selectFile(input, 'accepted.mp4');
+    vi.advanceTimersByTime(600);
+    expect(container.textContent).toContain('dropzone.selectedVideo');
+    vi.advanceTimersByTime(500);
+    expect(container.textContent).not.toContain('dropzone.selectedVideo');
+    dispose();
   });
 
   it('opens the persistent picker for Change and keeps selection on empty picker input', () => {
