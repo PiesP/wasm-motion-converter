@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   setConversionStatusMessage: vi.fn(),
   setCurrentFrame: vi.fn(),
   setErrorMessage: vi.fn(),
+  setErrorContext: vi.fn(),
+  setWebpReloadRequired: vi.fn(),
   setOutputFrames: vi.fn(),
   setTotalFrames: vi.fn(),
   setAppState: vi.fn((state: 'idle' | 'cancelling' | 'error') => {
@@ -54,7 +56,8 @@ vi.mock('@stores/conversion-store', () => ({
   setConversionResults: mocks.setConversionResults,
   setConversionStatusMessage: mocks.setConversionStatusMessage,
   setCurrentFrame: mocks.setCurrentFrame,
-  setErrorContext: vi.fn(),
+  setErrorContext: mocks.setErrorContext,
+  setWebpReloadRequired: mocks.setWebpReloadRequired,
   setErrorMessage: mocks.setErrorMessage,
   setInputFile: mocks.setInputFile,
   setOutputFrames: mocks.setOutputFrames,
@@ -124,6 +127,8 @@ beforeEach(() => {
   mocks.setConversionStatusMessage.mockReset();
   mocks.setCurrentFrame.mockReset();
   mocks.setErrorMessage.mockClear();
+  mocks.setErrorContext.mockClear();
+  mocks.setWebpReloadRequired.mockClear();
   mocks.setOutputFrames.mockReset();
   mocks.setTotalFrames.mockReset();
   mocks.setAppState.mockClear();
@@ -630,4 +635,31 @@ describe('localized conversion progress status', () => {
     if (primaryFailure) throw primaryFailure;
     if (cleanupFailures.length > 0) throw cleanupFailures[0];
   });
+});
+
+it('offers terminal recovery for initialization wrapped by frame processing, even with AbortError cause', async () => {
+  const { WasmWebpInitializationError } = await import('@services/wasm-webp-singleton');
+  const original = new DOMException('bounded failed factory fetch', 'AbortError');
+  const initialization = new WasmWebpInitializationError('factory', original);
+  const processing = new Error(`Frame processing failed: ${initialization.message}`, {
+    cause: initialization,
+  });
+  mocks.settings = { ...mocks.settings, format: 'webp' };
+  mocks.validateVideoDuration.mockResolvedValue({ duration: 1000, warnings: [] });
+  mocks.runConversionPipeline.mockRejectedValueOnce(processing);
+  await handleConvert(
+    createRuntime(),
+    ((key: string) => key) as Parameters<typeof handleConvert>[1]
+  );
+  expect(mocks.setWebpReloadRequired).toHaveBeenCalledWith(true);
+  expect(mocks.setErrorContext).toHaveBeenCalledWith(
+    expect.objectContaining({
+      phase: 'wasm_webp_initialization',
+      originalError: processing.message,
+    })
+  );
+  expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
+  expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
+    expect.objectContaining({ outputBlob: expect.any(Blob) }),
+  ]);
 });
