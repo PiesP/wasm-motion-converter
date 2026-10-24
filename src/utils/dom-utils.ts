@@ -54,20 +54,6 @@ export function scheduleTask<T>(fn: () => T, options?: { priority?: TaskPriority
 }
 
 /**
- * Focus a DOM element matching a selector on the next microtask.
- *
- * Useful after state changes that conditionally render elements,
- * since the element may not be in the DOM yet when the call is made.
- *
- * @param selector - CSS selector for the element to focus
- */
-export function focusElement(selector: string): void {
-  queueMicrotask(() => {
-    document.querySelector<HTMLElement>(selector)?.focus();
-  });
-}
-
-/**
  * Focus a newly rendered action unless the user currently owns an editable field.
  *
  * Completion UI may appear while the user is changing another input. Moving focus
@@ -89,9 +75,20 @@ export function focusElementUnlessUserIsEditing(selector: string): void {
   });
 }
 
-/** Focus the primary action exposed by the current error type. */
+/** Focus the current error's enabled action on the next microtask, then fall back to reload. */
 export function focusPrimaryErrorAction(): void {
-  focusElement(
-    '[data-testid="error-retry-button"], [data-testid="error-select-different-fallback-button"], [data-testid="app-recovery-reload"]'
-  );
+  queueMicrotask(() => {
+    // Query separately: a selector list follows DOM order, not action priority.
+    for (const selector of [
+      '[data-testid="error-retry-button"]:enabled',
+      '[data-testid="error-select-different-fallback-button"]:enabled',
+      '[data-testid="app-recovery-reload"]:enabled',
+    ]) {
+      const action = document.querySelector<HTMLButtonElement>(selector);
+      if (action) {
+        action.focus();
+        return;
+      }
+    }
+  });
 }
