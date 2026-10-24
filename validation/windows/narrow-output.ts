@@ -2,6 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
@@ -186,16 +187,53 @@ async function capture(
 ) {
   const observation = await snapshot(page);
   const file = `${id}-${stage}.png`;
-  const image = await page.screenshot({ path: join(output, file), fullPage: true });
+  const nativeZoom = id === 'chrome-zoom-200';
+  let image: Buffer;
+  if (nativeZoom) {
+    const session = await page.context().newCDPSession(page);
+    try {
+      await session.send('Page.bringToFront');
+      // Playwright can retain the pre-zoom screenshot clip after Chrome zoom.
+      const { data } = await session.send('Page.captureScreenshot', {
+        format: 'png',
+        fromSurface: true,
+        captureBeyondViewport: false,
+      });
+      image = Buffer.from(data, 'base64');
+    } finally {
+      await session.detach();
+    }
+  } else {
+    image = await page.screenshot({ fullPage: true });
+  }
+  await writeFile(join(output, file), image);
+  assert.equal(image.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+  const width = image.readUInt32BE(16);
+  const height = image.readUInt32BE(20);
   const result = {
     ...observation,
-    screenshot: { file, bytes: image.byteLength, sha256: sha256(image) },
+    screenshot: {
+      file,
+      bytes: image.byteLength,
+      sha256: sha256(image),
+      width,
+      height,
+      method: nativeZoom ? 'cdp-page-capture-screenshot-no-clip' : 'playwright-full-page',
+    },
   };
   observations[stage] = result;
   await writeFile(
     join(output, `${id}-observations.json`),
     `${JSON.stringify(observations, null, 2)}\n`
   );
+  if (nativeZoom) {
+    const expectedWidth = observation.viewport.innerWidth * observation.viewport.devicePixelRatio;
+    const scrollbarTolerance = Math.ceil(20 * observation.viewport.devicePixelRatio);
+    assert(
+      Math.abs(width - expectedWidth) <= scrollbarTolerance,
+      `Chrome zoom screenshot width ${width}px disagrees with ${expectedWidth}px surface`
+    );
+  }
   return result;
 }
 
@@ -433,6 +471,7 @@ async function exerciseMainFlow(
   if ((await error.count()) > 0) {
     throw new Error(`Conversion failed: ${await error.textContent()}`);
   }
+  await page.locator('[data-testid="result-section"]').scrollIntoViewIfNeeded();
   const afterCompletion = await capture(page, output, id, 'completed', observations);
   if (editingFocusDuringConversion) {
     assert.equal(
@@ -443,7 +482,7 @@ async function exerciseMainFlow(
   }
   const download = page.locator('[data-testid="download-result-button"]');
   await download.scrollIntoViewIfNeeded();
-  const foundDownload = await snapshot(page);
+  const foundDownload = await capture(page, output, id, 'download-in-view', observations);
   assert(foundDownload.download?.visible);
   assert(foundDownload.download.bounds.left >= -1);
   assert(foundDownload.download.bounds.right <= foundDownload.viewport.innerWidth + 1);
