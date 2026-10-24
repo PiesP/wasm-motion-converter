@@ -10,6 +10,7 @@ import { dirname, resolve } from 'node:path';
 interface VideoFixture {
   fileName: string;
   input: string;
+  outputDirectory?: string;
   videoFilter?: string;
   encoderArgs?: string[];
   extraEncoderArgs?: string[];
@@ -199,6 +200,18 @@ export function generateE2eVideo(): void {
     },
   ];
 
+  if (process.env.PREPARE_TRIM_SUBMISSION_FIXTURE === 'true') {
+    fixtures.push({
+      fileName: 'trim-submission.mp4',
+      outputDirectory: 'validation/windows/inputs',
+      input:
+        'testsrc2=size=640x360:rate=30:duration=10,' +
+        "drawtext=font=Sans:text='%{pts\\:hms}':fontsize=64:fontcolor=white:" +
+        'box=1:boxcolor=black@0.8:x=32:y=32',
+      extraEncoderArgs: ['-preset', 'ultrafast', '-crf', '22'],
+    });
+  }
+
   if (process.env.PREPARE_RESOURCE_FIXTURES === 'true') {
     fixtures.push({
       fileName: 'test-video-resource-hostile-par.webm',
@@ -255,7 +268,7 @@ export function generateE2eVideo(): void {
     }
   }
   for (const fixture of fixtures) {
-    const outputPath = resolve('public', fixture.fileName);
+    const outputPath = resolve(fixture.outputDirectory ?? 'public', fixture.fileName);
     mkdirSync(dirname(outputPath), { recursive: true });
     const encodedPath =
       fixture.displayRotation === undefined ? outputPath : `${outputPath}.unrotated.mp4`;
