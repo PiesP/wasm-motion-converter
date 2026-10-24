@@ -125,13 +125,79 @@ async function readGif(page: Page, file: string, output: string) {
   const delaysCs = parseGifDelaysCs(bytes);
   assert(delaysCs.length > 0, 'GIF has no timed frames');
   await writeFile(join(output, file), bytes);
+  const href = await page.locator('[data-testid="download-result-button"]').getAttribute('href');
+  if (!href?.startsWith('blob:')) throw new Error('Result download did not retain its Blob URL');
+  const decoded = await page.evaluate(async (resultUrl) => {
+    const response = await fetch(resultUrl);
+    if (!response.ok) throw new Error('Result Blob URL is unavailable');
+    const encoded = await response.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-256', encoded);
+    const digestHex = Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, '0')
+    ).join('');
+    const decoder = new ImageDecoder({ data: encoded, type: 'image/gif' });
+    try {
+      await decoder.tracks.ready;
+      const track = decoder.tracks.selectedTrack;
+      if (!track || track.frameCount < 1) throw new Error('Decoded GIF has no frames');
+      const samples = [];
+      for (const frameIndex of [0, track.frameCount - 1]) {
+        const { image } = await decoder.decode({ frameIndex, completeFramesOnly: true });
+        try {
+          const canvas = new OffscreenCanvas(image.displayWidth, image.displayHeight);
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('Cannot capture GIF timecode frame');
+          context.drawImage(image, 0, 0);
+          const png = await canvas.convertToBlob({ type: 'image/png' });
+          samples.push({ frameIndex, png: Array.from(new Uint8Array(await png.arrayBuffer())) });
+        } finally {
+          image.close();
+        }
+      }
+      return { digestHex, frameCount: track.frameCount, samples };
+    } finally {
+      decoder.close();
+    }
+  }, href);
+  assert.equal(decoded.digestHex, sha256(bytes), 'Decoded Blob URL differs from downloaded GIF');
+  assert.equal(decoded.frameCount, delaysCs.length, 'GIF image and delay counts disagree');
+  const timecodeFrames = [];
+  for (const [index, sample] of decoded.samples.entries()) {
+    const image = Buffer.from(sample.png);
+    const imageFile = `${file}-${index === 0 ? 'first' : 'last'}.png`;
+    await writeFile(join(output, imageFile), image);
+    timecodeFrames.push({ file: imageFile, frameIndex: sample.frameIndex, sha256: sha256(image) });
+  }
   return {
     file,
     sha256: sha256(bytes),
     bytes: bytes.byteLength,
     frameCount: delaysCs.length,
     durationSeconds: delaysCs.reduce((total, value) => total + value, 0) / 100,
+    timecodeFrames,
   };
+}
+
+async function activateConvert(page: Page, activation: Case['activation']) {
+  const convert = page.locator('[data-testid="convert-button"]');
+  if (activation === 'pointer') await convert.click();
+  else {
+    await convert.focus();
+    await page.keyboard.press('Enter');
+  }
+}
+
+async function waitForResult(page: Page) {
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-testid="result-section"]') !== null ||
+      document.querySelector('[data-testid="error-display"]') !== null,
+    undefined,
+    { timeout: 120_000 }
+  );
+  const error = page.locator('[data-testid="error-display"]');
+  assert.equal(await error.isVisible(), false, `Conversion failed: ${await error.textContent()}`);
+  await page.locator('[data-testid="result-section"]').waitFor({ state: 'visible' });
 }
 
 async function exerciseCase(
@@ -196,15 +262,7 @@ async function exerciseCase(
     const beforeActivation = await snapshot(page, entry.field);
     await page.screenshot({ path: join(output, `${entry.id}-before.png`), fullPage: true });
 
-    const convert = page.locator('[data-testid="convert-button"]');
-    if (entry.activation === 'pointer') await convert.click();
-    else {
-      await convert.focus();
-      await page.keyboard.press('Enter');
-    }
-    if (await page.locator('[data-testid="modal-confirm-button"]').isVisible()) {
-      await page.locator('[data-testid="modal-confirm-button"]').click();
-    }
+    await activateConvert(page, entry.activation);
     const started = await page
       .waitForFunction(
         () => {
@@ -222,15 +280,22 @@ async function exerciseCase(
       )
       .then(() => true)
       .catch(() => false);
-    if (started) {
-      await page.waitForFunction(
-        () =>
-          document.querySelector('[data-testid="result-section"]') !== null ||
-          document.querySelector('[data-testid="error-display"]') !== null,
-        undefined,
-        { timeout: 120_000 }
-      );
-    }
+    assert.equal(started, false, `${entry.id}: invalid trim started conversion`);
+    await activateConvert(page, entry.activation);
+    const repeatActivation = await snapshot(page, entry.field);
+    assert.equal(repeatActivation.value, entry.value, `${entry.id}: invalid draft was discarded`);
+    assert.equal(repeatActivation.invalid, 'true', `${entry.id}: invalid feedback disappeared`);
+    assert.equal(
+      repeatActivation.focus,
+      `trim-${entry.field}-input`,
+      `${entry.id}: first invalid field did not regain focus`
+    );
+    assert(repeatActivation.error, `${entry.id}: no visible field error`);
+    assert.equal(
+      await page.locator('[data-testid="result-section"]').count(),
+      0,
+      `${entry.id}: invalid submission produced a result`
+    );
     const afterActivation = await snapshot(page, entry.field);
     const trace = await page.evaluate(() => {
       const result = Reflect.get(globalThis, '__trimSubmissionTrace') as {
@@ -241,9 +306,62 @@ async function exerciseCase(
       return result.states;
     });
     await page.screenshot({ path: join(output, `${entry.id}-after.png`), fullPage: true });
-    const resultVisible = await page.locator('[data-testid="result-section"]').isVisible();
-    const errorVisible = await page.locator('[data-testid="error-display"]').isVisible();
-    const gif = resultVisible ? await readGif(page, `${entry.id}.gif`, output) : null;
+    assert(
+      trace.every((state) => !/Converting|Converted animation|Conversion failed/.test(state)),
+      `${entry.id}: invalid submission changed application state: ${trace.join(', ')}`
+    );
+    if (entry.viewport.width === 320) {
+      assert(
+        afterActivation.viewport.scrollWidth <= afterActivation.viewport.innerWidth,
+        'Narrow invalid feedback introduced page-level horizontal overflow'
+      );
+      assert(
+        afterActivation.inputBounds &&
+          afterActivation.inputBounds.y >= 0 &&
+          afterActivation.inputBounds.y + afterActivation.inputBounds.height <=
+            afterActivation.viewport.innerHeight,
+        'Narrow invalid input was not scrolled into view'
+      );
+    }
+
+    let expectedDuration: number;
+    let expectedRange: { start: number; end: number };
+    if (entry.id === 'start-after-end') {
+      await start.fill('3.0');
+      await start.press('Tab');
+      expectedRange = { start: 3, end: 8 };
+      expectedDuration = 5;
+    } else if (entry.id === 'end-before-start') {
+      await end.press('Escape');
+      expectedRange = { start: 2, end: 8 };
+      expectedDuration = 6;
+    } else if (entry.id === 'end-past-duration') {
+      await page.locator('[data-testid="trim-preset-first-5"]').click();
+      expectedRange = { start: 0, end: 5 };
+      expectedDuration = 5;
+    } else {
+      await page.getByRole('button', { name: 'Change', exact: true }).click();
+      await page.locator('[data-testid="file-input"]').setInputFiles(fixture);
+      await page.locator('[data-testid="trim-selector"]').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
+      expectedRange = { start: 0, end: 10 };
+      expectedDuration = 10;
+    }
+    const beforeRecovery = await snapshot(page, entry.field);
+    assert.equal(await start.inputValue(), `0:${String(expectedRange.start).padStart(2, '0')}.0`);
+    assert.equal(await end.inputValue(), `0:${String(expectedRange.end).padStart(2, '0')}.0`);
+    assert.equal(beforeRecovery.invalid, null, `${entry.id}: recovery left the field invalid`);
+    await activateConvert(page, entry.activation);
+    await waitForResult(page);
+    const afterRecovery = await snapshot(page, entry.field);
+    await page.screenshot({ path: join(output, `${entry.id}-recovered.png`), fullPage: true });
+    const gif = await readGif(page, `${entry.id}-recovered.gif`, output);
+    assert(
+      Math.abs(gif.durationSeconds - expectedDuration) <= 0.3,
+      `${entry.id}: output duration ${gif.durationSeconds} disagrees with ${expectedDuration}s selection`
+    );
+    assert.deepEqual(pageErrors, [], `${entry.id}: browser page errors`);
+    assert.deepEqual(consoleErrors, [], `${entry.id}: browser console errors`);
     return {
       id: entry.id,
       input: { field: entry.field, value: entry.value },
@@ -252,20 +370,75 @@ async function exerciseCase(
       committed,
       beforeActivation,
       afterActivation,
+      repeatActivation,
       trace,
-      result: resultVisible
-        ? 'converted'
-        : errorVisible
-          ? 'error'
-          : started
-            ? 'pending'
-            : 'no-start-observed',
-      error: errorVisible
-        ? await page.locator('[data-testid="error-display"]').textContent()
-        : null,
-      gif,
+      invalidResult: 'blocked',
+      recovery: { expectedRange, beforeRecovery, afterRecovery, gif },
       pageErrors,
       consoleErrors,
+    };
+  } finally {
+    await context.close();
+  }
+}
+
+async function exercisePairedValidDrafts(
+  browser: Browser,
+  url: string,
+  fixture: string,
+  output: string
+) {
+  const context = await browser.newContext({
+    acceptDownloads: true,
+    locale: 'en-US',
+    viewport: { width: 1280, height: 800 },
+  });
+  try {
+    const page = await context.newPage();
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    assert(response && response.ok(), 'Built application did not load');
+    await page.locator('[data-testid="file-input"]').setInputFiles(fixture);
+    await page
+      .locator('[data-testid="trim-selector"]')
+      .waitFor({ state: 'visible', timeout: 30_000 });
+    await selectLowGif(page);
+    const start = page.locator('#trim-start-input');
+    const end = page.locator('#trim-end-input');
+    await start.fill('2.0');
+    await start.press('Enter');
+    await end.fill('8.0');
+    await end.press('Enter');
+    await start.fill('9.0');
+    await start.press('Tab');
+    assert.equal(await start.getAttribute('aria-invalid'), 'true');
+    await end.fill('10.0');
+    const beforeSubmission = {
+      start: await snapshot(page, 'start'),
+      end: await snapshot(page, 'end'),
+    };
+    await page.screenshot({ path: join(output, 'paired-valid-before.png'), fullPage: true });
+    await activateConvert(page, 'pointer');
+    await waitForResult(page);
+    const afterSubmission = {
+      start: await snapshot(page, 'start'),
+      end: await snapshot(page, 'end'),
+    };
+    assert.equal(afterSubmission.start.value, '0:09.0');
+    assert.equal(afterSubmission.end.value, '0:10.0');
+    assert.equal(afterSubmission.start.invalid, null);
+    assert.equal(afterSubmission.end.invalid, null);
+    await page.screenshot({ path: join(output, 'paired-valid-result.png'), fullPage: true });
+    const gif = await readGif(page, 'paired-valid.gif', output);
+    assert(
+      Math.abs(gif.durationSeconds - 1) <= 0.3,
+      `Paired valid drafts produced ${gif.durationSeconds}s instead of 9–10s`
+    );
+    return {
+      id: 'paired-valid-drafts',
+      expectedRange: { start: 9, end: 10 },
+      beforeSubmission,
+      afterSubmission,
+      gif,
     };
   } finally {
     await context.close();
@@ -290,6 +463,11 @@ export async function exerciseTrimSubmission(
         failures.push(`${entry.id}: ${error instanceof Error ? error.stack : String(error)}`);
       }
     }
+    try {
+      cases.push(await exercisePairedValidDrafts(browser, url, fixture, output));
+    } catch (error) {
+      failures.push(`paired-valid-drafts: ${error instanceof Error ? error.stack : String(error)}`);
+    }
   } finally {
     await writeFile(
       join(output, 'trim-submission.json'),
@@ -297,5 +475,5 @@ export async function exerciseTrimSubmission(
     );
   }
   assert.equal(failures.length, 0, `Trim submission probe failed: ${failures.join('; ')}`);
-  return { profile: 'trim-submission', status: 'observed', cases };
+  return { profile: 'trim-submission', status: 'passed', cases };
 }

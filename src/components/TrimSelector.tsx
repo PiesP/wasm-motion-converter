@@ -13,7 +13,7 @@ import {
   TRIM_STEP,
 } from '@utils/trim-time';
 import type { Component } from 'solid-js';
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 
 const MIN_DURATION = 0.5;
 const STEP = TRIM_STEP;
@@ -28,6 +28,7 @@ interface TrimSelectorProps {
   disabled?: boolean | undefined;
   onChange: (start: number, end: number) => void;
   onSeek?: ((seconds: number) => void) | undefined;
+  onRegisterSubmission?: ((prepare: () => boolean) => () => void) | undefined;
 }
 
 interface TrimPreset {
@@ -88,6 +89,8 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     props.duration <= 0 ? 0 : (seekPosition() / props.duration) * 100
   );
   let trackRef: HTMLFieldSetElement | undefined;
+  let startInputRef: HTMLInputElement | undefined;
+  let endInputRef: HTMLInputElement | undefined;
 
   createEffect(() => {
     if (!startFocused() && !startError()) setStartText(formatTimePrecise(props.trimStart));
@@ -338,6 +341,63 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     setEndFocused(false);
   };
 
+  const prepareSubmission = (): boolean => {
+    const parsedStart = parseTimeInput(startText());
+    const parsedEnd = parseTimeInput(endText());
+    const start = parsedStart === null ? null : clampToStep(parsedStart);
+    const end = parsedEnd === null ? null : clampToStep(parsedEnd);
+    const startValid =
+      parsedStart !== null &&
+      parsedStart >= 0 &&
+      parsedStart < props.duration &&
+      start !== null &&
+      start >= 0 &&
+      start < props.duration;
+    const endValid =
+      parsedEnd !== null &&
+      parsedEnd > 0 &&
+      parsedEnd <= props.duration &&
+      end !== null &&
+      end > 0 &&
+      end <= props.duration;
+
+    if (!startValid || (endValid && start !== null && end !== null && start >= end)) {
+      setStartError(
+        t('trim.invalidStart', {
+          end: formatTimePrecise(endValid && end !== null ? end : effectiveEnd()),
+        })
+      );
+      startInputRef?.focus();
+      return false;
+    }
+    if (!endValid || start === null || end === null || end <= start) {
+      setEndError(
+        t('trim.invalidEnd', {
+          start: formatTimePrecise(start ?? props.trimStart),
+          duration: formatTimePrecise(props.duration),
+        })
+      );
+      endInputRef?.focus();
+      return false;
+    }
+
+    const normalizedEnd = normalizeEnd(end);
+    setStartError(null);
+    setEndError(null);
+    setStartText(formatTimePrecise(start));
+    setEndText(formatTimePrecise(end));
+    if (start !== props.trimStart || normalizedEnd !== props.trimEnd) {
+      props.onChange(start, normalizedEnd);
+    }
+    return true;
+  };
+
+  let unregisterSubmission: (() => void) | undefined;
+  onMount(() => {
+    unregisterSubmission = props.onRegisterSubmission?.(prepareSubmission);
+  });
+  onCleanup(() => unregisterSubmission?.());
+
   const handleStartTextKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -515,6 +575,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           <label for="trim-start-input" class="text-xs font-medium text-text-secondary">
             {t('trim.startLabel')}
             <input
+              ref={startInputRef}
               id="trim-start-input"
               name="trim-start"
               type="text"
@@ -547,6 +608,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
           <label for="trim-end-input" class="text-xs font-medium text-text-secondary">
             {t('trim.endLabel')}
             <input
+              ref={endInputRef}
               id="trim-end-input"
               name="trim-end"
               type="text"

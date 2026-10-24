@@ -58,6 +58,17 @@ The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
 
+For the focused trim-submission regression, prepare the ignored 10-second
+timecoded fixture with `PREPARE_TRIM_SUBMISSION_FIXTURE=true pnpm prepare:e2e:fixture`
+and put `{"scenario":"trim-submission"}` in the ignored
+`validation/windows/inputs/trim-submission.json` selector. The standard
+`hyperv-control validate --kind browser --repo ... --output ... -- --browser msedge
+--mode desktop` route then runs only this scenario. Its result records the
+selected range, invalid-edit focus and feedback, recovery, downloaded GIF bytes
+and durations, and first/last decoded timecode frames. Inspect those images
+against the source fixture before claiming timestamp agreement. Use a new
+external output directory for every attempt.
+
 ## Runner contract
 
 The guest runner imports `profile.ts` and calls:

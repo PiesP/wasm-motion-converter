@@ -95,6 +95,15 @@ const App: Component = () => {
   const [memoryWarning, setMemoryWarning] = createSignal(false);
   const [preferResultPreviewHidden, setPreferResultPreviewHidden] = createSignal(false);
   const [cancellingAnalysis, setCancellingAnalysis] = createSignal(false);
+  let prepareTrimSubmission: (() => boolean) | undefined;
+
+  const registerTrimSubmission = (prepare: () => boolean): (() => void) => {
+    prepareTrimSubmission = prepare;
+    return () => {
+      if (prepareTrimSubmission === prepare) prepareTrimSubmission = undefined;
+    };
+  };
+  const prepareCurrentTrim = (): boolean => prepareTrimSubmission?.() ?? true;
 
   const [memoryUsageText, setMemoryUsageText] = createSignal<string | null>(null);
 
@@ -250,6 +259,7 @@ const App: Component = () => {
   });
 
   const handleReduceSettings = (): void => {
+    if (!prepareCurrentTrim()) return;
     setConversionSettings({
       ...conversionSettings(),
       quality: 'low',
@@ -271,6 +281,7 @@ const App: Component = () => {
   };
 
   const handleConvertWithMemoryCheck = (): void => {
+    if (!prepareCurrentTrim()) return;
     if (isMemoryCritical()) {
       setMemoryWarning(true);
       return;
@@ -285,6 +296,10 @@ const App: Component = () => {
 
   const clearResultsForReload = (): void => {
     if (!isBusy()) setConversionResults([]);
+  };
+
+  const retryWithCurrentTrim = (): void => {
+    if (prepareCurrentTrim()) handleRetry();
   };
 
   const cancelForRecovery = (): void => {
@@ -336,7 +351,7 @@ const App: Component = () => {
           errorContext={errorContext()}
           errorMessage={appState() === 'error' ? errorMessage() : null}
           onDismissError={handleDismissError}
-          onRetry={handleRetry}
+          onRetry={retryWithCurrentTrim}
           onSelectNewFile={handleReset}
         />
 
@@ -405,6 +420,7 @@ const App: Component = () => {
                 onTrimChange={(start, end) =>
                   setConversionSettings({ ...conversionSettings(), trimStart: start, trimEnd: end })
                 }
+                onRegisterTrimSubmission={registerTrimSubmission}
               />
 
               {/* Video metadata: shown below dropzone when file selected but not converting */}
