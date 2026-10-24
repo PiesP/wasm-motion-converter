@@ -52,6 +52,10 @@ async function snapshot(page: Page) {
       choose: control(document.querySelector('[data-testid="choose-file-button"]')),
       change: control(change),
       previewButton: control(document.querySelector('[data-testid="trim-preview-button"]')),
+      previewUnavailable:
+        document
+          .querySelector('[data-testid="selection-preview-unavailable"]')
+          ?.textContent?.trim() ?? null,
       logs: control(document.querySelector('[data-testid="export-logs-button"]')),
       resultDownload: control(document.querySelector('[data-testid="download-result-button"]')),
       resultHref:
@@ -235,20 +239,36 @@ async function exerciseSelection(browser: Browser, url: string, fixture: string,
     observations.browserErrors = captureBrowserErrors(page);
     const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
     assert(response?.ok(), 'Built application did not load');
+    await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     observations.initial = await snapshot(page);
+    assert.equal(
+      (observations.initial as Awaited<ReturnType<typeof snapshot>>).choose?.text,
+      'Choose video'
+    );
     await page.screenshot({ path: join(output, 'selection-empty.png'), fullPage: true });
     await chooseFile(page, fixture);
     observations.selected = await snapshot(page);
     await page.screenshot({ path: join(output, 'selection-selected.png'), fullPage: true });
-    observations.converted = await convertLowGif(page, output, 'selection-first', 2, 8);
-    observations.exportedLogs = await exportLogs(page);
+    const converted = await convertLowGif(page, output, 'selection-first', 2, 8);
+    observations.converted = converted;
+    assert(Math.abs(converted.output.durationSeconds - 6) <= 0.3);
+    const exportedLogs = await exportLogs(page);
+    observations.exportedLogs = exportedLogs;
+    assert(exportedLogs.suggestedFilename.includes('logs'));
+    assert(converted.output.suggestedFilename.toLowerCase().endsWith('.gif'));
 
-    observations.pointerChange = await activateChange(page);
+    const pointerChange = await activateChange(page);
+    observations.pointerChange = pointerChange;
+    assert(pointerChange.openedPicker, 'Change video did not open the picker');
+    assert.equal(pointerChange.afterEmptySelection.fileName, 'trim-submission.mp4');
+    assert.equal(pointerChange.afterEmptySelection.trimStart, '0:02.0');
+    assert.equal(pointerChange.afterEmptySelection.trimEnd, '0:08.0');
     await page.screenshot({ path: join(output, 'selection-after-change.png'), fullPage: true });
     observations.outputAfterChange = await downloadResult(page, output, 'selection-after-change');
     observations.outputAfterChangeMatchesFirst =
       (observations.outputAfterChange as { sha256: string }).sha256 ===
       (observations.converted as { output: { sha256: string } }).output.sha256;
+    assert.equal(observations.outputAfterChangeMatchesFirst, true);
 
     if (await page.locator('[data-testid="choose-file-button"]').isVisible()) {
       const chooser = await fileChooserFromAction(page, () =>
@@ -265,6 +285,14 @@ async function exerciseSelection(browser: Browser, url: string, fixture: string,
       await waitForConversionReady(page);
     }
     observations.sameFileReselection = await snapshot(page);
+    assert.equal(
+      (observations.sameFileReselection as Awaited<ReturnType<typeof snapshot>>).fileName,
+      'trim-submission.mp4'
+    );
+    assert.equal(
+      (observations.sameFileReselection as Awaited<ReturnType<typeof snapshot>>).trimStart,
+      '0:00.0'
+    );
     observations.outputAfterReselection = await downloadResult(
       page,
       output,
@@ -273,8 +301,12 @@ async function exerciseSelection(browser: Browser, url: string, fixture: string,
     observations.outputAfterReselectionMatchesFirst =
       (observations.outputAfterReselection as { sha256: string }).sha256 ===
       (observations.converted as { output: { sha256: string } }).output.sha256;
+    assert.equal(observations.outputAfterReselectionMatchesFirst, true);
 
-    observations.keyboardChange = await activateChange(page, true);
+    const keyboardChange = await activateChange(page, true);
+    observations.keyboardChange = keyboardChange;
+    assert(keyboardChange.openedPicker, 'Keyboard Change video did not open the picker');
+    assert.equal(keyboardChange.afterEmptySelection.fileName, 'trim-submission.mp4');
     const invalid = {
       name: 'unsupported.txt',
       mimeType: 'text/plain',
@@ -292,7 +324,18 @@ async function exerciseSelection(browser: Browser, url: string, fixture: string,
       await chooser.setFiles(invalid);
     }
     await page.locator('[data-testid="error-display"]').waitFor({ state: 'visible' });
-    observations.unsupported = await snapshot(page);
+    await page.waitForFunction(
+      () =>
+        document.activeElement?.getAttribute('data-testid') ===
+        'error-select-different-fallback-button',
+      undefined,
+      { timeout: 5_000 }
+    );
+    const unsupported = await snapshot(page);
+    observations.unsupported = unsupported;
+    assert.equal(unsupported.retry, null, 'Unsupported input offered Retry without a current file');
+    assert(unsupported.selectDifferent, 'Unsupported input did not offer a different file');
+    assert.equal(unsupported.focus, 'error-select-different-fallback-button');
     await page.screenshot({ path: join(output, 'selection-unsupported.png'), fullPage: true });
     const retry = page.locator('[data-testid="error-retry-button"]');
     if (await retry.isVisible()) {
@@ -320,6 +363,10 @@ async function exerciseSelection(browser: Browser, url: string, fixture: string,
       });
     }
     observations.afterUnsupportedRetry = await snapshot(page);
+    assert.equal(
+      (observations.afterUnsupportedRetry as Awaited<ReturnType<typeof snapshot>>).retry,
+      null
+    );
     if (await page.locator('[data-testid="download-result-button"]').isVisible()) {
       observations.outputAfterUnsupportedRetry = await downloadResult(
         page,
@@ -338,6 +385,10 @@ async function exerciseSelection(browser: Browser, url: string, fixture: string,
       await chooseFile(page, fixture);
     }
     observations.recoveredValidFile = await snapshot(page);
+    assert.equal(
+      (observations.recoveredValidFile as Awaited<ReturnType<typeof snapshot>>).fileName,
+      'trim-submission.mp4'
+    );
     return observations;
   } catch (error) {
     await writeFile(
@@ -357,6 +408,11 @@ async function exerciseLocale(
   output: string,
   locale: 'en-US' | 'ko-KR' | 'ja-JP'
 ) {
+  const labels = {
+    'en-US': { choose: 'Choose video', change: 'Change video' },
+    'ko-KR': { choose: '동영상 선택', change: '동영상 변경' },
+    'ja-JP': { choose: '動画を選択', change: '動画を変更' },
+  }[locale];
   const context = await browser.newContext({
     acceptDownloads: true,
     locale,
@@ -371,13 +427,21 @@ async function exerciseLocale(
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     const empty = await snapshot(page);
     observations.empty = empty;
+    assert.equal(empty.choose?.text, labels.choose);
+    assert(empty.choose?.bounds.height >= 44 && empty.choose.bounds.width >= 44);
+    assert(empty.viewport.scrollWidth <= empty.viewport.width);
     await page.screenshot({ path: join(output, `locale-${locale}-empty.png`), fullPage: true });
     await chooseFile(page, fixture, true);
     const selected = await snapshot(page);
     observations.selected = selected;
+    assert.equal(selected.change?.text, labels.change);
+    assert(selected.change?.bounds.height >= 44 && selected.change.bounds.width >= 44);
+    assert(selected.viewport.scrollWidth <= selected.viewport.width);
     await page.screenshot({ path: join(output, `locale-${locale}-selected.png`), fullPage: true });
     const change = await activateChange(page, true);
     observations.change = change;
+    assert(change.openedPicker);
+    assert.equal(change.afterEmptySelection.fileName, 'trim-submission.mp4');
     return observations;
   } catch (error) {
     await writeFile(
@@ -440,12 +504,21 @@ async function exerciseNativePreview(
     });
     await page.locator('[data-testid="trim-preview-button"]').click();
     await page.waitForTimeout(750);
-    observations.afterPlay = await snapshot(page);
-    observations.events = await page.evaluate(
+    const afterPlay = await snapshot(page);
+    observations.afterPlay = afterPlay;
+    const events = await page.evaluate(
       () => Reflect.get(globalThis, '__selectionPreviewEvents') as string[]
     );
+    observations.events = events;
+    assert((afterPlay.video?.readyState ?? 0) >= 1);
+    assert.equal(afterPlay.video?.errorCode, null);
+    assert((afterPlay.video?.currentTime ?? 0) > 0.1);
+    assert(events.includes('playing'), 'Real Matroska preview did not play');
+    assert.equal(afterPlay.previewUnavailable, null);
     await page.screenshot({ path: join(output, 'matroska-preview.png'), fullPage: true });
-    observations.converted = await convertLowGif(page, output, 'matroska-converted', 0.1, 0.8);
+    const converted = await convertLowGif(page, output, 'matroska-converted', 0.1, 0.8);
+    observations.converted = converted;
+    assert(Math.abs(converted.output.durationSeconds - 0.7) <= 0.2);
     return observations;
   } catch (error) {
     await writeFile(
@@ -511,14 +584,26 @@ async function exerciseScopedPreviewFailure(
     observations.before = await snapshot(page);
     await page.locator('[data-testid="trim-preview-button"]').click();
     await page.waitForTimeout(100);
-    observations.afterRejectedPlay = await snapshot(page);
-    observations.rejectedPlayCount = await page.evaluate(
+    const afterRejectedPlay = await snapshot(page);
+    observations.afterRejectedPlay = afterRejectedPlay;
+    const rejectedPlayCount = await page.evaluate(
       () => (Reflect.get(globalThis, '__selectionPlayRejections') as number | undefined) ?? 0
     );
+    observations.rejectedPlayCount = rejectedPlayCount;
+    assert.equal(rejectedPlayCount, 1);
+    assert(afterRejectedPlay.previewUnavailable?.includes('preview is unavailable'));
+    assert.equal(afterRejectedPlay.error, null, 'Preview failure became a conversion error');
+    assert.equal(afterRejectedPlay.trimStart, '0:02.0');
+    assert.equal(afterRejectedPlay.trimEnd, '0:03.0');
+    assert(afterRejectedPlay.previewButton?.text.includes('Retry preview'));
     await page.locator('#selection-preview-video').dispatchEvent('error');
-    observations.afterSyntheticMediaError = await snapshot(page);
+    const afterSyntheticMediaError = await snapshot(page);
+    observations.afterSyntheticMediaError = afterSyntheticMediaError;
+    assert(afterSyntheticMediaError.previewUnavailable?.includes('preview is unavailable'));
     await page.screenshot({ path: join(output, 'scoped-preview-failure.png'), fullPage: true });
-    observations.converted = await convertLowGif(page, output, 'preview-rejected-converted', 2, 3);
+    const converted = await convertLowGif(page, output, 'preview-rejected-converted', 2, 3);
+    observations.converted = converted;
+    assert(Math.abs(converted.output.durationSeconds - 1) <= 0.2);
     return observations;
   } catch (error) {
     await writeFile(
@@ -531,7 +616,7 @@ async function exerciseScopedPreviewFailure(
   }
 }
 
-/** Baseline-only observations through the built application's real selection and conversion paths. */
+/** Source-bound selection and preview checks through the built application's conversion path. */
 export async function exerciseSelectionPreviewBaseline(
   browser: Browser,
   url: string,
@@ -557,7 +642,11 @@ export async function exerciseSelectionPreviewBaseline(
     }
     await writeFile(
       join(output, 'selection-preview.json'),
-      JSON.stringify({ status: 'observed', cases, failures }, null, 2)
+      JSON.stringify(
+        { status: failures.length === 0 ? 'passed' : 'failed', cases, failures },
+        null,
+        2
+      )
     );
   }
   assert.equal(
@@ -565,5 +654,5 @@ export async function exerciseSelectionPreviewBaseline(
     0,
     `Selection/preview baseline probe failed: ${failures.join('; ')}`
   );
-  return { profile: 'selection-preview', status: 'observed', cases };
+  return { profile: 'selection-preview', status: 'passed', cases };
 }

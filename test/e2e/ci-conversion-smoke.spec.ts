@@ -62,6 +62,65 @@ test('invalid visible trim blocks Convert until the edited range is submitted', 
   expect(durationSeconds).toBeLessThanOrEqual(0.7);
 });
 
+test('Change video keeps the current selection on picker cancellation and preserves the result', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await injectTestFile(page, FIXTURE);
+  await setFormat(page, 'gif');
+  await setQuality(page, 'low');
+  await setScale(page, '50%');
+  const start = page.locator('#trim-start-input');
+  const end = page.locator('#trim-end-input');
+  await start.fill('0.2');
+  await start.press('Enter');
+  await end.fill('0.9');
+  await end.press('Enter');
+  await clickConvert(page);
+  expect(await waitForConversionComplete(page)).toBe('done');
+  const firstOutput = await downloadResult(page);
+  const firstHref = await page.getByTestId('download-result-button').getAttribute('href');
+  const change = page.getByTestId('change-file-button');
+  const bounds = await change.boundingBox();
+  expect(bounds?.width).toBeGreaterThanOrEqual(44);
+  expect(bounds?.height).toBeGreaterThanOrEqual(44);
+
+  const cancelledPicker = page.waitForEvent('filechooser');
+  await change.click();
+  await (await cancelledPicker).setFiles([]);
+  await expect(page.getByTestId('selection-preview-player')).toBeVisible();
+  await expect(start).toHaveValue('0:00.2');
+  await expect(end).toHaveValue('0:00.9');
+  await expect(page.getByTestId('download-result-button')).toHaveAttribute('href', firstHref!);
+  expect(await downloadResult(page)).toEqual(firstOutput);
+
+  const replacementPicker = page.waitForEvent('filechooser');
+  await change.focus();
+  await page.keyboard.press('Enter');
+  await (await replacementPicker).setFiles(`public/${FIXTURE}`);
+  await expect(page.getByTestId('convert-button')).toBeEnabled();
+  await expect(start).toHaveValue('0:00.0');
+  await expect(end).toHaveValue('0:01.0');
+  expect(await downloadResult(page)).toEqual(firstOutput);
+
+  const unsupportedPicker = page.waitForEvent('filechooser');
+  await change.click();
+  await (
+    await unsupportedPicker
+  ).setFiles({
+    name: 'unsupported.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('not video'),
+  });
+  await expect(page.getByTestId('error-display')).toBeVisible();
+  await expect(page.getByTestId('error-retry-button')).toHaveCount(0);
+  const selectDifferent = page.getByTestId('error-select-different-fallback-button');
+  await expect(selectDifferent).toBeFocused();
+  await selectDifferent.click();
+  await expect(page.getByTestId('choose-file-button')).toBeFocused();
+  expect(await downloadResult(page)).toEqual(firstOutput);
+});
+
 test('sharing settings preserve the selected format and clip and allow manual changes', async ({
   page,
 }) => {

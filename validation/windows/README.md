@@ -69,7 +69,7 @@ and durations, and first/last decoded timecode frames. Inspect those images
 against the source fixture before claiming timestamp agreement. Use a new
 external output directory for every attempt.
 
-For the selection and source-preview baseline, reuse that 10-second fixture and
+For the selection and source-preview regression, reuse that 10-second fixture and
 put `{"scenario":"selection-preview"}` in the ignored
 `validation/windows/inputs/selection-preview.json` selector. Remove other
 focused selectors before packaging. The standard built-app Windows route records
@@ -77,7 +77,9 @@ file-choice labels, Change pointer/keyboard behavior, empty picker selection,
 same-file reselection, retained result downloads, unsupported input recovery,
 English/Korean/Japanese narrow layouts, actual Matroska native preview behavior,
 and two explicitly synthetic failures scoped to `#selection-preview-video`.
-The empty FileList simulates cancellation at the DOM boundary; it does not prove
+The candidate profile asserts Change picker behavior, target bounds, retained
+result bytes, recovery focus, and separate preview and conversion outcomes. The
+empty FileList simulates cancellation at the DOM boundary; it does not prove
 that a native Windows picker was cancelled. The synthetic play rejection and
 media-error event do not reproduce a field incident or change the conversion
 pipeline. The probe preserves partial observations and screenshots externally.
