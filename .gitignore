@@ -99,3 +99,4 @@ deployment-verification.json
 validation/windows/inputs/webp-initialization.json
 validation/windows/inputs/trim-submission.json
 validation/windows/inputs/trim-submission.mp4
+validation/windows/inputs/selection-preview.json
