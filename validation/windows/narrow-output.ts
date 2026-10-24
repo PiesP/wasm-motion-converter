@@ -41,11 +41,13 @@ type FixtureManifest = {
 };
 
 type FixturePaths = { main: string; cancel: string; manifest: string };
+type NativeSurface = { width: number; height: number };
 
 type Scenario = {
   id: 'css-390' | 'css-320' | 'chrome-zoom-200';
   viewport: { width: number; height: number };
   actualZoom: boolean;
+  nativeSurface?: NativeSurface;
 };
 
 const SCENARIOS: Scenario[] = [
@@ -178,38 +180,41 @@ async function snapshot(page: Page) {
   });
 }
 
+async function captureNativeSurface(page: Page): Promise<Buffer> {
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send('Page.bringToFront');
+    const { data } = await session.send('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: false,
+    });
+    return Buffer.from(data, 'base64');
+  } finally {
+    await session.detach();
+  }
+}
+
+function pngSize(bytes: Buffer): NativeSurface {
+  assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
 async function capture(
   page: Page,
   output: string,
-  id: string,
+  scenario: Scenario,
   stage: string,
   observations: Record<string, unknown>
 ) {
   const observation = await snapshot(page);
-  const file = `${id}-${stage}.png`;
-  const nativeZoom = id === 'chrome-zoom-200';
-  let image: Buffer;
-  if (nativeZoom) {
-    const session = await page.context().newCDPSession(page);
-    try {
-      await session.send('Page.bringToFront');
-      // Playwright can retain the pre-zoom screenshot clip after Chrome zoom.
-      const { data } = await session.send('Page.captureScreenshot', {
-        format: 'png',
-        fromSurface: true,
-        captureBeyondViewport: false,
-      });
-      image = Buffer.from(data, 'base64');
-    } finally {
-      await session.detach();
-    }
-  } else {
-    image = await page.screenshot({ fullPage: true });
-  }
+  const file = `${scenario.id}-${stage}.png`;
+  // Playwright can retain the pre-zoom screenshot clip after Chrome zoom.
+  const image = scenario.actualZoom
+    ? await captureNativeSurface(page)
+    : await page.screenshot({ fullPage: true });
   await writeFile(join(output, file), image);
-  assert.equal(image.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
-  const width = image.readUInt32BE(16);
-  const height = image.readUInt32BE(20);
+  const { width, height } = pngSize(image);
   const result = {
     ...observation,
     screenshot: {
@@ -218,20 +223,20 @@ async function capture(
       sha256: sha256(image),
       width,
       height,
-      method: nativeZoom ? 'cdp-page-capture-screenshot-no-clip' : 'playwright-full-page',
+      method: scenario.actualZoom ? 'cdp-page-capture-screenshot-no-clip' : 'playwright-full-page',
     },
   };
   observations[stage] = result;
   await writeFile(
-    join(output, `${id}-observations.json`),
+    join(output, `${scenario.id}-observations.json`),
     `${JSON.stringify(observations, null, 2)}\n`
   );
-  if (nativeZoom) {
-    const expectedWidth = observation.viewport.innerWidth * observation.viewport.devicePixelRatio;
-    const scrollbarTolerance = Math.ceil(20 * observation.viewport.devicePixelRatio);
-    assert(
-      Math.abs(width - expectedWidth) <= scrollbarTolerance,
-      `Chrome zoom screenshot width ${width}px disagrees with ${expectedWidth}px surface`
+  if (scenario.actualZoom) {
+    assert(scenario.nativeSurface, 'Chrome zoom native surface was not calibrated at 100%');
+    assert.deepEqual(
+      { width, height },
+      scenario.nativeSurface,
+      'Chrome zoom screenshot changed native surface dimensions'
     );
   }
   return result;
@@ -275,7 +280,7 @@ async function exerciseCancellation(
   page: Page,
   fixture: string,
   output: string,
-  id: string,
+  scenario: Scenario,
   observations: Record<string, unknown>
 ) {
   await selectFile(page, fixture, 'choose');
@@ -285,7 +290,7 @@ async function exerciseCancellation(
   const advanced = page.locator('[data-testid="advanced-settings"]');
   await advanced.locator('summary').click();
   await chooseOption(page, 'smart-frame-skip', 'adaptive');
-  const selected = await capture(page, output, id, 'cancel-input', observations);
+  const selected = await capture(page, output, scenario, 'cancel-input', observations);
   await page.locator('[data-testid="convert-button"]').click();
   await confirmIfPrompted(page);
   const outcome = await page.waitForFunction(
@@ -313,7 +318,7 @@ async function exerciseCancellation(
     };
   }
   assert.equal(state, 'progress');
-  const before = await capture(page, output, id, 'after-positive-progress', observations);
+  const before = await capture(page, output, scenario, 'after-positive-progress', observations);
   const progressBefore = Number(before.progress?.dataProgress);
   const stop = page.locator('[data-testid="stop-conversion-button"]');
   if (!(progressBefore > 0) || !(await stop.isVisible())) {
@@ -344,7 +349,7 @@ async function exerciseCancellation(
     undefined,
     { timeout: 45_000 }
   );
-  const settled = await capture(page, output, id, 'cancelled-ready', observations);
+  const settled = await capture(page, output, scenario, 'cancelled-ready', observations);
   assert.equal(await page.locator('[data-testid="result-section"]').count(), 0);
   assert.equal(await page.locator('[data-testid="error-display"]').count(), 0);
   return { status: 'effective' as const, progressBefore, selected, before, afterClick, settled };
@@ -354,7 +359,7 @@ async function exerciseMainFlow(
   page: Page,
   fixture: string,
   output: string,
-  id: string,
+  scenario: Scenario,
   action: 'choose' | 'change',
   observations: Record<string, unknown>
 ) {
@@ -364,13 +369,13 @@ async function exerciseMainFlow(
   const metadataText = (await metadata.textContent())?.trim() ?? '';
   assert(metadataText.includes('1920×1080'), 'Selected source dimensions are not shown');
   assert(metadataText.includes(NARROW_OUTPUT_FIXTURE), 'Long source filename is not shown');
-  const selected = await capture(page, output, id, 'selected-long-file', observations);
+  const selected = await capture(page, output, scenario, 'selected-long-file', observations);
   await metadata.locator('summary').click();
 
   const start = page.locator('#trim-start-input');
   const end = page.locator('#trim-end-input');
   await start.fill('1.0');
-  const fieldFocused = await capture(page, output, id, 'focused-trim-draft', observations);
+  const fieldFocused = await capture(page, output, scenario, 'focused-trim-draft', observations);
   assert.equal(fieldFocused.focus, 'trim-start-input');
   await chooseOption(page, 'format', 'webp');
   const afterFieldTransition = await snapshot(page);
@@ -384,7 +389,13 @@ async function exerciseMainFlow(
   assert.equal(await end.inputValue(), '0:06.0');
   await chooseOption(page, 'quality', 'high');
   await chooseOption(page, 'scale', '1');
-  const beforeSharing = await capture(page, output, id, 'before-sharing-preset', observations);
+  const beforeSharing = await capture(
+    page,
+    output,
+    scenario,
+    'before-sharing-preset',
+    observations
+  );
 
   const sharing = page.locator('[data-testid="sharing-settings"]');
   await sharing.locator('summary').click();
@@ -402,10 +413,10 @@ async function exerciseMainFlow(
   assert.equal(await start.inputValue(), '0:01.0');
   assert.equal(await end.inputValue(), '0:06.0');
   assert.equal(await page.locator('[data-testid="result-section"]').count(), 0);
-  const afterSharing = await capture(page, output, id, 'after-sharing-preset', observations);
+  const afterSharing = await capture(page, output, scenario, 'after-sharing-preset', observations);
 
   await chooseOption(page, 'format', 'gif');
-  const ready = await capture(page, output, id, 'before-convert', observations);
+  const ready = await capture(page, output, scenario, 'before-convert', observations);
   const summary = await page.locator('[data-testid="trim-summary"]').textContent();
   assert(summary?.includes('150'), 'Source-frame upper-bound estimate is absent');
   assert(ready.qualityLow.description?.text.includes('target 8 fps'));
@@ -472,7 +483,7 @@ async function exerciseMainFlow(
     throw new Error(`Conversion failed: ${await error.textContent()}`);
   }
   await page.locator('[data-testid="result-section"]').scrollIntoViewIfNeeded();
-  const afterCompletion = await capture(page, output, id, 'completed', observations);
+  const afterCompletion = await capture(page, output, scenario, 'completed', observations);
   if (editingFocusDuringConversion) {
     assert.equal(
       afterCompletion.focus,
@@ -482,13 +493,13 @@ async function exerciseMainFlow(
   }
   const download = page.locator('[data-testid="download-result-button"]');
   await download.scrollIntoViewIfNeeded();
-  const foundDownload = await capture(page, output, id, 'download-in-view', observations);
+  const foundDownload = await capture(page, output, scenario, 'download-in-view', observations);
   assert(foundDownload.download?.visible);
   assert(foundDownload.download.bounds.left >= -1);
   assert(foundDownload.download.bounds.right <= foundDownload.viewport.innerWidth + 1);
   assert(foundDownload.download.bounds.top >= -1);
   assert(foundDownload.download.bounds.bottom <= foundDownload.viewport.innerHeight + 1);
-  const gif = await readGif(page, `${id}-converted.gif`, output);
+  const gif = await readGif(page, `${scenario.id}-converted.gif`, output);
   assert.equal(gif.width, EXPECTED.output.width);
   assert.equal(gif.height, EXPECTED.output.height);
   assert(
@@ -565,13 +576,13 @@ async function exerciseLayout(
     }
     partial.environment = environment;
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
-    const empty = await capture(page, output, scenario.id, 'empty', observations);
+    const empty = await capture(page, output, scenario, 'empty', observations);
     partial.empty = empty;
     const cancellation = await exerciseCancellation(
       page,
       paths.cancel,
       output,
-      scenario.id,
+      scenario,
       observations
     );
     partial.cancellation = cancellation;
@@ -586,7 +597,7 @@ async function exerciseLayout(
       page,
       paths.main,
       output,
-      scenario.id,
+      scenario,
       mainAction,
       observations
     );
@@ -658,15 +669,21 @@ async function exerciseActualChromeZoom(
   paths: FixturePaths,
   output: string
 ) {
-  const scenario = SCENARIOS[2]!;
+  const scenario: Scenario = { ...SCENARIOS[2]! };
   const profilePath = await mkdtemp(join(bundleRoot, ZOOM_PROFILE_PREFIX));
   let context: BrowserContext | undefined;
   let settingsPage: Page | undefined;
   let appPage: Page | undefined;
   let previousZoom: string | undefined;
   let baseline:
-    | { devicePixelRatio: number; innerWidth: number; visualViewportScale: number }
+    | {
+        devicePixelRatio: number;
+        innerWidth: number;
+        innerHeight: number;
+        visualViewportScale: number;
+      }
     | undefined;
+  let zoomMetrics: typeof baseline;
   let zoomRestored = false;
   let contextClosed = false;
   let profileRemoved = false;
@@ -689,13 +706,16 @@ async function exerciseActualChromeZoom(
     baseline = await appPage.evaluate(() => ({
       devicePixelRatio,
       innerWidth,
+      innerHeight,
       visualViewportScale: visualViewport?.scale ?? 0,
     }));
+    scenario.nativeSurface = pngSize(await captureNativeSurface(appPage));
     settingsPage = await context.newPage();
     await settingsPage.goto('chrome://settings/appearance');
     const zoomControl = settingsPage.locator('select#zoomLevel');
     previousZoom = await zoomControl.inputValue();
     assert.equal(Number(previousZoom), 1, 'Owned Chrome profile did not start at 100% zoom');
+    await settingsPage.bringToFront();
     await zoomControl.selectOption('2');
     await appPage.bringToFront();
     await appPage.waitForFunction(
@@ -706,13 +726,28 @@ async function exerciseActualChromeZoom(
       baseline,
       { timeout: 10_000 }
     );
+    zoomMetrics = await appPage.evaluate(() => ({
+      devicePixelRatio,
+      innerWidth,
+      innerHeight,
+      visualViewportScale: visualViewport?.scale ?? 0,
+    }));
     assert.equal(
       await appPage.locator('[data-testid="file-input"]').inputValue(),
       '',
       'Zoom was applied after file import'
     );
     result = await exerciseLayout(appPage, url, paths, output, scenario, true);
-    result = { ...result, zoom: { baseline, factor: 2, appliedBeforeImport: true } };
+    result = {
+      ...result,
+      zoom: {
+        baseline,
+        baselineNativeSurface: scenario.nativeSurface,
+        actual: zoomMetrics,
+        factor: 2,
+        appliedBeforeImport: true,
+      },
+    };
   } catch (error) {
     primaryError = error;
   } finally {
@@ -772,6 +807,9 @@ async function exerciseActualChromeZoom(
             error instanceof Error ? error.message : String(error)
           ),
           profileName: basename(profilePath),
+          baseline,
+          baselineNativeSurface: scenario.nativeSurface,
+          actualZoomMetrics: zoomMetrics,
           cleanup,
         },
         null,
