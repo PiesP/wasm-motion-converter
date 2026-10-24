@@ -3054,14 +3054,14 @@ export async function run({
 
   const bundleRoot = await realpath(resolve(root));
   const webpSelector = resolve(bundleRoot, 'validation/windows/inputs/webp-initialization.json');
-  let webpSelected = false;
+  let webpSelectorText: string | undefined;
   try {
-    webpSelected = (await stat(webpSelector)).isFile();
+    webpSelectorText = await readFile(webpSelector, 'utf8');
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
-  if (webpSelected) {
-    const selector: unknown = JSON.parse(await readFile(webpSelector, 'utf8'));
+  if (webpSelectorText !== undefined) {
+    const selector: unknown = JSON.parse(webpSelectorText);
     assert.deepEqual(selector, { scenario: 'webp-initialization' });
     const config = JSON.parse(
       await readFile(await validateBundleFile(bundleRoot, OUTPUT_CONTRACT), 'utf8')
