@@ -380,7 +380,7 @@ const App: Component = () => {
               Do NOT wrap these divs — grid layout depends on direct-child relationship. */}
           <div class="mt-6 grid gap-6 sm:grid-cols-1 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)] lg:items-start lg:gap-8">
             {/* Left column (desktop): Dropzone + metadata */}
-            <div class="space-y-6 order-1">
+            <div class="min-w-0 space-y-6 order-1">
               <Show when={memoryWarning()}>
                 <MemoryWarning
                   isDuringConversion={appState() === 'converting'}

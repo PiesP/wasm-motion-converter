@@ -112,7 +112,7 @@ async function selectLowGif(page: Page) {
   }
 }
 
-async function readGif(page: Page, file: string, output: string) {
+export async function readGif(page: Page, file: string, output: string) {
   const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
   await page.locator('[data-testid="download-result-button"]').click();
   const download = await downloadPromise;
@@ -172,6 +172,8 @@ async function readGif(page: Page, file: string, output: string) {
     file,
     sha256: sha256(bytes),
     bytes: bytes.byteLength,
+    width: bytes.readUInt16LE(6),
+    height: bytes.readUInt16LE(8),
     frameCount: delaysCs.length,
     durationSeconds: delaysCs.reduce((total, value) => total + value, 0) / 100,
     timecodeFrames,

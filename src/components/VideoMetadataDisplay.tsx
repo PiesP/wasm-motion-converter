@@ -34,7 +34,7 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
 
   return (
     <details
-      class="rounded-lg border border-border-subtle bg-bg-elevated p-4"
+      class="min-w-0 rounded-lg border border-border-subtle bg-bg-elevated p-4"
       data-testid="video-metadata"
     >
       <summary class="min-h-target-minimum cursor-pointer content-center text-sm font-medium text-text-secondary">
@@ -43,7 +43,7 @@ const VideoMetadataDisplay: Component<VideoMetadataDisplayProps> = (props) => {
       <dl class="mt-3 space-y-1.5 border-t border-border-subtle pt-3 text-sm">
         <div class="flex justify-between gap-3">
           <dt class="text-text-tertiary shrink-0">{t('metadata.file')}</dt>
-          <dd class="text-text-primary truncate text-right">{local.fileName}</dd>
+          <dd class="min-w-0 text-text-primary truncate text-right">{local.fileName}</dd>
         </div>
         <div class="flex justify-between gap-3">
           <dt class="text-text-tertiary shrink-0">{t('metadata.resolution')}</dt>

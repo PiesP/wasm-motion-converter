@@ -296,6 +296,53 @@ test.describe('Quiet Instruments adapter', () => {
     expect(horizontalOverflow).toBeLessThanOrEqual(1);
   });
 
+  test('keeps long selected filenames inside narrow metadata and dropzone', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await page.waitForFunction(() => window.__TEST_HELPERS__ !== undefined);
+    await page.evaluate(async () => {
+      await window.__TEST_HELPERS__?.injectFile(
+        new File(
+          ['synthetic'],
+          'narrow-output-timecoded-1920x1080-30fps-long-filename-conversion-walkthrough.mp4',
+          { type: 'video/mp4' }
+        ),
+        {
+          width: 1920,
+          height: 1080,
+          duration: 10,
+          codec: 'h264',
+          framerate: 30,
+          bitrate: 0,
+        }
+      );
+    });
+
+    const metadata = page.locator('[data-testid="video-metadata"]');
+    await metadata.locator('summary').click();
+    await expect(metadata).toHaveAttribute('open', '');
+    await expect(metadata).toContainText('long-filename-conversion-walkthrough.mp4');
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      const layout = await page.evaluate(() => ({
+        viewportWidth: innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        metadataRight: document
+          .querySelector('[data-testid="video-metadata"]')!
+          .getBoundingClientRect().right,
+        dropzoneRight: document.querySelector('[data-testid="dropzone"]')!.getBoundingClientRect()
+          .right,
+      }));
+      expect(layout.viewportWidth).toBe(width);
+      expect(layout.scrollWidth, JSON.stringify(layout)).toBeLessThanOrEqual(
+        layout.clientWidth + 1
+      );
+      expect(layout.metadataRight).toBeLessThanOrEqual(width + 1);
+      expect(layout.dropzoneRight).toBeLessThanOrEqual(width + 1);
+    }
+  });
+
   for (const colorScheme of ['light', 'dark'] as const) {
     test(`keeps compact ETA and memory text readable in ${colorScheme} mode`, async ({ page }) => {
       const browserErrors = collectBrowserErrors(page);
