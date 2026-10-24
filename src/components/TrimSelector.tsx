@@ -92,6 +92,8 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   let startInputRef: HTMLInputElement | undefined;
   let endInputRef: HTMLInputElement | undefined;
   let lastEditedField: 'start' | 'end' | undefined;
+  let startDraftEdited = false;
+  let endDraftEdited = false;
 
   createEffect(() => {
     if (!startFocused() && !startError()) setStartText(formatTimePrecise(props.trimStart));
@@ -238,6 +240,8 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     if (props.disabled) return;
     props.onChange(0, TRIM_END_FULL_DURATION);
     seekPreview(0);
+    startDraftEdited = false;
+    endDraftEdited = false;
     setStartError(null);
     setEndError(null);
   };
@@ -307,11 +311,17 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     if (props.disabled) return;
     props.onChange(clampToStep(preset.start), preset.end === 0 ? 0 : clampToStep(preset.end));
     seekPreview(preset.start);
+    startDraftEdited = false;
+    endDraftEdited = false;
     setStartError(null);
     setEndError(null);
   };
 
   const commitStartText = () => {
+    if (!startDraftEdited && startText() === formatTimePrecise(props.trimStart)) {
+      setStartFocused(false);
+      return;
+    }
     const parsed = parseTimeInput(startText());
     if (parsed === null || parsed < 0 || parsed >= effectiveEnd()) {
       setStartError(t('trim.invalidStart', { end: formatTimePrecise(effectiveEnd()) }));
@@ -321,10 +331,15 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     setStartError(null);
     const value = updateStart(parsed);
     setStartText(formatTimePrecise(value));
+    startDraftEdited = false;
     setStartFocused(false);
   };
 
   const commitEndText = () => {
+    if (!endDraftEdited && endText() === formatTimePrecise(effectiveEnd())) {
+      setEndFocused(false);
+      return;
+    }
     const parsed = parseTimeInput(endText());
     if (parsed === null || parsed <= props.trimStart || parsed > props.duration) {
       setEndError(
@@ -339,14 +354,18 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     setEndError(null);
     const value = updateEnd(parsed);
     setEndText(formatTimePrecise(value));
+    endDraftEdited = false;
     setEndFocused(false);
   };
 
   const prepareSubmission = (): boolean => {
-    const parsedStart = parseTimeInput(startText());
-    const parsedEnd = parseTimeInput(endText());
-    const start = parsedStart === null ? null : clampToStep(parsedStart);
-    const end = parsedEnd === null ? null : clampToStep(parsedEnd);
+    const unchangedStart = !startDraftEdited && startText() === formatTimePrecise(props.trimStart);
+    const unchangedEnd = !endDraftEdited && endText() === formatTimePrecise(effectiveEnd());
+    const parsedStart = unchangedStart ? props.trimStart : parseTimeInput(startText());
+    const parsedEnd = unchangedEnd ? effectiveEnd() : parseTimeInput(endText());
+    const start =
+      parsedStart === null ? null : unchangedStart ? parsedStart : clampToStep(parsedStart);
+    const end = parsedEnd === null ? null : unchangedEnd ? parsedEnd : clampToStep(parsedEnd);
     const startValid =
       parsedStart !== null &&
       parsedStart >= 0 &&
@@ -397,11 +416,13 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
       return false;
     }
 
-    const normalizedEnd = normalizeEnd(end);
+    const normalizedEnd = unchangedEnd ? props.trimEnd : normalizeEnd(end);
     setStartError(null);
     setEndError(null);
     setStartText(formatTimePrecise(start));
     setEndText(formatTimePrecise(end));
+    startDraftEdited = false;
+    endDraftEdited = false;
     if (start !== props.trimStart || normalizedEnd !== props.trimEnd) {
       props.onChange(start, normalizedEnd);
     }
@@ -421,6 +442,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     } else if (event.key === 'Escape') {
       setStartText(formatTimePrecise(props.trimStart));
       setStartError(null);
+      startDraftEdited = false;
       (event.currentTarget as HTMLInputElement).blur();
     }
   };
@@ -432,6 +454,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
     } else if (event.key === 'Escape') {
       setEndText(formatTimePrecise(effectiveEnd()));
       setEndError(null);
+      endDraftEdited = false;
       (event.currentTarget as HTMLInputElement).blur();
     }
   };
@@ -604,6 +627,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
               aria-describedby="trim-start-error"
               onInput={(event) => {
                 lastEditedField = 'start';
+                startDraftEdited = true;
                 setStartText(event.currentTarget.value);
                 setStartError(null);
               }}
@@ -638,6 +662,7 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
               aria-describedby="trim-end-error"
               onInput={(event) => {
                 lastEditedField = 'end';
+                endDraftEdited = true;
                 setEndText(event.currentTarget.value);
                 setEndError(null);
               }}

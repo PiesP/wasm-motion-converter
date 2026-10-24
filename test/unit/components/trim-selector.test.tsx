@@ -121,6 +121,77 @@ describe('TrimSelector localized summary', () => {
     expect(container.querySelector<HTMLInputElement>('#trim-end-input')?.value).toBe('1:01:01.2');
   });
 
+  it('preserves an untouched fractional full-duration end through focus and submission', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    let prepare: (() => boolean) | undefined;
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={9.96}
+          trimStart={0}
+          trimEnd={0}
+          onChange={onChange}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return () => {};
+          }}
+        />
+      ),
+      container
+    );
+    const end = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    expect(end.value).toBe('0:10.0');
+    end.focus();
+    end.blur();
+    expect(end.getAttribute('aria-invalid')).toBeNull();
+    expect(prepare?.()).toBe(true);
+    expect(onChange).not.toHaveBeenCalled();
+
+    end.focus();
+    end.value = '0:10.0';
+    end.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    expect(prepare?.()).toBe(false);
+    expect(end.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(end);
+    expect(onChange).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it('does not round untouched fractional non-full boundaries on submission', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const onChange = vi.fn();
+    let prepare: (() => boolean) | undefined;
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={9.96}
+          trimStart={2.04}
+          trimEnd={8.96}
+          onChange={onChange}
+          onRegisterSubmission={(callback) => {
+            prepare = callback;
+            return () => {};
+          }}
+        />
+      ),
+      container
+    );
+    const start = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+    const end = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+    expect(start.value).toBe('0:02.0');
+    expect(end.value).toBe('0:09.0');
+    start.focus();
+    start.blur();
+    end.focus();
+    end.blur();
+    expect(prepare?.()).toBe(true);
+    expect(onChange).not.toHaveBeenCalled();
+    dispose();
+  });
+
   it('supports standard slider keys and seeks to the adjusted boundary', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

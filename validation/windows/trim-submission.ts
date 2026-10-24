@@ -196,7 +196,9 @@ async function waitForResult(page: Page) {
     { timeout: 120_000 }
   );
   const error = page.locator('[data-testid="error-display"]');
-  assert.equal(await error.isVisible(), false, `Conversion failed: ${await error.textContent()}`);
+  if (await error.isVisible()) {
+    throw new Error(`Conversion failed: ${await error.textContent()}`);
+  }
   await page.locator('[data-testid="result-section"]').waitFor({ state: 'visible' });
 }
 
@@ -219,6 +221,11 @@ async function exerciseCase(
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text());
   });
+  const partial: Record<string, unknown> = {
+    id: entry.id,
+    input: { field: entry.field, value: entry.value },
+    activation: entry.activation,
+  };
   try {
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
     assert(response && response.ok(), 'Built application did not load');
@@ -242,6 +249,7 @@ async function exerciseCase(
     assert.equal(await start.inputValue(), '0:02.0');
     assert.equal(await end.inputValue(), '0:08.0');
     const committed = await snapshot(page, entry.field);
+    partial.committed = committed;
 
     await page.evaluate(() => {
       const states: string[] = [];
@@ -260,6 +268,7 @@ async function exerciseCase(
     await input.fill(entry.value);
     if (entry.blurBeforeSubmit) await input.press('Tab');
     const beforeActivation = await snapshot(page, entry.field);
+    partial.beforeActivation = beforeActivation;
     await page.screenshot({ path: join(output, `${entry.id}-before.png`), fullPage: true });
 
     await activateConvert(page, entry.activation);
@@ -305,6 +314,7 @@ async function exerciseCase(
       result.observer.disconnect();
       return result.states;
     });
+    partial.invalidSubmission = { afterActivation, repeatActivation, trace };
     await page.screenshot({ path: join(output, `${entry.id}-after.png`), fullPage: true });
     assert(
       trace.every((state) => !/Converting|Converted animation|Conversion failed/.test(state)),
@@ -348,14 +358,17 @@ async function exerciseCase(
       expectedDuration = 10;
     }
     const beforeRecovery = await snapshot(page, entry.field);
+    partial.recovery = { expectedRange, beforeRecovery };
     assert.equal(await start.inputValue(), `0:${String(expectedRange.start).padStart(2, '0')}.0`);
     assert.equal(await end.inputValue(), `0:${String(expectedRange.end).padStart(2, '0')}.0`);
     assert.equal(beforeRecovery.invalid, null, `${entry.id}: recovery left the field invalid`);
     await activateConvert(page, entry.activation);
     await waitForResult(page);
     const afterRecovery = await snapshot(page, entry.field);
+    partial.recovery = { expectedRange, beforeRecovery, afterRecovery };
     await page.screenshot({ path: join(output, `${entry.id}-recovered.png`), fullPage: true });
     const gif = await readGif(page, `${entry.id}-recovered.gif`, output);
+    partial.recovery = { expectedRange, beforeRecovery, afterRecovery, gif };
     assert(
       Math.abs(gif.durationSeconds - expectedDuration) <= 0.3,
       `${entry.id}: output duration ${gif.durationSeconds} disagrees with ${expectedDuration}s selection`
@@ -377,6 +390,12 @@ async function exerciseCase(
       pageErrors,
       consoleErrors,
     };
+  } catch (error) {
+    await writeFile(
+      join(output, `${entry.id}-partial.json`),
+      JSON.stringify({ ...partial, pageErrors, consoleErrors, failure: String(error) }, null, 2)
+    );
+    throw error;
   } finally {
     await context.close();
   }
@@ -393,6 +412,7 @@ async function exercisePairedValidDrafts(
     locale: 'en-US',
     viewport: { width: 1280, height: 800 },
   });
+  const partial: Record<string, unknown> = { id: 'paired-valid-drafts' };
   try {
     const page = await context.newPage();
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -416,6 +436,7 @@ async function exercisePairedValidDrafts(
       start: await snapshot(page, 'start'),
       end: await snapshot(page, 'end'),
     };
+    partial.beforeSubmission = beforeSubmission;
     await page.screenshot({ path: join(output, 'paired-valid-before.png'), fullPage: true });
     await activateConvert(page, 'pointer');
     await waitForResult(page);
@@ -423,12 +444,14 @@ async function exercisePairedValidDrafts(
       start: await snapshot(page, 'start'),
       end: await snapshot(page, 'end'),
     };
+    partial.afterSubmission = afterSubmission;
     assert.equal(afterSubmission.start.value, '0:09.0');
     assert.equal(afterSubmission.end.value, '0:10.0');
     assert.equal(afterSubmission.start.invalid, null);
     assert.equal(afterSubmission.end.invalid, null);
     await page.screenshot({ path: join(output, 'paired-valid-result.png'), fullPage: true });
     const gif = await readGif(page, 'paired-valid.gif', output);
+    partial.gif = gif;
     assert(
       Math.abs(gif.durationSeconds - 1) <= 0.3,
       `Paired valid drafts produced ${gif.durationSeconds}s instead of 9–10s`
@@ -440,6 +463,12 @@ async function exercisePairedValidDrafts(
       afterSubmission,
       gif,
     };
+  } catch (error) {
+    await writeFile(
+      join(output, 'paired-valid-drafts-partial.json'),
+      JSON.stringify({ ...partial, failure: String(error) }, null, 2)
+    );
+    throw error;
   } finally {
     await context.close();
   }

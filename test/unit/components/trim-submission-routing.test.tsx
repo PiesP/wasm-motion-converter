@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { setConversionSettings } from '@stores/conversion-settings-store';
+import { conversionSettings, setConversionSettings } from '@stores/conversion-settings-store';
 import {
   setAppState,
   setErrorMessage,
@@ -136,6 +136,24 @@ describe('trim submission routes', () => {
     editStart('3.0');
     container.querySelector<HTMLButtonElement>('[data-testid="memory-warning-reduce"]')!.click();
     expect(mocks.convert).toHaveBeenCalledOnce();
+    dispose();
+  });
+
+  it('allows untouched full-range conversion when metadata rounds up in the display', async () => {
+    setConversionSettings({ ...conversionSettings(), trimStart: 0, trimEnd: 0 });
+    setVideoMetadata({
+      width: 160,
+      height: 90,
+      duration: 9.96,
+      codec: 'avc1',
+      framerate: 30,
+      bitrate: 1_000_000,
+    });
+    const { container, dispose } = await renderReadyApp();
+    expect(container.querySelector<HTMLInputElement>('#trim-end-input')?.value).toBe('0:10.0');
+    container.querySelector<HTMLButtonElement>('[data-testid="convert-button"]')!.click();
+    expect(mocks.convert).toHaveBeenCalledOnce();
+    expect(conversionSettings().trimEnd).toBe(0);
     dispose();
   });
 });
