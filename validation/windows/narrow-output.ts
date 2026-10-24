@@ -177,7 +177,13 @@ async function snapshot(page: Page) {
   });
 }
 
-async function capture(page: Page, output: string, id: string, stage: string) {
+async function capture(
+  page: Page,
+  output: string,
+  id: string,
+  stage: string,
+  observations: Record<string, unknown>
+) {
   const observation = await snapshot(page);
   const file = `${id}-${stage}.png`;
   const image = await page.screenshot({ path: join(output, file), fullPage: true });
@@ -185,7 +191,11 @@ async function capture(page: Page, output: string, id: string, stage: string) {
     ...observation,
     screenshot: { file, bytes: image.byteLength, sha256: sha256(image) },
   };
-  await writeFile(join(output, `${id}-${stage}.json`), `${JSON.stringify(result, null, 2)}\n`);
+  observations[stage] = result;
+  await writeFile(
+    join(output, `${id}-observations.json`),
+    `${JSON.stringify(observations, null, 2)}\n`
+  );
   return result;
 }
 
@@ -223,7 +233,13 @@ async function confirmIfPrompted(page: Page) {
   if (await confirm.isVisible()) await confirm.click();
 }
 
-async function exerciseCancellation(page: Page, fixture: string, output: string, id: string) {
+async function exerciseCancellation(
+  page: Page,
+  fixture: string,
+  output: string,
+  id: string,
+  observations: Record<string, unknown>
+) {
   await selectFile(page, fixture, 'choose');
   await chooseOption(page, 'format', 'gif');
   await chooseOption(page, 'quality', 'high');
@@ -231,7 +247,7 @@ async function exerciseCancellation(page: Page, fixture: string, output: string,
   const advanced = page.locator('[data-testid="advanced-settings"]');
   await advanced.locator('summary').click();
   await chooseOption(page, 'smart-frame-skip', 'adaptive');
-  const selected = await capture(page, output, id, 'cancel-input');
+  const selected = await capture(page, output, id, 'cancel-input', observations);
   await page.locator('[data-testid="convert-button"]').click();
   await confirmIfPrompted(page);
   const outcome = await page.waitForFunction(
@@ -259,7 +275,7 @@ async function exerciseCancellation(page: Page, fixture: string, output: string,
     };
   }
   assert.equal(state, 'progress');
-  const before = await capture(page, output, id, 'after-positive-progress');
+  const before = await capture(page, output, id, 'after-positive-progress', observations);
   const progressBefore = Number(before.progress?.dataProgress);
   const stop = page.locator('[data-testid="stop-conversion-button"]');
   if (!(progressBefore > 0) || !(await stop.isVisible())) {
@@ -290,7 +306,7 @@ async function exerciseCancellation(page: Page, fixture: string, output: string,
     undefined,
     { timeout: 45_000 }
   );
-  const settled = await capture(page, output, id, 'cancelled-ready');
+  const settled = await capture(page, output, id, 'cancelled-ready', observations);
   assert.equal(await page.locator('[data-testid="result-section"]').count(), 0);
   assert.equal(await page.locator('[data-testid="error-display"]').count(), 0);
   return { status: 'effective' as const, progressBefore, selected, before, afterClick, settled };
@@ -301,7 +317,8 @@ async function exerciseMainFlow(
   fixture: string,
   output: string,
   id: string,
-  action: 'choose' | 'change'
+  action: 'choose' | 'change',
+  observations: Record<string, unknown>
 ) {
   await selectFile(page, fixture, action);
   const metadata = page.locator('[data-testid="video-metadata"]');
@@ -309,13 +326,13 @@ async function exerciseMainFlow(
   const metadataText = (await metadata.textContent())?.trim() ?? '';
   assert(metadataText.includes('1920×1080'), 'Selected source dimensions are not shown');
   assert(metadataText.includes(NARROW_OUTPUT_FIXTURE), 'Long source filename is not shown');
-  const selected = await capture(page, output, id, 'selected-long-file');
+  const selected = await capture(page, output, id, 'selected-long-file', observations);
   await metadata.locator('summary').click();
 
   const start = page.locator('#trim-start-input');
   const end = page.locator('#trim-end-input');
   await start.fill('1.0');
-  const fieldFocused = await capture(page, output, id, 'focused-trim-draft');
+  const fieldFocused = await capture(page, output, id, 'focused-trim-draft', observations);
   assert.equal(fieldFocused.focus, 'trim-start-input');
   await chooseOption(page, 'format', 'webp');
   const afterFieldTransition = await snapshot(page);
@@ -329,7 +346,7 @@ async function exerciseMainFlow(
   assert.equal(await end.inputValue(), '0:06.0');
   await chooseOption(page, 'quality', 'high');
   await chooseOption(page, 'scale', '1');
-  const beforeSharing = await capture(page, output, id, 'before-sharing-preset');
+  const beforeSharing = await capture(page, output, id, 'before-sharing-preset', observations);
 
   const sharing = page.locator('[data-testid="sharing-settings"]');
   await sharing.locator('summary').click();
@@ -347,10 +364,10 @@ async function exerciseMainFlow(
   assert.equal(await start.inputValue(), '0:01.0');
   assert.equal(await end.inputValue(), '0:06.0');
   assert.equal(await page.locator('[data-testid="result-section"]').count(), 0);
-  const afterSharing = await capture(page, output, id, 'after-sharing-preset');
+  const afterSharing = await capture(page, output, id, 'after-sharing-preset', observations);
 
   await chooseOption(page, 'format', 'gif');
-  const ready = await capture(page, output, id, 'before-convert');
+  const ready = await capture(page, output, id, 'before-convert', observations);
   const summary = await page.locator('[data-testid="trim-summary"]').textContent();
   assert(summary?.includes('150'), 'Source-frame upper-bound estimate is absent');
   assert(ready.qualityLow.description?.text.includes('target 8 fps'));
@@ -367,20 +384,42 @@ async function exerciseMainFlow(
   await convert.focus();
   await page.keyboard.press('Enter');
   await confirmIfPrompted(page);
-  const focusObservation = await page.evaluate(() => {
-    const language = document.querySelector('[data-testid="language-selector"]');
-    if (!(language instanceof HTMLSelectElement)) throw new Error('Language selector is absent');
-    language.focus();
-    const progress = document.querySelector('[data-testid="dropzone"] [role="progressbar"]');
-    return {
-      focused: document.activeElement === language,
-      stopPresent: document.querySelector('[data-testid="stop-conversion-button"]') !== null,
-      progressPresent: progress !== null,
-      progressValue: progress?.getAttribute('data-progress') ?? null,
-    };
-  });
+  const focusOutcome = await page.waitForFunction(
+    () => {
+      if (document.querySelector('[data-testid="error-display"]')) return 'error';
+      if (document.querySelector('[data-testid="result-section"]')) return 'completed';
+      if (
+        document.querySelector('[data-testid="stop-conversion-button"]') &&
+        document.querySelector('[data-testid="dropzone"] [role="progressbar"]')
+      )
+        return 'active';
+      return false;
+    },
+    undefined,
+    { timeout: 180_000 }
+  );
+  const focusStage = await focusOutcome.jsonValue();
+  const focusObservation =
+    focusStage === 'active'
+      ? await page.evaluate(() => {
+          const language = document.querySelector('[data-testid="language-selector"]');
+          if (!(language instanceof HTMLSelectElement))
+            throw new Error('Language selector is absent');
+          language.focus();
+          const progress = document.querySelector('[data-testid="dropzone"] [role="progressbar"]');
+          return {
+            focused: document.activeElement === language,
+            stopPresent: document.querySelector('[data-testid="stop-conversion-button"]') !== null,
+            progressPresent: progress !== null,
+            progressValue: progress?.getAttribute('data-progress') ?? null,
+          };
+        })
+      : null;
   const editingFocusDuringConversion =
-    focusObservation.focused && focusObservation.stopPresent && focusObservation.progressPresent;
+    focusObservation !== null &&
+    focusObservation.focused &&
+    focusObservation.stopPresent &&
+    focusObservation.progressPresent;
   let progress: Awaited<ReturnType<typeof snapshot>> | null = null;
   if (editingFocusDuringConversion) progress = await snapshot(page);
   await page.waitForFunction(
@@ -394,7 +433,7 @@ async function exerciseMainFlow(
   if ((await error.count()) > 0) {
     throw new Error(`Conversion failed: ${await error.textContent()}`);
   }
-  const afterCompletion = await capture(page, output, id, 'completed');
+  const afterCompletion = await capture(page, output, id, 'completed', observations);
   if (editingFocusDuringConversion) {
     assert.equal(
       afterCompletion.focus,
@@ -437,6 +476,7 @@ async function exerciseMainFlow(
     beforeFindingConvert,
     foundConvert,
     progress,
+    focusStage,
     focusObservation,
     editingFocusDuringConversion,
     afterCompletion,
@@ -456,6 +496,7 @@ async function exerciseLayout(
   alreadyLoaded: boolean
 ) {
   const errors = captureBrowserErrors(page);
+  const observations: Record<string, unknown> = {};
   const partial: Record<string, unknown> = {
     id: scenario.id,
     cssViewport: scenario.viewport,
@@ -485,9 +526,15 @@ async function exerciseLayout(
     }
     partial.environment = environment;
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
-    const empty = await capture(page, output, scenario.id, 'empty');
+    const empty = await capture(page, output, scenario.id, 'empty', observations);
     partial.empty = empty;
-    const cancellation = await exerciseCancellation(page, paths.cancel, output, scenario.id);
+    const cancellation = await exerciseCancellation(
+      page,
+      paths.cancel,
+      output,
+      scenario.id,
+      observations
+    );
     partial.cancellation = cancellation;
     let mainAction: 'choose' | 'change' = 'change';
     if (cancellation.status === 'race') {
@@ -496,7 +543,14 @@ async function exerciseLayout(
       await page.reload({ waitUntil: 'domcontentloaded' });
       mainAction = 'choose';
     }
-    const main = await exerciseMainFlow(page, paths.main, output, scenario.id, mainAction);
+    const main = await exerciseMainFlow(
+      page,
+      paths.main,
+      output,
+      scenario.id,
+      mainAction,
+      observations
+    );
     partial.main = main;
     const horizontalOverflow = [
       empty,
@@ -749,5 +803,6 @@ export async function exerciseNarrowOutput(
     evaluation: 'pending-operator-visual-review',
   };
   await writeFile(join(output, 'narrow-output.json'), `${JSON.stringify(report, null, 2)}\n`);
+  assert.equal(report.status, 'passed', 'Narrow-output acceptance remains incomplete');
   return report;
 }
