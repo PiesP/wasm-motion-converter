@@ -42,7 +42,7 @@ import {
 import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
 import type { OutputContractCase } from './output-contract.ts';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
-import { exerciseSelectionPreviewBaseline } from './selection-preview.ts';
+import { exercisePreviewRetry, exerciseSelectionPreviewBaseline } from './selection-preview.ts';
 import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
 
@@ -3073,6 +3073,7 @@ export async function run({
     assert.deepEqual(selector, { scenario: NARROW_OUTPUT_SCENARIO });
     for (const other of [
       'selection-preview.json',
+      'preview-retry.json',
       'trim-submission.json',
       'webp-initialization.json',
       'service-worker-handoff.json',
@@ -3107,6 +3108,43 @@ export async function run({
     const started = await startStaticServer(bundleRoot);
     try {
       return await exerciseNarrowOutput(browser, bundleRoot, started.url, paths, output);
+    } finally {
+      await closeServer(started.server);
+    }
+  }
+  const previewRetrySelector = resolve(bundleRoot, 'validation/windows/inputs/preview-retry.json');
+  let previewRetrySelectorText: string | undefined;
+  try {
+    previewRetrySelectorText = await readFile(previewRetrySelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (previewRetrySelectorText !== undefined) {
+    const selector: unknown = JSON.parse(previewRetrySelectorText);
+    assert.deepEqual(selector, { scenario: 'preview-retry' });
+    for (const other of [
+      'narrow-output.json',
+      'selection-preview.json',
+      'trim-submission.json',
+      'webp-initialization.json',
+      'service-worker-handoff.json',
+      'recovery.json',
+      'app-update.json',
+    ]) {
+      const path = resolve(bundleRoot, 'validation/windows/inputs', other);
+      try {
+        assert.equal((await stat(path)).isFile(), false, `Conflicting Windows selector: ${other}`);
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+    }
+    const fixture = await validateBundleFile(
+      bundleRoot,
+      'validation/windows/inputs/trim-submission.mp4'
+    );
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exercisePreviewRetry(browser, started.url, fixture, output);
     } finally {
       await closeServer(started.server);
     }

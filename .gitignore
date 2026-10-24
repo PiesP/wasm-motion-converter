@@ -100,5 +100,6 @@ validation/windows/inputs/webp-initialization.json
 validation/windows/inputs/trim-submission.json
 validation/windows/inputs/trim-submission.mp4
 validation/windows/inputs/selection-preview.json
+validation/windows/inputs/preview-retry.json
 validation/windows/inputs/narrow-output.json
 validation/windows/inputs/narrow-output-fixtures.json

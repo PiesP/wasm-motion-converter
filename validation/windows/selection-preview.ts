@@ -616,6 +616,163 @@ async function exerciseScopedPreviewFailure(
   }
 }
 
+/** A focused same-element retry probe; only its first selected play is synthetic. */
+export async function exercisePreviewRetry(
+  browser: Browser,
+  url: string,
+  fixture: string,
+  output: string
+) {
+  await mkdir(output, { recursive: true });
+  const context = await browser.newContext({
+    acceptDownloads: true,
+    locale: 'en-US',
+    viewport: { width: 1280, height: 800 },
+  });
+  const observations: Record<string, unknown> = {
+    id: 'same-source-preview-retry',
+    fixture: basename(fixture),
+    limitation:
+      'One synthetic play rejection on the selected preview; retry uses native media playback.',
+  };
+  try {
+    const page = await context.newPage();
+    observations.browserErrors = captureBrowserErrors(page);
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+    assert(response?.ok(), 'Built application did not load');
+    await page.locator('[data-testid="file-input"]').setInputFiles(fixture);
+    await waitForConversionReady(page);
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>('#selection-preview-video');
+      return video && video.readyState >= HTMLMediaElement.HAVE_METADATA;
+    });
+
+    const preview = page.locator('#selection-preview-video');
+    const button = page.locator('[data-testid="trim-preview-button"]');
+    await preview.evaluate((video) => {
+      if (!(video instanceof HTMLVideoElement)) throw new Error('Missing preview video');
+      const events: { type: string; atMs: number; time: number }[] = [];
+      for (const type of ['loadedmetadata', 'play', 'playing', 'pause', 'ended', 'error']) {
+        video.addEventListener(type, () => {
+          if (events.length < 40)
+            events.push({ type, atMs: performance.now(), time: video.currentTime });
+        });
+      }
+      Reflect.set(globalThis, '__previewRetryProbe', {
+        video,
+        source: video.currentSrc,
+        events,
+        loadCalls: 0,
+        rejections: 0,
+      });
+      const nativeLoad = video.load;
+      video.load = function () {
+        const probe = Reflect.get(globalThis, '__previewRetryProbe') as { loadCalls: number };
+        probe.loadCalls++;
+        return nativeLoad.call(this);
+      };
+    });
+    observations.initial = await snapshot(page);
+    await button.click();
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>('#selection-preview-video');
+      return video && !video.paused && video.currentTime > 0.12;
+    });
+    observations.healthyPlaying = await snapshot(page);
+    await button.click();
+    observations.healthyStopped = await snapshot(page);
+
+    await preview.evaluate((video) => {
+      if (!(video instanceof HTMLVideoElement)) throw new Error('Missing preview video');
+      video.play = function () {
+        const probe = Reflect.get(globalThis, '__previewRetryProbe') as { rejections: number };
+        probe.rejections++;
+        Reflect.deleteProperty(this, 'play');
+        return Promise.reject(
+          new DOMException('Scoped transient preview rejection', 'NotAllowedError')
+        );
+      };
+    });
+    await button.click();
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="selection-preview-unavailable"]') !== null
+    );
+    observations.rejected = await snapshot(page);
+    await page.screenshot({ path: join(output, 'preview-retry-rejected.png'), fullPage: true });
+
+    await button.click();
+    await page.waitForFunction(() => {
+      const video = document.querySelector<HTMLVideoElement>('#selection-preview-video');
+      return video && !video.paused && video.currentTime > 0.12;
+    });
+    observations.retryPlaying = await snapshot(page);
+    await page.screenshot({ path: join(output, 'preview-retry-playing.png'), fullPage: true });
+    await button.click();
+    observations.retryStopped = await snapshot(page);
+    observations.probe = await page.evaluate(() => {
+      const probe = Reflect.get(globalThis, '__previewRetryProbe') as {
+        video: HTMLVideoElement;
+        source: string;
+        events: { type: string; atMs: number; time: number }[];
+        loadCalls: number;
+        rejections: number;
+      };
+      return {
+        sameElement: probe.video === document.querySelector('#selection-preview-video'),
+        sameSource: probe.source === probe.video.currentSrc,
+        source: probe.source,
+        events: probe.events,
+        loadCalls: probe.loadCalls,
+        rejections: probe.rejections,
+      };
+    });
+    await writeFile(join(output, 'preview-retry.json'), JSON.stringify(observations, null, 2));
+
+    const healthy = observations.healthyPlaying as Awaited<ReturnType<typeof snapshot>>;
+    const rejected = observations.rejected as Awaited<ReturnType<typeof snapshot>>;
+    const playing = observations.retryPlaying as Awaited<ReturnType<typeof snapshot>>;
+    const stopped = observations.retryStopped as Awaited<ReturnType<typeof snapshot>>;
+    const probe = observations.probe as {
+      sameElement: boolean;
+      sameSource: boolean;
+      events: { type: string }[];
+      loadCalls: number;
+      rejections: number;
+    };
+    assert.equal(healthy.previewUnavailable, null);
+    assert(healthy.video && healthy.video.currentTime > 0.12 && !healthy.video.paused);
+    assert(rejected.previewUnavailable?.includes('preview is unavailable'));
+    assert(rejected.previewButton?.text.includes('Retry preview'));
+    assert((rejected.video?.readyState ?? 0) >= HTMLMediaElement.HAVE_METADATA);
+    assert.equal(rejected.video?.errorCode, null);
+    assert.equal(probe.rejections, 1);
+    assert.equal(probe.sameElement, true);
+    assert.equal(probe.sameSource, true);
+    assert.equal(probe.loadCalls, 0);
+    assert.equal(probe.events.filter((event) => event.type === 'loadedmetadata').length, 0);
+    assert(probe.events.filter((event) => event.type === 'playing').length >= 2);
+    assert(playing.video && playing.video.currentTime > 0.12 && !playing.video.paused);
+    assert(playing.video.readyState >= HTMLMediaElement.HAVE_METADATA);
+    assert.equal(playing.video.errorCode, null);
+    assert.equal(
+      playing.previewUnavailable,
+      null,
+      'Successful native retry kept stale failure feedback'
+    );
+    assert.equal(stopped.previewUnavailable, null);
+    assert(stopped.previewButton?.text.includes('Preview selection'));
+    return { profile: 'preview-retry', status: 'passed', observations };
+  } catch (error) {
+    await writeFile(
+      join(output, 'preview-retry-partial.json'),
+      JSON.stringify({ ...observations, failure: String(error) }, null, 2)
+    );
+    throw error;
+  } finally {
+    await context.close();
+  }
+}
+
 /** Source-bound selection and preview checks through the built application's conversion path. */
 export async function exerciseSelectionPreviewBaseline(
   browser: Browser,

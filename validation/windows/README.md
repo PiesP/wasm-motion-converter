@@ -84,6 +84,16 @@ that a native Windows picker was cancelled. The synthetic play rejection and
 media-error event do not reproduce a field incident or change the conversion
 pipeline. The probe preserves partial observations and screenshots externally.
 
+For the focused same-source preview retry, prepare the same 10-second fixture and
+put `{"scenario":"preview-retry"}` in the ignored
+`validation/windows/inputs/preview-retry.json` selector. Remove other focused
+selectors before packaging, then run the standard built-app Windows route. The
+probe first confirms native playback, injects one rejected `play()` promise only
+for `#selection-preview-video`, and restores its native method before the next
+user retry. It records the element/source identity, media events, readiness,
+playback progress, status and button labels before asserting recovery. Its
+synthetic rejection is a lifecycle regression, not a field or codec incident.
+
 For the narrow-layout and output-comprehension evaluation, prepare the ignored
 1920×1080, 30 fps, 10-second timecoded video with a long filename and a separate
 24-second cancellation input using
