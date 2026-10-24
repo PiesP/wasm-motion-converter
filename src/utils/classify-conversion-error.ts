@@ -241,6 +241,20 @@ export function classifyConversionError(
     phase: 'unknown' as string,
   };
 
+  // Initialization is a document-lifetime failure, even when its original
+  // cause mentions abort, memory, or a network timeout.
+  if (errorMessage.startsWith('WebP initialization failed (')) {
+    return {
+      ...baseContext,
+      type: 'general',
+      code: 'ENCODER_ERROR',
+      phase: 'wasm_webp_initialization',
+      suggestion: t
+        ? t('error.webpInitialization')
+        : 'The WebP encoder could not start. Reload the page before trying WebP again.',
+    };
+  }
+
   for (const rule of ERROR_RULES) {
     if (!rule.pattern.test(msg)) {
       continue;

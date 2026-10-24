@@ -36,6 +36,7 @@ import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
 import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
 import type { OutputContractCase } from './output-contract.ts';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
+import { exerciseWebpInitialization } from './webp-initialization.ts';
 
 type Artifact = { kind: string; file: string; bytes: number; sha256: string };
 type HeaderRule = { pattern: string; headers: Map<string, string> };
@@ -3052,6 +3053,60 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const webpSelector = resolve(bundleRoot, 'validation/windows/inputs/webp-initialization.json');
+  let webpSelectorText: string | undefined;
+  try {
+    webpSelectorText = await readFile(webpSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (webpSelectorText !== undefined) {
+    const selector: unknown = JSON.parse(webpSelectorText);
+    assert.deepEqual(selector, { scenario: 'webp-initialization' });
+    const config = JSON.parse(
+      await readFile(await validateBundleFile(bundleRoot, OUTPUT_CONTRACT), 'utf8')
+    ) as OutputContractConfig;
+    const contract = config.cases.find((entry) => entry.id === 'vfr-par-webp');
+    assert(contract);
+    const fixture = await validateBundleFile(bundleRoot, contract.fixture);
+    const started = await startStaticServer(bundleRoot);
+    const checks: unknown[] = [];
+    try {
+      for (const mode of ['factory', 'import', 'cancelled-factory'] as const) {
+        const context = await browser.newContext({
+          locale: 'en-US',
+          serviceWorkers: 'block',
+          viewport: { width: 1280, height: 900 },
+        });
+        try {
+          const page = await context.newPage();
+          checks.push(
+            await exerciseWebpInitialization(
+              page,
+              started.url,
+              fixture,
+              contract,
+              config.markers,
+              mode
+            )
+          );
+          await page.screenshot({
+            path: join(output, `webp-initialization-${mode}.png`),
+            fullPage: true,
+          });
+        } finally {
+          await context.close();
+        }
+      }
+      return { profile: 'webp-initialization', status: 'passed', checks };
+    } finally {
+      await closeServer(started.server);
+      await writeFile(
+        join(output, 'webp-initialization.json'),
+        JSON.stringify({ checks }, null, 2)
+      );
+    }
+  }
   const handoffConfigPath = 'validation/windows/inputs/service-worker-handoff.json';
   let handoffPresent = false;
   try {

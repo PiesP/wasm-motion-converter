@@ -63,3 +63,25 @@ and checks repeated use and argument validation. The browser output-contract
 suite forces the WASM fallback under the application's actual CSP and decodes
 the resulting animation to verify geometry, color order, and timing. pnpm binds
 the exact patch hash in the lockfile and rejects an unapplied patch.
+
+### Failed initialization
+
+The application retains a rejected WebP initialization for the document lifetime
+and offers an explicit reload under the existing busy-work/result protection.
+The locked Emscripten factory owns per-invocation memory, binding registries and a
+10-second dependency watcher. A rejected streaming fetch rejects `Module.ready`
+without calling `abort` or removing the `wasm-instantiate` dependency; the watcher
+can therefore retain a partially initialized runtime. There is no supported
+partial-runtime disposal API. Reinvoking this factory may succeed but does not
+release that earlier runtime, so clearing only the application Promise is not a
+qualified recovery. No allocation exhaustion is induced to test this boundary.
+
+`WasmWebpInitializationError` separates factory failures from import/evaluation
+failures and retains the original cause. Both require explicit reload; a
+browser's failed module graph is not repaired by resetting an application
+Promise. Successful initialization remains shared, frame errors do not reset it,
+and caller cancellation does not dispose it. No conversion or reload is retried
+automatically. The focused built output-contract/Windows scenario injects one
+failed factory fetch, a separate module-evaluation failure, and a cancelled late
+factory failure, then exercises the real reload action and decodes a valid WebP.
+These controlled failures do not establish a reported incident or its frequency.

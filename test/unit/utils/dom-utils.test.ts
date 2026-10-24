@@ -87,3 +87,13 @@ describe('dom utilities', () => {
     expect(focusResult).toHaveBeenCalled();
   });
 });
+
+it('focuses explicit reload when terminal initialization has no retry action', async () => {
+  const button = document.createElement('button');
+  button.dataset.testid = 'app-recovery-reload';
+  document.body.append(button);
+  focusPrimaryErrorAction();
+  await Promise.resolve();
+  expect(document.activeElement).toBe(button);
+  button.remove();
+});

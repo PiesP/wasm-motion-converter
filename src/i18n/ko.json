@@ -1,6 +1,7 @@
 {
   "app.error.description": "앱의 일부 화면을 표시할 수 없습니다. 아래 복구 기능을 이용해 주세요.",
   "app.error.details": "오류 세부 정보",
+  "error.webpInitialization": "WebP 인코더를 시작하지 못했습니다. WebP 변환을 다시 시도하려면 페이지를 새로고침하세요. 파일이나 설정을 바꿔도 인코더는 다시 시작되지 않습니다.",
   "app.error.reload": "페이지 새로고침",
   "app.error.retry": "다시 시도",
   "app.error.title": "애플리케이션 오류",

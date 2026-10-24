@@ -37,3 +37,25 @@ describe('ErrorDisplay focus', () => {
     );
   });
 });
+
+it('does not advertise retry or a new file for terminal WASM initialization', () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const dispose = render(
+    () => (
+      <ErrorDisplay
+        message="WebP initialization failed (factory)"
+        reloadRequired
+        onRetry={() => {
+          throw new Error('unexpected retry');
+        }}
+        onSelectNewFile={() => {
+          throw new Error('unexpected new file');
+        }}
+      />
+    ),
+    container
+  );
+  expect(container.querySelector('button')).toBeNull();
+  dispose();
+});

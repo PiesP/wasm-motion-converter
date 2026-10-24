@@ -1,6 +1,7 @@
 {
   "app.error.description": "No se ha podido mostrar esta parte de la aplicación. Usa las opciones de recuperación siguientes.",
   "app.error.details": "Detalles del error",
+  "error.webpInitialization": "No se pudo iniciar el codificador WebP. Recarga la página antes de volver a intentarlo. Cambiar el archivo o los ajustes no lo reiniciará.",
   "app.error.reload": "Recargar página",
   "app.error.retry": "Intentar de nuevo",
   "app.error.title": "Error de la aplicación",

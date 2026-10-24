@@ -30,12 +30,12 @@ describe('translations', () => {
 
     it('has all translation keys in en.json', () => {
       const enKeys = Object.keys(enTranslations);
-      expect(enKeys.length).toBe(200);
+      expect(enKeys.length).toBe(201);
     });
 
     it('has all translation keys in ko.json', () => {
       const koKeys = Object.keys(koTranslations);
-      expect(koKeys.length).toBe(200);
+      expect(koKeys.length).toBe(201);
     });
 
     it('en.json keys are a subset of ko.json keys', () => {

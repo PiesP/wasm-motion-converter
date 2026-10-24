@@ -22,6 +22,8 @@
  * the factory internally and creates a new instance on every call.
  */
 
+import { getErrorMessage } from '@piesp/browser-core/error';
+
 interface WasmWebpInstance {
   encodeRGB(rgb: Uint8Array, width: number, height: number, quality: number): Uint8Array | null;
 }
@@ -29,21 +31,55 @@ interface WasmWebpInstance {
 let cachedModule: WasmWebpInstance | null = null;
 let initPromise: Promise<WasmWebpInstance> | null = null;
 
+/** The locked factory has no disposal contract for partially initialized runtimes. */
+export class WasmWebpInitializationError extends Error {
+  constructor(
+    readonly stage: 'import' | 'factory',
+    cause: unknown
+  ) {
+    super(`WebP initialization failed (${stage}): ${getErrorMessage(cause)}`, { cause });
+    this.name = 'WasmWebpInitializationError';
+  }
+}
+
+/** Decoder processing failures retain their encoder error as a cause. */
+export function findWasmWebpInitializationError(
+  error: unknown
+): WasmWebpInitializationError | null {
+  const seen = new Set<object>();
+  let current = error;
+  for (let depth = 0; depth < 16 && current instanceof Error && !seen.has(current); depth++) {
+    if (current instanceof WasmWebpInitializationError) return current;
+    seen.add(current);
+    current = current.cause;
+  }
+  return null;
+}
+
 async function getModule(): Promise<WasmWebpInstance> {
   if (cachedModule) return cachedModule;
   if (initPromise) return initPromise;
 
   initPromise = (async () => {
-    // Dynamic import reaches into wasm-webp's internal Emscripten module.
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const mod: { default: () => Promise<WasmWebpInstance> } =
-      await import('wasm-webp/dist/esm/webp-wasm.js');
-    const factory = mod.default;
-    if (typeof factory !== 'function') {
-      throw new Error('wasm-webp default export is not a factory function');
+    let stage: 'import' | 'factory' = 'import';
+    try {
+      // Dynamic import reaches into wasm-webp's internal Emscripten module.
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const mod: { default: () => Promise<WasmWebpInstance> } =
+        await import('wasm-webp/dist/esm/webp-wasm.js');
+      stage = 'factory';
+      const factory = mod.default;
+      if (typeof factory !== 'function') {
+        throw new Error('wasm-webp default export is not a factory function');
+      }
+      cachedModule = await factory();
+      return cachedModule;
+    } catch (cause) {
+      // Retain the failed attempt: a rejected Emscripten factory may still own a
+      // dependency watcher/partial runtime. Explicit document reload releases it.
+      // Import/evaluation failures also cannot promise same-document recovery.
+      throw new WasmWebpInitializationError(stage, cause);
     }
-    cachedModule = await factory();
-    return cachedModule;
   })();
 
   return initPromise;

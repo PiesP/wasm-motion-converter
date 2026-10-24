@@ -88,3 +88,15 @@ separately.
 The Windows packager copies and hashes this whole directory through
 `profile.json`. Keep input source SHAs and distribution digests in the external
 campaign receipt. Do not commit generated distributions or the selector file.
+
+## WebP initialization recovery
+
+For the focused built-app failure/reload/output scenario, create ignored
+`webp-initialization.json` containing `{"scenario":"webp-initialization"}`.
+This selector runs before the older migration/recovery selectors. It injects
+one failed WASM fetch and a separate dependency-module evaluation failure,
+verifies the locked factory's retained dependency watcher, tests cancelled late
+work, uses the real protected Reload page action and decodes the recovered WebP.
+Run with installed Edge through the existing artifact profile. Remove only this
+selector after collection. This is controlled fixture evidence, not a production
+incident or a broad codec/browser campaign.

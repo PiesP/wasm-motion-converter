@@ -1,6 +1,7 @@
 {
   "app.error.description": "无法显示应用的这一部分。请使用下方的恢复操作。",
   "app.error.details": "错误详情",
+  "error.webpInitialization": "WebP 编码器无法启动。再次尝试 WebP 转换前，请重新加载页面。更改文件或设置无法重新启动编码器。",
   "app.error.reload": "重新加载页面",
   "app.error.retry": "重试",
   "app.error.title": "应用程序错误",

@@ -36,6 +36,8 @@ export function transitionToState(newState: AppState): void {
 
 export const [errorMessage, setErrorMessage] = createSignal<string | null>(null);
 export const [errorContext, setErrorContext] = createSignal<ErrorContext | null>(null);
+/** Document-scoped failed WASM initialization survives file/settings resets. */
+export const [webpReloadRequired, setWebpReloadRequired] = createSignal(false);
 
 // ---------------------------------------------------------------------------
 // Progress

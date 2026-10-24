@@ -1,6 +1,7 @@
 {
   "app.error.description": "アプリの一部を表示できません。下の復旧操作をご利用ください。",
   "app.error.details": "エラーの詳細",
+  "error.webpInitialization": "WebP エンコーダーを起動できませんでした。WebP 変換を再試行する前にページを再読み込みしてください。ファイルや設定の変更では再起動できません。",
   "app.error.reload": "ページを再読み込み",
   "app.error.retry": "もう一度試す",
   "app.error.title": "アプリケーションエラー",

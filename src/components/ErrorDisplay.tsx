@@ -18,6 +18,7 @@ interface ErrorDisplayProps {
   message: string;
   suggestion?: string | undefined;
   errorType?: ConversionErrorType | undefined;
+  reloadRequired?: boolean;
   onRetry: () => void;
   onSelectNewFile: () => void;
   onDismiss?: (() => void) | undefined;
@@ -29,6 +30,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     'message',
     'suggestion',
     'errorType',
+    'reloadRequired',
     'onRetry',
     'onSelectNewFile',
     'onDismiss',
@@ -137,43 +139,45 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               <strong class="text-text-primary">{t('error.suggestion')}</strong> {local.suggestion}
             </div>
           </Show>
-          <div class="mt-4 flex gap-3">
-            <Show
-              when={canRetry()}
-              fallback={
+          <Show when={!local.reloadRequired}>
+            <div class="mt-4 flex gap-3">
+              <Show
+                when={canRetry()}
+                fallback={
+                  <button
+                    ref={primaryActionRef}
+                    type="button"
+                    data-testid="error-select-different-fallback-button"
+                    class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
+                    onClick={handleSelectNewFile}
+                    aria-label={t('error.selectDifferent')}
+                  >
+                    {t('error.selectDifferentFallback')}
+                  </button>
+                }
+              >
                 <button
                   ref={primaryActionRef}
                   type="button"
-                  data-testid="error-select-different-fallback-button"
+                  data-testid="error-retry-button"
                   class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
+                  onClick={handleRetry}
+                  aria-label={t('error.retry')}
+                >
+                  {t('error.retry')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="error-select-different-button"
+                  class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-text-secondary bg-white/[0.02] border-border-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
                   onClick={handleSelectNewFile}
                   aria-label={t('error.selectDifferent')}
                 >
-                  {t('error.selectDifferentFallback')}
+                  {t('error.selectDifferent')}
                 </button>
-              }
-            >
-              <button
-                ref={primaryActionRef}
-                type="button"
-                data-testid="error-retry-button"
-                class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
-                onClick={handleRetry}
-                aria-label={t('error.retry')}
-              >
-                {t('error.retry')}
-              </button>
-              <button
-                type="button"
-                data-testid="error-select-different-button"
-                class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-text-secondary bg-white/[0.02] border-border-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
-                onClick={handleSelectNewFile}
-                aria-label={t('error.selectDifferent')}
-              >
-                {t('error.selectDifferent')}
-              </button>
-            </Show>
-          </div>
+              </Show>
+            </div>
+          </Show>
         </div>
       </div>
     </Panel>

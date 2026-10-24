@@ -1,7 +1,8 @@
-// SPDX-License-Identifier: MIT
-// Copyright (c) 2026 PiesP
+import { resolve } from 'node:path';
 
 import { expect, test } from '@playwright/test';
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 PiesP
 import type { ConversionProfileReport } from '@services/conversion-profiler';
 
 import { parseGifDelaysCs } from '../../validation/windows/gif-playback.ts';
@@ -11,6 +12,7 @@ import {
   type OutputContractCase,
   verifyAnimatedOutput,
 } from '../../validation/windows/output-contract.ts';
+import { exerciseWebpInitialization } from '../../validation/windows/webp-initialization.ts';
 import {
   finishProgressObservation,
   installProgressObservation,
@@ -651,3 +653,20 @@ declare global {
   var __wmcWorkerConstructionAttempts: number;
   var __wmcIdentitySizedVideoFrameDraws: number;
 }
+
+test.describe('built WASM initialization recovery', () => {
+  test.use({ locale: 'en-US' });
+  for (const mode of ['factory', 'import', 'cancelled-factory'] as const) {
+    test(`recovers through explicit reload after ${mode} failure`, async ({ page, baseURL }) => {
+      const contract = cases.find((entry) => entry.id === 'vfr-par-webp')!;
+      await exerciseWebpInitialization(
+        page,
+        baseURL!,
+        resolve(contract.fixture),
+        contract,
+        markers,
+        mode
+      );
+    });
+  }
+});
