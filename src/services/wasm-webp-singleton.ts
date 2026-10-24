@@ -42,6 +42,19 @@ export class WasmWebpInitializationError extends Error {
   }
 }
 
+/** Decoder processing failures retain their encoder error as a cause. */
+export function findWasmWebpInitializationError(
+  error: unknown
+): WasmWebpInitializationError | null {
+  const seen = new Set<object>();
+  for (let depth = 0; depth < 16 && error instanceof Error && !seen.has(error); depth++) {
+    if (error instanceof WasmWebpInitializationError) return error;
+    seen.add(error);
+    error = error.cause;
+  }
+  return null;
+}
+
 async function getModule(): Promise<WasmWebpInstance> {
   if (cachedModule) return cachedModule;
   if (initPromise) return initPromise;

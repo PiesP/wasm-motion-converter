@@ -55,7 +55,7 @@ export async function exerciseWebpInitialization(
     const path = new URL(route.request().url()).pathname;
     const target =
       mode === 'import'
-        ? /\/webp-wasm[.-].*\.js$/.test(path) || /wasm-webp_dist_esm_webp-wasm_js\.js$/.test(path)
+        ? /\/webp-wasm[.-].*\.js$/.test(path) || /wasm-webp_dist_esm_webp-wasm_+js\.js$/.test(path)
         : path.endsWith('.wasm');
     if (!target || failures > 0) return route.continue();
     failures++;
@@ -98,7 +98,16 @@ export async function exerciseWebpInitialization(
     const before = await page.evaluate(() => performance.timeOrigin);
     await convert();
     if (mode === 'cancelled-factory') {
-      await requestBlocked;
+      await Promise.race([
+        requestBlocked,
+        new Promise<never>((_resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('WASM failure request was not intercepted within 15 seconds')),
+            15000
+          );
+          timer.unref();
+        }),
+      ]);
       await page.locator('[data-testid="dropzone-cancel-button"]').click();
       release();
       await page
@@ -122,7 +131,8 @@ export async function exerciseWebpInitialization(
     assert(
       (await error.textContent())?.includes(
         `WebP initialization failed (${mode === 'import' ? 'import' : 'factory'})`
-      )
+      ),
+      `Unexpected initialization UI: ${(await error.textContent())?.slice(0, 2000)}; console: ${consoleErrors.join('; ').slice(0, 2000)}`
     );
     assert.equal(await error.locator('[data-testid="error-retry-button"]').count(), 0);
     assert.equal(await error.locator('[data-testid^="error-select-different"]').count(), 0);
@@ -161,7 +171,9 @@ export async function exerciseWebpInitialization(
     );
     assert(
       consoleErrors.every((error) =>
-        /net::ERR_FAILED|WebP initialization failed|Conversion failed/.test(error)
+        /net::ERR_FAILED|WebP initialization failed|Conversion failed|Frame conversion errors detected/.test(
+          error
+        )
       ),
       `Unexpected console errors: ${consoleErrors.join('; ')}`
     );

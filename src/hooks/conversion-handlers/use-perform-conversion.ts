@@ -9,7 +9,7 @@ import type {
 } from '@services/conversion-worker/types';
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
-import { WasmWebpInitializationError } from '@services/wasm-webp-singleton';
+import { findWasmWebpInitializationError } from '@services/wasm-webp-singleton';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
 import {
@@ -486,15 +486,22 @@ async function handleConversionError(
   }
 
   const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
+  const initializationError = findWasmWebpInitializationError(error);
 
-  if (!(error instanceof WasmWebpInitializationError) && isCancellationError(error)) {
+  if (!initializationError && isCancellationError(error)) {
     // The intent's finally owns the terminal transition after teardown settles.
     runtime.stopMemoryMonitoring();
     return;
   }
 
-  const context = classifyConversionError(errorMessage_, videoMetadata(), settings, t);
-  if (error instanceof WasmWebpInitializationError) setWebpReloadRequired(true);
+  const context = classifyConversionError(
+    initializationError?.message ?? errorMessage_,
+    videoMetadata(),
+    settings,
+    t
+  );
+  context.originalError = errorMessage_;
+  if (initializationError) setWebpReloadRequired(true);
 
   logger.error('conversion', 'Conversion failed', {
     error: errorMessage_,

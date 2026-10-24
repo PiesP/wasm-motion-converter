@@ -69,3 +69,16 @@ describe('WASM WebP document lifetime', () => {
     expect(encode.mock.calls[2]?.[3]).toBe(0);
   });
 });
+
+it('finds initialization through the real decoder processing error boundary', async () => {
+  const { findWasmWebpInitializationError, WasmWebpInitializationError } =
+    await import('@services/wasm-webp-singleton');
+  const original = new DOMException('Failed fetch', 'AbortError');
+  const init = new WasmWebpInitializationError('factory', original);
+  const processing = new Error(`Frame processing failed: ${init.message}`, { cause: init });
+  expect(findWasmWebpInitializationError(processing)).toBe(init);
+  expect(findWasmWebpInitializationError(original)).toBeNull();
+  const cyclic = new Error('ordinary failure');
+  cyclic.cause = cyclic;
+  expect(findWasmWebpInitializationError(cyclic)).toBeNull();
+});
