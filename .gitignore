@@ -95,3 +95,5 @@ validation/windows/inputs/service-worker-handoff.json
 validation/windows/inputs/service-worker-baseline/
 deployment-verification.json
 .vitest/
+
+validation/windows/inputs/webp-initialization.json

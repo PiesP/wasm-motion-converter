@@ -201,3 +201,15 @@ describe('classifyConversionError', () => {
     });
   });
 });
+
+it('prioritizes terminal WebP initialization over memory, timeout and abort wording', () => {
+  for (const cause of ['Aborted(wasm memory)', 'network timeout', 'AbortError']) {
+    const result = classifyConversionError(`WebP initialization failed (factory): ${cause}`, null);
+    expect(result).toMatchObject({
+      type: 'general',
+      code: 'ENCODER_ERROR',
+      phase: 'wasm_webp_initialization',
+    });
+    expect(result.suggestion).toContain('Reload');
+  }
+});

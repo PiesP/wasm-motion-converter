@@ -13,6 +13,7 @@ import { registerServiceWorker } from '@/sw-register';
 const AppUpdateNotice: Component<{
   busy: boolean;
   hasResults: boolean;
+  webpReloadRequired?: boolean;
   onClearResults: () => void;
   t: TFunction;
 }> = (props) => {
@@ -54,13 +55,19 @@ const AppUpdateNotice: Component<{
     if (!disposed && !props.busy && props.hasResults) props.onClearResults();
   };
   return (
-    <Show when={currentNotice()}>
+    <Show when={currentNotice() || props.webpReloadRequired}>
       <div
         role="status"
         class="mb-6 space-y-2 rounded-lg border border-border-standard bg-bg-elevated p-4 text-text-primary"
       >
         <p>
-          {props.t(currentNotice() === 'available' ? 'update.available' : 'update.unavailable')}
+          {props.t(
+            props.webpReloadRequired
+              ? 'error.webpInitialization'
+              : currentNotice() === 'available'
+                ? 'update.available'
+                : 'update.unavailable'
+          )}
         </p>
         <Show when={props.busy}>
           <p>{props.t('update.wait')}</p>
@@ -70,6 +77,7 @@ const AppUpdateNotice: Component<{
         </Show>
         <button
           type="button"
+          data-testid="app-recovery-reload"
           disabled={!canReload(props.busy, props.hasResults)}
           onClick={reload}
           class="rounded-md bg-brand px-4 py-2 font-medium text-brand-foreground disabled:opacity-50"

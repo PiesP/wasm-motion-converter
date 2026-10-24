@@ -1,6 +1,7 @@
 {
   "app.error.description": "This part of the app could not be displayed. Use the recovery actions below.",
   "app.error.details": "Error details",
+  "error.webpInitialization": "The WebP encoder could not start. Reload the page before trying WebP again. Changing the file or settings cannot restart it.",
   "app.error.reload": "Reload page",
   "app.error.retry": "Try again",
   "app.error.title": "Application Error",
