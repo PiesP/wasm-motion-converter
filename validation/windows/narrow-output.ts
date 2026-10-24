@@ -367,17 +367,22 @@ async function exerciseMainFlow(
   await convert.focus();
   await page.keyboard.press('Enter');
   await confirmIfPrompted(page);
-  const active = await page.locator('[data-testid="stop-conversion-button"]').isVisible();
-  let editingFocusDuringConversion = false;
+  const focusObservation = await page.evaluate(() => {
+    const language = document.querySelector('[data-testid="language-selector"]');
+    if (!(language instanceof HTMLSelectElement)) throw new Error('Language selector is absent');
+    language.focus();
+    const progress = document.querySelector('[data-testid="dropzone"] [role="progressbar"]');
+    return {
+      focused: document.activeElement === language,
+      stopPresent: document.querySelector('[data-testid="stop-conversion-button"]') !== null,
+      progressPresent: progress !== null,
+      progressValue: progress?.getAttribute('data-progress') ?? null,
+    };
+  });
+  const editingFocusDuringConversion =
+    focusObservation.focused && focusObservation.stopPresent && focusObservation.progressPresent;
   let progress: Awaited<ReturnType<typeof snapshot>> | null = null;
-  if (active) {
-    const language = page.locator('[data-testid="language-selector"]');
-    await language.focus();
-    editingFocusDuringConversion = await language.evaluate(
-      (element) => document.activeElement === element
-    );
-    progress = await snapshot(page);
-  }
+  if (editingFocusDuringConversion) progress = await snapshot(page);
   await page.waitForFunction(
     () =>
       document.querySelector('[data-testid="result-section"]') !== null ||
@@ -414,6 +419,12 @@ async function exerciseMainFlow(
     `GIF duration ${gif.durationSeconds}s disagrees with the selected 5s clip`
   );
   assert(gif.frameCount > 0);
+  const targetFrameCeiling =
+    Math.ceil(gif.durationSeconds * EXPECTED.frameCounts.gifLowTargetFps) + 1;
+  assert(
+    gif.frameCount <= targetFrameCeiling,
+    `GIF contains ${gif.frameCount} frames, above the 8 fps target ceiling of ${targetFrameCeiling}`
+  );
   return {
     selected,
     metadataText,
@@ -426,10 +437,12 @@ async function exerciseMainFlow(
     beforeFindingConvert,
     foundConvert,
     progress,
+    focusObservation,
     editingFocusDuringConversion,
     afterCompletion,
     foundDownload,
     gif,
+    targetFrameCeiling,
     timecodeReview: 'pending-review-of-first-and-last-decoded-frame-images',
   };
 }
