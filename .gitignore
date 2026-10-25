@@ -105,3 +105,4 @@ validation/windows/inputs/narrow-output.json
 validation/windows/inputs/narrow-output-fixtures.json
 
 validation/windows/inputs/packet-lookup.json
+validation/windows/inputs/output-finalization.json
