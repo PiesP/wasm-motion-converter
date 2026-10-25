@@ -114,7 +114,7 @@ describe('encoder final playback duration', () => {
       onProgress
     );
 
-    expect(readWebpDurationMs(new Uint8Array(await output.arrayBuffer()))).toBe(200);
+    expect(readWebpDurationMs(output)).toBe(200);
     expect(onProgress).toHaveBeenLastCalledWith(
       expect.objectContaining({ phase: 'encoding', currentFrame: 1, totalFrames: 2 })
     );

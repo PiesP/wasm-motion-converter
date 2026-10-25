@@ -44,8 +44,8 @@ vi.mock('@services/streaming-webp-encoder', () => ({
       this.frames++;
     }
     finishPresentation = mocks.finishPresentation;
-    async finish(): Promise<Blob> {
-      return new Blob([new Uint8Array([1, 2, 3])], { type: 'image/webp' });
+    async finish(): Promise<Uint8Array> {
+      return new Uint8Array([1, 2, 3]);
     }
   },
 }));

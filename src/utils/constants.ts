@@ -91,8 +91,8 @@ export const MP4_MAX_LOGICAL_SAMPLES = 100_000_000;
 export const FRAME_PIPELINE_MEMORY_BUDGET_BYTES = CONVERSION_MEMORY_BUDGET_BYTES * 0.375;
 
 /**
- * Maximum animated WebP bytes. Keep room for two output-sized copies because
- * the legacy Worker completion boundary can materialize a Blob as ArrayBuffer.
+ * Maximum animated WebP bytes. Finalization retains the Blob source while
+ * materializing the returned ArrayBuffer, so reserve two output-sized copies.
  */
 export const WEBP_MAX_OUTPUT_BYTES =
   (CONVERSION_MEMORY_BUDGET_BYTES -

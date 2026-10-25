@@ -2,7 +2,6 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
-import type { MainThreadConversionOutput } from '@services/conversion-pipeline';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
 import type {
   SerializedConversionOptions,
@@ -10,7 +9,6 @@ import type {
 } from '@services/conversion-worker/types';
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
-import { resolveOutputLimits } from '@services/output-limits';
 import { findWasmWebpInitializationError } from '@services/wasm-webp-singleton';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
@@ -252,13 +250,7 @@ async function performConversion(
       metadata?.framerate
     );
 
-    const blob = await validateOutputBlob(
-      output,
-      settings,
-      signal,
-      serializedOptions.maxOutputBytes
-    );
-    if (!isActive()) return;
+    const blob = validateOutputBlob(output, settings);
     await handleResult(blob, file, settings, outputDimensions, runtime, startTimeMs, isActive);
     if (isActive()) focusDownloadButton();
   } catch (error) {
@@ -358,7 +350,7 @@ async function executePipeline(
   file: File,
   duration?: number,
   framerate?: number
-): Promise<MainThreadConversionOutput> {
+): Promise<ArrayBuffer> {
   if (!serializedConfig) {
     throw new Error('Unable to extract VideoDecoderConfig — cannot run conversion pipeline');
   }
@@ -399,41 +391,17 @@ async function executePipeline(
   );
 }
 
-async function validateOutputBlob(
-  output: MainThreadConversionOutput,
-  settings: ConversionSettings,
-  signal: AbortSignal,
-  requestedMaxOutputBytes?: number
-): Promise<Blob> {
-  if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
-  const isWebpBlob = output instanceof Blob;
-  if ((settings.format === 'webp') !== isWebpBlob) {
-    throw new Error(`Conversion produced an unexpected output type for ${settings.format}`);
-  }
-  const size = isWebpBlob ? output.size : output.byteLength;
-  if (size === 0) {
+function validateOutputBlob(output: ArrayBuffer, settings: ConversionSettings): Blob {
+  if (output.byteLength === 0) {
     throw new Error('Conversion produced an empty output file');
   }
-  if (
-    size >
-    resolveOutputLimits(settings.format, { maxOutputBytes: requestedMaxOutputBytes }).maxOutputBytes
-  ) {
-    throw new Error(`Conversion output exceeds the ${settings.format} byte limit`);
-  }
 
-  const header = isWebpBlob
-    ? new Uint8Array(await output.slice(0, 16).arrayBuffer())
-    : new Uint8Array(output, 0, Math.min(size, 16));
-  if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+  const header = new Uint8Array(output, 0, Math.min(output.byteLength, 16));
   if (!validateOutput(header, settings.format)) {
     throw new Error(`Conversion produced an invalid output header for ${settings.format}`);
   }
 
   const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';
-  if (isWebpBlob) {
-    if (output.type !== mimeType) throw new Error('Conversion produced an invalid WebP MIME type');
-    return output;
-  }
   return new Blob([output], { type: mimeType });
 }
 

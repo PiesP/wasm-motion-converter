@@ -107,17 +107,6 @@ function createRuntime(): ConversionRuntimeController {
   });
 }
 
-function validWebpBlob(): Blob {
-  return new Blob(
-    [new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])],
-    { type: 'image/webp' }
-  );
-}
-
-function paddedWebpBlob(): Blob {
-  return new Blob([validWebpBlob(), new Uint8Array(64)], { type: 'image/webp' });
-}
-
 beforeEach(() => {
   mocks.confirmation = undefined;
   mocks.appState = 'idle';
@@ -125,7 +114,11 @@ beforeEach(() => {
   mocks.runPipelineWithFallback
     .mockReset()
     .mockResolvedValue(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]).buffer);
-  mocks.runConversionPipeline.mockReset().mockResolvedValue(validWebpBlob());
+  mocks.runConversionPipeline
+    .mockReset()
+    .mockResolvedValue(
+      new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
+    );
   mocks.setConversionProgress.mockReset();
   mocks.readWholeFile.mockReset().mockRejectedValue(new Error('Full-file reads are forbidden'));
   mocks.setInputFile.mockClear();
@@ -213,9 +206,9 @@ describe('handleConvert conversion ownership', () => {
   it('keeps restart blocked until a cancelled WebP pipeline physically settles', async () => {
     mocks.settings = { ...mocks.settings, format: 'webp' };
     mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
-    let resolvePipeline: ((output: Blob) => void) | undefined;
+    let resolvePipeline: ((output: ArrayBuffer) => void) | undefined;
     mocks.runConversionPipeline.mockReturnValueOnce(
-      new Promise<Blob>((resolve) => {
+      new Promise<ArrayBuffer>((resolve) => {
         resolvePipeline = resolve;
       })
     );
@@ -229,7 +222,9 @@ describe('handleConvert conversion ownership', () => {
     expect(mocks.appState).toBe('cancelling');
     expect(mocks.runConversionPipeline).toHaveBeenCalledTimes(1);
 
-    resolvePipeline?.(validWebpBlob());
+    resolvePipeline?.(
+      new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
+    );
     await Promise.all([first, blockedRestart]);
     expect(mocks.appState).toBe('idle');
     expect(mocks.transitionToState).not.toHaveBeenCalledWith('done');
@@ -249,9 +244,9 @@ describe('handleConvert conversion ownership', () => {
     async (reason) => {
       mocks.settings = { ...mocks.settings, format: 'webp' };
       mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
-      let resolvePipeline: ((output: Blob) => void) | undefined;
+      let resolvePipeline: ((output: ArrayBuffer) => void) | undefined;
       mocks.runConversionPipeline.mockReturnValueOnce(
-        new Promise<Blob>((resolve) => {
+        new Promise<ArrayBuffer>((resolve) => {
           resolvePipeline = resolve;
         })
       );
@@ -272,7 +267,9 @@ describe('handleConvert conversion ownership', () => {
         });
       });
       try {
-        resolvePipeline?.(validWebpBlob());
+        resolvePipeline?.(
+          new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
+        );
         await conversion;
         expect(invalidatedAtBoundary).toBe(true);
         expect(mocks.setConversionResults).not.toHaveBeenCalled();
@@ -290,9 +287,9 @@ describe('handleConvert conversion ownership', () => {
   it('restores idle after a cancelled direct retry physically settles', async () => {
     mocks.appState = 'error';
     mocks.settings = { ...mocks.settings, format: 'webp' };
-    let resolvePipeline: ((output: Blob) => void) | undefined;
+    let resolvePipeline: ((output: ArrayBuffer) => void) | undefined;
     mocks.runConversionPipeline.mockReturnValueOnce(
-      new Promise<Blob>((resolve) => {
+      new Promise<ArrayBuffer>((resolve) => {
         resolvePipeline = resolve;
       })
     );
@@ -303,7 +300,9 @@ describe('handleConvert conversion ownership', () => {
     handleCancelConversion(runtime);
     expect(mocks.appState).toBe('cancelling');
 
-    resolvePipeline?.(validWebpBlob());
+    resolvePipeline?.(
+      new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
+    );
     await vi.waitFor(() => expect(mocks.appState).toBe('idle'));
     expect(runtime.beginConversionIntent()).not.toBeNull();
   });
@@ -426,12 +425,7 @@ describe('handleConvert conversion ownership', () => {
 
   it.each([
     ['gif', new Uint8Array([0x50, 0x4e, 0x47, 0x00]).buffer],
-    [
-      'webp',
-      new Blob([new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x50, 0x4e, 0x47, 0x00])], {
-        type: 'image/webp',
-      }),
-    ],
+    ['webp', new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x50, 0x4e, 0x47, 0x00]).buffer],
   ] as const)('rejects invalid %s output before publishing a result', async (format, output) => {
     mocks.settings = { ...mocks.settings, format };
     mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
@@ -451,111 +445,6 @@ describe('handleConvert conversion ownership', () => {
       expect.objectContaining({ outputBlob: expect.any(Blob) }),
     ]);
   });
-
-  it('publishes the same WebP Blob after reading only its header', async () => {
-    mocks.settings = { ...mocks.settings, format: 'webp' };
-    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
-    const output = paddedWebpBlob();
-    const slice = vi.spyOn(output, 'slice');
-    const fullRead = vi.spyOn(output, 'arrayBuffer');
-    mocks.runConversionPipeline.mockResolvedValueOnce(output);
-
-    await handleConvert(createRuntime(), localizedProgressT);
-
-    expect(mocks.setConversionResults.mock.lastCall?.[0]?.[0]?.outputBlob).toBe(output);
-    expect(slice).toHaveBeenCalledWith(0, 16);
-    expect(fullRead).not.toHaveBeenCalled();
-  });
-
-  it('retains each completed WebP Blob until the next result replaces it', async () => {
-    mocks.settings = { ...mocks.settings, format: 'webp' };
-    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
-    const first = validWebpBlob();
-    const second = paddedWebpBlob();
-    mocks.runConversionPipeline.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
-    const runtime = createRuntime();
-
-    await handleConvert(runtime, localizedProgressT);
-    const firstResult = mocks.setConversionResults.mock.lastCall?.[0]?.[0];
-    expect(firstResult?.outputBlob).toBe(first);
-    await handleConvert(runtime, localizedProgressT);
-    const secondResult = mocks.setConversionResults.mock.lastCall?.[0]?.[0];
-
-    expect(secondResult?.outputBlob).toBe(second);
-    expect(firstResult?.outputBlob).toBe(first);
-    expect(first.size).toBe(12);
-  });
-
-  it.each([
-    ['empty', new Blob([], { type: 'image/webp' }), 'empty output'],
-    ['wrong MIME', new Blob([validWebpBlob()], { type: 'image/png' }), 'invalid WebP MIME'],
-  ] as const)('rejects %s WebP Blob before publishing a result', async (_case, output, error) => {
-    mocks.settings = { ...mocks.settings, format: 'webp' };
-    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
-    mocks.runConversionPipeline.mockResolvedValueOnce(output);
-
-    await handleConvert(createRuntime(), localizedProgressT);
-
-    expect(mocks.setErrorMessage).toHaveBeenCalledWith(expect.stringContaining(error));
-    expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
-      expect.objectContaining({ outputBlob: expect.any(Blob) }),
-    ]);
-  });
-
-  it('rejects a WebP Blob beyond the unchanged output cap before reading it', async () => {
-    mocks.settings = { ...mocks.settings, format: 'webp' };
-    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
-    const output = validWebpBlob();
-    Object.defineProperty(output, 'size', { value: 96 * 1024 * 1024 + 1 });
-    const read = vi.spyOn(output, 'arrayBuffer');
-    mocks.runConversionPipeline.mockResolvedValueOnce(output);
-
-    await handleConvert(createRuntime(), localizedProgressT);
-
-    expect(mocks.setErrorMessage).toHaveBeenCalledWith(expect.stringContaining('byte limit'));
-    expect(read).not.toHaveBeenCalled();
-    expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
-      expect.objectContaining({ outputBlob: expect.any(Blob) }),
-    ]);
-  });
-
-  it.each(['cancellation', 'new-file revision'] as const)(
-    'discards WebP output invalidated by %s during header validation',
-    async (reason) => {
-      mocks.settings = { ...mocks.settings, format: 'webp' };
-      mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
-      const output = paddedWebpBlob();
-      const header = output.slice(0, 16);
-      let finishRead: ((value: ArrayBuffer) => void) | undefined;
-      vi.spyOn(output, 'slice').mockReturnValue(header);
-      const read = vi.spyOn(header, 'arrayBuffer').mockImplementation(
-        () =>
-          new Promise<ArrayBuffer>((resolve) => {
-            finishRead = resolve;
-          })
-      );
-      mocks.runConversionPipeline.mockResolvedValueOnce(output);
-      const runtime = createRuntime();
-
-      const conversion = handleConvert(runtime, localizedProgressT);
-      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
-      if (reason === 'cancellation') handleCancelConversion(runtime);
-      else runtime.invalidateActiveConversions();
-      finishRead?.(
-        new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
-      );
-      await conversion;
-
-      expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
-        expect.objectContaining({ outputBlob: expect.any(Blob) }),
-      ]);
-      expect(mocks.transitionToState).not.toHaveBeenCalledWith('done');
-      expect(mocks.focusElementUnlessUserIsEditing).not.toHaveBeenCalledWith(
-        '[data-testid="download-result-button"]'
-      );
-      runtime.dispose();
-    }
-  );
 
   it('publishes the encoded dimensions and requests guarded download focus', async () => {
     mocks.settings = { ...mocks.settings, scale: 0.5 };

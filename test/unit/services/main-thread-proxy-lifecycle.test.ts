@@ -722,23 +722,6 @@ describe('runPipelineViaWorker lifecycle', () => {
     expect(ThrowingWorker.instance?.terminate).toHaveBeenCalledOnce();
   });
 
-  it('materializes WebP Blob only at the legacy fallback ArrayBuffer boundary', async () => {
-    ThrowingWorker.workerError = new ErrorEvent('error', { message: 'Worker bootstrap failed' });
-    const output = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/webp' });
-    const read = vi.spyOn(output, 'arrayBuffer');
-    runConversionPipeline.mockResolvedValueOnce(output);
-
-    const result = await runPipelineWithFallback(
-      new Blob(['video']),
-      validDecoderConfig,
-      { ...validOptions, format: 'webp' },
-      vi.fn()
-    );
-
-    expect(Array.from(new Uint8Array(result))).toEqual([1, 2, 3]);
-    expect(read).toHaveBeenCalledOnce();
-  });
-
   it('rejects an oversized codec description before constructing a Worker', async () => {
     const config = {
       ...validDecoderConfig,

@@ -378,12 +378,6 @@ export async function runPipelineWithFallback(
       fallbackBlob
     );
 
-    const output = await runConversionPipeline(request, onProgress, signal);
-    if (output instanceof ArrayBuffer) return output;
-    // This generic fallback preserves the existing ArrayBuffer Worker API.
-    // Ordinary UI WebP conversions use the main pipeline directly and retain the Blob.
-    const buffer = await output.arrayBuffer();
-    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-    return buffer;
+    return runConversionPipeline(request, onProgress, signal);
   }
 }

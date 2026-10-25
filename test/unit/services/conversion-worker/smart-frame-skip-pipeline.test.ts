@@ -93,7 +93,7 @@ beforeEach(() => {
         encodedFrames: 1,
         emittedFrames: 1,
       });
-      return new Blob([new Uint8Array([1, 2, 3])], { type: 'image/webp' });
+      return new Uint8Array([1, 2, 3]);
     }
   );
 });
@@ -278,7 +278,6 @@ describe('worker pipeline smart frame skip forwarding', () => {
       emittedFrames: 1,
     });
     expect(result.profile?.encoderRoute).toBe('webp-wasm');
-    expect(Array.from(new Uint8Array(result.outputBuffer))).toEqual([1, 2, 3]);
   });
 
   it('transfers only output view bytes when the encoder returns spare capacity', async () => {

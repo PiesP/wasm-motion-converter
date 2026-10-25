@@ -238,10 +238,7 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
           selectedFrames = counts.selectedFrames ?? -1;
         },
       };
-      const bytes =
-        format === 'gif'
-          ? await encodeGif(demux, opts)
-          : new Uint8Array(await (await encodeWebp(demux, opts)).arrayBuffer());
+      const bytes = format === 'gif' ? await encodeGif(demux, opts) : await encodeWebp(demux, opts);
       expect(format === 'gif' ? gifHolds(bytes) : webpHolds(bytes)).toEqual([1000, 1000, 1000]);
       expect(selectedFrames).toBe(3);
     }
@@ -477,8 +474,7 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
             };
             let bytes: Uint8Array;
             if (format === 'gif') bytes = await encodeGif(demux, opts);
-            else if (format === 'webp')
-              bytes = new Uint8Array(await (await encodeWebp(demux, opts)).arrayBuffer());
+            else if (format === 'webp') bytes = await encodeWebp(demux, opts);
             else if (format === 'webp-canvas') {
               vi.stubGlobal(
                 'ImageData',
@@ -502,7 +498,7 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
                   }
                 }
               );
-              bytes = new Uint8Array(await (await encodeWebpOffscreen(demux, opts)).arrayBuffer());
+              bytes = await encodeWebpOffscreen(demux, opts);
             } else {
               const pool = {
                 activeWorkers: 1,
@@ -523,9 +519,7 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
                   onFrameAvailable: (pixels, duration, _index, handoff, timing) =>
                     encoder.submit(pixels, duration, handoff, timing),
                 });
-                bytes = new Uint8Array(
-                  await (await encoder.finish(result.presentationEndUs)).arrayBuffer()
-                );
+                bytes = await encoder.finish(result.presentationEndUs);
               } finally {
                 encoder.dispose();
               }

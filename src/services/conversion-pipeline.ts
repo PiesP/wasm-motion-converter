@@ -79,14 +79,11 @@ function toOwnedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.slice().buffer;
 }
 
-/** GIF uses an exact owned buffer; WebP keeps the completed immutable Blob. */
-export type MainThreadConversionOutput = ArrayBuffer | Blob;
-
 export async function runConversionPipeline(
   request: ConversionRequest,
   onProgress: ProgressCallback,
   signal?: AbortSignal
-): Promise<MainThreadConversionOutput> {
+): Promise<ArrayBuffer> {
   const pipelineStart = performance.now();
   const format = request.format;
   const logCtx = {
@@ -126,7 +123,7 @@ async function _runPipelineInner(
   signal: AbortSignal | undefined,
   pipelineStart: number,
   profiler: import('./conversion-profiler').ConversionProfiler | null
-): Promise<MainThreadConversionOutput> {
+): Promise<ArrayBuffer> {
   const throttled = createThrottledProgress(onProgress, PROGRESS_THROTTLE_MS);
   const profileOperation = profiler?.recordOperation;
   const profileCopyPath = profiler?.recordCopyPath;
@@ -242,7 +239,7 @@ async function _runPipelineInner(
     });
 
     // ── Decode + Encode Phase (10~90%) ──
-    let output: MainThreadConversionOutput | undefined;
+    let output: ArrayBuffer | undefined;
     let encodeResult: { outputBytes: number } | null = null;
 
     // Track frame times for FPS calculation
@@ -558,16 +555,18 @@ async function _runPipelineInner(
           { priority: 'user-blocking' }
         );
 
-        output = await scheduleTask(() => streamingEncoder.finish(presentationEndUs), {
-          priority: 'user-visible',
-        });
+        output = toOwnedArrayBuffer(
+          await scheduleTask(() => streamingEncoder.finish(presentationEndUs), {
+            priority: 'user-visible',
+          })
+        );
         recordCompletedFrameCounts({
           ...observedCounts,
           encodedFrames: streamingEncoder.encodedFrames,
           emittedFrames: streamingEncoder.emittedFrames,
         });
         encodeResult = {
-          outputBytes: output.size,
+          outputBytes: output.byteLength,
         };
       } else if (offscreenOk) {
         profiler?.setEncoderRoute('webp-serial-canvas');
@@ -610,9 +609,9 @@ async function _runPipelineInner(
             ),
           { priority: 'user-visible' }
         );
-        output = encoded;
+        output = toOwnedArrayBuffer(encoded);
         encodeResult = {
-          outputBytes: output.size,
+          outputBytes: output.byteLength,
         };
       } else {
         profiler?.setEncoderRoute('webp-wasm');
@@ -651,9 +650,9 @@ async function _runPipelineInner(
             ),
           { priority: 'user-visible' }
         );
-        output = encoded;
+        output = toOwnedArrayBuffer(encoded);
         encodeResult = {
-          outputBytes: output.size,
+          outputBytes: output.byteLength,
         };
       }
     }
@@ -716,7 +715,7 @@ async function _runPipelineInner(
             quality: request.quality,
             scale: request.scale,
             totalFrames: demuxResult.totalFrames,
-            outputBytes: output instanceof Blob ? output.size : output!.byteLength,
+            outputBytes: output!.byteLength,
             duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
             peakMemoryMB: report.heapPeakMB,
             dominantStage: report.dominantStage,
@@ -731,7 +730,7 @@ async function _runPipelineInner(
         quality: request.quality,
         scale: request.scale,
         totalFrames: demuxResult.totalFrames,
-        outputBytes: output instanceof Blob ? output.size : output!.byteLength,
+        outputBytes: output!.byteLength,
         duration: `${(totalElapsedMs / 1000).toFixed(1)}s`,
       });
     }

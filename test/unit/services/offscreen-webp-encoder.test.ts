@@ -94,7 +94,7 @@ describe('OffscreenCanvas WebP RGBA ownership', () => {
           pressureCadenceRatio: 1.4,
         }
       )
-    ).resolves.toBeInstanceOf(Blob);
+    ).resolves.toBeInstanceOf(Uint8Array);
 
     expect(mocks.pixelFormat).toBe('rgba');
     expect(mocks.decodeOptions).toEqual(
