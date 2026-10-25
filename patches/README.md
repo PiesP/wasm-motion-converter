@@ -2,7 +2,7 @@
 
 ## MediaBunny memory limits
 
-`mediabunny@1.62.0.patch` applies to the exact published 1.62.0 package. The
+`mediabunny@1.62.1.patch` applies to the exact published 1.62.1 package. The
 application sets finite limits in `src/utils/mediabunny-utils.ts`; the patch
 enforces them in the imported ESM modules and mirrors the changes in the shipped
 TypeScript source. It bounds contiguous reads, encoded packets, retained parser
@@ -22,8 +22,10 @@ test sets its 256-byte Reader limit before format detection and checks reads at
 and beyond that boundary; changing the Input field afterward would not update
 the Reader.
 
-The 1.62.0 port preserves upstream sample-table clamping and lazy Matroska block
-decoding while retaining the same metadata, packet, and memory limits. The
+The 1.62.1 port preserves upstream backwards fragment/cluster lookup and
+position-cache recovery for fragments without a key frame, while retaining
+sample-table clamping, lazy Matroska block decoding, and the same metadata,
+packet, and memory limits. The
 installed-parser tests in
 `test/unit/utils/mediabunny-memory-limits.test.ts` and
 `test/unit/utils/mediabunny-mp4-metadata-limits.test.ts` exercise bounded
