@@ -40,7 +40,7 @@ export async function encodeWebp(
   opts: BaseEncoderOptions,
   onProgress?: ProgressCallback,
   signal?: AbortSignal
-): Promise<Uint8Array> {
+): Promise<Blob> {
   const srcW = opts.width;
   const srcH = opts.height;
   const w = Math.max(1, Math.floor(srcW * opts.scale));
@@ -184,7 +184,7 @@ export async function encodeWebp(
     keptFrames: muxer.frames,
     totalFrames: demux.totalFrames,
     frameDecimation,
-    outputBytes: result.length,
+    outputBytes: result.size,
     fps: Math.round(muxer.frames / totalElapsed),
     duration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
@@ -195,7 +195,7 @@ export async function encodeWebp(
   });
   logger.info('encoders', '  │  └─ WebP: encode finished', {
     keptFrames: muxer.frames,
-    outputBytes: result.length,
+    outputBytes: result.size,
     duration: `${totalElapsed.toFixed(2)}s`,
     frameDecimation,
     skippedByDecimation,

@@ -2137,7 +2137,7 @@ describe('decoder-service', () => {
       pending.get(1)?.({ id: 1, bitstream: new Uint8Array(8) });
       pending.get(0)?.({ id: 0, bitstream: new Uint8Array(8) });
       await decoding;
-      await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
+      await expect(encoder.finish()).resolves.toBeInstanceOf(Blob);
       expect(budget.usage.sourceBytes).toBe(0);
       expect(budget.usage.targetBytes).toBe(0);
       expect(budget.usage.resultBytes).toBe(0);
@@ -2329,7 +2329,7 @@ describe('decoder-service', () => {
       const result = await decoding;
       expect(result.totalInputFrames).toBe(outputCount);
       expect(maxActiveTasks).toBe(1);
-      await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
+      await expect(encoder.finish()).resolves.toBeInstanceOf(Blob);
       expect(budget.usage.sourceBytes).toBe(0);
       expect(budget.usage.targetBytes).toBe(0);
       expect(budget.usage.resultBytes).toBe(0);

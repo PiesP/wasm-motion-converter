@@ -58,7 +58,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
     await encoder.submit(new Uint8Array(16), 100);
     const profile = new Uint8Array([1, 2, 3]);
     mocks.pending.get(0)?.resolve({ id: 0, bitstream: new Uint8Array(8), iccProfile: profile });
-    const output = await encoder.finish();
+    const output = new Uint8Array(await (await encoder.finish()).arrayBuffer());
     expect(output[20]).toBe(0x22);
     expect(output.subarray(38, 41)).toEqual(profile);
     expect(String.fromCharCode(...output.subarray(42, 46))).toBe('ANIM');
@@ -75,7 +75,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
     encoder.padLastFrame(75);
     mocks.pending.get(1)?.resolve({ id: 1, bitstream: new Uint8Array(8) });
     mocks.pending.get(0)?.resolve({ id: 0, bitstream: new Uint8Array(8) });
-    const output = await encoder.finish();
+    const output = new Uint8Array(await (await encoder.finish()).arrayBuffer());
     const durations = readFrameDurations(output);
 
     expect(durations).toEqual([100, 275]);
@@ -139,7 +139,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
     mocks.pending.get(1)?.resolve({ id: 1, bitstream: new Uint8Array(8) });
     await secondSubmission;
 
-    await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
+    await expect(encoder.finish()).resolves.toBeInstanceOf(Blob);
   });
 
   it('bounds sequentially awaited submissions and retained out-of-order result backing', async () => {
@@ -189,7 +189,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
     expect(budget.usage.resultBytes).toBe(0);
 
     mocks.pending.get(4)?.resolve({ id: 4, bitstream: new Uint8Array(8) });
-    await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
+    await expect(encoder.finish()).resolves.toBeInstanceOf(Blob);
     encoder.dispose();
     budget.dispose();
     expect(budget.usage.totalBytes).toBe(0);
@@ -227,7 +227,7 @@ describe('createStreamingWebpEncoder tail timing', () => {
       mocks.pending.get(index)?.resolve({ id: index, bitstream: new Uint8Array(8) });
     }
     await Promise.all(submissions);
-    await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
+    await expect(encoder.finish()).resolves.toBeInstanceOf(Blob);
 
     encoder.dispose();
     budget.dispose();

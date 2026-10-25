@@ -48,7 +48,7 @@ export interface StreamingWebpEncoder {
     memoryHandoff?: FrameMemoryHandoff,
     timing?: { startUs: number; endUs: number }
   ) => Promise<void>;
-  finish: (presentationEndUs?: number) => Promise<Uint8Array>;
+  finish: (presentationEndUs?: number) => Promise<Blob>;
   /** Signals the first asynchronous worker failure to the decoder immediately. */
   failureSignal: AbortSignal;
   /** Pad the last frame's duration (for tail-accumulated durations from decimation/smart-skip). */
@@ -325,7 +325,7 @@ export function createStreamingWebpEncoder(
     }
   };
 
-  const finish = async (presentationEndUs?: number): Promise<Uint8Array> => {
+  const finish = async (presentationEndUs?: number): Promise<Blob> => {
     await awaitWithCancellation(Promise.allSettled([...inFlight]));
 
     if (firstEncodeError) {

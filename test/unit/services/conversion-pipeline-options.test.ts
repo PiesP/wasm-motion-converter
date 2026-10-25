@@ -88,8 +88,12 @@ beforeEach(() => {
   mocks.demuxVideo.mockReset().mockResolvedValue(demuxResult);
   mocks.createWorkerPool.mockReset().mockReturnValue(null);
   mocks.encodeGif.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
-  mocks.encodeWebp.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
-  mocks.encodeWebpOffscreen.mockReset().mockResolvedValue(new Uint8Array([1, 2, 3]));
+  mocks.encodeWebp
+    .mockReset()
+    .mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/webp' }));
+  mocks.encodeWebpOffscreen
+    .mockReset()
+    .mockResolvedValue(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/webp' }));
   mocks.disposeWorkerPool.mockReset();
 });
 
@@ -345,17 +349,19 @@ describe('main conversion pipeline encoder options', () => {
 
     const result = await runConversionPipeline(baseRequest, vi.fn());
 
+    expect(result).toBeInstanceOf(ArrayBuffer);
+    if (!(result instanceof ArrayBuffer)) throw new Error('Expected GIF buffer');
     expect(Array.from(new Uint8Array(result))).toEqual([1, 2, 3]);
     expect(result).not.toBe(backing.buffer);
   });
 
-  it('reuses a WebP encoder buffer when its view covers the entire allocation', async () => {
-    const encoded = new Uint8Array([1, 2, 3]);
+  it('preserves the completed WebP Blob identity', async () => {
+    const encoded = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/webp' });
     mocks.encodeWebp.mockResolvedValue(encoded);
 
     const result = await runConversionPipeline({ ...baseRequest, format: 'webp' }, vi.fn());
 
-    expect(result).toBe(encoded.buffer);
+    expect(result).toBe(encoded);
   });
 
   it('forwards smartFrameSkip to the wasm WebP fallback', async () => {

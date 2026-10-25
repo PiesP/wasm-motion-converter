@@ -421,10 +421,10 @@ export class StreamingWebpMuxer {
   }
 
   /**
-   * Finalize the container and return the complete WebP file.
-   * Patches the RIFF size, then records concatenation and the final output copy.
+   * Finalize the container as an owned WebP Blob.
+   * Patches the RIFF size before Blob construction and releases the source chunks.
    */
-  async finish(signal?: AbortSignal): Promise<Uint8Array> {
+  async finish(signal?: AbortSignal): Promise<Blob> {
     if (this.pending) throw new Error('WebP presentation has no endpoint');
     if (this.frameCount === 0) {
       throw new Error('No frames added to muxer');
@@ -439,19 +439,15 @@ export class StreamingWebpMuxer {
     const view = new DataView(header.buffer, header.byteOffset, header.length);
     view.setUint32(4, riffSize, true);
 
-    // Concatenate the owned chunks without assuming a browser-specific copy strategy.
+    // Construct an immutable Blob without assuming a browser-specific copy strategy.
     const finalizeStart = this.profileOperation ? performance.now() : null;
     const blob = new Blob(this.chunks, { type: 'image/webp' });
-    // The Blob owns the bytes now; the final allocation guard accounts for both forms.
+    // The Blob owns the bytes now; keep the existing conservative output cap.
     this.chunks.length = 0;
     if (finalizeStart !== null)
       this.profileOperation?.('muxFinalization', performance.now() - finalizeStart);
-    const copyStart = this.profileOperation ? performance.now() : null;
-    const output = new Uint8Array(await blob.arrayBuffer());
-    if (copyStart !== null) this.profileOperation?.('outputCopy', performance.now() - copyStart);
     if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
-
-    return output;
+    return blob;
   }
 
   /**

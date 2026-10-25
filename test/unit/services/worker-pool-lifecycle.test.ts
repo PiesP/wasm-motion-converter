@@ -70,7 +70,7 @@ describe('WebpWorkerPool buffer ownership', () => {
           data: { id: 1, bitstream: new Uint8Array(8) },
         })
       );
-      await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
+      await expect(encoder.finish()).resolves.toBeInstanceOf(Blob);
     } finally {
       pool.terminate();
       encoder.dispose();

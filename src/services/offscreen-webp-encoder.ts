@@ -56,7 +56,7 @@ export async function encodeWebpOffscreen(
   opts: BaseEncoderOptions,
   onProgress?: ProgressCallback,
   signal?: AbortSignal
-): Promise<Uint8Array> {
+): Promise<Blob> {
   const srcW = opts.width;
   const srcH = opts.height;
   const w = Math.max(1, Math.floor(srcW * opts.scale));
@@ -221,7 +221,7 @@ export async function encodeWebpOffscreen(
     keptFrames: muxer.frames,
     totalFrames: demux.totalFrames,
     frameDecimation,
-    outputBytes: result.length,
+    outputBytes: result.size,
     fps: Math.round(muxer.frames / totalElapsed),
     duration: `${totalElapsed.toFixed(2)}s`,
     resolution: `${w}×${h}`,
@@ -232,7 +232,7 @@ export async function encodeWebpOffscreen(
   });
   logger.info('encoders', '  │  └─ WebP: OffscreenCanvas encode finished', {
     keptFrames: muxer.frames,
-    outputBytes: result.length,
+    outputBytes: result.size,
     duration: `${totalElapsed.toFixed(2)}s`,
     frameDecimation,
     skippedByDecimation: totalSkipped,

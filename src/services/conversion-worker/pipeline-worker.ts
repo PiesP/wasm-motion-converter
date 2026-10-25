@@ -436,7 +436,15 @@ export async function runWorkerPipeline(
           () => undefined,
           signal
         );
-        output = toExactOutputBuffer(webpResult);
+        // The Worker completion wire transfers an ArrayBuffer. Only this legacy
+        // Worker route materializes the owned WebP Blob; the UI route keeps it.
+        assertMemoryBudget(webpResult.size * 2);
+        const copyStart = profileOperation ? performance.now() : null;
+        output = await webpResult.arrayBuffer();
+        if (copyStart !== null) {
+          profileOperation?.('outputCopy', Math.max(0, performance.now() - copyStart));
+        }
+        if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
       }
     }
 
