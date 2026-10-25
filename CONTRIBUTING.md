@@ -303,6 +303,17 @@ when used as acceptance evidence. Windows profile inputs and the task-owned
 old-to-new cache/public scenarios are documented in
 [Windows validation](./validation/windows/README.md).
 
+The usual production-verification artifact retains bounded first-GIF and forced
+WebP/WASM observations alongside the initial-JS timing. Each successful attempt
+keeps browser/cache/Service Worker conditions, source-bound file lengths/hashes,
+encoded/decoded/transfer sizes and converted output bytes. Request start times
+separate initial requests from requests starting after the pre-upload boundary;
+these disjoint groups must not be added to an already cumulative total. Page
+Resource Timing does not cover all worker-internal requests. Positive transfer
+bytes are observed lower bounds; zero entries may be cached or unavailable,
+missing response encodings stay unknown, and runtime memory is not measured.
+Compare runs only when source/build inputs and delivery conditions support it.
+
 Service-worker assets use one bounded app-owned cache across this update.
 Previously cached entries are body-validated once during admission migration;
 admitted hits need no fetch, clone, write or FIFO enumeration. A removed lazy
