@@ -1,5 +1,34 @@
 # Application update acceptance inputs
 
+## Output finalization comparison
+
+For issue #397, generate the task-owned, ignored 12-second 1280×720 input once:
+
+```sh
+ffmpeg -f lavfi -i 'testsrc2=size=1280x720:rate=20:duration=12' -an -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -movflags +faststart -y validation/windows/inputs/output-finalization-motion.mp4
+sha256sum validation/windows/inputs/output-finalization-motion.mp4
+```
+
+The expected input SHA-256 is
+`6133c0de0831fe6ef3d48e9d3f9aec288de4a6cbd1741a9d0c2f5372903fcbec`.
+Keep this exact file for both builds. After preserving any existing selector files,
+put `{"scenario":"output-finalization"}` in the ignored
+`validation/windows/inputs/output-finalization.json`; no other focused selector
+may be present in the packaged input directory. Build the clean source with
+`pnpm build:ci`, then run the standard installed-Edge desktop browser profile
+with a new external evidence directory. The profile checks the production
+distribution inventory and both input digests before serving the app. It
+records three cold and three same-document warm WebP conversions per workload,
+streamed download digests, Blob API observations, renderer heap point samples,
+and bounded decoded frame hashes. Partial samples are saved on failure.
+
+The observer records explicit WebP `Blob.arrayBuffer()` calls and the interval
+from the first output-sized Blob construction to the product's Blob URL. It
+cannot see browser-internal Blob copies, Worker memory, native/GPU allocations,
+or process peaks. The private campaign plan fixes workloads and adoption
+criteria before the baseline. Do not treat this interval as the DEV profiler's
+post-mux `finalizing` span.
+
 ## Service-worker migration handoff
 
 Place a complete clean baseline distribution at the ignored

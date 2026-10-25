@@ -16,6 +16,7 @@
     "public/test-video-contract-rotate-90.mp4",
     "validation/windows/output-contract.json",
     "validation/windows/output-contract.ts",
+    "validation/windows/output-finalization.ts",
     "validation/windows/mp4-budget-fixture.ts",
     "public/test-video-contract-bframes.mp4",
     "public/test-video-contract-fragmented-no-index.mp4",
