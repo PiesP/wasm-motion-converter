@@ -31,19 +31,10 @@ type BlobEvent = {
   startMs: number;
   endMs: number;
 };
-type FrameCounter = {
-  atMs: number;
-  current: number;
-  total: number;
-  output: number;
-  outputExplicit: boolean;
-};
 type Observer = {
   clickMs: number | null;
   events: BlobEvent[];
-  frameCounters: FrameCounter[];
   reset: () => void;
-  disconnect: () => void;
 };
 
 type WebpRoute = 'webp-parallel-canvas' | 'webp-serial-canvas' | 'webp-wasm';
@@ -70,7 +61,10 @@ function observeProductLogs(page: Page) {
     const line = message.text();
     const route = classifyWebpRoute(line);
     if (route) observation.routes.push(route);
-    if (line.includes('Critical memory pressure, dynamic frame skip'))
+    if (
+      message.type() === 'warning' &&
+      line.includes('Critical memory pressure, dynamic frame skip')
+    )
       observation.criticalSkipWarnings++;
   });
   return observation;
@@ -81,42 +75,12 @@ export function installOutputFinalizationObserver() {
   const observer: Observer = {
     clickMs: null,
     events: [],
-    frameCounters: [],
     reset() {
       this.clickMs = null;
       this.events = [];
-      this.frameCounters = [];
     },
-    disconnect() {},
   };
   Reflect.set(globalThis, '__wmcOutputFinalizationObserver', observer);
-  const progressObserver = new MutationObserver(() => {
-    const diagnostic = document.querySelector('[data-testid="progress-diagnostics"]');
-    const match = /Frame\s+(\d+)\/(\d+)(?:\s+\((\d+)\s+out\))?/.exec(diagnostic?.textContent ?? '');
-    if (!match) return;
-    const current = Number(match[1]);
-    const total = Number(match[2]);
-    const outputExplicit = match[3] !== undefined;
-    const output = outputExplicit ? Number(match[3]) : total;
-    if (
-      !Number.isSafeInteger(current) ||
-      !Number.isSafeInteger(total) ||
-      !Number.isSafeInteger(output)
-    )
-      return;
-    const previous = observer.frameCounters.at(-1);
-    if (previous?.current === current && previous.total === total && previous.output === output)
-      return;
-    observer.frameCounters.push({
-      atMs: performance.now(),
-      current,
-      total,
-      output,
-      outputExplicit,
-    });
-  });
-  progressObserver.observe(document, { characterData: true, childList: true, subtree: true });
-  observer.disconnect = () => progressObserver.disconnect();
   const NativeBlob = Blob;
   globalThis.Blob = new Proxy(NativeBlob, {
     construct(target, parts, newTarget) {
@@ -346,7 +310,6 @@ async function measure(
     return {
       clickMs: probe.clickMs,
       events: [...probe.events],
-      frameCounters: [...probe.frameCounters],
       timeOrigin: performance.timeOrigin,
     };
   });
@@ -359,9 +322,6 @@ async function measure(
   const published = outputEvents.findLast((event) => event.kind === 'url');
   assert(created && published && observations.clickMs !== null, 'Missing output observer boundary');
   const fullReads = outputEvents.filter((event) => event.kind === 'read');
-  const terminalCounter = observations.frameCounters.findLast(
-    (counter) => counter.current === counter.total && counter.total > 0
-  );
   const decoded = await inspectOutput(page, href, workload);
   const result = {
     workload: workload.id,
@@ -386,23 +346,17 @@ async function measure(
     productRoute: productLogs.routes.length === 1 ? productLogs.routes[0] : null,
     productRouteObservations: [...productLogs.routes],
     criticalPressureSkipWarnings: productLogs.criticalSkipWarnings,
-    terminalFrameCounter: terminalCounter ?? null,
-    terminalCounterObserved: terminalCounter !== undefined,
-    sourceFrameGap:
-      terminalCounter === undefined ? null : terminalCounter.current - terminalCounter.output,
+    terminalFrameCounter: null,
+    terminalCounterObserved: false,
+    terminalFrameCounterReason: 'compact-progress-does-not-render-frame-count',
+    sourceFrameGap: null,
+    skipObservationLimitation: 'sustained-info-suppressed-in-production',
     rendererHeapBefore: heapBefore,
     rendererHeapAfter: heapAfter,
     workerMemory: null,
     nativeGpuMemory: null,
     decoded,
   };
-  if (terminalCounter) {
-    assert.equal(
-      terminalCounter.output,
-      decoded.frameCount,
-      'UI output count differs from decoder'
-    );
-  }
   if (workload.id === 'small') assert(output.bytes < 1024 * 1024, 'Small output exceeded 1 MiB');
   return result;
 }
@@ -485,7 +439,6 @@ export async function exerciseOutputFinalization(
         (sample) => sample.output.bytes >= 8 * 1024 * 1024
       ),
       routeObserved: samples.every((sample) => sample.productRoute !== null),
-      terminalFrameCounterObserved: samples.every((sample) => sample.terminalCounterObserved),
     };
     return {
       scenario: OUTPUT_FINALIZATION_SCENARIO,

@@ -29,13 +29,11 @@ test('output observer preserves native File admission and records WebP construct
   const originalFile = globalThis.File;
   const originalArrayBuffer = NativeBlob.prototype.arrayBuffer;
   const originalCreateObjectURL = URL.createObjectURL;
-  let observer: ReturnType<typeof installOutputFinalizationObserver> | undefined;
-  let diagnostic: HTMLElement | undefined;
   try {
     globalThis.Blob = NativeBlob as typeof Blob;
     globalThis.File = NativeFile as typeof File;
     URL.createObjectURL = vi.fn(() => 'blob:observed');
-    observer = installOutputFinalizationObserver();
+    const observer = installOutputFinalizationObserver();
 
     const file = new File(['video'], 'input.mp4', { type: 'video/mp4' });
     expect(file instanceof Blob).toBe(true);
@@ -51,31 +49,7 @@ test('output observer preserves native File admission and records WebP construct
       ['read', 4],
       ['url', 4],
     ]);
-
-    diagnostic = document.createElement('details');
-    diagnostic.dataset.testid = 'progress-diagnostics';
-    document.body.append(diagnostic);
-    diagnostic.textContent = 'Frame 240/240 (225 out)';
-    await Promise.resolve();
-    expect(observer.frameCounters.at(-1)).toMatchObject({
-      current: 240,
-      total: 240,
-      output: 225,
-      outputExplicit: true,
-    });
-    observer.reset();
-    diagnostic.textContent = 'Frame 240/240';
-    await Promise.resolve();
-    expect(observer.frameCounters).toHaveLength(1);
-    expect(observer.frameCounters[0]).toMatchObject({
-      current: 240,
-      total: 240,
-      output: 240,
-      outputExplicit: false,
-    });
   } finally {
-    observer?.disconnect();
-    diagnostic?.remove();
     globalThis.Blob = originalBlob;
     globalThis.File = originalFile;
     NativeBlob.prototype.arrayBuffer = originalArrayBuffer;
