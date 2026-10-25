@@ -10,8 +10,11 @@ const MAX_OUTPUT_BYTES = 96 * 1024 * 1024;
 const CONVERSION_TIMEOUT_MS = 180_000;
 
 export const OUTPUT_FINALIZATION_SCENARIO = 'output-finalization';
+export const OUTPUT_FINALIZATION_V2_SCENARIO = 'output-finalization-v2';
 export const OUTPUT_FINALIZATION_FIXTURE =
   'validation/windows/inputs/output-finalization-motion.mp4';
+export const OUTPUT_FINALIZATION_V2_FIXTURE =
+  'validation/windows/inputs/output-finalization-noisy-1024x576.mp4';
 
 type Workload = {
   id: 'small' | 'large';
@@ -19,6 +22,8 @@ type Workload = {
   inputSha256: string;
   quality: 'low' | 'high';
   scale: '0.5' | '1';
+  outputWidth?: number;
+  outputHeight?: number;
 };
 type BlobEvent = {
   kind: 'construct' | 'read' | 'url';
@@ -26,19 +31,92 @@ type BlobEvent = {
   startMs: number;
   endMs: number;
 };
-type Observer = { clickMs: number | null; events: BlobEvent[]; reset: () => void };
+type FrameCounter = {
+  atMs: number;
+  current: number;
+  total: number;
+  output: number;
+  outputExplicit: boolean;
+};
+type Observer = {
+  clickMs: number | null;
+  events: BlobEvent[];
+  frameCounters: FrameCounter[];
+  reset: () => void;
+  disconnect: () => void;
+};
+
+type WebpRoute = 'webp-parallel-canvas' | 'webp-serial-canvas' | 'webp-wasm';
+
+export function classifyWebpRoute(line: string): WebpRoute | null {
+  if (line.includes('Branch: WebP encoder (parallel Worker pool + OffscreenCanvas)'))
+    return 'webp-parallel-canvas';
+  if (line.includes('Branch: WebP encoder (OffscreenCanvas convertToBlob + mux)'))
+    return 'webp-serial-canvas';
+  if (line.includes('Branch: WebP encoder (streaming encodeRGB + mux)')) return 'webp-wasm';
+  return null;
+}
+
+function observeProductLogs(page: Page) {
+  const observation = {
+    routes: [] as WebpRoute[],
+    criticalSkipWarnings: 0,
+    reset() {
+      this.routes = [];
+      this.criticalSkipWarnings = 0;
+    },
+  };
+  page.on('console', (message) => {
+    const line = message.text();
+    const route = classifyWebpRoute(line);
+    if (route) observation.routes.push(route);
+    if (line.includes('Critical memory pressure, dynamic frame skip'))
+      observation.criticalSkipWarnings++;
+  });
+  return observation;
+}
 
 /** Installed before the built app; exported so the native File boundary can be tested directly. */
 export function installOutputFinalizationObserver() {
   const observer: Observer = {
     clickMs: null,
     events: [],
+    frameCounters: [],
     reset() {
       this.clickMs = null;
       this.events = [];
+      this.frameCounters = [];
     },
+    disconnect() {},
   };
   Reflect.set(globalThis, '__wmcOutputFinalizationObserver', observer);
+  const progressObserver = new MutationObserver(() => {
+    const diagnostic = document.querySelector('[data-testid="progress-diagnostics"]');
+    const match = /Frame\s+(\d+)\/(\d+)(?:\s+\((\d+)\s+out\))?/.exec(diagnostic?.textContent ?? '');
+    if (!match) return;
+    const current = Number(match[1]);
+    const total = Number(match[2]);
+    const outputExplicit = match[3] !== undefined;
+    const output = outputExplicit ? Number(match[3]) : total;
+    if (
+      !Number.isSafeInteger(current) ||
+      !Number.isSafeInteger(total) ||
+      !Number.isSafeInteger(output)
+    )
+      return;
+    const previous = observer.frameCounters.at(-1);
+    if (previous?.current === current && previous.total === total && previous.output === output)
+      return;
+    observer.frameCounters.push({
+      atMs: performance.now(),
+      current,
+      total,
+      output,
+      outputExplicit,
+    });
+  });
+  progressObserver.observe(document, { characterData: true, childList: true, subtree: true });
+  observer.disconnect = () => progressObserver.disconnect();
   const NativeBlob = Blob;
   globalThis.Blob = new Proxy(NativeBlob, {
     construct(target, parts, newTarget) {
@@ -140,7 +218,7 @@ async function downloadIdentity(page: Page) {
 
 async function inspectOutput(page: Page, href: string, workload: Workload) {
   return page.evaluate(
-    async ({ url, id }) => {
+    async ({ url, id, expectedWidth, expectedHeight }) => {
       if (typeof ImageDecoder !== 'function') throw new Error('ImageDecoder unavailable');
       const response = await fetch(url);
       if (!response.ok || !response.body) throw new Error('Retained Blob stream unavailable');
@@ -166,8 +244,6 @@ async function inspectOutput(page: Page, href: string, workload: Workload) {
           const decoded = await decoder.decode({ frameIndex, completeFramesOnly: true });
           const image = decoded.image;
           try {
-            const expectedWidth = id === 'large' ? 1280 : 80;
-            const expectedHeight = id === 'large' ? 720 : 45;
             if (
               !decoded.complete ||
               image.displayWidth !== expectedWidth ||
@@ -228,14 +304,26 @@ async function inspectOutput(page: Page, href: string, workload: Workload) {
         decoder.close();
       }
     },
-    { url: href, id: workload.id }
+    {
+      url: href,
+      id: workload.id,
+      expectedWidth: workload.outputWidth ?? (workload.id === 'large' ? 1280 : 80),
+      expectedHeight: workload.outputHeight ?? (workload.id === 'large' ? 720 : 45),
+    }
   );
 }
 
-async function measure(page: Page, workload: Workload, condition: 'cold' | 'warm', index: number) {
+async function measure(
+  page: Page,
+  productLogs: ReturnType<typeof observeProductLogs>,
+  workload: Workload,
+  condition: 'cold' | 'warm',
+  index: number
+) {
   await page.evaluate(() =>
     (Reflect.get(globalThis, '__wmcOutputFinalizationObserver') as Observer).reset()
   );
+  productLogs.reset();
   const heapBefore = await heapPoint(page);
   const started = Date.now();
   await page.locator('[data-testid="convert-button"]').click();
@@ -258,6 +346,7 @@ async function measure(page: Page, workload: Workload, condition: 'cold' | 'warm
     return {
       clickMs: probe.clickMs,
       events: [...probe.events],
+      frameCounters: [...probe.frameCounters],
       timeOrigin: performance.timeOrigin,
     };
   });
@@ -270,6 +359,10 @@ async function measure(page: Page, workload: Workload, condition: 'cold' | 'warm
   const published = outputEvents.findLast((event) => event.kind === 'url');
   assert(created && published && observations.clickMs !== null, 'Missing output observer boundary');
   const fullReads = outputEvents.filter((event) => event.kind === 'read');
+  const terminalCounter = observations.frameCounters.findLast(
+    (counter) => counter.current === counter.total && counter.total > 0
+  );
+  const decoded = await inspectOutput(page, href, workload);
   const result = {
     workload: workload.id,
     condition,
@@ -290,17 +383,26 @@ async function measure(page: Page, workload: Workload, condition: 'cold' | 'warm
     fullReadBytes: fullReads.reduce((sum, event) => sum + event.size, 0),
     fullReadElapsedMs: fullReads.map((event) => event.endMs - event.startMs),
     events: observations.events,
+    productRoute: productLogs.routes.length === 1 ? productLogs.routes[0] : null,
+    productRouteObservations: [...productLogs.routes],
+    criticalPressureSkipWarnings: productLogs.criticalSkipWarnings,
+    terminalFrameCounter: terminalCounter ?? null,
+    terminalCounterObserved: terminalCounter !== undefined,
+    sourceFrameGap:
+      terminalCounter === undefined ? null : terminalCounter.current - terminalCounter.output,
     rendererHeapBefore: heapBefore,
     rendererHeapAfter: heapAfter,
     workerMemory: null,
     nativeGpuMemory: null,
-    decoded:
-      workload.id === 'small' ||
-      (condition === 'cold' && index === 0) ||
-      (condition === 'warm' && index === 2)
-        ? await inspectOutput(page, href, workload)
-        : null,
+    decoded,
   };
+  if (terminalCounter) {
+    assert.equal(
+      terminalCounter.output,
+      decoded.frameCount,
+      'UI output count differs from decoder'
+    );
+  }
   if (workload.id === 'small') assert(output.bytes < 1024 * 1024, 'Small output exceeded 1 MiB');
   return result;
 }
@@ -314,7 +416,12 @@ export async function exerciseOutputFinalization(
   const samples: Awaited<ReturnType<typeof measure>>[] = [];
   const retained = new Map<
     string,
-    { page: Page; close: () => Promise<void>; timeOrigin: number }
+    {
+      page: Page;
+      logs: ReturnType<typeof observeProductLogs>;
+      close: () => Promise<void>;
+      timeOrigin: number;
+    }
   >();
   try {
     for (let index = 0; index < 3; index++) {
@@ -326,6 +433,7 @@ export async function exerciseOutputFinalization(
           serviceWorkers: 'block',
         });
         const page = await context.newPage();
+        const logs = observeProductLogs(page);
         try {
           await installObserver(page);
           const response = await page.goto(url);
@@ -340,12 +448,13 @@ export async function exerciseOutputFinalization(
           await choose(page, 'quality', workload.quality);
           await choose(page, 'scale', workload.scale);
           await choose(page, 'smart-frame-skip', 'off');
-          const sample = await measure(page, workload, 'cold', index);
+          const sample = await measure(page, logs, workload, 'cold', index);
           samples.push(sample);
           await onSample(sample);
           if (index === 2)
             retained.set(workload.id, {
               page,
+              logs,
               close: () => context.close(),
               timeOrigin: await page.evaluate(() => performance.timeOrigin),
             });
@@ -361,7 +470,7 @@ export async function exerciseOutputFinalization(
       for (const workload of ordered) {
         const previous = retained.get(workload.id);
         assert(previous);
-        const sample = await measure(previous.page, workload, 'warm', index);
+        const sample = await measure(previous.page, previous.logs, workload, 'warm', index);
         samples.push(sample);
         await onSample(sample);
         assert.equal(
@@ -370,10 +479,19 @@ export async function exerciseOutputFinalization(
         );
       }
     }
+    const largeSamples = samples.filter((sample) => sample.workload === 'large');
+    const qualification = {
+      largeOutputAtLeast8MiB: largeSamples.every(
+        (sample) => sample.output.bytes >= 8 * 1024 * 1024
+      ),
+      routeObserved: samples.every((sample) => sample.productRoute !== null),
+      terminalFrameCounterObserved: samples.every((sample) => sample.terminalCounterObserved),
+    };
     return {
       scenario: OUTPUT_FINALIZATION_SCENARIO,
-      status: 'passed',
+      status: Object.values(qualification).every(Boolean) ? 'passed' : 'incomplete',
       browserVersion: browser.version(),
+      qualification,
       samples,
     };
   } finally {

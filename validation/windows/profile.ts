@@ -46,6 +46,8 @@ import {
   exerciseOutputFinalization,
   OUTPUT_FINALIZATION_FIXTURE,
   OUTPUT_FINALIZATION_SCENARIO,
+  OUTPUT_FINALIZATION_V2_FIXTURE,
+  OUTPUT_FINALIZATION_V2_SCENARIO,
 } from './output-finalization.ts';
 import { exercisePreviewRetry, exerciseSelectionPreviewBaseline } from './selection-preview.ts';
 import { exerciseTrimSubmission } from './trim-submission.ts';
@@ -3074,16 +3076,33 @@ export async function run({
     bundleRoot,
     'validation/windows/inputs/output-finalization.json'
   );
+  const finalizationV2Selector = resolve(
+    bundleRoot,
+    'validation/windows/inputs/output-finalization-v2.json'
+  );
   let finalizationSelectorText: string | undefined;
+  let finalizationV2SelectorText: string | undefined;
   try {
     finalizationSelectorText = await readFile(finalizationSelector, 'utf8');
   } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
-  if (finalizationSelectorText !== undefined) {
-    assert.deepEqual(JSON.parse(finalizationSelectorText), {
-      scenario: OUTPUT_FINALIZATION_SCENARIO,
-    });
+  try {
+    finalizationV2SelectorText = await readFile(finalizationV2Selector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  assert(
+    finalizationSelectorText === undefined || finalizationV2SelectorText === undefined,
+    'Conflicting output-finalization selectors'
+  );
+  const finalizationV2 = finalizationV2SelectorText !== undefined;
+  const selectedFinalizationText = finalizationV2SelectorText ?? finalizationSelectorText;
+  if (selectedFinalizationText !== undefined) {
+    const scenario = finalizationV2
+      ? OUTPUT_FINALIZATION_V2_SCENARIO
+      : OUTPUT_FINALIZATION_SCENARIO;
+    assert.deepEqual(JSON.parse(selectedFinalizationText), { scenario });
     for (const other of [
       'packet-lookup.json',
       'narrow-output.json',
@@ -3100,15 +3119,18 @@ export async function run({
       });
     }
     const smallPath = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
-    const largePath = await validateBundleFile(bundleRoot, OUTPUT_FINALIZATION_FIXTURE);
+    const largePath = await validateBundleFile(
+      bundleRoot,
+      finalizationV2 ? OUTPUT_FINALIZATION_V2_FIXTURE : OUTPUT_FINALIZATION_FIXTURE
+    );
+    const largeSha256 = finalizationV2
+      ? 'd50e66f509de3858eeb6ecc1863a75117d28faab9f93a86c13337e8ea0da36a5'
+      : '6133c0de0831fe6ef3d48e9d3f9aec288de4a6cbd1741a9d0c2f5372903fcbec';
     assert.equal(
       sha256(await readFile(smallPath)),
       'de4c15ff513d41c964eadb5d45ce08030b2a94eea501e9f86edfd8a301e1411e'
     );
-    assert.equal(
-      sha256(await readFile(largePath)),
-      '6133c0de0831fe6ef3d48e9d3f9aec288de4a6cbd1741a9d0c2f5372903fcbec'
-    );
+    assert.equal(sha256(await readFile(largePath)), largeSha256);
     const build = await readBuild(bundleRoot, 'dist', validateBundleFile, {
       verifyInventory: true,
       exactInventory: true,
@@ -3117,7 +3139,7 @@ export async function run({
     const samples: unknown[] = [];
     const evidencePath = join(output, 'output-finalization.json');
     let result: unknown = {
-      scenario: OUTPUT_FINALIZATION_SCENARIO,
+      scenario,
       status: 'started',
       build,
       samples,
@@ -3137,9 +3159,10 @@ export async function run({
           {
             id: 'large',
             path: largePath,
-            inputSha256: '6133c0de0831fe6ef3d48e9d3f9aec288de4a6cbd1741a9d0c2f5372903fcbec',
+            inputSha256: largeSha256,
             quality: 'high',
             scale: '1',
+            ...(finalizationV2 ? { outputWidth: 1024, outputHeight: 576 } : {}),
           },
         ],
         async (sample) => {
@@ -3147,15 +3170,15 @@ export async function run({
           await mkdir(output, { recursive: true });
           await writeFile(
             evidencePath,
-            `${JSON.stringify({ scenario: OUTPUT_FINALIZATION_SCENARIO, status: 'running', build, samples }, null, 2)}\n`
+            `${JSON.stringify({ scenario, status: 'running', build, samples }, null, 2)}\n`
           );
         }
       );
-      result = { ...measured, build };
+      result = { ...measured, scenario, build };
       return result;
     } catch (error) {
       result = {
-        scenario: OUTPUT_FINALIZATION_SCENARIO,
+        scenario,
         status: 'failed',
         build,
         samples,
