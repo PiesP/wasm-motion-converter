@@ -20,6 +20,8 @@ export interface OutputContractCase {
   expected: {
     width: number;
     height: number;
+    /** Null permits equivalent adjacent frames to be coalesced by the encoder. */
+    frameCount?: number | null;
     markers: string[];
     corners?: {
       topLeft: string;
@@ -181,6 +183,13 @@ export function assertAnimatedOutput(
   observation: AnimatedOutputObservation,
   contract: OutputContractCase
 ): AnimatedOutputObservation {
+  if (contract.expected.frameCount != null) {
+    assert.equal(
+      observation.frameCount,
+      contract.expected.frameCount,
+      `${contract.id}: frame count`
+    );
+  }
   // Stored frames may be split or merged. Compare source-derived scene intervals.
   const scenes: Array<{ marker: string | null; durationMs: number }> = [];
   for (const frame of observation.frames) {

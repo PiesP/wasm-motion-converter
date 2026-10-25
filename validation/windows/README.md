@@ -58,6 +58,18 @@ The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
 
+For focused packet-lookup qualification, run `pnpm prepare:e2e:fixture` and put
+`{"scenario":"packet-lookup"}` in the ignored
+`validation/windows/inputs/packet-lookup.json` selector, with other focused
+selectors preserved outside the input directory for the attempt. The standard
+Edge desktop route runs the generated no-index fragmented MP4 and clustered
+WebM through nonzero-trim GIF/WebP conversion and the decoded-output oracle.
+It then cancels a real conversion and verifies a subsequent conversion in the
+same document. This selective profile does not claim the broader visual or
+codec matrix; installed-parser unit tests separately cover cold/full-scan/warm
+key-packet lookup and reduced-budget rejection. The generated inputs and the
+retained downloaded outputs are bound by the bundle and result hashes.
+
 For the focused trim-submission regression, prepare the ignored 10-second
 timecoded fixture with `PREPARE_TRIM_SUBMISSION_FIXTURE=true pnpm prepare:e2e:fixture`
 and put `{"scenario":"trim-submission"}` in the ignored

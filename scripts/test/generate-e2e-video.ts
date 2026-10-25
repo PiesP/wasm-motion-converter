@@ -20,11 +20,36 @@ interface VideoFixture {
   requiresReorderedFrames?: boolean;
   finalSampleDurationMs?: number;
   attachedTextBytes?: number;
+  stripFragmentIndex?: boolean;
 }
 
 const NARROW_OUTPUT_FIXTURE =
   'narrow-output-timecoded-1920x1080-30fps-long-filename-conversion-walkthrough.mp4';
 const NARROW_CANCEL_FIXTURE = 'narrow-output-cancel.mp4';
+
+/** Remove only the final top-level mfra box from an owned fragmented MP4. */
+function stripFragmentIndex(path: string): void {
+  const bytes = readFileSync(path);
+  let offset = 0;
+  let fragmentCount = 0;
+  while (offset + 8 <= bytes.length) {
+    const size = bytes.readUInt32BE(offset);
+    const type = bytes.toString('ascii', offset + 4, offset + 8);
+    if (size < 8 || size > bytes.length - offset) {
+      throw new Error(`Invalid top-level MP4 box in ${path}`);
+    }
+    if (type === 'moof') fragmentCount++;
+    if (type === 'mfra') {
+      if (offset + size !== bytes.length || fragmentCount < 2) {
+        throw new Error(`Unexpected MP4 fragment index layout in ${path}`);
+      }
+      writeFileSync(path, bytes.subarray(0, offset));
+      return;
+    }
+    offset += size;
+  }
+  throw new Error(`Missing final MP4 fragment index in ${path}`);
+}
 
 /** Adjust only the final singleton sample in the small, ordinary MP4 fixture. */
 function setFinalSampleDuration(path: string, durationMs: number): void {
@@ -163,6 +188,45 @@ export function generateE2eVideo(): void {
       encoderArgs: ['-c:v', 'libx264', '-profile:v', 'main'],
       extraEncoderArgs: ['-bf', '2', '-x264-params', 'b-adapt=0:scenecut=0:keyint=4:min-keyint=4'],
       requiresReorderedFrames: true,
+    },
+    {
+      fileName: 'test-video-contract-fragmented-no-index.mp4',
+      input:
+        'color=c=black:size=96x64:rate=4:duration=4,' +
+        "drawbox=c=red:t=fill:enable='between(n,0,3)'," +
+        "drawbox=c=lime:t=fill:enable='between(n,4,7)'," +
+        "drawbox=c=blue:t=fill:enable='between(n,8,11)'," +
+        "drawbox=c=yellow:t=fill:enable='between(n,12,15)'",
+      extraEncoderArgs: [
+        '-preset',
+        'ultrafast',
+        '-g',
+        '4',
+        '-keyint_min',
+        '4',
+        '-sc_threshold',
+        '0',
+        '-bf',
+        '0',
+      ],
+      outputArgs: [
+        '-movflags',
+        'frag_keyframe+empty_moov+default_base_moof',
+        '-frag_duration',
+        '250000',
+      ],
+      stripFragmentIndex: true,
+    },
+    {
+      fileName: 'test-video-contract-clusters.webm',
+      input:
+        'color=c=black:size=96x64:rate=4:duration=4,' +
+        "drawbox=c=red:t=fill:enable='between(n,0,3)'," +
+        "drawbox=c=lime:t=fill:enable='between(n,4,7)'," +
+        "drawbox=c=blue:t=fill:enable='between(n,8,11)'," +
+        "drawbox=c=yellow:t=fill:enable='between(n,12,15)'",
+      encoderArgs: ['-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8', '-g', '4'],
+      outputArgs: ['-cluster_time_limit', '250'],
     },
     {
       fileName: 'test-video-contract-vp9.webm',
@@ -383,6 +447,7 @@ export function generateE2eVideo(): void {
       if (fixture.finalSampleDurationMs !== undefined) {
         setFinalSampleDuration(outputPath, fixture.finalSampleDurationMs);
       }
+      if (fixture.stripFragmentIndex) stripFragmentIndex(outputPath);
       const mediaBytes = attachmentPath ? readFileSync(outputPath) : undefined;
       const size = mediaBytes?.byteLength ?? statSync(outputPath).size;
       if (size === 0) {

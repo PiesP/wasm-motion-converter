@@ -105,6 +105,9 @@ function assertOutputContractConfig(value: unknown): asserts value is OutputCont
     const expected = contract.expected;
     assert(isRecord(expected), 'Invalid output contract expectation');
     assert(typeof expected.width === 'number' && typeof expected.height === 'number');
+    if (expected.frameCount != null) {
+      assert(Number.isSafeInteger(expected.frameCount) && Number(expected.frameCount) > 0);
+    }
     assert(
       Array.isArray(expected.markers) && expected.markers.every((item) => typeof item === 'string')
     );
@@ -1385,10 +1388,11 @@ async function convertOutputContract(
   contract: OutputContractCase,
   markers: Record<string, number[]>,
   outputRoot: string,
-  artifacts: Artifact[]
+  artifacts: Artifact[],
+  reload = true
 ) {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await loadApplication(page, baseUrl);
+  if (reload) await loadApplication(page, baseUrl);
   assert.equal(
     await page.evaluate(() => typeof VideoDecoder === 'function'),
     true,
@@ -3061,6 +3065,139 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const lookupSelector = resolve(bundleRoot, 'validation/windows/inputs/packet-lookup.json');
+  let lookupSelectorText: string | undefined;
+  try {
+    lookupSelectorText = await readFile(lookupSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (lookupSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(lookupSelectorText), { scenario: 'packet-lookup' });
+    for (const other of [
+      'narrow-output.json',
+      'selection-preview.json',
+      'preview-retry.json',
+      'trim-submission.json',
+      'webp-initialization.json',
+      'service-worker-handoff.json',
+      'app-update.json',
+      'recovery.json',
+    ]) {
+      await assert.rejects(stat(resolve(bundleRoot, 'validation/windows/inputs', other)), {
+        code: 'ENOENT',
+      });
+    }
+    const config: unknown = JSON.parse(
+      await readFile(await validateBundleFile(bundleRoot, OUTPUT_CONTRACT), 'utf8')
+    );
+    assertOutputContractConfig(config);
+    const contracts = ['fragmented-no-index-trim-gif', 'cluster-trim-webp'].map((id) => {
+      const contract = config.cases.find((entry) => entry.id === id);
+      assert(contract, `Missing packet lookup output contract: ${id}`);
+      return contract;
+    });
+    const started = await startStaticServer(bundleRoot);
+    let context: BrowserContext | undefined;
+    const artifacts: Artifact[] = [];
+    const checks: unknown[] = [];
+    const diagnostics: MediaNetworkDiagnostics = {
+      pageErrors: [],
+      consoleErrors: [],
+      failedRequests: [],
+      failedResponses: [],
+    };
+    let failure: MediaProfileFailure | undefined;
+    try {
+      context = await browser.newContext({
+        acceptDownloads: true,
+        locale: 'en-US',
+        viewport: { width: 1280, height: 900 },
+      });
+      const page = await context.newPage();
+      page.on('pageerror', (error) => diagnostics.pageErrors.push(error.message));
+      page.on('console', (message) => {
+        if (message.type() === 'error') diagnostics.consoleErrors.push(message.text());
+      });
+      page.on('requestfailed', (request) => {
+        const url = new URL(request.url());
+        const error = request.failure()?.errorText ?? 'unknown';
+        if (url.protocol === 'blob:' && error === 'net::ERR_ABORTED') return;
+        diagnostics.failedRequests.push({ url: url.pathname, error });
+      });
+      page.on('response', (response) => {
+        if (response.status() >= 400) {
+          diagnostics.failedResponses.push({
+            status: response.status(),
+            url: new URL(response.url()).pathname,
+          });
+        }
+      });
+      checks.push(await loadApplication(page, started.url));
+      checks.push(await observeEnvironment(page, browser));
+      for (const contract of contracts) {
+        checks.push(
+          await convertOutputContract(
+            page,
+            started.url,
+            await validateBundleFile(bundleRoot, contract.fixture),
+            contract,
+            config.markers,
+            output,
+            artifacts
+          )
+        );
+        await recordScreenshot(page, output, `packet-lookup-${contract.id}.png`, artifacts);
+      }
+      const cancellation = await exerciseCancellation(
+        page,
+        started.url,
+        await validateBundleFile(bundleRoot, CANCELLATION_FIXTURE),
+        output,
+        artifacts
+      );
+      assert.equal(cancellation.status, 'passed', 'Cancellation was not exercised');
+      assert.equal(cancellation.effective, true);
+      checks.push(cancellation);
+      const documentIdentity = await page.evaluate(() => performance.timeOrigin);
+      const recoveryContract = { ...contracts[0]!, id: 'fragmented-no-index-after-cancellation' };
+      checks.push(
+        await convertOutputContract(
+          page,
+          started.url,
+          await validateBundleFile(bundleRoot, recoveryContract.fixture),
+          recoveryContract,
+          config.markers,
+          output,
+          artifacts,
+          false
+        )
+      );
+      assert.equal(await page.evaluate(() => performance.timeOrigin), documentIdentity);
+      checks.push({ id: 'same-document-after-cancellation', status: 'passed' });
+      await assertMediaNetworkDiagnostics(output, diagnostics);
+      return { profile: 'packet-lookup', status: 'passed', checks, artifacts };
+    } catch (error) {
+      failure = { error };
+      throw error;
+    } finally {
+      try {
+        await writeFile(
+          join(output, 'packet-lookup.json'),
+          JSON.stringify({ checks, artifacts }, null, 2)
+        );
+      } catch (error) {
+        failure ??= { error };
+      }
+      await finishMediaProfile({
+        context,
+        server: started.server,
+        outputRoot: output,
+        diagnostics,
+        failure,
+      });
+    }
+  }
   const narrowSelector = resolve(bundleRoot, 'validation/windows/inputs/narrow-output.json');
   let narrowSelectorText: string | undefined;
   try {

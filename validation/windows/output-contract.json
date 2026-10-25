@@ -132,6 +132,48 @@
       }
     },
     {
+      "id": "fragmented-no-index-trim-gif",
+      "fixture": "public/test-video-contract-fragmented-no-index.mp4",
+      "format": "gif",
+      "settings": {
+        "quality": "high",
+        "scale": "1",
+        "trimStart": 1,
+        "trimEnd": 3,
+        "smartFrameSkip": "off"
+      },
+      "expected": {
+        "width": 96,
+        "height": 64,
+        "markers": ["lime", "blue"],
+        "durationsMs": [1000, 1000],
+        "durationToleranceMs": 20,
+        "maxColorDistance": 96,
+        "frameCount": null
+      }
+    },
+    {
+      "id": "cluster-trim-webp",
+      "fixture": "public/test-video-contract-clusters.webm",
+      "format": "webp",
+      "settings": {
+        "quality": "high",
+        "scale": "1",
+        "trimStart": 1,
+        "trimEnd": 3,
+        "smartFrameSkip": "off"
+      },
+      "expected": {
+        "width": 96,
+        "height": 64,
+        "markers": ["lime", "blue"],
+        "durationsMs": [1000, 1000],
+        "durationToleranceMs": 12,
+        "maxColorDistance": 96,
+        "frameCount": null
+      }
+    },
+    {
       "id": "vp9-webm-gif",
       "fixture": "public/test-video-contract-vp9.webm",
       "format": "gif",

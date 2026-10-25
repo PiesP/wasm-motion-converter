@@ -113,7 +113,11 @@ test.describe('deterministic output contracts', () => {
       }
       const output = await runContractConversion(page, contract);
       const observation = await verifyAnimatedOutput(page, output, contract, markers);
-      expect(observation.frameCount).toBe(contract.expected.markers.length);
+      if (contract.expected.frameCount !== null) {
+        expect(observation.frameCount).toBe(
+          contract.expected.frameCount ?? contract.expected.markers.length
+        );
+      }
       if (contract.id === 'cfr-trim-gif') {
         const exact = await compareAnimatedOutputExact(page, output, output, contract.format);
         expect(exact.durationUs).toBeGreaterThan(0);
@@ -446,7 +450,9 @@ test.describe('Canvas pixel-copy fallback', () => {
     });
     const observation = await verifyAnimatedOutput(page, output, contract, markers);
 
-    expect(observation.frameCount).toBe(contract.expected.markers.length);
+    expect(observation.frameCount).toBe(
+      contract.expected.frameCount ?? contract.expected.markers.length
+    );
     expect(pathProbe.workerConstructionAttempts).toBeGreaterThan(0);
     expect(pathProbe.identitySizedVideoFrameDraws).toBeGreaterThan(0);
     expect(pathProbe.identitySizedVideoFrameDraws).toBe(pathProbe.canvasCopyFrames);

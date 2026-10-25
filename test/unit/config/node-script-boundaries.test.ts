@@ -312,9 +312,21 @@ describe('direct Node script boundaries', () => {
       Buffer.from([0x1f, 0x43, 0xb6, 0x75]),
     ]);
     writeFileSync(mkvPath, mkvBytes);
+    const fragmentedPath = join(root, 'fragmented.mp4');
+    const fragmentsWithoutIndex = Buffer.concat([
+      box('ftyp', Buffer.from('isom')),
+      box('moof', Buffer.alloc(0)),
+      box('mdat', Buffer.from('one')),
+      box('moof', Buffer.alloc(0)),
+      box('mdat', Buffer.from('two')),
+    ]);
+    writeFileSync(
+      fragmentedPath,
+      Buffer.concat([fragmentsWithoutIndex, box('mfra', Buffer.from('index'))])
+    );
     stub(
       join(bin, 'ffmpeg'),
-      'for last do :; done\ncase "$last" in\n*short-tail.mp4) cp "$FAKE_MP4" "$last" ;;\n*matroska-metadata.mkv) cp "$FAKE_MKV" "$last" ;;\n*) printf video > "$last" ;;\nesac'
+      'for last do :; done\ncase "$last" in\n*short-tail.mp4) cp "$FAKE_MP4" "$last" ;;\n*fragmented-no-index.mp4) cp "$FAKE_FRAGMENTS" "$last" ;;\n*matroska-metadata.mkv) cp "$FAKE_MKV" "$last" ;;\n*) printf video > "$last" ;;\nesac'
     );
     stub(
       join(bin, 'ffprobe'),
@@ -334,6 +346,7 @@ esac`
       PATH: `${bin}:${process.env.PATH ?? ''}`,
       PREPARE_RESOURCE_FIXTURES: 'false',
       FAKE_MP4: mp4Path,
+      FAKE_FRAGMENTS: fragmentedPath,
       FAKE_MKV: mkvPath,
       FAKE_MKV_METADATA: 'present',
     };
@@ -341,6 +354,9 @@ esac`
     expect(result.status, result.stderr).toBe(0);
     expect(readFileSync(join(root, 'public/test-video-contract-bframes.mp4'), 'utf8')).toBe(
       'video'
+    );
+    expect(readFileSync(join(root, 'public/test-video-contract-fragmented-no-index.mp4'))).toEqual(
+      fragmentsWithoutIndex
     );
     expect(readFileSync(join(root, 'public/test-video-matroska-metadata.mkv'))).toEqual(mkvBytes);
     expect(existsSync(join(root, 'public/test-video-matroska-metadata.mkv.attachment.txt'))).toBe(

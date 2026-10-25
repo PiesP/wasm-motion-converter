@@ -18,6 +18,8 @@
     "validation/windows/output-contract.ts",
     "validation/windows/mp4-budget-fixture.ts",
     "public/test-video-contract-bframes.mp4",
+    "public/test-video-contract-fragmented-no-index.mp4",
+    "public/test-video-contract-clusters.webm",
     "public/test-video-contract-vp9.webm",
     "public/test-video-matroska-metadata.mkv",
     "validation/windows/offline-recovery.ts",
