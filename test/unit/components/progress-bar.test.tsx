@@ -36,6 +36,9 @@ describe('ProgressBar pipeline phase segments', () => {
       );
       expect(harness?.textContent).toContain('Encoding animation frames');
       expect(harness?.textContent).toContain('64 MB / 512 MB (13%)');
+      const diagnostics = harness?.querySelector('[data-testid="progress-diagnostics"]');
+      expect(diagnostics).not.toBeNull();
+      expect(diagnostics?.textContent).not.toContain('Frame ');
     });
 
     dispose();

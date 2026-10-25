@@ -28,6 +28,7 @@ export function mountCompactProgressHarness(locale: Locale): () => void {
           metadataSummary="1920×1080 · 0:12 · 30fps · 9 B"
           onCancel={() => {}}
           onFileSelected={() => {}}
+          outputFrames={225}
           phase="encoding"
           previewUrl="/test-video-ci-h264.mp4"
           progress={84}

@@ -42,6 +42,13 @@ import {
 import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
 import type { OutputContractCase } from './output-contract.ts';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
+import {
+  exerciseOutputFinalization,
+  OUTPUT_FINALIZATION_FIXTURE,
+  OUTPUT_FINALIZATION_SCENARIO,
+  OUTPUT_FINALIZATION_V2_FIXTURE,
+  OUTPUT_FINALIZATION_V2_SCENARIO,
+} from './output-finalization.ts';
 import { exercisePreviewRetry, exerciseSelectionPreviewBaseline } from './selection-preview.ts';
 import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
@@ -3065,6 +3072,125 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const finalizationSelector = resolve(
+    bundleRoot,
+    'validation/windows/inputs/output-finalization.json'
+  );
+  const finalizationV2Selector = resolve(
+    bundleRoot,
+    'validation/windows/inputs/output-finalization-v2.json'
+  );
+  let finalizationSelectorText: string | undefined;
+  let finalizationV2SelectorText: string | undefined;
+  try {
+    finalizationSelectorText = await readFile(finalizationSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  try {
+    finalizationV2SelectorText = await readFile(finalizationV2Selector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  assert(
+    finalizationSelectorText === undefined || finalizationV2SelectorText === undefined,
+    'Conflicting output-finalization selectors'
+  );
+  const finalizationV2 = finalizationV2SelectorText !== undefined;
+  const selectedFinalizationText = finalizationV2SelectorText ?? finalizationSelectorText;
+  if (selectedFinalizationText !== undefined) {
+    const scenario = finalizationV2
+      ? OUTPUT_FINALIZATION_V2_SCENARIO
+      : OUTPUT_FINALIZATION_SCENARIO;
+    assert.deepEqual(JSON.parse(selectedFinalizationText), { scenario });
+    for (const other of [
+      'packet-lookup.json',
+      'narrow-output.json',
+      'selection-preview.json',
+      'preview-retry.json',
+      'trim-submission.json',
+      'webp-initialization.json',
+      'service-worker-handoff.json',
+      'app-update.json',
+      'recovery.json',
+    ]) {
+      await assert.rejects(stat(resolve(bundleRoot, 'validation/windows/inputs', other)), {
+        code: 'ENOENT',
+      });
+    }
+    const smallPath = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
+    const largePath = await validateBundleFile(
+      bundleRoot,
+      finalizationV2 ? OUTPUT_FINALIZATION_V2_FIXTURE : OUTPUT_FINALIZATION_FIXTURE
+    );
+    const largeSha256 = finalizationV2
+      ? 'd50e66f509de3858eeb6ecc1863a75117d28faab9f93a86c13337e8ea0da36a5'
+      : '6133c0de0831fe6ef3d48e9d3f9aec288de4a6cbd1741a9d0c2f5372903fcbec';
+    assert.equal(
+      sha256(await readFile(smallPath)),
+      'de4c15ff513d41c964eadb5d45ce08030b2a94eea501e9f86edfd8a301e1411e'
+    );
+    assert.equal(sha256(await readFile(largePath)), largeSha256);
+    const build = await readBuild(bundleRoot, 'dist', validateBundleFile, {
+      verifyInventory: true,
+      exactInventory: true,
+    });
+    const started = await startStaticServer(bundleRoot);
+    const samples: unknown[] = [];
+    const evidencePath = join(output, 'output-finalization.json');
+    let result: unknown = {
+      scenario,
+      status: 'started',
+      build,
+      samples,
+    };
+    try {
+      const measured = await exerciseOutputFinalization(
+        browser,
+        started.url,
+        [
+          {
+            id: 'small',
+            path: smallPath,
+            inputSha256: 'de4c15ff513d41c964eadb5d45ce08030b2a94eea501e9f86edfd8a301e1411e',
+            quality: 'low',
+            scale: '0.5',
+          },
+          {
+            id: 'large',
+            path: largePath,
+            inputSha256: largeSha256,
+            quality: 'high',
+            scale: '1',
+            ...(finalizationV2 ? { outputWidth: 1024, outputHeight: 576 } : {}),
+          },
+        ],
+        async (sample) => {
+          samples.push(sample);
+          await mkdir(output, { recursive: true });
+          await writeFile(
+            evidencePath,
+            `${JSON.stringify({ scenario, status: 'running', build, samples }, null, 2)}\n`
+          );
+        }
+      );
+      result = { ...measured, scenario, build };
+      return result;
+    } catch (error) {
+      result = {
+        scenario,
+        status: 'failed',
+        build,
+        samples,
+        error: String(error),
+      };
+      throw error;
+    } finally {
+      await closeServer(started.server);
+      await mkdir(output, { recursive: true });
+      await writeFile(evidencePath, `${JSON.stringify(result, null, 2)}\n`);
+    }
+  }
   const lookupSelector = resolve(bundleRoot, 'validation/windows/inputs/packet-lookup.json');
   let lookupSelectorText: string | undefined;
   try {

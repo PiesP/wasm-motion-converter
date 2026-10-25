@@ -1,5 +1,55 @@
 # Application update acceptance inputs
 
+## Output finalization comparison
+
+The original motion workload uses a task-owned, ignored 12-second 1280×720 input:
+
+```sh
+ffmpeg -f lavfi -i 'testsrc2=size=1280x720:rate=20:duration=12' -an -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -movflags +faststart -y validation/windows/inputs/output-finalization-motion.mp4
+sha256sum validation/windows/inputs/output-finalization-motion.mp4
+```
+
+The expected input SHA-256 is
+`6133c0de0831fe6ef3d48e9d3f9aec288de4a6cbd1741a9d0c2f5372903fcbec`.
+Keep this exact file for both builds. After preserving any existing selector files,
+put `{"scenario":"output-finalization"}` in the ignored
+`validation/windows/inputs/output-finalization.json`; no other focused selector
+may be present in the packaged input directory. Build the clean source with
+`pnpm build:ci`, then run the standard installed-Edge desktop browser profile
+with a new external evidence directory. The profile checks the production
+distribution inventory and both input digests before serving the app. It
+records three cold and three same-document warm WebP conversions per workload,
+streamed download digests, Blob API observations, renderer heap point samples,
+and bounded decoded frame hashes. Partial samples are saved on failure.
+
+The observer records explicit WebP `Blob.arrayBuffer()` calls and the interval
+from the first output-sized Blob construction to the product's Blob URL. It
+cannot see browser-internal Blob copies, Worker memory, native/GPU allocations,
+or process peaks. The private campaign plan fixes workloads and adoption
+criteria before the baseline. Do not treat this interval as the DEV profiler's
+post-mux `finalizing` span.
+
+For the fixed 1024×576 texture workload, generate its input once with FFmpeg
+7.1.5 and a single encoder thread:
+
+```sh
+ffmpeg -f lavfi -i 'testsrc2=size=1024x576:rate=20:duration=12' -vf 'noise=alls=12:allf=t+u:all_seed=397' -an -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -threads 1 -movflags +faststart -n validation/windows/inputs/output-finalization-noisy-1024x576.mp4
+sha256sum validation/windows/inputs/output-finalization-noisy-1024x576.mp4
+```
+
+Its expected SHA-256 is
+`d50e66f509de3858eeb6ecc1863a75117d28faab9f93a86c13337e8ea0da36a5`.
+Select it with exactly `{"scenario":"output-finalization-v2"}` in the ignored
+`validation/windows/inputs/output-finalization-v2.json`, after preserving and
+removing other focused selectors. Both variants keep the same small workload.
+The texture variant records the actual production encoder branch and decodes
+every large output after timing. Compare complete frame hashes, durations,
+loop behavior and output bytes before interpreting timing differences. The
+compact UI does not expose its terminal frame counter; decoded output counts
+do not establish internal decoder selection or every dynamic skip reason.
+Treat an output below the predeclared size or unequal emitted work as an
+inadequate comparison, rather than changing quality, budgets or thresholds.
+
 ## Service-worker migration handoff
 
 Place a complete clean baseline distribution at the ignored
