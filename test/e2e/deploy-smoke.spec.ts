@@ -18,6 +18,7 @@ import { type APIResponse, expect, type Page, type Response, test } from '@playw
 
 import { conditionalEtagObservation } from './lib/conditional-etag';
 import { assertExecutableBody, assertExecutableResponse } from './lib/deployment-responses';
+import { firstConversionTraffic } from './lib/first-conversion-traffic';
 
 const DEPLOY_URL = process.env.DEPLOY_URL || 'https://wasm-motion-converter.pages.dev';
 const TEST_VIDEO_PATH =
@@ -424,7 +425,10 @@ test.describe('Deployment: Visual — Progress UI', () => {
     const runtimeFailures = await collectRuntimeFailures(page);
     const workers: string[] = [];
     page.on('worker', (worker) => workers.push(worker.url()));
+    const traffic = firstConversionTraffic(page, 'normal-gif');
     await page.goto(DEPLOY_URL);
+    await page.waitForLoadState('networkidle');
+    await traffic.markInitial();
     await uploadTestVideo(page);
     await startConversion(page);
 
@@ -465,19 +469,7 @@ test.describe('Deployment: Visual — Progress UI', () => {
     const bytes = await readFile(await download.path());
     expect(bytes.subarray(0, 6).toString('ascii')).toMatch(/^GIF8[79]a$/);
     await testInfo.attach('first-gif-traffic', {
-      body: JSON.stringify(
-        await page.evaluate(() =>
-          performance
-            .getEntriesByType('resource')
-            .filter((entry) => entry instanceof PerformanceResourceTiming)
-            .map((entry) => ({
-              name: new URL(entry.name).pathname,
-              transferSize: entry.transferSize,
-            }))
-        ),
-        null,
-        2
-      ),
+      body: JSON.stringify(await traffic.observation(bytes.length)),
       contentType: 'application/json',
     });
     expect(await runtimeFailures()).toEqual({
@@ -510,7 +502,10 @@ test.describe('Deployment: Visual — Progress UI', () => {
     page.on('response', (response) => {
       if (new URL(response.url()).pathname.endsWith('.wasm')) wasmResponses.push(response);
     });
+    const traffic = firstConversionTraffic(page, 'forced-webp-wasm');
     await page.goto(DEPLOY_URL);
+    await page.waitForLoadState('networkidle');
+    await traffic.markInitial();
     await uploadTestVideo(page);
     await page
       .getByRole('radiogroup', { name: 'Output Format' })
@@ -532,19 +527,7 @@ test.describe('Deployment: Visual — Progress UI', () => {
     expect(bytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
     expect(bytes.subarray(8, 12).toString('ascii')).toBe('WEBP');
     await testInfo.attach('first-webp-traffic', {
-      body: JSON.stringify(
-        await page.evaluate(() =>
-          performance
-            .getEntriesByType('resource')
-            .filter((entry) => entry instanceof PerformanceResourceTiming)
-            .map((entry) => ({
-              name: new URL(entry.name).pathname,
-              transferSize: entry.transferSize,
-            }))
-        ),
-        null,
-        2
-      ),
+      body: JSON.stringify(await traffic.observation(bytes.length)),
       contentType: 'application/json',
     });
     expect(await runtimeFailures()).toEqual({

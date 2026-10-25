@@ -19,6 +19,16 @@ const PRODUCERS = [
     title: 'total JS transfer size under 150KB',
     name: 'js-transfer-timing',
   },
+  {
+    file: 'e2e/deploy-smoke.spec.ts',
+    title: 'GIF conversion starts a module worker and downloads valid bytes',
+    name: 'first-gif-traffic',
+  },
+  {
+    file: 'e2e/deploy-smoke.spec.ts',
+    title: 'WebP conversion uses real WASM fallback and downloads valid bytes',
+    name: 'first-webp-traffic',
+  },
 ] as const;
 
 type JsonRecord = Record<string, unknown>;
@@ -127,6 +137,82 @@ function validateTiming(value: unknown, target: URL): void {
     throw new Error('Invalid JS transfer timing observation');
 }
 
+function firstConversionObservation(
+  value: unknown,
+  expected: DeploymentState,
+  target: URL,
+  name: string
+): unknown {
+  const traffic = record(value, 'first-conversion traffic');
+  const resources = entries(traffic.resources, 'first-conversion resources');
+  if (
+    traffic.schemaVersion !== 1 ||
+    traffic.target !== target.href ||
+    typeof traffic.measuredAt !== 'string' ||
+    Number.isNaN(Date.parse(traffic.measuredAt)) ||
+    typeof traffic.browserVersion !== 'string' ||
+    traffic.browserVersion.length === 0 ||
+    traffic.scenario !== (name === 'first-gif-traffic' ? 'normal-gif' : 'forced-webp-wasm') ||
+    traffic.phase !== 'cumulative-first-conversion' ||
+    typeof traffic.phaseBoundaryMs !== 'number' ||
+    !Number.isFinite(traffic.phaseBoundaryMs) ||
+    traffic.phaseBoundaryMs < 0 ||
+    traffic.cache !== 'fresh-browser-context-http-cache-not-disabled' ||
+    traffic.serviceWorkers !== 'blocked' ||
+    traffic.coverage !== 'page-resource-timing-only-worker-internal-traffic-unknown' ||
+    traffic.contentEncoding !== 'response-header-when-observed-null-is-unavailable' ||
+    traffic.runtimeMemoryBytes !== null ||
+    typeof traffic.outputBytes !== 'number' ||
+    !Number.isSafeInteger(traffic.outputBytes) ||
+    traffic.outputBytes <= 0 ||
+    resources.length === 0 ||
+    resources.length > 256
+  )
+    throw new Error('Invalid first-conversion traffic observation');
+  const totals = {
+    initial: { observedEntries: 0, knownPositiveTransferBytes: 0, unknownOrCachedEntries: 0 },
+    firstConversion: {
+      observedEntries: 0,
+      knownPositiveTransferBytes: 0,
+      unknownOrCachedEntries: 0,
+    },
+  };
+  const boundary = traffic.phaseBoundaryMs;
+  const observed = resources.map((item) => {
+    const row = record(item, 'first-conversion resource');
+    const file = expected.files.find((file) => `/${file.path}` === row.path);
+    if (
+      !file ||
+      !/\.(?:js|css|wasm)$/.test(file.path) ||
+      typeof row.initiatorType !== 'string' ||
+      !(
+        row.contentEncoding === null ||
+        (typeof row.contentEncoding === 'string' && /^[a-z0-9, -]{1,64}$/.test(row.contentEncoding))
+      ) ||
+      typeof row.startTime !== 'number' ||
+      !Number.isFinite(row.startTime) ||
+      row.startTime < 0 ||
+      ['transferSize', 'encodedBodySize', 'decodedBodySize'].some(
+        (key) => typeof row[key] !== 'number' || !Number.isSafeInteger(row[key]) || row[key] < 0
+      )
+    )
+      throw new Error('Invalid or unbound first-conversion resource');
+    const phase = row.startTime < boundary ? 'initial' : 'firstConversion';
+    const total = totals[phase];
+    total.observedEntries++;
+    const transfer = row.transferSize as number;
+    if (transfer > 0) total.knownPositiveTransferBytes += transfer;
+    else total.unknownOrCachedEntries++;
+    return { ...row, phase, emittedRawBytes: file.size, emittedSha256: file.sha256 };
+  });
+  return {
+    ...traffic,
+    resources: observed,
+    totals,
+    accounting: 'disjoint-request-start-phases-positive-transfers-only-not-total-download',
+  };
+}
+
 /** Extract only bounded public observations; the caller owns Playwright's exit status. */
 export function preserveDeploymentDiagnostics(
   reportFile: string,
@@ -166,7 +252,15 @@ export function preserveDeploymentDiagnostics(
         attempt.observation = diagnosticBody(result, producer.name);
         if (producer.name === 'conditional-header-observations')
           validateConditional(attempt.observation, expected, target);
-        else validateTiming(attempt.observation, target);
+        else if (producer.name === 'js-transfer-timing')
+          validateTiming(attempt.observation, target);
+        else
+          attempt.observation = firstConversionObservation(
+            attempt.observation,
+            expected,
+            target,
+            producer.name
+          );
       }
       return attempt;
     });

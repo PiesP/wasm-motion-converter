@@ -46,7 +46,47 @@ const timing = {
   resources: [{ name: new URL(`/${asset}`, target).href, transferSize: 12345 }],
 };
 
-function report(options: { missing?: string; target?: string; status?: string } = {}) {
+function traffic(scenario = 'normal-gif') {
+  return {
+    schemaVersion: 1,
+    target: target.href,
+    measuredAt: timing.measuredAt,
+    browserVersion: '155.0.1.0',
+    scenario,
+    phase: 'cumulative-first-conversion',
+    phaseBoundaryMs: 100,
+    cache: 'fresh-browser-context-http-cache-not-disabled',
+    serviceWorkers: 'blocked',
+    coverage: 'page-resource-timing-only-worker-internal-traffic-unknown',
+    contentEncoding: 'response-header-when-observed-null-is-unavailable',
+    runtimeMemoryBytes: null,
+    outputBytes: 1024,
+    resources: [
+      {
+        path: `/${asset}`,
+        initiatorType: 'script',
+        contentEncoding: 'br',
+        startTime: 10,
+        transferSize: 12345,
+        encodedBodySize: 12045,
+        decodedBodySize: 20000,
+      },
+      {
+        path: `/${asset}`,
+        initiatorType: 'fetch',
+        contentEncoding: null,
+        startTime: 110,
+        transferSize: 0,
+        encodedBodySize: 0,
+        decodedBodySize: 0,
+      },
+    ],
+  };
+}
+
+function report(
+  options: { missing?: string; target?: string; status?: string; traffic?: unknown } = {}
+) {
   function suite(file: string, title: string, name: string, value: unknown) {
     return {
       file,
@@ -100,6 +140,18 @@ function report(options: { missing?: string; target?: string; status?: string } 
         ...timing,
         target: options.target ?? timing.target,
       }),
+      suite(
+        'e2e/deploy-smoke.spec.ts',
+        'GIF conversion starts a module worker and downloads valid bytes',
+        'first-gif-traffic',
+        options.traffic ?? traffic()
+      ),
+      suite(
+        'e2e/deploy-smoke.spec.ts',
+        'WebP conversion uses real WASM fallback and downloads valid bytes',
+        'first-webp-traffic',
+        traffic('forced-webp-wasm')
+      ),
     ],
   };
 }
@@ -153,9 +205,68 @@ describe('deployment diagnostic artifact', () => {
           outcome: 'expected',
           attempts: [{ retry: 0, status: 'passed', observation: timing }],
         },
+        { attachment: 'first-gif-traffic' },
+        { attachment: 'first-webp-traffic' },
       ],
     });
     expect(preserveDeploymentDiagnostics(file, state, target, 0, output)).not.toBe(path);
+  });
+
+  it('binds first-conversion rows to emitted files and keeps phases, output and unknown traffic separate', () => {
+    const { file, output } = fixture(report());
+    const artifact = JSON.parse(
+      readFileSync(preserveDeploymentDiagnostics(file, state, target, 0, output), 'utf8')
+    );
+    const gif = artifact.diagnostics[2].attempts[0].observation;
+    expect(gif).toMatchObject({
+      scenario: 'normal-gif',
+      coverage: 'page-resource-timing-only-worker-internal-traffic-unknown',
+      outputBytes: 1024,
+      runtimeMemoryBytes: null,
+      totals: {
+        initial: {
+          observedEntries: 1,
+          knownPositiveTransferBytes: 12345,
+          unknownOrCachedEntries: 0,
+        },
+        firstConversion: {
+          observedEntries: 1,
+          knownPositiveTransferBytes: 0,
+          unknownOrCachedEntries: 1,
+        },
+      },
+    });
+    expect(gif.resources[0]).toMatchObject({
+      emittedRawBytes: 1,
+      emittedSha256: 'e'.repeat(64),
+      phase: 'initial',
+    });
+    expect(gif.resources[1]).toMatchObject({ transferSize: 0, phase: 'firstConversion' });
+    expect(artifact.diagnostics[3].attempts[0].observation.scenario).toBe('forced-webp-wasm');
+  });
+
+  it.each([
+    { ...traffic(), target: 'https://example.test/' },
+    { ...traffic(), coverage: 'complete-worker-traffic' },
+    { ...traffic(), scenario: 'forced-webp-wasm' },
+    { ...traffic(), resources: [] },
+    { ...traffic(), outputBytes: 0 },
+    { ...traffic(), resources: [{ ...traffic().resources[0], path: '/unbound.js' }] },
+    { ...traffic(), resources: [{ ...traffic().resources[0], decodedBodySize: -1 }] },
+  ])('rejects malformed, misidentified or unbound first-conversion observations', (invalid) => {
+    const { file, output } = fixture(report({ traffic: invalid }));
+    expect(() => preserveDeploymentDiagnostics(file, state, target, 0, output)).toThrow(
+      /first-conversion/
+    );
+  });
+
+  it('requires each successful first-conversion attachment', () => {
+    for (const name of ['first-gif-traffic', 'first-webp-traffic']) {
+      const { file, output } = fixture(report({ missing: name }));
+      expect(() => preserveDeploymentDiagnostics(file, state, target, 0, output)).toThrow(
+        `no unique ${name}`
+      );
+    }
   });
 
   it('rejects a passing test with missing evidence or an observation from another target', () => {
@@ -171,16 +282,20 @@ describe('deployment diagnostic artifact', () => {
 
   it('retains a successful retry separately from an earlier failed attempt', () => {
     const value = report();
-    const test = value.suites[0]!.specs[0]!.tests[0]!;
+    const test = value.suites[2]!.specs[0]!.tests[0]!;
     test.status = 'flaky';
     test.results[0]!.retry = 1;
     test.results.unshift({ retry: 0, status: 'failed', attachments: [] });
     const { file, output } = fixture(value);
     const path = preserveDeploymentDiagnostics(file, state, target, 0, output);
     const artifact = JSON.parse(readFileSync(path, 'utf8'));
-    expect(artifact.diagnostics[0].attempts).toEqual([
+    expect(artifact.diagnostics[2].attempts).toEqual([
       { retry: 0, status: 'failed' },
-      { retry: 1, status: 'passed', observation: conditional },
+      {
+        retry: 1,
+        status: 'passed',
+        observation: expect.objectContaining({ scenario: 'normal-gif' }),
+      },
     ]);
   });
 
