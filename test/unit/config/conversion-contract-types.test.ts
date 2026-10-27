@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
 import { describe, expect, it } from 'vite-plus/test';
 
@@ -82,9 +83,10 @@ describe('conversion boundary type contracts', () => {
       ];
       const invalid = run(invalidCases.join('\n'));
       expect(invalid.status).not.toBe(0);
+      const diagnostics = stripVTControlCharacters(invalid.stdout);
       const firstInvalidLine = contract.split('\n').length;
       for (const index of invalidCases.keys()) {
-        expect(invalid.stdout).toContain(`probe.ts:${firstInvalidLine + index}:`);
+        expect(diagnostics).toContain(`probe.ts:${firstInvalidLine + index}:`);
       }
     } finally {
       rmSync(root, { recursive: true, force: true });
