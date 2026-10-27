@@ -46,7 +46,10 @@ const settings: ConversionSettings = {
 };
 
 describe('UI state clarity', () => {
+  let disposeLoadedPreview: (() => void) | undefined;
   afterEach(async () => {
+    disposeLoadedPreview?.();
+    disposeLoadedPreview = undefined;
     document.body.innerHTML = '';
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -178,6 +181,7 @@ describe('UI state clarity', () => {
       ),
       container
     );
+    disposeLoadedPreview = dispose;
     await Promise.resolve();
 
     const image = container.querySelector<HTMLImageElement>('[data-testid="result-image"]');
@@ -221,6 +225,7 @@ describe('UI state clarity', () => {
     const pendingFrameId = requestAnimationFrameSpy.mock.results.at(-1)?.value;
     expect(pendingFrameId).toBeTypeOf('number');
     dispose();
+    disposeLoadedPreview = undefined;
     expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(pendingFrameId);
     expect(revokeObjectURL).toHaveBeenCalledWith(resultUrl);
   });
