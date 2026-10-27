@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -40,17 +48,21 @@ function fixture() {
     commit(
       pin: unknown,
       version: unknown = '1.2.3',
-      scripts: unknown = { quality: 'pnpm -s fmt && pnpm -s lint' }
+      scripts: unknown = { quality: 'vp run fmt && vp run lint' },
+      authority: 'current' | 'legacy' | 'both' = 'current'
     ): string {
       writeFileSync(
         join(source, 'package.json'),
         JSON.stringify({
           version,
-          volta: { node: pin },
+          ...(authority !== 'current' ? { volta: { node: pin } } : {}),
           scripts: scripts === missingScripts ? undefined : scripts,
         })
       );
-      git(source, 'add', 'package.json');
+      if (authority !== 'legacy' && pin !== undefined)
+        writeFileSync(join(source, '.node-version'), String(pin));
+      writeFileSync(join(source, 'pnpm-workspace.yaml'), 'catalog:\n  vite-plus: 1.4.0\n');
+      git(source, 'add', '-A');
       git(source, 'commit', '-qm', `manifest ${String(pin)}`);
       return git(source, 'rev-parse', 'HEAD');
     },
@@ -66,7 +78,7 @@ function fixture() {
     fetchAllTags(): void {
       git(checkout, 'fetch', '-q', '--tags', 'origin');
     },
-    run(tag: string, protectedSha: string, outputPath = output) {
+    run(tag: string, protectedSha: string, outputPath = output, overrides: NodeJS.ProcessEnv = {}) {
       return spawnSync(process.execPath, ['--experimental-strip-types', script], {
         cwd: checkout,
         encoding: 'utf8',
@@ -75,6 +87,7 @@ function fixture() {
           RELEASE_TAG: tag,
           GITHUB_SHA: protectedSha,
           GITHUB_OUTPUT: outputPath,
+          ...overrides,
         },
       });
     },
@@ -86,7 +99,7 @@ function fixture() {
 
 test('annotated tag resolves to its commit and reads the tagged historical Node pin', () => {
   const f = fixture();
-  const releaseSha = f.commit('24.15.0');
+  const releaseSha = f.commit('24.15.0', '1.2.3', { quality: 'vp run fmt' }, 'legacy');
   f.tag('v1.2.3', true);
   const protectedSha = f.commit('26.9.0');
   f.clone();
@@ -94,6 +107,21 @@ test('annotated tag resolves to its commit and reads the tagged historical Node 
   assert.equal(result.status, 0, result.stderr);
   assert.equal(f.values(), `node-version=24.15.0\nrelease-sha=${releaseSha}\nversion=1.2.3\n`);
   assert.equal(git(f.checkout, 'tag', '--list', 'v1.2.3'), 'v1.2.3');
+});
+
+test('unsupported historical sources fail in provenance before release outputs', () => {
+  const f = fixture();
+  f.commit('24.15.0', '9.0.0', { quality: 'vp run fmt' }, 'legacy');
+  rmSync(join(f.source, 'pnpm-workspace.yaml'));
+  git(f.source, 'add', '-u');
+  git(f.source, 'commit', '-qm', 'pre-Vite source');
+  const head = git(f.source, 'rev-parse', 'HEAD');
+  f.tag('v9.0.0');
+  f.clone();
+  const result = f.run('v9.0.0', head);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /predates supported Vite\+ setup/);
+  assert.equal(f.values(), '');
 });
 
 test('lightweight tag resolves to the same commit and emits only three fixed output keys', () => {
@@ -139,16 +167,68 @@ test('a valid tag on an unrelated branch cannot authorize a protected release', 
 });
 
 test('missing or malformed tagged Node pins fail without publishing outputs', () => {
-  for (const pin of [undefined, 'latest', 26, '26.9.0\nversion=0', '26.9.0\n']) {
+  for (const pin of [undefined, 'latest', 26, '26.9.0\nversion=0', '26.9.0\nextra']) {
     const f = fixture();
     const head = f.commit(pin, '4.0.0');
     f.tag('v4.0.0');
     f.clone();
     const result = f.run('v4.0.0', head);
     assert.notEqual(result.status, 0, String(pin));
-    assert.match(result.stderr, /exact volta\.node pin/);
+    assert.match(
+      result.stderr,
+      /exact \.node-version or historical volta\.node pin|exact \.node-version pin/
+    );
     assert.equal(f.values(), '');
   }
+});
+
+test('tagged .node-version must be a regular non-executable blob even with a Volta fallback', () => {
+  for (const kind of ['symlink', 'executable', 'gitlink'] as const) {
+    const f = fixture();
+    const initial = f.commit('26.9.0', '4.1.0', { quality: 'vp run fmt' }, 'both');
+    const nodePath = join(f.source, '.node-version');
+    if (kind === 'symlink') {
+      rmSync(nodePath);
+      symlinkSync('26.9.0', nodePath);
+      git(f.source, 'add', '.node-version');
+    } else if (kind === 'executable') {
+      chmodSync(nodePath, 0o755);
+      git(f.source, 'add', '.node-version');
+    } else {
+      git(f.source, 'update-index', '--cacheinfo', `160000,${initial},.node-version`);
+    }
+    git(f.source, 'commit', '-qm', `tagged ${kind} node entry`);
+    const head = git(f.source, 'rev-parse', 'HEAD');
+    f.tag('v4.1.0');
+    f.clone();
+    const result = f.run('v4.1.0', head);
+    assert.notEqual(result.status, 0, kind);
+    assert.match(result.stderr, /\.node-version must be a regular 100644 blob/);
+    assert.equal(f.values(), '');
+  }
+});
+
+test('a present unreadable tagged Node blob fails instead of using Volta', () => {
+  const f = fixture();
+  const head = f.commit('26.9.0', '4.2.0', { quality: 'vp run fmt' }, 'both');
+  f.tag('v4.2.0');
+  f.clone();
+  const wrapperDirectory = join(f.root, 'git-wrapper');
+  mkdirSync(wrapperDirectory);
+  const wrapper = join(wrapperDirectory, 'git');
+  writeFileSync(
+    wrapper,
+    '#!/bin/sh\nif [ "$1" = "cat-file" ] && [ "$2" = "blob" ]; then exit 37; fi\nexec "$REAL_GIT" "$@"\n'
+  );
+  chmodSync(wrapper, 0o755);
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const result = f.run('v4.2.0', head, f.output, {
+    PATH: `${wrapperDirectory}:${process.env.PATH ?? ''}`,
+    REAL_GIT: realGit,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cat-file blob/);
+  assert.equal(f.values(), '');
 });
 
 test('tag and tagged package versions must match before output publication', () => {

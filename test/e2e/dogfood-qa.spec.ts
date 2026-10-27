@@ -6,7 +6,7 @@
 // This file documents the systematic QA inspection performed via MCP Playwright
 // against the production deployment at https://wasm-motion-converter.pages.dev/.
 //
-// Run with: pnpm exec playwright test test/e2e/dogfood-qa.spec.ts --reporter=list
+// Run with: vp exec playwright test test/e2e/dogfood-qa.spec.ts --reporter=list
 //
 // Last inspection: 2026-07-29
 

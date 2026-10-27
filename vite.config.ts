@@ -28,6 +28,43 @@ export default defineConfig(({ command }) => {
   const commonPlugins: PluginOption[] = [stripDataTestIdPlugin(), emitServiceWorkerPlugin()];
 
   const modeConfig = {
+    run: {
+      cache: false,
+      tasks: {
+        quality: {
+          command: [
+            'vp run fmt',
+            'vp run lint',
+            'vp run check',
+            'vp run check:test:unit',
+            'vp run check:test:e2e',
+            'vp run check:scripts',
+            'vp run check:windows',
+            'vp run check:worker',
+            'vp run test:ci',
+            'vp run check:i18n',
+          ],
+          cache: false,
+        },
+        'build:ci': {
+          command: [
+            'node --experimental-strip-types scripts/build/generate-licenses.ts',
+            'vp build',
+            'node --experimental-strip-types scripts/build/postbuild.ts',
+          ],
+          cache: false,
+        },
+        verify: { command: ['vp run quality', 'vp run build:ci'], cache: false },
+        'verify:full': {
+          command: [
+            'vp run verify',
+            'vp run test:cov',
+            'node --experimental-strip-types scripts/test/run-e2e-on-free-port.ts',
+          ],
+          cache: false,
+        },
+      },
+    },
     fmt: {
       useTabs: false,
       tabWidth: 2,

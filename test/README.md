@@ -6,12 +6,12 @@ the repository root.
 
 ## Setup
 
-Use the toolchain pinned in `package.json`, initialize the shared submodule, and
-install dependencies:
+Use the Vite+ toolchain selected by `.node-version`, `packageManager`, and
+`pnpm-workspace.yaml`; initialize the shared submodule before installing:
 
 ```bash
 git submodule update --init --recursive
-pnpm install
+vp install --frozen-lockfile -- --no-runtime
 ```
 
 Playwright requires a Chromium installation. The CI and resource profiles also
@@ -31,14 +31,14 @@ require FFmpeg on `PATH` to generate their deterministic H.264 fixtures.
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm test` | Run all Vitest tests once |
-| `pnpm test -- path/to/file.test.ts` | Run a focused Vitest file |
-| `pnpm test:cov` | Run Vitest with coverage thresholds |
-| `pnpm test:e2e:ci` | Generate the CI fixture and run the CI Playwright profile |
-| `pnpm test:e2e:resource` | Generate fixtures and run the opt-in Linux Chromium resource profile (requires FFmpeg) |
-| `pnpm test:e2e` | Run the local Playwright profile |
-| `pnpm exec playwright test test/e2e/smoke.spec.ts` | Run one browser test file |
-| `pnpm verify:full` | Run quality, build, coverage, and browser validation |
+| `vp run test` | Run the unit Vitest project once |
+| `vp test run --project unit path/to/file.test.ts` | Run a focused Vitest file |
+| `vp run test:cov` | Run Vitest with coverage thresholds |
+| `vp run test:e2e:ci` | Generate the CI fixture and run the CI Playwright profile |
+| `vp run test:e2e:resource` | Generate fixtures and run the opt-in Linux Chromium resource profile (requires FFmpeg) |
+| `vp run test:e2e` | Run the local Playwright profile |
+| `vp exec playwright test test/e2e/smoke.spec.ts` | Run one browser test file |
+| `vp run verify:full` | Run quality, build, coverage, and browser validation |
 
 The Playwright configuration starts a local Vite server unless
 `SKIP_WEB_SERVER` is set. Use `PLAYWRIGHT_TEST_PROFILE=ci` or `deploy` only when

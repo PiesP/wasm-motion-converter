@@ -14,8 +14,8 @@ Explain what changed and why.
 Include commands or steps (or explain why testing is not needed).
 
 ```bash
-pnpm verify
-pnpm test
+vp run verify
+vp run test
 ```
 
 ## Checklist
@@ -24,6 +24,6 @@ pnpm test
 - [ ] App remains fully in-browser (no server upload)
 - [ ] COOP/COEP headers intact when SharedArrayBuffer is required
 - [ ] I used alias-based imports for cross-folder modules
-- [ ] I ran relevant checks (`pnpm verify`, focused tests, or explained why not)
+- [ ] I ran relevant checks (`vp run verify`, focused tests, or explained why not)
 - [ ] Docs updated if user-visible behavior changed
 - [ ] `.github/SECURITY.md` reviewed if security/privacy behavior changed

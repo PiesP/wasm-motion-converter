@@ -24,7 +24,7 @@ describe('Vitest coverage gate', () => {
     ) as { scripts?: Record<string, string> };
 
     expect(packageJson.scripts?.['quality:fix']).toBe(
-      'pnpm -s fmt:fix && pnpm -s lint:fix && pnpm -s quality'
+      'vp run fmt:fix && vp run lint:fix && vp run quality'
     );
   });
 });

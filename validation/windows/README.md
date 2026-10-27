@@ -3,19 +3,19 @@
 This profile adds a selective Windows acceptance layer above the deterministic
 Playwright suites. It is intended for release candidates and changes to the
 media, browser, or visual path. It is not a required CI gate and does not
-replace `pnpm test:e2e:ci` or `pnpm verify:full`.
+replace `vp run test:e2e:ci` or `vp run verify:full`.
 
 ## Build inputs
 
-In a prepared environment, use the Node.js and pnpm versions pinned by the
-repository to build the production application and deterministic media fixtures
+In a prepared environment, use the Vite+-selected Node and pnpm versions
+pinned by the repository to build the production application and deterministic media fixtures
 from the repository root. The fixture command requires FFmpeg's `ffmpeg` and
 `ffprobe` on `PATH`.
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm prepare:e2e:fixture
-pnpm build:ci
+vp install --frozen-lockfile -- --no-runtime
+vp run prepare:e2e:fixture
+vp run build:ci
 ```
 
 The common Windows acceptance runner reads
@@ -58,7 +58,7 @@ The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
 
-For focused packet-lookup qualification, run `pnpm prepare:e2e:fixture` and put
+For focused packet-lookup qualification, run `vp run prepare:e2e:fixture` and put
 `{"scenario":"packet-lookup"}` in the ignored
 `validation/windows/inputs/packet-lookup.json` selector, with other focused
 selectors preserved outside the input directory for the attempt. The standard
@@ -71,7 +71,7 @@ key-packet lookup and reduced-budget rejection. The generated inputs and the
 retained downloaded outputs are bound by the bundle and result hashes.
 
 For the focused trim-submission regression, prepare the ignored 10-second
-timecoded fixture with `PREPARE_TRIM_SUBMISSION_FIXTURE=true pnpm prepare:e2e:fixture`
+timecoded fixture with `PREPARE_TRIM_SUBMISSION_FIXTURE=true vp run prepare:e2e:fixture`
 and put `{"scenario":"trim-submission"}` in the ignored
 `validation/windows/inputs/trim-submission.json` selector. The standard
 `hyperv-control validate --kind browser --repo ... --output ... -- --browser msedge
@@ -109,7 +109,7 @@ synthetic rejection is a lifecycle regression, not a field or codec incident.
 For the narrow-layout and output-comprehension evaluation, prepare the ignored
 1920×1080, 30 fps, 10-second timecoded video with a long filename and a separate
 24-second cancellation input using
-`PREPARE_NARROW_OUTPUT_FIXTURE=true pnpm prepare:e2e:fixture`. This gated command
+`PREPARE_NARROW_OUTPUT_FIXTURE=true vp run prepare:e2e:fixture`. This gated command
 generates only those two inputs and an FFprobe-verified, SHA-256-bound
 `validation/windows/inputs/narrow-output-fixtures.json`. Add the ignored
 `validation/windows/inputs/narrow-output.json` selector with

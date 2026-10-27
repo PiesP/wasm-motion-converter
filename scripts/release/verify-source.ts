@@ -26,12 +26,43 @@ function taggedNodeVersion(sha: string, releaseVersion: string): string {
   if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest))
     throw new Error('Invalid release source manifest');
   const volta = (manifest as { volta?: unknown }).volta;
-  const version =
+  const legacyVersion =
     volta && typeof volta === 'object' && !Array.isArray(volta)
       ? (volta as { node?: unknown }).node
       : undefined;
-  if (typeof version !== 'string' || !matchesExactly(exactNodeVersion, version))
-    throw new Error('Release source must declare an exact volta.node pin');
+  const nodeEntry = git(['ls-tree', sha, '--', '.node-version']);
+  let fileVersion: string | undefined;
+  if (nodeEntry) {
+    const regularBlob = /^100644 blob ([0-9a-f]{40})\t\.node-version$/u.exec(nodeEntry)?.[1];
+    if (!regularBlob) throw new Error('Release source .node-version must be a regular 100644 blob');
+    // Read failures are fatal. Only a truly absent tree entry can use the
+    // historical Volta pin, which predates the file authority.
+    fileVersion = git(['cat-file', 'blob', regularBlob]);
+  }
+  if (fileVersion !== undefined && !matchesExactly(exactNodeVersion, fileVersion))
+    throw new Error('Release source must declare an exact .node-version pin');
+  if (
+    legacyVersion !== undefined &&
+    (typeof legacyVersion !== 'string' || !matchesExactly(exactNodeVersion, legacyVersion))
+  )
+    throw new Error('Release source has an invalid legacy volta.node pin');
+  if (fileVersion !== undefined && legacyVersion !== undefined && fileVersion !== legacyVersion)
+    throw new Error('Release source Node pins disagree');
+  const version = fileVersion ?? legacyVersion;
+  if (typeof version !== 'string')
+    throw new Error(
+      'Release source must declare an exact .node-version or historical volta.node pin'
+    );
+  // A historical Volta-only tag can use the numeric runtime override in the
+  // qualified provider, but only if its Vite+ catalog is also supported.
+  let workspace: string;
+  try {
+    workspace = git(['show', `${sha}:pnpm-workspace.yaml`]);
+  } catch {
+    throw new Error('Release source predates supported Vite+ setup');
+  }
+  if (!/^  vite-plus: \d+\.\d+\.\d+$/mu.test(workspace))
+    throw new Error('Release source lacks an exact Vite+ catalog pin');
   const sourceVersion = (manifest as { version?: unknown }).version;
   if (sourceVersion !== releaseVersion)
     throw new Error(

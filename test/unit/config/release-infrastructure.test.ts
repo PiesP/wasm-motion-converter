@@ -46,13 +46,12 @@ function runSecuritySummary(event: string, results: Record<string, string> = {})
 describe('Release infrastructure', () => {
   it('keeps the Cloudflare Pages toolchain aligned with repository pins', () => {
     const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
-      volta?: { node?: string };
       packageManager: string;
     };
     const nodeVersion = readFileSync(resolve(root, '.node-version'), 'utf8').trim();
     const wrangler = readFileSync(resolve(root, 'wrangler.toml'), 'utf8');
 
-    expect(nodeVersion).toBe(packageJson.volta?.node);
+    expect(nodeVersion).toMatch(/^\d+\.\d+\.\d+$/u);
     expect(wrangler.match(/^PNPM_VERSION\s*=\s*"([^"]+)"/m)?.[1]).toBe(
       packageJson.packageManager.replace(/^pnpm@/, '')
     );
@@ -199,7 +198,7 @@ describe('Release infrastructure', () => {
     expect(provenance).toContain('persist-credentials: false');
     expect(provenance).toContain('RELEASE_TAG: ${{ inputs.tag }}');
     expect(provenance).toContain(
-      'uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9'
+      'uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc'
     );
     expect(provenance).toContain("install-dependencies: 'false'");
     expect(provenance).toContain(
@@ -207,10 +206,12 @@ describe('Release infrastructure', () => {
     );
 
     const localExecutionMarker = {
-      quality: 'uses: ./.github/actions/setup-release',
-      unit: 'uses: ./.github/actions/setup-release',
-      e2e: 'uses: ./.github/actions/setup-release',
-      build: 'uses: ./.github/actions/setup-release',
+      quality:
+        'uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc',
+      unit: 'uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc',
+      e2e: 'uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc',
+      build:
+        'uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc',
     } as const;
     for (const [jobId, marker] of Object.entries(localExecutionMarker)) {
       const job = jobBlock(workflow, jobId);
@@ -261,7 +262,7 @@ describe('Release infrastructure', () => {
     const workflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
     const e2eJob = workflow.match(/\n {2}e2e:[\s\S]*?\n {2}build:/)?.[0] ?? '';
 
-    expect(e2eJob).toContain('pnpm test:e2e:ci');
-    expect(e2eJob).not.toContain('pnpm build:ci');
+    expect(e2eJob).toContain('vp run test:e2e:ci');
+    expect(e2eJob).not.toContain('vp run build:ci');
   });
 });

@@ -94,7 +94,7 @@ describe('direct Node script boundaries', () => {
       encoding: 'utf8',
     });
     expect(loaded.status, loaded.stderr).toBe(0);
-    for (const script of ['scripts/build/run-vite.ts', 'scripts/release/publication-guard.ts']) {
+    for (const script of ['scripts/build/pages-build.ts', 'scripts/release/publication-guard.ts']) {
       expect(loaded.stdout).toContain(join(project, script));
     }
     const nodeOnly = run();
@@ -153,7 +153,6 @@ describe('direct Node script boundaries', () => {
             PATH: `${bin}:${process.env.PATH ?? ''}`,
             SPAWN_RECORD: join(root, 'spawned'),
             RELEASE_VERSION: 'invalid',
-            npm_execpath: join(root, 'missing-package-manager.mjs'),
           },
           encoding: 'utf8',
         }
@@ -539,32 +538,5 @@ esac`
     const failed = run('scripts/test/generate-e2e-video.ts', env);
     expect(failed.status).not.toBe(0);
     expect(failed.stderr).toContain('ffmpeg failed to generate');
-  });
-
-  it('closes the allocated port and propagates the package script exit status', () => {
-    const { root, run } = fixture();
-    const packageManager = join(root, 'fake-manager.mjs');
-    writeFileSync(
-      packageManager,
-      `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.FAKE_RESULT, JSON.stringify({ argv: process.argv.slice(2), port: process.env.PLAYWRIGHT_DEV_PORT }));\nprocess.exitCode = 7;\n`
-    );
-    const result = run('scripts/test/run-e2e-on-free-port.ts', {
-      ...process.env,
-      npm_execpath: packageManager,
-      FAKE_RESULT: join(root, 'result.json'),
-    });
-    expect(result.status).toBe(7);
-    const recorded = JSON.parse(readFileSync(join(root, 'result.json'), 'utf8')) as {
-      argv: string[];
-      port: string;
-    };
-    expect(recorded.argv).toEqual(['test:e2e:ci']);
-    expect(Number(recorded.port)).toBeGreaterThan(0);
-    const missing = run('scripts/test/run-e2e-on-free-port.ts', {
-      ...process.env,
-      npm_execpath: '',
-    });
-    expect(missing.status).not.toBe(0);
-    expect(missing.stderr).toContain('npm_execpath is required');
   });
 });

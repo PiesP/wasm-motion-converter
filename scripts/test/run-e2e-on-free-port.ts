@@ -1,13 +1,8 @@
 import { createServer } from 'node:net';
-import { delimiter, dirname } from 'node:path';
 
-import { runChild } from '../check/run-child.ts';
+import { packageBinary, runChild } from '../check/run-child.ts';
 
 export async function runE2eOnFreePort(run: typeof runChild = runChild): Promise<number> {
-  const packageManagerPath = process.env.npm_execpath;
-  if (!packageManagerPath) {
-    throw new Error('npm_execpath is required to run the Playwright package script.');
-  }
   const server = createServer();
   let failure: { error: unknown } | undefined;
   let port: number | undefined;
@@ -38,20 +33,14 @@ export async function runE2eOnFreePort(run: typeof runChild = runChild): Promise
   if (failure) throw failure.error;
   if (port === undefined) throw new Error('Could not allocate a local TCP port for Playwright.');
   // Selection releases the probe; Playwright still owns binding and collision errors.
-  const nativeManager = !/\.[cm]?js$/u.test(packageManagerPath);
   return run(
-    packageManagerPath,
-    ['test:e2e:ci'],
+    packageBinary('vite-plus', 'vp'),
+    ['run', 'test:e2e:ci'],
     {
       PLAYWRIGHT_DEV_PORT: String(port),
-      // Node launchers may prepend an older manager shim; keep lifecycle calls on this binary.
-      ...(nativeManager
-        ? { PATH: `${dirname(packageManagerPath)}${delimiter}${process.env.PATH ?? ''}` }
-        : {}),
     },
     {
       signalScope: 'process-group',
-      executable: nativeManager,
     }
   );
 }

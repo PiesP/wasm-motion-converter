@@ -1,47 +1,21 @@
 import assert from 'node:assert/strict';
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process';
-import {
-  chmodSync,
-  existsSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { basename, delimiter, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, join } from 'node:path';
 
 import { test } from 'vite-plus/test';
 
-import { runVite } from '../build/run-vite.ts';
 import { prepareResourceFixtures } from '../test/prepare-resource-fixtures.ts';
 import { runE2eOnFreePort } from '../test/run-e2e-on-free-port.ts';
 import { runPlaywright } from '../test/run-playwright.ts';
-import { runChild } from './run-child.ts';
-
-function closeWithin(child: ChildProcess): Promise<number | null> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(child.exitCode);
-  return new Promise((resolve, reject) => {
-    const onClose = (code: number | null): void => {
-      clearTimeout(timer);
-      resolve(code);
-    };
-    const timer = setTimeout(() => {
-      child.off('close', onClose);
-      reject(new Error('Owned child did not close before the deadline.'));
-    }, 5_000);
-    child.once('close', onClose);
-  });
-}
+import { packageBinary, runChild } from './run-child.ts';
 
 test('portable adapters remain inert when imported with a missing argv entry', () => {
   const directory = mkdtempSync(join(tmpdir(), 'wmc-command-import-'));
   try {
     const modules = [
-      new URL('../build/run-vite.ts', import.meta.url).href,
       new URL('../test/run-playwright.ts', import.meta.url).href,
       new URL('../test/prepare-resource-fixtures.ts', import.meta.url).href,
       new URL('../test/run-e2e-on-free-port.ts', import.meta.url).href,
@@ -66,123 +40,34 @@ test('portable adapters remain inert when imported with a missing argv entry', (
   }
 });
 
-test('free-port wrapper keeps package lifecycle and releases the port before child startup', async () => {
-  const previous = process.env.npm_execpath;
+test('free-port runner uses the local Vite+ task, releases the probe, and returns child status', async () => {
   const listeners = ['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal));
-  process.env.npm_execpath = '/package manager with spaces/pnpm.cjs';
-  try {
-    for (const status of [0, 19]) {
-      const fixture = recordingRunner([status]);
-      assert.equal(await runE2eOnFreePort(fixture.run), status);
-      assert.equal(fixture.calls.length, 1);
-      assert.equal(fixture.calls[0]?.script, process.env.npm_execpath);
-      assert.deepEqual(fixture.calls[0]?.options, {
-        signalScope: 'process-group',
-        executable: false,
+  for (const status of [0, 19]) {
+    const fixture = recordingRunner([status]);
+    assert.equal(await runE2eOnFreePort(fixture.run), status);
+    assert.equal(fixture.calls.length, 1);
+    assert.equal(basename(fixture.calls[0]?.script ?? ''), 'vp');
+    assert.deepEqual(fixture.calls[0]?.options, { signalScope: 'process-group' });
+    assert.deepEqual(fixture.calls[0]?.args, ['run', 'test:e2e:ci']);
+    assert.deepEqual(Object.keys(fixture.calls[0]?.env ?? {}), ['PLAYWRIGHT_DEV_PORT']);
+    const port = Number(fixture.calls[0]?.env.PLAYWRIGHT_DEV_PORT);
+    assert.ok(Number.isInteger(port) && port > 0 && port <= 65535);
+    const server = createServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen({ host: '127.0.0.1', port }, resolve);
       });
-      assert.deepEqual(fixture.calls[0]?.args, ['test:e2e:ci']);
-      assert.deepEqual(Object.keys(fixture.calls[0]?.env ?? {}), ['PLAYWRIGHT_DEV_PORT']);
-      const port = Number(fixture.calls[0]?.env.PLAYWRIGHT_DEV_PORT);
-      assert.ok(Number.isInteger(port) && port > 0 && port <= 65535);
-      const server = createServer();
-      try {
-        await new Promise<void>((resolve, reject) => {
-          server.once('error', reject);
-          server.listen({ host: '127.0.0.1', port }, resolve);
-        });
-      } finally {
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) => (error ? reject(error) : resolve()));
-        });
-      }
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
     }
-    process.env.npm_execpath = '/package manager with spaces/pnpm';
-    const native = recordingRunner();
-    assert.equal(await runE2eOnFreePort(native.run), 0);
-    assert.equal(native.calls[0]?.script, process.env.npm_execpath);
-    assert.deepEqual(native.calls[0]?.options, {
-      signalScope: 'process-group',
-      executable: true,
-    });
-    assert.equal(
-      native.calls[0]?.env.PATH,
-      `${dirname(process.env.npm_execpath)}${delimiter}${process.env.PATH ?? ''}`
-    );
-    delete process.env.npm_execpath;
-    const missing = recordingRunner();
-    await assert.rejects(runE2eOnFreePort(missing.run), /npm_execpath is required/);
-    assert.equal(missing.calls.length, 0);
-    assert.deepEqual(
-      ['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal)),
-      listeners
-    );
-  } finally {
-    if (previous === undefined) delete process.env.npm_execpath;
-    else process.env.npm_execpath = previous;
   }
-});
-
-test('free-port CLI preserves status, inherited environment, cwd and startup diagnostics', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'wmc free port '));
-  const wrapper = new URL('../test/run-e2e-on-free-port.ts', import.meta.url);
-  const script = join(directory, 'package manager.mjs');
-  const output = join(directory, 'observed.json');
-  try {
-    writeFileSync(
-      script,
-      `import { writeFileSync } from 'node:fs';
-writeFileSync(process.env.OUTPUT, JSON.stringify({args: process.argv.slice(2), cwd: process.cwd(), path: process.env.PATH, value: process.env.INHERITED_VALUE, port: process.env.PLAYWRIGHT_DEV_PORT}));
-process.exitCode = Number(process.env.STATUS);
-`
-    );
-    for (const status of [0, 23]) {
-      const result = spawnSync(
-        process.execPath,
-        ['--experimental-strip-types', fileURLToPath(wrapper)],
-        {
-          cwd: directory,
-          env: {
-            ...process.env,
-            npm_execpath: script,
-            OUTPUT: output,
-            INHERITED_VALUE: 'kept',
-            STATUS: String(status),
-          },
-          encoding: 'utf8',
-          timeout: 10_000,
-        }
-      );
-      assert.equal(result.status, status, result.stderr);
-      const observed = JSON.parse(readFileSync(output, 'utf8')) as {
-        args: string[];
-        cwd: string;
-        path: string;
-        value: string;
-        port: string;
-      };
-      assert.deepEqual(observed.args, ['test:e2e:ci']);
-      assert.equal(observed.cwd, directory);
-      assert.equal(observed.path, process.env.PATH);
-      assert.equal(observed.value, 'kept');
-      assert.ok(Number(observed.port) > 0 && Number(observed.port) <= 65535);
-    }
-    for (const execpath of ['', join(directory, 'missing.mjs')]) {
-      const result = spawnSync(
-        process.execPath,
-        ['--experimental-strip-types', fileURLToPath(wrapper)],
-        {
-          cwd: directory,
-          env: { ...process.env, npm_execpath: execpath },
-          encoding: 'utf8',
-          timeout: 10_000,
-        }
-      );
-      assert.equal(result.status, 1);
-      assert.match(result.stderr, execpath ? /MODULE_NOT_FOUND/ : /npm_execpath is required/);
-    }
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
+  assert.deepEqual(
+    ['SIGINT', 'SIGTERM'].map((signal) => process.listenerCount(signal)),
+    listeners
+  );
 });
 
 test('free-port allocation failures close the probe and preserve the original diagnostic', () => {
@@ -208,7 +93,7 @@ try { await runE2eOnFreePort(); process.exitCode = 99; }
 catch(error) { console.log(JSON.stringify({error: error.message, closed})); }
 `,
       ],
-      { env: { ...process.env, npm_execpath: 'unused' }, encoding: 'utf8', timeout: 10_000 }
+      { env: process.env, encoding: 'utf8', timeout: 10_000 }
     );
     assert.equal(result.status, 0, result.stderr);
     const observed = JSON.parse(result.stdout) as { error: string; closed: boolean };
@@ -222,72 +107,6 @@ catch(error) { console.log(JSON.stringify({error: error.message, closed})); }
     if (injected === 'cleanup') assert.match(result.stderr, /cleanup control/);
   }
 });
-
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  test(
-    `free-port CLI forwards parent-only ${signal} and observes owned child disappearance`,
-    {
-      skip: process.platform === 'win32',
-      timeout: 15_000,
-    },
-    async () => {
-      const directory = mkdtempSync(join(tmpdir(), 'wmc-free-port-signal-'));
-      const script = join(directory, 'package manager.mjs');
-      const marker = join(directory, 'marker.json');
-      const stopped = join(directory, 'stopped');
-      const wrapper = new URL('../test/run-e2e-on-free-port.ts', import.meta.url);
-      writeFileSync(
-        script,
-        `import { writeFileSync, renameSync } from 'node:fs';
-const signal = process.env.PROBE_SIGNAL;
-if (!['SIGINT', 'SIGTERM'].includes(signal)) throw new Error('Expected a probe signal.');
-process.on(signal, () => { writeFileSync(process.env.STOPPED, signal); process.exit(0); });
-writeFileSync(process.env.MARKER + '.tmp', JSON.stringify({pid: process.pid}));
-renameSync(process.env.MARKER + '.tmp', process.env.MARKER);
-setInterval(() => {}, 1000);
-`
-      );
-      const supervisor = spawn(
-        process.execPath,
-        ['--experimental-strip-types', fileURLToPath(wrapper)],
-        {
-          env: {
-            ...process.env,
-            npm_execpath: script,
-            MARKER: marker,
-            STOPPED: stopped,
-            PROBE_SIGNAL: signal,
-          },
-          stdio: 'ignore',
-        }
-      );
-      let childPid: number | undefined;
-      try {
-        for (let attempt = 0; attempt < 250 && !existsSync(marker); attempt++) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
-        childPid = (JSON.parse(readFileSync(marker, 'utf8')) as { pid: number }).pid;
-        const closed = closeWithin(supervisor);
-        supervisor.kill(signal);
-        assert.equal(await closed, signal === 'SIGINT' ? 130 : 143);
-        assert.equal(readFileSync(stopped, 'utf8'), signal);
-        const observedPid = childPid;
-        assert.throws(() => process.kill(observedPid, 0), { code: 'ESRCH' });
-      } finally {
-        supervisor.kill('SIGKILL');
-        if (childPid) {
-          try {
-            process.kill(childPid, 'SIGKILL');
-          } catch {
-            /* Already reaped. */
-          }
-        }
-        await closeWithin(supervisor);
-        rmSync(directory, { recursive: true, force: true });
-      }
-    }
-  );
-}
 
 test('child runner removes listeners after missing child and child-initiated signals', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'wmc-run-child-terminal-'));
@@ -438,44 +257,49 @@ function recordingRunner(results: number[] = []) {
   return { calls, run };
 }
 
-test('build:ci preserves license, Vite, and postbuild order and stops on failure', async () => {
-  const success = recordingRunner();
-  assert.equal(await runVite('ci', ['--emptyOutDir'], success.run), 0);
-  assert.deepEqual(
-    success.calls.map(({ script }) => basename(script)),
-    ['generate-licenses.ts', 'vp', 'postbuild.ts']
-  );
-  assert.deepEqual(success.calls[1]?.args, ['build', '--emptyOutDir']);
-  assert.equal(success.calls[1]?.env.NODE_OPTIONS, '--no-deprecation');
-  assert.equal(success.calls[1]?.env.VITE_ANALYZE_BUNDLE, undefined);
-
-  const licenseFailure = recordingRunner([7]);
-  assert.equal(await runVite('ci', [], licenseFailure.run), 7);
-  assert.equal(licenseFailure.calls.length, 1);
-  const viteFailure = recordingRunner([0, 9]);
-  assert.equal(await runVite('ci', [], viteFailure.run), 9);
-  assert.equal(viteFailure.calls.length, 2);
-  const postbuildFailure = recordingRunner([0, 0, 11]);
-  assert.equal(await runVite('ci', [], postbuildFailure.run), 11);
-  assert.equal(postbuildFailure.calls.length, 3);
-});
-
-test('Vite commands keep their arguments and command-specific environment', async () => {
-  for (const [mode, expectedArgs] of [
-    ['dev', ['dev', '--host', '127.0.0.1']],
-    ['build', ['build', '--host', '127.0.0.1']],
-    ['preview', ['preview', '--host', '127.0.0.1']],
-  ] as const) {
-    const fixture = recordingRunner();
-    assert.equal(await runVite(mode, ['--host', '127.0.0.1'], fixture.run), 0);
-    assert.deepEqual(fixture.calls[0]?.args, expectedArgs);
-    assert.equal(fixture.calls[0]?.env.NODE_OPTIONS, '--no-deprecation');
-    assert.equal(fixture.calls[0]?.env.VITE_ANALYZE_BUNDLE, undefined);
-    assert.equal(fixture.calls.length, 1);
-    const failure = recordingRunner([13]);
-    assert.equal(await runVite(mode, ['--host', '127.0.0.1'], failure.run), 13);
-    assert.deepEqual(failure.calls[0]?.args, expectedArgs);
-    assert.equal(failure.calls.length, 1);
+test('Vite+ build lifecycle stops at the failing license, build, or postbuild phase', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'wmc-vp-lifecycle-'));
+  const vp = packageBinary('vite-plus', 'vp');
+  try {
+    writeFileSync(
+      join(directory, 'package.json'),
+      JSON.stringify({
+        private: true,
+        type: 'module',
+        scripts: {
+          prebuild: 'node step.mjs license',
+          build: 'node step.mjs build',
+          postbuild: 'node step.mjs postbuild',
+        },
+      })
+    );
+    writeFileSync(
+      join(directory, 'step.mjs'),
+      `import { appendFileSync } from 'node:fs';
+const step = process.argv[2];
+appendFileSync(process.env.STEP_LOG, step + '\\n');
+if (process.env.FAIL_STEP === step) process.exitCode = 17;
+`
+    );
+    for (const [failed, expected] of [
+      ['license', ['license']],
+      ['build', ['license', 'build']],
+      ['postbuild', ['license', 'build', 'postbuild']],
+      ['', ['license', 'build', 'postbuild']],
+    ] as const) {
+      const log = join(directory, 'steps');
+      writeFileSync(log, '');
+      const result = spawnSync(process.execPath, [vp, 'run', 'build'], {
+        cwd: directory,
+        env: { ...process.env, STEP_LOG: log, FAIL_STEP: failed },
+        encoding: 'utf8',
+        timeout: 20_000,
+      });
+      assert.equal(result.status, failed ? 17 : 0, result.stderr);
+      assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n'), expected);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
@@ -528,26 +352,6 @@ process.exitCode = 17;
     rmSync(dir, { recursive: true, force: true });
   }
 });
-
-test(
-  'child runner executes a native package manager without a Node launcher',
-  {
-    skip: process.platform === 'win32',
-  },
-  async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'wmc-native-manager-'));
-    try {
-      const manager = join(directory, 'pnpm');
-      const output = join(directory, 'args');
-      writeFileSync(manager, '#!/bin/sh\nprintf "%s" "$1" > "$2"\nexit 23\n');
-      chmodSync(manager, 0o755);
-      assert.equal(await runChild(manager, ['test:e2e:ci', output], {}, { executable: true }), 23);
-      assert.equal(readFileSync(output, 'utf8'), 'test:e2e:ci');
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  }
-);
 
 test(
   'child runner forwards SIGTERM and preserves the interrupted exit status',

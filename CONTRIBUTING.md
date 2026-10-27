@@ -27,37 +27,28 @@ Avoid attaching sensitive or private files.
 
 ## Development setup
 
-Use the toolchain pinned in `package.json`, or versions that satisfy its
-`engines` fields. Then initialize the shared submodule and install dependencies:
+Install the reviewed global Vite+ CLI, then use its project-selected Node and
+package manager. `.node-version`, `packageManager`, and the default workspace
+catalog select the exact versions. Initialize the shared submodule before the
+frozen install:
 
 ```bash
 git submodule update --init --recursive
-npm install --global "$(node -p "require('./package.json').packageManager")" --allow-scripts=pnpm
-pnpm install --frozen-lockfile
-```
-
-Volta selects Node.js; `packageManager` selects native pnpm. Follow the
-[shared bootstrap](https://github.com/PiesP/browser-core/blob/master/README.md#development)
-when retiring an existing global Volta pnpm selection; PATH order alone does not
-prevent Volta's Node launcher from selecting that obsolete manager.
-
-```bash
-pnpm dev
+vp env current
+vp install --frozen-lockfile -- --no-runtime
+vp run dev
 ```
 
 COOP/COEP headers are configured in `vite.config.ts` for development and preview.
 
 ## Dependency and action updates
 
-Dependabot manages workflow dependencies and the external actions inside
-`.github/actions/setup-release`. CodeQL, `pnpm/action-setup`, and other Actions use
-separate update groups so a toolchain contract failure does not block unrelated
-scanner maintenance. Updates remain subject to maintainer review and the
-existing minimum 24-hour release age.
-
-The local release action resolves the tagged manifest pin, selects that Node,
-then installs the manifest-pinned pnpm before the frozen dependency install. It disables
-automatic package-manager caching and installation in both setup actions.
+Dependabot manages workflow dependencies. The reviewed shared
+`browser-core/automation/actions/setup-project` action installs catalog-pinned
+Vite+, selects `.node-version` and `packageManager`, and performs a frozen
+install. Routing, provenance, and publication checks opt out of dependency
+installation. Tagged release jobs pass the verified numeric source Node pin;
+unsupported historical sources fail during provenance before publication.
 
 Every workflow action job first invokes the [browser-core Node trust preparation](https://github.com/PiesP/browser-core/blob/381b4ca733494cf069212cd0d16458389a83c623/automation/README.md#consumer-contract) at that reviewed SHA, with OpenSSL trust settings inherited by action bootstrap and post steps. The helper supports Ubuntu 24.04 and Alpine 3.23; unsupported systems fail before later actions. Its step boundary does not cover runner downloads or container pulls that happen before steps.
 
@@ -69,15 +60,15 @@ installation, and publication boundaries intact. Do not make the expected SHA
 follow the workflow being tested. Local release recipes retain their separately
 reviewed compatibility contracts.
 
-Run the focused toolchain and dependency-policy tests, then `pnpm verify` and
+Run the focused toolchain and dependency-policy tests, then `vp run verify` and
 the applicable workflow checks. Preserve failed evidence and distinguish a
 reviewed pin-contract update from a runtime failure before splitting or closing
 an update PR. A setup check does not authorize release publication.
 
 ## Command catalog
 
-Run package commands from the repository root with manifest-pinned Node and
-pnpm after restoring the recorded `packages/core` gitlink. The dependency-free
+Run Vite+ tasks from the repository root with `.node-version` and
+manifest-pinned pnpm after restoring the recorded `packages/core` gitlink. The dependency-free
 `preinstall` check can run before dependencies exist. `packages/core` supplies
 product runtime code; automation helpers are consumer-owned or separately
 pinned. The table records execution stage, inputs, side effects and checks.
@@ -86,20 +77,20 @@ pinned. The table records execution stage, inputs, side effects and checks.
 
 | Public command or family | Purpose; owner, runtime, and stage | Inputs, outputs, side effects; verification |
 | --- | --- | --- |
-| `pnpm install` (`preinstall`) | Dependency-free `scripts/check/bootstrap.ts` checks the core manifest before `node_modules` exists. | Reads `packages/core/package.json`, prints actionable initialization steps and fails if absent; no check writes. `test/unit/config/command-adapters.test.ts`, `pnpm check:scripts`; the package-manager install is separate. |
-| `pnpm dev`, `build`, `build:ci`, `preview` | `scripts/build/run-vite.ts` launches project-local Vite+; `prebuild` generates licenses and runs quality, while `build:ci` generates licenses, builds, then postprocesses without repeating quality. `dev`/`preview` start servers. | Reads source/core and installed Vite+; builds write `dist/` and may update `public/LICENSES.md`. `scripts/check/run-child.test.ts`, `pnpm verify`, and artifact comparison check execution. |
-| `pnpm postbuild`, `clean` | `scripts/build/postbuild.ts` finalizes distribution headers/assets; `scripts/build/clean.ts` removes generated output. | Inspect `dist/_headers`, output manifest and licenses after a build; `test/unit/config/node-script-boundaries.test.ts` checks direct CLI/import behavior. |
-| `pnpm prepare:e2e:fixture`, `pretest:e2e:ci`, `pretest:e2e:resource`, `pretest:e2e:deploy` | `scripts/test/generate-e2e-video.ts` uses host FFmpeg/ffprobe; `scripts/test/prepare-resource-fixtures.ts` selects resource fixtures. | Writes ignored `public/test-video-*` files; requires codec tools on PATH. `test/unit/e2e-fixtures.test.ts`, child adapter tests, and affected E2E profile check outputs. |
-| `pnpm test:e2e`, `test:e2e:ci`, `test:e2e:resource`, `test:e2e:deploy` | Plain `test:e2e` runs Playwright; `scripts/test/run-playwright.ts` selects the named CI, resource or deploy profile in the caller environment. | Requires built app/fixtures and browsers; writes test results/screenshots. `scripts/check/run-child.test.ts` covers argv, cwd, env, exit and signal; browser profiles have distinct scopes. |
-| `pnpm verify:full` | Runs verify, coverage and `scripts/test/run-e2e-on-free-port.ts` CI smoke; chooses an ephemeral loopback port and invokes the package script via the pinned native `npm_execpath`. | May bind loopback, generate fixtures, build, launch browsers and write reports; `test/unit/config/playwright-profile.test.ts` and CI smoke are checks. It is not all hardware/codec/Windows acceptance. |
-| `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vite+ projects: `unit` owns product/config suites; `node-policy` owns `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts`, `scripts/check/run-child.test.ts` and native HTTP/recovery tests. | `test`, `test:watch` and `test:cov` select `unit`, preserving ordinary test discovery and product coverage ownership; `test:watch` uses explicit `vp test watch` and stays active to rerun changed tests. Coverage writes reports. `test:ci` selects `node-policy` with real Node globals, timers, Fetch/HTTP and no browser setup. It checks repository authority, tagged source, portable child execution and loopback server behavior. Its subprocesses still execute actual Node, and its signal tests require POSIX where marked. Quality owns it; unit-only CI runs it before unit coverage so policy assertions are neither skipped nor repeated. |
-| `pnpm check`, `check:test:unit`, `check:test:e2e`, `check:scripts`, `check:windows`, `typecheck` | Browser, Vitest, Playwright, strict NodeNext/erasable script TypeScript, and the Windows validation TypeScript project. `tsconfig.scripts.json` retains its Node-only ES2022 boundary; `tsconfig.windows.json` adds DOM types only for Playwright-evaluated code. | Read-only; `pnpm quality` runs these boundaries. The Node boundary test compiles the full script project with positive Node and negative browser-global probes and checks every Windows module's syntax. |
-| `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
-| `pnpm fmt`, `fmt:check`, `lint`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting and static/type source-cycle analysis. | Read-only; `circular` is a focused alias for native source lint. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
-| `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, then browser/unit/E2E/Node types, the Vite+ Node-policy project, and i18n; native lint includes static cycles once. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
-| `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `published-asset.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
+| `vp install --frozen-lockfile -- --no-runtime` (`preinstall`) | Dependency-free `scripts/check/bootstrap.ts` checks the core manifest before `node_modules` exists. | Reads `packages/core/package.json`, prints actionable initialization steps and fails if absent; no check writes. `test/unit/config/command-adapters.test.ts`, `vp run check:scripts`; the package-manager install is separate. |
+| `vp run dev`, `build`, `build:ci`, `preview` | `vp run build` runs `prebuild` licenses and quality, `vp build`, then `postbuild` validation. The native `build:ci` task runs licenses, build, and postbuild without repeating CI's separate quality gate; `verify` runs quality once before `build:ci`. `dev`/`preview` start servers. | Reads source/core and installed Vite+; builds write `dist/` and may update `public/LICENSES.md`. `scripts/check/run-child.test.ts`, `vp run verify`, and artifact comparison check execution. |
+| `vp run postbuild`, `clean` | `scripts/build/postbuild.ts` finalizes distribution headers/assets; `scripts/build/clean.ts` removes generated output. | Inspect `dist/_headers`, output manifest and licenses after a build; `test/unit/config/node-script-boundaries.test.ts` checks direct CLI/import behavior. |
+| `vp run prepare:e2e:fixture`, `pretest:e2e:ci`, `pretest:e2e:resource`, `pretest:e2e:deploy` | `scripts/test/generate-e2e-video.ts` uses host FFmpeg/ffprobe; `scripts/test/prepare-resource-fixtures.ts` selects resource fixtures. | Writes ignored `public/test-video-*` files; requires codec tools on PATH. `test/unit/e2e-fixtures.test.ts`, child adapter tests, and affected E2E profile check outputs. |
+| `vp run test:e2e`, `test:e2e:ci`, `test:e2e:resource`, `test:e2e:deploy` | Plain `test:e2e` runs Playwright; `scripts/test/run-playwright.ts` selects the named CI, resource or deploy profile in the caller environment. | Requires built app/fixtures and browsers; writes test results/screenshots. `scripts/check/run-child.test.ts` covers argv, cwd, env, exit and signal; browser profiles have distinct scopes. |
+| `vp run verify:full` | Runs verify, coverage and `scripts/test/run-e2e-on-free-port.ts` CI smoke; chooses an ephemeral loopback port and invokes the project-local Vite+ task with process-group signal cleanup. | May bind loopback, generate fixtures, build, launch browsers and write reports; `test/unit/config/playwright-profile.test.ts` and CI smoke are checks. It is not all hardware/codec/Windows acceptance. |
+| `vp run test`, `test:watch`, `test:cov`, `test:ci` | Vite+ projects: `unit` owns product/config suites; `node-policy` owns `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts`, `scripts/check/run-child.test.ts` and native HTTP/recovery tests. | `test`, `test:watch` and `test:cov` select `unit`, preserving ordinary test discovery and product coverage ownership; `test:watch` uses explicit `vp test watch` and stays active to rerun changed tests. Coverage writes reports. `test:ci` selects `node-policy` with real Node globals, timers, Fetch/HTTP and no browser setup. It checks repository authority, tagged source, portable child execution and loopback server behavior. Its subprocesses still execute actual Node, and its signal tests require POSIX where marked. Quality owns it; unit-only CI runs it before unit coverage so policy assertions are neither skipped nor repeated. |
+| `vp run check`, `check:test:unit`, `check:test:e2e`, `check:scripts`, `check:windows`, `typecheck` | Browser, Vitest, Playwright, strict NodeNext/erasable script TypeScript, and the Windows validation TypeScript project. `tsconfig.scripts.json` retains its Node-only ES2022 boundary; `tsconfig.windows.json` adds DOM types only for Playwright-evaluated code. | Read-only; `vp run quality` runs these boundaries. The Node boundary test compiles the full script project with positive Node and negative browser-global probes and checks every Windows module's syntax. |
+| `vp run check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
+| `vp run fmt`, `fmt:check`, `lint`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting and static/type source-cycle analysis. | Read-only; `circular` is a focused alias for native source lint. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
+| `vp run quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, then browser/unit/E2E/Node types, the Vite+ Node-policy project, and i18n; native lint includes static cycles once. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
+| `vp run release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `published-asset.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
 
-`pnpm circular` runs `vp lint src --deny-warnings`; ordinary quality already
+`vp run circular` runs `vp lint src --deny-warnings`; ordinary quality already
 runs the same native cycle rule within `lint` and does not repeat the alias.
 Oxlint's error-level `import/no-cycle` visits recursive `src/**` TS/TSX,
 including root files, deep UI and both independent conversion/WebP Workers.
@@ -153,9 +144,9 @@ image, browser set, Playwright installation contract, or cache behavior changes.
 
 ### Windows bundle and retained languages
 
-`validation/windows/profile.json` declares generated `dist`, named generated MP4/WebM fixtures, `output-contract.json`, and the TypeScript helper closure. The controller packs and imports `profile.ts` under its portable Windows Node with native type stripping, then invokes `run({ browser, root, output })` using the installed stable browser. The prepared Windows controller runs `pnpm prepare:e2e:fixture` and `pnpm build:ci` in a **clean Linux checkout**, then bundles `playwright-core` and portable Node. Guest Node/pnpm/FFmpeg on PATH are not prerequisites.
+`validation/windows/profile.json` declares generated `dist`, named generated MP4/WebM fixtures, `output-contract.json`, and the TypeScript helper closure. The controller packs and imports `profile.ts` under its portable Windows Node with native type stripping, then invokes `run({ browser, root, output })` using the installed stable browser. The prepared Windows controller runs `vp run prepare:e2e:fixture` and `vp run build:ci` in a **clean Linux checkout**, then bundles `playwright-core` and portable Node. Guest Node/pnpm/FFmpeg on PATH are not prerequisites.
 
-`pnpm check:windows` checks the full validation implementation without widening the Node-only script project. The Node boundary suite runs `node --check` over every `validation/windows/**/*.ts` module; the E2E output-contract and resource-profile specs cover related behavior. These local checks do not establish desktop, physical codec, GPU or media performance acceptance.
+`vp run check:windows` checks the full validation implementation without widening the Node-only script project. The Node boundary suite runs `node --check` over every `validation/windows/**/*.ts` module; the E2E output-contract and resource-profile specs cover related behavior. These local checks do not establish desktop, physical codec, GPU or media performance acceptance.
 
 MP4 sample metadata uses the maintained MediaBunny patch and the limits in
 `src/utils/constants.ts`. Its 32 MiB policy reserve completes the 128 MiB demux
@@ -186,11 +177,11 @@ Small workflow shell blocks remain runner bootstrap, checkout, output, and actio
 Run the narrowest relevant test while working. Before opening a pull request, run:
 
 ```bash
-pnpm verify
-pnpm test
+vp run verify
+vp run test
 ```
 
-Use `pnpm verify:full` for substantive or publication-level changes. Browser
+Use `vp run verify:full` for substantive or publication-level changes. Browser
 behavior changes also require the relevant Playwright flow. See the
 [testing guide](./test/README.md) for profiles and fixtures.
 
@@ -230,10 +221,10 @@ release merely because it exists.
 
 The source-build settings are an empty repository root, output `dist`, build
 command `node --experimental-strip-types scripts/build/pages-build.ts`, and
-`SKIP_DEPENDENCY_INSTALL=1`. The dependency-free bootstrap validates effective
-Node/pnpm against `.node-version` and `package.json`, restores and verifies the
-recorded core gitlink, installs the frozen lockfile with build dependencies,
-then runs `pnpm build`. Its quality, license and postbuild lifecycle stays a
+`SKIP_DEPENDENCY_INSTALL=1`. The source-build bootstrap validates Node and the Vite+-selected pnpm against
+`.node-version` and `package.json`, restores and verifies the core gitlink,
+installs the frozen lockfile with build dependencies,
+then runs `vp run build`. Its quality, license and postbuild lifecycle stays a
 deployment prerequisite. License notices omit build dates so CI and Pages can
 reproduce the same public bytes across a date boundary. Read the provider log
 for effective tools and core SHA. Declare `SKIP_DEPENDENCY_INSTALL = "1"` in
@@ -241,11 +232,10 @@ Wrangler `[vars]` as well as
 the project settings: Pages projects using a Wrangler file read its variables
 into the build environment before deciding whether to install dependencies.
 Confirm the switch and the absence of an automatic install in the provider log.
-The tracked `PNPM_VERSION` selects the exact native pnpm release before the
-build command starts; keep it aligned with `packageManager`. Node 26 does not
-bundle Corepack, and older separately installed Corepack shims select a JavaScript
-entrypoint absent from pnpm 12. Confirm the effective pnpm version in the provider
-log as well as the bootstrap receipt.
+The tracked `PNPM_VERSION` keeps the Pages provider pre-build selection aligned
+with `packageManager`. The bootstrap installs the reviewed Vite+ 1.4.0 global CLI
+from an immutable installer source with a checked SHA-256 when absent, then verifies
+Vite+ selects the exact Node and pnpm pins. Confirm those identities in the provider log.
 
 The incident Node definition under `scripts/build/node-build-definitions` supplies
 26.12.1 while the provider's upstream version catalog lacks it. Declare
@@ -271,12 +261,12 @@ PAGES_NODE_QUALIFICATION=1 node --experimental-strip-types scripts/build/pages-b
 
 Restore the exact normal build command after retaining the source-bound receipt;
 do not keep a project-only flag for normal builds. Combined with `CF_PAGES=1`,
-the switch runs the bounded qualifier before installation, records the selected
-native pnpm executable, its version and binary hash, the Node executable and CA
+the switch runs the bounded qualifier before installation, records the Vite+-selected
+pnpm executable, its version and binary hash, the Node executable and CA
 settings, and checks Node HTTPS plus one direct and one cross-signed incident
 sample through https and fetch. The direct sample is DV
 G3B and the AAA-cross-signed sample is EV G3B, two of the coordinator's twelve
-chains. These TLS samples describe Node, while the pnpm receipt proves native
+chains. These TLS samples describe Node, while the package-manager receipt binds the selected
 binary identity; they do not measure pnpm's own TLS client. Successful receipts
 cover only these two samples. Failed timeout/DNS
 receipts remain inconclusive; do not treat them as proof that the client rejected
@@ -326,8 +316,8 @@ readback during a release/issue closeout.
 For an authorized local public check, build the clean expected source and run:
 
 ```bash
-pnpm prepare:e2e:fixture
-EXPECTED_SOURCE_SHA="$(git rev-parse HEAD)" pnpm verify:deploy
+vp run prepare:e2e:fixture
+EXPECTED_SOURCE_SHA="$(git rev-parse HEAD)" vp run verify:deploy
 ```
 
 Keep `SKIP_WEB_SERVER` unset. The deploy profile uses production controls and
@@ -598,7 +588,7 @@ import restrictions. Relevant references are [Oxlint import restrictions](https:
   including patch/minor, major and security updates; no auto-eligible category
   remains. An open security alert prioritizes review and never authorizes it.
 - `package.json`, `pnpm-workspace.yaml`, and pinned workflow digests are the
-  authoritative versions. Run `pnpm verify:full` after substantive upgrades.
+  authoritative versions. Run `vp run verify:full` after substantive upgrades.
 
 Vite+ owns the Vite, Vitest, coverage, and core-tool versions. Dependabot keeps
 `vite-plus` update PRs visible while omitting ordinary component-version PRs for
@@ -606,11 +596,11 @@ Vite+ owns the Vite, Vitest, coverage, and core-tool versions. Dependabot keeps
 and alerts remain visible. For a Vite+ update, select an exact stable release
 published at least 24 hours earlier and set `VERSION` to that release. Follow the
 [project upgrade guide](https://viteplus.dev/guide/upgrade-project): run
-`pnpm dlx --package="vite-plus@$VERSION" vp help migrate`, then
-`pnpm dlx --package="vite-plus@$VERSION" vp migrate --no-interactive --no-agent --no-editor --no-hooks`.
+`vp dlx --package="vite-plus@$VERSION" vp help migrate`, then
+`vp dlx --package="vite-plus@$VERSION" vp migrate --no-interactive --no-agent --no-editor --no-hooks`.
 Review the managed Vite alias, Vitest and coverage catalog entries, and exact
 peer-compatibility selectors against the bundled versions. Confirm fresh
-dependency resolution, a frozen install, and `pnpm verify:full` before merging.
+dependency resolution, a frozen install, and `vp run verify:full` before merging.
 Upgrading a global `vp` installation does not update this project's package graph.
 
 Review the exact dependency/Action diff and its upstream source, release notes,
