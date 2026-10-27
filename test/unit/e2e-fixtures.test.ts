@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -8,8 +9,28 @@ import {
   validateGifMagic,
   validateWebpMagic,
 } from '../e2e/fixtures/validate-magic';
+import { validateFileMagic } from '../e2e/fixtures/verify';
 
 describe('E2E media validation fixtures', () => {
+  it('accepts valid GIF bytes through the E2E wrapper and preserves dimensions', () => {
+    const bytes = Buffer.from([
+      ...new TextEncoder().encode('GIF89a'),
+      0x80,
+      0x02,
+      0xe0,
+      0x01,
+      0x3b,
+    ]);
+
+    expect(validateGifMagic(bytes)).toEqual({ valid: true, width: 640, height: 480 });
+    expect(validateFileMagic(bytes, 'gif')).toEqual({
+      valid: true,
+      width: 640,
+      height: 480,
+      message: 'Valid GIF',
+    });
+  });
+
   it('rejects a GIF without its trailer byte', () => {
     const bytes = new Uint8Array([
       ...new TextEncoder().encode('GIF89a'),
@@ -23,6 +44,7 @@ describe('E2E media validation fixtures', () => {
     ]);
 
     expect(validateGifMagic(bytes).valid).toBe(false);
+    expect(validateFileMagic(Buffer.from(bytes), 'gif').message).toMatch(/^Invalid GIF magic:/);
   });
 
   it('rejects a WebP without a complete chunk header', () => {
@@ -37,6 +59,7 @@ describe('E2E media validation fixtures', () => {
     ]);
 
     expect(validateWebpMagic(bytes).valid).toBe(false);
+    expect(validateFileMagic(Buffer.from(bytes), 'webp').message).toMatch(/^Invalid WebP magic:/);
   });
 
   it('counts animated WebP frames and their encoded durations', () => {
@@ -63,6 +86,10 @@ describe('E2E media validation fixtures', () => {
       valid: true,
       frameCount: 2,
       durationMs: 67,
+    });
+    expect(validateFileMagic(Buffer.from(bytes), 'webp')).toMatchObject({
+      valid: true,
+      message: 'Valid WebP',
     });
 
     const missingAnimationFlag = new Uint8Array(bytes);

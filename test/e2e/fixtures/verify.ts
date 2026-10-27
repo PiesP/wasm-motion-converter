@@ -2,6 +2,8 @@ import type { Buffer } from 'node:buffer';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { validateGifMagic, validateWebpMagic } from './validate-magic';
+
 const execFileAsync = promisify(execFile);
 
 /**
@@ -69,69 +71,6 @@ export async function decodeFileFully(filePath: string): Promise<void> {
     'null',
     '-',
   ]);
-}
-
-// ─── Magic byte validation (no external tools required) ──
-
-/**
- * Validate GIF file by checking magic bytes.
- * GIF files start with "GIF89a" or "GIF87a" and end with 0x3B.
- */
-export function validateGifMagic(bytes: Uint8Array): {
-  valid: boolean;
-  width?: number;
-  height?: number;
-} {
-  if (bytes.length < 10) return { valid: false };
-
-  const header = String.fromCharCode(
-    bytes[0]!,
-    bytes[1]!,
-    bytes[2]!,
-    bytes[3]!,
-    bytes[4]!,
-    bytes[5]!
-  );
-  if (header !== 'GIF89a' && header !== 'GIF87a') return { valid: false };
-  if (bytes[bytes.length - 1] !== 0x3b) return { valid: false };
-
-  // Logical Screen Descriptor: bytes 6-9 contain width (little-endian) and height (little-endian)
-  const width = bytes[6]! | (bytes[7]! << 8);
-  const height = bytes[8]! | (bytes[9]! << 8);
-
-  return { valid: true, width, height };
-}
-
-/**
- * Validate WebP file by checking magic bytes.
- * WebP: bytes 0-3 = "RIFF", bytes 8-11 = "WEBP"
- */
-export function validateWebpMagic(bytes: Uint8Array): {
-  valid: boolean;
-  width?: number;
-  height?: number;
-} {
-  if (bytes.length < 20) return { valid: false };
-
-  const riff = String.fromCharCode(bytes[0]!, bytes[1]!, bytes[2]!, bytes[3]!);
-  const webp = String.fromCharCode(bytes[8]!, bytes[9]!, bytes[10]!, bytes[11]!);
-  if (riff !== 'RIFF' || webp !== 'WEBP') return { valid: false };
-
-  // For VP8 (lossy): bytes 12-15 = "VP8 ", then dimensions at offset 26-29
-  // For VP8L (lossless): bytes 12-15 = "VP8L", then dimensions at offset 21-24
-  const codec = String.fromCharCode(bytes[12]!, bytes[13]!, bytes[14]!, bytes[15]!);
-  if (codec === 'VP8 ' && bytes.length >= 30) {
-    // VP8: width at offset 26-27, height at offset 28-29 (little-endian, 14-bit each)
-    const w = (bytes[26]! | (bytes[27]! << 8)) & 0x3fff;
-    const h = (bytes[28]! | (bytes[29]! << 8)) & 0x3fff;
-    return { valid: true, width: w, height: h };
-  }
-  if (codec === 'VP8L' && bytes.length >= 25) {
-    // VP8L: dimensions encoded differently, skip for now
-    return { valid: true };
-  }
-
-  return { valid: true };
 }
 
 /**
