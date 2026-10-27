@@ -106,8 +106,8 @@ export default defineConfig(({ command }) => {
         'typescript/no-explicit-any': 'error',
         'typescript/no-unused-vars': 'warn',
         'typescript/no-this-alias': 'off',
-        // Existing asynchronous ownership and branded unions are validated by
-        // the project's focused tests and four TypeScript projects.
+        // Focused tests cover asynchronous ownership. Native Vite+ type checking
+        // validates branded unions through each context's nearest tsconfig.
         'typescript/no-floating-promises': 'off',
         'typescript/unbound-method': 'off',
         'typescript/no-redundant-type-constituents': 'off',
