@@ -87,6 +87,7 @@ describe('Playwright workflow profiles', () => {
       ['release', release, '\n  build:\n'],
     ] as const) {
       const e2e = workflow.slice(workflow.indexOf('  e2e:\n'), workflow.indexOf(end));
+      expect(e2e, name).toContain('timeout-minutes: 90');
       const setup = e2e.indexOf('      - name: 📦 Setup project');
       const version = e2e.indexOf('      - name: 🎭 Resolve installed Playwright version');
       const cache = e2e.indexOf('      - name: 🎭 Cache Playwright browsers');

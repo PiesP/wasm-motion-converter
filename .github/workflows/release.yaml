@@ -136,7 +136,8 @@ jobs:
     name: 🎭 Release E2E
     needs: provenance
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Match CI's cold encoder/browser provisioning budget; test deadlines remain in Playwright.
+    timeout-minutes: 90
     steps:
       - uses: PiesP/browser-core/automation/actions/prepare-node-trust@381b4ca733494cf069212cd0d16458389a83c623
         id: node_trust
