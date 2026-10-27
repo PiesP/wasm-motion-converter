@@ -37,7 +37,7 @@ export function prepareRelease(): void {
     if (start < 0) {
       throw new Error(`CHANGELOG.md has no entry for version ${releaseVersion}.`);
     }
-    const next = lines.findIndex((line, index) => index > start && /^## \[/.test(line));
+    const next = lines.findIndex((line, index) => index > start && line.startsWith('## ['));
     const entry = lines
       .slice(start + 1, next < 0 ? undefined : next)
       .join('\n')

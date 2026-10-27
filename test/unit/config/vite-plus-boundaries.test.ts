@@ -6,23 +6,17 @@ import { afterAll, beforeAll, describe, expect, it } from 'vite-plus/test';
 
 const project = resolve(import.meta.dirname, '../../..');
 const vp = join(project, 'node_modules/vite-plus/bin/vp');
-const biome = join(project, 'node_modules/@biomejs/biome/bin/biome');
 const root = mkdtempSync(join(project, 'test/unit/config/__vp_lint_'));
 const configFile = join(root, '.oxlintrc.json');
 
-function run(args: string[]) {
-  const result = spawnSync(process.execPath, [vp, 'lint', ...args, '--config', configFile], {
-    cwd: project,
-    encoding: 'utf8',
-  });
-  return { status: result.status, output: result.stdout + result.stderr };
-}
-
-function runBiome(path: string) {
+function run(args: string[], useFixtureConfig = true) {
   const result = spawnSync(
     process.execPath,
-    [biome, 'lint', '--error-on-warnings', '--colors=off', path],
-    { cwd: project, encoding: 'utf8' }
+    [vp, 'lint', ...args, ...(useFixtureConfig ? ['--config', configFile] : [])],
+    {
+      cwd: project,
+      encoding: 'utf8',
+    }
   );
   return { status: result.status, output: result.stdout + result.stderr };
 }
@@ -44,9 +38,13 @@ beforeAll(() => {
   expect(config.ignorePatterns).toContain('packages/core/**');
   expect(config.ignorePatterns).toContain('validation/windows/inputs/**');
   // Route the installed browser rule over this disposable test-only fixture.
+  config.jsPlugins = ['vite-plus/oxlint-plugin'];
+  config.rules['vite-plus/prefer-vite-plus-imports'] = 'error';
   config.overrides[0].files = ['**/*'];
   const restriction = config.overrides[0].rules['no-restricted-imports'];
   config.overrides[0].rules['no-restricted-imports'] = ['error', restriction[1][0]];
+  const cycle = config.overrides[0].rules['import/no-cycle'];
+  config.overrides[0].rules['import/no-cycle'] = ['error', cycle[1][0]];
   writeFileSync(configFile, JSON.stringify(config));
 });
 
@@ -64,9 +62,7 @@ describe('installed Vite+ lint boundaries', () => {
     expect(readFileSync(file, 'utf8')).toBe(source);
     const scripts = JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')).scripts;
     expect(scripts.lint).toContain('vp lint . --deny-warnings');
-    expect(scripts['lint:residual']).toBe('biome lint --error-on-warnings .');
     expect(scripts.quality).toContain('pnpm -s lint');
-    expect(scripts.quality).toContain('pnpm -s lint:residual');
   });
 
   it.each([
@@ -86,42 +82,68 @@ describe('installed Vite+ lint boundaries', () => {
     expect(result.status, result.output).toBe(0);
   });
 
-  it('rejects an untitled SVG and accepts a titled SVG', () => {
-    const invalid = fixture('export const icon = <svg><path /></svg>;\n', 'svg-control.tsx');
-    const rejected = runBiome(invalid.path);
-    expect(rejected.status, rejected.output).not.toBe(0);
-    expect(rejected.output).toContain('noSvgWithoutTitle');
-
-    const valid = fixture(
-      'export const icon = (\n  <svg>\n    <title>Icon</title>\n    <path />\n  </svg>\n);\n',
-      'svg-control.tsx'
+  it.each([
+    [
+      'prefer-const',
+      'export function control() { let value = 1; return value; }',
+      'export const value = 1;',
+    ],
+    [
+      'prefer-exponentiation-operator',
+      'export const square = (value: number) => Math.pow(value, 2);',
+      'export const square = (value: number) => value ** 2;',
+    ],
+    [
+      'no-self-compare',
+      'export const compare = (value: number) => value === value;',
+      'export const compare = (value: number) => value === 1;',
+    ],
+    [
+      'array-callback-return',
+      'export const mapped = [1].map(() => {});',
+      'export const mapped = [1].map((value) => value);',
+    ],
+    [
+      'no-unneeded-ternary',
+      'export const flag = (value: boolean) => value ? true : false;',
+      'export const flag = (value: boolean) => value;',
+    ],
+    [
+      'no-useless-switch-case',
+      'export function control(value: number) { switch (value) { case 1: default: return 0; } }',
+      'export function control(value: number) { switch (value) { case 1: return 1; default: return 0; } }',
+    ],
+    [
+      'no-lone-blocks',
+      'export function control() { { console.log(1); } }',
+      'export function control() { console.log(1); }',
+    ],
+    [
+      'prefer-vite-plus-imports',
+      "import type { Plugin } from 'vite'; export type Control = Plugin;",
+      "import type { Plugin } from 'vite-plus'; export type Control = Plugin;",
+    ],
+  ])('enforces native %s and accepts the restored control', (rule, invalid, valid) => {
+    const rejected = run(
+      [
+        fixture(
+          `${invalid}\n`,
+          rule === 'prefer-vite-plus-imports' ? 'vite.config.ts' : 'control.ts'
+        ).path,
+        '--deny-warnings',
+      ],
+      rule !== 'prefer-vite-plus-imports'
     );
-    const accepted = runBiome(valid.path);
-    expect(accepted.status, accepted.output).toBe(0);
-  });
-
-  it('rejects an unused template literal and accepts an ordinary string', () => {
-    const invalid = fixture('export const label = `plain text`;\n', 'template-control.ts');
-    const rejected = runBiome(invalid.path);
     expect(rejected.status, rejected.output).not.toBe(0);
-    expect(rejected.output).toContain('noUnusedTemplateLiteral');
-
-    const valid = fixture("export const label = 'plain text';\n", 'template-control.ts');
-    const accepted = runBiome(valid.path);
-    expect(accepted.status, accepted.output).toBe(0);
-  });
-
-  it('rejects a generic element with a semantic role and accepts its native element', () => {
-    const invalid = fixture(
-      'export const action = <div role="button">Go</div>;\n',
-      'role-control.tsx'
+    expect(rejected.output).toContain(rule);
+    const accepted = run(
+      [
+        fixture(`${valid}\n`, rule === 'prefer-vite-plus-imports' ? 'vite.config.ts' : 'control.ts')
+          .path,
+        '--deny-warnings',
+      ],
+      rule !== 'prefer-vite-plus-imports'
     );
-    const rejected = runBiome(invalid.path);
-    expect(rejected.status, rejected.output).not.toBe(0);
-    expect(rejected.output).toContain('useSemanticElements');
-
-    const valid = fixture('export const action = <button>Go</button>;\n', 'role-control.tsx');
-    const accepted = runBiome(valid.path);
     expect(accepted.status, accepted.output).toBe(0);
   });
 });

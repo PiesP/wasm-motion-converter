@@ -60,9 +60,13 @@ export default defineConfig(({ command }) => {
         'validation/windows/prior-dist/**',
         'validation/windows/public-target.json',
       ],
-      plugins: ['typescript', 'jsx-a11y'],
+      plugins: ['typescript', 'jsx-a11y', 'oxc', 'unicorn', 'import'],
+      jsPlugins: ['vite-plus/oxlint-plugin'],
       options: { typeAware: true, typeCheck: false },
       rules: {
+        'vite-plus/prefer-vite-plus-imports': 'error',
+        // Preserve deliberate snapshots of mutable queues and acceptance collections.
+        'unicorn/no-useless-spread': 'off',
         'eslint/no-control-regex': 'off',
         'eslint/no-unassigned-vars': 'off',
         'eslint/no-unused-expressions': 'off',
@@ -81,6 +85,13 @@ export default defineConfig(({ command }) => {
         'typescript/no-useless-default-assignment': 'off',
         'typescript/await-thenable': 'off',
         'oxc/no-accumulating-spread': 'error',
+        'eslint/prefer-const': 'error',
+        'eslint/prefer-exponentiation-operator': 'error',
+        'eslint/no-self-compare': 'warn',
+        'eslint/array-callback-return': 'error',
+        'eslint/no-unneeded-ternary': 'error',
+        'unicorn/no-useless-switch-case': 'error',
+        'eslint/no-lone-blocks': 'error',
         'eslint/no-param-reassign': 'warn',
         'jsx-a11y/no-static-element-interactions': 'error',
         'jsx-a11y/click-events-have-key-events': 'error',
@@ -92,6 +103,7 @@ export default defineConfig(({ command }) => {
         {
           files: ['src/**'],
           rules: {
+            'import/no-cycle': ['error', { ignoreTypes: false, ignoreExternal: false }],
             'eslint/no-restricted-imports': [
               'error',
               {

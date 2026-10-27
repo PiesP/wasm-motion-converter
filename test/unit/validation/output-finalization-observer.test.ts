@@ -4,7 +4,7 @@
 import { Blob as NativeBlob, File as NativeFile } from 'node:buffer';
 
 import { BlobSource } from 'mediabunny';
-import { expect, test, vi } from 'vitest';
+import { expect, test, vi } from 'vite-plus/test';
 
 import {
   classifyWebpRoute,

@@ -95,17 +95,31 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vite+ Vitest and direct Node `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts`, `scripts/check/run-child.test.ts`, and the native HTTP/recovery tests. | `test` and `test:cov` run once; `test:watch` uses explicit `vp test watch` and stays active to rerun changed tests. Coverage writes reports. `test:ci` checks repository authority, tagged source, portable child execution and loopback server behavior, not rendered conversion. |
 | `pnpm check`, `check:test:unit`, `check:test:e2e`, `check:scripts`, `check:windows`, `typecheck` | Browser, Vitest, Playwright, strict NodeNext/erasable script TypeScript, and the Windows validation TypeScript project. `tsconfig.scripts.json` retains its Node-only ES2022 boundary; `tsconfig.windows.json` adds DOM types only for Playwright-evaluated code. | Read-only; `pnpm quality` runs these boundaries. The Node boundary test compiles the full script project with positive Node and negative browser-global probes and checks every Windows module's syntax. |
 | `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
-| `pnpm fmt`, `fmt:check`, `lint`, `lint:residual`, `knip`, `knip:full`, `knip:production`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting, Biome residual lint, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
-| `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, Biome residual lint, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
+| `pnpm fmt`, `fmt:check`, `lint`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting and static/type source-cycle analysis. | Read-only; `circular` is a focused alias for native source lint. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
+| `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, then browser/unit/E2E/Node types, direct Node tests, and i18n; native lint includes static cycles once. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
 | `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `published-asset.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
 
-`pnpm circular` passes double-quoted recursive TS and TSX patterns to dpdm, so
-shell expansion cannot narrow the `src/` entry set. This includes the Solid UI,
-recovery code and the independent conversion Worker while retaining type-only,
-re-export, alias and dynamic-import edges and imported shared-core traversal.
-Explicit app/Worker roots would omit otherwise unreferenced source modules.
-The separately compiled top-level `worker/` service worker is outside this
-application-source gate and retains its own TypeScript/build verification.
+`pnpm circular` runs `vp lint src --deny-warnings`; ordinary quality already
+runs the same native cycle rule within `lint` and does not repeat the alias.
+Oxlint's error-level `import/no-cycle` visits recursive `src/**` TS/TSX,
+including root files, deep UI and both independent conversion/WebP Workers.
+It retains aliases, type-only and re-export edges, linked-core/external import
+traversal (`ignoreTypes: false`, `ignoreExternal: false`) and unbounded depth.
+The top-level `worker/` service worker retains its separate TypeScript/build
+contract outside the application cycle gate. Node scripts, tests and raw Windows
+modules retain their own compiler and runtime checks.
+
+This policy replaces dpdm and deliberately retires global pure/mixed dynamic
+import-cycle rejection. Lazy imports and Worker construction keep their existing
+behavior tests. Mandatory Knip full/production graph auditing is also retired:
+native unused-binding/import checks and TypeScript/build checks remain, but do
+not establish that every orphan file, export or dependency is detected. Review
+those graphs when their owners change; a separately requested temporary audit
+must not recreate a mandatory toolchain. The former entry inventory maps to
+`index.html`/app builds, the conversion and WebP Worker builds, service-worker
+build, `test`/`test:ci`/Playwright discovery, strict Node script checking and the
+Windows profile project. No product source is removed as a consequence of
+retiring the graph analyzer.
 
 The license generator validates every declared runtime package's installed
 version, license identifier and nonempty license/notice text. When Vite is a
@@ -484,17 +498,27 @@ module, root TypeScript/JSON/HTML configuration, the service worker, 404 page,
 and bundled dependency metadata. The shared `packages/core` checkout,
 dependencies, generated distributions and reports, lockfiles, media, binary
 snapshots, patches, and generated Windows inputs/prior distributions/public
-targets are excluded. Oxfmt formats `src/index.css`; `pnpm lint:residual` runs
-`biome lint --error-on-warnings .` for recommended CSS lint and the original
-JS/TS rules whose exact behavior is not enabled in Oxlint, including SVG titles,
-semantic elements, unused template literals, implicit-any declarations,
-iterable callback returns, and selected simplifications. Its `biome.json`
-includes browser source, scripts, tests, tooling, raw Windows modules, the
-release action, service worker, and root TypeScript files while excluding
-generated Windows inputs and prior distributions. The residual JS/TS rules
-apply only where their syntax occurs; Oxlint owns the remaining JS/TS rules.
-Review Biome's residual scope whenever Oxlint gains exact rule parity or CSS
-lint, and when changing these source paths or the CSS toolchain.
+targets are excluded. Vite+ is the sole routine formatter/linter. Oxfmt formats
+`src/index.css`; Tailwind/Vite compiles it. The residual Biome gate is retired
+under the [common migration policy](https://github.com/PiesP/.github/issues/29).
+Its former responsibilities have these dispositions; native alternatives are
+purpose-level checks, not claims of identical diagnostics:
+
+| Former Biome responsibility | Maintained policy |
+| --- | --- |
+| `useConst` | Native `eslint/prefer-const` (error). |
+| `useExponentiationOperator` | Native `eslint/prefer-exponentiation-operator` (error). |
+| `noSelfCompare` | Native `eslint/no-self-compare` (warning, denied by lint). |
+| `useIterableCallbackReturn` | Native `eslint/array-callback-return` (error). |
+| `noUselessTernary` | Native `eslint/no-unneeded-ternary` (error). |
+| `noUselessSwitchCase` | Native `unicorn/no-useless-switch-case` (error). |
+| `noUselessLoneBlockStatements` | Native `eslint/no-lone-blocks` (error). |
+| `noSvgWithoutTitle`, `useSemanticElements` | Retired static restrictions; retain native JSX interaction/ARIA checks, meaningful rendered labels, keyboard and accessibility assertions. SVG-title and semantic-element diagnostic parity is not claimed. |
+| `noUnusedTemplateLiteral` | Retired; no-substitution template literals are allowed. Unnecessary interpolations are a different question. |
+| `noImplicitAnyLet` | Retired; strict TypeScript still permits evolving-any locals and is not an equivalent restriction. Explicit-any and unused-binding lint remain. |
+| `useExhaustiveDependencies` (already off in product source) | Retired React-hook analysis; preserve Solid ownership and lifecycle assertions. |
+| Recommended CSS lint | Retired; retain Oxfmt, Tailwind/Vite compilation and actual UI checks, without a separate CSS linter. |
+
 Use `fmt:fix`, `lint:fix`, or `quality:fix` for repairs and review their diffs
 before committing.
 
@@ -547,13 +571,11 @@ before committing.
 - Fix applicable diagnostics without weakening correctness, accessibility,
   explicit-any, unused-import, or accumulation-spread checks. Solid components
   do not use React's lint plugin. TypeScript's strict projects catch implicit
-  `any`; Oxlint checks explicit `any`. The residual Biome gate enforces SVG
-  titles and semantic elements and rejects template literals without
-  interpolation. The existing drag-and-drop `role="group"` has a targeted
-  semantic-elements exception because `fieldset` semantics would affect its
-  file, cancellation, and progress controls. Biome previously disabled
-  `noControlCharactersInRegex`; Oxlint keeps `no-control-regex` disabled, so
-  that policy has not changed. Retain narrowly
+  `any` contracts but permits evolving-any locals; Oxlint checks explicit `any`.
+  The table above records deliberately retired restrictions. The drag-and-drop
+  group retains its file, cancellation and progress behavior; fieldset disabled
+  semantics would change that behavior. Oxlint keeps `no-control-regex` disabled
+  for the existing literal-regex policy. Retain narrowly
   explained exceptions for literal GitHub Actions assertions, inert native
   mocks, asynchronous receiver capture, and cleanup failures raised only when
   there is no primary failure. Do not apply unsafe automatic fixes, broad

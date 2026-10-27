@@ -148,7 +148,6 @@ function policyOwnershipFixture() {
     expect(step).not.toContain('continue-on-error:');
   }
   expect(policy).toContain('QUALITY_SELECTED: ${{ needs.changes.outputs.quality }}');
-  writeFileSync(join(bin, 'biome'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(
     join(bin, 'pnpm'),
     `#!/bin/sh

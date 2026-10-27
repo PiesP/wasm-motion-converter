@@ -21,7 +21,8 @@ and exercises the real Action preparation and CLI without advancing the runtime
 `packages/core` gitlink. The workflow Action SHA and caller paths are checked by
 `test/unit/config/scanner-pins.test.ts`.
 
-Knip discovers the direct Node tests from the package command and disables the Node plugin's
-generic `test-*` discovery. The app's `src/test-helpers.ts` is a development runtime
-module, so classifying it as a Node test would remove it from production
-dependency analysis.
+Direct Node policy tests are selected by `package.json`'s `test:ci` command.
+`src/test-helpers.ts` remains a browser development runtime module exercised by
+browser fixtures. The Node, Windows and service-worker TypeScript/build projects
+retain their own runtime boundaries. Routine Knip graph auditing is retired;
+review orphan files, exports and dependencies when touching their owners.
