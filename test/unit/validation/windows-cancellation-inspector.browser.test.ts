@@ -1,10 +1,9 @@
-import assert from 'node:assert/strict';
-
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
-import * as profile from '../../../validation/windows/profile.ts';
-
-const { installCancellationInspector, readCancellationInspector } = profile;
+import {
+  installCancellationInspector,
+  readCancellationInspector,
+} from '../../../validation/windows/cancellation-inspector.ts';
 
 const page = { evaluate: async <T>(callback: () => T): Promise<T> => callback() };
 
@@ -14,7 +13,6 @@ function prepareProgress(): HTMLElement {
     <div data-testid="dropzone">
       <div role="progressbar" data-progress="76" aria-valuenow="76"></div>
     </div>`;
-  vi.spyOn(HTMLElement.prototype, 'getClientRects').mockReturnValue({ length: 1 } as DOMRectList);
   const progress = document.querySelector<HTMLElement>('[role="progressbar"]');
   if (!progress) throw new Error('Missing test progress bar');
   return progress;
@@ -42,7 +40,7 @@ describe('Windows cancellation inspector', () => {
 
     await enterCancelling(progress, 81);
     const observation = await readCancellationInspector(page);
-    assert(observation);
+    if (!observation) throw new Error('Missing cancellation observation');
 
     expect(observation.progressBeforeClick).toBe(76);
     expect(observation.progressValues).toEqual([81]);
@@ -64,7 +62,7 @@ describe('Windows cancellation inspector', () => {
     progress.setAttribute('aria-valuenow', '82');
     await Promise.resolve();
     const observation = await readCancellationInspector(page);
-    assert(observation);
+    if (!observation) throw new Error('Missing cancellation observation');
 
     expect(observation.progressSamples).toEqual([
       { values: [81], ariaValueNow: '81', sameProgressElement: true },

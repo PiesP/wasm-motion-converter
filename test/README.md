@@ -14,12 +14,14 @@ git submodule update --init --recursive
 vp install --frozen-lockfile -- --no-runtime
 ```
 
-Playwright requires a Chromium installation. The CI and resource profiles also
+Browser Mode unit tests and Playwright require a Chromium installation. Install
+it with `vp exec playwright install chromium`. The CI and resource profiles also
 require FFmpeg on `PATH` to generate their deterministic H.264 fixtures.
 
 ## Test layout
 
-- `unit/`: Vitest component, service, store, and utility tests
+- `unit/**/*.browser.test.{ts,tsx}`: native Chromium DOM, Solid, and browser lifecycle tests
+- `unit/**/*.test.{ts,tsx}`: Node tests for pure logic, configuration, files, and VM tooling
 - `e2e/`: Playwright conversion, i18n, regression, and visual flows
 - `e2e/fixtures/`: browser helpers and output validation
 - `lib/`: local codec matrix, baseline data, and result recording
@@ -31,8 +33,10 @@ require FFmpeg on `PATH` to generate their deterministic H.264 fixtures.
 
 | Command | Purpose |
 | --- | --- |
-| `vp run test` | Run the unit Vitest project once |
-| `vp test run --project unit path/to/file.test.ts` | Run a focused Vitest file |
+| `vp run test` | Run both the Node and Chromium Browser Mode unit projects once |
+| `vp test run --project unit path/to/file.test.ts` | Run a focused Node unit file |
+| `vp test run --project browser path/to/file.browser.test.tsx` | Run a focused Chromium Browser Mode file |
+| `vp run test:watch` | Watch both unit projects and rerun changed files |
 | `vp run test:cov` | Run Vitest with coverage thresholds |
 | `vp run test:e2e:ci` | Generate the CI fixture and run the CI Playwright profile |
 | `vp run test:e2e:resource` | Generate fixtures and run the opt-in Linux Chromium resource profile (requires FFmpeg) |
@@ -116,7 +120,8 @@ the retained quality checks. The workflow files in `.github/workflows/` are
 authoritative when this summary changes.
 
 `quality` retains `test:ci` locally and owns that policy suite in CI when selected.
-For unit-only routing, unit runs `test:ci` before its independent `test:cov` step;
+For unit-only routing, unit runs `test:ci`, installs Chromium, then runs its
+independent `test:cov` step across both unit projects;
 uncertain classification enables every gate. The policy suite is only part of
 unit validation, and `verify` does not run full product coverage or browser E2E.
 

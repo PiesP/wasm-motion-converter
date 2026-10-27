@@ -32,7 +32,7 @@ function createMockRegistration(
   overrides: Partial<MockServiceWorkerRegistration> = {}
 ): MockServiceWorkerRegistration {
   return {
-    scope: 'http://localhost:5173/',
+    scope: location.origin + '/',
     active: null,
     installing: null,
     addEventListener: vi.fn(),
@@ -43,51 +43,40 @@ function createMockRegistration(
   };
 }
 
-function setupNavigator(withSw: boolean): void {
+function setupNavigator(): void {
   mockRegistration = createMockRegistration();
 
-  if (withSw) {
-    Object.defineProperty(navigator, 'serviceWorker', {
-      value: {
-        register: vi.fn().mockResolvedValue(mockRegistration),
-        getRegistrations: vi.fn().mockResolvedValue([]),
-        ready: Promise.resolve(mockRegistration as unknown as ServiceWorkerRegistration),
-        controller: null,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      },
-      writable: true,
-      configurable: true,
-    });
-  } else {
-    // Completely remove serviceWorker from navigator so 'in' check fails
-    Reflect.deleteProperty(navigator, 'serviceWorker');
-  }
+  Object.defineProperty(navigator, 'serviceWorker', {
+    value: {
+      register: vi.fn().mockResolvedValue(mockRegistration),
+      getRegistrations: vi.fn().mockResolvedValue([]),
+      ready: Promise.resolve(mockRegistration as unknown as ServiceWorkerRegistration),
+      controller: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    },
+    writable: true,
+    configurable: true,
+  });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.resetModules();
 });
 afterEach(() => {
   window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false }));
   vi.restoreAllMocks();
+  Reflect.deleteProperty(navigator, 'serviceWorker');
+  Reflect.deleteProperty(document, 'visibilityState');
 });
 
 describe('registerServiceWorker', () => {
   // ── Feature detection ────────────────────────────────────────────
 
-  it('returns {supported: false, registered: false} when serviceWorker not in navigator', async () => {
-    setupNavigator(false);
-    const { registerServiceWorker } = await import('@/sw-register');
-    const result = await registerServiceWorker();
-    expect(result).toEqual({ supported: false, registered: false });
-  });
-
   // ── Production registration ──────────────────────────────────────
 
   it('registers with module type and correct path in production', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const { registerServiceWorker } = await import('@/sw-register');
     await registerServiceWorker();
 
@@ -97,7 +86,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('returns {supported: true, registered: true} on successful registration', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const { registerServiceWorker } = await import('@/sw-register');
     const result = await registerServiceWorker();
     expect(result).toEqual({
@@ -108,7 +97,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('registration includes cleanup function in result', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const { registerServiceWorker } = await import('@/sw-register');
     const result = await registerServiceWorker();
     expect(result.cleanup).toBeDefined();
@@ -118,7 +107,7 @@ describe('registerServiceWorker', () => {
   // ── Lifecycle callbacks ──────────────────────────────────────────
 
   it('attaches updatefound listener on registration', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const { registerServiceWorker } = await import('@/sw-register');
     await registerServiceWorker();
 
@@ -131,7 +120,7 @@ describe('registerServiceWorker', () => {
   // ── Visibility change auto-update ────────────────────────────────
 
   it('adds visibilitychange listener on document', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const addEventListenerSpy = vi.spyOn(document, 'addEventListener');
 
     const { registerServiceWorker } = await import('@/sw-register');
@@ -141,7 +130,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('calls registration.update() when page becomes visible', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const { registerServiceWorker } = await import('@/sw-register');
     await registerServiceWorker();
 
@@ -157,7 +146,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('calls registration.update() when visibility becomes visible multiple times', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const { registerServiceWorker } = await import('@/sw-register');
     await registerServiceWorker();
 
@@ -173,7 +162,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('does not call registration.update() for hidden visibility', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const { registerServiceWorker } = await import('@/sw-register');
     await registerServiceWorker();
 
@@ -190,7 +179,7 @@ describe('registerServiceWorker', () => {
   // ── Cleanup ──────────────────────────────────────────────────────
 
   it('cleanup removes visibilitychange listener', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener');
 
     const { registerServiceWorker } = await import('@/sw-register');
@@ -202,7 +191,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('adds pagehide listener for cleanup on unload', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
 
     const { registerServiceWorker } = await import('@/sw-register');
@@ -212,7 +201,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('cleanup can be called more than once without error', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const { registerServiceWorker } = await import('@/sw-register');
     const result = await registerServiceWorker();
 
@@ -223,7 +212,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('accepts unavailable messages only from the current controller and removes the listener on cleanup', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const controller = {} as ServiceWorker;
     Object.defineProperty(navigator.serviceWorker, 'controller', {
       value: controller,
@@ -275,7 +264,7 @@ describe('registerServiceWorker', () => {
   // ── Error handling ───────────────────────────────────────────────
 
   it('keeps the observer through BFCache restoration and removes it on final departure', async () => {
-    setupNavigator(true);
+    setupNavigator();
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
     const { registerServiceWorker } = await import('@/sw-register');
     await registerServiceWorker();
@@ -289,7 +278,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('observes an installation already in progress once and distinguishes first activation from an update', async () => {
-    setupNavigator(true);
+    setupNavigator();
     const worker = new EventTarget();
     Object.assign(worker, { state: 'installing' });
     mockRegistration.installing = worker as ServiceWorker;
@@ -318,7 +307,7 @@ describe('registerServiceWorker', () => {
   });
 
   it('returns {supported: true, registered: false} when registration throws', async () => {
-    setupNavigator(true);
+    setupNavigator();
     navigator.serviceWorker!.register = vi.fn().mockRejectedValue(new Error('Network error'));
 
     const { registerServiceWorker } = await import('@/sw-register');

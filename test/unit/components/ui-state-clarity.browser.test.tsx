@@ -8,6 +8,17 @@ import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+import { commands } from 'vite-plus/test/browser';
+
+declare module 'vitest/browser' {
+  interface BrowserCommands {
+    setReducedMotion(reduced: boolean): Promise<void>;
+  }
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
 
 vi.mock('@hooks/use-locale', () => ({
   useLocale: () => ({
@@ -35,10 +46,11 @@ const settings: ConversionSettings = {
 };
 
 describe('UI state clarity', () => {
-  afterEach(() => {
+  afterEach(async () => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    await commands.setReducedMotion(false);
   });
 
   it('presents finalized metadata as a collapsed disclosure with truthful unknown values', () => {
@@ -136,11 +148,7 @@ describe('UI state clarity', () => {
   });
 
   it('keeps the focused download action visible after the preview replaces its skeleton', async () => {
-    const animationFrames: FrameRequestCallback[] = [];
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-      animationFrames.push(callback);
-      return animationFrames.length;
-    });
+    const requestAnimationFrameSpy = vi.spyOn(window, 'requestAnimationFrame');
     const cancelAnimationFrameSpy = vi.spyOn(window, 'cancelAnimationFrame');
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:result-preview');
     const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
@@ -192,23 +200,20 @@ describe('UI state clarity', () => {
 
     expect(container.querySelector('.animate-pulse')).toBeNull();
     expect(scrollIntoView).not.toHaveBeenCalled();
-    expect(animationFrames).toHaveLength(1);
-    animationFrames[0]?.(performance.now());
+    expect(requestAnimationFrameSpy).toHaveBeenCalledOnce();
+    await nextAnimationFrame();
+    expect(document.activeElement).toBe(download);
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
 
     image?.dispatchEvent(new Event('load'));
-    expect(animationFrames).toHaveLength(2);
+    const pendingFrameId = requestAnimationFrameSpy.mock.results.at(-1)?.value;
+    expect(pendingFrameId).toBeTypeOf('number');
     dispose();
-    expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(2);
+    expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(pendingFrameId);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:result-preview');
   });
 
   it('does not scroll the result after the user moves focus elsewhere', async () => {
-    const animationFrames: FrameRequestCallback[] = [];
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-      animationFrames.push(callback);
-      return animationFrames.length;
-    });
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:result-preview');
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
@@ -244,15 +249,14 @@ describe('UI state clarity', () => {
     const otherControl = document.createElement('button');
     document.body.appendChild(otherControl);
     otherControl.focus();
-    animationFrames[0]?.(performance.now());
+    await nextAnimationFrame();
     expect(scrollIntoView).not.toHaveBeenCalled();
 
     dispose();
   });
 
   it('opts into reduced-motion previews, detaches the image when hidden, and preserves the download URL', async () => {
-    const motionPreference = Object.assign(new EventTarget(), { matches: true });
-    vi.stubGlobal('matchMedia', () => motionPreference);
+    await commands.setReducedMotion(true);
     const createUrl = vi
       .spyOn(URL, 'createObjectURL')
       .mockReturnValueOnce('blob:first-result')
@@ -310,9 +314,10 @@ describe('UI state clarity', () => {
     firstImage?.dispatchEvent(new Event('load'));
     toggle.click();
     expect(container.querySelector('.animate-pulse')).not.toBeNull();
-    motionPreference.matches = false;
-    motionPreference.dispatchEvent(new Event('change'));
-    expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull();
+    await commands.setReducedMotion(false);
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull()
+    );
     expect(preferHidden).toBeTypeOf('function');
     replaceBlob?.(new Blob(['webp'], { type: 'image/webp' }));
     await Promise.resolve();
@@ -327,8 +332,7 @@ describe('UI state clarity', () => {
   });
 
   it('follows motion preference changes until the user makes an explicit preview choice', async () => {
-    const motionPreference = Object.assign(new EventTarget(), { matches: false });
-    vi.stubGlobal('matchMedia', () => motionPreference);
+    await commands.setReducedMotion(false);
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:motion-result');
     const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     const container = document.createElement('div');
@@ -351,17 +355,18 @@ describe('UI state clarity', () => {
       '[data-testid="result-preview-toggle"]'
     )!;
     expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull();
-    motionPreference.matches = true;
-    motionPreference.dispatchEvent(new Event('change'));
-    expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
-    motionPreference.matches = false;
-    motionPreference.dispatchEvent(new Event('change'));
-    expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull();
+    await commands.setReducedMotion(true);
+    expect(window.matchMedia('(prefers-reduced-motion: reduce)').matches).toBe(true);
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-testid="result-image"]')).toBeNull()
+    );
+    await commands.setReducedMotion(false);
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-testid="result-image"]')).not.toBeNull()
+    );
     toggle.click();
-    motionPreference.matches = true;
-    motionPreference.dispatchEvent(new Event('change'));
-    motionPreference.matches = false;
-    motionPreference.dispatchEvent(new Event('change'));
+    await commands.setReducedMotion(true);
+    await commands.setReducedMotion(false);
     expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
     expect(revokeUrl).not.toHaveBeenCalled();
     dispose();

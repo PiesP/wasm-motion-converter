@@ -22,6 +22,14 @@ vi.mock('@utils/logger', () => ({
 }));
 
 const STORAGE_KEY = 'conversion-settings';
+let moduleVersion = 0;
+
+function importFreshSettingsStore(): Promise<typeof import('@stores/conversion-settings-store')> {
+  const url = `/src/stores/conversion-settings-store.ts?browser-test=${++moduleVersion}`;
+  return import(/* @vite-ignore */ url) as Promise<
+    typeof import('@stores/conversion-settings-store')
+  >;
+}
 
 const DEFAULT_SETTINGS: ConversionSettings = {
   format: 'gif',
@@ -50,7 +58,6 @@ describe('conversion-settings-store', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.resetModules();
 
     // Mock localStorage
     localStorageStore = {};
@@ -79,14 +86,14 @@ describe('conversion-settings-store', () => {
   // ── Default settings (empty localStorage) ──────────────────────────
 
   it('returns defaults when localStorage is empty', async () => {
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   // ── Save / restore round-trip ──────────────────────────────────────
 
   it('saveConversionSettings persists to localStorage', async () => {
-    const { saveConversionSettings } = await import('@stores/conversion-settings-store');
+    const { saveConversionSettings } = await importFreshSettingsStore();
     const settings = makeTestSettings();
     saveConversionSettings(settings);
 
@@ -98,24 +105,22 @@ describe('conversion-settings-store', () => {
 
   it('can restore saved settings on next call', async () => {
     // Save first
-    const mod1 = await import('@stores/conversion-settings-store');
+    const mod1 = await importFreshSettingsStore();
     const testSettings = makeTestSettings();
     mod1.saveConversionSettings(testSettings);
 
-    // Reset modules to simulate fresh page load
-    vi.resetModules();
+    // A unique module URL re-evaluates storage initialization in Browser Mode.
 
-    // Re-import — should read from localStorage
-    const mod2 = await import('@stores/conversion-settings-store');
+    // Re-import reads the value saved by the first module instance.
+    const mod2 = await importFreshSettingsStore();
     expect(mod2.conversionSettings()).toEqual(testSettings);
   });
 
   it('preserves a last-segment trim that uses trimEnd=0 as the full-duration sentinel', async () => {
-    const mod1 = await import('@stores/conversion-settings-store');
+    const mod1 = await importFreshSettingsStore();
     mod1.saveConversionSettings(makeTestSettings({ trimStart: 5, trimEnd: 0 }));
 
-    vi.resetModules();
-    const mod2 = await import('@stores/conversion-settings-store');
+    const mod2 = await importFreshSettingsStore();
     const restored = mod2.conversionSettings();
     expect(restored.trimStart).toBe(5);
     expect(restored.trimEnd).toBe(0);
@@ -128,7 +133,7 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify({ ...makeTestSettings(), format: 'bmp' })
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
@@ -137,13 +142,13 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify({ ...makeTestSettings(), quality: 'ultra' })
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('returns defaults when scale is invalid', async () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...makeTestSettings(), scale: 2.0 }));
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
@@ -152,13 +157,13 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify({ ...makeTestSettings(), smartFrameSkip: 'turbo' })
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('returns defaults when format is not a string', async () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...makeTestSettings(), format: 42 }));
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
@@ -167,7 +172,7 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify({ ...makeTestSettings(), scale: '100%' })
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
@@ -178,7 +183,7 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify(makeTestSettings({ trimStart: 30, trimEnd: 5 }))
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     const restored = conversionSettings();
     // Trim is invalid — only trim is reset, other settings are preserved
     expect(restored.trimStart).toBe(0);
@@ -194,7 +199,7 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify(makeTestSettings({ trimStart: 10, trimEnd: 10 }))
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     const restored = conversionSettings();
     // Trim is invalid — only trim is reset, other settings are preserved
     expect(restored.trimStart).toBe(0);
@@ -210,7 +215,7 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify(makeTestSettings({ trimStart: 5, trimEnd: 30 }))
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings().trimStart).toBe(5);
     expect(conversionSettings().trimEnd).toBe(30);
   });
@@ -220,7 +225,7 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify(makeTestSettings({ trimStart: 0, trimEnd: 5 }))
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings().trimStart).toBe(0);
     expect(conversionSettings().trimEnd).toBe(5);
   });
@@ -230,7 +235,7 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify(makeTestSettings({ trimStart: -5, trimEnd: 10 }))
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     const restored = conversionSettings();
     // Invalid trimStart falls back to the beginning while preserving the valid end.
     expect(restored.trimStart).toBe(0);
@@ -246,7 +251,7 @@ describe('conversion-settings-store', () => {
       STORAGE_KEY,
       JSON.stringify(makeTestSettings({ trimStart: 5, trimEnd: -1 }))
     );
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     const restored = conversionSettings();
     // Invalid trimEnd falls back to the full-duration sentinel while preserving the start.
     expect(restored.trimStart).toBe(5);
@@ -261,39 +266,39 @@ describe('conversion-settings-store', () => {
 
   it('returns defaults when stored data is invalid JSON', async () => {
     window.localStorage.setItem(STORAGE_KEY, 'not-json');
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('returns defaults when stored data is a primitive', async () => {
     window.localStorage.setItem(STORAGE_KEY, '"string"');
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('returns defaults when stored data is an array', async () => {
     window.localStorage.setItem(STORAGE_KEY, '["gif", "high"]');
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('returns defaults when stored data is null', async () => {
     window.localStorage.setItem(STORAGE_KEY, 'null');
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('returns defaults when stored data is empty string', async () => {
     window.localStorage.setItem(STORAGE_KEY, '');
     // Empty string is falsy → not parsed → falls through to defaults
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
   it('ignores extra unknown properties', async () => {
     const stored = { ...makeTestSettings(), unknownField: 'test', another: 123 };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings().format).toBe('webp');
     expect(conversionSettings().quality).toBe('high');
     expect(conversionSettings().scale).toBe(1.0);
@@ -302,7 +307,7 @@ describe('conversion-settings-store', () => {
   it('handles missing trimStart/trimEnd keys (defaults both to 0)', async () => {
     const partial = { format: 'gif', quality: 'medium', scale: 0.75, smartFrameSkip: 'off' };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(partial));
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     const restored = conversionSettings();
     // trimStart/trimEnd are undefined → default to 0; both 0 → validTrim=true
     expect(restored.trimStart).toBe(0);
@@ -320,7 +325,7 @@ describe('conversion-settings-store', () => {
     window.localStorage.getItem = vi.fn(() => {
       throw new Error('storage error');
     });
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
@@ -328,7 +333,7 @@ describe('conversion-settings-store', () => {
     window.localStorage.setItem = vi.fn(() => {
       throw new DOMException('QuotaExceededError', 'QuotaExceededError');
     });
-    const { saveConversionSettings } = await import('@stores/conversion-settings-store');
+    const { saveConversionSettings } = await importFreshSettingsStore();
     // Should not throw — catch block logs warning
     expect(() => saveConversionSettings(makeTestSettings())).not.toThrow();
   });
@@ -339,13 +344,13 @@ describe('conversion-settings-store', () => {
     // Pre-set a valid value
     const stored = makeTestSettings({ format: 'gif', scale: 0.5 });
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-    const { conversionSettings } = await import('@stores/conversion-settings-store');
+    const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings().format).toBe('gif');
     expect(conversionSettings().scale).toBe(0.5);
   });
 
   it('saveConversionSettings serializes only known keys', async () => {
-    const { saveConversionSettings } = await import('@stores/conversion-settings-store');
+    const { saveConversionSettings } = await importFreshSettingsStore();
     const settings = makeTestSettings();
     saveConversionSettings(settings);
 
@@ -377,42 +382,42 @@ describe('conversion-settings-store', () => {
     it('rejects NaN scale and falls back to defaults', async () => {
       const stored = { ...makeTestSettings(), scale: NaN };
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().scale).toBe(0.75); // DEFAULT
     });
 
     it('rejects Infinity scale and falls back to defaults', async () => {
       const stored = { ...makeTestSettings(), scale: Infinity };
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().scale).toBe(0.75);
     });
 
     it('rejects -Infinity scale and falls back to defaults', async () => {
       const stored = { ...makeTestSettings(), scale: -Infinity };
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().scale).toBe(0.75);
     });
 
     it('rejects NaN trimStart and resets to 0', async () => {
       const stored = makeTestSettings({ trimStart: NaN, trimEnd: 30 });
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().trimStart).toBe(0);
     });
 
     it('rejects Infinity trimEnd and resets to 0', async () => {
       const stored = makeTestSettings({ trimStart: 5, trimEnd: Infinity });
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().trimEnd).toBe(0);
     });
 
     it('rejects negative trimStart and resets to 0', async () => {
       const stored = makeTestSettings({ trimStart: -1, trimEnd: 30 });
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().trimStart).toBe(0);
     });
 
@@ -429,7 +434,7 @@ describe('conversion-settings-store', () => {
           smartFrameSkip: 'off',
         })
       );
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().quality).toBe('low');
     });
 
@@ -446,7 +451,7 @@ describe('conversion-settings-store', () => {
           smartFrameSkip: 'off',
         })
       );
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().format).toBe('webp');
     });
 
@@ -463,7 +468,7 @@ describe('conversion-settings-store', () => {
           smartFrameSkip: 'off',
         })
       );
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().format).toBe('gif');
     });
 
@@ -480,7 +485,7 @@ describe('conversion-settings-store', () => {
           smartFrameSkip: 'off',
         })
       );
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().format).toBe('gif'); // DEFAULT
     });
 
@@ -497,7 +502,7 @@ describe('conversion-settings-store', () => {
           smartFrameSkip: 'off',
         })
       );
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().format).toBe('gif'); // DEFAULT
     });
 
@@ -514,7 +519,7 @@ describe('conversion-settings-store', () => {
           smartFrameSkip: 'off',
         })
       );
-      const { conversionSettings } = await import('@stores/conversion-settings-store');
+      const { conversionSettings } = await importFreshSettingsStore();
       expect(conversionSettings().format).toBe('gif'); // DEFAULT
     });
   });

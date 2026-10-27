@@ -193,6 +193,10 @@ jobs:
             echo "Policy tests are owned by the selected quality gate."
           fi
 
+      - name: 🎭 Install Chromium for Browser Mode coverage
+        if: ${{ needs.changes.outputs.unit == 'true' }}
+        run: vp exec playwright install --with-deps chromium
+
       - name: 🧪 Run unit coverage thresholds
         if: ${{ needs.changes.outputs.unit == 'true' }}
         run: vp run test:cov

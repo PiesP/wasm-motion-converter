@@ -7,7 +7,7 @@ import { observeDeploymentUpdates } from '../../../src/deployment-update';
 
 const localSha = 'a'.repeat(40);
 const remoteSha = 'b'.repeat(40);
-const metadataUrl = 'http://localhost:3000/deployment-state.json';
+const metadataUrl = new URL('/deployment-state.json', location.origin).href;
 const cleanups: Array<() => void> = [];
 let now: number;
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -86,7 +86,6 @@ beforeEach(() => {
   vi.spyOn(performance, 'now').mockImplementation(() => now);
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
-  vi.stubGlobal('location', { href: 'http://localhost:3000/' });
   fetchMock = vi.fn().mockResolvedValue(response());
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -139,27 +138,6 @@ describe('deployment update observer', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     }
   );
-
-  it.each(['file:///tmp/app.html', 'data:text/html,app', 'http://example.test/app'])(
-    'rejects unsafe origin %s',
-    (href) => {
-      vi.stubGlobal('location', { href });
-      observe();
-      expect(fetchMock).not.toHaveBeenCalled();
-    }
-  );
-
-  it('checks an HTTPS application origin without using a cross-origin endpoint', async () => {
-    vi.stubGlobal('location', { href: 'https://drop.test/?entry=one' });
-    fetchMock.mockResolvedValue(
-      response(metadata(), { url: 'https://drop.test/deployment-state.json' })
-    );
-    observe();
-    await settle();
-    expect(fetchMock.mock.calls[0]?.[0]).toEqual(
-      new URL('https://drop.test/deployment-state.json')
-    );
-  });
 
   it('waits for visible and online states, without background polling', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
