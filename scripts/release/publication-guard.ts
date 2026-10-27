@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { downloadAsset, proveLegacyDeployment } from './legacy-state.ts';
+import { downloadAsset } from './published-asset.ts';
 
 type Identity = { version: string; commit: string };
 type Decision = { publishBranch: boolean; createRelease: boolean };
@@ -154,7 +154,6 @@ export async function decidePublication(
 
   const branchRef = await request('/git/ref/heads/release');
   let deployed: Identity | null = null;
-  let legacyBranchSha: string | null = null;
   if (branchRef !== null) {
     const branchSha = record(
       record(branchRef, 'release branch ref').object,
@@ -165,7 +164,9 @@ export async function decidePublication(
     }
     const marker = await request(`/contents/release-state.json?ref=${branchSha}`);
     if (marker === null) {
-      legacyBranchSha = branchSha;
+      throw new Error(
+        'Existing release branch has no release-state.json; require reviewed recovery before publication'
+      );
     } else {
       const file = record(marker, 'release branch marker');
       if (file.encoding !== 'base64' || typeof file.content !== 'string') {
@@ -223,12 +224,6 @@ export async function decidePublication(
   }
   if (highest !== null && compareVersions(requested.version, highest) < 0) {
     throw new Error(`Refusing historical release v${requested.version}; latest is v${highest}`);
-  }
-  if (legacyBranchSha !== null) {
-    if (latest === null || highest === null) {
-      throw new Error('Unmarked release branch has no public release to verify');
-    }
-    deployed = await proveLegacyDeployment(legacyBranchSha, latest, highest, request);
   }
   if (deployed === null && published.length > 0) {
     throw new Error('Release branch is absent despite published releases');

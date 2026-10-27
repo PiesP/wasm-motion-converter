@@ -35,7 +35,7 @@ function fixture() {
   for (const path of [
     ...entries,
     'scripts/check/run-child.ts',
-    'scripts/release/legacy-state.ts',
+    'scripts/release/published-asset.ts',
     'scripts/build/deployment-state.ts',
     'scripts/build/verify-service-worker-output.ts',
   ]) {
