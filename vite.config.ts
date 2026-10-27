@@ -46,8 +46,15 @@ export default defineConfig(({ command }) => {
           ],
           cache: false,
         },
-        'build:ci': { command: 'vp run build', cache: false },
-        verify: { command: 'vp run build:ci', cache: false },
+        'build:ci': {
+          command: [
+            'node --experimental-strip-types scripts/build/generate-licenses.ts',
+            'vp build',
+            'node --experimental-strip-types scripts/build/postbuild.ts',
+          ],
+          cache: false,
+        },
+        verify: { command: ['vp run quality', 'vp run build:ci'], cache: false },
         'verify:full': {
           command: [
             'vp run verify',

@@ -30,11 +30,14 @@ function taggedNodeVersion(sha: string, releaseVersion: string): string {
     volta && typeof volta === 'object' && !Array.isArray(volta)
       ? (volta as { node?: unknown }).node
       : undefined;
+  const nodeEntry = git(['ls-tree', sha, '--', '.node-version']);
   let fileVersion: string | undefined;
-  try {
-    fileVersion = git(['show', `${sha}:.node-version`]).trim();
-  } catch {
-    // Older immutable tags used only volta.node.
+  if (nodeEntry) {
+    const regularBlob = /^100644 blob ([0-9a-f]{40})\t\.node-version$/u.exec(nodeEntry)?.[1];
+    if (!regularBlob) throw new Error('Release source .node-version must be a regular 100644 blob');
+    // Read failures are fatal. Only a truly absent tree entry can use the
+    // historical Volta pin, which predates the file authority.
+    fileVersion = git(['cat-file', 'blob', regularBlob]);
   }
   if (fileVersion !== undefined && !matchesExactly(exactNodeVersion, fileVersion))
     throw new Error('Release source must declare an exact .node-version pin');
