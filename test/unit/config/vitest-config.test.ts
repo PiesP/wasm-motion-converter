@@ -4,6 +4,17 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vite-plus/test';
 
 describe('Vitest coverage gate', () => {
+  it('keeps browser lifecycle tests in Chromium and Node tooling out of Browser Mode', () => {
+    const source = readFileSync(resolve(process.cwd(), 'vitest.config.ts'), 'utf8');
+
+    expect(source).toContain("include: ['test/unit/**/*.browser.test.{ts,tsx}']");
+    expect(source).toContain("exclude: ['test/unit/**/*.browser.test.{ts,tsx}'");
+    expect(source).toContain("environment: 'node'");
+    expect(source).toContain("instances: [{ browser: 'chromium' }]");
+    expect(source).not.toMatch(/from ['"]\.\/vite\.config/);
+    expect(source).not.toContain("environment: 'jsdom'");
+  });
+
   it('counts unimported runtime source and enforces positive coverage thresholds', () => {
     const source = readFileSync(resolve(process.cwd(), 'vitest.config.ts'), 'utf8');
 

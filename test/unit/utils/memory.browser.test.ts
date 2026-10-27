@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const setPerformanceMemory = (memory: object | undefined) => {
   if (memory === undefined) {
-    Reflect.deleteProperty(performance, 'memory');
+    Object.defineProperty(performance, 'memory', { configurable: true, value: undefined });
     return;
   }
   Object.defineProperty(performance, 'memory', {

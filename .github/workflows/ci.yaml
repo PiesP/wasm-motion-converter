@@ -193,6 +193,10 @@ jobs:
             echo "Policy tests are owned by the selected quality gate."
           fi
 
+      - name: 🎭 Install Chromium for Browser Mode coverage
+        if: ${{ needs.changes.outputs.unit == 'true' }}
+        run: vp exec playwright install --with-deps chromium
+
       - name: 🧪 Run unit coverage thresholds
         if: ${{ needs.changes.outputs.unit == 'true' }}
         run: vp run test:cov
@@ -201,7 +205,8 @@ jobs:
     name: pr-gate/e2e
     needs: changes
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Cold encoder/browser OS packages have taken 59 minutes; leave time for the unchanged test deadlines.
+    timeout-minutes: 90
     steps:
       - uses: PiesP/browser-core/automation/actions/prepare-node-trust@381b4ca733494cf069212cd0d16458389a83c623
         id: node_trust

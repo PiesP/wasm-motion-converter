@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import solid from 'vite-plugin-solid';
 import { defineConfig } from 'vite-plus';
+import { playwright } from 'vite-plus/test/browser-playwright';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const srcDir = resolve(__dirname, 'src');
@@ -11,6 +12,7 @@ export default defineConfig({
   define: { __DEV__: true, __APP_SOURCE_SHA__: null },
   plugins: [solid()],
   test: {
+    environment: 'node',
     // Vitest v4 compatibility: preserve mock call history.
     // Remove after tests no longer rely on calls from setup or earlier tests.
     // https://viteplus.dev/guide/vitest-v5#remove-unneeded-compatibility-settings
@@ -22,10 +24,28 @@ export default defineConfig({
         extends: true,
         test: {
           name: 'unit',
-          environment: 'jsdom',
+          environment: 'node',
           setupFiles: ['./test/setup.ts'],
           include: ['test/unit/**/*.test.{ts,tsx}'],
-          exclude: ['node_modules', 'dist'],
+          exclude: ['test/unit/**/*.browser.test.{ts,tsx}', 'node_modules', 'dist'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'browser',
+          setupFiles: ['./test/setup.ts'],
+          include: ['test/unit/**/*.browser.test.{ts,tsx}'],
+          browser: {
+            enabled: true,
+            provider: playwright(),
+            headless: true,
+            instances: [{ browser: 'chromium' }],
+            commands: {
+              setReducedMotion: ({ page }, reduced: boolean) =>
+                page.emulateMedia({ reducedMotion: reduced ? 'reduce' : 'no-preference' }),
+            },
+          },
         },
       },
       {

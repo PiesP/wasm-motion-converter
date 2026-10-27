@@ -3,7 +3,7 @@
  *
  * These functions read only from the provided Uint8Array/Buffer and do not
  * invoke child processes, fs, or other Node.js built-ins. They can safely be
- * imported in jsdom Vitest environments (used by `test/unit/e2e-fixtures.test.ts`).
+ * imported by Node unit tests (including `test/unit/e2e-fixtures.test.ts`).
  */
 
 /**

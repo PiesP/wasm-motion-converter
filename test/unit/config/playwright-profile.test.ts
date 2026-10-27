@@ -57,7 +57,7 @@ describe('Playwright workflow profiles', () => {
     expect(packageJson.scripts?.['pretest:e2e:ci']).toBe('vp run prepare:e2e:fixture');
     expect(workflow).toContain('vp run test:e2e:ci');
     expect(workflow).toContain('sudo apt-get install --yes ffmpeg');
-    expect(e2eJob).toContain('timeout-minutes: 60');
+    expect(e2eJob).toContain('timeout-minutes: 90');
     expect(workflow).not.toContain('vp exec playwright test\n');
     expect(config).toContain("trace: 'retain-on-failure'");
     expect(config).toContain("video: process.env.CI ? 'retain-on-failure' : 'off'");
