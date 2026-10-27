@@ -62,7 +62,7 @@ describe('installed Vite+ lint boundaries', () => {
     expect(readFileSync(file, 'utf8')).toBe(source);
     const scripts = JSON.parse(readFileSync(join(project, 'package.json'), 'utf8')).scripts;
     expect(scripts.lint).toContain('vp lint . --deny-warnings');
-    expect(scripts.quality).toContain('pnpm -s lint');
+    expect(scripts.prebuild).toContain('vp run quality');
   });
 
   it.each([

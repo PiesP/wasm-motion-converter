@@ -5,7 +5,7 @@ because process memory varies by host. Run it from the repository root after
 completing the setup in the [testing guide](./README.md):
 
 ```bash
-pnpm test:e2e:resource
+vp run test:e2e:resource
 ```
 
 ## Workload

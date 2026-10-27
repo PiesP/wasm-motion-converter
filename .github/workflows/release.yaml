@@ -49,7 +49,7 @@ jobs:
           submodules: false
 
       - name: 📦 Setup trusted provenance runtime
-        uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9
+        uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc
         with:
           install-dependencies: 'false'
 
@@ -87,12 +87,12 @@ jobs:
           git submodule update --init --recursive
 
       - name: 📦 Setup project
-        uses: ./.github/actions/setup-release
+        uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc
         with:
           node-version: ${{ needs.provenance.outputs.node-version }}
 
       - name: ✅ Run quality gate
-        run: pnpm quality
+        run: vp run quality
 
   unit:
     name: 🧪 Release unit + coverage
@@ -122,12 +122,12 @@ jobs:
           git submodule update --init --recursive
 
       - name: 📦 Setup project
-        uses: ./.github/actions/setup-release
+        uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc
         with:
           node-version: ${{ needs.provenance.outputs.node-version }}
 
       - name: 🧪 Run unit tests and coverage thresholds
-        run: pnpm test:cov
+        run: vp run test:cov
 
   e2e:
     name: 🎭 Release E2E
@@ -157,7 +157,7 @@ jobs:
           git submodule update --init --recursive
 
       - name: 📦 Setup project
-        uses: ./.github/actions/setup-release
+        uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc
         with:
           node-version: ${{ needs.provenance.outputs.node-version }}
 
@@ -178,8 +178,8 @@ jobs:
 
       - name: 🎭 Run E2E tests
         run: |
-          pnpm exec playwright install --with-deps chromium firefox webkit
-          pnpm test:e2e:ci
+          vp exec playwright install --with-deps chromium firefox webkit
+          vp run test:e2e:ci
 
   build:
     name: 🏗️ Build release package
@@ -209,18 +209,18 @@ jobs:
           git submodule update --init --recursive
 
       - name: 📦 Setup project
-        uses: ./.github/actions/setup-release
+        uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc
         with:
           node-version: ${{ needs.provenance.outputs.node-version }}
 
       - name: 🏗️ Build app
-        run: pnpm build:ci
+        run: vp run build:ci
 
       - name: 📦 Prepare release bundle
         env:
           RELEASE_VERSION: ${{ needs.provenance.outputs.version }}
           RELEASE_SHA: ${{ needs.provenance.outputs.release-sha }}
-        run: pnpm release:prepare
+        run: vp run release:prepare
 
       - name: 📊 Upload release bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -257,19 +257,11 @@ jobs:
           name: release-bundle-${{ needs.provenance.outputs.release-sha }}
           path: release-bundle
 
-      - name: 📦 Setup verified Node.js runtime
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: 📦 Setup verified Vite+ runtime without dependencies
+        uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc
         with:
           node-version: "${{ needs.provenance.outputs.node-version }}"
-          package-manager-cache: false
-
-      - name: 📦 Install protected-source pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          package_json_file: package.json
-          cache: false
-          run_install: false
-          standalone: false
+          install-dependencies: 'false'
 
       - name: 🔐 Check live publication order
         id: publication

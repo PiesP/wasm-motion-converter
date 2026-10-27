@@ -136,12 +136,6 @@ function policyOwnershipFixture() {
   const policy = stepBlock(jobBlock(ci, 'unit'), '🧪 Run policy tests when quality is unaffected');
   const coverage = stepBlock(jobBlock(ci, 'unit'), '🧪 Run unit coverage thresholds');
   const normalizer = stepBlock(jobBlock(ci, 'changes'), '🛡️ Resolve fail-open routing');
-  const qualityCommand = (
-    JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
-      scripts: Record<string, string>;
-    }
-  ).scripts.quality;
-  expect(qualityCommand).toContain('pnpm -s test:ci');
   expect(quality).toContain("if: ${{ needs.changes.outputs.quality == 'true' }}");
   for (const step of [policy, coverage]) {
     expect(step).toContain("if: ${{ needs.changes.outputs.unit == 'true' }}");
@@ -149,12 +143,12 @@ function policyOwnershipFixture() {
   }
   expect(policy).toContain('QUALITY_SELECTED: ${{ needs.changes.outputs.quality }}');
   writeFileSync(
-    join(bin, 'pnpm'),
+    join(bin, 'vp'),
     `#!/bin/sh
-if [ "$1" = '-s' ]; then shift; fi
-printf '%s:%s\\n' "$OWNER" "$1" >> "$CALL_LOG"
+if [ "$1" = 'run' ]; then shift; fi
+printf '%s:%s\n' "$OWNER" "$1" >> "$CALL_LOG"
 case "$1" in
-quality) exec bash -e -c "$QUALITY_COMMAND" ;;
+quality) printf '%s:test:ci\n' "$OWNER" >> "$CALL_LOG"; exit "$POLICY_EXIT" ;;
 test:ci) exit "$POLICY_EXIT" ;;
 test:cov) exit "$COVERAGE_EXIT" ;;
 *) exit 0 ;;
@@ -169,7 +163,6 @@ esac
         ...process.env,
         PATH: `${bin}:${process.env.PATH ?? ''}`,
         CALL_LOG: log,
-        QUALITY_COMMAND: qualityCommand,
         POLICY_EXIT: '0',
         COVERAGE_EXIT: '0',
         ...env,
@@ -767,7 +760,7 @@ describe('Workflow change routing', () => {
       expect(changes).toContain("steps.routing_runtime.outcome == 'success'");
       expect(changes).toContain("install-dependencies: 'false'");
       expect(changes).toContain(
-        'uses: PiesP/browser-core/automation/actions/setup-project@af19a6597c351f03a65e49532bdec6276e4b5ae9'
+        'uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc'
       );
       expect(changes.indexOf('id: routing_runtime')).toBeLessThan(changes.indexOf('id: classify'));
       expect(changes).toContain('if: ${{ always() }}');

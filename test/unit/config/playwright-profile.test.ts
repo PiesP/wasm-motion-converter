@@ -54,11 +54,11 @@ describe('Playwright workflow profiles', () => {
     const e2eJob = workflow.slice(workflow.indexOf('  e2e:\n'), workflow.indexOf('\n  build:\n'));
 
     expect(packageJson.scripts?.['test:e2e:ci']).toContain('run-playwright.ts ci');
-    expect(packageJson.scripts?.['pretest:e2e:ci']).toBe('pnpm prepare:e2e:fixture');
-    expect(workflow).toContain('pnpm test:e2e:ci');
+    expect(packageJson.scripts?.['pretest:e2e:ci']).toBe('vp run prepare:e2e:fixture');
+    expect(workflow).toContain('vp run test:e2e:ci');
     expect(workflow).toContain('sudo apt-get install --yes ffmpeg');
     expect(e2eJob).toContain('timeout-minutes: 60');
-    expect(workflow).not.toContain('pnpm exec playwright test\n');
+    expect(workflow).not.toContain('vp exec playwright test\n');
     expect(config).toContain("trace: 'retain-on-failure'");
     expect(config).toContain("video: process.env.CI ? 'retain-on-failure' : 'off'");
     expect(workflow).toContain('playwright-report/');
@@ -90,10 +90,8 @@ describe('Playwright workflow profiles', () => {
       const setup = e2e.indexOf('      - name: 📦 Setup project');
       const version = e2e.indexOf('      - name: 🎭 Resolve installed Playwright version');
       const cache = e2e.indexOf('      - name: 🎭 Cache Playwright browsers');
-      const install = e2e.indexOf(
-        'pnpm exec playwright install --with-deps chromium firefox webkit'
-      );
-      const run = e2e.indexOf('pnpm test:e2e:ci');
+      const install = e2e.indexOf('vp exec playwright install --with-deps chromium firefox webkit');
+      const run = e2e.indexOf('vp run test:e2e:ci');
       expect(
         setup >= 0 && setup < version && version < cache && cache < install && install < run,
         name

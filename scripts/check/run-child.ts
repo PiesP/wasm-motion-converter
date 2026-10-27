@@ -22,27 +22,18 @@ export async function runChild(
   options: {
     signalScope?: 'child' | 'process-group';
     gracefulTerminationSignal?: 'SIGINT';
-    executable?: boolean;
   } = {}
 ): Promise<number> {
-  const nodeArgs = options.executable
-    ? []
-    : script.endsWith('.ts')
-      ? ['--experimental-strip-types']
-      : [];
+  const nodeArgs = script.endsWith('.ts') ? ['--experimental-strip-types'] : [];
   const signalGroup = options.signalScope === 'process-group' && process.platform !== 'win32';
-  const child = spawn(
-    options.executable ? script : process.execPath,
-    [...nodeArgs, ...(options.executable ? [] : [script]), ...args],
-    {
-      cwd: process.cwd(),
-      env: { ...process.env, ...overrides },
-      stdio: 'inherit',
-      // A dedicated POSIX group bounds signal delivery to this supervised workload.
-      // The child stays awaited with inherited I/O; it is never unref'd or backgrounded.
-      detached: signalGroup,
-    }
-  );
+  const child = spawn(process.execPath, [...nodeArgs, script, ...args], {
+    cwd: process.cwd(),
+    env: { ...process.env, ...overrides },
+    stdio: 'inherit',
+    // A dedicated POSIX group bounds signal delivery to this supervised workload.
+    // The child stays awaited with inherited I/O; it is never unref'd or backgrounded.
+    detached: signalGroup,
+  });
   let interrupted: NodeJS.Signals | undefined;
   const forward = (signal: NodeJS.Signals): void => {
     interrupted = signal;

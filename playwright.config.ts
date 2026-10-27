@@ -104,12 +104,12 @@ export default defineConfig({
       : [chromiumProject, ...capabilitySmokeProjects],
 
   // Auto-start dev server unless SKIP_WEB_SERVER is set (e.g. when running
-  // tests against an already-running instance via `pnpm dev`).
+  // tests against an already-running instance via `vp run dev`).
   ...(process.env.SKIP_WEB_SERVER || IS_DEPLOY_PROFILE
     ? {}
     : {
         webServer: {
-          command: `node --experimental-strip-types scripts/build/run-vite.ts dev --host 127.0.0.1 --port ${DEV_SERVER_PORT} --strictPort`,
+          command: `vp run dev --host 127.0.0.1 --port ${DEV_SERVER_PORT} --strictPort`,
           url: DEV_SERVER_URL,
           reuseExistingServer: true,
           timeout: 120_000,

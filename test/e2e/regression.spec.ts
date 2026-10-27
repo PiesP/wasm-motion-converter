@@ -5,7 +5,7 @@
 // Run after matrix tests to detect performance/size regressions.
 //
 // Usage:
-//   pnpm test -- regression.spec.ts
+//   vp exec playwright test test/e2e/regression.spec.ts
 //   (Run after matrix.spec.ts to populate results file)
 
 import { expect, test } from '@playwright/test';

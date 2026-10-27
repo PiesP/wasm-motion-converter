@@ -15,7 +15,7 @@ Keep this exact file for both builds. After preserving any existing selector fil
 put `{"scenario":"output-finalization"}` in the ignored
 `validation/windows/inputs/output-finalization.json`; no other focused selector
 may be present in the packaged input directory. Build the clean source with
-`pnpm build:ci`, then run the standard installed-Edge desktop browser profile
+`vp run build:ci`, then run the standard installed-Edge desktop browser profile
 with a new external evidence directory. The profile checks the production
 distribution inventory and both input digests before serving the app. It
 records three cold and three same-document warm WebP conversions per workload,
