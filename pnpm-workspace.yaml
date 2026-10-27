@@ -1,9 +1,8 @@
 overrides:
   vite@*: "catalog:"
   vitest@*: "catalog:"
-
-allowBuilds:
-  esbuild: true
+  # Current Rolldown/Oxc callers do not need this optional fallback; revisit on toolchain updates.
+  "@voidzero-dev/vite-plus-core@1.4.0>esbuild": "-"
 
 # Fail closed on unreviewed dependency scripts and exotic transitive sources.
 strictDepBuilds: true
