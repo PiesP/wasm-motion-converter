@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -147,6 +156,117 @@ describe('Pages source-build contract', () => {
     );
     for (const name of ['.bashrc', '.profile'])
       expect(readFileSync(join(root, name), 'utf8')).toBe(`${name}\n`);
+  });
+
+  it('accepts the exact installer suffix when the original profile is at the read limit', () => {
+    const root = fixture();
+    const home = join(root, 'selected-vp');
+    const profile = join(root, '.profile');
+    const original = Buffer.alloc(4 * 1024 * 1024, 0x61);
+    writeFileSync(profile, original);
+    installPagesVitePlus(
+      'installer.sh',
+      home,
+      process.versions.node,
+      '1.4.0',
+      () => {
+        writeFileSync(
+          profile,
+          Buffer.concat([
+            original,
+            Buffer.from(`\n# Vite+ bin (https://viteplus.dev)\n. "${home}/env"\n`),
+          ])
+        );
+        return '';
+      },
+      root
+    );
+    expect(readFileSync(profile)).toEqual(original);
+  });
+
+  it('removes a newly created profile only when it contains the exact installer suffix', () => {
+    const root = fixture();
+    const home = join(root, 'selected-vp');
+    installPagesVitePlus(
+      'installer.sh',
+      home,
+      process.versions.node,
+      '1.4.0',
+      () => {
+        writeFileSync(
+          join(root, '.profile'),
+          `\n# Vite+ bin (https://viteplus.dev)\n. "${home}/env"\n`
+        );
+        return '';
+      },
+      root
+    );
+    expect(existsSync(join(root, '.profile'))).toBe(false);
+  });
+
+  it('rejects a replaced profile even when it carries the expected suffix', () => {
+    const root = fixture();
+    const home = join(root, 'selected-vp');
+    const profile = join(root, '.profile');
+    const original = 'original\n';
+    const appended = `${original}\n# Vite+ bin (https://viteplus.dev)\n. "${home}/env"\n`;
+    writeFileSync(profile, original);
+    expect(() =>
+      installPagesVitePlus(
+        'installer.sh',
+        home,
+        process.versions.node,
+        '1.4.0',
+        () => {
+          renameSync(profile, join(root, 'saved-profile'));
+          writeFileSync(profile, appended);
+          return '';
+        },
+        root
+      )
+    ).toThrow('Installer replaced profile');
+    expect(readFileSync(profile, 'utf8')).toBe(appended);
+    expect(readFileSync(join(root, 'saved-profile'), 'utf8')).toBe(original);
+  });
+
+  it('rejects a symlink replacement without changing its target', () => {
+    const root = fixture();
+    const home = join(root, 'selected-vp');
+    const profile = join(root, '.profile');
+    const target = join(root, 'target');
+    writeFileSync(profile, 'original\n');
+    writeFileSync(target, 'target remains\n');
+    expect(() =>
+      installPagesVitePlus(
+        'installer.sh',
+        home,
+        process.versions.node,
+        '1.4.0',
+        () => {
+          rmSync(profile);
+          symlinkSync(target, profile);
+          return '';
+        },
+        root
+      )
+    ).toThrow();
+    expect(readFileSync(target, 'utf8')).toBe('target remains\n');
+  });
+
+  it('rejects symlink and oversized Node pin inputs before running commands', () => {
+    const root = fixture();
+    const pin = join(root, '.node-version');
+    const target = join(root, 'pin-target');
+    writeFileSync(target, process.versions.node);
+    rmSync(pin);
+    symlinkSync(target, pin);
+    const run = vi.fn(() => '');
+    expect(() => pagesBuild(root, run)).toThrow();
+    expect(run).not.toHaveBeenCalled();
+    rmSync(pin);
+    writeFileSync(pin, Buffer.alloc(65, 0x32));
+    expect(() => pagesBuild(root, run)).toThrow('exceeds 64 bytes');
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('keeps unexpected profile edits and the primary installer failure', () => {

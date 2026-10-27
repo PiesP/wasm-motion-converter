@@ -1,11 +1,121 @@
 /** Pages source builds use the same Vite+ build lifecycle as local builds. */
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { lstatSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  ftruncateSync,
+  linkSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 type Execute = (command: string, args: string[], environment?: NodeJS.ProcessEnv) => string;
+type ObservedFile = { bytes: Buffer; dev: bigint; ino: bigint };
+const maxProfileBytes = 4 * 1024 * 1024;
+
+function observeOpenFile(fd: number, path: string, limit: number): ObservedFile {
+  const first = fstatSync(fd, { bigint: true });
+  if (!first.isFile()) throw new Error(`Pages requires a regular file: ${path}`);
+  if (first.size > BigInt(limit)) throw new Error(`Pages file exceeds ${limit} bytes: ${path}`);
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (total <= limit) {
+    const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, limit + 1 - total));
+    const count = readSync(fd, chunk, 0, chunk.length, total);
+    if (count === 0) break;
+    chunks.push(chunk.subarray(0, count));
+    total += count;
+  }
+  if (total > limit) throw new Error(`Pages file exceeds ${limit} bytes: ${path}`);
+  const last = fstatSync(fd, { bigint: true });
+  if (
+    first.dev !== last.dev ||
+    first.ino !== last.ino ||
+    first.size !== last.size ||
+    first.mtimeNs !== last.mtimeNs ||
+    first.ctimeNs !== last.ctimeNs
+  )
+    throw new Error(`Pages file changed while reading: ${path}`);
+  return { bytes: Buffer.concat(chunks), dev: first.dev, ino: first.ino };
+}
+
+function observeRegularFile(
+  path: string,
+  limit: number,
+  allowMissing = false
+): ObservedFile | undefined {
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (error) {
+    if (allowMissing && error instanceof Error && 'code' in error && error.code === 'ENOENT')
+      return undefined;
+    throw error;
+  }
+  try {
+    return observeOpenFile(fd, path, limit);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function sameFile(left: ObservedFile, right: ObservedFile): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function restoreProfile(path: string, before: ObservedFile | undefined, suffix: Buffer): void {
+  const appendedLimit = maxProfileBytes + suffix.length;
+  const after = observeRegularFile(path, appendedLimit, true);
+  if (!after) {
+    if (before) throw new Error(`Installer removed profile: ${path}`);
+    return;
+  }
+  if (before && !sameFile(before, after)) throw new Error(`Installer replaced profile: ${path}`);
+  if (before?.bytes.equals(after.bytes)) return;
+  const expected = before ? Buffer.concat([before.bytes, suffix]) : suffix;
+  if (!after.bytes.equals(expected))
+    throw new Error(`Installer changed profile outside its exact Vite+ suffix: ${path}`);
+  if (before) {
+    const fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const current = observeOpenFile(fd, path, appendedLimit);
+      if (!sameFile(before, current) || !current.bytes.equals(expected))
+        throw new Error(`Installer changed profile before suffix removal: ${path}`);
+      ftruncateSync(fd, before.bytes.length);
+    } finally {
+      closeSync(fd);
+    }
+    return;
+  }
+  // A profile created by the installer is removed only after moving it to a
+  // private name and confirming that the moved inode still has the exact suffix.
+  const quarantine = `${path}.vite-plus-restore-${randomUUID()}`;
+  renameSync(path, quarantine);
+  try {
+    const moved = observeRegularFile(quarantine, appendedLimit);
+    if (!moved || !sameFile(after, moved) || !moved.bytes.equals(suffix))
+      throw new Error(`Installer-created profile changed before removal: ${path}`);
+    unlinkSync(quarantine);
+  } catch (error) {
+    try {
+      linkSync(quarantine, path);
+      unlinkSync(quarantine);
+    } catch (restoreError) {
+      console.error(`Preserved changed installer profile at ${quarantine}:`, restoreError);
+    }
+    throw error;
+  }
+}
 
 function execute(command: string, args: string[], environment?: NodeJS.ProcessEnv): string {
   const result = spawnSync(command, args, {
@@ -29,10 +139,7 @@ export function installPagesVitePlus(
 ): void {
   const profiles = ['.bashrc', '.profile'].map((name) => {
     const path = join(profileDirectory, name);
-    const stat = lstatSync(path, { throwIfNoEntry: false });
-    if (stat && !stat.isFile())
-      throw new Error(`Pages installer profile is not a regular file: ${path}`);
-    return { path, before: stat ? readFileSync(path) : undefined };
+    return { path, before: observeRegularFile(path, maxProfileBytes, true) };
   });
   let primaryFailure: unknown;
   try {
@@ -49,19 +156,7 @@ export function installPagesVitePlus(
   const suffix = Buffer.from(`\n# Vite+ bin (https://viteplus.dev)\n. "${home}/env"\n`);
   for (const { path, before } of profiles) {
     try {
-      const stat = lstatSync(path, { throwIfNoEntry: false });
-      if (!stat) {
-        if (before !== undefined) throw new Error(`Installer removed profile: ${path}`);
-        continue;
-      }
-      if (!stat.isFile()) throw new Error(`Installer changed profile file type: ${path}`);
-      const after = readFileSync(path);
-      if (before?.equals(after)) continue;
-      const expected = before ? Buffer.concat([before, suffix]) : suffix;
-      if (!after.equals(expected))
-        throw new Error(`Installer changed profile outside its exact Vite+ suffix: ${path}`);
-      if (before) writeFileSync(path, before);
-      else rmSync(path);
+      restoreProfile(path, before, suffix);
     } catch (error) {
       if (primaryFailure === undefined) primaryFailure = error;
       else console.error('Failed to restore installer-owned profile suffix:', error);
@@ -76,8 +171,9 @@ export function pagesBuild(root: string, run: Execute = execute): void {
   };
   const pnpmPin = /^pnpm@(\d+\.\d+\.\d+)$/.exec(manifest.packageManager)?.[1];
   const nodeFile = join(root, '.node-version');
-  if (!lstatSync(nodeFile).isFile()) throw new Error('Pages requires a regular .node-version');
-  const nodePin = readFileSync(nodeFile, 'utf8').trim();
+  const nodeFileState = observeRegularFile(nodeFile, 64);
+  if (!nodeFileState) throw new Error('Pages requires a regular .node-version');
+  const nodePin = nodeFileState.bytes.toString('utf8').trim();
   if (!/^\d+\.\d+\.\d+$/u.test(nodePin) || !pnpmPin)
     throw new Error('Pages toolchain pins must be exact');
   if (process.versions.node !== nodePin)
