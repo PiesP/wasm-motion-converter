@@ -95,17 +95,31 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `pnpm test`, `test:watch`, `test:cov`, `test:ci` | Vite+ Vitest and direct Node `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts`, `scripts/check/run-child.test.ts`, and the native HTTP/recovery tests. | `test` and `test:cov` run once; `test:watch` uses explicit `vp test watch` and stays active to rerun changed tests. Coverage writes reports. `test:ci` checks repository authority, tagged source, portable child execution and loopback server behavior, not rendered conversion. |
 | `pnpm check`, `check:test:unit`, `check:test:e2e`, `check:scripts`, `check:windows`, `typecheck` | Browser, Vitest, Playwright, strict NodeNext/erasable script TypeScript, and the Windows validation TypeScript project. `tsconfig.scripts.json` retains its Node-only ES2022 boundary; `tsconfig.windows.json` adds DOM types only for Playwright-evaluated code. | Read-only; `pnpm quality` runs these boundaries. The Node boundary test compiles the full script project with positive Node and negative browser-global probes and checks every Windows module's syntax. |
 | `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
-| `pnpm fmt`, `fmt:check`, `lint`, `knip`, `knip:full`, `knip:production`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
-| `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
+| `pnpm fmt`, `fmt:check`, `lint`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting and static/type source-cycle analysis. | Read-only; `circular` is a focused alias for native source lint. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
+| `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, then browser/unit/E2E/Node types, direct Node tests, and i18n; native lint includes static cycles once. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
 | `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `published-asset.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
 
-`pnpm circular` passes double-quoted recursive TS and TSX patterns to dpdm, so
-shell expansion cannot narrow the `src/` entry set. This includes the Solid UI,
-recovery code and the independent conversion Worker while retaining type-only,
-re-export, alias and dynamic-import edges and imported shared-core traversal.
-Explicit app/Worker roots would omit otherwise unreferenced source modules.
-The separately compiled top-level `worker/` service worker is outside this
-application-source gate and retains its own TypeScript/build verification.
+`pnpm circular` runs `vp lint src --deny-warnings`; ordinary quality already
+runs the same native cycle rule within `lint` and does not repeat the alias.
+Oxlint's error-level `import/no-cycle` visits recursive `src/**` TS/TSX,
+including root files, deep UI and both independent conversion/WebP Workers.
+It retains aliases, type-only and re-export edges, linked-core/external import
+traversal (`ignoreTypes: false`, `ignoreExternal: false`) and unbounded depth.
+The top-level `worker/` service worker retains its separate TypeScript/build
+contract outside the application cycle gate. Node scripts, tests and raw Windows
+modules retain their own compiler and runtime checks.
+
+This policy replaces dpdm and deliberately retires global pure/mixed dynamic
+import-cycle rejection. Lazy imports and Worker construction keep their existing
+behavior tests. Mandatory Knip full/production graph auditing is also retired:
+native unused-binding/import checks and TypeScript/build checks remain, but do
+not establish that every orphan file, export or dependency is detected. Review
+those graphs when their owners change; a separately requested temporary audit
+must not recreate a mandatory toolchain. The former entry inventory maps to
+`index.html`/app builds, the conversion and WebP Worker builds, service-worker
+build, `test`/`test:ci`/Playwright discovery, strict Node script checking and the
+Windows profile project. No product source is removed as a consequence of
+retiring the graph analyzer.
 
 The license generator validates every declared runtime package's installed
 version, license identifier and nonempty license/notice text. When Vite is a

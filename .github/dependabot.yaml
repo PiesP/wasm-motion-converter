@@ -67,14 +67,6 @@ updates:
           - "minor"
           - "patch"
 
-      # Dependency analysis
-      quality:
-        patterns:
-          - "knip"
-        update-types:
-          - "minor"
-          - "patch"
-
       pnpm:
         patterns:
           - "pnpm"

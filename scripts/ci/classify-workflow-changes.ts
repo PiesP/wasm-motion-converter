@@ -117,7 +117,7 @@ function classifyPath(routes: Routes, path: string): void {
     ['.github/threat-model.md', '.github/SECURITY.md', '.github/dependabot.yaml'].includes(path)
   ) {
     enable(routes, 'unit', 'dependency', 'codeql', 'semgrep', 'semgrep_full', 'security_tools');
-  } else if (['knip.json', 'tsconfig.json', 'tsconfig.worker.json'].includes(path)) {
+  } else if (['tsconfig.json', 'tsconfig.worker.json'].includes(path)) {
     enable(routes, 'quality', 'unit', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path === 'vite.config.ts') {
     enable(routes, 'quality', 'unit', 'e2e', 'build', 'codeql', 'semgrep', 'semgrep_full');

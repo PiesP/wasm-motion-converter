@@ -43,6 +43,8 @@ beforeAll(() => {
   config.overrides[0].files = ['**/*'];
   const restriction = config.overrides[0].rules['no-restricted-imports'];
   config.overrides[0].rules['no-restricted-imports'] = ['error', restriction[1][0]];
+  const cycle = config.overrides[0].rules['import/no-cycle'];
+  config.overrides[0].rules['import/no-cycle'] = ['error', cycle[1][0]];
   writeFileSync(configFile, JSON.stringify(config));
 });
 

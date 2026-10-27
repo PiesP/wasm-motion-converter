@@ -60,7 +60,7 @@ export default defineConfig(({ command }) => {
         'validation/windows/prior-dist/**',
         'validation/windows/public-target.json',
       ],
-      plugins: ['typescript', 'jsx-a11y', 'oxc', 'unicorn'],
+      plugins: ['typescript', 'jsx-a11y', 'oxc', 'unicorn', 'import'],
       jsPlugins: ['vite-plus/oxlint-plugin'],
       options: { typeAware: true, typeCheck: false },
       rules: {
@@ -103,6 +103,7 @@ export default defineConfig(({ command }) => {
         {
           files: ['src/**'],
           rules: {
+            'import/no-cycle': ['error', { ignoreTypes: false, ignoreExternal: false }],
             'eslint/no-restricted-imports': [
               'error',
               {
