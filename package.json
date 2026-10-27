@@ -44,9 +44,9 @@
     "postbuild": "node --experimental-strip-types scripts/build/postbuild.ts",
     "preview": "node --experimental-strip-types scripts/build/run-vite.ts preview",
     "clean": "node --experimental-strip-types scripts/build/clean.ts",
-    "test": "vp test run",
-    "test:ci": "node --experimental-strip-types --test scripts/ci/repository-authority.test.ts scripts/release/verify-source.test.ts scripts/check/run-child.test.ts test/native/deployment-update.test.ts test/native/offline-recovery.test.ts test/native/recovery-server.test.ts",
-    "test:watch": "vp test watch",
+    "test": "vp test run --project unit",
+    "test:ci": "vp test run --project node-policy",
+    "test:watch": "vp test watch --project unit",
     "test:e2e": "playwright test",
     "prepare:e2e:fixture": "node --experimental-strip-types scripts/test/generate-e2e-video.ts",
     "pretest:e2e:ci": "pnpm prepare:e2e:fixture",
@@ -61,7 +61,7 @@
     "verify:full": "pnpm verify && pnpm test:cov && node --experimental-strip-types scripts/test/run-e2e-on-free-port.ts",
     "verify:deploy": "node --experimental-strip-types scripts/test/verify-deployment.ts",
     "release:prepare": "node --experimental-strip-types scripts/release/prepare.ts",
-    "test:cov": "vp test run --coverage",
+    "test:cov": "vp test run --project unit --coverage",
     "check:i18n": "node --experimental-strip-types scripts/check/i18n.ts"
   },
   "dependencies": {

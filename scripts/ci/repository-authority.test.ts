@@ -3,15 +3,16 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import test, { after } from 'node:test';
 import { fileURLToPath } from 'node:url';
+
+import { afterAll, test } from 'vite-plus/test';
 
 const dir = fileURLToPath(new URL('.', import.meta.url));
 const head = 'a'.repeat(40);
 const other = 'b'.repeat(40);
 const repository = 'PiesP/wasm-motion-converter';
 const temporaryFixtures: string[] = [];
-after(() => {
+afterAll(() => {
   for (const path of temporaryFixtures) rmSync(path, { recursive: true, force: true });
 });
 

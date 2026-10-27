@@ -12,8 +12,9 @@ import {
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
-import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+
+import { test } from 'vite-plus/test';
 
 import { runVite } from '../build/run-vite.ts';
 import { prepareResourceFixtures } from '../test/prepare-resource-fixtures.ts';

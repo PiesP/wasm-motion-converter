@@ -3,7 +3,8 @@
 
 import assert from 'node:assert/strict';
 import { createServer, type ServerResponse } from 'node:http';
-import { test } from 'node:test';
+
+import { test } from 'vite-plus/test';
 
 import { observeDeploymentUpdates } from '../../src/deployment-update.ts';
 
@@ -22,6 +23,8 @@ for (const [name, headers] of [
   ['declared length', { 'content-type': 'application/json', 'content-length': '65537' }],
 ] as const) {
   test(`native Fetch releases two unfinished responses rejected by ${name}`, async () => {
+    assert.equal(typeof window, 'undefined', 'Node policy must not inherit a DOM environment');
+    assert.equal(typeof document, 'undefined', 'Node policy must not inherit browser setup');
     const openResponses = new Set<ServerResponse>();
     let closedResponses = 0;
     let requests = 0;

@@ -17,10 +17,36 @@ export default defineConfig({
     // https://vitest.dev/guide/migration/#clearmocks-is-enabled-by-default
     clearMocks: false,
     globals: true,
-    environment: 'jsdom',
-    setupFiles: ['./test/setup.ts'],
-    include: ['test/unit/**/*.test.{ts,tsx}'],
-    exclude: ['node_modules', 'dist'],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'unit',
+          environment: 'jsdom',
+          setupFiles: ['./test/setup.ts'],
+          include: ['test/unit/**/*.test.{ts,tsx}'],
+          exclude: ['node_modules', 'dist'],
+        },
+      },
+      {
+        test: {
+          name: 'node-policy',
+          environment: 'node',
+          setupFiles: [],
+          include: [
+            'scripts/ci/repository-authority.test.ts',
+            'scripts/release/verify-source.test.ts',
+            'scripts/check/run-child.test.ts',
+            'test/native/deployment-update.test.ts',
+            'test/native/offline-recovery.test.ts',
+            'test/native/recovery-server.test.ts',
+          ],
+          fileParallelism: false,
+          passWithNoTests: false,
+          testTimeout: 30000,
+        },
+      },
+    ],
     passWithNoTests: false,
     slowTestThreshold: 2000,
     testTimeout: 30000,

@@ -63,6 +63,6 @@ describe('browser-core workflow composition', () => {
     expect(workflow).toContain('PREFLIGHT: ${{ inputs.preflight }}');
     expect(workflow).not.toContain('AUTO_MERGE_TOKEN');
     expect(workflow).not.toContain('gh pr merge');
-    expect(manifest.scripts['test:ci']).toContain('scripts/ci/repository-authority.test.ts');
+    expect(manifest.scripts['test:ci']).toBe('vp test run --project node-policy');
   });
 });
