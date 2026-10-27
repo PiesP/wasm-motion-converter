@@ -9,6 +9,8 @@ import type { Browser, Page } from '@playwright/test';
 import { installOutputFinalizationObserverOnPage } from './output-finalization-observer.ts';
 import type { Observer } from './output-finalization-observer.ts';
 
+export { installOutputFinalizationObserver } from './output-finalization-observer.ts';
+
 const MAX_OUTPUT_BYTES = 96 * 1024 * 1024;
 const CONVERSION_TIMEOUT_MS = 180_000;
 

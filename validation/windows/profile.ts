@@ -57,6 +57,11 @@ import { exercisePreviewRetry, exerciseSelectionPreviewBaseline } from './select
 import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
 
+export {
+  installCancellationInspector,
+  readCancellationInspector,
+} from './cancellation-inspector.ts';
+
 type Artifact = { kind: string; file: string; bytes: number; sha256: string };
 type HeaderRule = { pattern: string; headers: Map<string, string> };
 type AssetFailure = { path: string; mode: '404' | 'wrong-mime' | 'network' };
