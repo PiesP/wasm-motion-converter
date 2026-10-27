@@ -22,7 +22,6 @@ require FFmpeg on `PATH` to generate their deterministic H.264 fixtures.
 - `unit/`: Vitest component, service, store, and utility tests
 - `e2e/`: Playwright conversion, i18n, regression, and visual flows
 - `e2e/fixtures/`: browser helpers and output validation
-- `e2e/debug/`: opt-in diagnostics and benchmarks
 - `lib/`: local codec matrix, baseline data, and result recording
 - `setup.ts`: shared Vitest setup
 - `../vitest.config.ts`: Vitest and coverage configuration
@@ -44,6 +43,12 @@ require FFmpeg on `PATH` to generate their deterministic H.264 fixtures.
 The Playwright configuration starts a local Vite server unless
 `SKIP_WEB_SERVER` is set. Use `PLAYWRIGHT_TEST_PROFILE=ci` or `deploy` only when
 you need the corresponding restricted profile.
+
+Use `e2e/ci-conversion-smoke.spec.ts` for deterministic GIF/WebP conversion and
+console health, `e2e/matrix.spec.ts` with the local codec corpus for broader
+codec and timing records, and `e2e/resource-profile.spec.ts` for resource
+measurements. The earlier `e2e/debug/` scripts were excluded from Playwright
+discovery and their Vitest invocation comments did not select those tests.
 
 See [Resource testing](./RESOURCE-TESTING.md) for the opt-in resource profile's
 workload, signals, limits, and interpretation rules.

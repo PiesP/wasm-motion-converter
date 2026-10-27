@@ -4,13 +4,7 @@
 /**
  * Vite Environment Types
  *
- * Extends global types for:
- * - Environment variable definitions with type safety
- * - WebCodecs API support (experimental MediaStreamTrackProcessor)
- * - HTMLMediaElement WebCodecs integration (captureStream method)
- *
- * These type definitions enable TypeScript support for APIs that may not
- * yet be fully standardized or included in DOM type definitions.
+ * Extends global types for environment variable definitions with type safety.
  */
 
 /// <reference types="vite/client" />
@@ -25,23 +19,6 @@ declare module './i18n/*.json' {
 
   const value: Translations;
   export default value;
-}
-
-/* ============================================================================
-   Video Pipeline Types (defined inline — @t/video-pipeline-types was stale)
-   ============================================================================ */
-
-interface VideoCapabilities {
-  webCodecs: boolean;
-  webp: boolean;
-  gif: boolean;
-  vp8: boolean;
-  vp9: boolean;
-  av1: boolean;
-  h264: boolean;
-  h265: boolean;
-  aac: boolean;
-  opus: boolean;
 }
 
 /* ============================================================================
@@ -74,142 +51,5 @@ declare global {
    */
   interface ImportMeta {
     readonly env: ImportMetaEnv;
-  }
-}
-
-/* ============================================================================
-   WebCodecs API Extensions
-   ============================================================================ */
-
-declare global {
-  /**
-   * Options for creating a MediaStreamTrackProcessor
-   *
-   * @remarks
-   * MediaStreamTrackProcessor is part of the WebCodecs API (experimental).
-   * Allows processing of video frames from a MediaStreamTrack with optional
-   * buffering control.
-   *
-   * @see {@link https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrackProcessor}
-   */
-  interface MediaStreamTrackProcessorInit {
-    /** The MediaStreamTrack to process (required) */
-    track: MediaStreamTrack;
-    /** Maximum number of frames to buffer (optional, default varies by browser) */
-    maxBufferSize?: number;
-  }
-
-  /**
-   * Processor for reading frames from a MediaStreamTrack
-   *
-   * @remarks
-   * Part of the WebCodecs API (experimental). Converts a MediaStreamTrack
-   * into a ReadableStream of VideoFrames for frame-by-frame processing.
-   *
-   * TypeScript generic T defaults to VideoFrame for video tracks.
-   *
-   * @see {@link https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamTrackProcessor}
-   */
-  interface MediaStreamTrackProcessor<T = VideoFrame> {
-    /** ReadableStream of frames from the input track */
-    readonly readable: ReadableStream<T>;
-  }
-
-  /**
-   * Constructor for MediaStreamTrackProcessor
-   *
-   * @remarks
-   * Browser support: Currently experimental, check caniuse.com before use.
-   * Provides an easy way to create a processor for a given track and options.
-   */
-  var MediaStreamTrackProcessor: {
-    prototype: MediaStreamTrackProcessor;
-    new (options: MediaStreamTrackProcessorInit): MediaStreamTrackProcessor;
-  };
-
-  /**
-   * Configuration for ImageEncoder initialization
-   *
-   * @remarks
-   * ImageEncoder is part of the WebCodecs API (experimental).
-   * Used for encoding images to various formats (WebP, JPEG, PNG).
-   *
-   * @see {@link https://developer.mozilla.org/en-US/docs/Web/API/ImageEncoder}
-   */
-  interface ImageEncoderInit {
-    /** Output format type (e.g., "image/webp", "image/jpeg") */
-    type: string;
-    /** Quality level (0-1 for formats that support it, optional) */
-    quality?: number;
-    /** Callback when encoded chunk is available */
-    output: (chunk: {
-      /** Size of encoded chunk in bytes */
-      byteLength: number;
-      /** Copy encoded data to destination buffer */
-      copyTo: (destination: ArrayBufferView) => void;
-    }) => void;
-    /** Callback for encoding errors (optional) */
-    error?: (error: Error) => void;
-  }
-
-  /**
-   * Encoder for image formats (WebP, JPEG, PNG, etc.)
-   *
-   * @remarks
-   * Part of the WebCodecs API (experimental). Encodes ImageBitmapSource
-   * (Canvas, VideoFrame, etc.) to specified image format with quality control.
-   *
-   * Browser support: Limited, check caniuse.com before use.
-   *
-   * @see {@link https://developer.mozilla.org/en-US/docs/Web/API/ImageEncoder}
-   */
-  interface ImageEncoder {
-    /** Encode an image source to the specified format */
-    encode(image: ImageBitmapSource): Promise<void> | void;
-    /** Flush any pending encoded data */
-    flush(): Promise<void>;
-    /** Close encoder and release resources */
-    close(): void;
-  }
-
-  /**
-   * Constructor for ImageEncoder
-   *
-   * @remarks
-   * Static method `isTypeSupported` checks if a format is supported
-   * before attempting to create an encoder.
-   */
-  var ImageEncoder: {
-    prototype: ImageEncoder;
-    new (init: ImageEncoderInit): ImageEncoder;
-    /** Check if image format is supported (optional, browser-dependent) */
-    isTypeSupported?: (type: string) => Promise<boolean>;
-  };
-}
-
-/* ============================================================================
-   HTMLMediaElement Extensions
-   ============================================================================ */
-
-/**
- * Extension to HTMLMediaElement for WebCodecs support
- *
- * @remarks
- * captureStream() is a standard method to get a MediaStream from
- * an audio or video element for real-time frame/audio capture.
- * This allows using MediaStreamTrackProcessor to process video frames
- * for conversion to GIF or WebP formats.
- *
- * @see {@link https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/captureStream}
- */
-declare global {
-  interface HTMLMediaElement {
-    /** Capture a MediaStream from the media element for frame processing */
-    captureStream?(): MediaStream;
-  }
-
-  interface Window {
-    /** Cached runtime video capabilities (capability-service.ts) */
-    __VIDEO_CAPS__?: VideoCapabilities;
   }
 }

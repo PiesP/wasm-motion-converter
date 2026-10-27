@@ -356,8 +356,7 @@ export async function validateVideoDuration(
     // ERROR HANDLING: If duration extraction fails (unsupported codec, corrupted file, network error)
     // Allow conversion to proceed with default settings.
     // The conversion service will eventually handle errors if the video is truly unreadable.
-    // This approach: fail gracefully rather than blocking valid videos
-    // (some obscure codecs may work in FFmpeg even if HTML5 Video API fails)
+    // Duration metadata can be unavailable even when the conversion path can decode the file.
     logger.warn('general', 'Failed to extract duration, proceeding without validation', {
       error: getErrorMessage(error),
     });
