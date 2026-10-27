@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "paths": {
+      "@/*": ["./*"],
+      "@components/*": ["./components/*"],
+      "@services/*": ["./services/*"],
+      "@utils/*": ["./utils/*"],
+      "@stores/*": ["./stores/*"],
+      "@hooks/*": ["./hooks/*"],
+      "@t/*": ["./types/*"]
+    },
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "stableTypeOrdering": true,
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["**/*"],
+  "exclude": ["node_modules", "dist"]
+}

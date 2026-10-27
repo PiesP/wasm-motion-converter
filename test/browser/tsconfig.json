@@ -1,0 +1,7 @@
+{
+  "extends": "../../test/tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client", "vitest/globals", "@vitest/browser-playwright"]
+  },
+  "include": ["**/*.ts", "**/*.tsx", "../../src/**/*.d.ts"]
+}

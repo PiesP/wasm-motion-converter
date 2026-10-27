@@ -20,7 +20,7 @@ require FFmpeg on `PATH` to generate their deterministic H.264 fixtures.
 
 ## Test layout
 
-- `unit/**/*.browser.test.{ts,tsx}`: native Chromium DOM, Solid, and browser lifecycle tests
+- `browser/**/*.browser.test.{ts,tsx}`: native Chromium DOM, Solid, and browser lifecycle tests
 - `unit/**/*.test.{ts,tsx}`: Node tests for pure logic, configuration, files, and VM tooling
 - `e2e/`: Playwright conversion, i18n, regression, and visual flows
 - `e2e/fixtures/`: browser helpers and output validation

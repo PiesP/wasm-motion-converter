@@ -27,7 +27,7 @@ export default defineConfig({
           environment: 'node',
           setupFiles: ['./test/setup.ts'],
           include: ['test/unit/**/*.test.{ts,tsx}'],
-          exclude: ['test/unit/**/*.browser.test.{ts,tsx}', 'node_modules', 'dist'],
+          exclude: ['node_modules', 'dist'],
         },
       },
       {
@@ -35,7 +35,7 @@ export default defineConfig({
         test: {
           name: 'browser',
           setupFiles: ['./test/setup.ts'],
-          include: ['test/unit/**/*.browser.test.{ts,tsx}'],
+          include: ['test/browser/**/*.browser.test.{ts,tsx}'],
           browser: {
             enabled: true,
             provider: playwright(),
@@ -62,7 +62,6 @@ export default defineConfig({
             'test/native/recovery-server.test.ts',
           ],
           fileParallelism: false,
-          passWithNoTests: false,
           testTimeout: 30000,
         },
       },

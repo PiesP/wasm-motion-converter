@@ -77,6 +77,7 @@ describe('installed Vite+ lint boundaries', () => {
   });
 
   it('allows same-folder imports', () => {
+    writeFileSync(join(root, 'same-folder.ts'), 'export const value = 1;\n');
     const { path } = fixture("export { value } from './same-folder';\n");
     const result = run([path, '--deny-warnings']);
     expect(result.status, result.output).toBe(0);
