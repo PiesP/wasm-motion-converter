@@ -177,13 +177,9 @@ html.dark :focus-visible {
   *,
   *::before,
   *::after {
-    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
     animation-duration: 0.01ms !important;
-    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
     animation-iteration-count: 1 !important;
-    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
     transition-duration: 0.01ms !important;
-    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
     scroll-behavior: auto !important;
   }
 
@@ -192,13 +188,11 @@ html.dark :focus-visible {
      pseudo-elements and @starting-style, which operate at the compositor
      level rather than the CSS animation/transition layer. */
   ::view-transition-group(*) {
-    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
     animation-duration: 0.01ms !important;
   }
 
   ::view-transition-old(*),
   ::view-transition-new(*) {
-    /* biome-ignore lint/complexity/noImportantStyles: a11y reduced-motion override */
     animation-duration: 0.01ms !important;
   }
 

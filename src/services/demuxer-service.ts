@@ -115,14 +115,13 @@ export async function demuxVideo(
   // (full in-memory BufferSource) to reduce memory usage for large files.
   const input = createMediaBunnyInput(inputSource);
   let disposed = false;
-  let abortHandler: (() => void) | undefined;
   const dispose = (): void => {
     if (disposed) return;
     disposed = true;
     if (abortHandler) signal?.removeEventListener('abort', abortHandler);
     input.dispose();
   };
-  abortHandler = dispose;
+  const abortHandler = dispose;
   signal?.addEventListener('abort', abortHandler, { once: true });
 
   try {
@@ -180,6 +179,8 @@ export async function demuxVideo(
     signal?.throwIfAborted();
     onPrepared?.(estimatedTotalFrames);
 
+    // The lazy generator updates the result only after it is returned to its owner.
+    // oxlint-disable-next-line prefer-const
     let result!: DemuxResult;
     const chunks = (async function* streamChunks(): AsyncGenerator<EncodedVideoChunk> {
       let totalFrames = 0;

@@ -1,4 +1,4 @@
-import type { Plugin } from 'vite';
+import type { Plugin } from 'vite-plus';
 
 const DATA_TEST_ID_PATTERN = /\s+data-testid="[^"]*"/g;
 

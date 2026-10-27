@@ -1,6 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
-import type { UserConfig } from 'vite';
 import solid from 'vite-plugin-solid';
+import type { UserConfig } from 'vite-plus';
 
 export function browserAppManualChunk(id: string): string | undefined {
   // Keep Vite's shared preload helper separate from the lazy codec chunk.
