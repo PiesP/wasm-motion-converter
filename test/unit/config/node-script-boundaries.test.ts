@@ -222,6 +222,99 @@ describe('direct Node script boundaries', () => {
     }
   });
 
+  it('includes the installed Vite helper owner notice when Vite is declared', () => {
+    const { root, run } = fixture();
+    mkdirSync(join(root, 'node_modules/sample'), { recursive: true });
+    mkdirSync(join(root, 'node_modules/vite'), { recursive: true });
+    mkdirSync(join(root, 'public'));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        type: 'module',
+        dependencies: { sample: '1.0.0' },
+        devDependencies: { vite: 'npm:@voidzero-dev/vite-plus-core@1.4.0' },
+      })
+    );
+    writeFileSync(
+      join(root, 'node_modules/sample/package.json'),
+      '{"version":"1.0.0","license":"MIT"}'
+    );
+    writeFileSync(join(root, 'node_modules/sample/LICENSE'), 'Copyright runtime author\n');
+    writeFileSync(
+      join(root, 'node_modules/vite/package.json'),
+      '{"name":"@voidzero-dev/vite-plus-core","version":"1.4.0","license":"MIT"}'
+    );
+    writeFileSync(
+      join(root, 'node_modules/vite/LICENSE'),
+      'Copyright helper author\nThird-party helper notice\n'
+    );
+
+    const result = run('scripts/build/generate-licenses.ts');
+    expect(result.status, result.stderr).toBe(0);
+    const generated = readFileSync(join(root, 'public/LICENSES.md'), 'utf8');
+    expect(generated).toContain('## sample');
+    expect(generated).toContain('## Build-generated browser helper owner');
+    expect(generated).toContain('### @voidzero-dev/vite-plus-core');
+    expect(generated).toContain('**Version:** 1.4.0');
+    expect(generated).toContain('**Purpose:** Build-generated Vite/Rolldown browser helpers');
+    expect(generated).toContain('Copyright helper author');
+    expect(generated).toContain('Third-party helper notice');
+  });
+
+  it.each([
+    ['missing package', null, null, 'required dependency vite'],
+    ['missing name', '{"version":"1.4.0","license":"MIT"}', 'notice', 'name'],
+    [
+      'missing license',
+      '{"name":"@voidzero-dev/vite-plus-core","version":"1.4.0"}',
+      'notice',
+      'license',
+    ],
+    [
+      'missing notice',
+      '{"name":"@voidzero-dev/vite-plus-core","version":"1.4.0","license":"MIT"}',
+      null,
+      'notice',
+    ],
+    [
+      'empty notice',
+      '{"name":"@voidzero-dev/vite-plus-core","version":"1.4.0","license":"MIT"}',
+      '',
+      'notice',
+    ],
+  ] as const)(
+    'preserves prior license output for %s in required Vite helper owner',
+    (_case, metadata, notice, diagnostic) => {
+      const { root, run } = fixture();
+      mkdirSync(join(root, 'node_modules/sample'), { recursive: true });
+      mkdirSync(join(root, 'public'));
+      const output = join(root, 'public/LICENSES.md');
+      writeFileSync(output, 'previous valid notice\n');
+      writeFileSync(
+        join(root, 'package.json'),
+        JSON.stringify({
+          type: 'module',
+          dependencies: { sample: '1.0.0' },
+          devDependencies: { vite: 'npm:@voidzero-dev/vite-plus-core@1.4.0' },
+        })
+      );
+      writeFileSync(
+        join(root, 'node_modules/sample/package.json'),
+        '{"version":"1.0.0","license":"MIT"}'
+      );
+      writeFileSync(join(root, 'node_modules/sample/LICENSE'), 'Copyright runtime author\n');
+      if (metadata !== null) {
+        mkdirSync(join(root, 'node_modules/vite'));
+        writeFileSync(join(root, 'node_modules/vite/package.json'), metadata);
+        if (notice !== null) writeFileSync(join(root, 'node_modules/vite/LICENSE'), notice);
+      }
+      const result = run('scripts/build/generate-licenses.ts');
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(diagnostic);
+      expect(readFileSync(output, 'utf8')).toBe('previous valid notice\n');
+    }
+  );
+
   it.each([1, 0])(
     'preserves prior license output when only %i of two required packages is installed',
     (installed) => {
