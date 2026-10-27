@@ -182,7 +182,7 @@ describe('Pages source-build contract', () => {
       },
       root
     );
-    expect(readFileSync(profile)).toEqual(original);
+    expect(readFileSync(profile).equals(original)).toBe(true);
   });
 
   it('removes a newly created profile only when it contains the exact installer suffix', () => {
