@@ -147,6 +147,7 @@ describe('Pages source-build contract', () => {
         expect(command).toBe('bash');
         expect(args).toEqual(['installer.sh']);
         expect(environment?.VP_HOME).toBe(home);
+        expect(environment?.VP_PM_MANAGER).toBe('yes');
         expect(environment).not.toHaveProperty('HOME');
         for (const name of ['.bashrc', '.profile'])
           writeFileSync(join(root, name), `${name}\n${suffix}`);

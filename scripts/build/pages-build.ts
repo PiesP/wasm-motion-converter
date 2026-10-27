@@ -148,6 +148,7 @@ export function installPagesVitePlus(
       VP_VERSION: vitePin,
       VP_SETUP_NODE_VERSION: nodePin,
       VP_NODE_MANAGER: 'yes',
+      VP_PM_MANAGER: 'yes',
       CI: '1',
     });
   } catch (error) {
