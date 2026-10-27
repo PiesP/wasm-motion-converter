@@ -150,8 +150,8 @@ describe('UI state clarity', () => {
   it('keeps the focused download action visible after the preview replaces its skeleton', async () => {
     const requestAnimationFrameSpy = vi.spyOn(window, 'requestAnimationFrame');
     const cancelAnimationFrameSpy = vi.spyOn(window, 'cancelAnimationFrame');
-    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:result-preview');
-    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const createObjectURL = vi.spyOn(URL, 'createObjectURL');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL');
 
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -161,7 +161,17 @@ describe('UI state clarity', () => {
           originalName="sample.mp4"
           originalSize={1_000}
           outputHeight={810}
-          outputBlob={new Blob(['result'], { type: 'image/gif' })}
+          outputBlob={
+            new Blob(
+              [
+                Uint8Array.from(
+                  atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
+                  (character) => character.charCodeAt(0)
+                ),
+              ],
+              { type: 'image/gif' }
+            )
+          }
           outputWidth={1440}
           settings={settings}
         />
@@ -175,7 +185,9 @@ describe('UI state clarity', () => {
       '[data-testid="download-result-button"]'
     );
     expect(image).toBeInstanceOf(HTMLImageElement);
-    expect(download?.getAttribute('href')).toBe('blob:result-preview');
+    const resultUrl = createObjectURL.mock.results[0]?.value;
+    expect(resultUrl).toMatch(/^blob:/);
+    expect(download?.getAttribute('href')).toBe(resultUrl);
     expect(container.querySelector('.animate-pulse')).not.toBeNull();
     const summary = container.querySelector<HTMLElement>('[data-testid="result-summary"]');
     const resolution = container.querySelector<HTMLElement>('[data-result-resolution]');
@@ -196,21 +208,21 @@ describe('UI state clarity', () => {
       value: scrollIntoView,
     });
     download?.focus();
-    image?.dispatchEvent(new Event('load'));
-
-    expect(container.querySelector('.animate-pulse')).toBeNull();
     expect(scrollIntoView).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(container.querySelector('.animate-pulse')).toBeNull();
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
+    });
+    expect(image?.naturalWidth).toBe(1);
     expect(requestAnimationFrameSpy).toHaveBeenCalledOnce();
-    await nextAnimationFrame();
     expect(document.activeElement).toBe(download);
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' });
 
     image?.dispatchEvent(new Event('load'));
     const pendingFrameId = requestAnimationFrameSpy.mock.results.at(-1)?.value;
     expect(pendingFrameId).toBeTypeOf('number');
     dispose();
     expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(pendingFrameId);
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:result-preview');
+    expect(revokeObjectURL).toHaveBeenCalledWith(resultUrl);
   });
 
   it('does not scroll the result after the user moves focus elsewhere', async () => {
