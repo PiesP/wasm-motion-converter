@@ -99,6 +99,24 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, Biome residual lint, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
 | `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `legacy-state.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
 
+`pnpm circular` passes double-quoted recursive TS and TSX patterns to dpdm, so
+shell expansion cannot narrow the `src/` entry set. This includes the Solid UI,
+recovery code and the independent conversion Worker while retaining type-only,
+re-export, alias and dynamic-import edges and imported shared-core traversal.
+Explicit app/Worker roots would omit otherwise unreferenced source modules.
+The separately compiled top-level `worker/` service worker is outside this
+application-source gate and retains its own TypeScript/build verification.
+
+The license generator validates every declared runtime
+package's installed version, license identifier and nonempty license/notice text
+before replacing `public/LICENSES.md`; missing or invalid required input fails
+the build and preserves the prior notice. Installed license texts retain their
+copyright notices. `scripts/build/wasm-webp-NOTICES.txt` supplies offline native
+and generated-runtime notices with their source-attribution limits; review it
+when updating that package. The inventory is scoped to declared runtime packages,
+with bundled-native notices handled separately; it is not the entire installed
+production graph or a binary provenance audit.
+
 ### Workflow and subprocess entrypoints
 
 | Surface | Contract; stage and side effects | Verification / status |

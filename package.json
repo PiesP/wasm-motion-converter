@@ -40,7 +40,7 @@
     "typecheck": "pnpm -s check",
     "knip": "knip --files --exports --dependencies --treat-config-hints-as-errors",
     "knip:production": "knip --production --files --exports --dependencies --treat-config-hints-as-errors",
-    "circular": "dpdm --tsconfig tsconfig.json --circular --no-tree --no-warning --exit-code circular:1 src/**/*.ts",
+    "circular": "dpdm --tsconfig tsconfig.json --circular --no-tree --no-warning --exit-code circular:1 \"src/**/*.ts\" \"src/**/*.tsx\"",
     "knip:full": "pnpm -s knip",
     "prebuild": "node --experimental-strip-types scripts/build/generate-licenses.ts && pnpm -s quality",
     "build": "node --experimental-strip-types scripts/build/run-vite.ts build",

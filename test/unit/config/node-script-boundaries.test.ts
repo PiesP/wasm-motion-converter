@@ -189,11 +189,18 @@ describe('direct Node script boundaries', () => {
       join(root, 'node_modules/sample/package.json'),
       '{"version":"1.0.0","license":"MIT"}'
     );
+    writeFileSync(
+      join(root, 'node_modules/sample/LICENSE'),
+      'MIT License\nCopyright sample authors\n'
+    );
     const result = run('scripts/build/generate-licenses.ts');
     expect(result.status, result.stderr).toBe(0);
-    expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toContain('### sample');
+    expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toContain('## sample');
     expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toContain('**Version:** 1.0.0');
     const generated = readFileSync(join(root, 'public/LICENSES.md'), 'utf8');
+    expect(generated).toContain('Copyright sample authors');
+    expect(generated).not.toContain('respective authors');
+    expect(generated).not.toContain('No patent retaliation');
     const clock = join(root, 'clock.mjs');
     for (const instant of ['2000-01-01T00:00:00Z', '2100-01-01T00:00:00Z']) {
       writeFileSync(
@@ -214,6 +221,63 @@ describe('direct Node script boundaries', () => {
       expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toBe(generated);
     }
   });
+
+  it.each([1, 0])(
+    'preserves prior license output when only %i of two required packages is installed',
+    (installed) => {
+      const { root, run } = fixture();
+      mkdirSync(join(root, 'public'));
+      const output = join(root, 'public/LICENSES.md');
+      writeFileSync(output, 'previous valid notice\n');
+      writeFileSync(
+        join(root, 'package.json'),
+        JSON.stringify({
+          type: 'module',
+          dependencies: { sample: '1.0.0', missing: '1.0.0' },
+        })
+      );
+      if (installed) {
+        mkdirSync(join(root, 'node_modules/sample'), { recursive: true });
+        writeFileSync(
+          join(root, 'node_modules/sample/package.json'),
+          JSON.stringify({ version: '1.0.0', license: 'MIT' })
+        );
+        writeFileSync(join(root, 'node_modules/sample/LICENSE'), 'MIT License\nCopyright sample\n');
+      }
+      const result = run('scripts/build/generate-licenses.ts');
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('required dependency');
+      expect(readFileSync(output, 'utf8')).toBe('previous valid notice\n');
+    }
+  );
+
+  it.each([
+    ['invalid JSON', '{', 'MIT License', 'sample'],
+    ['missing version', '{"license":"MIT"}', 'MIT License', 'version'],
+    ['missing license', '{"version":"1.0.0"}', 'MIT License', 'license'],
+    ['unknown license', '{"version":"1.0.0","license":"Unknown"}', 'MIT License', 'license'],
+    ['missing notice', '{"version":"1.0.0","license":"MIT"}', null, 'notice'],
+    ['empty notice', '{"version":"1.0.0","license":"MIT"}', '', 'notice'],
+  ] as const)(
+    'rejects %s without replacing prior license output',
+    (_case, metadata, notice, diagnostic) => {
+      const { root, run } = fixture();
+      mkdirSync(join(root, 'public'));
+      mkdirSync(join(root, 'node_modules/sample'), { recursive: true });
+      const output = join(root, 'public/LICENSES.md');
+      writeFileSync(output, 'previous valid notice\n');
+      writeFileSync(
+        join(root, 'package.json'),
+        '{"type":"module","dependencies":{"sample":"1.0.0"}}'
+      );
+      writeFileSync(join(root, 'node_modules/sample/package.json'), metadata);
+      if (notice !== null) writeFileSync(join(root, 'node_modules/sample/LICENSE'), notice);
+      const result = run('scripts/build/generate-licenses.ts');
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(diagnostic);
+      expect(readFileSync(output, 'utf8')).toBe('previous valid notice\n');
+    }
+  );
 
   it('deduplicates build output and validates references while rejecting inline or external scripts', () => {
     const { root, run } = fixture();
