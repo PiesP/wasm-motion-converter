@@ -406,7 +406,7 @@ describe('release publication guard', () => {
     const badMarker = fixture({ deployed: { version: 'bad', commit: source } });
     await expect(
       decidePublication(candidate, candidate, candidate, badMarker.request)
-    ).rejects.toThrow('valid version');
+    ).rejects.toThrow(/invalid release-state\.json; require reviewed recovery.*valid version/);
     const conflictingLatest = fixture({
       deployed: candidate,
       releases: [published('0.2.11')],

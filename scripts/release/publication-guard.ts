@@ -168,14 +168,22 @@ export async function decidePublication(
         'Existing release branch has no release-state.json; require reviewed recovery before publication'
       );
     } else {
-      const file = record(marker, 'release branch marker');
-      if (file.encoding !== 'base64' || typeof file.content !== 'string') {
-        throw new Error('Release branch marker has no base64 content');
+      try {
+        const file = record(marker, 'release branch marker');
+        if (file.encoding !== 'base64' || typeof file.content !== 'string') {
+          throw new Error('Release branch marker has no base64 content');
+        }
+        deployed = identity(
+          JSON.parse(Buffer.from(file.content, 'base64').toString('utf8')),
+          'release branch marker'
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Existing release branch has invalid release-state.json; require reviewed recovery before publication: ${detail}`,
+          { cause: error }
+        );
       }
-      deployed = identity(
-        JSON.parse(Buffer.from(file.content, 'base64').toString('utf8')),
-        'release branch marker'
-      );
     }
   }
 
