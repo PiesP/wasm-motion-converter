@@ -36,11 +36,6 @@ export default defineConfig(({ command }) => {
             'vp run fmt',
             'vp run lint',
             'vp run check',
-            'vp run check:test:unit',
-            'vp run check:test:e2e',
-            'vp run check:scripts',
-            'vp run check:windows',
-            'vp run check:worker',
             'vp run test:ci',
             'vp run check:i18n',
           ],
@@ -99,7 +94,7 @@ export default defineConfig(({ command }) => {
       ],
       plugins: ['typescript', 'jsx-a11y', 'oxc', 'unicorn', 'import'],
       jsPlugins: ['vite-plus/oxlint-plugin'],
-      options: { typeAware: true, typeCheck: false },
+      options: { typeAware: true, typeCheck: true },
       rules: {
         'vite-plus/prefer-vite-plus-imports': 'error',
         // Preserve deliberate snapshots of mutable queues and acceptance collections.

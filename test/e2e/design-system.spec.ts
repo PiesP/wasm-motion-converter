@@ -158,7 +158,7 @@ async function readRenderedTextMetrics(locator: Locator): Promise<RenderedTextMe
 
 async function mountCompactProgressHarness(page: Page, locale: 'ar' | 'en'): Promise<void> {
   await page.evaluate(async (initialLocale) => {
-    const harnessPath = '/test/unit/components/rendered-design-harness.tsx';
+    const harnessPath = '/test/browser/components/rendered-design-harness.tsx';
     const harness = await import(harnessPath);
     harness.mountCompactProgressHarness(initialLocale);
   }, locale);
@@ -522,7 +522,7 @@ test.describe('Quiet Instruments adapter', () => {
       await page.emulateMedia({ colorScheme });
       await page.goto('/');
       const metrics = await page.evaluate(async () => {
-        const harnessPath = '/test/unit/components/rendered-design-harness.tsx';
+        const harnessPath = '/test/browser/components/rendered-design-harness.tsx';
         const harness = await import(harnessPath);
         harness.mountResultPreviewHarness();
         await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -559,7 +559,7 @@ test.describe('Quiet Instruments adapter', () => {
       await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto('/');
       await page.evaluate(async (selectedFormat) => {
-        const harnessPath = '/test/unit/components/rendered-design-harness.tsx';
+        const harnessPath = '/test/browser/components/rendered-design-harness.tsx';
         const harness = await import(harnessPath);
         harness.mountResultPreviewHarness(selectedFormat);
       }, format);

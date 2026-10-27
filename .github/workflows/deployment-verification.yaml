@@ -27,7 +27,8 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository &&
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # Cold encoder/browser provisioning must not consume the public verification budget.
+    timeout-minutes: 90
     steps:
       - uses: PiesP/browser-core/automation/actions/prepare-node-trust@381b4ca733494cf069212cd0d16458389a83c623
         id: node_trust
@@ -56,6 +57,7 @@ jobs:
           vp exec playwright install --with-deps chromium
 
       - name: Match and verify actual production
+        timeout-minutes: 30
         env:
           EXPECTED_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
           VERIFY_CURRENT_MASTER: '1'

@@ -86,15 +86,16 @@ function classifyPath(routes: Routes, path: string): void {
     enable(routes, 'quality', 'unit', 'e2e', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (
     path.startsWith('test/unit/') ||
+    path.startsWith('test/browser/') ||
     path === 'test/setup.ts' ||
     path === 'vitest.config.ts' ||
-    path === 'tsconfig.test.json'
+    path === 'test/tsconfig.json'
   ) {
     enable(routes, 'quality', 'unit', 'codeql', 'semgrep', 'semgrep_full');
+    if (path === 'test/browser/components/rendered-design-harness.tsx') enable(routes, 'e2e');
   } else if (
     path.startsWith('test/e2e/') ||
     path.startsWith('test/lib/') ||
-    path === 'test/tsconfig.playwright.json' ||
     path === 'playwright.config.ts'
   ) {
     enable(routes, 'quality', 'e2e', 'codeql', 'semgrep', 'semgrep_full');
@@ -117,8 +118,14 @@ function classifyPath(routes: Routes, path: string): void {
     ['.github/threat-model.md', '.github/SECURITY.md', '.github/dependabot.yaml'].includes(path)
   ) {
     enable(routes, 'unit', 'dependency', 'codeql', 'semgrep', 'semgrep_full', 'security_tools');
-  } else if (['tsconfig.json', 'tsconfig.worker.json'].includes(path)) {
+  } else if (path === 'tsconfig.json' || path === 'tsconfig.node.json') {
+    enable(routes, 'quality', 'unit', 'e2e', 'build', 'codeql', 'semgrep', 'semgrep_full');
+  } else if (path === 'src/tsconfig.json' || path === 'worker/tsconfig.json') {
+    enable(routes, 'quality', 'unit', 'e2e', 'build', 'codeql', 'semgrep', 'semgrep_full');
+  } else if (path === 'scripts/tsconfig.json' || path === 'tooling/tsconfig.json') {
     enable(routes, 'quality', 'unit', 'build', 'codeql', 'semgrep', 'semgrep_full');
+  } else if (path === 'validation/windows/tsconfig.json') {
+    enable(routes, 'quality', 'unit', 'e2e', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path === 'vite.config.ts') {
     enable(routes, 'quality', 'unit', 'e2e', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path === 'wrangler.toml') {

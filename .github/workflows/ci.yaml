@@ -243,11 +243,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
 
+      - name: 🎭 Install browser binaries and OS dependencies
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
+        run: vp exec playwright install --with-deps chromium firefox webkit
+
       - name: 🎭 Run repository-backed E2E tests
         if: ${{ needs.changes.outputs.e2e == 'true' }}
-        run: |
-          vp exec playwright install --with-deps chromium firefox webkit
-          vp run test:e2e:ci
+        timeout-minutes: 60
+        run: vp run test:e2e:ci
 
       - name: 📊 Upload Playwright diagnostics
         if: ${{ steps.node_trust.outcome == 'success' && (needs.changes.outputs.e2e == 'true' && failure() && !cancelled()) }}

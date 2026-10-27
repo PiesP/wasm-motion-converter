@@ -1,11 +1,12 @@
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { stripVTControlCharacters } from 'node:util';
 
 import { describe, expect, it } from 'vite-plus/test';
 
 const project = resolve(import.meta.dirname, '../../..');
-const compiler = join(project, 'node_modules/typescript/bin/tsc');
+const checker = join(project, 'node_modules/vite-plus/bin/vp');
 const contract = `
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
 import { isWorkerRequest, isWorkerResponse } from '@services/conversion-worker/guards';
@@ -50,22 +51,19 @@ export const decoderAsyncCpu = { ...decoderBase,
 
 describe('conversion boundary type contracts', () => {
   it('accepts compatible conversion/decoder contracts and rejects invalid handoffs', () => {
-    const root = mkdtempSync(join(project, '.conversion-types-'));
+    const root = mkdtempSync(join(project, 'node_modules/conversion-types-'));
     try {
-      const source = join(root, 'control.ts');
-      const config = join(root, 'tsconfig.json');
+      const source = join(root, 'probe.ts');
       writeFileSync(
-        config,
+        join(root, 'tsconfig.json'),
         JSON.stringify({
-          extends: '../tsconfig.json',
-          compilerOptions: { tsBuildInfoFile: './control.tsbuildinfo' },
-          include: ['control.ts', '../src/**/*.d.ts'],
-          exclude: [],
+          extends: '../../src/tsconfig.json',
+          include: ['probe.ts', '../../src/**/*.d.ts'],
         })
       );
       const run = (suffix = '') => {
         writeFileSync(source, contract + suffix);
-        return spawnSync(process.execPath, [compiler, '-p', config, '--noEmit'], {
+        return spawnSync(process.execPath, [checker, 'check', '--no-fmt', '--no-lint', source], {
           cwd: project,
           encoding: 'utf8',
           timeout: 20_000,
@@ -73,43 +71,23 @@ describe('conversion boundary type contracts', () => {
       };
       const valid = run();
       expect(valid.status, valid.stdout + valid.stderr).toBe(0);
-      for (const [suffix, diagnostic] of [
-        ['export const invalid = decoderBase satisfies DecodeOptions;', /TS2741/],
-        [
-          'export const invalid = { ...decoderBase, onFrameAvailable: undefined } satisfies DecodeOptions;',
-          /TS2322/,
-        ],
-        [
-          "export const invalid = { ...decoderCpu, mode: 'batch' } satisfies DecodeOptions;",
-          /TS2353/,
-        ],
-        [
-          'export const invalid = { ...decoderCpu, onVideoFrameAvailable: (frame: VideoFrame) => frame.close() } satisfies DecodeOptions;',
-          /TS2561/,
-        ],
-        [
-          'export const invalid = { ...blobStart, inputBuffer: new ArrayBuffer(8) } satisfies WorkerRequest;',
-          /TS2322: Type 'ArrayBuffer' is not assignable to type 'undefined'/,
-        ],
-        [
-          "export const invalid = { type: 'start', requestId: 'missing', config, options } satisfies WorkerRequest;",
-          /TS1360/,
-        ],
-      ] as const) {
-        const invalid = run(suffix);
-        expect(invalid.status).not.toBe(0);
-        expect(invalid.stdout).toMatch(diagnostic);
+      const invalidCases = [
+        'export const invalidDecoderMissing = decoderBase satisfies DecodeOptions;',
+        'export const invalidDecoderUndefined = { ...decoderBase, onFrameAvailable: undefined } satisfies DecodeOptions;',
+        "export const invalidDecoderMode = { ...decoderCpu, mode: 'batch' } satisfies DecodeOptions;",
+        'export const invalidDecoderCallback = { ...decoderCpu, onVideoFrameAvailable: (frame: VideoFrame) => frame.close() } satisfies DecodeOptions;',
+        'export const invalidWorkerHandoff = { ...blobStart, inputBuffer: new ArrayBuffer(8) } satisfies WorkerRequest;',
+        "export const invalidWorkerMissingSource = { type: 'start', requestId: 'missing', config, options } satisfies WorkerRequest;",
+        'export function invalidUnvalidated(event: MessageEvent<unknown>) { return event.data.type; }',
+        'export const invalidProgress: ProgressCallback = (_update: { progress: string }) => {};',
+      ];
+      const invalid = run(invalidCases.join('\n'));
+      expect(invalid.status).not.toBe(0);
+      const diagnostics = stripVTControlCharacters(invalid.stdout);
+      const firstInvalidLine = contract.split('\n').length;
+      for (const index of invalidCases.keys()) {
+        expect(diagnostics).toContain(`probe.ts:${firstInvalidLine + index}:`);
       }
-      const unvalidated = run(
-        'export function invalid(event: MessageEvent<unknown>) { return event.data.type; }'
-      );
-      expect(unvalidated.status).not.toBe(0);
-      expect(unvalidated.stdout).toContain('TS18046');
-      const wrongProgress = run(
-        'export const invalid: ProgressCallback = (_update: { progress: string }) => {};'
-      );
-      expect(wrongProgress.status).not.toBe(0);
-      expect(wrongProgress.stdout).toContain('TS2322');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

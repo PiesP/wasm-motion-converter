@@ -12,5 +12,5 @@
     "exactOptionalPropertyTypes": true,
     "skipLibCheck": true
   },
-  "files": ["worker/service-worker.ts"]
+  "include": ["**/*.ts"]
 }

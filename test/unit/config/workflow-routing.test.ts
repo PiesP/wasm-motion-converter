@@ -349,6 +349,19 @@ describe('Workflow change routing', () => {
     });
   });
 
+  it('routes Browser Mode tests and the shared design harness', () => {
+    expect(classify(['test/browser/components/icon.browser.test.tsx'])).toMatchObject({
+      quality: 'true',
+      unit: 'true',
+      e2e: 'false',
+    });
+    expect(classify(['test/browser/components/rendered-design-harness.tsx'])).toMatchObject({
+      quality: 'true',
+      unit: 'true',
+      e2e: 'true',
+    });
+  });
+
   it('treats dependency and shared-core changes as consumer-wide', () => {
     for (const path of ['pnpm-lock.yaml', 'packages/core']) {
       expect(classify([path]), path).toMatchObject({

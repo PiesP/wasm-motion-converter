@@ -165,6 +165,14 @@ describe('source-bound public verification', () => {
 
   it('runs after exact successful protected-source CI using its bound artifact and no production secrets', () => {
     const workflow = readFileSync('.github/workflows/deployment-verification.yaml', 'utf8');
+    const prepare = workflow.indexOf('      - name: Prepare bounded owned media and Chromium');
+    const verify = workflow.indexOf('      - name: Match and verify actual production');
+    const evidence = workflow.indexOf('      - name: Preserve public verification evidence');
+    expect(prepare).toBeGreaterThan(0);
+    expect(verify).toBeGreaterThan(prepare);
+    expect(evidence).toBeGreaterThan(verify);
+    expect(workflow.slice(0, prepare)).toContain('timeout-minutes: 90');
+    expect(workflow.slice(verify, evidence)).toContain('timeout-minutes: 30');
     expect(workflow).toContain("github.event.workflow_run.event == 'push'");
     expect(workflow).toContain("github.event.workflow_run.head_branch == 'master'");
     expect(workflow).toContain('head_repository.full_name == github.repository');

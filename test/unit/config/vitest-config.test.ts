@@ -7,8 +7,8 @@ describe('Vitest coverage gate', () => {
   it('keeps browser lifecycle tests in Chromium and Node tooling out of Browser Mode', () => {
     const source = readFileSync(resolve(process.cwd(), 'vitest.config.ts'), 'utf8');
 
-    expect(source).toContain("include: ['test/unit/**/*.browser.test.{ts,tsx}']");
-    expect(source).toContain("exclude: ['test/unit/**/*.browser.test.{ts,tsx}'");
+    expect(source).toContain("include: ['test/browser/**/*.browser.test.{ts,tsx}']");
+    expect(source).not.toContain('test/unit/**/*.browser.test.{ts,tsx}');
     expect(source).toContain("environment: 'node'");
     expect(source).toContain("instances: [{ browser: 'chromium' }]");
     expect(source).not.toMatch(/from ['"]\.\/vite\.config/);
