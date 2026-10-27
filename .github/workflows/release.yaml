@@ -180,10 +180,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
 
+      - name: 🎭 Install browser binaries and OS dependencies
+        run: vp exec playwright install --with-deps chromium firefox webkit
+
       - name: 🎭 Run E2E tests
-        run: |
-          vp exec playwright install --with-deps chromium firefox webkit
-          vp run test:e2e:ci
+        timeout-minutes: 20
+        run: vp run test:e2e:ci
 
   build:
     name: 🏗️ Build release package

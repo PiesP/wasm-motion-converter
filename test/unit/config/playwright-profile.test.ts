@@ -93,6 +93,8 @@ describe('Playwright workflow profiles', () => {
       const cache = e2e.indexOf('      - name: 🎭 Cache Playwright browsers');
       const install = e2e.indexOf('vp exec playwright install --with-deps chromium firefox webkit');
       const run = e2e.indexOf('vp run test:e2e:ci');
+      const verificationStep = e2e.slice(e2e.lastIndexOf('\n      - name:', run), run);
+      expect(verificationStep, name).toContain(`timeout-minutes: ${name === 'CI' ? 60 : 20}`);
       expect(
         setup >= 0 && setup < version && version < cache && cache < install && install < run,
         name
