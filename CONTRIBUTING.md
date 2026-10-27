@@ -97,7 +97,7 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `pnpm check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
 | `pnpm fmt`, `fmt:check`, `lint`, `lint:residual`, `knip`, `knip:full`, `knip:production`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting, Biome residual lint, entry/dependency and source-graph analysis. | Read-only; `knip.json` lists script project files and external FFmpeg/ffprobe. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
 | `pnpm quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied, Biome residual lint, then browser/unit/E2E/Node types, direct Node tests, i18n, graph/Knip. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
-| `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `legacy-state.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
+| `pnpm release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `published-asset.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
 
 `pnpm circular` passes double-quoted recursive TS and TSX patterns to dpdm, so
 shell expansion cannot narrow the `src/` entry set. This includes the Solid UI,
@@ -125,7 +125,7 @@ every installed build dependency or constitute a binary provenance audit.
 | --- | --- | --- |
 | `.github/workflows/ci.yaml`, `security.yaml` changed-path jobs | `scripts/ci/classify-workflow-changes.ts` uses the trusted base on PR/merge-group and protected checkout on push, reads Git event and NUL-safe no-renames diff, writes conservative fixed gate outputs. | `test/unit/config/workflow-routing.test.ts` exercises real temporary Git repositories; verify exact-SHA hosted gates run relevant jobs. |
 | `.github/workflows/security.yaml` pinned tools and OSV | `scripts/ci/pinned-tools.json` owns tool versions/digests; trusted private `pinned-tools.ts` and `check-pinned-tools.ts` provide image env and freshness checks. The independently pinned browser-core `automation/actions/prepare-osv` supplies the private `consumer` OSV helper; `packages/core` is the runtime gitlink. | `test/unit/config/pinned-tools-cli.test.ts`, `test/unit/config/osv-workflow-composition.test.ts`, and provider OSV fixtures; `docs/osv-workflow.md` explains trust order and live-container limits. |
-| `.github/workflows/release.yaml` | `scripts/release/verify-source.ts` checks protected tagged source before validation fan-out; `prepare.ts` creates local files and `publication-guard.ts` plus `legacy-state.ts` own the locked public write decision. Short runner `run:` blocks select checkout, append outputs and launch actions. | `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts`, `scripts/release/verify-source.test.ts` and artifact inspection. Preparation is not publication. |
+| `.github/workflows/release.yaml` | `scripts/release/verify-source.ts` checks protected tagged source before validation fan-out; `prepare.ts` creates local files and `publication-guard.ts` plus `published-asset.ts` own the locked public write decision. Short runner `run:` blocks select checkout, append outputs and launch actions. | `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts`, `scripts/release/verify-source.test.ts` and artifact inspection. Preparation is not publication. |
 | `.github/dependabot.yaml`, `update-browser-core.yaml` | Dependabot opens npm and GitHub Actions update PRs for maintainer review; repository workflows do not approve or merge dependency updates. `scripts/ci/update-browser-core.ts` verifies remote SHA/impact and owns gitlink PR preparation/publication. Runner shell passes event inputs and bounded output/checkout glue. | `test/unit/config/{dependency-review-policy,browser-core-automation}.test.ts` and `scripts/ci/repository-authority.test.ts`; hosted exact-SHA checks establish privileged results. |
 | `.githooks/pre-commit`, `.githooks/pre-push` | Minimal Git-launched Bash guard rejects detached/default-branch commits and direct default-branch pushes before pinned Node setup. | `test/unit/config/git-hooks.test.ts`. Retain as a small pre-runtime Git adapter; revisit if the hook installer guarantees pinned Node for every local Git invocation without loosening the refusal. |
 | Test subprocess callers | `test/unit/config/{command-adapters,workflow-routing,release-runtime,release-publication-guard,git-hooks,node-script-boundaries,playwright-profile}.test.ts`, `scripts/check/run-child.test.ts`, and `scripts/ci/repository-authority.test.ts` exercise CLI, child, Git, and release policy in fixtures. Provider tests own OSV parser/scanner behavior. | Keep callers and NodeNext configs aligned; fixture tests do not prove browser media or publication acceptance. |
@@ -427,14 +427,15 @@ does not change existing tags.
 
 Each new release-branch artifact contains `release-state.json` with the version and verified
 tagged commit. The downloadable `metadata.json` records that same identity.
-For the existing branch without `release-state.json`, the guard verifies the
-Latest release's metadata and live tag, checks the published archive digest,
-then compares every archived file byte-for-byte with the branch tree. The Pages
-action's empty `.nojekyll` file is the only allowed extra file. A mismatch,
-missing archive, oversized or unsafe archive, or incomplete API response stops
-publication; a separately reviewed bootstrap is then required. Latest alone
-never establishes branch identity. After the first guarded deployment writes a
-marker, that marker becomes the branch identity for subsequent runs.
+The release branch now contains a marker: `4478d5d83c95999241c0b26b957ed27ecfeefa59`
+records v0.2.3 and source `7de3449ea709e55168d7585dc97cd73de9357f59`.
+The initial markerless migration and its archive comparison are preserved at
+[`8a3e359a01e7c7594126afff3c94e5a47f248c56`](https://github.com/PiesP/wasm-motion-converter/blob/8a3e359a01e7c7594126afff3c94e5a47f248c56/scripts/release/legacy-state.ts).
+An existing branch missing a valid marker stops publication before either writer.
+Recovery requires a separate maintainer review of the branch tree, live tag,
+public release and source identity, followed by an explicit repair procedure.
+The guard does not infer or repair branch state automatically. A true first
+publication still works when both the branch and published releases are absent.
 
 ## Project constraints
 
