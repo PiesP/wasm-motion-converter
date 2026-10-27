@@ -21,7 +21,9 @@ and exercises the real Action preparation and CLI without advancing the runtime
 `packages/core` gitlink. The workflow Action SHA and caller paths are checked by
 `test/unit/config/scanner-pins.test.ts`.
 
-Direct Node policy tests are selected by `package.json`'s `test:ci` command.
+Vite+'s `node-policy` project in `vitest.config.ts` owns policy/CLI and native
+HTTP/recovery suites. `test:ci` selects it without DOM setup or browser mocks;
+real Node subprocess probes retain dependency-free execution checks.
 `src/test-helpers.ts` remains a browser development runtime module exercised by
 browser fixtures. The Node, Windows and service-worker TypeScript/build projects
 retain their own runtime boundaries. Routine Knip graph auditing is retired;
