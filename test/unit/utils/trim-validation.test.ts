@@ -39,15 +39,33 @@ describe('trim time helpers', () => {
     ['1:00:00', 3600],
     ['2:30:00.5', 9000.5],
     ['90.5', 90.5],
+    ['.5', 0.5],
+    ['1:02.5', 62.5],
     ['  1:30  ', 90],
   ])('parses %j as %s seconds', (input, expected) => {
     expect(parseTimeInput(input)).toBe(expected);
   });
 
-  it.each(['', '   ', 'abc', '1:', ':30', '1:2:', '1:2:3:4', 'a:30', '1:b', 'a:b:c'])(
-    'rejects invalid input %j',
-    (input) => {
-      expect(parseTimeInput(input)).toBeNull();
-    }
-  );
+  it.each([
+    '',
+    '   ',
+    'abc',
+    '1:',
+    ':30',
+    '1:2:',
+    '1:2:3:4',
+    'a:30',
+    '1:b',
+    'a:b:c',
+    '12oops',
+    '1:2oops',
+    '1,5',
+    '1:2,5',
+    '1e2',
+    'Infinity',
+    '1:Infinity',
+    '9'.repeat(400),
+  ])('rejects invalid input %j', (input) => {
+    expect(parseTimeInput(input)).toBeNull();
+  });
 });

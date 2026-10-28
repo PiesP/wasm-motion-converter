@@ -42,28 +42,13 @@ export function formatTimePrecise(seconds: number): string {
 export function parseTimeInput(input: string): number | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
-
-  const colonCount = (trimmed.match(/:/g) || []).length;
-  if (colonCount >= 1) {
-    const parts = trimmed.split(':');
-    if (colonCount === 1 && parts.length === 2) {
-      const minutes = Number.parseFloat(parts[0]!);
-      const seconds = Number.parseFloat(parts[1]!);
-      if (Number.isNaN(minutes) || Number.isNaN(seconds)) return null;
-      return minutes * 60 + seconds;
-    }
-    if (colonCount === 2 && parts.length === 3) {
-      const hours = Number.parseFloat(parts[0]!);
-      const minutes = Number.parseFloat(parts[1]!);
-      const seconds = Number.parseFloat(parts[2]!);
-      if (Number.isNaN(hours) || Number.isNaN(minutes) || Number.isNaN(seconds)) return null;
-      return hours * 3600 + minutes * 60 + seconds;
-    }
+  const parts = trimmed.split(':');
+  // Consume every decimal component. Prefix parsing can silently select a
+  // different trim point for malformed suffixes or decimal commas.
+  if (parts.length > 3 || parts.some((part) => !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(part)))
     return null;
-  }
-
-  const value = Number.parseFloat(trimmed);
-  return Number.isNaN(value) ? null : value;
+  const value = parts.reduce((seconds, part) => seconds * 60 + Number(part), 0);
+  return Number.isFinite(value) ? value : null;
 }
 
 export function clampToStep(value: number): number {
