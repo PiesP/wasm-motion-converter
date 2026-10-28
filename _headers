@@ -1,0 +1,88 @@
+# Cloudflare Pages _headers
+# Matching rules are cumulative; duplicate header values are comma-joined.
+# postbuild appends exact rules for emitted fingerprinted assets. A wildcard
+# asset rule would also give missing-resource error documents immutable caching.
+
+/
+  Cache-Control: public, max-age=0, must-revalidate
+
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/404.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/service-worker.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/deployment-state.json
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Security headers apply to documents, assets and error responses.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-dhTAj/p2tcWB3q8ACHjAvUY9vq8602iOu4/ItmGkyJQ=' 'sha256-9aZj+ksN13qgCb5jrVDA3Hisq1nb33/Vq6OxRwHLtY1='; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' blob:; worker-src 'self'
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Permissions-Policy: camera=(), geolocation=(), microphone=(), accelerometer=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# Emitted fingerprinted assets only; missing paths keep Pages revalidation.
+/assets/__vite-browser-external.BJnlNVBm.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/ar.D0fSUWLD.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/conversion-pipeline.DlfqMNq_.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/es.RnS5waFJ.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/gifenc.VW7PxvxG.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/index.BA0NrXFW.css
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/index.RN_rqwxV.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/ja.DzISmCik.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/ko.CvwQi9xQ.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/preload-helper.BLdHbfdN.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/rolldown-runtime-WkwZ5CU-.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/rolldown-runtime.XKyaHtl9.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/video-metadata.CMOBS3up.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/wasm-webp.Beye86F8.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/webp-encoder-worker-Dt0iE3Ie.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/webp-wasm-DPLbpl-w.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/webp-wasm-DhoM6Y9t.wasm
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/worker-CC_hyA8y.js
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/zh-CN.B5sL-mQT.js
+  Cache-Control: public, max-age=31536000, immutable
