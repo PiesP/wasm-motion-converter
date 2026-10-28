@@ -153,6 +153,8 @@
   "scale.title": "مقياس الإخراج",
   "settings.convert": "تحويل",
   "settings.convertAgain": "التحويل مرة أخرى",
+  "settings.persistenceFuture": "فتحت علامة التبويب هذه إعدادات حفظها إصدار أحدث. لن تُحفَظ التغييرات هنا. استخدم الإصدار الأحدث من التطبيق لتعديل الإعدادات المحفوظة.",
+  "settings.persistenceUnavailable": "تعذّر الوصول إلى تخزين الإعدادات. لن تُحفَظ التغييرات في علامة التبويب هذه. أعد التحميل بعد استعادة الوصول.",
   "settings.heading": "إعدادات التحويل",
   "settings.section.inputRange": "نطاق الإدخال",
   "settings.section.outputSettings": "إعدادات الإخراج",

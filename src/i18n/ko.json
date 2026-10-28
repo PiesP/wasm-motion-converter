@@ -153,6 +153,8 @@
   "scale.title": "출력 크기",
   "settings.convert": "변환",
   "settings.convertAgain": "다시 변환",
+  "settings.persistenceFuture": "이 탭은 더 새 버전에서 저장한 설정을 열었습니다. 이 탭의 변경 사항은 저장되지 않습니다. 저장된 설정을 변경하려면 더 새 버전의 앱을 사용하세요.",
+  "settings.persistenceUnavailable": "설정 저장소에 접근할 수 없습니다. 이 탭의 변경 사항은 저장되지 않습니다. 저장소 접근이 복구되면 새로고침하세요.",
   "settings.heading": "변환 설정",
   "settings.section.inputRange": "입력 범위",
   "settings.section.outputSettings": "출력 설정",

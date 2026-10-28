@@ -43,6 +43,7 @@ or immutable Pages URL and the provider-confirmed deployment identity:
 
 The target file is bundled and hashed with the test artifact; it is not a
 repository setting. The profile rejects unknown hosts and source mismatches.
+
 Public checks verify deployment metadata status, MIME, schema, and source;
 compare every listed output byte digest with served bytes; exercise document
 isolation, a real GIF Worker, WebP WASM fallback, downloads, invalid recovery,
@@ -57,6 +58,18 @@ errors and external HTTP requests remain failures.
 The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
+
+For a focused conversion-settings compatibility check, put
+`{"scenario":"settings-schema"}` in the ignored
+`validation/windows/inputs/settings-schema.json` selector and remove other
+focused JSON selectors for this attempt. Run the standard built-app Edge desktop
+profile. It loads a future-version settings record into a new tab, waits for the
+initial save and user edit, then checks exact stored bytes and the visible
+session-only notice. A second already-loaded tab observes a newer record written
+by another document and must also leave it intact after an edit. The Browser
+Mode tests separately exercise app unmount flush, migration and storage errors;
+this Windows fixture does not simulate a power failure or claim atomic cross-tab
+writes. The focused selector does not consume `prior-dist/` or a public target.
 
 For focused packet-lookup qualification, run `vp run prepare:e2e:fixture` and put
 `{"scenario":"packet-lookup"}` in the ignored

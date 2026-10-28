@@ -153,6 +153,8 @@
   "scale.title": "输出比例",
   "settings.convert": "转换",
   "settings.convertAgain": "再次转换",
+  "settings.persistenceFuture": "此标签页打开了较新版本保存的设置。此处的更改不会保存。请使用较新版本的应用修改已保存的设置。",
+  "settings.persistenceUnavailable": "无法访问设置存储空间。此标签页中的更改不会保存。恢复访问后请重新加载。",
   "settings.heading": "转换设置",
   "settings.section.inputRange": "输入范围",
   "settings.section.outputSettings": "输出设置",

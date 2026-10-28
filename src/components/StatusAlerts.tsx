@@ -4,11 +4,15 @@
 import EnvironmentWarning from '@components/EnvironmentWarning';
 import ErrorDisplay from '@components/ErrorDisplay';
 import OfflineBanner from '@components/OfflineBanner';
+import type { ConversionSettingsPersistenceStatus } from '@stores/conversion-settings-store';
 import type { ErrorContext } from '@t/conversion-types';
+import type { TFunction } from '@t/i18n-types';
 import type { Component } from 'solid-js';
 import { Show } from 'solid-js';
 
 interface StatusAlertsProps {
+  t: TFunction;
+  persistenceStatus?: ConversionSettingsPersistenceStatus;
   environmentSupported: boolean;
   errorMessage: string | null;
   errorContext: ErrorContext | null;
@@ -22,6 +26,20 @@ const StatusAlerts: Component<StatusAlertsProps> = (props) => {
   return (
     <div class="space-y-6" data-testid="status-alerts">
       <OfflineBanner />
+
+      <Show when={props.persistenceStatus && props.persistenceStatus !== 'writable'}>
+        <div
+          class="rounded-lg bg-status-warning text-bg-base px-4 py-2 text-center font-medium"
+          role="status"
+          data-testid="settings-persistence-notice"
+        >
+          {props.t(
+            props.persistenceStatus === 'future'
+              ? 'settings.persistenceFuture'
+              : 'settings.persistenceUnavailable'
+          )}
+        </div>
+      </Show>
 
       <Show when={!props.environmentSupported}>
         <EnvironmentWarning />

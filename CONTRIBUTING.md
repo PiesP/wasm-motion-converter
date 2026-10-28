@@ -373,6 +373,62 @@ the new app; they may show their original conversion error and need a
 manual browser reload; updates never reload them automatically or delete their
 result Blob.
 
+### Conversion input and settings ownership
+
+`src/hooks/conversion-handlers/use-perform-conversion.ts` admits one conversion
+intent for the selected file, snapshots the chosen settings, validates duration,
+and creates the request passed to `src/services/conversion-pipeline.ts` or the
+Worker path. The main-thread demux still reads `videoMetadata()` from the
+conversion store at task start; the Worker receives serialized inputs and owns
+its decoder metadata. Progress and results are accepted only for the current
+intent. Cancellation, output buffers and worker transfer/disposal remain owned
+by the conversion handlers and pipeline. The selected file and metadata are
+reactive UI state until admission; the admitted file/settings and run token
+belong to that job. See the handler and pipeline tests under `test/browser/`
+for the affected paths.
+
+`src/stores/conversion-settings-store.ts` owns the `conversion-settings`
+localStorage record and schema version in
+`src/stores/conversion-settings-constants.ts`. Missing storage starts with
+defaults. A valid legacy record is migrated and queued for a microtask write;
+an invalid JSON record or invalid version is normalized by the ordinary current
+schema save. Versions are valid only when they are nonnegative safe integers;
+an absent version denotes legacy schema 0. Known fields of a valid future
+version remain usable in the current session, but its entire stored record is
+preserved, including unknown fields. That tab displays a notice and will not
+write conversion settings again until reload. `src/App.tsx` still schedules its
+initial debounced save, saves edits, and flushes on unmount. All of these use
+the same guarded writer, which re-reads the current record before each write so
+an older tab also stops when it observes a newer version. A failed read blocks
+writes for the rest of the tab's lifetime because the current record is unknown.
+A failed write shows an unsaved notice and a subsequent edit can retry; success
+clears that notice. There is no implicit downgrade or reset of a future record.
+The read and write are separate localStorage operations, so this is not an
+atomic cross-tab compare-and-swap; a write by another document between them can
+still race. Conversion settings are only session-local while writes are blocked.
+
+The [Solid effect timing contract](https://docs.solidjs.com/reference/basic-reactivity/create-effect)
+explains why an initial effect schedules work after rendering. The
+[Web Storage contract](https://html.spec.whatwg.org/multipage/webstorage.html)
+does not provide an atomic read-modify-write transaction for this policy.
+Version-separated keys would require a migration and rollback reader policy;
+this single-record store currently has no such reader. A guarded single-record
+writer keeps the existing key and call sites. Passing immutable metadata into
+the main-thread pipeline would remove one hidden store read, but the current
+admission token and busy state keep the selection fixed across the relevant
+user path; no same-job race has been established. The Worker already receives
+explicit serialized inputs. Retain that pipeline seam until a concrete caller
+needs stronger metadata ownership; adding another request representation here
+would change delivery and transfer paths without resolving the settings risk.
+
+Browser Mode coverage in
+`test/browser/components/settings-persistence.browser.test.tsx` mounts the real
+App through its initial effect, debounced edits and unmount flush; the store
+tests cover migration, an older tab, invalid records and storage failures.
+The production browser profile in `validation/windows/` covers the affected
+rendered flow. The existing conversion tests own cancellation, stale result
+rejection and output disposal; this storage correction does not change them.
+
 ### Long-lived tabs and prior build assets
 
 The Pages source build serves the current generation and does not carry earlier

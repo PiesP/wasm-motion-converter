@@ -54,6 +54,7 @@ import {
   OUTPUT_FINALIZATION_V2_SCENARIO,
 } from './output-finalization.ts';
 import { exercisePreviewRetry, exerciseSelectionPreviewBaseline } from './selection-preview.ts';
+import { observeFutureSettings, observeOlderTab, seedFutureSettings } from './settings-schema.ts';
 import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
 
@@ -2937,6 +2938,84 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const schemaSelector = resolve(bundleRoot, 'validation/windows/inputs/settings-schema.json');
+  let schemaSelectorText: string | undefined;
+  try {
+    schemaSelectorText = await readFile(schemaSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (schemaSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(schemaSelectorText), { scenario: 'settings-schema' });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    const conflictingSelectors = [
+      'narrow-output.json',
+      'selection-preview.json',
+      'preview-retry.json',
+      'trim-submission.json',
+      'webp-initialization.json',
+      'service-worker-handoff.json',
+      'recovery.json',
+      'app-update.json',
+      'packet-lookup.json',
+      'output-finalization.json',
+      'output-finalization-v2.json',
+    ].filter((name) => selected.includes(name));
+    assert.deepEqual(
+      conflictingSelectors,
+      [],
+      'Settings-schema qualification requires one focused selector'
+    );
+    const started = await startStaticServer(bundleRoot);
+    let context: BrowserContext | undefined;
+    let oldContext: BrowserContext | undefined;
+    const observations: Record<string, unknown> = {
+      scenario: 'settings-schema',
+      status: 'running',
+    };
+    const errors: string[] = [];
+    try {
+      context = await browser.newContext({ locale: 'en-US' });
+      oldContext = await browser.newContext({ locale: 'en-US' });
+      for (const browserContext of [context, oldContext]) {
+        browserContext.on('page', (page) => {
+          page.on('pageerror', (error) => errors.push(error.message));
+          page.on('console', (message) => {
+            if (message.type() === 'error') errors.push(message.text().slice(0, 300));
+          });
+        });
+      }
+      const futurePage = await context.newPage();
+      await seedFutureSettings(futurePage);
+      await loadApplication(futurePage, started.url);
+      observations.future = await observeFutureSettings(futurePage);
+      await futurePage.screenshot({
+        path: join(output, 'settings-schema-future.png'),
+        fullPage: true,
+      });
+      const oldPage = await oldContext.newPage();
+      await loadApplication(oldPage, started.url);
+      const writer = await oldContext.newPage();
+      await writer.goto(started.url, { waitUntil: 'domcontentloaded' });
+      observations.olderTab = await observeOlderTab(oldPage, writer);
+      observations.unexpectedConsoleErrors = errors;
+      assert.deepEqual(errors, [], 'Unexpected browser errors during settings qualification');
+      observations.status = 'passed';
+      return { profile: 'settings-schema', ...observations };
+    } catch (error) {
+      observations.status = 'failed';
+      observations.failure = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      await writeFile(
+        join(output, 'settings-schema.json'),
+        `${JSON.stringify(observations, null, 2)}\n`
+      );
+      await context?.close();
+      await oldContext?.close();
+      await closeServer(started.server);
+    }
+  }
   const finalizationSelector = resolve(
     bundleRoot,
     'validation/windows/inputs/output-finalization.json'

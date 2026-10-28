@@ -472,6 +472,84 @@ describe('conversion-settings-store', () => {
       expect(conversionSettings().format).toBe('gif');
     });
 
+    it('does not overwrite a future version written after an older tab loaded', async () => {
+      const olderTab = await importFreshSettingsStore();
+      const futureRecord = JSON.stringify({
+        __schemaVersion: 2,
+        ...makeTestSettings(),
+        futureEncoderOption: { mode: 'new' },
+      });
+      window.localStorage.setItem(STORAGE_KEY, futureRecord);
+      olderTab.saveConversionSettings(makeTestSettings({ quality: 'low' }));
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBe(futureRecord);
+      expect(olderTab.conversionSettingsPersistenceStatus()).toBe('future');
+
+      window.localStorage.removeItem(STORAGE_KEY);
+      olderTab.saveConversionSettings(makeTestSettings());
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    });
+
+    it('does not let a queued legacy migration replace a newer record', async () => {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(makeTestSettings()));
+      const queued: Array<() => void> = [];
+      const originalQueueMicrotask = window.queueMicrotask;
+      const queueSpy = vi
+        .spyOn(window, 'queueMicrotask')
+        .mockImplementation((callback) => queued.push(callback));
+      const olderTab = await importFreshSettingsStore();
+      queueSpy.mockRestore();
+      expect(queued).toHaveLength(1);
+      const futureRecord = JSON.stringify({
+        __schemaVersion: 2,
+        ...makeTestSettings(),
+        futureEncoderOption: { mode: 'new' },
+      });
+      window.localStorage.setItem(STORAGE_KEY, futureRecord);
+      queued[0]?.();
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBe(futureRecord);
+      expect(olderTab.conversionSettingsPersistenceStatus()).toBe('future');
+      expect(window.queueMicrotask).toBe(originalQueueMicrotask);
+    });
+
+    it('does not write after a failed current-record read', async () => {
+      const olderTab = await importFreshSettingsStore();
+      vi.mocked(window.localStorage.getItem).mockImplementationOnce(() => {
+        throw new Error('read denied');
+      });
+      olderTab.saveConversionSettings(makeTestSettings());
+      expect(window.localStorage.setItem).not.toHaveBeenCalled();
+      expect(olderTab.conversionSettingsPersistenceStatus()).toBe('unreadable');
+    });
+
+    it('allows a later explicit save when only the preceding write failed', async () => {
+      const store = await importFreshSettingsStore();
+      vi.mocked(window.localStorage.setItem).mockImplementationOnce(() => {
+        throw new Error('write denied');
+      });
+      store.saveConversionSettings(makeTestSettings());
+      expect(store.conversionSettingsPersistenceStatus()).toBe('unreadable');
+      store.saveConversionSettings(makeTestSettings());
+      expect(store.conversionSettingsPersistenceStatus()).toBe('writable');
+      expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}')).toMatchObject({
+        __schemaVersion: 1,
+        quality: 'high',
+      });
+    });
+
+    it('normalizes invalid JSON while blocking a valid future version with invalid fields', async () => {
+      window.localStorage.setItem(STORAGE_KEY, '{broken');
+      const store = await importFreshSettingsStore();
+      expect(store.conversionSettingsPersistenceStatus()).toBe('writable');
+      store.saveConversionSettings(makeTestSettings());
+      expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}').__schemaVersion).toBe(1);
+
+      const futureRecord = JSON.stringify({ __schemaVersion: 2, format: 'unknown-new-format' });
+      window.localStorage.setItem(STORAGE_KEY, futureRecord);
+      store.saveConversionSettings(makeTestSettings());
+      expect(window.localStorage.getItem(STORAGE_KEY)).toBe(futureRecord);
+      expect(store.conversionSettingsPersistenceStatus()).toBe('future');
+    });
+
     it('rejects numeric string for enum field (format)', async () => {
       window.localStorage.setItem(
         STORAGE_KEY,
