@@ -12,7 +12,7 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **WebP playback timing** — Avoid image viewers' 100ms substitution for frame holds of 10ms or less. Coalesce dense presentations against source timestamps and retain a distinct terminal scene with at most 10ms of endpoint extension, without accumulating per-frame timing drift.
+- **WebP playback timing** — Avoid image viewers' 100ms substitution for frame holds of 10ms or less. Coalesce dense presentations against source timestamps, choosing the newer scene when an earlier scene is too short to display safely. Retain the final source image with at most 10ms of endpoint extension, without accumulating per-frame timing drift. Very short initial or intermediate scenes can be omitted, and a coalesced scene can begin up to 10ms early.
 - **Animation cadence** — Sample fractional and variable-rate input by presentation time, preserve decoded endpoints and skipped tails, and keep GIF frame holds safe for ordinary image playback.
 - **Trim inputs** — Validate pending edits before conversion, retain invalid text with actionable feedback, and reject malformed numeric suffixes or decimal commas instead of silently selecting a different trim point. Decimal points, mm:ss and hh:mm:ss remain supported.
 - **Selection and preview** — Preserve the chosen video and downloadable results through preview failures, offer focused retry/recovery actions, and keep long filenames usable on narrow screens.

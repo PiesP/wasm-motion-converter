@@ -218,7 +218,13 @@ export class StreamingWebpMuxer {
       )
         return;
       const durationMs = Math.round(timing.startUs / 1000) - Math.round(previous.startUs / 1000);
-      if (durationMs < StreamingWebpMuxer.MIN_PRESENTATION_HOLD_MS) return;
+      if (durationMs < StreamingWebpMuxer.MIN_PRESENTATION_HOLD_MS) {
+        // Collapse a too-short earlier scene into the newer scene, keeping the
+        // absolute boundary and the latest (including terminal) source image.
+        this.reservePending(bitstream, previous.bitstream.length, iccProfile);
+        this.pending = { bitstream: new Uint8Array(bitstream), startUs: previous.startUs };
+        return;
+      }
       this.emitPending(durationMs);
     }
     this.reservePending(bitstream, previous?.bitstream.length ?? 0, iccProfile);

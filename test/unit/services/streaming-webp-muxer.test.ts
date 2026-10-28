@@ -77,10 +77,12 @@ describe('StreamingWebpMuxer', () => {
         });
       }
       muxer.finishPresentation(1_000_000);
-      const holds = durations(await muxer.finish());
+      const output = await muxer.finish();
+      const holds = durations(output);
       expect(holds.reduce((sum, hold) => sum + hold, 0)).toBe(1000);
       expect(holds.every((hold) => hold >= 11)).toBe(true);
       expect(holds).toHaveLength(60);
+      expect(output.subarray(output.length - 100)).toEqual(dummyBitstream(100, 119));
     });
 
     it.each([1, 10, 11])(
@@ -109,6 +111,17 @@ describe('StreamingWebpMuxer', () => {
       );
       muxer.finishPresentation(300_000);
       expect(durations(await muxer.finish())).toEqual([42, 41, 42, 42, 41, 42, 42, 11]);
+    });
+
+    it('retains the terminal image when VFR presents it just after a short scene', async () => {
+      const muxer = new StreamingWebpMuxer(16, 16);
+      muxer.addPresentationFrame(dummyBitstream(100, 1), { startUs: 0, endUs: 100_000 });
+      muxer.addPresentationFrame(dummyBitstream(100, 2), { startUs: 100_000, endUs: 105_000 });
+      muxer.addPresentationFrame(dummyBitstream(100, 3), { startUs: 105_000, endUs: 120_000 });
+      muxer.finishPresentation(120_000);
+      const output = await muxer.finish();
+      expect(durations(output)).toEqual([100, 20]);
+      expect(output.subarray(output.length - 100)).toEqual(dummyBitstream(100, 3));
     });
 
     it('splits a 24-bit continuation without a short final hold', async () => {
@@ -181,6 +194,17 @@ describe('StreamingWebpMuxer', () => {
       const holds = durations(await muxer.finish());
       expect(holds).toEqual([11]);
       expect(muxer.frames).toBe(1);
+    });
+
+    it('counts both compressed views before coalescing a dense presentation', () => {
+      const muxer = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 400 });
+      muxer.addPresentationFrame(dummyBitstream(100, 1), { startUs: 0, endUs: 1000 });
+      muxer.addPresentationFrame(dummyBitstream(200, 2), { startUs: 1000, endUs: 2000 });
+      expect(() =>
+        muxer.addPresentationFrame(dummyBitstream(300, 3), { startUs: 2000, endUs: 3000 })
+      ).toThrow('byte limit');
+      expect(muxer.frameBytes).toBe(200);
+      expect(muxer.frames).toBe(0);
     });
 
     it('counts a dropped terminal sub-millisecond hold against no emitted frame', async () => {
