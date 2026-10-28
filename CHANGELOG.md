@@ -8,9 +8,20 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-28
+
+### Fixed
+
+- **WebP playback timing** — Avoid image viewers' 100ms substitution for frame holds of 10ms or less. Coalesce dense presentations against source timestamps, choosing the newer scene when an earlier scene is too short to display safely. Retain the final source image with at most 10ms of endpoint extension, without accumulating per-frame timing drift. Very short initial or intermediate scenes can be omitted, and a coalesced scene can begin up to 10ms early.
+- **Animation cadence** — Sample fractional and variable-rate input by presentation time, preserve decoded endpoints and skipped tails, and keep GIF frame holds safe for ordinary image playback.
+- **Trim inputs** — Validate pending edits before conversion, retain invalid text with actionable feedback, and reject malformed numeric suffixes or decimal commas instead of silently selecting a different trim point. Decimal points, mm:ss and hh:mm:ss remain supported.
+- **Selection and preview** — Preserve the chosen video and downloadable results through preview failures, offer focused retry/recovery actions, and keep long filenames usable on narrow screens.
+- **Media and resource handling** — Qualify current MediaBunny packet lookup, skip unused Matroska metadata before retention, and preserve bounded decoder-buffer ownership and cancellation.
+- **Updates and offline recovery** — Bind cached application assets and production verification to source identity, detect application deployments even without Worker changes, and keep failed-asset recovery explicit.
+
 ### Changed
 
-- **Dependency maintenance** — Refresh Solid and the asset-building toolchain, use the serializer versions supported by Solid, and update local Pages, browser-test, and quality tooling.
+- **Dependency maintenance** — Refresh Solid, shared utilities and the asset-building toolchain, use the serializer versions supported by Solid, and update local Pages, browser-test, and quality tooling. These changes do not establish measured conversion-speed or memory improvements.
 
 ## [0.2.3] - 2026-10-09
 

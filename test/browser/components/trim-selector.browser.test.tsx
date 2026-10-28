@@ -212,36 +212,39 @@ describe('TrimSelector localized summary', () => {
     expect(onSeek).toHaveBeenCalledWith(0);
   });
 
-  it('preserves invalid text inputs without changing the selected range', () => {
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    const onChange = vi.fn();
-    render(
-      () => <TrimSelector duration={10} trimStart={2} trimEnd={8} onChange={onChange} />,
-      container
-    );
+  it.each(['9.0', '2oops', '0:02oops', '2,5'])(
+    'preserves invalid text %j without changing the selected range',
+    (invalidText) => {
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const onChange = vi.fn();
+      render(
+        () => <TrimSelector duration={10} trimStart={2} trimEnd={8} onChange={onChange} />,
+        container
+      );
 
-    const input = container.querySelector<HTMLInputElement>('#trim-start-input')!;
-    input.focus();
-    input.value = '9.0';
-    input.dispatchEvent(new InputEvent('input', { bubbles: true }));
-    input.blur();
+      const input = container.querySelector<HTMLInputElement>('#trim-start-input')!;
+      input.focus();
+      input.value = invalidText;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      input.blur();
 
-    expect(input.value).toBe('9.0');
-    expect(input.getAttribute('aria-invalid')).toBe('true');
-    expect(container.querySelector('#trim-start-error')).not.toBeNull();
+      expect(input.value).toBe(invalidText);
+      expect(input.getAttribute('aria-invalid')).toBe('true');
+      expect(container.querySelector('#trim-start-error')).not.toBeNull();
 
-    const endInput = container.querySelector<HTMLInputElement>('#trim-end-input')!;
-    endInput.focus();
-    endInput.value = '1.0';
-    endInput.dispatchEvent(new InputEvent('input', { bubbles: true }));
-    endInput.blur();
+      const endInput = container.querySelector<HTMLInputElement>('#trim-end-input')!;
+      endInput.focus();
+      endInput.value = '1.0';
+      endInput.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      endInput.blur();
 
-    expect(endInput.value).toBe('1.0');
-    expect(endInput.getAttribute('aria-invalid')).toBe('true');
-    expect(container.querySelector('#trim-end-error')).not.toBeNull();
-    expect(onChange).not.toHaveBeenCalled();
-  });
+      expect(endInput.value).toBe('1.0');
+      expect(endInput.getAttribute('aria-invalid')).toBe('true');
+      expect(container.querySelector('#trim-end-error')).not.toBeNull();
+      expect(onChange).not.toHaveBeenCalled();
+    }
+  );
 
   it('refuses a stale range at submission and focuses the invalid draft', () => {
     const container = document.createElement('div');
