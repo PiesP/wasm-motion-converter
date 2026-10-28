@@ -68,6 +68,9 @@ export function extractVP8Bitstream(webp: Uint8Array): Uint8Array {
  *   const result = muxer.finish();
  */
 export class StreamingWebpMuxer {
+  // Ordinary image viewers replace holds <=10ms with 100ms. Coalesce dense
+  // presentations against absolute PTS instead of stretching every frame.
+  private static readonly MIN_PRESENTATION_HOLD_MS = 11;
   private pending: { bitstream: Uint8Array; startUs: number } | null = null;
   private lastPresentationStartUs: number | null = null;
   private static readonly VP8_FOURCC = SHARED_VP8_FOURCC;
@@ -215,9 +218,8 @@ export class StreamingWebpMuxer {
       )
         return;
       const durationMs = Math.round(timing.startUs / 1000) - Math.round(previous.startUs / 1000);
-      if (durationMs > 0) {
-        this.emitPending(durationMs);
-      }
+      if (durationMs < StreamingWebpMuxer.MIN_PRESENTATION_HOLD_MS) return;
+      this.emitPending(durationMs);
     }
     this.reservePending(bitstream, previous?.bitstream.length ?? 0, iccProfile);
     this.retainProfile(iccProfile);
@@ -235,7 +237,9 @@ export class StreamingWebpMuxer {
       this.pending = null;
       return;
     }
-    this.emitPending(Math.max(1, durationMs));
+    // Keep a distinct final scene. Only this endpoint can extend (by at most
+    // 10ms); cumulative rounding and coalescing prevent per-frame drift.
+    this.emitPending(Math.max(StreamingWebpMuxer.MIN_PRESENTATION_HOLD_MS, durationMs));
   }
 
   private emitPending(durationMs: number): void {
@@ -262,7 +266,12 @@ export class StreamingWebpMuxer {
     try {
       let remaining = durationMs;
       while (remaining > 0) {
-        const hold = Math.min(remaining, 0xffffff);
+        // A 24-bit continuation must not introduce another viewer-normalized
+        // short hold. Borrow from its preceding chunk without moving the end.
+        const hold =
+          remaining > 0xffffff && remaining < 0xffffff + StreamingWebpMuxer.MIN_PRESENTATION_HOLD_MS
+            ? remaining - StreamingWebpMuxer.MIN_PRESENTATION_HOLD_MS
+            : Math.min(remaining, 0xffffff);
         this.addFrame(pending.bitstream, hold, this.iccProfile);
         remaining -= hold;
       }
