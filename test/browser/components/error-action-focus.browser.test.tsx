@@ -53,6 +53,7 @@ function mountAlerts(protection: 'idle' | 'busy' | 'results') {
           t={(key) => key}
         />
         <StatusAlerts
+          t={(key) => key}
           environmentSupported
           errorContext={error()}
           errorMessage={errorVisible() ? (error()?.originalError ?? null) : null}

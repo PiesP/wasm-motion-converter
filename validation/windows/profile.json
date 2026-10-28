@@ -33,6 +33,7 @@
     "validation/windows/selection-preview.ts",
     "validation/windows/narrow-output.ts",
     "validation/windows/trim-submission.ts",
-    "validation/windows/webp-initialization.ts"
+    "validation/windows/webp-initialization.ts",
+    "validation/windows/settings-schema.ts"
   ]
 }

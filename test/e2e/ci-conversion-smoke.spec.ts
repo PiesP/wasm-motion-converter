@@ -24,6 +24,46 @@ const PREVIEW_VIEWPORTS = [
   { name: 'narrow', width: 390, height: 844 },
 ] as const;
 
+test('a future settings record survives app startup and a visible edit', async ({ page }) => {
+  const browserErrors: string[] = [];
+  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') browserErrors.push(message.text());
+  });
+  const futureRecord = JSON.stringify({
+    __schemaVersion: 2,
+    format: 'gif',
+    quality: 'high',
+    scale: 1,
+    trimStart: 0,
+    trimEnd: 0,
+    smartFrameSkip: 'off',
+    futureEncoderOption: { mode: 'new' },
+  });
+  await page.addInitScript(() => localStorage.setItem('dropconvert.locale', 'en'));
+  await page.addInitScript(
+    (record) => localStorage.setItem('conversion-settings', record),
+    futureRecord
+  );
+  await page.goto('/');
+  await expect(page.getByTestId('settings-persistence-notice')).toContainText(
+    'Changes here will not be saved'
+  );
+  await page.waitForTimeout(650);
+  expect(await page.evaluate(() => localStorage.getItem('conversion-settings'))).toBe(futureRecord);
+  await setQuality(page, 'low');
+  await expect(page.locator('input[name="quality"][value="low"]')).toBeChecked();
+  await page.waitForTimeout(650);
+  expect(await page.evaluate(() => localStorage.getItem('conversion-settings'))).toBe(futureRecord);
+  const screenshotPath = test.info().outputPath('future-settings-notice.png');
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  await test.info().attach('future-settings-notice', {
+    path: screenshotPath,
+    contentType: 'image/png',
+  });
+  expect(browserErrors).toEqual([]);
+});
+
 test('invalid visible trim blocks Convert until the edited range is submitted', async ({
   page,
 }) => {

@@ -153,6 +153,8 @@
   "scale.title": "Output Scale",
   "settings.convert": "Convert",
   "settings.convertAgain": "Convert again",
+  "settings.persistenceFuture": "This tab opened settings saved by a newer version. Changes here will not be saved. Use the newer app to edit saved settings.",
+  "settings.persistenceUnavailable": "Settings storage is unavailable. Changes in this tab will not be saved. Reload after storage access is restored.",
   "settings.heading": "Conversion Settings",
   "settings.section.inputRange": "Input Range",
   "settings.section.outputSettings": "Output Settings",

@@ -153,6 +153,8 @@
   "scale.title": "Escala de salida",
   "settings.convert": "Convertir",
   "settings.convertAgain": "Convertir de nuevo",
+  "settings.persistenceFuture": "Esta pestaña abrió ajustes guardados por una versión más reciente. Los cambios aquí no se guardarán. Usa la versión más reciente de la aplicación para editar los ajustes guardados.",
+  "settings.persistenceUnavailable": "No se puede acceder al almacenamiento de ajustes. Los cambios en esta pestaña no se guardarán. Recarga cuando se restablezca el acceso.",
   "settings.heading": "Ajustes de conversión",
   "settings.section.inputRange": "Rango de entrada",
   "settings.section.outputSettings": "Configuración de salida",

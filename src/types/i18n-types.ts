@@ -102,6 +102,8 @@ export interface TranslationKeys {
 
   // Settings Panel
   'settings.heading': string;
+  'settings.persistenceFuture': string;
+  'settings.persistenceUnavailable': string;
   'settings.selectVideo': string;
   'settings.convert': string;
   'settings.convertAgain': string;

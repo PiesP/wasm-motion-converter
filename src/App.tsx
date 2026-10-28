@@ -21,6 +21,7 @@ import { getErrorMessage } from '@piesp/browser-core/error';
 import { dismissConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
+  conversionSettingsPersistenceStatus,
   saveConversionSettings,
   setConversionSettings,
 } from '@stores/conversion-settings-store';
@@ -353,6 +354,8 @@ const App: Component = () => {
           t={t}
         />
         <StatusAlerts
+          t={t}
+          persistenceStatus={conversionSettingsPersistenceStatus()}
           environmentSupported={environmentSupported()}
           errorContext={errorContext()}
           errorMessage={appState() === 'error' ? errorMessage() : null}

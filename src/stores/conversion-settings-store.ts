@@ -28,6 +28,25 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   smartFrameSkip: 'off',
 };
 
+export type ConversionSettingsPersistenceStatus = 'writable' | 'future' | 'unreadable';
+
+const [conversionSettingsPersistenceStatus, setConversionSettingsPersistenceStatus] =
+  createSignal<ConversionSettingsPersistenceStatus>('writable');
+export { conversionSettingsPersistenceStatus };
+
+// A failed read gives no evidence that a newer record is absent. This tab must
+// reload before it can safely become a writer again.
+let recordReadUnknown = false;
+
+const storedSchemaVersion = (record: Record<string, unknown>): number | null => {
+  const value = record.__schemaVersion;
+  if (value === undefined) return 0; // Unversioned legacy record.
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
 // ── Migration chain ─────────────────────────────────────────────────────
 
 /**
@@ -85,24 +104,31 @@ function parseStoredSettings(raw: Record<string, unknown>): ConversionSettings |
 }
 
 const getInitialConversionSettings = (): ConversionSettings => {
+  let stored: string | null;
   try {
-    const stored = localStorage.getItem(CONVERSION_SETTINGS_STORAGE_KEY);
-    if (!stored) return DEFAULT_CONVERSION_SETTINGS;
+    stored = localStorage.getItem(CONVERSION_SETTINGS_STORAGE_KEY);
+  } catch (error) {
+    recordReadUnknown = true;
+    setConversionSettingsPersistenceStatus('unreadable');
+    logger.warn('general', 'Failed to read conversion settings from localStorage', { error });
+    return DEFAULT_CONVERSION_SETTINGS;
+  }
+  if (!stored) return DEFAULT_CONVERSION_SETTINGS;
 
+  try {
     const parsed: unknown = JSON.parse(stored);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    if (!isRecord(parsed)) {
       return DEFAULT_CONVERSION_SETTINGS;
     }
 
-    const obj = parsed as Record<string, unknown>;
-    const rawVersion = typeof obj.__schemaVersion === 'number' ? obj.__schemaVersion : 0;
-    // Clamp version to prevent infinite loops from NaN/-Infinity/negative values.
-    // NaN < VERSION is false and NaN is not finite, so it normalizes to 0.
-    // -Infinity++ stays -Infinity forever — clamp prevents the infinite loop.
-    const storedVersion =
-      Number.isFinite(rawVersion) && rawVersion >= 0
-        ? Math.min(rawVersion, CONVERSION_SETTINGS_SCHEMA_VERSION)
-        : 0;
+    const obj = parsed;
+    const version = storedSchemaVersion(obj);
+    if (version !== null && version > CONVERSION_SETTINGS_SCHEMA_VERSION) {
+      setConversionSettingsPersistenceStatus('future');
+    }
+    // An invalid version is not a supported migration source. Read known
+    // settings for this session, then normalize only through the ordinary save.
+    const storedVersion = version === null ? CONVERSION_SETTINGS_SCHEMA_VERSION : version;
 
     // Run migration chain if stored version is behind
     let migrated: Record<string, unknown> = { ...obj };
@@ -125,7 +151,7 @@ const getInitialConversionSettings = (): ConversionSettings => {
 
     return settings;
   } catch (error) {
-    logger.warn('general', 'Failed to load conversion settings from localStorage', { error });
+    logger.warn('general', 'Failed to parse conversion settings from localStorage', { error });
   }
 
   return DEFAULT_CONVERSION_SETTINGS;
@@ -134,6 +160,32 @@ const getInitialConversionSettings = (): ConversionSettings => {
 // ── Save ─────────────────────────────────────────────────────────────────
 
 export const saveConversionSettings = (settings: ConversionSettings): void => {
+  if (recordReadUnknown || conversionSettingsPersistenceStatus() === 'future') return;
+  try {
+    // An older open tab can observe a newer record after its initial load.
+    // Check every writer, including queued migration and cleanup flushes.
+    const current = localStorage.getItem(CONVERSION_SETTINGS_STORAGE_KEY);
+    if (current) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(current);
+      } catch {
+        // An invalid JSON record follows the existing normalization behavior.
+      }
+      if (isRecord(parsed)) {
+        const version = storedSchemaVersion(parsed);
+        if (version !== null && version > CONVERSION_SETTINGS_SCHEMA_VERSION) {
+          setConversionSettingsPersistenceStatus('future');
+          return;
+        }
+      }
+    }
+  } catch (error) {
+    recordReadUnknown = true;
+    setConversionSettingsPersistenceStatus('unreadable');
+    logger.warn('general', 'Failed to read conversion settings before save', { error });
+    return;
+  }
   try {
     localStorage.setItem(
       CONVERSION_SETTINGS_STORAGE_KEY,
@@ -147,7 +199,9 @@ export const saveConversionSettings = (settings: ConversionSettings): void => {
         smartFrameSkip: settings.smartFrameSkip,
       })
     );
+    setConversionSettingsPersistenceStatus('writable');
   } catch (error) {
+    setConversionSettingsPersistenceStatus('unreadable');
     logger.warn('general', 'Failed to save conversion settings to localStorage', { error });
   }
 };

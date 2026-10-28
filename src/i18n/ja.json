@@ -153,6 +153,8 @@
   "scale.title": "出力スケール",
   "settings.convert": "変換",
   "settings.convertAgain": "もう一度変換",
+  "settings.persistenceFuture": "このタブは新しいバージョンで保存された設定を開いています。このタブでの変更は保存されません。保存済みの設定を変更するには新しいバージョンのアプリを使用してください。",
+  "settings.persistenceUnavailable": "設定ストレージにアクセスできません。このタブでの変更は保存されません。アクセスが回復したら再読み込みしてください。",
   "settings.heading": "変換設定",
   "settings.section.inputRange": "入力範囲",
   "settings.section.outputSettings": "出力設定",
