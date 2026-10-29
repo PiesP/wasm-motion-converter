@@ -36,7 +36,7 @@ const providerFiles = [
   [
     'automation/security/scanner-pins.ts',
     'scanner-pins.ts.txt',
-    '4975feec038d3969dc38fcd1de73afba04cb84e8cd8e176de9ed8a4a81f7b7a9',
+    'fb571eeceff38b596ac23cf370b3e39a7fcac90d281773c36fb12f1a8cab6960',
   ],
 ] as const;
 const roots: string[] = [];
@@ -136,10 +136,15 @@ if (file === 'gh') {
     chmodSync(snapshot, 0o600);
     return snapshot;
   };
-  const run = (helper: string, mode: 'env' | 'check', snapshot: string, scenario = '') => {
+  const run = (helper: string, mode: 'env' | 'check' | 'json', snapshot: string, scenario = '') => {
     const result = spawnSync(
       process.execPath,
-      ['--experimental-strip-types', helper, mode, snapshot],
+      [
+        '--experimental-strip-types',
+        helper,
+        ...(mode === 'json' ? ['check', '--json'] : [mode]),
+        snapshot,
+      ],
       { cwd: candidateCheckout, env: { ...env, MOCK_SCENARIO: scenario }, encoding: 'utf8' }
     );
     const calls = existsSync(env.CALLS)
@@ -262,6 +267,110 @@ describe('reviewed scanner provider in the WMC workflow boundary', () => {
     const error = token.run(token.helperPath(), 'check', token.copyMetadata(), 'manifest-fail');
     expect(error.result.status).toBe(1);
     expect(error.result.stderr).toContain('curl request failed (exit 7)');
+    expect(error.result.stderr).not.toContain('fixture-bearer-token');
+  });
+
+  it('binds one JSON observation to the reviewed helper and pins with independent attempts', () => {
+    const f = fixture();
+    expect(f.prepare().status).toBe(0);
+    const response = f.run(f.helperPath(), 'json', f.copyMetadata(), 'young-first');
+    expect(response.result.status, response.result.stderr).toBe(0);
+    expect(response.calls.map((call) => call.file)).toEqual(['gh', 'curl', 'curl', 'gh']);
+    const observation = JSON.parse(response.result.stdout) as {
+      schemaVersion: number;
+      pinsSha256: string;
+      helperSha256: string;
+      coolingHours: number;
+      observedAt: string;
+      ok: boolean;
+      checks: {
+        id: string;
+        status: string;
+        source: string;
+        publishedAt?: string;
+        observationWindow?: string;
+        pendingRelease?: { version: string };
+        platformScope?: string;
+      }[];
+      semgrepDigest: { status: string };
+    };
+    expect(observation.schemaVersion).toBe(1);
+    expect(observation.pinsSha256).toBe(
+      createHash('sha256').update(JSON.stringify(f.pins)).digest('hex')
+    );
+    expect(observation.helperSha256).toBe(providerFiles[2][2]);
+    expect(observation.coolingHours).toBe(24);
+    expect(Number.isFinite(Date.parse(observation.observedAt))).toBe(true);
+    expect(observation.ok).toBe(true);
+    expect(observation.checks.map(({ id, status }) => [id, status])).toEqual([
+      ['osv_release', 'match'],
+      ['osv_digest', 'match'],
+      ['semgrep_release', 'match'],
+    ]);
+    expect(observation.checks[0]).toMatchObject({
+      source: 'https://github.com/google/osv-scanner/releases',
+      observationWindow: 'wait',
+      pendingRelease: { version: '9.9.9' },
+    });
+    expect(observation.checks[0]?.publishedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
+    expect(observation.checks[1]).toMatchObject({
+      source: `https://ghcr.io/v2/google/osv-scanner-action/manifests/v${f.pins.osv.version}`,
+      platformScope: 'multiarch-tag',
+    });
+    expect(observation.semgrepDigest.status).toBe('not_checked');
+  });
+
+  it('retains warning-only release drift and fails a digest difference', () => {
+    const warning = fixture();
+    expect(warning.prepare().status).toBe(0);
+    const release = warning.run(warning.helperPath(), 'json', warning.copyMetadata(), 'update');
+    expect(release.result.status, release.result.stderr).toBe(0);
+    expect(JSON.parse(release.result.stdout)).toMatchObject({
+      ok: true,
+      checks: [
+        { id: 'osv_release', status: 'different', observed: '9.9.9' },
+        { id: 'osv_digest', status: 'match' },
+        { id: 'semgrep_release', status: 'different', observed: '9.9.9' },
+      ],
+    });
+    const digest = fixture();
+    expect(digest.prepare().status).toBe(0);
+    const mismatch = digest.run(
+      digest.helperPath(),
+      'json',
+      digest.copyMetadata(),
+      'mismatch-digest'
+    );
+    expect(mismatch.result.status).toBe(1);
+    expect(JSON.parse(mismatch.result.stdout)).toMatchObject({
+      ok: false,
+      checks: [
+        { id: 'osv_release', status: 'match' },
+        { id: 'osv_digest', status: 'different' },
+        { id: 'semgrep_release', status: 'match' },
+      ],
+    });
+  });
+
+  it('records an incomplete upstream attempt while continuing later attempts without token leakage', () => {
+    const failed = fixture();
+    expect(failed.prepare().status).toBe(0);
+    const response = failed.run(failed.helperPath(), 'json', failed.copyMetadata(), 'api-fail');
+    expect(response.result.status).toBe(1);
+    expect(response.calls.map((call) => call.file)).toEqual(['gh', 'curl', 'curl', 'gh']);
+    expect(JSON.parse(response.result.stdout)).toMatchObject({
+      ok: false,
+      checks: [
+        { id: 'osv_release', status: 'incomplete' },
+        { id: 'osv_digest', status: 'match' },
+        { id: 'semgrep_release', status: 'match' },
+      ],
+    });
+    const token = fixture();
+    expect(token.prepare().status).toBe(0);
+    const error = token.run(token.helperPath(), 'json', token.copyMetadata(), 'manifest-fail');
+    expect(error.result.status).toBe(1);
+    expect(error.result.stdout).not.toContain('fixture-bearer-token');
     expect(error.result.stderr).not.toContain('fixture-bearer-token');
   });
 

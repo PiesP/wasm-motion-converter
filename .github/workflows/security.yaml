@@ -61,7 +61,7 @@ jobs:
 
       - name: 🔐 Prepare reviewed scanner pin helper
         id: scanner_helper
-        uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@4ab0442d8d2e3cf640767b499b6444c92f6479b5
+        uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@a85cc07e89fe0c0517b98aa5c15b9a83dcb82bcd
 
       - name: 🔐 Export validated scanner images
         id: pins
@@ -186,17 +186,44 @@ jobs:
 
       - name: 🔐 Prepare reviewed scanner pin helper
         id: scanner_helper
-        uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@4ab0442d8d2e3cf640767b499b6444c92f6479b5
+        uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@a85cc07e89fe0c0517b98aa5c15b9a83dcb82bcd
 
       - name: 🔎 Check pinned tools after the cooling window
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          umask 077
           pinned_dir="$(mktemp -d "$RUNNER_TEMP/pinned-tools.XXXXXXXX")"
           pin_metadata="$pinned_dir/pinned-tools.json"
           install -m 0600 scripts/ci/pinned-tools.json "$pin_metadata"
-          node --experimental-strip-types "${{ steps.scanner_helper.outputs.helper-path }}" check "$pin_metadata"
+          observation="$RUNNER_TEMP/scanner-pin-observation.json"
+          result=0
+          node --experimental-strip-types "${{ steps.scanner_helper.outputs.helper-path }}" check --json "$pin_metadata" > "$observation" || result=$?
+          OBSERVATION="$observation" node -e '
+            const observation = JSON.parse(require("node:fs").readFileSync(process.env.OBSERVATION, "utf8"));
+            for (const check of observation.checks ?? []) {
+              if (check.status === "different" && check.id !== "osv_digest")
+                console.log(`::warning title=${check.id} update available::Review scanner-pin-observation artifact.`);
+              else if (check.status === "different" || check.status === "incomplete")
+                console.error(`::error title=${check.id} observation failed::Review scanner-pin-observation artifact.`);
+              else console.log(`${check.id}: ${check.status}`);
+              if (check.observationWindow === "wait")
+                console.log(`::notice title=${check.id} cooling window::A newer release is still within the cooling window; review scanner-pin-observation artifact.`);
+            }
+            if (observation.semgrepDigest?.status === "not_checked") console.log("semgrep_digest: not_checked");
+            if (observation.status === "incomplete") console.error("check-pinned-tools: incomplete observation; review artifact.");
+          '
+          exit "$result"
+
+      - name: 📊 Upload scanner pin observation
+        if: ${{ steps.node_trust.outcome == 'success' && (always()) }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: scanner-pin-observation-${{ github.sha }}
+          path: ${{ runner.temp }}/scanner-pin-observation.json
+          if-no-files-found: warn
+          retention-days: 7
 
   osv-scan-pr:
     name: pr-gate/osv / osv-scan
