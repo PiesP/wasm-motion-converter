@@ -71,11 +71,14 @@ The same selector file accepts `{"scenario":"worker-cancellation"}` to run
 only the worker case, cancel before frame dispatch, check that the pool has
 retired and no worker task was submitted, and recover in the same document.
 
-For a focused conversion-settings compatibility check, put
-`{"scenario":"settings-schema"}` in the ignored
-`validation/windows/inputs/settings-schema.json` selector and remove other
-focused JSON selectors for this attempt. Run the standard built-app Edge desktop
-profile. It loads a future-version settings record into a new tab, waits for the
+For a focused conversion-settings compatibility check, select
+`--scenario settings-schema` on the shared `vmctl.py plan`, `bundle`, or `run`
+command with Edge desktop mode. The controller builds the application, writes
+the selector only into the new task-owned bundle, and retains the checkout's
+other ignored inputs. This selection does not require `prior-dist/`,
+`public-target.json`, or generated media fixtures. The default full profile
+still requires its declared assets. The focused profile loads a future-version
+settings record into a new tab, waits for the
 initial save and user edit, then checks exact stored bytes and the visible
 session-only notice. A second already-loaded tab observes a newer record written
 by another document and must also leave it intact after an edit. The Browser

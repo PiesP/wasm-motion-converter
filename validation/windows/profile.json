@@ -1,6 +1,38 @@
 {
   "id": "wmc-media",
   "entry": "validation/windows/profile.ts",
+  "preparation": {
+    "selector_files": [
+      "analysis-worker-recovery.json",
+      "app-update.json",
+      "narrow-output.json",
+      "output-finalization-v2.json",
+      "output-finalization.json",
+      "packet-lookup.json",
+      "preview-retry.json",
+      "recovery.json",
+      "selection-preview.json",
+      "service-worker-handoff.json",
+      "settings-schema.json",
+      "trim-submission.json",
+      "webp-initialization.json"
+    ],
+    "scenarios": {
+      "settings-schema": {
+        "selector": "settings-schema.json",
+        "browsers": ["msedge"],
+        "modes": ["desktop"],
+        "required_inputs": ["dist", "validation/windows/inputs/settings-schema.json"],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      }
+    }
+  },
   "assets": [
     "dist",
     "worker/service-worker.ts",
