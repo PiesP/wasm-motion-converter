@@ -48,6 +48,8 @@ export function prepareRelease(): void {
     return entry;
   }
 
+  const changes = changelogEntry(readFileSync(join(root, 'CHANGELOG.md'), 'utf8'), version);
+
   rmSync(bundleDir, { force: true, recursive: true });
   mkdirSync(releaseDir, { recursive: true });
   writeFileSync(
@@ -108,7 +110,6 @@ export function prepareRelease(): void {
   });
   writeFileSync(join(releaseDir, 'checksums.txt'), `${checksumLines.join('\n')}\n`);
 
-  const changes = changelogEntry(readFileSync(join(root, 'CHANGELOG.md'), 'utf8'), version);
   const releaseNotes = `# 🚀 Release v${version}
 
 ## 📝 What's Changed
