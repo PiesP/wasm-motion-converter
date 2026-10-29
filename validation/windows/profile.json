@@ -34,6 +34,7 @@
     "validation/windows/narrow-output.ts",
     "validation/windows/trim-submission.ts",
     "validation/windows/webp-initialization.ts",
-    "validation/windows/settings-schema.ts"
+    "validation/windows/settings-schema.ts",
+    "validation/windows/analysis-worker-recovery.ts"
   ]
 }
