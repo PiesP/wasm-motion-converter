@@ -61,15 +61,25 @@ export async function exerciseWorkerRecovery(page: Page, url: string, fixture: s
       }
     };
     const nativeDecode = VideoDecoder.prototype.decode;
+    const nativeFlush = VideoDecoder.prototype.flush;
     const pending: { decoder: VideoDecoder; chunk: EncodedVideoChunk }[] = [];
     let held = true;
+    let releaseFlush!: () => void;
+    const flushGate = new Promise<void>((resolve) => {
+      releaseFlush = resolve;
+    });
     VideoDecoder.prototype.decode = function (chunk) {
       if (held) pending.push({ decoder: this, chunk });
       else nativeDecode.call(this, chunk);
     };
+    VideoDecoder.prototype.flush = async function () {
+      await flushGate;
+      return nativeFlush.call(this);
+    };
     Reflect.set(globalThis, '__releaseDecode', () => {
       held = false;
       for (const { decoder, chunk } of pending.splice(0)) nativeDecode.call(decoder, chunk);
+      releaseFlush();
     });
   });
   let inject = true;
@@ -129,7 +139,19 @@ export async function exerciseWorkerRecovery(page: Page, url: string, fixture: s
   await page.locator('[data-testid="error-display"]').waitFor({ state: 'visible', timeout: 30000 });
   inject = false;
   const timeOrigin = await page.evaluate(() => performance.timeOrigin);
-  await page.locator('[data-testid="error-retry-button"]').click();
+  const retry = page.locator('[data-testid="error-retry-button"]');
+  if (await retry.count()) {
+    await retry.click();
+  } else {
+    await page.locator('[data-testid="error-select-different-fallback-button"]').click();
+    await page.locator('[data-testid="file-input"]').setInputFiles(fixture);
+    await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
+    const webpOption = page.locator('[data-testid="option-format-webp"]');
+    if (!(await webpOption.isVisible()))
+      await page.locator('[data-testid="advanced-settings"] summary').click();
+    await webpOption.click();
+    await page.locator('[data-testid="convert-button"]').click();
+  }
   await page
     .locator('[data-testid="result-section"]')
     .waitFor({ state: 'visible', timeout: 60000 });
