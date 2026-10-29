@@ -387,6 +387,13 @@ reactive UI state until admission; the admitted file/settings and run token
 belong to that job. See the handler and pipeline tests under `test/browser/`
 for the affected paths.
 
+Analysis cancellation waits for metadata extraction and its owned input cleanup.
+The metadata module import and the subsequent decoder support query are not
+abortable and own no retained input; cancellation stops waiting for them and
+observes late failures without publishing a retired result. An explicit false
+support result still blocks conversion while unavailable or failed probes defer
+to conversion-time decoder setup.
+
 `src/stores/conversion-settings-store.ts` owns the `conversion-settings`
 localStorage record and schema version in
 `src/stores/conversion-settings-constants.ts`. Missing storage starts with

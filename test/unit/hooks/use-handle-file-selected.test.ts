@@ -446,6 +446,33 @@ describe('handleFileSelected conversion settings', () => {
     expect(runtime.finishAnalysisRun).toHaveBeenCalledOnce();
   });
 
+  it('settles cancellation during the advisory decoder query and ignores a late rejection', async () => {
+    let rejectSupport: ((reason: Error) => void) | undefined;
+    mocks.checkVideoDecoderSupport.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectSupport = reject;
+      })
+    );
+    const runtime = createRuntime();
+    let settled = false;
+    const selection = handleFileSelected(
+      new File(['video'], 'cancelled.mp4', { type: 'video/mp4' }),
+      runtime,
+      ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+    ).then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(mocks.checkVideoDecoderSupport).toHaveBeenCalledOnce());
+    mocks.appState = 'cancelling';
+    runtime.invalidateActiveConversions();
+    await vi.waitFor(() => expect(settled).toBe(true), { timeout: 200 });
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('idle');
+    expect(mocks.setInputFile).toHaveBeenLastCalledWith(null);
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    rejectSupport?.(new Error('late support failure'));
+    await selection;
+  });
+
   it('does not request the metadata module for an invalid file', async () => {
     const selectFile = await freshHandleFileSelected();
     mocks.validateVideoFile.mockResolvedValueOnce({ valid: false, error: new Error('invalid') });
