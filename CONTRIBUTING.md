@@ -394,6 +394,14 @@ observes late failures without publishing a retired result. An explicit false
 support result still blocks conversion while unavailable or failed probes defer
 to conversion-time decoder setup.
 
+The WebP pool counts constructed workers as capacity, not proof of module
+readiness. Each slot permits one replacement after an idle asynchronous error
+for the lifetime of the conversion, then retires; other slots remain usable.
+If no capacity remains, queued submissions fail and release their buffers, and
+later submissions fail immediately. The pipeline owns pool disposal; a later
+conversion creates a fresh pool. Active task errors retain their existing task
+failure and replacement behavior.
+
 `src/stores/conversion-settings-store.ts` owns the `conversion-settings`
 localStorage record and schema version in
 `src/stores/conversion-settings-constants.ts`. Missing storage starts with
