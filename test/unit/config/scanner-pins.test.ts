@@ -12,7 +12,7 @@ const metadata = JSON.parse(metadataBytes.toString('utf8')) as {
 };
 const security = readFileSync(resolve(root, '.github/workflows/security.yaml'), 'utf8');
 const reviewedConsumerSha = 'e985fce5c0bce5ea9fb86b313afc6a6339af37a9';
-const reviewedProviderSha = '4ab0442d8d2e3cf640767b499b6444c92f6479b5';
+const reviewedProviderSha = 'a85cc07e89fe0c0517b98aa5c15b9a83dcb82bcd';
 const action = `uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@${reviewedProviderSha}`;
 
 function job(name: string): string {
@@ -49,7 +49,9 @@ describe('scanner pin workflow contracts', () => {
       const checkout = body.indexOf(`ref: ${reviewedConsumerSha}`);
       const runtime = body.indexOf("install-dependencies: 'false'");
       const helper = body.indexOf(action);
-      const command = body.indexOf(` ${mode} "$pin_metadata"`);
+      const commandText =
+        mode === 'check' ? ' check --json "$pin_metadata"' : ' env "$pin_metadata"';
+      const command = body.indexOf(commandText);
       expect(checkout).toBeGreaterThan(0);
       expect(runtime).toBeGreaterThan(checkout);
       expect(helper).toBeGreaterThan(runtime);
@@ -59,7 +61,7 @@ describe('scanner pin workflow contracts', () => {
       expect(body).toContain('pin_metadata="$pinned_dir/pinned-tools.json"');
       expect(body).toContain('install -m 0600 scripts/ci/pinned-tools.json "$pin_metadata"');
       expect(body).toContain('"${{ steps.scanner_helper.outputs.helper-path }}"');
-      expect(body).toContain(` ${mode} "$pin_metadata"`);
+      expect(body).toContain(commandText);
       expect(body).not.toContain('scripts/ci/pinned-tools.ts');
       expect(body).not.toContain('check-pinned-tools.ts');
       expect(body).not.toContain('continue-on-error:');
@@ -72,6 +74,20 @@ describe('scanner pin workflow contracts', () => {
     expect(job('pin-metadata')).toContain('SEMGREP_IMAGE: ${{ steps.pins.outputs.SEMGREP_IMAGE }}');
     expect(job('pinned-tools')).toContain('GH_TOKEN: ${{ github.token }}');
     expect(job('pinned-tools')).toContain('needs.changes.outputs.security_tools');
+    expect(job('pinned-tools').match(/ check --json "\$pin_metadata"/gu)).toHaveLength(1);
+    expect(job('pinned-tools')).not.toContain(' check "$pin_metadata"');
+    expect(job('pinned-tools')).toContain(
+      'observation="$RUNNER_TEMP/scanner-pin-observation.json"'
+    );
+    expect(job('pinned-tools')).toContain('> "$observation" || result=$?');
+    expect(job('pinned-tools')).toContain('exit "$result"');
+    expect(job('pinned-tools')).toContain('::warning title=${check.id} update available');
+    expect(job('pinned-tools')).toContain('::notice title=${check.id} cooling window');
+    expect(job('pinned-tools')).toContain('if: ${{ always() }}');
+    expect(job('pinned-tools')).toContain('path: ${{ runner.temp }}/scanner-pin-observation.json');
+    expect(job('pinned-tools')).toContain('if-no-files-found: warn');
+    expect(job('pinned-tools')).toContain('retention-days: 7');
+    expect(job('pin-metadata')).not.toContain(' check --json ');
     expect(security).toContain("needs['pin-metadata'].outputs.OSV_SCANNER_IMAGE");
     expect(security).toContain("needs['pin-metadata'].outputs.SEMGREP_IMAGE");
   });
