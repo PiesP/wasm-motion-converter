@@ -29,7 +29,16 @@ export async function exerciseAnalysisRecovery(page: Page, url: string, fixture:
   await page.locator('[data-testid="file-input"]').setInputFiles(fixture);
   await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
   assert.equal(await page.locator('[data-testid="error-display"]').count(), 0);
-  return { heldQueryCancelled: true, lateUnsupportedIgnored: true, reselection: true };
+  await page.locator('[data-testid="convert-button"]').click();
+  await page
+    .locator('[data-testid="result-section"]')
+    .waitFor({ state: 'visible', timeout: 60000 });
+  return {
+    heldQueryCancelled: true,
+    lateUnsupportedIgnored: true,
+    reselection: true,
+    recoveryConversion: true,
+  };
 }
 
 export async function exerciseWorkerRecovery(page: Page, url: string, fixture: string) {
@@ -82,9 +91,25 @@ export async function exerciseWorkerRecovery(page: Page, url: string, fixture: s
     await page.locator('[data-testid="advanced-settings"] summary').click();
   await webp.click();
   await page.locator('[data-testid="convert-button"]').click();
-  await page.waitForFunction(() => Reflect.get(globalThis, '__workerCounts').errors >= 2, null, {
-    timeout: 30000,
-  });
+  try {
+    await page.waitForFunction(() => Reflect.get(globalThis, '__workerCounts').errors >= 2, null, {
+      timeout: 30000,
+    });
+  } catch (error) {
+    const counts = await page.evaluate(() => Reflect.get(globalThis, '__workerCounts'));
+    const state = await page
+      .locator('#app-state')
+      .textContent()
+      .catch(() => null);
+    const visibleError = await page
+      .locator('[data-testid="error-display"]')
+      .textContent()
+      .catch(() => null);
+    throw new Error(
+      `Worker injection timed out; counts=${JSON.stringify(counts)}; requests=${requests}; state=${state}; error=${visibleError}`,
+      { cause: error }
+    );
+  }
   const counts = await page.evaluate(
     () =>
       Reflect.get(globalThis, '__workerCounts') as {
@@ -96,6 +121,9 @@ export async function exerciseWorkerRecovery(page: Page, url: string, fixture: s
   assert.equal(counts.constructed, 2);
   assert.equal(counts.errors, 2);
   assert.equal(counts.terminated, 2);
+  assert.equal(requests, 2);
+  await page.waitForTimeout(1000);
+  assert.deepEqual(await page.evaluate(() => Reflect.get(globalThis, '__workerCounts')), counts);
   assert.equal(requests, 2);
   await page.evaluate(() => Reflect.get(globalThis, '__releaseDecode')());
   await page.locator('[data-testid="error-display"]').waitFor({ state: 'visible', timeout: 30000 });
