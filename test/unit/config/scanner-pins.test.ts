@@ -83,7 +83,9 @@ describe('scanner pin workflow contracts', () => {
     expect(job('pinned-tools')).toContain('exit "$result"');
     expect(job('pinned-tools')).toContain('::warning title=${check.id} update available');
     expect(job('pinned-tools')).toContain('::notice title=${check.id} cooling window');
-    expect(job('pinned-tools')).toContain('if: ${{ always() }}');
+    expect(job('pinned-tools')).toContain(
+      "if: ${{ steps.node_trust.outcome == 'success' && (always()) }}"
+    );
     expect(job('pinned-tools')).toContain('path: ${{ runner.temp }}/scanner-pin-observation.json');
     expect(job('pinned-tools')).toContain('if-no-files-found: warn');
     expect(job('pinned-tools')).toContain('retention-days: 7');
