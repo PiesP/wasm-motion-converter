@@ -2950,7 +2950,10 @@ export async function run({
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
   if (recoveryText !== undefined) {
-    assert.deepEqual(JSON.parse(recoveryText), { scenario: 'analysis-worker-recovery' });
+    const selector: unknown = JSON.parse(recoveryText);
+    const cancellationOnly =
+      JSON.stringify(selector) === JSON.stringify({ scenario: 'worker-cancellation' });
+    if (!cancellationOnly) assert.deepEqual(selector, { scenario: 'analysis-worker-recovery' });
     const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
     assert.deepEqual(
       [
@@ -2974,10 +2977,19 @@ export async function run({
     const started = await startStaticServer(bundleRoot);
     const checks: Record<string, unknown> = {};
     try {
-      for (const [name, exercise] of [
-        ['analysis', exerciseAnalysisRecovery],
-        ['worker', exerciseWorkerRecovery],
-      ] as const) {
+      const scenarios = cancellationOnly
+        ? ([
+            [
+              'worker-cancellation',
+              (page: Page, url: string, path: string) =>
+                exerciseWorkerRecovery(page, url, path, true),
+            ],
+          ] as const)
+        : ([
+            ['analysis', exerciseAnalysisRecovery],
+            ['worker', exerciseWorkerRecovery],
+          ] as const);
+      for (const [name, exercise] of scenarios) {
         const context = await browser.newContext({
           locale: 'en-US',
           serviceWorkers: 'block',
@@ -2994,7 +3006,11 @@ export async function run({
           await context.close();
         }
       }
-      return { profile: 'analysis-worker-recovery', status: 'passed', checks };
+      return {
+        profile: cancellationOnly ? 'worker-cancellation' : 'analysis-worker-recovery',
+        status: 'passed',
+        checks,
+      };
     } finally {
       await closeServer(started.server);
       await writeFile(

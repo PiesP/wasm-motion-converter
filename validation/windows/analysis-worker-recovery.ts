@@ -41,11 +41,16 @@ export async function exerciseAnalysisRecovery(page: Page, url: string, fixture:
   };
 }
 
-export async function exerciseWorkerRecovery(page: Page, url: string, fixture: string) {
+export async function exerciseWorkerRecovery(
+  page: Page,
+  url: string,
+  fixture: string,
+  cancel = false
+) {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'hardwareConcurrency', { configurable: true, value: 2 });
     const NativeWorker = Worker;
-    const counts = { constructed: 0, errors: 0, terminated: 0 };
+    const counts = { constructed: 0, errors: 0, terminated: 0, submissions: 0 };
     Reflect.set(globalThis, '__workerCounts', counts);
     globalThis.Worker = class extends NativeWorker {
       constructor(script: string | URL, options?: WorkerOptions) {
@@ -58,6 +63,14 @@ export async function exerciseWorkerRecovery(page: Page, url: string, fixture: s
       override terminate() {
         counts.terminated++;
         super.terminate();
+      }
+      override postMessage(
+        message: unknown,
+        transfer?: Transferable[] | StructuredSerializeOptions
+      ) {
+        counts.submissions++;
+        if (Array.isArray(transfer)) super.postMessage(message, transfer);
+        else super.postMessage(message, transfer);
       }
     };
     const nativeDecode = VideoDecoder.prototype.decode;
@@ -76,9 +89,11 @@ export async function exerciseWorkerRecovery(page: Page, url: string, fixture: s
       await flushGate;
       return nativeFlush.call(this);
     };
-    Reflect.set(globalThis, '__releaseDecode', () => {
+    Reflect.set(globalThis, '__releaseDecode', (discard: boolean) => {
       held = false;
-      for (const { decoder, chunk } of pending.splice(0)) nativeDecode.call(decoder, chunk);
+      for (const { decoder, chunk } of pending.splice(0)) {
+        if (!discard) nativeDecode.call(decoder, chunk);
+      }
       releaseFlush();
     });
   });
@@ -126,16 +141,38 @@ export async function exerciseWorkerRecovery(page: Page, url: string, fixture: s
         constructed: number;
         errors: number;
         terminated: number;
+        submissions: number;
       }
   );
   assert.equal(counts.constructed, 2);
   assert.equal(counts.errors, 2);
   assert.equal(counts.terminated, 2);
+  assert.equal(counts.submissions, 0);
   assert.equal(requests, 2);
   await page.waitForTimeout(1000);
   assert.deepEqual(await page.evaluate(() => Reflect.get(globalThis, '__workerCounts')), counts);
   assert.equal(requests, 2);
-  await page.evaluate(() => Reflect.get(globalThis, '__releaseDecode')());
+  if (cancel) {
+    await page.locator('[data-testid="dropzone-cancel-button"]').click();
+    await page.evaluate(() => Reflect.get(globalThis, '__releaseDecode')(true));
+    await page
+      .locator('[data-testid="convert-button"]')
+      .waitFor({ state: 'visible', timeout: 30000 });
+    assert.equal(await page.locator('[data-testid="error-display"]').count(), 0);
+    assert.equal(await page.locator('[data-testid="result-section"]').count(), 0);
+    await page.waitForTimeout(1000);
+    assert.deepEqual(await page.evaluate(() => Reflect.get(globalThis, '__workerCounts')), counts);
+    assert.equal(requests, 2);
+    inject = false;
+    const timeOrigin = await page.evaluate(() => performance.timeOrigin);
+    await page.locator('[data-testid="convert-button"]').click();
+    await page
+      .locator('[data-testid="result-section"]')
+      .waitFor({ state: 'visible', timeout: 60000 });
+    assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin);
+    return { ...counts, requests, cancelled: true, recoveryConversion: true };
+  }
+  await page.evaluate(() => Reflect.get(globalThis, '__releaseDecode')(false));
   await page.locator('[data-testid="error-display"]').waitFor({ state: 'visible', timeout: 30000 });
   inject = false;
   const timeOrigin = await page.evaluate(() => performance.timeOrigin);

@@ -67,6 +67,9 @@ Edge scenario holds the advisory decoder query, cancels and reselects, then
 separately gates decoder frames while failing only the WebP worker module.
 It checks the bounded worker count, error outcome and same-document retry after
 restoring the route. These are controlled injections, not field incidence.
+The same selector file accepts `{"scenario":"worker-cancellation"}` to run
+only the worker case, cancel before frame dispatch, check that the pool has
+retired and no worker task was submitted, and recover in the same document.
 
 For a focused conversion-settings compatibility check, put
 `{"scenario":"settings-schema"}` in the ignored
