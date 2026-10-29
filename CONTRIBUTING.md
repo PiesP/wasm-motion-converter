@@ -88,7 +88,7 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `vp run check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
 | `vp run fmt`, `fmt:check`, `lint`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting and static/type source-cycle analysis. | Read-only; `circular` is a focused alias for native source lint. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
 | `vp run quality`, `verify` | Quality checks Oxfmt formatting/import order, Oxlint with warnings denied and type checking enabled, then the integrated Vite+ type check, Node-policy project and i18n; native lint includes static cycles once. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
-| `vp run release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `published-asset.ts` owns live publication order in release workflow. | Reads `RELEASE_VERSION`, optional source identity, built `dist`; writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
+| `vp run release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `published-asset.ts` owns live publication order in release workflow. | Validates version, package version, built `dist`, source SHA and matching nonempty changelog entry before writing. Later packaging errors can leave disposable partial output. Writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
 
 `vp run circular` runs `vp lint src --deny-warnings`; ordinary quality already
 runs the same native cycle rule within `lint` and does not repeat the alias.
@@ -386,6 +386,21 @@ by the conversion handlers and pipeline. The selected file and metadata are
 reactive UI state until admission; the admitted file/settings and run token
 belong to that job. See the handler and pipeline tests under `test/browser/`
 for the affected paths.
+
+Analysis cancellation waits for metadata extraction and its owned input cleanup.
+The metadata module import and the subsequent decoder support query are not
+abortable and own no retained input; cancellation stops waiting for them and
+observes late failures without publishing a retired result. An explicit false
+support result still blocks conversion while unavailable or failed probes defer
+to conversion-time decoder setup.
+
+The WebP pool counts constructed workers as capacity, not proof of module
+readiness. Each slot permits one replacement after an idle asynchronous error
+for the lifetime of the conversion, then retires; other slots remain usable.
+If no capacity remains, queued submissions fail and release their buffers, and
+later submissions fail immediately. The pipeline owns pool disposal; a later
+conversion creates a fresh pool. Active task errors retain their existing task
+failure and replacement behavior.
 
 `src/stores/conversion-settings-store.ts` owns the `conversion-settings`
 localStorage record and schema version in

@@ -30,6 +30,7 @@ import type {
   Request as PlaywrightRequest,
 } from '@playwright/test';
 
+import { exerciseAnalysisRecovery, exerciseWorkerRecovery } from './analysis-worker-recovery.ts';
 import { readBuild, runAppUpdate } from './app-update.ts';
 import {
   installCancellationInspector,
@@ -2938,6 +2939,86 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const recoverySelector = resolve(
+    bundleRoot,
+    'validation/windows/inputs/analysis-worker-recovery.json'
+  );
+  let recoveryText: string | undefined;
+  try {
+    recoveryText = await readFile(recoverySelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (recoveryText !== undefined) {
+    const selector: unknown = JSON.parse(recoveryText);
+    const cancellationOnly =
+      JSON.stringify(selector) === JSON.stringify({ scenario: 'worker-cancellation' });
+    if (!cancellationOnly) assert.deepEqual(selector, { scenario: 'analysis-worker-recovery' });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      [
+        'narrow-output.json',
+        'selection-preview.json',
+        'preview-retry.json',
+        'trim-submission.json',
+        'webp-initialization.json',
+        'service-worker-handoff.json',
+        'recovery.json',
+        'app-update.json',
+        'packet-lookup.json',
+        'output-finalization.json',
+        'output-finalization-v2.json',
+        'settings-schema.json',
+      ].filter((name) => selected.includes(name)),
+      [],
+      'Remove other focused selectors'
+    );
+    const fixture = await validateBundleFile(bundleRoot, 'public/test-video-ci-h264.mp4');
+    const started = await startStaticServer(bundleRoot);
+    const checks: Record<string, unknown> = {};
+    try {
+      const scenarios = cancellationOnly
+        ? ([
+            [
+              'worker-cancellation',
+              (page: Page, url: string, path: string) =>
+                exerciseWorkerRecovery(page, url, path, true),
+            ],
+          ] as const)
+        : ([
+            ['analysis', exerciseAnalysisRecovery],
+            ['worker', exerciseWorkerRecovery],
+          ] as const);
+      for (const [name, exercise] of scenarios) {
+        const context = await browser.newContext({
+          locale: 'en-US',
+          serviceWorkers: 'block',
+          viewport: { width: 1280, height: 900 },
+        });
+        try {
+          const page = await context.newPage();
+          checks[name] = await exercise(page, started.url, fixture);
+          await page.screenshot({
+            path: join(output, `analysis-worker-${name}.png`),
+            fullPage: true,
+          });
+        } finally {
+          await context.close();
+        }
+      }
+      return {
+        profile: cancellationOnly ? 'worker-cancellation' : 'analysis-worker-recovery',
+        status: 'passed',
+        checks,
+      };
+    } finally {
+      await closeServer(started.server);
+      await writeFile(
+        join(output, 'analysis-worker-recovery.json'),
+        JSON.stringify({ checks }, null, 2)
+      );
+    }
+  }
   const schemaSelector = resolve(bundleRoot, 'validation/windows/inputs/settings-schema.json');
   let schemaSelectorText: string | undefined;
   try {

@@ -121,6 +121,50 @@ describe('WebpWorkerPool buffer ownership', () => {
     expect(pool.stats).toMatchObject({ poolSize: 1, idle: 1, active: 0, queued: 0 });
   });
 
+  it('bounds repeated idle worker errors and rejects work when capacity is exhausted', async () => {
+    const pool = new WebpWorkerPool(1, 1000);
+    const first = FakeWorker.instances[0]!;
+    first.onerror?.(new ErrorEvent('error', { message: 'module failed' }));
+    const second = FakeWorker.instances[1]!;
+    second.onerror?.(new ErrorEvent('error', { message: 'module failed again' }));
+    first.onerror?.(new ErrorEvent('error', { message: 'late event' }));
+    expect(FakeWorker.instances).toHaveLength(2);
+    expect(pool.activeWorkers).toBe(0);
+    const buffer = new Uint8Array(4);
+    const release = vi.spyOn(globalBufferPool, 'release');
+    await expect(
+      pool.encode({ id: 1, rgbaData: buffer, width: 1, height: 1, quality: 0.8, durationMs: 40 })
+    ).rejects.toThrow('no active workers');
+    expect(release).toHaveBeenCalledWith(buffer);
+    pool.terminate();
+  });
+
+  it('keeps a healthy slot and settles queued work after another slot retires', async () => {
+    const pool = new WebpWorkerPool(2, 1000);
+    const failed = FakeWorker.instances[0]!;
+    failed.onerror?.(new ErrorEvent('error', { message: 'first failure' }));
+    const replacement = FakeWorker.instances[2]!;
+    replacement.onerror?.(new ErrorEvent('error', { message: 'second failure' }));
+    expect(pool.activeWorkers).toBe(1);
+    const task = (id: number) => ({
+      id,
+      rgbaData: new Uint8Array(4),
+      width: 1,
+      height: 1,
+      quality: 0.8,
+      durationMs: 40,
+    });
+    const first = pool.encode(task(1));
+    const second = pool.encode(task(2));
+    const healthy = FakeWorker.instances[1]!;
+    expect(pool.stats).toMatchObject({ active: 1, queued: 1 });
+    healthy.onmessage?.({ data: { id: 1, bitstream: new Uint8Array([1]) } } as MessageEvent);
+    healthy.onmessage?.({ data: { id: 2, bitstream: new Uint8Array([2]) } } as MessageEvent);
+    await expect(first).resolves.toMatchObject({ id: 1 });
+    await expect(second).resolves.toMatchObject({ id: 2 });
+    pool.terminate();
+  });
+
   it('cancels task timeouts when the pool is terminated', async () => {
     vi.useFakeTimers();
     try {

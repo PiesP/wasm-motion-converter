@@ -35,16 +35,13 @@ const resetAnalysisState = (): void => {
   setVideoMetadata(null);
 };
 
-async function loadMetadataModule(
-  signal: AbortSignal
-): Promise<typeof import('@services/video-metadata')> {
-  // The browser cannot abort import(), but the selection must settle promptly
-  // when its run is retired. Promise.race observes a late import rejection.
-  const loading = import('@services/video-metadata');
+async function awaitAdvisory<T>(loading: Promise<T>, signal: AbortSignal): Promise<T> {
+  // Neither import() nor the decoder capability query is abortable. Observe a
+  // late rejection while allowing a retired analysis to release its UI state.
   let onAbort: () => void = () => undefined;
   const aborted = new Promise<never>((_resolve, reject) => {
     onAbort = () =>
-      reject(signal.reason ?? new DOMException('The metadata load was aborted.', 'AbortError'));
+      reject(signal.reason ?? new DOMException('The analysis was aborted.', 'AbortError'));
     signal.addEventListener('abort', onAbort, { once: true });
     if (signal.aborted) onAbort();
   });
@@ -111,14 +108,20 @@ export async function handleFileSelected(
 
   try {
     // BlobSource lets MediaBunny read only the ranges needed for metadata.
-    const { extractVideoMetadata } = await loadMetadataModule(run.signal);
+    const { extractVideoMetadata } = await awaitAdvisory(
+      import('@services/video-metadata'),
+      run.signal
+    );
     if (isStale()) return;
     const metadata = await extractVideoMetadata(file, DEFAULT_FPS, run.signal);
     if (isStale()) return;
 
     const decoderConfig = metadata.config;
     if (decoderConfig) {
-      const decoderSupported = await checkVideoDecoderSupport(decoderConfig);
+      const decoderSupported = await awaitAdvisory(
+        checkVideoDecoderSupport(decoderConfig),
+        run.signal
+      );
       if (isStale()) return;
       if (decoderSupported === false) {
         const message = `Unsupported codec configuration: ${decoderConfig.codec}`;

@@ -94,6 +94,8 @@ export class WebpWorkerPool {
   private idleWorkers: Worker[] = [];
   private queue: PendingTask[] = [];
   private activeTasks: Map<Worker, PendingTask> = new Map();
+  // One idle error replacement per slot for this pool's lifetime.
+  private idleReplacements = new WeakMap<Worker, number>();
   private terminated = false;
   private readonly size: number;
   private readonly timeoutMs: number;
@@ -253,6 +255,7 @@ export class WebpWorkerPool {
   }
 
   private handleWorkerError(worker: Worker, event: ErrorEvent): void {
+    if (!this.workers.includes(worker)) return;
     logger.warn('encoders', 'worker-error', { message: event.message });
 
     const pending = this.activeTasks.get(worker);
@@ -272,8 +275,8 @@ export class WebpWorkerPool {
       pending.reject(new Error(`Worker error: ${event.message}`));
     }
 
-    // Replace dead worker (with try/catch inside replaceWorker)
-    this.replaceWorker(worker);
+    const idleFailures = this.idleReplacements.get(worker) ?? 0;
+    this.replaceWorker(worker, !pending && idleFailures >= 1, idleFailures + (pending ? 0 : 1));
   }
 
   // Timeout ownership follows the Worker and its exact active PendingTask. Task IDs
@@ -382,7 +385,7 @@ export class WebpWorkerPool {
     this.activeTasks.set(worker, pending);
   }
 
-  private replaceWorker(worker: Worker): void {
+  private replaceWorker(worker: Worker, retire = false, idleFailures?: number): void {
     const idx = this.workers.indexOf(worker);
     if (idx === -1) return;
 
@@ -393,7 +396,9 @@ export class WebpWorkerPool {
     }
 
     try {
+      if (retire) throw new Error('Idle worker replacement budget exhausted');
       const newWorker = this.createWorker();
+      this.idleReplacements.set(newWorker, idleFailures ?? this.idleReplacements.get(worker) ?? 0);
       this.workers[idx] = newWorker;
       this.idleWorkers.push(newWorker);
     } catch (err) {

@@ -1,5 +1,6 @@
 // GitHub Actions expressions are literal workflow assertions.
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -179,6 +180,68 @@ describe('Release infrastructure', () => {
         { encoding: 'utf8' }
       );
       expect(JSON.parse(archived)).toEqual(marker);
+      const releaseDir = join(fixture, 'release-bundle/release');
+      const assets = ['wasm-motion-converter-0.2.10.tar.gz', 'metadata.json'];
+      const checksums = assets.map((name) => {
+        const digest = createHash('sha256')
+          .update(readFileSync(join(releaseDir, name)))
+          .digest('hex');
+        return `${digest}  ./${name}`;
+      });
+      expect(readFileSync(join(releaseDir, 'checksums.txt'), 'utf8')).toBe(
+        `${checksums.join('\n')}\n`
+      );
+      expect(readFileSync(join(fixture, 'release-bundle/RELEASE_NOTES.md'), 'utf8')).toContain(
+        'Release ordering.'
+      );
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['missing file', null, /ENOENT.*CHANGELOG\.md/s],
+    ['missing version', '## [0.2.9]\n\nEarlier changes.\n', /no entry for version 0\.2\.10/],
+    [
+      'empty entry',
+      '## [0.2.10]\n\n## [0.2.9]\nEarlier changes.\n',
+      /entry for version 0\.2\.10 is empty/,
+    ],
+  ])('preserves existing release output when the changelog has a %s', (_case, changelog, error) => {
+    const fixture = mkdtempSync(join(tmpdir(), 'release-changelog-'));
+    const oldBundle = Buffer.from('previous candidate bytes');
+    const oldState = Buffer.from('{"version":"previous","commit":"previous"}\n');
+    try {
+      mkdirSync(join(fixture, 'scripts/release'), { recursive: true });
+      mkdirSync(join(fixture, 'dist'), { recursive: true });
+      mkdirSync(join(fixture, 'release-bundle'), { recursive: true });
+      cpSync(
+        resolve(root, 'scripts/release/prepare.ts'),
+        join(fixture, 'scripts/release/prepare.ts')
+      );
+      writeFileSync(
+        join(fixture, 'package.json'),
+        JSON.stringify({ type: 'module', version: '0.2.10' })
+      );
+      writeFileSync(join(fixture, 'dist/index.html'), '<html>built input</html>');
+      writeFileSync(join(fixture, 'dist/release-state.json'), oldState);
+      writeFileSync(join(fixture, 'release-bundle/previous.txt'), oldBundle);
+      if (changelog !== null) writeFileSync(join(fixture, 'CHANGELOG.md'), changelog);
+
+      const result = spawnSync(
+        process.execPath,
+        ['--experimental-strip-types', join(fixture, 'scripts/release/prepare.ts')],
+        {
+          cwd: fixture,
+          encoding: 'utf8',
+          env: { ...process.env, RELEASE_VERSION: '0.2.10', RELEASE_SHA: 'a'.repeat(40) },
+        }
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(error);
+      expect(readFileSync(join(fixture, 'release-bundle/previous.txt'))).toEqual(oldBundle);
+      expect(readFileSync(join(fixture, 'dist/release-state.json'))).toEqual(oldState);
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

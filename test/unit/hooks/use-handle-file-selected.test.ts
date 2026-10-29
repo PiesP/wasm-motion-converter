@@ -42,6 +42,11 @@ vi.mock('@stores/conversion-settings-store', () => ({
 }));
 vi.mock('@stores/conversion-store', () => ({
   appState: () => mocks.appState,
+  setConversionProgress: vi.fn(),
+  setConversionStatusMessage: vi.fn(),
+  setCurrentFrame: vi.fn(),
+  setOutputFrames: vi.fn(),
+  setTotalFrames: vi.fn(),
   setErrorContext: mocks.setErrorContext,
   setErrorMessage: mocks.setErrorMessage,
   setInputFile: mocks.setInputFile,
@@ -61,7 +66,7 @@ vi.mock('@utils/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import type { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
+import { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from '@hooks/conversion-handlers/use-handle-file-selected';
 
 function createRuntime(): ConversionRuntimeController {
@@ -125,6 +130,7 @@ describe('handleFileSelected conversion settings', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('resets file-specific trim when a valid new file is accepted', async () => {
@@ -445,6 +451,70 @@ describe('handleFileSelected conversion settings', () => {
     expect(mocks.setVideoPreviewUrl).not.toHaveBeenCalledWith('blob:test-preview');
     expect(runtime.finishAnalysisRun).toHaveBeenCalledOnce();
   });
+
+  it.each(['true', 'false', 'rejection'] as const)(
+    'settles cancelled real support query and ignores late %s after a newer selection',
+    async (outcome) => {
+      const actual = await vi.importActual<typeof import('@services/video-decoder-support')>(
+        '@services/video-decoder-support'
+      );
+      mocks.checkVideoDecoderSupport.mockImplementation(actual.checkVideoDecoderSupport);
+      let resolveSupport!: (result: VideoDecoderSupport) => void;
+      let rejectSupport!: (reason: Error) => void;
+      const gate = new Promise<VideoDecoderSupport>((resolve, reject) => {
+        resolveSupport = resolve;
+        rejectSupport = reject;
+      });
+      const query = vi.fn().mockReturnValueOnce(gate).mockResolvedValue({ supported: true });
+      vi.stubGlobal('VideoDecoder', { isConfigSupported: query });
+      const runtime = new ConversionRuntimeController({
+        setConversionStartTime: vi.fn(),
+        setEstimatedSecondsRemaining: vi.fn(),
+        setMemoryWarning: vi.fn(),
+        setMemoryUsageText: vi.fn(),
+      });
+      let settled = false;
+      const selection = handleFileSelected(
+        new File(['video'], 'cancelled.mp4', { type: 'video/mp4' }),
+        runtime,
+        ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+      ).then(() => {
+        settled = true;
+      });
+      await vi.waitFor(() => expect(query).toHaveBeenCalledOnce());
+      const signal = mocks.extractVideoMetadata.mock.calls[0]?.[2] as AbortSignal;
+      const removeListener = vi.spyOn(signal, 'removeEventListener');
+      mocks.appState = 'cancelling';
+      runtime.invalidateActiveConversions();
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 200 });
+      expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(mocks.transitionToState).toHaveBeenLastCalledWith('idle');
+      expect(mocks.setInputFile).toHaveBeenLastCalledWith(null);
+      expect(URL.createObjectURL).not.toHaveBeenCalled();
+
+      mocks.appState = 'idle';
+      const replacement = new File(['new'], 'replacement.mp4', { type: 'video/mp4' });
+      await handleFileSelected(
+        replacement,
+        runtime,
+        ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+      );
+      mocks.transitionToState.mockClear();
+      mocks.setErrorMessage.mockClear();
+      mocks.setErrorContext.mockClear();
+      if (outcome === 'rejection') rejectSupport(new Error('late support failure'));
+      else resolveSupport({ supported: outcome === 'true' });
+      await selection;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(URL.createObjectURL).toHaveBeenCalledOnce();
+      expect(URL.createObjectURL).toHaveBeenCalledWith(replacement);
+      expect(mocks.setInputFile).toHaveBeenLastCalledWith(replacement);
+      expect(mocks.transitionToState).not.toHaveBeenCalled();
+      expect(mocks.setErrorMessage).not.toHaveBeenCalled();
+      expect(mocks.setErrorContext).not.toHaveBeenCalled();
+      runtime.dispose();
+    }
+  );
 
   it('does not request the metadata module for an invalid file', async () => {
     const selectFile = await freshHandleFileSelected();
