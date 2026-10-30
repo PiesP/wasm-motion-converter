@@ -103,6 +103,8 @@ Browser codec support is detected at runtime with
 `VideoDecoder.isConfigSupported()`. Do not replace capability detection with a
 static browser or codec allowlist.
 
+For an optional local input inspection, use the [media diagnosis procedure](../CONTRIBUTING.md#local-media-diagnosis).
+
 ## Results and artifacts
 
 - Conversion measurements are written under `.results/` and are not release

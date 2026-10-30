@@ -172,6 +172,52 @@ document; it does not run a destructive out-of-memory test.
 
 Small workflow shell blocks remain runner bootstrap, checkout, output, and action-launch adapters; revisit them when tested Node entrypoints preserve trusted-source and write ordering. The Git hooks remain Bash because Git invokes them before pinned Node setup.
 
+## Local media diagnosis
+
+For an owned or sanitized conversion input, use the installed FFmpeg/ffprobe and
+GNU `timeout` tools on Linux or WSL to inspect the first video stream and one
+sample frame. This is an optional investigation outside the application build and
+performance measurements. Run from the repository root; substitute an existing
+absolute input path and a requested time within that input:
+
+```bash
+set -euo pipefail
+input='/absolute/path/to/owned-or-sanitized.mp4'
+evidence="$(mktemp -d "${TMPDIR:-/tmp}/dropconvert-media.XXXXXXXX")"
+git rev-parse HEAD > "$evidence/source.sha"
+sha256sum -- "$input" > "$evidence/input.sha256"
+stat -c '%s' -- "$input" > "$evidence/input.bytes"
+ffprobe -version > "$evidence/ffprobe.version"
+ffmpeg -version > "$evidence/ffmpeg.version"
+timeout 30s ffprobe -v error -select_streams v:0 \
+  -show_entries 'format=format_name,duration,size:stream=index,codec_type,codec_name,width,height,sample_aspect_ratio,display_aspect_ratio,avg_frame_rate,r_frame_rate,color_range,color_space,color_transfer,color_primaries:stream_side_data=rotation' \
+  -of json "$input" > "$evidence/source-video.json" 2> "$evidence/probe.stderr"
+timeout 30s ffprobe -v error -select_streams v:0 -read_intervals '0%+#100' \
+  -show_entries frame=best_effort_timestamp_time,pkt_duration_time -of csv=p=0 \
+  "$input" > "$evidence/first-frame-times.csv" 2> "$evidence/times.stderr"
+timeout 30s ffmpeg -hide_banner -nostdin -v error -xerror -ss 0.5 \
+  -noautorotate -i "$input" -map 0:v:0 \
+  -vf "scale=w='min(iw,320)':h='min(ih,320)':force_original_aspect_ratio=decrease" \
+  -frames:v 1 -an -sn -n "$evidence/frame-requested-0.5s.png" \
+  > "$evidence/frame.stdout" 2> "$evidence/frame.stderr"
+sha256sum -- "$evidence/frame-requested-0.5s.png" > "$evidence/frame.sha256"
+```
+
+Keep the input unchanged and the private evidence directory outside Git. Record
+the exact commands, exit statuses and file sizes with the evidence; `set -e`
+stops after an executed failure and retains its stderr. A missing optional tool
+is unavailable, while a nonzero exit or timeout is a failed observation. The
+frame is at most 320×320 **coded pixels**: `-noautorotate` disables display
+rotation, the scale filter may reduce dimensions, and no crop or tone mapping
+is applied. The filename records the requested seek time; the exact decoded
+source timestamp is unknown unless independently established. The CSV samples
+only the first 100 packets, not the full video. Missing color or rotation fields
+mean unavailable metadata, not a default value. For side-by-side investigation,
+record both source identities, requested times, timestamp mapping, display
+transformations, and whether a person reviewed the images. A readable probe or
+PNG is diagnostic evidence only; use the [media test contract](./test/README.md#media-fixtures)
+for full frame, timing, pixel, loop, and browser playback acceptance.
+
 ## Validation
 
 Run the narrowest relevant test while working. Before opening a pull request, run:
