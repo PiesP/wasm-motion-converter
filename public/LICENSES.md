@@ -454,7 +454,7 @@ Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/
 
 ## solid-js
 
-- **Version:** 1.9.17
+- **Version:** 1.9.18
 - **License:** MIT
 - **Repository:** https://github.com/solidjs/solid
 - **Purpose:** UI framework (reactive signals, components)
