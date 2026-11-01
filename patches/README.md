@@ -2,7 +2,7 @@
 
 ## MediaBunny memory limits
 
-`mediabunny@1.62.1.patch` applies to the exact published 1.62.1 package. The
+`mediabunny@1.65.0.patch` applies to the exact published 1.65.0 package. The
 application sets finite limits in `src/utils/mediabunny-utils.ts`; the patch
 enforces them in the imported ESM modules and mirrors the changes in the shipped
 TypeScript source. It bounds contiguous reads, encoded packets, retained parser
@@ -22,16 +22,32 @@ test sets its 256-byte Reader limit before format detection and checks reads at
 and beyond that boundary; changing the Input field afterward would not update
 the Reader.
 
-The 1.62.1 port preserves upstream backwards fragment/cluster lookup and
-position-cache recovery for fragments without a key frame, while retaining
-sample-table clamping, lazy Matroska block decoding, and the same metadata,
-packet, and memory limits. The
-installed-parser tests in
+The 1.65.0 port preserves upstream backwards fragment/cluster lookup,
+position-cache recovery for fragments without a key frame, and the 1.63.0
+reference-PES header retention fix. That upstream fix does not bound MPEG-TS
+section, PES, or reordered packet buffers, so the local first-section reread and
+byte budgets remain. The local MP4 sample and metadata budgets, both encryption
+auxiliary-info reservations, Matroska descriptive skip and final packet/side-data
+check, nested HLS budgets, and finite-budget packet-sink on-demand mode also
+remain. The port mirrors these limits in the imported ESM modules and shipped
+TypeScript, with the Reader constructor declaration updated. The installed-parser
+tests in
 `test/unit/utils/mediabunny-memory-limits.test.ts` and
 `test/unit/utils/mediabunny-mp4-metadata-limits.test.ts` exercise bounded
 rejection and valid media with the actual patched package.
 `test/unit/utils/mediabunny-matroska-metadata.test.ts` covers the Matroska skip
 policy and the dependency's unchanged default metadata behavior.
+
+The port was checked against the published [1.65.0 npm tarball](https://registry.npmjs.org/mediabunny/-/mediabunny-1.65.0.tgz)
+(`sha512-TNnDNOmD5Fme4rwMGWuNv485a9iQwd9lgw88PI9zQ0FMnzEUoo6EJpG7ZhdJ2iwZFWo8AzNkP1KPq5IAHaktKw==`)
+and upstream [1.63.0](https://github.com/Vanilagy/mediabunny/releases/tag/v1.63.0),
+[1.64.0](https://github.com/Vanilagy/mediabunny/releases/tag/v1.64.0), and
+[1.65.0](https://github.com/Vanilagy/mediabunny/releases/tag/v1.65.0) notes.
+The 1.63.0 reference-PES change is upstream; the local limits above are still
+required. The two MP4 auxiliary-info call sites retain their reservation
+callback, the Matroska final packet check follows 1.65.0's codec-delay handling,
+and the MPEG-TS first-section reread follows the moved packet lookup method.
+The 1.65.0 `@mediabunny/server` fix does not affect this browser package.
 
 For a later MediaBunny update, review the complete published package delta and
 port the patch to its runtime modules, source, and declarations. Update the exact
