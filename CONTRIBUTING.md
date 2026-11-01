@@ -283,14 +283,18 @@ with `packageManager`. The bootstrap installs the reviewed Vite+ 1.4.0 global CL
 from an immutable installer source with a checked SHA-256 when absent, then verifies
 Vite+ selects the exact Node and pnpm pins. Confirm those identities in the provider log.
 
-The incident Node definition under `scripts/build/node-build-definitions` supplies
-26.12.1 while the provider's upstream version catalog lacks it. Declare
+The exact Node definitions under `scripts/build/node-build-definitions` include
+the selected 26.13.0 binary and retain the historical 26.12.1 incident definition.
+The 26.13.0 Linux x64 archive digest is from Node's
+[signed release checksums](https://nodejs.org/dist/v26.13.0/SHASUMS256.txt.asc).
+Keep the project definition path even if a newer upstream node-build catalog
+lists 26.13.0: the Pages build image may use a different catalog revision. Declare
 `NODE_BUILD_DEFINITIONS` in tracked Wrangler `[vars]`, pointing to
 `/opt/buildhome/repo/scripts/build/node-build-definitions`. The clone phase uses
 `/opt/buildhome/clone`, but Pages moves that checkout to `/opt/buildhome/repo`
-before installing tools. A successful production Pages deployment confirmed the
-tracked Wrangler variable is sufficient with the project-only variable absent;
-verify the provider log shows Node 26.12.1 installed before the build proceeds.
+before installing tools. A prior 26.12.1 production deployment confirmed the
+tracked Wrangler variable was sufficient with the project-only variable absent;
+verify the current provider log shows Node 26.13.0 installed before the build proceeds.
 The definition admits only Linux x64, verifies the official binary SHA-256, and
 rejects compile mode or tarball overrides; it has no source-build fallback. Keep
 the exact manifest and `.node-version` checks. A changed provider clone layout
