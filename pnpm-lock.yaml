@@ -183,7 +183,7 @@ overrides:
   '@voidzero-dev/vite-plus-core@1.4.0>esbuild': '-'
 
 patchedDependencies:
-  mediabunny@1.62.1: aaf7804347af70680e2e7ae3cdecd87ae79df5c776fe7cdc0e01dd68b77ad638
+  mediabunny@1.65.0: f85cba97bbc2a0f605e76df564d6813c2b7b97350b8fc6d85245421d8fd928d5
   wasm-webp@0.1.0: bef378941329357206c2b92a9ed683d03a25ca0c9331dd09f664fe0392d0b6f5
 
 importers:
@@ -197,8 +197,8 @@ importers:
         specifier: ^1.0.3
         version: 1.0.3
       mediabunny:
-        specifier: 1.62.1
-        version: 1.62.1(patch_hash=aaf7804347af70680e2e7ae3cdecd87ae79df5c776fe7cdc0e01dd68b77ad638)
+        specifier: 1.65.0
+        version: 1.65.0(patch_hash=f85cba97bbc2a0f605e76df564d6813c2b7b97350b8fc6d85245421d8fd928d5)
       solid-js:
         specifier: 1.9.18
         version: 1.9.18
@@ -1492,8 +1492,8 @@ packages:
   magicast@0.5.5:
     resolution: {integrity: sha512-UicdXN8zQ3JHlxVq+28afMXPr1z7WNY6+7EJnzTdQWkTAlMLF5fNCCKxJHBQwGaNGR11581EiQmQzx73+MvszA==}
 
-  mediabunny@1.62.1:
-    resolution: {integrity: sha512-lYzeerDwo9QLhBCipqQDXOSV7InvaIFplllZQviPO5rPwH+IUr8M1uvumk1olIUgMRGkPiInRriv25WFErUgMw==}
+  mediabunny@1.65.0:
+    resolution: {integrity: sha512-TNnDNOmD5Fme4rwMGWuNv485a9iQwd9lgw88PI9zQ0FMnzEUoo6EJpG7ZhdJ2iwZFWo8AzNkP1KPq5IAHaktKw==}
 
   merge-anything@5.1.7:
     resolution: {integrity: sha512-eRtbOb1N5iyH0tkQDAoQ4Ipsp/5qSR79Dzrz8hEPxRX10RWWR/iQXdoKmBSRCThY1Fh5EhISDtpSc93fpxUniQ==}
@@ -2664,7 +2664,7 @@ snapshots:
       '@babel/types': 7.29.11
       source-map-js: 1.2.2
 
-  mediabunny@1.62.1(patch_hash=aaf7804347af70680e2e7ae3cdecd87ae79df5c776fe7cdc0e01dd68b77ad638):
+  mediabunny@1.65.0(patch_hash=f85cba97bbc2a0f605e76df564d6813c2b7b97350b8fc6d85245421d8fd928d5):
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13
