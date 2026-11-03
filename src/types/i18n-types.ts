@@ -8,43 +8,70 @@
  * Uses flat keys (section.component.element) for consistency.
  */
 
-/** Supported locale identifiers (BCP 47) */
-export type Locale = 'en' | 'ko' | 'ja' | 'zh-CN' | 'es' | 'ar';
+import { SUPPORTED_LOCALES } from '@piesp/browser-core/locale';
+import type {
+  Locale as CoreLocale,
+  LocaleInfo as CoreLocaleInfo,
+} from '@piesp/browser-core/locale';
+
+/** Ordered languages shipped by this app. Core may support additional languages. */
+export const APP_LOCALE_CODES = [
+  'en',
+  'ko',
+  'ja',
+  'zh-CN',
+  'es',
+  'ar',
+] as const satisfies readonly CoreLocale[];
+export type Locale = (typeof APP_LOCALE_CODES)[number];
+
+/** Exact membership is required for saved settings; region matching is browser detection only. */
+export function isAppLocale(value: unknown): value is Locale {
+  return typeof value === 'string' && APP_LOCALE_CODES.some((code) => code === value);
+}
 
 /** User-facing language setting — includes 'auto' for browser detection. */
 export type SettingLocale = 'auto' | Locale;
 
-/** Locale metadata */
-export interface LocaleInfo {
-  code: Locale;
-  name: string; // Native name
-  englishName: string;
-  dir: 'ltr' | 'rtl';
-}
+/** Shared metadata plus the app's English label and narrowed code. */
+export type LocaleInfo = Omit<CoreLocaleInfo, 'code'> & {
+  readonly code: Locale;
+  readonly englishName: string;
+};
 
-/** Available locales */
-export const LOCALES: LocaleInfo[] = [
-  { code: 'en', name: 'English', englishName: 'English', dir: 'ltr' },
-  { code: 'ko', name: '한국어', englishName: 'Korean', dir: 'ltr' },
-  { code: 'ja', name: '日本語', englishName: 'Japanese', dir: 'ltr' },
-  { code: 'zh-CN', name: '简体中文', englishName: 'Chinese (Simplified)', dir: 'ltr' },
-  { code: 'es', name: 'Español', englishName: 'Spanish', dir: 'ltr' },
-  { code: 'ar', name: 'العربية', englishName: 'Arabic', dir: 'rtl' },
-];
+const ENGLISH_NAMES = {
+  en: 'English',
+  ko: 'Korean',
+  ja: 'Japanese',
+  'zh-CN': 'Chinese (Simplified)',
+  es: 'Spanish',
+  ar: 'Arabic',
+} satisfies Record<Locale, string>;
+
+/** App order and English labels; native names and direction come from core. */
+export const LOCALES: readonly LocaleInfo[] = APP_LOCALE_CODES.map((code) => {
+  const info = SUPPORTED_LOCALES.find((locale) => locale.code === code);
+  if (!info) throw new Error(`Missing core locale metadata: ${code}`);
+  return { ...info, code, englishName: ENGLISH_NAMES[code] };
+});
 
 /** Default locale */
 export const DEFAULT_LOCALE: Locale = 'en';
 
 /** Auto-detect option for LanguageSelector dropdown. */
-export const AUTO_OPTION: LocaleInfo = {
-  code: 'auto' as Locale,
+export interface AutoOption extends Omit<LocaleInfo, 'code'> {
+  code: 'auto';
+}
+
+export const AUTO_OPTION: AutoOption = {
+  code: 'auto',
   name: 'Auto',
   englishName: 'Auto',
   dir: 'ltr',
-} as LocaleInfo;
+};
 
 /** All options for the language selector dropdown (auto + all locales). */
-export const ALL_LOCALE_OPTIONS: LocaleInfo[] = [AUTO_OPTION, ...LOCALES];
+export const ALL_LOCALE_OPTIONS: readonly (AutoOption | LocaleInfo)[] = [AUTO_OPTION, ...LOCALES];
 
 /** Translation namespace keys */
 export interface TranslationKeys {

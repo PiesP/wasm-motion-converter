@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import { readdirSync } from 'node:fs';
+
 import arTranslations from '@i18n/ar.json';
 import enTranslations from '@i18n/en.json';
 import esTranslations from '@i18n/es.json';
@@ -9,7 +11,13 @@ import koTranslations from '@i18n/ko.json';
 import zhCnTranslations from '@i18n/zh-CN.json';
 import { describe, expect, it } from 'vite-plus/test';
 
-import { LOCALES } from '../../../src/types/i18n-types';
+import {
+  ALL_LOCALE_OPTIONS,
+  APP_LOCALE_CODES,
+  DEFAULT_LOCALE,
+  LOCALES,
+  isAppLocale,
+} from '../../../src/types/i18n-types';
 
 const allTranslations = {
   en: enTranslations,
@@ -99,6 +107,39 @@ describe('translations', () => {
   });
 
   describe('LOCALES codes match JSON file names', () => {
+    it('preserves app order and labels from the product contract', () => {
+      expect(APP_LOCALE_CODES).toEqual(['en', 'ko', 'ja', 'zh-CN', 'es', 'ar']);
+      expect(DEFAULT_LOCALE).toBe('en');
+      expect(
+        LOCALES.map(({ code, name, englishName, dir }) => ({ code, name, englishName, dir }))
+      ).toEqual([
+        { code: 'en', name: 'English', englishName: 'English', dir: 'ltr' },
+        { code: 'ko', name: '한국어', englishName: 'Korean', dir: 'ltr' },
+        { code: 'ja', name: '日本語', englishName: 'Japanese', dir: 'ltr' },
+        { code: 'zh-CN', name: '简体中文', englishName: 'Chinese (Simplified)', dir: 'ltr' },
+        { code: 'es', name: 'Español', englishName: 'Spanish', dir: 'ltr' },
+        { code: 'ar', name: 'العربية', englishName: 'Arabic', dir: 'rtl' },
+      ]);
+      expect(ALL_LOCALE_OPTIONS.map((option) => option.code)).toEqual([
+        'auto',
+        ...APP_LOCALE_CODES,
+      ]);
+    });
+
+    it('matches the shipped JSON files in both directions', () => {
+      const shipped = readdirSync(new URL('../../../src/i18n/', import.meta.url))
+        .filter((file) => file.endsWith('.json'))
+        .map((file) => file.slice(0, -5))
+        .sort();
+      expect(shipped).toEqual([...APP_LOCALE_CODES].sort());
+    });
+
+    it('accepts only exact app codes for stored settings', () => {
+      for (const code of APP_LOCALE_CODES) expect(isAppLocale(code)).toBe(true);
+      for (const value of ['auto', 'en-US', 'zh-TW', 'fr', '', null, 42, {}]) {
+        expect(isAppLocale(value)).toBe(false);
+      }
+    });
     it('LOCALES includes en and ko', () => {
       const codes = LOCALES.map((l) => l.code);
       expect(codes).toContain('en');

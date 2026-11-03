@@ -84,7 +84,10 @@ session-only notice. A second already-loaded tab observes a newer record written
 by another document and must also leave it intact after an edit. The Browser
 Mode tests separately exercise app unmount flush, migration and storage errors;
 this Windows fixture does not simulate a power failure or claim atomic cross-tab
-writes. The focused selector does not consume `prior-dist/` or a public target.
+writes. The same source-bound profile also checks the built language selector's
+ordered options, saved Korean preference across reload, English browser auto
+resolution, and Arabic direction across reload. The focused selector does not
+consume `prior-dist/` or a public target.
 
 For the focused conversion-option contract, first generate the small H.264 and
 CFR color-marker fixtures with `vp run prepare:e2e:fixture`, then select

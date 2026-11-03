@@ -2,18 +2,18 @@ import defaultTranslationsJson from '@i18n/en.json';
 import {
   DEFAULT_LOCALE,
   LOCALES,
+  isAppLocale,
   type Locale,
   type LocaleInfo,
   type SettingLocale,
   type TranslationKeys,
   type Translations,
 } from '@t/i18n-types';
+import { LOCALE_STORAGE_KEY } from '@utils/constants';
 import { detectInitialLocale, detectUserLocale, updateDocumentLang } from '@utils/format-utils';
 import { logger } from '@utils/logger';
 import type { Component, JSX } from 'solid-js';
 import { createContext, createEffect, createSignal, Show, useContext } from 'solid-js';
-
-const LOCALE_STORAGE_KEY = 'dropconvert.locale';
 
 export interface LocaleContextValue {
   /** The resolved concrete locale (never 'auto'). */
@@ -36,11 +36,18 @@ const LocaleContext = createContext<LocaleContextValue | undefined>(undefined);
 const defaultTranslations = defaultTranslationsJson as Translations;
 const translationCache = new Map<Locale, Translations>([[DEFAULT_LOCALE, defaultTranslations]]);
 
+/** Explicit bundle coverage; methods can be replaced in focused loader-failure tests. */
+export const localeLoaders = {
+  en: () => import('@i18n/en.json'),
+  ko: () => import('@i18n/ko.json'),
+  ja: () => import('@i18n/ja.json'),
+  'zh-CN': () => import('@i18n/zh-CN.json'),
+  es: () => import('@i18n/es.json'),
+  ar: () => import('@i18n/ar.json'),
+} satisfies Record<Locale, () => Promise<{ default: Record<string, string> }>>;
+
 async function importLocale(locale: Locale): Promise<Translations> {
-  const translations = (await import(`@i18n/${locale}.json`)) as {
-    default: Translations;
-  };
-  return translations.default;
+  return (await localeLoaders[locale]()).default as Translations;
 }
 
 async function loadTranslations(locale: Locale): Promise<Translations> {
@@ -75,7 +82,7 @@ function resolveInitialSetting(storageKey: string): SettingLocale {
   try {
     const stored = localStorage.getItem(storageKey);
     if (stored === 'auto') return 'auto';
-    if (stored && LOCALES.some((l) => l.code === stored)) return stored as Locale;
+    if (isAppLocale(stored)) return stored;
   } catch {
     /* localStorage unavailable */
   }
