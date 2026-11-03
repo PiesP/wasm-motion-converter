@@ -92,6 +92,7 @@ function resolveInitialSetting(storageKey: string): SettingLocale {
 export interface LocaleProviderProps {
   children: JSX.Element;
   initialLocale?: Locale;
+  loadTranslations?: ((locale: Locale) => Promise<Translations>) | undefined;
 }
 
 const Provider = LocaleContext.Provider;
@@ -121,7 +122,7 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
     const info = LOCALES.find((l) => l.code === currentLocaleValue)!;
     updateDocumentLang(currentLocaleValue, info.dir);
     const gen = ++loadGeneration;
-    void loadTranslations(currentLocaleValue)
+    void (props.loadTranslations ?? loadTranslations)(currentLocaleValue)
       .then((loaded) => {
         if (gen === loadGeneration) {
           setTranslations(loaded);

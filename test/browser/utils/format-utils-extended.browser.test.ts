@@ -31,6 +31,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('locale-aware format utilities', () => {
@@ -83,6 +84,19 @@ describe('locale-aware format utilities', () => {
     expect(detectInitialLocale('test-locale')).toBe('zh-CN');
     localStorage.setItem('test-locale', 'auto');
     expect(detectInitialLocale('test-locale')).toBe('zh-CN');
+  });
+
+  it('continues through browser preferences until one belongs to the app subset', () => {
+    vi.stubGlobal('navigator', { languages: ['ja', 'ko-KR'], language: 'en' });
+    expect(detectUserLocale(['ko'])).toBe('ko');
+    expect(detectUserLocale(['ar'])).toBe('en');
+  });
+
+  it('retains platform language priority when it belongs to the app subset', () => {
+    vi.stubGlobal('chrome', { i18n: { getUILanguage: () => 'ar-EG' } });
+    vi.stubGlobal('navigator', { languages: ['ko-KR'], language: 'ko-KR' });
+    expect(detectUserLocale(['en', 'ko', 'ar'])).toBe('ar');
+    expect(detectUserLocale(['en', 'ko'])).toBe('ko');
   });
 
   it('ignores invalid or unavailable local storage', () => {

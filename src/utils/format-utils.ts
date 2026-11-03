@@ -9,7 +9,7 @@
  * (over-engineering reduction: merge tiny utility files).
  */
 
-import { detectLocale, formatDuration, formatFileSize } from '@piesp/browser-core/locale';
+import { formatDuration, formatFileSize, normalizeLocale } from '@piesp/browser-core/locale';
 import type { Locale } from '@t/i18n-types';
 import { DEFAULT_LOCALE, APP_LOCALE_CODES, isAppLocale } from '@t/i18n-types';
 
@@ -88,8 +88,40 @@ export function detectUserLocale(
   supportedLocales: Locale[],
   defaultLocale: Locale = DEFAULT_LOCALE
 ): Locale {
-  const detected = detectLocale({ defaultLocale });
-  return isAppLocale(detected) && supportedLocales.includes(detected) ? detected : defaultLocale;
+  const match = (raw: unknown): Locale | null => {
+    if (typeof raw !== 'string') return null;
+    const normalized = normalizeLocale(raw);
+    return isAppLocale(normalized) && supportedLocales.includes(normalized) ? normalized : null;
+  };
+
+  try {
+    const platformLanguage = (
+      globalThis as { chrome?: { i18n?: { getUILanguage?: () => string } } }
+    ).chrome?.i18n?.getUILanguage?.();
+    const platformMatch = match(platformLanguage);
+    if (platformMatch) return platformMatch;
+  } catch {
+    // Platform API may be unavailable outside an extension.
+  }
+
+  try {
+    if (typeof navigator !== 'undefined') {
+      const languages = navigator.languages;
+      if (languages?.length) {
+        for (const language of languages) {
+          const matched = match(language);
+          if (matched) return matched;
+        }
+      } else {
+        const matched = match(navigator.language);
+        if (matched) return matched;
+      }
+    }
+  } catch {
+    // Navigator may be unavailable in an isolated runtime.
+  }
+
+  return defaultLocale;
 }
 
 /**
