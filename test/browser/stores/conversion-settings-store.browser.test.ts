@@ -116,6 +116,24 @@ describe('conversion-settings-store', () => {
     expect(mod2.conversionSettings()).toEqual(testSettings);
   });
 
+  it('round-trips every supported option choice', async () => {
+    for (const [field, values] of [
+      ['format', ['gif', 'webp']],
+      ['quality', ['low', 'medium', 'high']],
+      ['scale', [0.5, 0.75, 1]],
+      ['smartFrameSkip', ['off', 'low', 'medium', 'high', 'adaptive']],
+    ] as const) {
+      for (const value of values) {
+        window.localStorage.clear();
+        const settings = { ...makeTestSettings(), [field]: value };
+        const writer = await importFreshSettingsStore();
+        writer.saveConversionSettings(settings);
+        const reader = await importFreshSettingsStore();
+        expect(reader.conversionSettings()).toEqual(settings);
+      }
+    }
+  });
+
   it('preserves a last-segment trim that uses trimEnd=0 as the full-duration sentinel', async () => {
     const mod1 = await importFreshSettingsStore();
     mod1.saveConversionSettings(makeTestSettings({ trimStart: 5, trimEnd: 0 }));

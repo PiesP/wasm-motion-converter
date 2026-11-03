@@ -2,16 +2,14 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
-import type { ConversionScale, VideoMetadata } from '@t/conversion-types';
+import { CONVERSION_SCALES, type ConversionScale, type VideoMetadata } from '@t/conversion-types';
 import type { Component } from 'solid-js';
 import { createMemo, splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
 const SCALE_COLUMNS = 3;
-const SCALE_50_PERCENT = 0.5;
-const SCALE_75_PERCENT = 0.75;
-const SCALE_100_PERCENT = 1.0;
+const SCALE_PERCENT = 100;
 
 interface ScaleSelectorProps {
   value: ConversionScale;
@@ -34,15 +32,13 @@ const ScaleSelector: Component<ScaleSelectorProps> = (props) => {
     return `${width}x${height}`;
   };
 
-  const options = createMemo<OptionSelectorOption<ConversionScale>[]>(() => [
-    { value: SCALE_50_PERCENT, label: '50%', description: getOutputResolution(SCALE_50_PERCENT) },
-    { value: SCALE_75_PERCENT, label: '75%', description: getOutputResolution(SCALE_75_PERCENT) },
-    {
-      value: SCALE_100_PERCENT,
-      label: '100%',
-      description: getOutputResolution(SCALE_100_PERCENT),
-    },
-  ]);
+  const options = createMemo<OptionSelectorOption<ConversionScale>[]>(() =>
+    CONVERSION_SCALES.map((value) => ({
+      value,
+      label: `${value * SCALE_PERCENT}%`,
+      description: getOutputResolution(value),
+    }))
+  );
 
   return (
     <OptionSelector

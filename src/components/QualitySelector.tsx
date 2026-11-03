@@ -2,7 +2,11 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
-import type { ConversionFormat, ConversionQuality } from '@t/conversion-types';
+import {
+  CONVERSION_QUALITIES,
+  type ConversionFormat,
+  type ConversionQuality,
+} from '@t/conversion-types';
 import { GIF_TARGET_FPS, WEBP_TARGET_FPS } from '@utils/constants';
 import type { Component } from 'solid-js';
 import { createMemo, splitProps } from 'solid-js';
@@ -10,6 +14,11 @@ import { createMemo, splitProps } from 'solid-js';
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
 
 const QUALITY_COLUMNS = 3;
+const QUALITY_LABEL_KEYS = {
+  low: ['quality.low', 'quality.lowDesc'],
+  medium: ['quality.medium', 'quality.mediumDesc'],
+  high: ['quality.high', 'quality.highDesc'],
+} as const satisfies Record<ConversionQuality, readonly [string, string]>;
 
 interface QualitySelectorProps {
   format: ConversionFormat;
@@ -26,23 +35,13 @@ const QualitySelector: Component<QualitySelectorProps> = (props) => {
   const targetFps = (quality: ConversionQuality): number =>
     local.format === 'gif' ? GIF_TARGET_FPS[quality] : WEBP_TARGET_FPS[quality];
 
-  const QUALITY_OPTIONS = createMemo<OptionSelectorOption<ConversionQuality>[]>(() => [
-    {
-      value: 'low',
-      label: t('quality.low'),
-      description: t('quality.lowDesc', { fps: targetFps('low') }),
-    },
-    {
-      value: 'medium',
-      label: t('quality.medium'),
-      description: t('quality.mediumDesc', { fps: targetFps('medium') }),
-    },
-    {
-      value: 'high',
-      label: t('quality.high'),
-      description: t('quality.highDesc', { fps: targetFps('high') }),
-    },
-  ]);
+  const QUALITY_OPTIONS = createMemo<OptionSelectorOption<ConversionQuality>[]>(() =>
+    CONVERSION_QUALITIES.map((value) => ({
+      value,
+      label: t(QUALITY_LABEL_KEYS[value][0]),
+      description: t(QUALITY_LABEL_KEYS[value][1], { fps: targetFps(value) }),
+    }))
+  );
 
   return (
     <OptionSelector

@@ -2,11 +2,19 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
-import type { SmartFrameSkipMode } from '@t/conversion-types';
+import { SMART_FRAME_SKIP_MODES, type SmartFrameSkipMode } from '@t/conversion-types';
 import type { Component } from 'solid-js';
 import { createMemo, splitProps } from 'solid-js';
 
 import OptionSelector, { type OptionSelectorOption } from './OptionSelector';
+
+const SKIP_LABEL_KEYS = {
+  off: ['frameSkip.off', 'frameSkip.offDesc'],
+  low: ['frameSkip.low', 'frameSkip.lowDesc'],
+  medium: ['frameSkip.medium', 'frameSkip.mediumDesc'],
+  high: ['frameSkip.high', 'frameSkip.highDesc'],
+  adaptive: ['frameSkip.adaptive', 'frameSkip.adaptiveDesc'],
+} as const satisfies Record<SmartFrameSkipMode, readonly [string, string]>;
 
 interface SmartFrameSkipSelectorProps {
   value: SmartFrameSkipMode;
@@ -18,13 +26,13 @@ const SmartFrameSkipSelector: Component<SmartFrameSkipSelectorProps> = (props) =
   const { t } = useLocale();
   const [local] = splitProps(props, ['value', 'onChange', 'disabled']);
 
-  const SKIP_OPTIONS = createMemo<OptionSelectorOption<SmartFrameSkipMode>[]>(() => [
-    { value: 'off', label: t('frameSkip.off'), description: t('frameSkip.offDesc') },
-    { value: 'low', label: t('frameSkip.low'), description: t('frameSkip.lowDesc') },
-    { value: 'medium', label: t('frameSkip.medium'), description: t('frameSkip.mediumDesc') },
-    { value: 'high', label: t('frameSkip.high'), description: t('frameSkip.highDesc') },
-    { value: 'adaptive', label: t('frameSkip.adaptive'), description: t('frameSkip.adaptiveDesc') },
-  ]);
+  const SKIP_OPTIONS = createMemo<OptionSelectorOption<SmartFrameSkipMode>[]>(() =>
+    SMART_FRAME_SKIP_MODES.map((value) => ({
+      value,
+      label: t(SKIP_LABEL_KEYS[value][0]),
+      description: t(SKIP_LABEL_KEYS[value][1]),
+    }))
+  );
 
   return (
     <OptionSelector

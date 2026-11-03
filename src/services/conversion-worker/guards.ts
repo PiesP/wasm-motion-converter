@@ -18,6 +18,7 @@ import {
   PROFILE_OPERATIONS,
   type StageMetrics,
 } from '@services/conversion-profiler';
+import { isConversionFormat, isConversionQuality, isSmartFrameSkipMode } from '@t/conversion-types';
 
 import type { WorkerRequest, WorkerResponse } from './types';
 import { WORKER_LOG_MAX_MESSAGE_CHARS, WORKER_LOG_MAX_REQUEST_ID_CHARS } from './types';
@@ -172,8 +173,8 @@ function isValidDecoderConfig(config: unknown): config is Record<string, unknown
 function isValidConversionOptions(options: unknown): options is Record<string, unknown> {
   if (!isRecord(options)) return false;
   return (
-    isNonEmptyString(options.format) &&
-    isNonEmptyString(options.quality) &&
+    isConversionFormat(options.format) &&
+    isConversionQuality(options.quality) &&
     typeof options.fps === 'number' &&
     Number.isFinite(options.fps) &&
     options.fps > 0 &&
@@ -192,7 +193,9 @@ function isValidConversionOptions(options: unknown): options is Record<string, u
       (isFinitePositive(options.forceDecimation) &&
         Number.isSafeInteger(options.forceDecimation))) &&
     (options.memoryPressureCadenceRatio === undefined ||
-      isFinitePositive(options.memoryPressureCadenceRatio))
+      isFinitePositive(options.memoryPressureCadenceRatio)) &&
+    (options.smartFrameSkip === undefined || isSmartFrameSkipMode(options.smartFrameSkip)) &&
+    (options.maxMemoryMB === undefined || isFinitePositive(options.maxMemoryMB))
   );
 }
 

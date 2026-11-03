@@ -58,6 +58,7 @@ import { exercisePreviewRetry, exerciseSelectionPreviewBaseline } from './select
 import { observeFutureSettings, observeOlderTab, seedFutureSettings } from './settings-schema.ts';
 import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
+import { exerciseInvalidWorkerOptions } from './worker-option-contract.ts';
 
 export {
   installCancellationInspector,
@@ -3795,6 +3796,16 @@ export async function run({
       viewport: { width: 1280, height: 800 },
     });
     const page = await context.newPage();
+    const conversionWorkerUrls: string[] = [];
+    page.on('worker', (worker) => {
+      const url = new URL(worker.url());
+      if (
+        url.origin === new URL(started.url).origin &&
+        /^\/assets\/worker-[\w-]+\.js$/.test(url.pathname)
+      ) {
+        conversionWorkerUrls.push(url.href);
+      }
+    });
     page.on('pageerror', (error) => pageErrors.push(error.message));
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
@@ -3894,6 +3905,12 @@ export async function run({
         'Logical-count rejection before size-table expansion; browser heap/RSS not measured',
     });
     checks.push(recoveredGif);
+    assert.equal(
+      conversionWorkerUrls.length,
+      1,
+      'GIF conversion did not load one built conversion Worker'
+    );
+    checks.push(await exerciseInvalidWorkerOptions(page, conversionWorkerUrls[0]!));
     await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
     await loadApplication(page, started.url);
     await selectFixture(page, matroskaMetadataFixture);

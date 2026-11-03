@@ -17,10 +17,11 @@
  * @example
  * const format: ConversionFormat = 'gif';
  */
-export type ConversionFormat = 'gif' | 'webp';
+export const CONVERSION_FORMATS = ['gif', 'webp'] as const;
+export type ConversionFormat = (typeof CONVERSION_FORMATS)[number];
 
-/** Runtime-available list of all ConversionFormat values (single source of truth) */
-export const CONVERSION_FORMATS: readonly ConversionFormat[] = ['gif', 'webp'] as const;
+export const isConversionFormat = (value: unknown): value is ConversionFormat =>
+  typeof value === 'string' && CONVERSION_FORMATS.some((format) => format === value);
 
 /**
  * VideoDecoderConfig as extended by mediabunny at runtime.
@@ -50,14 +51,11 @@ export type VideoRotation = 0 | 90 | 180 | 270;
  * @example
  * const quality: ConversionQuality = 'high';
  */
-export type ConversionQuality = 'low' | 'medium' | 'high';
+export const CONVERSION_QUALITIES = ['low', 'medium', 'high'] as const;
+export type ConversionQuality = (typeof CONVERSION_QUALITIES)[number];
 
-/** Runtime-available list of all ConversionQuality values */
-export const CONVERSION_QUALITIES: readonly ConversionQuality[] = [
-  'low',
-  'medium',
-  'high',
-] as const;
+export const isConversionQuality = (value: unknown): value is ConversionQuality =>
+  typeof value === 'string' && CONVERSION_QUALITIES.some((quality) => quality === value);
 
 /**
  * Video scaling factor
@@ -71,10 +69,13 @@ export const CONVERSION_QUALITIES: readonly ConversionQuality[] = [
  * @example
  * const scale: ConversionScale = 0.75;
  */
-export type ConversionScale = 0.5 | 0.75 | 1.0;
+export const CONVERSION_SCALES = [0.5, 0.75, 1.0] as const;
+export type ConversionScale = (typeof CONVERSION_SCALES)[number];
 
-/** Runtime-available list of all ConversionScale values */
-export const CONVERSION_SCALES: readonly ConversionScale[] = [0.5, 0.75, 1.0] as const;
+export const isConversionScale = (value: unknown): value is ConversionScale =>
+  typeof value === 'number' &&
+  Number.isFinite(value) &&
+  CONVERSION_SCALES.some((scale) => scale === value);
 
 /**
  * Smart frame skip mode — controls similarity-based frame deduplication.
@@ -89,16 +90,11 @@ export const CONVERSION_SCALES: readonly ConversionScale[] = [0.5, 0.75, 1.0] as
  * - `high`: Aggressive motion threshold (6)
  * - `adaptive`: Motion-dependent cadence within the requested resource floor
  */
-export type SmartFrameSkipMode = 'off' | 'low' | 'medium' | 'high' | 'adaptive';
+export const SMART_FRAME_SKIP_MODES = ['off', 'low', 'medium', 'high', 'adaptive'] as const;
+export type SmartFrameSkipMode = (typeof SMART_FRAME_SKIP_MODES)[number];
 
-/** Runtime-available list of all SmartFrameSkipMode values */
-export const SMART_FRAME_SKIP_MODES: readonly SmartFrameSkipMode[] = [
-  'off',
-  'low',
-  'medium',
-  'high',
-  'adaptive',
-] as const;
+export const isSmartFrameSkipMode = (value: unknown): value is SmartFrameSkipMode =>
+  typeof value === 'string' && SMART_FRAME_SKIP_MODES.some((mode) => mode === value);
 
 /**
  * User-selected conversion settings

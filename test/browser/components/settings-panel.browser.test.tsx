@@ -56,3 +56,40 @@ it('keeps sharing settings unavailable while the application is busy', () => {
   button?.click();
   expect(onSharingSettings).toHaveBeenCalledOnce();
 });
+
+it('shows every supported conversion choice in the established order', () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  dispose = render(
+    () => (
+      <SettingsPanel
+        isBusy={false}
+        isCancelling={false}
+        isComplete={false}
+        isConversionActive={false}
+        settings={DEFAULT_CONVERSION_SETTINGS}
+        metadata={null}
+        onConvert={() => {}}
+        onCancel={() => {}}
+        onFormatChange={() => {}}
+        onQualityChange={() => {}}
+        onScaleChange={() => {}}
+        onSmartFrameSkipChange={() => {}}
+        onSharingSettings={() => {}}
+      />
+    ),
+    container
+  );
+
+  for (const [name, expected] of [
+    ['format', ['gif', 'webp']],
+    ['quality', ['low', 'medium', 'high']],
+    ['scale', ['0.5', '0.75', '1']],
+    ['smart-frame-skip', ['off', 'low', 'medium', 'high', 'adaptive']],
+  ] as const) {
+    const actual = [...container.querySelectorAll<HTMLInputElement>(`input[name="${name}"]`)].map(
+      (input) => input.value
+    );
+    expect(actual).toEqual(expected);
+  }
+});

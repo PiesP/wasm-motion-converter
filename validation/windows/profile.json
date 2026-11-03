@@ -67,6 +67,7 @@
     "validation/windows/trim-submission.ts",
     "validation/windows/webp-initialization.ts",
     "validation/windows/settings-schema.ts",
-    "validation/windows/analysis-worker-recovery.ts"
+    "validation/windows/analysis-worker-recovery.ts",
+    "validation/windows/worker-option-contract.ts"
   ]
 }
