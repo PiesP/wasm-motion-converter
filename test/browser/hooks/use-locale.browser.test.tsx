@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { LocaleProvider, useLocale } from '@hooks/use-locale';
+import { LocaleProvider, localeLoaders, useLocale } from '@hooks/use-locale';
 import arTranslations from '@i18n/ar.json';
 import enTranslations from '@i18n/en.json';
-import type { Locale, SettingLocale, Translations } from '@t/i18n-types';
+import type { SettingLocale } from '@t/i18n-types';
 import { render } from 'solid-js/web';
 import { afterEach, expect, it, vi } from 'vite-plus/test';
 
@@ -23,12 +23,12 @@ function Probe() {
   );
 }
 
-function mount(loader?: (locale: Locale) => Promise<Translations>): void {
+function mount(): void {
   const container = document.createElement('div');
   document.body.appendChild(container);
   dispose = render(
     () => (
-      <LocaleProvider loadTranslations={loader}>
+      <LocaleProvider>
         <Probe />
       </LocaleProvider>
     ),
@@ -47,6 +47,7 @@ afterEach(() => {
   dispose = undefined;
   setLanguage = undefined;
   document.body.innerHTML = '';
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   localStorage.clear();
 });
@@ -89,23 +90,24 @@ it('survives unavailable storage when detecting and saving a language', async ()
 });
 
 it('keeps the newer language after a delayed older load and falls back after a failed load', async () => {
-  let resolveKo: ((value: Translations) => void) | undefined;
-  const loader = (locale: Locale): Promise<Translations> => {
-    if (locale === 'ko')
-      return new Promise((resolve) => {
+  let resolveKo: ((value: Awaited<ReturnType<typeof localeLoaders.ko>>) => void) | undefined;
+  const koLoader = vi.spyOn(localeLoaders, 'ko').mockImplementation(
+    () =>
+      new Promise((resolve) => {
         resolveKo = resolve;
-      });
-    if (locale === 'ja') return Promise.reject(new Error('simulated translation load failure'));
-    if (locale === 'ar') return Promise.resolve(arTranslations as Translations);
-    return Promise.resolve(enTranslations as Translations);
-  };
+      })
+  );
+  const jaLoader = vi
+    .spyOn(localeLoaders, 'ja')
+    .mockRejectedValue(new Error('simulated translation load failure'));
   localStorage.setItem('dropconvert.locale', 'en');
-  mount(loader);
+  mount();
   await ready();
   setLanguage?.('ko');
   await vi.waitFor(() => expect(resolveKo).toBeTypeOf('function'));
+  expect(koLoader).toHaveBeenCalledOnce();
   setLanguage?.('en');
-  resolveKo?.({ ...enTranslations, 'app.title': 'Stale Korean title' } as Translations);
+  resolveKo?.({ default: { ...enTranslations, 'app.title': 'Stale Korean title' } });
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(document.querySelector('[data-testid="title"]')?.textContent).toBe(
     enTranslations['app.title']
@@ -127,4 +129,5 @@ it('keeps the newer language after a delayed older load and falls back after a f
       enTranslations['app.title']
     )
   );
+  expect(jaLoader).toHaveBeenCalledOnce();
 });

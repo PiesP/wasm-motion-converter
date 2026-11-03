@@ -36,7 +36,8 @@ const LocaleContext = createContext<LocaleContextValue | undefined>(undefined);
 const defaultTranslations = defaultTranslationsJson as Translations;
 const translationCache = new Map<Locale, Translations>([[DEFAULT_LOCALE, defaultTranslations]]);
 
-const localeLoaders = {
+/** Explicit bundle coverage; methods can be replaced in focused loader-failure tests. */
+export const localeLoaders = {
   en: () => import('@i18n/en.json'),
   ko: () => import('@i18n/ko.json'),
   ja: () => import('@i18n/ja.json'),
@@ -92,7 +93,6 @@ function resolveInitialSetting(storageKey: string): SettingLocale {
 export interface LocaleProviderProps {
   children: JSX.Element;
   initialLocale?: Locale;
-  loadTranslations?: ((locale: Locale) => Promise<Translations>) | undefined;
 }
 
 const Provider = LocaleContext.Provider;
@@ -122,7 +122,7 @@ export const LocaleProvider: Component<LocaleProviderProps> = (props) => {
     const info = LOCALES.find((l) => l.code === currentLocaleValue)!;
     updateDocumentLang(currentLocaleValue, info.dir);
     const gen = ++loadGeneration;
-    void (props.loadTranslations ?? loadTranslations)(currentLocaleValue)
+    void loadTranslations(currentLocaleValue)
       .then((loaded) => {
         if (gen === loadGeneration) {
           setTranslations(loaded);
