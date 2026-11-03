@@ -86,6 +86,23 @@ Mode tests separately exercise app unmount flush, migration and storage errors;
 this Windows fixture does not simulate a power failure or claim atomic cross-tab
 writes. The focused selector does not consume `prior-dist/` or a public target.
 
+For the focused conversion-option contract, first generate the small H.264
+fixture with `vp run prepare:e2e:fixture`, then select
+`--scenario conversion-option-contract` on the shared `vmctl.py plan`, `bundle`,
+or `run` command in Edge desktop mode. The controller builds `dist/` from the
+selected source and packages only that build, the fixture, and source modules.
+The profile verifies a GIF download and an app-owned built Worker `start` and
+`complete` with matching request ID and output SHA-256. It opens a fresh instance
+of that Worker to require bounded `INVALID_REQUEST` responses for unsupported
+format, quality, frame-skip, and memory-limit values. A second app page forces
+Worker construction to fail and verifies byte-identical GIF output from the
+main-thread fallback. A third
+page forces the WebP encoder pool Worker to fail and verifies serial native
+Canvas encoding. All downloads must decode to 80×45 preview images. These
+route injections are controlled capability failures; they do not prove a
+field Worker failure. This scenario does not need `prior-dist/`, a public
+target, or the full output-contract corpus.
+
 For focused packet-lookup qualification, run `vp run prepare:e2e:fixture` and put
 `{"scenario":"packet-lookup"}` in the ignored
 `validation/windows/inputs/packet-lookup.json` selector, with other focused

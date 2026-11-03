@@ -58,7 +58,14 @@ import { exercisePreviewRetry, exerciseSelectionPreviewBaseline } from './select
 import { observeFutureSettings, observeOlderTab, seedFutureSettings } from './settings-schema.ts';
 import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
-import { exerciseInvalidWorkerOptions } from './worker-option-contract.ts';
+import {
+  exerciseInvalidWorkerOptions,
+  installAppWorkerObserver,
+  installUnavailableWorkerObserver,
+  readAppWorkerObservation,
+  readMainThreadWebpObservation,
+  readUnavailableWorkerObservation,
+} from './worker-option-contract.ts';
 
 export {
   installCancellationInspector,
@@ -2940,6 +2947,152 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const optionSelectorPath = resolve(
+    bundleRoot,
+    'validation/windows/inputs/conversion-option-contract.json'
+  );
+  let optionSelectorText: string | undefined;
+  try {
+    optionSelectorText = await readFile(optionSelectorPath, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (optionSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(optionSelectorText), { scenario: 'conversion-option-contract' });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    const others = [
+      'analysis-worker-recovery.json',
+      'app-update.json',
+      'narrow-output.json',
+      'output-finalization-v2.json',
+      'output-finalization.json',
+      'packet-lookup.json',
+      'preview-retry.json',
+      'recovery.json',
+      'selection-preview.json',
+      'service-worker-handoff.json',
+      'settings-schema.json',
+      'trim-submission.json',
+      'webp-initialization.json',
+    ].filter((name) => selected.includes(name));
+    assert.deepEqual(others, [], 'Conversion option contract requires one focused selector');
+    const fixturePath = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
+    const fixtureBytes = await readFile(fixturePath);
+    const build = await readBuild(bundleRoot, 'dist', validateBundleFile, {
+      verifyInventory: true,
+      exactInventory: true,
+    });
+    const started = await startStaticServer(bundleRoot);
+    const evidencePath = join(output, 'conversion-option-contract.json');
+    const result: Record<string, unknown> = {
+      scenario: 'conversion-option-contract',
+      status: 'running',
+      build,
+      fixture: { path: SMALL_FIXTURE, bytes: fixtureBytes.length, sha256: sha256(fixtureBytes) },
+      checks: [],
+    };
+    try {
+      async function convert(page: Page, format: 'gif' | 'webp') {
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        await loadApplication(page, started.url);
+        await selectFixture(page, fixturePath);
+        await chooseOption(page, 'format', format);
+        await chooseOption(page, 'quality', 'low');
+        await chooseOption(page, 'scale', '0.5');
+        await chooseOption(page, 'smart-frame-skip', 'off');
+        await page.locator('[data-testid="convert-button"]').click();
+        await proceedIfPrompted(page);
+        await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
+        const download = page.waitForEvent('download', { timeout: 30_000 });
+        await page.locator('[data-testid="download-result-button"]').click();
+        const bytes = await readDownload(await download);
+        validateOutput(bytes, format);
+        const image = page.locator('[data-testid="result-image"]');
+        await image.waitFor({ state: 'visible', timeout: 30_000 });
+        await page.waitForFunction(
+          () => {
+            const image = document.querySelector('[data-testid="result-image"]');
+            return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+          },
+          undefined,
+          { timeout: 30_000 }
+        );
+        const dimensions = await image.evaluate((element) => {
+          if (!(element instanceof HTMLImageElement)) throw new Error('Result is not an image');
+          return { width: element.naturalWidth, height: element.naturalHeight };
+        });
+        assert.deepEqual(dimensions, { width: 80, height: 45 });
+        return { format, bytes: bytes.length, sha256: sha256(bytes), dimensions };
+      }
+
+      let primaryGifSha256: string | undefined;
+      const gifContext = await browser.newContext({
+        locale: 'en-US',
+        serviceWorkers: 'block',
+        viewport: { width: 1280, height: 900 },
+      });
+      try {
+        const gifPage = await gifContext.newPage();
+        await installAppWorkerObserver(gifPage);
+        const output = await convert(gifPage, 'gif');
+        const route = await readAppWorkerObservation(gifPage);
+        assert.equal(new URL(route.url).origin, new URL(started.url).origin);
+        assert(
+          build.state.files.some((file) => `/${file.path}` === new URL(route.url).pathname),
+          'App conversion Worker is absent from the verified build inventory'
+        );
+        assert.equal(route.completes[0]?.outputBytes, output.bytes);
+        assert.equal(route.completes[0]?.sha256, output.sha256);
+        primaryGifSha256 = output.sha256;
+        const check: Record<string, unknown> = { id: 'gif-app-worker', output, route };
+        (result.checks as unknown[]).push(check);
+        check.invalid = await exerciseInvalidWorkerOptions(gifPage, route.url);
+      } finally {
+        await gifContext.close();
+      }
+
+      const fallbackContext = await browser.newContext({
+        locale: 'en-US',
+        serviceWorkers: 'block',
+        viewport: { width: 1280, height: 900 },
+      });
+      try {
+        const fallbackPage = await fallbackContext.newPage();
+        await installUnavailableWorkerObserver(fallbackPage);
+        const output = await convert(fallbackPage, 'gif');
+        assert.equal(output.sha256, primaryGifSha256, 'Main-thread GIF output differs from Worker');
+        const route = await readUnavailableWorkerObservation(fallbackPage);
+        (result.checks as unknown[]).push({ id: 'gif-main-thread-fallback', output, route });
+      } finally {
+        await fallbackContext.close();
+      }
+
+      const webpContext = await browser.newContext({
+        locale: 'en-US',
+        serviceWorkers: 'block',
+        viewport: { width: 1280, height: 900 },
+      });
+      try {
+        const webpPage = await webpContext.newPage();
+        await installUnavailableWorkerObserver(webpPage);
+        const output = await convert(webpPage, 'webp');
+        const route = await readMainThreadWebpObservation(webpPage);
+        (result.checks as unknown[]).push({ id: 'webp-native-serial-canvas', output, route });
+      } finally {
+        await webpContext.close();
+      }
+      result.status = 'passed';
+      return { profile: 'conversion-option-contract', ...result };
+    } catch (error) {
+      result.status = 'failed';
+      result.failure = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      await closeServer(started.server);
+      await mkdir(output, { recursive: true });
+      await writeFile(evidencePath, `${JSON.stringify(result, null, 2)}\n`);
+    }
+  }
   const recoverySelector = resolve(
     bundleRoot,
     'validation/windows/inputs/analysis-worker-recovery.json'
@@ -3796,16 +3949,6 @@ export async function run({
       viewport: { width: 1280, height: 800 },
     });
     const page = await context.newPage();
-    const conversionWorkerUrls: string[] = [];
-    page.on('worker', (worker) => {
-      const url = new URL(worker.url());
-      if (
-        url.origin === new URL(started.url).origin &&
-        /^\/assets\/worker-[\w-]+\.js$/.test(url.pathname)
-      ) {
-        conversionWorkerUrls.push(url.href);
-      }
-    });
     page.on('pageerror', (error) => pageErrors.push(error.message));
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
@@ -3905,12 +4048,6 @@ export async function run({
         'Logical-count rejection before size-table expansion; browser heap/RSS not measured',
     });
     checks.push(recoveredGif);
-    assert.equal(
-      conversionWorkerUrls.length,
-      1,
-      'GIF conversion did not load one built conversion Worker'
-    );
-    checks.push(await exerciseInvalidWorkerOptions(page, conversionWorkerUrls[0]!));
     await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
     await loadApplication(page, started.url);
     await selectFixture(page, matroskaMetadataFixture);
