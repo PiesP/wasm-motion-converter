@@ -2995,6 +2995,11 @@ export async function run({
     const evidencePath = join(output, 'conversion-option-contract.json');
     const checks: Record<string, unknown>[] = [];
     const artifacts: Artifact[] = [];
+    const browserErrors: Array<{
+      route: string;
+      pageErrors: string[];
+      consoleErrors: string[];
+    }> = [];
     const result: Record<string, unknown> = {
       scenario: 'conversion-option-contract',
       status: 'running',
@@ -3008,9 +3013,18 @@ export async function run({
       outputContract: { path: OUTPUT_CONTRACT, sha256: sha256(outputContractBytes) },
       checks,
       artifacts,
+      browserErrors,
     };
     try {
       await mkdir(output, { recursive: true });
+      function watchBrowserErrors(page: Page, route: string) {
+        const observed = { route, pageErrors: [] as string[], consoleErrors: [] as string[] };
+        browserErrors.push(observed);
+        page.on('pageerror', (error) => observed.pageErrors.push(error.message));
+        page.on('console', (message) => {
+          if (message.type() === 'error') observed.consoleErrors.push(message.text());
+        });
+      }
       async function convertSmall(page: Page, format: 'gif' | 'webp') {
         await page.emulateMedia({ reducedMotion: 'no-preference' });
         await loadApplication(page, started.url);
@@ -3073,6 +3087,7 @@ export async function run({
       });
       try {
         const gifPage = await gifContext.newPage();
+        watchBrowserErrors(gifPage, 'gif-worker');
         await installAppWorkerObserver(gifPage);
         await gifPage.emulateMedia({ reducedMotion: 'no-preference' });
         const gradient = await convertSmall(gifPage, 'gif');
@@ -3101,6 +3116,7 @@ export async function run({
         assert.equal(gradientRoute.completes[0]?.outputBytes, gradientOutput.bytes);
         assert.equal(gradientRoute.completes[0]?.sha256, gradientOutput.sha256);
         gradientCheck.invalid = await exerciseInvalidWorkerOptions(gifPage, gradientRoute.url);
+        await recordScreenshot(gifPage, output, 'conversion-option-gif-worker.png', artifacts);
 
         const check: Record<string, unknown> = { id: 'gif-app-worker-cfr' };
         checks.push(check);
@@ -3145,6 +3161,7 @@ export async function run({
       });
       try {
         const fallbackPage = await fallbackContext.newPage();
+        watchBrowserErrors(fallbackPage, 'gif-main-thread');
         await installUnavailableWorkerObserver(fallbackPage);
         await fallbackPage.emulateMedia({ reducedMotion: 'no-preference' });
         const gradient = await convertSmall(fallbackPage, 'gif');
@@ -3158,6 +3175,7 @@ export async function run({
         };
         checks.push(gradientCheck);
         gradientCheck.route = await readUnavailableWorkerObservation(fallbackPage);
+        await recordScreenshot(fallbackPage, output, 'conversion-option-gif-main.png', artifacts);
 
         const check: Record<string, unknown> = { id: 'gif-main-thread-cfr' };
         checks.push(check);
@@ -3189,15 +3207,24 @@ export async function run({
       });
       try {
         const webpPage = await webpContext.newPage();
+        watchBrowserErrors(webpPage, 'webp-serial-canvas');
         await installUnavailableWorkerObserver(webpPage);
         const converted = await convertSmall(webpPage, 'webp');
-        const output = await retainOutput('webp-serial', 'webp', converted);
-        const check: Record<string, unknown> = { id: 'webp-native-serial-canvas', output };
+        const retainedOutput = await retainOutput('webp-serial', 'webp', converted);
+        const check: Record<string, unknown> = {
+          id: 'webp-native-serial-canvas',
+          output: retainedOutput,
+        };
         checks.push(check);
         const route = await readMainThreadWebpObservation(webpPage);
         check.route = route;
+        await recordScreenshot(webpPage, output, 'conversion-option-webp-serial.png', artifacts);
       } finally {
         await webpContext.close();
+      }
+      for (const observed of browserErrors) {
+        assert.deepEqual(observed.pageErrors, [], `${observed.route} emitted page errors`);
+        assert.deepEqual(observed.consoleErrors, [], `${observed.route} emitted console errors`);
       }
       result.status = 'passed';
       return { profile: 'conversion-option-contract', ...result };

@@ -108,7 +108,8 @@ harmless. A third page forces the WebP encoder pool Worker to fail and verifies
 serial native Canvas encoding with an 80×45 preview. These route injections are
 controlled capability failures; they do not prove a field Worker failure. This
 scenario does not need `prior-dist/`, a public target, or the full
-output-contract corpus.
+output-contract corpus. It retains a completed-result screenshot for each of
+the three routes and fails on unexpected page or console errors.
 
 For focused packet-lookup qualification, run `vp run prepare:e2e:fixture` and put
 `{"scenario":"packet-lookup"}` in the ignored
