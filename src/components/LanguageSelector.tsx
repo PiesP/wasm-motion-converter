@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
-import { ALL_LOCALE_OPTIONS } from '@t/i18n-types';
+import { ALL_LOCALE_OPTIONS, isAppLocale } from '@t/i18n-types';
 import type { Component } from 'solid-js';
 
 interface LanguageSelectorProps {
@@ -14,7 +14,7 @@ const LanguageSelector: Component<LanguageSelectorProps> = (props) => {
 
   const handleChange = (event: Event) => {
     const target = event.target as HTMLSelectElement;
-    setLocale(target.value as Parameters<typeof setLocale>[0]);
+    if (target.value === 'auto' || isAppLocale(target.value)) setLocale(target.value);
   };
 
   return (

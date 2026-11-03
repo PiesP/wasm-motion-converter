@@ -76,6 +76,15 @@ describe('locale-aware format utilities', () => {
     localStorage.removeItem('test-locale');
   });
 
+  it('normalizes browser regions but requires exact stored membership', () => {
+    vi.stubGlobal('navigator', { languages: ['zh-TW', 'ko-KR'], language: 'ko-KR' });
+    expect(detectUserLocale(['en', 'ko', 'ja', 'zh-CN', 'es', 'ar'])).toBe('zh-CN');
+    localStorage.setItem('test-locale', 'ko-KR');
+    expect(detectInitialLocale('test-locale')).toBe('zh-CN');
+    localStorage.setItem('test-locale', 'auto');
+    expect(detectInitialLocale('test-locale')).toBe('zh-CN');
+  });
+
   it('ignores invalid or unavailable local storage', () => {
     localStorage.setItem('test-locale', 'xx');
     vi.stubGlobal('navigator', { languages: ['en'], language: 'en' });

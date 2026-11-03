@@ -11,7 +11,7 @@
 
 import { detectLocale, formatDuration, formatFileSize } from '@piesp/browser-core/locale';
 import type { Locale } from '@t/i18n-types';
-import { DEFAULT_LOCALE, LOCALES } from '@t/i18n-types';
+import { DEFAULT_LOCALE, APP_LOCALE_CODES, isAppLocale } from '@t/i18n-types';
 
 import { BYTES_PER_KB, LOCALE_STORAGE_KEY } from './constants';
 
@@ -89,7 +89,7 @@ export function detectUserLocale(
   defaultLocale: Locale = DEFAULT_LOCALE
 ): Locale {
   const detected = detectLocale({ defaultLocale });
-  return supportedLocales.includes(detected as Locale) ? (detected as Locale) : defaultLocale;
+  return isAppLocale(detected) && supportedLocales.includes(detected) ? detected : defaultLocale;
 }
 
 /**
@@ -101,12 +101,12 @@ export function detectUserLocale(
 export function detectInitialLocale(storageKey = LOCALE_STORAGE_KEY): Locale {
   try {
     const stored = localStorage.getItem(storageKey);
-    if (stored && LOCALES.some((l) => l.code === stored)) return stored as Locale;
+    if (isAppLocale(stored)) return stored;
   } catch {
     /* localStorage unavailable */
   }
 
-  const matched = detectUserLocale(LOCALES.map((l) => l.code));
+  const matched = detectUserLocale([...APP_LOCALE_CODES]);
   if (matched) return matched;
 
   return DEFAULT_LOCALE;

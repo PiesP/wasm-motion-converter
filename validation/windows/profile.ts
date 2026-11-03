@@ -55,7 +55,12 @@ import {
   OUTPUT_FINALIZATION_V2_SCENARIO,
 } from './output-finalization.ts';
 import { exercisePreviewRetry, exerciseSelectionPreviewBaseline } from './selection-preview.ts';
-import { observeFutureSettings, observeOlderTab, seedFutureSettings } from './settings-schema.ts';
+import {
+  observeFutureSettings,
+  observeLanguagePreference,
+  observeOlderTab,
+  seedFutureSettings,
+} from './settings-schema.ts';
 import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
 import {
@@ -3378,6 +3383,11 @@ export async function run({
       const writer = await oldContext.newPage();
       await writer.goto(started.url, { waitUntil: 'domcontentloaded' });
       observations.olderTab = await observeOlderTab(oldPage, writer);
+      observations.languagePreference = await observeLanguagePreference(futurePage);
+      await futurePage.screenshot({
+        path: join(output, 'settings-schema-language-ar.png'),
+        fullPage: true,
+      });
       observations.unexpectedConsoleErrors = errors;
       assert.deepEqual(errors, [], 'Unexpected browser errors during settings qualification');
       observations.status = 'passed';
