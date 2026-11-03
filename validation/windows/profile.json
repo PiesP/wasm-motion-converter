@@ -26,6 +26,8 @@
         "required_inputs": [
           "dist",
           "public/test-video-ci-h264.mp4",
+          "public/test-video-contract-cfr.mp4",
+          "validation/windows/output-contract.json",
           "validation/windows/inputs/conversion-option-contract.json"
         ],
         "generated_assets": ["dist"],

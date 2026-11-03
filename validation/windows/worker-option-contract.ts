@@ -78,7 +78,16 @@ export async function installAppWorkerObserver(page: Page) {
   });
 }
 
-export async function readAppWorkerObservation(page: Page): Promise<AppWorkerObservation> {
+export async function readAppWorkerObservation(
+  page: Page,
+  expected: {
+    quality: string;
+    scale: number;
+    trimStart: number;
+    trimEnd: number;
+    smartFrameSkip: string;
+  }
+): Promise<AppWorkerObservation> {
   await page.waitForFunction(
     () => {
       const observations = Reflect.get(globalThis, '__wmcAppWorkerObservations') as
@@ -108,13 +117,13 @@ export async function readAppWorkerObservation(page: Page): Promise<AppWorkerObs
       format: observation.starts[0]?.options.format,
       quality: observation.starts[0]?.options.quality,
       scale: observation.starts[0]?.options.scale,
+      trimStart: observation.starts[0]?.options.trimStart,
+      trimEnd: observation.starts[0]?.options.trimEnd,
       smartFrameSkip: observation.starts[0]?.options.smartFrameSkip,
     },
     {
       format: 'gif',
-      quality: 'low',
-      scale: 0.5,
-      smartFrameSkip: 'off',
+      ...expected,
     }
   );
   assert(observation.starts[0]?.requestId, 'Built conversion Worker start omitted request ID');
