@@ -4,6 +4,7 @@
 import { LocaleProvider, localeLoaders, useLocale } from '@hooks/use-locale';
 import arTranslations from '@i18n/ar.json';
 import enTranslations from '@i18n/en.json';
+import koTranslations from '@i18n/ko.json';
 import type { SettingLocale } from '@t/i18n-types';
 import { render } from 'solid-js/web';
 import { afterEach, expect, it, vi } from 'vite-plus/test';
@@ -107,7 +108,7 @@ it('keeps the newer language after a delayed older load and falls back after a f
   await vi.waitFor(() => expect(resolveKo).toBeTypeOf('function'));
   expect(koLoader).toHaveBeenCalledOnce();
   setLanguage?.('en');
-  resolveKo?.({ default: { ...enTranslations, 'app.title': 'Stale Korean title' } });
+  resolveKo?.({ default: koTranslations });
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(document.querySelector('[data-testid="title"]')?.textContent).toBe(
     enTranslations['app.title']
