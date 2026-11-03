@@ -9,7 +9,10 @@
  */
 
 import { SUPPORTED_LOCALES } from '@piesp/browser-core/locale';
-import type { Locale as CoreLocale, TextDirection } from '@piesp/browser-core/locale';
+import type {
+  Locale as CoreLocale,
+  LocaleInfo as CoreLocaleInfo,
+} from '@piesp/browser-core/locale';
 
 /** Ordered languages shipped by this app. Core may support additional languages. */
 export const APP_LOCALE_CODES = [
@@ -30,13 +33,11 @@ export function isAppLocale(value: unknown): value is Locale {
 /** User-facing language setting — includes 'auto' for browser detection. */
 export type SettingLocale = 'auto' | Locale;
 
-/** Locale metadata */
-export interface LocaleInfo {
-  code: Locale;
-  name: string; // Native name
-  englishName: string;
-  dir: TextDirection;
-}
+/** Shared metadata plus the app's English label and narrowed code. */
+export type LocaleInfo = Omit<CoreLocaleInfo, 'code'> & {
+  readonly code: Locale;
+  readonly englishName: string;
+};
 
 const ENGLISH_NAMES = {
   en: 'English',
