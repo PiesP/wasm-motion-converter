@@ -2984,14 +2984,16 @@ export async function run({
     });
     const started = await startStaticServer(bundleRoot);
     const evidencePath = join(output, 'conversion-option-contract.json');
+    const checks: Record<string, unknown>[] = [];
     const result: Record<string, unknown> = {
       scenario: 'conversion-option-contract',
       status: 'running',
       build,
       fixture: { path: SMALL_FIXTURE, bytes: fixtureBytes.length, sha256: sha256(fixtureBytes) },
-      checks: [],
+      checks,
     };
     try {
+      await mkdir(output, { recursive: true });
       async function convert(page: Page, format: 'gif' | 'webp') {
         await page.emulateMedia({ reducedMotion: 'no-preference' });
         await loadApplication(page, started.url);
@@ -3022,10 +3024,25 @@ export async function run({
           return { width: element.naturalWidth, height: element.naturalHeight };
         });
         assert.deepEqual(dimensions, { width: 80, height: 45 });
-        return { format, bytes: bytes.length, sha256: sha256(bytes), dimensions };
+        return { bytes, dimensions };
+      }
+      async function retainOutput(
+        label: string,
+        format: 'gif' | 'webp',
+        converted: Awaited<ReturnType<typeof convert>>
+      ) {
+        const file = `conversion-option-${label}.${format}`;
+        await writeFile(join(output, file), converted.bytes);
+        return {
+          format,
+          file,
+          bytes: converted.bytes.length,
+          sha256: sha256(converted.bytes),
+          dimensions: converted.dimensions,
+        };
       }
 
-      let primaryGifSha256: string | undefined;
+      let primaryGifBytes: Buffer | undefined;
       const gifContext = await browser.newContext({
         locale: 'en-US',
         serviceWorkers: 'block',
@@ -3034,8 +3051,12 @@ export async function run({
       try {
         const gifPage = await gifContext.newPage();
         await installAppWorkerObserver(gifPage);
-        const output = await convert(gifPage, 'gif');
+        const converted = await convert(gifPage, 'gif');
+        const output = await retainOutput('gif-worker', 'gif', converted);
+        const check: Record<string, unknown> = { id: 'gif-app-worker', output };
+        checks.push(check);
         const route = await readAppWorkerObservation(gifPage);
+        check.route = route;
         assert.equal(new URL(route.url).origin, new URL(started.url).origin);
         assert(
           build.state.files.some((file) => `/${file.path}` === new URL(route.url).pathname),
@@ -3043,9 +3064,7 @@ export async function run({
         );
         assert.equal(route.completes[0]?.outputBytes, output.bytes);
         assert.equal(route.completes[0]?.sha256, output.sha256);
-        primaryGifSha256 = output.sha256;
-        const check: Record<string, unknown> = { id: 'gif-app-worker', output, route };
-        (result.checks as unknown[]).push(check);
+        primaryGifBytes = converted.bytes;
         check.invalid = await exerciseInvalidWorkerOptions(gifPage, route.url);
       } finally {
         await gifContext.close();
@@ -3059,10 +3078,19 @@ export async function run({
       try {
         const fallbackPage = await fallbackContext.newPage();
         await installUnavailableWorkerObserver(fallbackPage);
-        const output = await convert(fallbackPage, 'gif');
-        assert.equal(output.sha256, primaryGifSha256, 'Main-thread GIF output differs from Worker');
+        const converted = await convert(fallbackPage, 'gif');
+        const output = await retainOutput('gif-main', 'gif', converted);
+        const check: Record<string, unknown> = { id: 'gif-main-thread-fallback', output };
+        checks.push(check);
         const route = await readUnavailableWorkerObservation(fallbackPage);
-        (result.checks as unknown[]).push({ id: 'gif-main-thread-fallback', output, route });
+        check.route = route;
+        assert(primaryGifBytes, 'Worker GIF bytes were not retained for comparison');
+        check.decodedComparison = await compareAnimatedOutputExact(
+          fallbackPage,
+          primaryGifBytes,
+          converted.bytes,
+          'gif'
+        );
       } finally {
         await fallbackContext.close();
       }
@@ -3075,9 +3103,12 @@ export async function run({
       try {
         const webpPage = await webpContext.newPage();
         await installUnavailableWorkerObserver(webpPage);
-        const output = await convert(webpPage, 'webp');
+        const converted = await convert(webpPage, 'webp');
+        const output = await retainOutput('webp-serial', 'webp', converted);
+        const check: Record<string, unknown> = { id: 'webp-native-serial-canvas', output };
+        checks.push(check);
         const route = await readMainThreadWebpObservation(webpPage);
-        (result.checks as unknown[]).push({ id: 'webp-native-serial-canvas', output, route });
+        check.route = route;
       } finally {
         await webpContext.close();
       }

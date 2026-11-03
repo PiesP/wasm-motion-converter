@@ -95,8 +95,9 @@ The profile verifies a GIF download and an app-owned built Worker `start` and
 `complete` with matching request ID and output SHA-256. It opens a fresh instance
 of that Worker to require bounded `INVALID_REQUEST` responses for unsupported
 format, quality, frame-skip, and memory-limit values. A second app page forces
-Worker construction to fail and verifies byte-identical GIF output from the
-main-thread fallback. A third
+Worker construction to fail and compares the GIF fallback with the Worker
+output using fully decoded frame pixels and presentation timing. The distinct
+compressed files, sizes, and hashes are retained before this comparison. A third
 page forces the WebP encoder pool Worker to fail and verifies serial native
 Canvas encoding. All downloads must decode to 80×45 preview images. These
 route injections are controlled capability failures; they do not prove a

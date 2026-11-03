@@ -7,13 +7,7 @@ import type { Page } from '@playwright/test';
 
 type AppWorkerObservation = {
   url: string;
-  starts: {
-    requestId: string;
-    format: unknown;
-    quality: unknown;
-    scale: unknown;
-    smartFrameSkip: unknown;
-  }[];
+  starts: { requestId: string; options: Record<string, unknown> }[];
   completes: { requestId: string; outputBytes: number; sha256: string | null }[];
   errors: { requestId: unknown; code: unknown }[];
 };
@@ -74,10 +68,7 @@ export async function installAppWorkerObserver(page: Page) {
           const values = message.options as Record<string, unknown>;
           this.record.starts.push({
             requestId: 'requestId' in message ? String(message.requestId) : '',
-            format: values.format,
-            quality: values.quality,
-            scale: values.scale,
-            smartFrameSkip: values.smartFrameSkip,
+            options: { ...values },
           });
         }
         if (Array.isArray(options)) return super.postMessage(message, options);
@@ -112,13 +103,20 @@ export async function readAppWorkerObservation(page: Page): Promise<AppWorkerObs
     1,
     'Built conversion Worker did not receive one app start'
   );
-  assert.deepEqual(observation.starts[0], {
-    requestId: observation.starts[0]?.requestId,
-    format: 'gif',
-    quality: 'low',
-    scale: 0.5,
-    smartFrameSkip: 'off',
-  });
+  assert.deepEqual(
+    {
+      format: observation.starts[0]?.options.format,
+      quality: observation.starts[0]?.options.quality,
+      scale: observation.starts[0]?.options.scale,
+      smartFrameSkip: observation.starts[0]?.options.smartFrameSkip,
+    },
+    {
+      format: 'gif',
+      quality: 'low',
+      scale: 0.5,
+      smartFrameSkip: 'off',
+    }
+  );
   assert(observation.starts[0]?.requestId, 'Built conversion Worker start omitted request ID');
   assert.deepEqual(observation.errors, [], 'App Worker returned an error');
   assert.deepEqual(observation.completes, [
