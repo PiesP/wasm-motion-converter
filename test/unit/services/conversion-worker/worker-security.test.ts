@@ -53,6 +53,51 @@ describe('conversion worker message security', () => {
     });
   });
 
+  it('rejects unsupported conversion choices before starting the pipeline', async () => {
+    const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+    vi.stubGlobal('self', workerScope);
+    const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+    await import('@services/conversion-worker/worker');
+    workerScope.postMessage.mockClear();
+
+    for (const [field, value] of [
+      ['format', 'avif'],
+      ['quality', 'ultra'],
+      ['smartFrameSkip', 'turbo'],
+      ['smartFrameSkip', 123],
+    ] as const) {
+      vi.mocked(runWorkerPipeline).mockClear();
+      workerScope.postMessage.mockClear();
+      await workerScope.onmessage?.({
+        data: {
+          type: 'start',
+          requestId: 'invalid-choice',
+          inputBuffer: new ArrayBuffer(0),
+          config: { codec: 'vp09', codedHeight: 16, codedWidth: 16 },
+          options: {
+            format: 'gif',
+            quality: 'medium',
+            fps: 30,
+            scale: 1,
+            trimStart: 0,
+            trimEnd: 0,
+            maxFrames: 1,
+            maxOutputBytes: 1024,
+            [field]: value,
+          },
+        },
+        source: null,
+      } as unknown as MessageEvent);
+      expect(runWorkerPipeline).not.toHaveBeenCalled();
+      expect(workerScope.postMessage).toHaveBeenCalledWith({
+        type: 'error',
+        requestId: 'invalid-choice',
+        message: 'Invalid conversion worker request',
+        code: 'INVALID_REQUEST',
+      });
+    }
+  });
+
   it('continues to ignore payloads that cannot be correlated to a request', async () => {
     const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
     vi.stubGlobal('self', workerScope);

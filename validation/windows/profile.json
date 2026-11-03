@@ -5,6 +5,7 @@
     "selector_files": [
       "analysis-worker-recovery.json",
       "app-update.json",
+      "conversion-option-contract.json",
       "narrow-output.json",
       "output-finalization-v2.json",
       "output-finalization.json",
@@ -18,6 +19,25 @@
       "webp-initialization.json"
     ],
     "scenarios": {
+      "conversion-option-contract": {
+        "selector": "conversion-option-contract.json",
+        "browsers": ["msedge"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "public/test-video-contract-cfr.mp4",
+          "validation/windows/output-contract.json",
+          "validation/windows/inputs/conversion-option-contract.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
       "settings-schema": {
         "selector": "settings-schema.json",
         "browsers": ["msedge"],
@@ -67,6 +87,7 @@
     "validation/windows/trim-submission.ts",
     "validation/windows/webp-initialization.ts",
     "validation/windows/settings-schema.ts",
-    "validation/windows/analysis-worker-recovery.ts"
+    "validation/windows/analysis-worker-recovery.ts",
+    "validation/windows/worker-option-contract.ts"
   ]
 }

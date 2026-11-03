@@ -3,13 +3,12 @@
 
 import type { ConversionSettings } from '@t/conversion-types';
 import {
-  CONVERSION_FORMATS,
-  CONVERSION_QUALITIES,
-  CONVERSION_SCALES,
-  SMART_FRAME_SKIP_MODES,
+  isConversionFormat,
+  isConversionQuality,
+  isConversionScale,
+  isSmartFrameSkipMode,
 } from '@t/conversion-types';
 import { logger } from '@utils/logger';
-import { isInTuple } from '@utils/type-utils';
 import { createSignal } from 'solid-js';
 
 import {
@@ -74,15 +73,10 @@ function isFiniteNonNegativeNumber(value: unknown): value is number {
 
 function parseStoredSettings(raw: Record<string, unknown>): ConversionSettings | null {
   if (
-    typeof raw.format === 'string' &&
-    isInTuple(raw.format, CONVERSION_FORMATS) &&
-    typeof raw.quality === 'string' &&
-    isInTuple(raw.quality, CONVERSION_QUALITIES) &&
-    typeof raw.scale === 'number' &&
-    Number.isFinite(raw.scale) &&
-    isInTuple(raw.scale, CONVERSION_SCALES) &&
-    typeof raw.smartFrameSkip === 'string' &&
-    isInTuple(raw.smartFrameSkip, SMART_FRAME_SKIP_MODES)
+    isConversionFormat(raw.format) &&
+    isConversionQuality(raw.quality) &&
+    isConversionScale(raw.scale) &&
+    isSmartFrameSkipMode(raw.smartFrameSkip)
   ) {
     const trimStart = isFiniteNonNegativeNumber(raw.trimStart) ? raw.trimStart : 0;
     const trimEnd = isFiniteNonNegativeNumber(raw.trimEnd) ? raw.trimEnd : 0;

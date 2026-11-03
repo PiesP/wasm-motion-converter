@@ -86,6 +86,31 @@ Mode tests separately exercise app unmount flush, migration and storage errors;
 this Windows fixture does not simulate a power failure or claim atomic cross-tab
 writes. The focused selector does not consume `prior-dist/` or a public target.
 
+For the focused conversion-option contract, first generate the small H.264 and
+CFR color-marker fixtures with `vp run prepare:e2e:fixture`, then select
+`--scenario conversion-option-contract` on the shared `vmctl.py plan`, `bundle`,
+or `run` command in Edge desktop mode. The controller builds `dist/` from the
+selected source and packages only that build, the two small fixtures, the
+existing output contract, and source modules.
+The profile verifies a GIF download and an app-owned built Worker `start` and
+`complete` with matching request ID and output SHA-256. It opens a fresh instance
+of that Worker to require bounded `INVALID_REQUEST` responses for unsupported
+format, quality, frame-skip, and memory-limit values. A second app page forces
+Worker construction to fail. Each GIF route independently checks the existing
+CFR source-marker contract for dimensions, scene colors, ordering, and timing.
+Before that contract, both routes also retain the original H.264 gradient GIF,
+its 80×45 preview, compressed hash, and per-frame delays as diagnostics. The
+source-marker GIF previews must decode to 96×64. Distinct files prevent either
+route from overwriting the other's output. Cross-backend byte or exact-pixel
+equality is not a conversion-option requirement; prior failed comparisons remain
+failed evidence and the upstream gradient color difference is not classified as
+harmless. A third page forces the WebP encoder pool Worker to fail and verifies
+serial native Canvas encoding with an 80×45 preview. These route injections are
+controlled capability failures; they do not prove a field Worker failure. This
+scenario does not need `prior-dist/`, a public target, or the full
+output-contract corpus. It retains a completed-result screenshot for each of
+the three routes and fails on unexpected page or console errors.
+
 For focused packet-lookup qualification, run `vp run prepare:e2e:fixture` and put
 `{"scenario":"packet-lookup"}` in the ignored
 `validation/windows/inputs/packet-lookup.json` selector, with other focused

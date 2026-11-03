@@ -36,6 +36,59 @@ describe('isWorkerRequest', () => {
     expect(isWorkerRequest(validStart)).toBe(true);
   });
 
+  it('accepts every supported format, quality, and smart-frame-skip mode', () => {
+    for (const format of ['gif', 'webp']) {
+      for (const quality of ['low', 'medium', 'high']) {
+        for (const smartFrameSkip of ['off', 'low', 'medium', 'high', 'adaptive']) {
+          expect(
+            isWorkerRequest({
+              ...validStart,
+              options: { ...validStart.options, format, quality, smartFrameSkip },
+            })
+          ).toBe(true);
+        }
+      }
+    }
+    expect(isWorkerRequest({ ...validStart, options: { ...validStart.options, scale: 0.6 } })).toBe(
+      true
+    );
+  });
+
+  it('rejects unknown and mistyped conversion choices', () => {
+    for (const [field, values] of [
+      ['format', ['avif', '', 123, null]],
+      ['quality', ['ultra', '', 123, null]],
+      ['smartFrameSkip', ['turbo', '', 123, null]],
+    ] as const) {
+      for (const value of values) {
+        expect(
+          isWorkerRequest({
+            ...validStart,
+            options: { ...validStart.options, [field]: value },
+          })
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('accepts omitted optional modes and memory limits but rejects malformed values', () => {
+    expect(isWorkerRequest(validStart)).toBe(true);
+    expect(
+      isWorkerRequest({
+        ...validStart,
+        options: { ...validStart.options, smartFrameSkip: undefined, maxMemoryMB: 256 },
+      })
+    ).toBe(true);
+    for (const maxMemoryMB of [null, '256', 0, -1, NaN, Infinity]) {
+      expect(
+        isWorkerRequest({
+          ...validStart,
+          options: { ...validStart.options, maxMemoryMB },
+        })
+      ).toBe(false);
+    }
+  });
+
   it('accepts a Blob input without an ArrayBuffer', () => {
     const { inputBuffer: _, ...request } = validStart;
     expect(isWorkerRequest({ ...request, inputBlob: new Blob(['video']) })).toBe(true);

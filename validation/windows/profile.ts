@@ -58,6 +58,14 @@ import { exercisePreviewRetry, exerciseSelectionPreviewBaseline } from './select
 import { observeFutureSettings, observeOlderTab, seedFutureSettings } from './settings-schema.ts';
 import { exerciseTrimSubmission } from './trim-submission.ts';
 import { exerciseWebpInitialization } from './webp-initialization.ts';
+import {
+  exerciseInvalidWorkerOptions,
+  installAppWorkerObserver,
+  installUnavailableWorkerObserver,
+  readAppWorkerObservation,
+  readMainThreadWebpObservation,
+  readUnavailableWorkerObservation,
+} from './worker-option-contract.ts';
 
 export {
   installCancellationInspector,
@@ -1374,7 +1382,8 @@ async function convertOutputContract(
   markers: Record<string, number[]>,
   outputRoot: string,
   artifacts: Artifact[],
-  reload = true
+  reload = true,
+  outputFileOverride?: string
 ) {
   await page.setViewportSize({ width: 1280, height: 900 });
   if (reload) await loadApplication(page, baseUrl);
@@ -1412,7 +1421,7 @@ async function convertOutputContract(
   const downloadPromise = page.waitForEvent('download', { timeout: 30_000 });
   await page.locator('[data-testid="download-result-button"]').click();
   const bytes = await readDownload(await downloadPromise);
-  const outputFile = `${PROFILE_ID}-${contract.id}.${contract.format}`;
+  const outputFile = outputFileOverride ?? `${PROFILE_ID}-${contract.id}.${contract.format}`;
   await writeFile(join(outputRoot, outputFile), bytes);
   artifacts.push({
     kind: 'output-contract-media',
@@ -2939,6 +2948,296 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const optionSelectorPath = resolve(
+    bundleRoot,
+    'validation/windows/inputs/conversion-option-contract.json'
+  );
+  let optionSelectorText: string | undefined;
+  try {
+    optionSelectorText = await readFile(optionSelectorPath, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (optionSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(optionSelectorText), { scenario: 'conversion-option-contract' });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    const others = [
+      'analysis-worker-recovery.json',
+      'app-update.json',
+      'narrow-output.json',
+      'output-finalization-v2.json',
+      'output-finalization.json',
+      'packet-lookup.json',
+      'preview-retry.json',
+      'recovery.json',
+      'selection-preview.json',
+      'service-worker-handoff.json',
+      'settings-schema.json',
+      'trim-submission.json',
+      'webp-initialization.json',
+    ].filter((name) => selected.includes(name));
+    assert.deepEqual(others, [], 'Conversion option contract requires one focused selector');
+    const fixturePath = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
+    const fixtureBytes = await readFile(fixturePath);
+    const outputContractPath = await validateBundleFile(bundleRoot, OUTPUT_CONTRACT);
+    const outputContractBytes = await readFile(outputContractPath);
+    const outputContract: unknown = JSON.parse(outputContractBytes.toString('utf8'));
+    assertOutputContractConfig(outputContract);
+    const gifContract = outputContract.cases.find((entry) => entry.id === 'cfr-trim-gif');
+    assert(gifContract, 'Missing source-bound CFR GIF output contract');
+    const gifFixturePath = await validateBundleFile(bundleRoot, gifContract.fixture);
+    const gifFixtureBytes = await readFile(gifFixturePath);
+    const build = await readBuild(bundleRoot, 'dist', validateBundleFile, {
+      verifyInventory: true,
+      exactInventory: true,
+    });
+    const started = await startStaticServer(bundleRoot);
+    const evidencePath = join(output, 'conversion-option-contract.json');
+    const checks: Record<string, unknown>[] = [];
+    const artifacts: Artifact[] = [];
+    const browserErrors: Array<{
+      route: string;
+      pageErrors: string[];
+      consoleErrors: string[];
+    }> = [];
+    const result: Record<string, unknown> = {
+      scenario: 'conversion-option-contract',
+      status: 'running',
+      build,
+      fixture: { path: SMALL_FIXTURE, bytes: fixtureBytes.length, sha256: sha256(fixtureBytes) },
+      gifFixture: {
+        path: gifContract.fixture,
+        bytes: gifFixtureBytes.length,
+        sha256: sha256(gifFixtureBytes),
+      },
+      outputContract: { path: OUTPUT_CONTRACT, sha256: sha256(outputContractBytes) },
+      checks,
+      artifacts,
+      browserErrors,
+    };
+    try {
+      await mkdir(output, { recursive: true });
+      function watchBrowserErrors(page: Page, route: string) {
+        const observed = { route, pageErrors: [] as string[], consoleErrors: [] as string[] };
+        browserErrors.push(observed);
+        page.on('pageerror', (error) => observed.pageErrors.push(error.message));
+        page.on('console', (message) => {
+          if (message.type() === 'error') observed.consoleErrors.push(message.text());
+        });
+      }
+      async function convertSmall(page: Page, format: 'gif' | 'webp') {
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        await loadApplication(page, started.url);
+        await selectFixture(page, fixturePath);
+        await chooseOption(page, 'format', format);
+        await chooseOption(page, 'quality', 'low');
+        await chooseOption(page, 'scale', '0.5');
+        await chooseOption(page, 'smart-frame-skip', 'off');
+        await page.locator('[data-testid="convert-button"]').click();
+        await proceedIfPrompted(page);
+        await waitForConversionOutcome(page, CONVERSION_TIMEOUT_MS);
+        const download = page.waitForEvent('download', { timeout: 30_000 });
+        await page.locator('[data-testid="download-result-button"]').click();
+        const bytes = await readDownload(await download);
+        validateOutput(bytes, format);
+        const image = page.locator('[data-testid="result-image"]');
+        await image.waitFor({ state: 'visible', timeout: 30_000 });
+        await page.waitForFunction(
+          () => {
+            const image = document.querySelector('[data-testid="result-image"]');
+            return image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0;
+          },
+          undefined,
+          { timeout: 30_000 }
+        );
+        const dimensions = await image.evaluate((element) => {
+          if (!(element instanceof HTMLImageElement)) throw new Error('Result is not an image');
+          return { width: element.naturalWidth, height: element.naturalHeight };
+        });
+        assert.deepEqual(dimensions, { width: 80, height: 45 });
+        return { bytes, dimensions };
+      }
+      async function retainOutput(
+        label: string,
+        format: 'gif' | 'webp',
+        converted: Awaited<ReturnType<typeof convertSmall>>
+      ) {
+        const file = `conversion-option-${label}.${format}`;
+        await writeFile(join(output, file), converted.bytes);
+        const digest = sha256(converted.bytes);
+        artifacts.push({
+          kind: 'conversion-option-media',
+          file,
+          bytes: converted.bytes.length,
+          sha256: digest,
+        });
+        return {
+          format,
+          file,
+          bytes: converted.bytes.length,
+          sha256: digest,
+          dimensions: converted.dimensions,
+        };
+      }
+
+      const gifContext = await browser.newContext({
+        locale: 'en-US',
+        serviceWorkers: 'block',
+        viewport: { width: 1280, height: 900 },
+      });
+      try {
+        const gifPage = await gifContext.newPage();
+        watchBrowserErrors(gifPage, 'gif-worker');
+        await installAppWorkerObserver(gifPage);
+        await gifPage.emulateMedia({ reducedMotion: 'no-preference' });
+        const gradient = await convertSmall(gifPage, 'gif');
+        const gradientOutput = await retainOutput('gif-worker-gradient', 'gif', gradient);
+        const gradientDelaysCs = parseGifDelaysCs(gradient.bytes);
+        const gradientCheck: Record<string, unknown> = {
+          id: 'gif-app-worker-gradient',
+          output: gradientOutput,
+          gifDelaysCs: gradientDelaysCs,
+          gifDurationMs: gradientDelaysCs.reduce((sum, delay) => sum + delay, 0) * 10,
+        };
+        checks.push(gradientCheck);
+        const gradientRoute = await readAppWorkerObservation(gifPage, {
+          quality: 'low',
+          scale: 0.5,
+          trimStart: 0,
+          trimEnd: 0,
+          smartFrameSkip: 'off',
+        });
+        gradientCheck.route = gradientRoute;
+        assert.equal(new URL(gradientRoute.url).origin, new URL(started.url).origin);
+        assert(
+          build.state.files.some((file) => `/${file.path}` === new URL(gradientRoute.url).pathname),
+          'App conversion Worker is absent from the verified build inventory'
+        );
+        assert.equal(gradientRoute.completes[0]?.outputBytes, gradientOutput.bytes);
+        assert.equal(gradientRoute.completes[0]?.sha256, gradientOutput.sha256);
+        gradientCheck.invalid = await exerciseInvalidWorkerOptions(gifPage, gradientRoute.url);
+        await recordScreenshot(gifPage, output, 'conversion-option-gif-worker.png', artifacts);
+
+        const check: Record<string, unknown> = { id: 'gif-app-worker-cfr' };
+        checks.push(check);
+        const converted = await convertOutputContract(
+          gifPage,
+          started.url,
+          gifFixturePath,
+          gifContract,
+          outputContract.markers,
+          output,
+          artifacts,
+          true,
+          'wmc-media-cfr-trim-gif-worker.gif'
+        );
+        check.output = converted.output;
+        check.decoded = converted.decoded;
+        check.gifDelaysCs = converted.gifDelaysCs;
+        check.exactOracle = converted.exactOracle;
+        const route = await readAppWorkerObservation(gifPage, {
+          quality: gifContract.settings.quality,
+          scale: Number(gifContract.settings.scale),
+          trimStart: gifContract.settings.trimStart,
+          trimEnd: gifContract.settings.trimEnd,
+          smartFrameSkip: gifContract.settings.smartFrameSkip,
+        });
+        check.route = route;
+        assert.equal(new URL(route.url).origin, new URL(started.url).origin);
+        assert(
+          build.state.files.some((file) => `/${file.path}` === new URL(route.url).pathname),
+          'App conversion Worker is absent from the verified build inventory'
+        );
+        assert.equal(route.completes[0]?.outputBytes, converted.output.bytes);
+        assert.equal(route.completes[0]?.sha256, converted.output.sha256);
+      } finally {
+        await gifContext.close();
+      }
+
+      const fallbackContext = await browser.newContext({
+        locale: 'en-US',
+        serviceWorkers: 'block',
+        viewport: { width: 1280, height: 900 },
+      });
+      try {
+        const fallbackPage = await fallbackContext.newPage();
+        watchBrowserErrors(fallbackPage, 'gif-main-thread');
+        await installUnavailableWorkerObserver(fallbackPage);
+        await fallbackPage.emulateMedia({ reducedMotion: 'no-preference' });
+        const gradient = await convertSmall(fallbackPage, 'gif');
+        const gradientOutput = await retainOutput('gif-main-gradient', 'gif', gradient);
+        const gradientDelaysCs = parseGifDelaysCs(gradient.bytes);
+        const gradientCheck: Record<string, unknown> = {
+          id: 'gif-main-thread-gradient',
+          output: gradientOutput,
+          gifDelaysCs: gradientDelaysCs,
+          gifDurationMs: gradientDelaysCs.reduce((sum, delay) => sum + delay, 0) * 10,
+        };
+        checks.push(gradientCheck);
+        gradientCheck.route = await readUnavailableWorkerObservation(fallbackPage);
+        await recordScreenshot(fallbackPage, output, 'conversion-option-gif-main.png', artifacts);
+
+        const check: Record<string, unknown> = { id: 'gif-main-thread-cfr' };
+        checks.push(check);
+        const converted = await convertOutputContract(
+          fallbackPage,
+          started.url,
+          gifFixturePath,
+          gifContract,
+          outputContract.markers,
+          output,
+          artifacts,
+          true,
+          'wmc-media-cfr-trim-gif-main.gif'
+        );
+        check.output = converted.output;
+        check.decoded = converted.decoded;
+        check.gifDelaysCs = converted.gifDelaysCs;
+        check.exactOracle = converted.exactOracle;
+        const route = await readUnavailableWorkerObservation(fallbackPage);
+        check.route = route;
+      } finally {
+        await fallbackContext.close();
+      }
+
+      const webpContext = await browser.newContext({
+        locale: 'en-US',
+        serviceWorkers: 'block',
+        viewport: { width: 1280, height: 900 },
+      });
+      try {
+        const webpPage = await webpContext.newPage();
+        watchBrowserErrors(webpPage, 'webp-serial-canvas');
+        await installUnavailableWorkerObserver(webpPage);
+        const converted = await convertSmall(webpPage, 'webp');
+        const retainedOutput = await retainOutput('webp-serial', 'webp', converted);
+        const check: Record<string, unknown> = {
+          id: 'webp-native-serial-canvas',
+          output: retainedOutput,
+        };
+        checks.push(check);
+        const route = await readMainThreadWebpObservation(webpPage);
+        check.route = route;
+        await recordScreenshot(webpPage, output, 'conversion-option-webp-serial.png', artifacts);
+      } finally {
+        await webpContext.close();
+      }
+      for (const observed of browserErrors) {
+        assert.deepEqual(observed.pageErrors, [], `${observed.route} emitted page errors`);
+        assert.deepEqual(observed.consoleErrors, [], `${observed.route} emitted console errors`);
+      }
+      result.status = 'passed';
+      return { profile: 'conversion-option-contract', ...result };
+    } catch (error) {
+      result.status = 'failed';
+      result.failure = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      await closeServer(started.server);
+      await mkdir(output, { recursive: true });
+      await writeFile(evidencePath, `${JSON.stringify(result, null, 2)}\n`);
+    }
+  }
   const recoverySelector = resolve(
     bundleRoot,
     'validation/windows/inputs/analysis-worker-recovery.json'
