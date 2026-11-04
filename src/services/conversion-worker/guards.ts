@@ -57,6 +57,36 @@ function isVideoRotation(value: unknown): boolean {
   return value === undefined || value === 0 || value === 90 || value === 180 || value === 270;
 }
 
+const COLOR_PRIMARIES = ['bt709', 'bt470bg', 'smpte170m', 'bt2020', 'smpte432'] as const;
+const COLOR_TRANSFER = ['bt709', 'smpte170m', 'iec61966-2-1', 'linear', 'pq', 'hlg'] as const;
+const COLOR_MATRIX = ['rgb', 'bt709', 'bt470bg', 'smpte170m', 'bt2020-ncl'] as const;
+const COLOR_SPACE_FIELDS = ['primaries', 'transfer', 'matrix', 'fullRange'] as const;
+
+function isNullableColorEnum(value: unknown, choices: readonly string[]): boolean {
+  return (
+    value === undefined || value === null || (typeof value === 'string' && choices.includes(value))
+  );
+}
+
+function isValidDecoderColorSpace(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some(
+      (key) => !COLOR_SPACE_FIELDS.includes(key as (typeof COLOR_SPACE_FIELDS)[number])
+    )
+  )
+    return false;
+  return (
+    isNullableColorEnum(value.primaries, COLOR_PRIMARIES) &&
+    isNullableColorEnum(value.transfer, COLOR_TRANSFER) &&
+    isNullableColorEnum(value.matrix, COLOR_MATRIX) &&
+    (value.fullRange === undefined ||
+      value.fullRange === null ||
+      typeof value.fullRange === 'boolean')
+  );
+}
+
 const PROFILE_STAGES = ['demuxing', 'transcoding', 'finalizing'] as const;
 const WORKER_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const WORKER_LOG_CATEGORIES = ['conversion', 'general', 'demuxer', 'encoders', 'decoders'] as const;
@@ -165,6 +195,7 @@ function isValidDecoderConfig(config: unknown): config is Record<string, unknown
     Number.isFinite(config.codedHeight) &&
     config.codedHeight > 0 &&
     isVideoRotation(config.rotation) &&
+    isValidDecoderColorSpace(config.colorSpace) &&
     isBoundedCodecDescription(config.description)
   );
 }

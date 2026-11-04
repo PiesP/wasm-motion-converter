@@ -109,6 +109,7 @@ function serializeDecoderConfig(
 ): SerializedDecoderConfig | null {
   const decoderConfig = metadata?.config;
   if (!decoderConfig) return null;
+  const colorSpace = decoderConfig.colorSpace;
 
   return {
     codec: decoderConfig.codec,
@@ -122,6 +123,16 @@ function serializeDecoderConfig(
       : {}),
     ...(decoderConfig.hardwareAcceleration
       ? { hardwareAcceleration: decoderConfig.hardwareAcceleration }
+      : {}),
+    ...(colorSpace !== undefined
+      ? {
+          colorSpace: {
+            ...(colorSpace.primaries !== undefined ? { primaries: colorSpace.primaries } : {}),
+            ...(colorSpace.transfer !== undefined ? { transfer: colorSpace.transfer } : {}),
+            ...(colorSpace.matrix !== undefined ? { matrix: colorSpace.matrix } : {}),
+            ...(colorSpace.fullRange !== undefined ? { fullRange: colorSpace.fullRange } : {}),
+          },
+        }
       : {}),
     ...(includeDescription && decoderConfig.description
       ? { description: copyBoundedCodecDescription(decoderConfig.description) }

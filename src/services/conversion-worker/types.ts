@@ -82,6 +82,7 @@ export interface SerializedDecoderConfig {
   displayAspectWidth?: number | undefined;
   displayAspectHeight?: number | undefined;
   hardwareAcceleration?: string | undefined;
+  colorSpace?: VideoDecoderConfig['colorSpace'] | undefined;
   description?: ArrayBuffer | undefined;
   rotation?: VideoRotation | undefined;
 }

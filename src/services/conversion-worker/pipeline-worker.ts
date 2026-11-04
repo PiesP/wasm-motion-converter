@@ -275,6 +275,7 @@ export async function runWorkerPipeline(
             ...(config.hardwareAcceleration
               ? { hardwareAcceleration: config.hardwareAcceleration as HardwareAcceleration }
               : {}),
+            ...(config.colorSpace !== undefined ? { colorSpace: config.colorSpace } : {}),
             ...(config.description ? { description: config.description } : {}),
           } as VideoDecoderConfig,
           ...(config.rotation !== undefined ? { rotation: config.rotation } : {}),
