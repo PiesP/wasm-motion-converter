@@ -17,7 +17,7 @@ strictPeerDependencies: true
 # Recheck callers, alias and bundled Vite together on each toolchain update.
 peerDependencyRules:
   allowedVersions:
-    "@tailwindcss/vite@4.3.3>vite": 1.4.0
+    "@tailwindcss/vite@4.3.4>vite": 1.4.0
     "@vitest/mocker@5.0.5>vite": 1.4.0
     "vitest@5.0.5>vite": 1.4.0
     "vite-plugin-solid@2.11.15>vite": 1.4.0
