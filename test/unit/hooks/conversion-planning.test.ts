@@ -215,6 +215,58 @@ describe('serializeConversionInputs', () => {
     expect(result.serializedConfig).not.toHaveProperty('description');
   });
 
+  it.each(['gif', 'webp'] as const)(
+    'preserves the partial decoder color space without aliasing metadata for %s',
+    (format) => {
+      const colorSpace = { fullRange: false };
+      const metadata: VideoMetadata = {
+        ...defaultMetadata,
+        config: { ...defaultMetadata.config!, colorSpace },
+      };
+
+      const { serializedConfig } = serializeConversionInputs(metadata, undefined, {
+        ...defaultSettings,
+        format,
+      });
+
+      expect(serializedConfig?.colorSpace).toEqual({ fullRange: false });
+      expect(serializedConfig?.colorSpace).not.toBe(colorSpace);
+      expect(colorSpace).toEqual({ fullRange: false });
+    }
+  );
+
+  it('preserves explicit decoder color fields and null unknowns', () => {
+    const colorSpace = {
+      primaries: 'bt709',
+      transfer: 'iec61966-2-1',
+      matrix: 'rgb',
+      fullRange: null,
+    } as const;
+    const metadata: VideoMetadata = {
+      ...defaultMetadata,
+      config: { ...defaultMetadata.config!, colorSpace },
+    };
+
+    expect(
+      serializeConversionInputs(metadata, undefined, defaultSettings).serializedConfig
+    ).toEqual(expect.objectContaining({ colorSpace }));
+  });
+
+  it('keeps absent and empty decoder color metadata distinct', () => {
+    const absent = serializeConversionInputs(defaultMetadata, undefined, defaultSettings);
+    const empty = serializeConversionInputs(
+      {
+        ...defaultMetadata,
+        config: { ...defaultMetadata.config!, colorSpace: {} },
+      },
+      undefined,
+      defaultSettings
+    );
+
+    expect(absent.serializedConfig).not.toHaveProperty('colorSpace');
+    expect(empty.serializedConfig).toHaveProperty('colorSpace', {});
+  });
+
   it('uses protocol defaults when metadata and decoder config are unavailable', () => {
     expect(serializeConversionInputs(null, undefined, defaultSettings)).toEqual({
       serializedConfig: null,

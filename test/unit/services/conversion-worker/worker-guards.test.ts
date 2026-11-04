@@ -179,6 +179,62 @@ describe('isWorkerRequest', () => {
     );
   });
 
+  it('accepts partial, empty, and explicit nullable decoder color metadata', () => {
+    for (const colorSpace of [
+      {},
+      { fullRange: false },
+      {
+        primaries: 'bt709',
+        transfer: 'iec61966-2-1',
+        matrix: 'rgb',
+        fullRange: null,
+      },
+    ]) {
+      expect(isWorkerRequest({ ...validStart, config: { ...validStart.config, colorSpace } })).toBe(
+        true
+      );
+    }
+  });
+
+  it('accepts every supported decoder color value and null for each optional field', () => {
+    const accepted = {
+      primaries: ['bt709', 'bt470bg', 'smpte170m', 'bt2020', 'smpte432', null],
+      transfer: ['bt709', 'smpte170m', 'iec61966-2-1', 'linear', 'pq', 'hlg', null],
+      matrix: ['rgb', 'bt709', 'bt470bg', 'smpte170m', 'bt2020-ncl', null],
+      fullRange: [true, false, null],
+    } as const;
+
+    for (const [field, values] of Object.entries(accepted)) {
+      for (const value of values) {
+        expect(
+          isWorkerRequest({
+            ...validStart,
+            config: { ...validStart.config, colorSpace: { [field]: value } },
+          }),
+          `${field}=${String(value)}`
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('rejects malformed or unreviewed decoder color metadata', () => {
+    for (const colorSpace of [
+      null,
+      [],
+      'bt709',
+      { primaries: 'unknown' },
+      { transfer: 'unknown' },
+      { matrix: 'unknown' },
+      { fullRange: 'false' },
+      { fullRange: 0 },
+      { fullRange: false, unexpected: true },
+    ]) {
+      expect(isWorkerRequest({ ...validStart, config: { ...validStart.config, colorSpace } })).toBe(
+        false
+      );
+    }
+  });
+
   it('accepts a bounded binary codec description', () => {
     const config = { ...validStart.config, description: new ArrayBuffer(32) };
     expect(isWorkerRequest({ ...validStart, config })).toBe(true);

@@ -233,12 +233,41 @@ describe('worker pipeline smart frame skip forwarding', () => {
     );
 
     expect(mocks.demuxVideo.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ rotation: 270 }));
+    expect(mocks.demuxVideo.mock.calls[0]?.[1]?.config).not.toHaveProperty('colorSpace');
     expect(mocks.encodeGif).toHaveBeenCalledWith(
       expect.objectContaining({ rotation: 270 }),
       expect.objectContaining({ width: 48, height: 80 }),
       undefined
     );
   });
+
+  it.each(['gif', 'webp'] as const)(
+    'passes partial color metadata unchanged to the %s decoder configuration',
+    async (format) => {
+      const config = {
+        codec: 'avc1.42001e',
+        codedWidth: 16,
+        codedHeight: 16,
+        colorSpace: { fullRange: false },
+      };
+      await runWorkerPipeline(
+        new ArrayBuffer(8),
+        { ...baseOptions, format },
+        vi.fn(),
+        'color-space-request',
+        undefined,
+        config,
+        1,
+        30
+      );
+
+      expect(mocks.demuxVideo.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          config: expect.objectContaining({ colorSpace: { fullRange: false } }),
+        })
+      );
+    }
+  );
 
   it('combines GIF stream peaks with the worker aggregate memory budget', async () => {
     await runWorkerPipeline(new ArrayBuffer(8), baseOptions, vi.fn(), 'request-1');
