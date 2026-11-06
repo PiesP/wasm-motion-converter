@@ -1,6 +1,4 @@
-import tailwindcss from '@tailwindcss/vite';
-import solid from 'vite-plugin-solid';
-import type { UserConfig } from 'vite-plus';
+import { lazyPlugins, type UserConfig } from 'vite-plus';
 
 export function browserAppManualChunk(id: string): string | undefined {
   // Keep Vite's shared preload helper separate from the lazy codec chunk.
@@ -18,7 +16,12 @@ export function browserAppManualChunk(id: string): string | undefined {
 }
 
 const browserAppPreset: UserConfig = {
-  plugins: [solid(), tailwindcss()],
+  plugins:
+    lazyPlugins(async () => {
+      const { default: solid } = await import('vite-plugin-solid');
+      const { default: tailwindcss } = await import('@tailwindcss/vite');
+      return [solid(), tailwindcss()];
+    }) ?? [],
 
   server: {
     headers: {

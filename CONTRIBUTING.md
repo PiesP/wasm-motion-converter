@@ -599,6 +599,12 @@ helpers, and the service worker retain their environment boundaries. Quality
 does not repeat the standalone type-only `check`/`typecheck` commands. Vite+
 task caching is not enabled.
 
+`tooling/vite/aliases.ts` owns the runtime aliases shared by the build preset
+and the separate Vitest configuration. Tests keep their own plugins and defines;
+importing the alias map does not load the production source or service-worker lifecycle.
+The browser-app preset lazily imports and creates Solid and Tailwind plugins for
+Vite execution, keeping metadata-only lint, format, check and task lookup lightweight.
+
 The Vite alias reports Vite+ `1.4.0` and bundles Vite `8.3.5`. Strict peer
 validation stays enabled. `pnpm-workspace.yaml` permits only that exact alias
 for the reviewed Vitest, mocker, Tailwind, Solid plugin and vitefu versions,
