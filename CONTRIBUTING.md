@@ -53,8 +53,9 @@ unsupported historical sources fail during provenance before publication.
 Every workflow action job first invokes the [browser-core Node trust preparation](https://github.com/PiesP/browser-core/blob/381b4ca733494cf069212cd0d16458389a83c623/automation/README.md#consumer-contract) at that reviewed SHA, with OpenSSL trust settings inherited by action bootstrap and post steps. The helper supports Ubuntu 24.04 and Alpine 3.23; unsupported systems fail before later actions. Its step boundary does not cover runner downloads or container pulls that happen before steps.
 
 For an action update, verify the full commit SHA against the official upstream
-release and update the independent allowed-SHA expectations in
-`test/unit/config/toolchain-action.test.ts` in the same reviewed change. Keep
+release. Update any affected independent allowed-SHA expectations, including
+`test/unit/config/toolchain-action.test.ts` for setup-provider changes, in the
+same reviewed change; do not add unrelated expectations for other actions. Keep
 the protected checkout, verified runtime, action inputs, cache behavior, locked
 installation, and publication boundaries intact. Do not make the expected SHA
 follow the workflow being tested. Local release recipes retain their separately
