@@ -280,7 +280,7 @@ the project settings: Pages projects using a Wrangler file read its variables
 into the build environment before deciding whether to install dependencies.
 Confirm the switch and the absence of an automatic install in the provider log.
 The tracked `PNPM_VERSION` keeps the Pages provider pre-build selection aligned
-with `packageManager`. The bootstrap installs the reviewed Vite+ 1.4.0 global CLI
+with `packageManager`. The bootstrap installs the catalog-pinned Vite+ global CLI
 from an immutable installer source with a checked SHA-256 when absent, then verifies
 Vite+ selects the exact Node and pnpm pins. Confirm those identities in the provider log.
 
