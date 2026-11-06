@@ -1,12 +1,8 @@
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import solid from 'vite-plugin-solid';
 import { defineConfig } from 'vite-plus';
 import { playwright } from 'vite-plus/test/browser-playwright';
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const srcDir = resolve(__dirname, 'src');
+import { appAliases } from './tooling/vite/aliases.ts';
 
 export default defineConfig({
   define: { __DEV__: true, __APP_SOURCE_SHA__: null },
@@ -90,15 +86,6 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: {
-      '@': srcDir,
-      '@components': resolve(srcDir, 'components'),
-      '@services': resolve(srcDir, 'services'),
-      '@utils': resolve(srcDir, 'utils'),
-      '@stores': resolve(srcDir, 'stores'),
-      '@hooks': resolve(srcDir, 'hooks'),
-      '@t': resolve(srcDir, 'types'),
-      '@i18n': resolve(srcDir, 'i18n'),
-    },
+    alias: appAliases,
   },
 });

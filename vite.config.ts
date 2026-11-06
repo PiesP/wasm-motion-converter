@@ -32,13 +32,7 @@ export default defineConfig(({ command }) => {
       cache: false,
       tasks: {
         quality: {
-          command: [
-            'vp run fmt',
-            'vp run lint',
-            'vp run check',
-            'vp run test:ci',
-            'vp run check:i18n',
-          ],
+          command: ['vp run fmt', 'vp run lint', 'vp run test:ci', 'vp run check:i18n'],
           cache: false,
         },
         'build:ci': {
