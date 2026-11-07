@@ -46,6 +46,50 @@ describe('buildConversionRequest', () => {
     expect(request.fileName).toBe('myvideo.webm');
   });
 
+  it('reuses the admitted decoder fields without normalizing false, zero, or absent fields', () => {
+    const description = new Uint8Array([1, 2, 3]).buffer;
+    const request = buildConversionRequest(
+      undefined,
+      baseOptions,
+      WORKER_MAX_MEMORY_MB,
+      new Blob(),
+      'clip.mp4',
+      {
+        codec: 'avc1.640028',
+        codedWidth: 16,
+        codedHeight: 9,
+        colorSpace: { fullRange: false },
+        description,
+        displayAspectWidth: 4,
+        displayAspectHeight: 3,
+        hardwareAcceleration: 'prefer-hardware',
+        rotation: 0,
+      },
+      0,
+      0
+    );
+
+    expect(request.preComputedMetadata).toEqual({
+      config: {
+        codec: 'avc1.640028',
+        codedWidth: 16,
+        codedHeight: 9,
+        colorSpace: { fullRange: false },
+        description,
+        displayAspectWidth: 4,
+        displayAspectHeight: 3,
+        hardwareAcceleration: 'prefer-hardware',
+      },
+      duration: 0,
+      framerate: 0,
+      rotation: 0,
+    });
+    expect(request.preComputedMetadata?.config?.description).toBe(description);
+    expect(buildConversionRequest(undefined, baseOptions)).not.toHaveProperty(
+      'preComputedMetadata'
+    );
+  });
+
   it('uses default maxMemoryMB when not specified', () => {
     const buffer = new ArrayBuffer(1024);
     const request = buildConversionRequest(buffer, baseOptions);

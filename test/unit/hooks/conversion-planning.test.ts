@@ -195,7 +195,7 @@ describe('serializeConversionInputs', () => {
     });
   });
 
-  it('does not clone an unused decoder description for WebP conversion', () => {
+  it('copies the bounded decoder description for direct WebP conversion', () => {
     const description = new Uint8Array([0x01, 0xab, 0xff]).buffer;
     const metadata: VideoMetadata = {
       ...defaultMetadata,
@@ -212,7 +212,8 @@ describe('serializeConversionInputs', () => {
       format: 'webp',
     });
 
-    expect(result.serializedConfig).not.toHaveProperty('description');
+    expect(result.serializedConfig?.description).toEqual(description);
+    expect(result.serializedConfig?.description).not.toBe(description);
   });
 
   it.each(['gif', 'webp'] as const)(

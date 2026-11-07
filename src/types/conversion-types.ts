@@ -249,6 +249,11 @@ export interface VideoMetadata {
   rotation?: VideoRotation;
 }
 
+/** Decoder inputs retained by one admitted conversion, without UI-only metadata. */
+export type PrecomputedVideoMetadata = Readonly<
+  Pick<VideoMetadata, 'config' | 'duration' | 'framerate' | 'rotation'>
+>;
+
 // ---------------------------------------------------------------------------
 // Pipeline types (phase, progress, request)
 // ---------------------------------------------------------------------------
@@ -261,6 +266,8 @@ export interface ConversionRequest {
   inputBuffer?: ArrayBuffer | undefined;
   /** File as Blob — enables on-demand reading via BlobSource, avoiding full memory load */
   inputBlob?: Blob | undefined;
+  /** Omit for programmatic callers that need demux to extract metadata once. */
+  preComputedMetadata?: PrecomputedVideoMetadata | undefined;
   fileName: string;
   format: ConversionFormat;
   quality: ConversionQuality;

@@ -3,7 +3,11 @@
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 import { extractVideoMetadata } from '@services/video-metadata';
-import type { ConversionRequest, VideoMetadata, VideoRotation } from '@t/conversion-types';
+import type {
+  ConversionRequest,
+  PrecomputedVideoMetadata,
+  VideoRotation,
+} from '@t/conversion-types';
 import {
   DEFAULT_FPS,
   ENCODED_CHUNK_BUDGET_BYTES,
@@ -65,13 +69,13 @@ function getInputSizeBytes(source: Blob | ArrayBuffer): number {
  * `extractVideoMetadata()` call and its associated Input creation.
  *
  * @param request - Conversion settings + input buffer
- * @param preComputedMetadata - Optional pre-extracted metadata (from handleFileSelected)
+ * @param preComputedMetadata - Optional metadata bound to the admitted request
  * @param onPrepared - Callback after metadata, track, and trim start are ready
  * @param signal - AbortSignal for cancellation
  */
 export async function demuxVideo(
   request: ConversionRequest,
-  preComputedMetadata?: VideoMetadata,
+  preComputedMetadata?: PrecomputedVideoMetadata,
   onPrepared?: DemuxPreparedCallback,
   signal?: AbortSignal
 ): Promise<DemuxResult> {

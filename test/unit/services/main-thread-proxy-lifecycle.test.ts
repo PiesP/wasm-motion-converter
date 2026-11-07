@@ -708,12 +708,39 @@ describe('runPipelineViaWorker lifecycle', () => {
     const output = new ArrayBuffer(4);
     runConversionPipeline.mockResolvedValue(output);
 
+    const description = new Uint8Array([1, 2, 3]).buffer;
+    const config = {
+      ...validDecoderConfig,
+      colorSpace: { fullRange: false },
+      description,
+      displayAspectWidth: 4,
+      displayAspectHeight: 3,
+      hardwareAcceleration: 'prefer-hardware',
+      rotation: 0,
+    } satisfies SerializedDecoderConfig;
     await expect(
-      runPipelineWithFallback(input, validDecoderConfig, validOptions, vi.fn())
+      runPipelineWithFallback(input, config, validOptions, vi.fn(), undefined, undefined, 0, 0)
     ).resolves.toBe(output);
 
     expect(runConversionPipeline).toHaveBeenCalledWith(
-      expect.objectContaining({ inputBlob: input }),
+      expect.objectContaining({
+        inputBlob: input,
+        preComputedMetadata: {
+          config: {
+            codec: validDecoderConfig.codec,
+            codedHeight: validDecoderConfig.codedHeight,
+            codedWidth: validDecoderConfig.codedWidth,
+            colorSpace: { fullRange: false },
+            description,
+            displayAspectWidth: 4,
+            displayAspectHeight: 3,
+            hardwareAcceleration: 'prefer-hardware',
+          },
+          duration: 0,
+          framerate: 0,
+          rotation: 0,
+        },
+      }),
       expect.any(Function),
       undefined
     );

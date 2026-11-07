@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
 import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
 import type {
   SerializedConversionOptions,
@@ -32,7 +33,6 @@ import {
 } from '@stores/conversion-store';
 import type {
   ConversionProgress,
-  ConversionRequest,
   ConversionResult,
   ConversionSettings,
   ProgressCallback,
@@ -106,13 +106,14 @@ export async function handleConvert(
   }
 
   const settings = conversionSettings();
+  const metadata = videoMetadata();
 
   try {
     const durationValidation = await validateVideoDuration(
       file,
       settings.format,
       t,
-      videoMetadata()?.framerate,
+      metadata?.framerate,
       intent.signal
     );
     if (!intent.isActive()) return;
@@ -137,7 +138,15 @@ export async function handleConvert(
               settle();
               return;
             }
-            void performConversion(file, settings, runtime, t, intent, durationValidation.duration)
+            void performConversion(
+              file,
+              settings,
+              metadata,
+              runtime,
+              t,
+              intent,
+              durationValidation.duration
+            )
               .catch((error) => {
                 logger.error('conversion', 'Post-confirmation conversion failed', {
                   error: getErrorMessage(error),
@@ -169,13 +178,21 @@ export async function handleConvert(
       return;
     }
 
-    await performConversion(file, settings, runtime, t, intent, durationValidation.duration);
+    await performConversion(
+      file,
+      settings,
+      metadata,
+      runtime,
+      t,
+      intent,
+      durationValidation.duration
+    );
   } catch (validationError) {
     if (!intent.isActive() || isCancellationError(validationError)) return;
     logger.warn('conversion', 'Duration validation failed, proceeding anyway', {
       error: getErrorMessage(validationError),
     });
-    await performConversion(file, settings, runtime, t, intent);
+    await performConversion(file, settings, metadata, runtime, t, intent);
   } finally {
     finishConversionRun(runtime, intent);
   }
@@ -184,6 +201,7 @@ export async function handleConvert(
 async function performConversion(
   file: File,
   settings: ConversionSettings,
+  metadata: VideoMetadata | null,
   runtime: ConversionRuntimeController,
   t: TFunction,
   intent: ConversionIntent,
@@ -218,7 +236,6 @@ async function performConversion(
 
     runtime.startMemoryMonitoring();
 
-    const metadata = videoMetadata();
     const memoryPressureCadenceRatio = runMemoryCheck(metadata, settings);
 
     if (signal.aborted) {
@@ -361,21 +378,16 @@ async function executePipeline(
   const isWebP = serializedOptions.format === 'webp';
   if (isWebP) {
     const { runConversionPipeline } = await import('@services/conversion-pipeline');
-    const request = {
-      inputBlob: file,
-      fileName: file.name,
-      format: 'webp',
-      quality: serializedOptions.quality,
-      scale: serializedOptions.scale,
-      trimStart: serializedOptions.trimStart,
-      trimEnd: serializedOptions.trimEnd,
-      maxMemoryMB: WORKER_MAX_MEMORY_MB,
-      maxFrames: serializedOptions.maxFrames,
-      maxOutputBytes: serializedOptions.maxOutputBytes,
-      forceDecimation: serializedOptions.forceDecimation,
-      memoryPressureCadenceRatio: serializedOptions.memoryPressureCadenceRatio,
-      smartFrameSkip: serializedOptions.smartFrameSkip ?? 'off',
-    } satisfies ConversionRequest;
+    const request = buildConversionRequest(
+      undefined,
+      serializedOptions,
+      WORKER_MAX_MEMORY_MB,
+      file,
+      file.name,
+      serializedConfig,
+      duration,
+      framerate
+    );
     return runConversionPipeline(request, progressCallback, signal);
   }
 
@@ -576,11 +588,12 @@ export function handleRetry(runtime: ConversionRuntimeController, t: TFunction):
     // file-selection phase), skip re-extracting it and go straight to
     // conversion. This avoids redundant buffer reads + decoder config
     // extraction when only the conversion itself failed.
-    if (videoMetadata()?.config) {
+    const metadata = videoMetadata();
+    if (metadata?.config) {
       const settings = conversionSettings();
       const intent = runtime.beginConversionIntent();
       if (!intent) return;
-      void performConversion(file, settings, runtime, t, intent)
+      void performConversion(file, settings, metadata, runtime, t, intent)
         .catch((error) =>
           logger.error('conversion', 'Retry conversion failed', { error: getErrorMessage(error) })
         )

@@ -427,16 +427,19 @@ result Blob.
 ### Conversion input and settings ownership
 
 `src/hooks/conversion-handlers/use-perform-conversion.ts` admits one conversion
-intent for the selected file, snapshots the chosen settings, validates duration,
-and creates the request passed to `src/services/conversion-pipeline.ts` or the
-Worker path. The main-thread demux still reads `videoMetadata()` from the
-conversion store at task start; the Worker receives serialized inputs and owns
-its decoder metadata. Progress and results are accepted only for the current
-intent. Cancellation, output buffers and worker transfer/disposal remain owned
-by the conversion handlers and pipeline. The selected file and metadata are
-reactive UI state until admission; the admitted file/settings and run token
-belong to that job. See the handler and pipeline tests under `test/browser/`
-for the affected paths.
+intent for the selected file, captures the chosen settings and metadata with
+that intent, validates duration, and creates the request passed to
+`src/services/conversion-pipeline.ts` or the Worker path. Both routes use the
+same serialized decoder fields, duration and framerate. The main-thread demux
+receives request-owned metadata instead of reading the UI store when its task
+starts. A programmatic request without metadata still extracts it from the
+input. Progress and results are accepted only for the current intent.
+Cancellation, output buffers and Worker transfer/disposal remain owned by the
+conversion handlers and pipeline. The selected file and metadata are reactive
+UI state until admission; the admitted file/settings/metadata and run token
+belong to that job. See `test/unit/hooks/use-perform-conversion.test.ts`,
+`test/unit/services/conversion-pipeline-options.test.ts` and the Worker proxy
+tests for these boundaries.
 
 Analysis cancellation waits for metadata extraction and its owned input cleanup.
 The metadata module import and the subsequent decoder support query are not
@@ -479,13 +482,21 @@ explains why an initial effect schedules work after rendering. The
 does not provide an atomic read-modify-write transaction for this policy.
 Version-separated keys would require a migration and rollback reader policy;
 this single-record store currently has no such reader. A guarded single-record
-writer keeps the existing key and call sites. Passing immutable metadata into
-the main-thread pipeline would remove one hidden store read, but the current
-admission token and busy state keep the selection fixed across the relevant
-user path; no same-job race has been established. The Worker already receives
-explicit serialized inputs. Retain that pipeline seam until a concrete caller
-needs stronger metadata ownership; adding another request representation here
-would change delivery and transfer paths without resolving the settings risk.
+writer keeps the existing key and call sites. The historical #427 assessment
+found no same-job metadata race and retained the main-thread store read then.
+The later composition policy in `.github#39` and conversion ownership work in
+#466 replace that read with explicit admitted metadata. This design change does
+not revise the #427 race finding or the settings writer's separate ownership.
+The existing serialized decoder/config, duration and framerate boundary is
+reused across Worker, main-thread and Worker-unavailable fallback paths.
+
+The proxy's direct `Error` subclasses are narrow native error boundaries:
+`WorkerUnavailableError` alone permits main-thread fallback; timeout, memory,
+pipeline and cancellation failures remain terminal. `OutputLimitError` carries
+the output ceiling category and `WasmWebpInitializationError` retains the
+failed WASM initialization state until an explicit reload. These native error
+types support `instanceof` checks or existing error handling at their direct
+call sites; they do not form a product-internal implementation base class.
 
 Browser Mode coverage in
 `test/browser/components/settings-persistence.browser.test.tsx` mounts the real

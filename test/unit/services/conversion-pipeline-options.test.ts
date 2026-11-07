@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => ({
   encodeWebpOffscreen: vi.fn(),
 }));
 
-vi.mock('@stores/conversion-store', () => ({ videoMetadata: () => null }));
 vi.mock('@utils/logger', () => ({
   logger: {
     debug: vi.fn(),
@@ -98,6 +97,20 @@ afterEach(() => {
 });
 
 describe('main conversion pipeline encoder options', () => {
+  it('passes the request-owned metadata to demux and permits programmatic omission', async () => {
+    const preComputedMetadata = {
+      config: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
+      duration: 0,
+      framerate: 0,
+      rotation: 0 as const,
+    };
+    await runConversionPipeline({ ...baseRequest, preComputedMetadata }, vi.fn());
+    expect(mocks.demuxVideo.mock.calls[0]?.[1]).toBe(preComputedMetadata);
+
+    await runConversionPipeline(baseRequest, vi.fn());
+    expect(mocks.demuxVideo.mock.calls[1]?.[1]).toBeUndefined();
+  });
+
   it.each(['gif', 'webp-wasm', 'webp-canvas'] as const)(
     'forwards independent normal, pressure, and explicit-gap policies to %s',
     async (route) => {
