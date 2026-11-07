@@ -280,7 +280,7 @@ the project settings: Pages projects using a Wrangler file read its variables
 into the build environment before deciding whether to install dependencies.
 Confirm the switch and the absence of an automatic install in the provider log.
 The tracked `PNPM_VERSION` keeps the Pages provider pre-build selection aligned
-with `packageManager`. The bootstrap installs the reviewed Vite+ 1.4.0 global CLI
+with `packageManager`. The bootstrap installs the catalog-pinned Vite+ global CLI
 from an immutable installer source with a checked SHA-256 when absent, then verifies
 Vite+ selects the exact Node and pnpm pins. Confirm those identities in the provider log.
 
@@ -606,7 +606,7 @@ importing the alias map does not load the production source or service-worker li
 The browser-app preset lazily imports and creates Solid and Tailwind plugins for
 Vite execution, keeping metadata-only lint, format, check and task lookup lightweight.
 
-The Vite alias reports Vite+ `1.4.0` and bundles Vite `8.3.5`. Strict peer
+The Vite alias reports Vite+ `1.5.0` and bundles Vite `8.3.5`. Strict peer
 validation stays enabled. `pnpm-workspace.yaml` permits only that exact alias
 for the reviewed Vitest, mocker, Tailwind, Solid plugin and vitefu versions,
 whose declared Vite ranges include 8.3.5. Recheck callers, their original
@@ -726,13 +726,17 @@ Vite+ owns the Vite, Vitest, coverage, and core-tool versions. Dependabot keeps
 `vite-plus` update PRs visible while omitting ordinary component-version PRs for
 `vite`, `vitest`, `@vitest/*`, and `@voidzero-dev/vite-plus-core`. Security updates
 and alerts remain visible. For a Vite+ update, select an exact stable release
-published at least 24 hours earlier and set `VERSION` to that release. Follow the
-[project upgrade guide](https://viteplus.dev/guide/upgrade-project): run
+published at least 24 hours earlier and set `VERSION` to that release. Review
+the managed Vite alias, Vitest and coverage catalog entries, and exact
+peer-compatibility selectors against the bundled versions first. Perform a fresh
+strict dependency resolution and audit the full graph before running the pinned
+migrator, whose automatic install may rewrite the lockfile and workspace policy.
+Follow the [project upgrade guide](https://viteplus.dev/guide/upgrade-project): run
 `vp dlx --package="vite-plus@$VERSION" vp help migrate`, then
 `vp dlx --package="vite-plus@$VERSION" vp migrate --no-interactive --no-agent --no-editor --no-hooks`.
-Review the managed Vite alias, Vitest and coverage catalog entries, and exact
-peer-compatibility selectors against the bundled versions. Confirm fresh
-dependency resolution, a frozen install, and `vp run verify:full` before merging.
+Review and discard generated policy exceptions, restore the strict controls,
+then repeat fresh resolution and confirm a frozen install and `vp run verify:full`
+before merging.
 Upgrading a global `vp` installation does not update this project's package graph.
 
 Review the exact dependency/Action diff and its upstream source, release notes,
