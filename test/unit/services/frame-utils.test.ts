@@ -556,12 +556,10 @@ describe('convertRGBAToRGB', () => {
     expect(() => convertRGBAToRGB(tooSmall, 1, 1, 'RGBA')).toThrow(RangeError);
   });
 
-  it('throws on empty input (pixelCount=0)', () => {
+  it('accepts empty input for zero dimensions', () => {
     const rgba = new Uint8Array([]);
-    // pixelCount=0 → acquire(0) → BufferPool returns 1-byte bucket (min size)
-    // The source Uint8Array(0) has byteLength=0 which is less than needsBytes=0
-    // Actually needsBytes = 0*4 = 0, so the bounds check passes, and acquire(0) returns a 1-byte buffer
-    // The function should not throw for zero dimensions
+    // The zero-byte source satisfies the zero-byte bound; acquire(0) returns
+    // a zero-byte buffer rather than a minimum one-byte bucket.
     expect(() => convertRGBAToRGB(rgba, 0, 0, 'RGBA')).not.toThrow();
   });
 });

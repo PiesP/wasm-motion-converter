@@ -2,10 +2,40 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { resolveOutputLimits } from '@services/output-limits';
-import type { ConversionRequest } from '@t/conversion-types';
-import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
+import type { ConversionRequest, PrecomputedVideoMetadata } from '@t/conversion-types';
+import { DEFAULT_FPS, WORKER_MAX_MEMORY_MB } from '@utils/constants';
 
-import type { SerializedConversionOptions } from './types';
+import type { SerializedConversionOptions, SerializedDecoderConfig } from './types';
+
+/** Reconstruct only what demux consumes from the existing serialized decoder input. */
+function toPrecomputedVideoMetadata(
+  config: SerializedDecoderConfig | undefined,
+  duration: number | undefined,
+  framerate: number | undefined
+): PrecomputedVideoMetadata | undefined {
+  if (!config) return undefined;
+  return {
+    duration: duration ?? 0,
+    framerate: framerate ?? DEFAULT_FPS,
+    config: {
+      codec: config.codec,
+      codedWidth: config.codedWidth,
+      codedHeight: config.codedHeight,
+      ...(config.displayAspectWidth !== undefined
+        ? { displayAspectWidth: config.displayAspectWidth }
+        : {}),
+      ...(config.displayAspectHeight !== undefined
+        ? { displayAspectHeight: config.displayAspectHeight }
+        : {}),
+      ...(config.hardwareAcceleration !== undefined
+        ? { hardwareAcceleration: config.hardwareAcceleration as HardwareAcceleration }
+        : {}),
+      ...(config.colorSpace !== undefined ? { colorSpace: config.colorSpace } : {}),
+      ...(config.description !== undefined ? { description: config.description } : {}),
+    },
+    ...(config.rotation !== undefined ? { rotation: config.rotation } : {}),
+  };
+}
 
 /**
  * Build the request consumed by both the Worker and its main-thread fallback.
@@ -19,7 +49,10 @@ export function buildConversionRequest(
   options: SerializedConversionOptions,
   maxMemoryMB = WORKER_MAX_MEMORY_MB,
   inputBlob?: Blob,
-  fileName = 'input.webm'
+  fileName = 'input.webm',
+  config?: SerializedDecoderConfig,
+  duration?: number,
+  framerate?: number
 ): ConversionRequest {
   const outputLimits = resolveOutputLimits(options.format, {
     maxFrames: options.maxFrames,
@@ -28,6 +61,9 @@ export function buildConversionRequest(
   return {
     ...(inputBuffer !== undefined ? { inputBuffer } : {}),
     ...(inputBlob !== undefined ? { inputBlob } : {}),
+    ...(config !== undefined
+      ? { preComputedMetadata: toPrecomputedVideoMetadata(config, duration, framerate) }
+      : {}),
     fileName,
     format: options.format,
     quality: options.quality,

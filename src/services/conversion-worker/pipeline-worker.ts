@@ -17,7 +17,6 @@ import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
-import type { VideoMetadata } from '@t/conversion-types';
 import {
   BYTES_PER_MB,
   DEFAULT_FPS,
@@ -121,7 +120,16 @@ export async function runWorkerPipeline(
 
   const inputBuffer = input instanceof ArrayBuffer ? input : undefined;
   const inputBlob = input instanceof Blob ? input : undefined;
-  const request = buildConversionRequest(inputBuffer, options, maxMemoryMB, inputBlob);
+  const request = buildConversionRequest(
+    inputBuffer,
+    options,
+    maxMemoryMB,
+    inputBlob,
+    'input.webm',
+    config,
+    duration,
+    framerate
+  );
 
   const progressState = createWorkerProgressTracker();
   const relayLog = createWorkerLogRelay(postMessage, requestId);
@@ -250,43 +258,11 @@ export async function runWorkerPipeline(
   try {
     assertMemoryBudget();
 
-    // ── Pre-computed metadata (avoids redundant extractVideoMetadata in worker) ──
-    // When the main thread has already extracted metadata during file selection,
-    // reuse it here to skip the expensive extractVideoMetadata → Input.create →
-    // getVideoTracks → getDecoderConfig → computeDuration chain inside demuxVideo.
-    const preComputedMetadata: VideoMetadata | undefined = config
-      ? {
-          width: config.codedWidth,
-          height: config.codedHeight,
-          duration: duration ?? 0,
-          codec: config.codec,
-          framerate: framerate ?? DEFAULT_FPS,
-          bitrate: 0,
-          config: {
-            codec: config.codec,
-            codedWidth: config.codedWidth,
-            codedHeight: config.codedHeight,
-            ...(config.displayAspectWidth !== undefined
-              ? { displayAspectWidth: config.displayAspectWidth }
-              : {}),
-            ...(config.displayAspectHeight !== undefined
-              ? { displayAspectHeight: config.displayAspectHeight }
-              : {}),
-            ...(config.hardwareAcceleration
-              ? { hardwareAcceleration: config.hardwareAcceleration as HardwareAcceleration }
-              : {}),
-            ...(config.colorSpace !== undefined ? { colorSpace: config.colorSpace } : {}),
-            ...(config.description ? { description: config.description } : {}),
-          } as VideoDecoderConfig,
-          ...(config.rotation !== undefined ? { rotation: config.rotation } : {}),
-        }
-      : undefined;
-
     // ── Demux Phase ────────────────────────────────────────────
     const demuxSpan = profiler?.begin('demuxing');
     const demuxResult = await demuxVideo(
       request,
-      preComputedMetadata,
+      request.preComputedMetadata,
       (_estimatedTotalFrames) => {
         // Media metadata is an estimate, not a count of consumed chunks.
         postProgress('demuxing');

@@ -14,9 +14,6 @@
  * 5. Resource cleanup: profiler removed from active map on completion/failure
  */
 
-// Reactive store signals — read pre-computed metadata from the file-selection
-// phase to avoid re-extracting it inside demuxVideo.
-import { videoMetadata } from '@stores/conversion-store';
 import type {
   ConversionRequest,
   MediabunnyVideoDecoderConfig,
@@ -190,7 +187,7 @@ async function _runPipelineInner(
       () =>
         demuxVideo(
           request,
-          videoMetadata() ?? undefined,
+          request.preComputedMetadata,
           (estimatedTotalFrames) => {
             if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
             demuxSpan?.update({ frames: estimatedTotalFrames });

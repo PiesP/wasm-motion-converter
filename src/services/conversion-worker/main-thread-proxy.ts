@@ -375,7 +375,11 @@ export async function runPipelineWithFallback(
       fallbackBuffer,
       options,
       options.maxMemoryMB ?? WORKER_MAX_MEMORY_MB,
-      fallbackBlob
+      fallbackBlob,
+      'input.webm',
+      config,
+      duration,
+      framerate
     );
 
     return runConversionPipeline(request, onProgress, signal);

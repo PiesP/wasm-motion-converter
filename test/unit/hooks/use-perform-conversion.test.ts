@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import type { ConversionSettings, ProgressPhase } from '@t/conversion-types';
+import type { ConversionSettings, ProgressPhase, VideoMetadata } from '@t/conversion-types';
 import { createComputed, createRoot, createSignal } from 'solid-js';
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
@@ -30,6 +30,11 @@ const mocks = vi.hoisted(() => ({
   transitionToState: vi.fn(),
   validateVideoDuration: vi.fn(),
   readWholeFile: vi.fn(),
+  metadata: {
+    config: { codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16 },
+    duration: 1,
+    framerate: 30,
+  } as VideoMetadata,
   settings: {
     format: 'gif' as ConversionSettings['format'],
     quality: 'medium' as ConversionSettings['quality'],
@@ -65,11 +70,7 @@ vi.mock('@stores/conversion-store', () => ({
   setVideoMetadata: mocks.setVideoMetadata,
   setVideoPreviewUrl: mocks.setVideoPreviewUrl,
   transitionToState: mocks.transitionToState,
-  videoMetadata: () => ({
-    config: { codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16 },
-    duration: 1,
-    framerate: 30,
-  }),
+  videoMetadata: () => mocks.metadata,
   videoPreviewUrl: vi.fn(),
 }));
 
@@ -144,6 +145,11 @@ beforeEach(() => {
     trimEnd: 0,
     trimStart: 0,
   };
+  mocks.metadata = {
+    config: { codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16 },
+    duration: 1,
+    framerate: 30,
+  } as VideoMetadata;
 });
 
 const localizedProgressT = ((key: string, params?: Record<string, string | number>) => {
@@ -381,6 +387,63 @@ describe('handleConvert conversion ownership', () => {
       expect.anything()
     );
   });
+
+  it.each(['gif', 'webp'] as const)(
+    'uses the %s metadata admitted before asynchronous validation',
+    async (format) => {
+      let resolveValidation: ((value: unknown) => void) | undefined;
+      mocks.settings = { ...mocks.settings, format };
+      mocks.metadata = {
+        ...mocks.metadata,
+        config: { codec: 'vp09.00.10.08', codedHeight: 16, codedWidth: 16 },
+        duration: 2,
+        framerate: 24,
+        rotation: 0,
+      };
+      mocks.validateVideoDuration.mockReturnValue(
+        new Promise((resolve) => {
+          resolveValidation = resolve;
+        })
+      );
+
+      const conversion = handleConvert(createRuntime(), localizedProgressT);
+      mocks.metadata = {
+        ...mocks.metadata,
+        config: { codec: 'avc1.640028', codedHeight: 32, codedWidth: 32 },
+        duration: 9,
+        framerate: 60,
+        rotation: 90,
+      };
+      resolveValidation?.({ duration: 2_000, warnings: [] });
+      await conversion;
+
+      if (format === 'gif') {
+        expect(mocks.runPipelineWithFallback).toHaveBeenCalledWith(
+          expect.any(File),
+          expect.objectContaining({ codec: 'vp09.00.10.08', rotation: 0 }),
+          expect.any(Object),
+          expect.any(Function),
+          expect.any(AbortSignal),
+          undefined,
+          2,
+          24
+        );
+      } else {
+        expect(mocks.runConversionPipeline).toHaveBeenCalledWith(
+          expect.objectContaining({
+            preComputedMetadata: expect.objectContaining({
+              config: expect.objectContaining({ codec: 'vp09.00.10.08' }),
+              duration: 2,
+              framerate: 24,
+              rotation: 0,
+            }),
+          }),
+          expect.any(Function),
+          expect.any(AbortSignal)
+        );
+      }
+    }
+  );
 
   it('passes the original File to the GIF worker without a full-file read', async () => {
     mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });

@@ -82,7 +82,7 @@ export function serializeConversionInputs(
       ? metadataFps
       : DEFAULT_FPS;
   return {
-    serializedConfig: serializeDecoderConfig(metadata, settings.format === 'gif'),
+    serializedConfig: serializeDecoderConfig(metadata),
     serializedOptions: {
       format: settings.format,
       quality: settings.quality,
@@ -103,10 +103,7 @@ export function serializeConversionInputs(
   };
 }
 
-function serializeDecoderConfig(
-  metadata: VideoMetadata | null,
-  includeDescription: boolean
-): SerializedDecoderConfig | null {
+function serializeDecoderConfig(metadata: VideoMetadata | null): SerializedDecoderConfig | null {
   const decoderConfig = metadata?.config;
   if (!decoderConfig) return null;
   const colorSpace = decoderConfig.colorSpace;
@@ -134,7 +131,7 @@ function serializeDecoderConfig(
           },
         }
       : {}),
-    ...(includeDescription && decoderConfig.description
+    ...(decoderConfig.description
       ? { description: copyBoundedCodecDescription(decoderConfig.description) }
       : {}),
     ...(metadata.rotation !== undefined ? { rotation: metadata.rotation } : {}),

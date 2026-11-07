@@ -427,16 +427,70 @@ result Blob.
 ### Conversion input and settings ownership
 
 `src/hooks/conversion-handlers/use-perform-conversion.ts` admits one conversion
-intent for the selected file, snapshots the chosen settings, validates duration,
-and creates the request passed to `src/services/conversion-pipeline.ts` or the
-Worker path. The main-thread demux still reads `videoMetadata()` from the
-conversion store at task start; the Worker receives serialized inputs and owns
-its decoder metadata. Progress and results are accepted only for the current
-intent. Cancellation, output buffers and worker transfer/disposal remain owned
-by the conversion handlers and pipeline. The selected file and metadata are
-reactive UI state until admission; the admitted file/settings and run token
-belong to that job. See the handler and pipeline tests under `test/browser/`
-for the affected paths.
+intent for the selected file, captures the chosen settings and metadata with
+that intent, validates duration, and creates the request passed to
+`src/services/conversion-pipeline.ts` or the Worker path. Both routes use the
+same serialized decoder fields, duration and framerate. The main-thread demux
+receives request-owned metadata instead of reading the UI store when its task
+starts. A programmatic request without metadata still extracts it from the
+input. Progress and results are accepted only for the current intent.
+Cancellation, output buffers and Worker transfer/disposal remain owned by the
+conversion handlers and pipeline. The selected file and metadata are reactive
+UI state until admission; the admitted file/settings/metadata and run token
+belong to that job. See `test/unit/hooks/use-perform-conversion.test.ts`,
+`test/unit/services/conversion-pipeline-options.test.ts` and the Worker proxy
+tests for these boundaries.
+
+#### Realm buffer pool ownership (#467)
+
+**Decision: retain the current realm-scoped
+[`globalBufferPool`](src/services/buffer-pool.ts).** The supported
+UI admits one conversion intent at a time through
+`use-conversion-runtime-controller.ts`; the GIF conversion proxy creates and
+terminates a Worker for one request. Main-thread and GIF Worker pipelines use
+separate realm-local pools. `BufferPool` is an ordinary stateful collaborator,
+not an inherited implementation base. Injecting an allocation capability now
+would add a complete cross-module migration without a supported second
+same-realm owner.
+
+| Lifetime and realm | Owner and borrower | Return or retirement authority |
+| --- | --- | --- |
+| UI conversion intent | The handler owns the admitted file, settings, metadata, cancellation and result publication; the pipeline borrows the request. | The handler ends the intent only after physical pipeline settlement. |
+| Main-thread conversion | `runConversionPipeline` owns demux, decoder, encoder, optional WebP Worker pool and the main-realm buffer-pool boundary. | It clears the realm pool at start and after processing, and disposes conversion resources in `finally`; its abort path terminates the WebP Worker pool. |
+| Main-realm frame and decoder work | `frame-utils.ts` borrows `acquire`/`release`; `decoder-service.ts` returns skipped or failed pixels and hands delivered pixels or completed batches to the consumer. | The receiving encoder/pipeline returns handed-off pixels after use. `pooled-buffer.ts` returns its borrowed pixels in `finally`. |
+| GIF, serial WebP and Canvas WebP encoders | `gif-encoder-service.ts`, `webp-encoder-service.ts` and `offscreen-webp-encoder.ts` borrow and return frame buffers. | The encoder owns in-flight pixels; the pipeline alone clears the realm pool after settlement. |
+| Parallel WebP task and Worker pool | `parallel-webp-encoder.ts` hands RGBA pixels to its conversion-scoped `WebpWorkerPool`; the pipeline owns pool disposal. Encoding Workers do not import `globalBufferPool`. | On failed transfer, `worker-pool.ts` returns attached pixels; after successful transfer it calls `releaseTransferred` in the sending realm. The Worker owns transferred pixels until task completion or failure. The encoder does not dispose the Worker pool. |
+| GIF conversion Worker realm | `main-thread-proxy.ts` owns Worker creation, input transfer, timeout, cancellation and termination; `pipeline-worker.ts` borrows its own realm-local pool. | The Worker pipeline clears its realm pool in `finally`; the proxy terminates the Worker. Main-realm clearing cannot settle Worker-realm accounting. |
+| Returned output | Encoders and muxers own working bytes until an exact output `ArrayBuffer` is returned or transferred; the caller then owns it and the UI retains its result `Blob`. | Output is outside the frame pool. Clearing the pool does not release or invalidate the returned result. |
+
+`BufferPool.clear()` drops retained buckets **and resets active-allocation
+accounting**. Zero active bytes after a clear therefore does not prove that a
+borrower returned its pixels. [Pool accounting tests](test/unit/services/buffer-pool-memory.test.ts)
+check checked-out, returned and transferred accounting;
+[decoder tests](test/unit/services/decoder-service.test.ts) use an active sentinel to test failure cleanup before
+clearing; [frame-memory tests](test/unit/services/frame-memory.test.ts) check admission and reservation release. The
+frame, GIF, WebP, parallel WebP and Worker-pool tests cover their own return,
+cancellation and output paths. No explicit duplicate-return identity test was
+found for the whole pool chain; `release()` can insert the same buffer into a
+bucket twice if called twice. Such a control is a prerequisite for a future
+chain migration, not evidence supplied by current tests.
+
+This retain decision preserves current bucket caps, frame/task backpressure,
+transfer accounting, return order, cancellation behavior and output ownership.
+The exported `runConversionPipeline` and `runWorkerPipeline` have no same-realm
+serialization guard; direct concurrent programmatic calls are **not** covered
+by the supported UI/proxy lifetime, and one call's `clear()` could reset
+another's accounting. Revisit this decision when a second same-realm job is
+supported, a new consumer needs independent disposal, or a verified
+acquire/release/clear chain crosses owners. Any migration must cover one
+complete chain with a borrowed allocation/return capability and owner-only
+clear/disposal authority, then verify accounting before teardown,
+duplicate-return identity, failure/cancel recovery, unchanged output and
+same-source resource observations. The optional `pool` parameter in
+`frame-utils.ts` is only a partial seam; injecting it alone would split acquire
+and release between owners. A partial migration risks returning pixels to a
+different pool, losing transfer accounting, or clearing a live borrower's
+accounting; those regression costs outweigh a new contract for current callers.
 
 Analysis cancellation waits for metadata extraction and its owned input cleanup.
 The metadata module import and the subsequent decoder support query are not
@@ -479,13 +533,21 @@ explains why an initial effect schedules work after rendering. The
 does not provide an atomic read-modify-write transaction for this policy.
 Version-separated keys would require a migration and rollback reader policy;
 this single-record store currently has no such reader. A guarded single-record
-writer keeps the existing key and call sites. Passing immutable metadata into
-the main-thread pipeline would remove one hidden store read, but the current
-admission token and busy state keep the selection fixed across the relevant
-user path; no same-job race has been established. The Worker already receives
-explicit serialized inputs. Retain that pipeline seam until a concrete caller
-needs stronger metadata ownership; adding another request representation here
-would change delivery and transfer paths without resolving the settings risk.
+writer keeps the existing key and call sites. The historical #427 assessment
+found no same-job metadata race and retained the main-thread store read then.
+The later composition policy in `.github#39` and conversion ownership work in
+#466 replace that read with explicit admitted metadata. This design change does
+not revise the #427 race finding or the settings writer's separate ownership.
+The existing serialized decoder/config, duration and framerate boundary is
+reused across Worker, main-thread and Worker-unavailable fallback paths.
+
+The proxy's direct `Error` subclasses are narrow native error boundaries:
+`WorkerUnavailableError` alone permits main-thread fallback; timeout, memory,
+pipeline and cancellation failures remain terminal. `OutputLimitError` carries
+the output ceiling category and `WasmWebpInitializationError` retains the
+failed WASM initialization state until an explicit reload. These native error
+types support `instanceof` checks or existing error handling at their direct
+call sites; they do not form a product-internal implementation base class.
 
 Browser Mode coverage in
 `test/browser/components/settings-persistence.browser.test.tsx` mounts the real
