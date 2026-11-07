@@ -466,7 +466,7 @@ same-realm owner.
 `BufferPool.clear()` drops retained buckets **and resets active-allocation
 accounting**. Zero active bytes after a clear therefore does not prove that a
 borrower returned its pixels. [Pool accounting tests](test/unit/services/buffer-pool-memory.test.ts)
-checks checked-out, returned and transferred accounting;
+check checked-out, returned and transferred accounting;
 [decoder tests](test/unit/services/decoder-service.test.ts) use an active sentinel to test failure cleanup before
 clearing; [frame-memory tests](test/unit/services/frame-memory.test.ts) check admission and reservation release. The
 frame, GIF, WebP, parallel WebP and Worker-pool tests cover their own return,
