@@ -124,6 +124,7 @@ export async function exerciseNativeTooltipZoom(
   let previousZoom: string | undefined;
   let baseline: { dpr: number; width: number; scale: number } | undefined;
   let actual: typeof baseline;
+  let browserIdentity: { product: string; revision: string } | undefined;
   let result: Record<string, unknown> | undefined;
   let failure: unknown;
   const cleanupErrors: unknown[] = [];
@@ -139,6 +140,14 @@ export async function exerciseNativeTooltipZoom(
       viewport: { width: 1280, height: 900 },
     });
     appPage = context.pages()[0] ?? (await context.newPage());
+    const browserSession = await context.newCDPSession(appPage);
+    try {
+      const { product, revision } = await browserSession.send('Browser.getVersion');
+      assert(product.startsWith('Chrome/'), 'Zoom lane did not launch installed Chrome');
+      browserIdentity = { product, revision };
+    } finally {
+      await browserSession.detach();
+    }
     const response = await appPage.goto(url, { waitUntil: 'domcontentloaded' });
     assert(response?.ok(), 'Installed Chrome did not load the source-bound app');
     const trigger = appPage.getByRole('button', { name: 'Information about Output Format' });
@@ -178,7 +187,7 @@ export async function exerciseNativeTooltipZoom(
     const height = await appPage.evaluate(() => innerHeight);
     const rect = assertWithinViewport(await tooltip.boundingBox(), actual.width, height);
     await appPage.screenshot({ path: join(output, 'native-ui-chrome-zoom.png'), fullPage: true });
-    result = { baseline, actual, rect, factor: 2 };
+    result = { browserIdentity, baseline, actual, rect, factor: 2 };
   } catch (error) {
     failure = error;
   } finally {
@@ -229,6 +238,7 @@ export async function exerciseNativeTooltipZoom(
     `${JSON.stringify(
       {
         status: failure || cleanupErrors.length ? 'failed' : 'passed',
+        browserIdentity,
         baseline,
         actual,
         result,
