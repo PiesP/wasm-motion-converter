@@ -7,6 +7,7 @@
       "app-update.json",
       "conversion-option-contract.json",
       "narrow-output.json",
+      "native-ui.json",
       "output-finalization-v2.json",
       "output-finalization.json",
       "packet-lookup.json",
@@ -19,6 +20,23 @@
       "webp-initialization.json"
     ],
     "scenarios": {
+      "native-ui": {
+        "selector": "native-ui.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "validation/windows/inputs/native-ui.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
       "conversion-option-contract": {
         "selector": "conversion-option-contract.json",
         "browsers": ["msedge"],
@@ -84,6 +102,7 @@
     "validation/windows/gif-playback.ts",
     "validation/windows/selection-preview.ts",
     "validation/windows/narrow-output.ts",
+    "validation/windows/native-ui.ts",
     "validation/windows/trim-submission.ts",
     "validation/windows/webp-initialization.ts",
     "validation/windows/settings-schema.ts",

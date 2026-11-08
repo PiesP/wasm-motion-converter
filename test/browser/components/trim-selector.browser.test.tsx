@@ -41,6 +41,47 @@ describe('TrimSelector localized summary', () => {
     document.body.innerHTML = '';
   });
 
+  it('restores the prior cursor and releases capture when disabled or unmounted mid-drag', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const [disabled, setDisabled] = createSignal(false);
+    const dispose = render(
+      () => (
+        <TrimSelector
+          duration={10}
+          trimStart={2}
+          trimEnd={8}
+          disabled={disabled()}
+          onChange={() => {}}
+        />
+      ),
+      container
+    );
+    const handle = container.querySelector<HTMLButtonElement>('[data-testid="trim-start-handle"]')!;
+    const capture = vi.spyOn(handle, 'setPointerCapture').mockImplementation(() => {});
+    const hasCapture = vi.spyOn(handle, 'hasPointerCapture').mockReturnValue(true);
+    const release = vi.spyOn(handle, 'releasePointerCapture').mockImplementation(() => {});
+    document.body.style.cursor = 'crosshair';
+
+    handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 7 }));
+    expect(capture).toHaveBeenCalledWith(7);
+    expect(document.body.style.cursor).toBe('ew-resize');
+    setDisabled(true);
+    await Promise.resolve();
+    expect(hasCapture).toHaveBeenCalledWith(7);
+    expect(release).toHaveBeenCalledWith(7);
+    expect(document.body.style.cursor).toBe('crosshair');
+
+    setDisabled(false);
+    await Promise.resolve();
+    handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 8 }));
+    expect(document.body.style.cursor).toBe('ew-resize');
+    dispose();
+    expect(release).toHaveBeenCalledWith(8);
+    expect(document.body.style.cursor).toBe('crosshair');
+    document.body.style.cursor = '';
+  });
+
   it('renders Intl-formatted duration, percentage, and frame units', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);

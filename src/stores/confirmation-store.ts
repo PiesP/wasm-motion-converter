@@ -35,7 +35,8 @@ export const showConfirmation = (
     cancelLabel?: string;
   }
 ): void => {
-  // Reset guard when a new confirmation is shown
+  // Replacing a pending choice must settle the old owner's cancellation first.
+  dismissConfirmation();
   callbackInvoked = false;
   const confirmWarnings = warnings.filter((w) => w.requiresConfirmation);
   if (confirmWarnings.length === 0) {
@@ -55,7 +56,7 @@ export const showConfirmation = (
 };
 
 export const confirmDialog = (): void => {
-  if (callbackInvoked) return;
+  if (callbackInvoked || !confirmationState().isVisible) return;
   callbackInvoked = true;
   const state = confirmationState();
   setConfirmationState({ ...state, isVisible: false });
@@ -63,27 +64,26 @@ export const confirmDialog = (): void => {
 };
 
 export const cancelDialog = (): void => {
-  if (callbackInvoked) return;
+  if (callbackInvoked || !confirmationState().isVisible) return;
   callbackInvoked = true;
   const state = confirmationState();
   setConfirmationState({ ...state, isVisible: false });
   state.onCancel?.();
 };
 
-/** Dismiss any visible confirmation dialog without triggering callbacks (cleanup). */
+/** Settle any visible confirmation through its cancellation callback (cleanup). */
 export const dismissConfirmation = (): void => {
   const state = confirmationState();
-  if (!state.isVisible) {
+  if (!state.isVisible || callbackInvoked) {
     return;
   }
+  callbackInvoked = true;
+  setConfirmationState({ isVisible: false, warnings: [] });
   try {
     state.onCancel?.();
   } catch (err) {
-    // If onCancel throws, still reset the state to avoid a deadlock
-    // where the confirmation modal cannot be dismissed.
     logger.warn('general', 'dismissConfirmation: onCancel threw', {
       error: err instanceof Error ? err.message : String(err),
     });
   }
-  setConfirmationState({ isVisible: false, warnings: [] });
 };

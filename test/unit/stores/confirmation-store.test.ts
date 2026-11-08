@@ -62,6 +62,23 @@ describe('confirmation store', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it('settles a replaced confirmation and ignores late dismissal events', () => {
+    const firstConfirm = vi.fn();
+    const firstCancel = vi.fn();
+    const nextConfirm = vi.fn();
+    const nextCancel = vi.fn();
+    showConfirmation([warning(true)], firstConfirm, firstCancel);
+    showConfirmation([warning(true)], nextConfirm, nextCancel);
+    expect(firstCancel).toHaveBeenCalledOnce();
+    expect(firstConfirm).not.toHaveBeenCalled();
+
+    dismissConfirmation();
+    cancelDialog();
+    confirmDialog();
+    expect(nextCancel).toHaveBeenCalledOnce();
+    expect(nextConfirm).not.toHaveBeenCalled();
+  });
+
   it('dismisses visible dialogs and still resets state when cleanup throws', () => {
     const onCancel = vi.fn(() => {
       throw new Error('cleanup failed');

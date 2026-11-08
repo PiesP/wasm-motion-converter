@@ -173,7 +173,7 @@ describe('Accessibility', () => {
   });
 
   describe('ConfirmationModal', () => {
-    it('exposes dialog relationships, traps focus, dismisses with Escape, and restores state', async () => {
+    it('opens a native modal with relationships and restores focus after cancel', async () => {
       vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
       const previous = document.createElement('button');
       document.body.append(previous);
@@ -195,7 +195,7 @@ describe('Accessibility', () => {
       );
       await Promise.resolve();
 
-      const dialog = container.querySelector<HTMLElement>('[role="dialog"]')!;
+      const dialog = container.querySelector<HTMLDialogElement>('dialog')!;
       const cancelButton = container.querySelector<HTMLButtonElement>(
         '[data-testid="modal-cancel-button"]'
       )!;
@@ -203,7 +203,8 @@ describe('Accessibility', () => {
         '[data-testid="modal-confirm-button"]'
       )!;
 
-      expect(dialog.getAttribute('aria-modal')).toBe('true');
+      expect(dialog.open).toBe(true);
+      expect(dialog.matches(':modal')).toBe(true);
       expect(dialog.getAttribute('aria-labelledby')).toBe('modal-title');
       expect(dialog.getAttribute('aria-describedby')).toBe('modal-description');
       expect(container.querySelector('#modal-title')?.textContent).toBe('modal.title');
@@ -214,20 +215,12 @@ describe('Accessibility', () => {
       expect(document.body.style.position).toBe('fixed');
       expect(document.activeElement).toBe(cancelButton);
 
-      confirmButton.focus();
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
-      expect(document.activeElement).toBe(cancelButton);
-      document.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true })
-      );
-      expect(document.activeElement).toBe(confirmButton);
-
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      cancelButton.click();
       await Promise.resolve();
 
       expect(onCancel).toHaveBeenCalledOnce();
       expect(getConfirmationState().isVisible).toBe(false);
-      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(container.querySelector('dialog')).toBeNull();
       expect(document.body.style.overflow).toBe('');
       expect(document.body.style.position).toBe('');
       expect(document.activeElement).toBe(previous);

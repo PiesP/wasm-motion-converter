@@ -44,6 +44,7 @@ import {
   NARROW_OUTPUT_FIXTURE,
   NARROW_OUTPUT_SCENARIO,
 } from './narrow-output.ts';
+import { exerciseNativeTooltipZoom, exerciseNativeUi } from './native-ui.ts';
 import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
 import type { OutputContractCase } from './output-contract.ts';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
@@ -2953,6 +2954,84 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const nativeUiSelector = resolve(bundleRoot, 'validation/windows/inputs/native-ui.json');
+  let nativeUiSelectorText: string | undefined;
+  try {
+    nativeUiSelectorText = await readFile(nativeUiSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (nativeUiSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(nativeUiSelectorText), { scenario: 'native-ui' });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter((name) => name.endsWith('.json') && name !== 'native-ui.json'),
+      [],
+      'Native UI qualification requires one focused selector'
+    );
+    const fixturePath = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
+    const started = await startStaticServer(bundleRoot);
+    let context: BrowserContext | undefined;
+    let page: Page | undefined;
+    const observations: Record<string, unknown> = {
+      scenario: 'native-ui',
+      status: 'running',
+      phase: 'setup',
+      browserVersion: browser.version(),
+    };
+    const errors: string[] = [];
+    try {
+      context = await browser.newContext({ locale: 'en-US', colorScheme: 'light' });
+      page = await context.newPage();
+      page.on('pageerror', (error) => errors.push(error.message));
+      page.on('console', (message) => {
+        if (message.type() === 'error') errors.push(message.text().slice(0, 300));
+      });
+      observations.document = await loadApplication(page, started.url);
+      observations.checks = await exerciseNativeUi(page, fixturePath, output, (phase) => {
+        observations.phase = phase;
+      });
+      await page.screenshot({ path: join(output, 'native-ui.png'), fullPage: true });
+      observations.phase = 'chrome-zoom';
+      observations.chromeZoom = await exerciseNativeTooltipZoom(
+        browser,
+        bundleRoot,
+        started.url,
+        output
+      );
+      observations.unexpectedErrors = errors;
+      assert.deepEqual(errors, [], 'Unexpected browser errors during native UI qualification');
+      observations.status = 'passed';
+      return { profile: 'native-ui', ...observations };
+    } catch (error) {
+      observations.status = 'failed';
+      observations.failure = error instanceof Error ? error.message : String(error);
+      if (page && !page.isClosed()) {
+        try {
+          observations.failureContext = await page.evaluate(() => ({
+            url: location.href,
+            locale: document.documentElement.lang,
+            direction: document.documentElement.dir,
+            activeElement: document.activeElement?.outerHTML.slice(0, 300),
+            tooltipCount: document.querySelectorAll('[role="tooltip"]').length,
+          }));
+        } catch (diagnosticError) {
+          observations.failureContextError = String(diagnosticError);
+        }
+        try {
+          await page.screenshot({ path: join(output, 'native-ui-failure.png'), fullPage: true });
+          observations.failureScreenshot = 'native-ui-failure.png';
+        } catch (diagnosticError) {
+          observations.failureScreenshotError = String(diagnosticError);
+        }
+      }
+      throw error;
+    } finally {
+      await writeFile(join(output, 'native-ui.json'), `${JSON.stringify(observations, null, 2)}\n`);
+      await context?.close();
+      await closeServer(started.server);
+    }
+  }
   const optionSelectorPath = resolve(
     bundleRoot,
     'validation/windows/inputs/conversion-option-contract.json'

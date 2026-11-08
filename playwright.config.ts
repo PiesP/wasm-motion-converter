@@ -17,6 +17,7 @@ const BROWSER_CAPABILITY_TEST = 'e2e/browser-capability.spec.ts';
 const CI_TEST_MATCH = [
   'e2e/accessibility.spec.ts',
   'e2e/design-system.spec.ts',
+  'e2e/native-ui.spec.ts',
   'e2e/i18n.spec.ts',
   'e2e/ci-conversion-smoke.spec.ts',
   'e2e/output-contract.spec.ts',

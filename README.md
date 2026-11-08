@@ -18,6 +18,11 @@ application.
 
 ## Browser requirements
 
+The supported browsers are the latest stable Chrome, Edge, Firefox, and Safari
+within their available desktop and mobile platform scope. The interface uses
+native modal dialogs, CSS anchor positioning, and pointer capture; earlier
+browser releases are outside the support range.
+
 dropconvert requires WebCodecs (`VideoDecoder` and `VideoFrame`) and
 WebAssembly. Input codec support varies by browser and operating system; the app
 checks the selected file and reports unsupported configurations.

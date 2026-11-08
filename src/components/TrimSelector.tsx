@@ -94,6 +94,9 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   let lastEditedField: 'start' | 'end' | undefined;
   let startDraftEdited = false;
   let endDraftEdited = false;
+  let activePointerId: number | null = null;
+  let activeHandle: HTMLButtonElement | null = null;
+  let previousCursor: string | null = null;
 
   createEffect(() => {
     if (!startFocused() && !startError()) setStartText(formatTimePrecise(props.trimStart));
@@ -134,43 +137,51 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
   };
 
   const startDrag = (event: PointerEvent, handle: 'start' | 'end') => {
-    if (props.disabled) return;
+    if (props.disabled || activePointerId !== null) return;
     event.preventDefault();
     event.stopPropagation();
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    const target = event.currentTarget as HTMLButtonElement;
+    target.setPointerCapture(event.pointerId);
+    activePointerId = event.pointerId;
+    activeHandle = target;
+    previousCursor = document.body.style.cursor;
+    document.body.style.cursor = 'ew-resize';
     setDragging(handle);
   };
 
   const onPointerMove = (event: PointerEvent) => {
     const handle = dragging();
-    if (!handle || !trackRef) return;
+    if (
+      !handle ||
+      !trackRef ||
+      props.disabled ||
+      event.pointerId !== activePointerId ||
+      event.currentTarget !== activeHandle
+    ) {
+      return;
+    }
     const seconds = clientXToSeconds(event.clientX);
     if (handle === 'start') updateStart(seconds);
     else updateEnd(seconds);
   };
 
-  const stopDragging = () => setDragging(null);
+  const stopDragging = (event?: PointerEvent) => {
+    if (activePointerId === null || (event && event.pointerId !== activePointerId)) return;
+    const pointerId = activePointerId;
+    const target = activeHandle;
+    activePointerId = null;
+    activeHandle = null;
+    setDragging(null);
+    if (previousCursor !== null) document.body.style.cursor = previousCursor;
+    previousCursor = null;
+    if (target?.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
+  };
 
   createEffect(() => {
-    if (!dragging()) return;
-    document.body.style.cursor = 'ew-resize';
-    document.addEventListener('pointermove', onPointerMove);
-    document.addEventListener('pointerup', stopDragging);
-    document.addEventListener('pointercancel', stopDragging);
-    onCleanup(() => {
-      document.body.style.cursor = '';
-      document.removeEventListener('pointermove', onPointerMove);
-      document.removeEventListener('pointerup', stopDragging);
-      document.removeEventListener('pointercancel', stopDragging);
-    });
+    if (props.disabled) stopDragging();
   });
 
-  onCleanup(() => {
-    document.body.style.cursor = '';
-    document.removeEventListener('pointermove', onPointerMove);
-    document.removeEventListener('pointerup', stopDragging);
-    document.removeEventListener('pointercancel', stopDragging);
-  });
+  onCleanup(() => stopDragging());
 
   const handleStartKeyDown = (event: KeyboardEvent) => {
     if (props.disabled) return;
@@ -556,6 +567,10 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             class={handleClass('start')}
             style={{ left: `${startPct()}%` }}
             onPointerDown={(event) => startDrag(event, 'start')}
+            onPointerMove={onPointerMove}
+            onPointerUp={stopDragging}
+            onPointerCancel={stopDragging}
+            onLostPointerCapture={stopDragging}
             role="slider"
             aria-label={t('trim.start')}
             aria-valuemin={0}
@@ -579,6 +594,10 @@ const TrimSelector: Component<TrimSelectorProps> = (props) => {
             class={handleClass('end')}
             style={{ left: `${endPct()}%` }}
             onPointerDown={(event) => startDrag(event, 'end')}
+            onPointerMove={onPointerMove}
+            onPointerUp={stopDragging}
+            onPointerCancel={stopDragging}
+            onLostPointerCapture={stopDragging}
             role="slider"
             aria-label={t('trim.end')}
             aria-valuemin={minEnd()}
