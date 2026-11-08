@@ -126,6 +126,27 @@ test('anchored tooltip follows focus and stays within a changed viewport', async
   expect(scrolledBounds!.y + scrolledBounds!.height).toBeLessThanOrEqual(480);
 });
 
+test('localized tooltip reopens only after focus changes following Escape', async ({ page }) => {
+  await page.goto('/');
+  const trigger = page.getByRole('button', { name: 'Information about Output Format' });
+  const tooltip = page.getByRole('tooltip');
+  await trigger.focus();
+  await expect(tooltip).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+
+  const languageSelector = page.getByTestId('language-selector');
+  await languageSelector.focus();
+  await languageSelector.selectOption('ar');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  const localizedTrigger = page.locator('fieldset legend button').first();
+  await localizedTrigger.focus();
+  await expect(tooltip).toBeVisible();
+  const tooltipId = await tooltip.getAttribute('id');
+  expect(tooltipId).toBeTruthy();
+  await expect(localizedTrigger).toHaveAttribute('aria-describedby', tooltipId!);
+});
+
 test('captured trim handle owns outside movement, pointer identity, and release', async ({
   page,
 }) => {

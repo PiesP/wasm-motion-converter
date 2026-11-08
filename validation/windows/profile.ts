@@ -2972,22 +2972,27 @@ export async function run({
     const fixturePath = await validateBundleFile(bundleRoot, SMALL_FIXTURE);
     const started = await startStaticServer(bundleRoot);
     let context: BrowserContext | undefined;
+    let page: Page | undefined;
     const observations: Record<string, unknown> = {
       scenario: 'native-ui',
       status: 'running',
+      phase: 'setup',
       browserVersion: browser.version(),
     };
     const errors: string[] = [];
     try {
       context = await browser.newContext({ locale: 'en-US', colorScheme: 'light' });
-      const page = await context.newPage();
+      page = await context.newPage();
       page.on('pageerror', (error) => errors.push(error.message));
       page.on('console', (message) => {
         if (message.type() === 'error') errors.push(message.text().slice(0, 300));
       });
       observations.document = await loadApplication(page, started.url);
-      observations.checks = await exerciseNativeUi(page, fixturePath);
+      observations.checks = await exerciseNativeUi(page, fixturePath, (phase) => {
+        observations.phase = phase;
+      });
       await page.screenshot({ path: join(output, 'native-ui.png'), fullPage: true });
+      observations.phase = 'chrome-zoom';
       observations.chromeZoom = await exerciseNativeTooltipZoom(
         browser,
         bundleRoot,
@@ -3001,6 +3006,25 @@ export async function run({
     } catch (error) {
       observations.status = 'failed';
       observations.failure = error instanceof Error ? error.message : String(error);
+      if (page && !page.isClosed()) {
+        try {
+          observations.failureContext = await page.evaluate(() => ({
+            url: location.href,
+            locale: document.documentElement.lang,
+            direction: document.documentElement.dir,
+            activeElement: document.activeElement?.outerHTML.slice(0, 300),
+            tooltipCount: document.querySelectorAll('[role="tooltip"]').length,
+          }));
+        } catch (diagnosticError) {
+          observations.failureContextError = String(diagnosticError);
+        }
+        try {
+          await page.screenshot({ path: join(output, 'native-ui-failure.png'), fullPage: true });
+          observations.failureScreenshot = 'native-ui-failure.png';
+        } catch (diagnosticError) {
+          observations.failureScreenshotError = String(diagnosticError);
+        }
+      }
       throw error;
     } finally {
       await writeFile(join(output, 'native-ui.json'), `${JSON.stringify(observations, null, 2)}\n`);

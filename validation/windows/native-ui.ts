@@ -22,7 +22,12 @@ function assertWithinViewport(
 }
 
 /** Exercise the source-bound production UI without changing its conversion policy. */
-export async function exerciseNativeUi(page: Page, fixturePath: string) {
+export async function exerciseNativeUi(
+  page: Page,
+  fixturePath: string,
+  setPhase: (phase: string) => void = () => {}
+) {
+  setPhase('initial-tooltip');
   const viewport = { width: 320, height: 480 };
   const trigger = page.getByRole('button', { name: 'Information about Output Format' });
   const tooltip = page.getByRole('tooltip');
@@ -33,8 +38,11 @@ export async function exerciseNativeUi(page: Page, fixturePath: string) {
   await page.keyboard.press('Escape');
   assert.equal(await tooltip.count(), 0, 'Escape did not dismiss the focused tooltip');
 
+  setPhase('localized-tooltip');
   await page.setViewportSize(viewport);
-  await page.locator('[data-testid="language-selector"]').selectOption('ar');
+  const languageSelector = page.locator('[data-testid="language-selector"]');
+  await languageSelector.focus();
+  await languageSelector.selectOption('ar');
   await page.waitForFunction(() => document.documentElement.dir === 'rtl');
   const rtlTrigger = page.locator('fieldset legend button').first();
   await rtlTrigger.evaluate((element) => {
@@ -72,6 +80,7 @@ export async function exerciseNativeUi(page: Page, fixturePath: string) {
   await page.locator('[data-testid="language-selector"]').selectOption('en');
   await page.evaluate(() => window.scrollTo(0, 0));
 
+  setPhase('captured-trim');
   await page.locator('[data-testid="file-input"]').setInputFiles(fixturePath);
   const start = page.getByTestId('trim-start-handle');
   const track = page.getByTestId('trim-timeline');
