@@ -89,6 +89,22 @@ ordered options, saved Korean preference across reload, English browser auto
 resolution, and Arabic direction across reload. The focused selector does not
 consume `prior-dist/` or a public target.
 
+For current-browser native UI changes, select `--scenario native-ui` on the
+shared controller with installed Edge or Chrome in desktop mode. First generate
+the small CI H.264 fixture with `vp run prepare:e2e:fixture`; the controller then
+builds `dist/` from the selected clean commit. The profile checks the built
+app's CSS-anchored tooltip with focus,
+Escape, long RTL content, viewport edges, and scrolling, then drags a captured
+trim handle outside its track, rejects a foreign pointer ID, and checks its
+displayed value and keyboard adjustment. It also opens an owned installed
+Chrome profile, sets real browser-tab zoom to 200%, measures the viewport and
+tooltip, restores the prior zoom setting, and removes the owned profile after
+closure. This selector does not consume `prior-dist/` or public targets.
+The current conversion warnings do not present a confirmation dialog, so this
+built-app scenario does not claim installed-browser coverage of that component;
+the source-mounted browser test exercises its native keyboard and dismissal
+behavior separately.
+
 For the focused conversion-option contract, first generate the small H.264 and
 CFR color-marker fixtures with `vp run prepare:e2e:fixture`, then select
 `--scenario conversion-option-contract` on the shared `vmctl.py plan`, `bundle`,

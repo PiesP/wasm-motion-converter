@@ -125,3 +125,88 @@ test('anchored tooltip follows focus and stays within a changed viewport', async
   expect(scrolledBounds!.y).toBeGreaterThanOrEqual(0);
   expect(scrolledBounds!.y + scrolledBounds!.height).toBeLessThanOrEqual(480);
 });
+
+test('captured trim handle owns outside movement, pointer identity, and release', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.evaluate(async () => {
+    const modulePath = './src/test-helpers';
+    const { attachTestHelpers } = await import(modulePath);
+    attachTestHelpers();
+    await window.__TEST_HELPERS__?.injectFile(
+      new File(['synthetic'], 'trim-pointer.mp4', { type: 'video/mp4' }),
+      {
+        width: 640,
+        height: 360,
+        duration: 10,
+        codec: 'avc1.42E01E',
+        framerate: 15,
+        bitrate: 500000,
+      }
+    );
+  });
+
+  const start = page.getByTestId('trim-start-handle');
+  const track = page.getByTestId('trim-timeline');
+  await expect(start).toBeVisible();
+  await start.scrollIntoViewIfNeeded();
+  const startBounds = await start.boundingBox();
+  const trackBounds = await track.boundingBox();
+  expect(startBounds).not.toBeNull();
+  expect(trackBounds).not.toBeNull();
+  await page.mouse.move(
+    startBounds!.x + startBounds!.width / 2,
+    startBounds!.y + startBounds!.height / 2
+  );
+  await page.mouse.down();
+  await expect(page.locator('body')).toHaveCSS('cursor', 'ew-resize');
+  await start.evaluate((element) => {
+    element.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, pointerId: 999, clientX: 9999 })
+    );
+  });
+  await expect(start).toHaveAttribute('aria-valuenow', '0');
+  await page.mouse.move(trackBounds!.x + trackBounds!.width + 100, trackBounds!.y + 20);
+  await expect(start).toHaveAttribute('aria-valuenow', '9.9');
+  await expect(page.locator('#trim-start-input')).toHaveValue('0:09.9');
+  await page.mouse.up();
+  await expect(page.locator('body')).not.toHaveCSS('cursor', 'ew-resize');
+
+  const end = page.getByTestId('trim-end-handle');
+  const endBounds = await end.boundingBox();
+  expect(endBounds).not.toBeNull();
+  await end.evaluate((element) => {
+    element.addEventListener('gotpointercapture', () => {
+      (element as HTMLElement).dataset.gotCapture = 'true';
+    });
+    element.addEventListener('lostpointercapture', () => {
+      (element as HTMLElement).dataset.lostCapture = 'true';
+    });
+    element.addEventListener(
+      'pointerdown',
+      (event) => {
+        (element as HTMLElement).dataset.activePointerId = String(
+          (event as PointerEvent).pointerId
+        );
+      },
+      { once: true }
+    );
+  });
+  await page.mouse.move(endBounds!.x + endBounds!.width / 2, endBounds!.y + endBounds!.height / 2);
+  await page.mouse.down();
+  await expect(page.locator('body')).toHaveCSS('cursor', 'ew-resize');
+  await page.mouse.move(
+    endBounds!.x + endBounds!.width / 2 - 1,
+    endBounds!.y + endBounds!.height / 2
+  );
+  await expect(end).toHaveAttribute('data-got-capture', 'true');
+  await end.evaluate((element) => {
+    const pointerId = Number((element as HTMLElement).dataset.activePointerId);
+    (element as HTMLButtonElement).releasePointerCapture(pointerId);
+  });
+  await page.mouse.move(endBounds!.x - 50, endBounds!.y + endBounds!.height / 2);
+  await expect(end).toHaveAttribute('data-lost-capture', 'true');
+  await expect(page.locator('body')).not.toHaveCSS('cursor', 'ew-resize');
+  await page.mouse.up();
+});
