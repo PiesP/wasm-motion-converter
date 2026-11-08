@@ -95,16 +95,17 @@ test('anchored tooltip follows focus and stays within a changed viewport', async
   await expect(tooltip).toHaveCount(0);
 
   await page.setViewportSize({ width: 320, height: 480 });
+  const languageSelector = page.getByTestId('language-selector');
+  await languageSelector.focus();
+  await languageSelector.selectOption('ar');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+  const localizedTrigger = page.locator('fieldset legend button').first();
   await page.evaluate(() => {
-    document.documentElement.dir = 'rtl';
-    const button = document.querySelector<HTMLButtonElement>(
-      '[aria-label="Information about Output Format"]'
-    );
-    if (!button?.parentElement) throw new Error('Tooltip anchor is missing');
-    Object.assign(button.parentElement.style, { position: 'fixed', top: '2px', right: '2px' });
+    document.body.style.minHeight = '1600px';
   });
-  await trigger.blur();
-  await trigger.focus();
+  await localizedTrigger.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+  await page.evaluate(() => window.scrollBy(0, -24));
+  await localizedTrigger.focus();
   await expect(tooltip).toBeVisible();
   await tooltip.evaluate((element) => {
     element.textContent = 'Long localized explanation. '.repeat(16);
@@ -116,14 +117,31 @@ test('anchored tooltip follows focus and stays within a changed viewport', async
   expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(480);
 
-  await page.evaluate(() => {
-    document.body.style.minHeight = '1600px';
-    window.scrollTo(0, 300);
-  });
+  const expectUnoccluded = async () => {
+    const hits = await tooltip.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return [0.2, 0.5, 0.8].map((fraction) => {
+        const hit = document.elementFromPoint(
+          rect.left + rect.width * fraction,
+          rect.top + rect.height * fraction
+        );
+        return hit === element || element.contains(hit);
+      });
+    });
+    expect(hits).toEqual([true, true, true]);
+  };
+  await expectUnoccluded();
+
+  await page.evaluate(() => window.scrollBy(0, 12));
+  const triggerBounds = await localizedTrigger.boundingBox();
+  expect(triggerBounds).not.toBeNull();
+  expect(triggerBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(triggerBounds!.y).toBeLessThan(60);
   const scrolledBounds = await tooltip.boundingBox();
   expect(scrolledBounds).not.toBeNull();
   expect(scrolledBounds!.y).toBeGreaterThanOrEqual(0);
   expect(scrolledBounds!.y + scrolledBounds!.height).toBeLessThanOrEqual(480);
+  await expectUnoccluded();
 });
 
 test('localized tooltip reopens only after focus changes following Escape', async ({ page }) => {

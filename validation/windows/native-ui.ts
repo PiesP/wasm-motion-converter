@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
-import type { Browser, BrowserContext, Page } from '@playwright/test';
+import type { Browser, BrowserContext, Locator, Page } from '@playwright/test';
 
 async function captureNativeViewport(page: Page, outputPath: string): Promise<void> {
   const session = await page.context().newCDPSession(page);
@@ -35,6 +35,22 @@ function assertWithinViewport(
   return rect;
 }
 
+async function assertTooltipReceivesPointer(tooltip: Locator) {
+  const hits = await tooltip.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return [0.2, 0.5, 0.8].map((fraction) => {
+      const x = rect.left + rect.width * fraction;
+      const y = rect.top + rect.height * fraction;
+      const hit = document.elementFromPoint(x, y);
+      return { x, y, received: hit === element || element.contains(hit) };
+    });
+  });
+  assert(
+    hits.every((hit) => hit.received),
+    `Tooltip is visually occluded: ${JSON.stringify(hits)}`
+  );
+}
+
 /** Exercise the source-bound production UI without changing its conversion policy. */
 export async function exerciseNativeUi(
   page: Page,
@@ -60,11 +76,11 @@ export async function exerciseNativeUi(
   await languageSelector.selectOption('ar');
   await page.waitForFunction(() => document.documentElement.dir === 'rtl');
   const rtlTrigger = page.locator('fieldset legend button').first();
-  await rtlTrigger.evaluate((element) => {
-    const anchor = element.parentElement;
-    if (!anchor) throw new Error('Tooltip anchor is missing');
-    Object.assign(anchor.style, { position: 'fixed', top: '2px', right: '2px' });
+  await page.evaluate(() => {
+    document.body.style.minHeight = '1600px';
   });
+  await rtlTrigger.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+  await page.evaluate(() => window.scrollBy(0, -24));
   await rtlTrigger.focus();
   await tooltip.waitFor({ state: 'visible' });
   await tooltip.evaluate((element) => {
@@ -82,16 +98,16 @@ export async function exerciseNativeUi(
   }));
   assert(anchorPosition.anchor.startsWith('--tooltip-'), 'Tooltip lost its named CSS anchor');
   assert(anchorPosition.fallbacks !== 'none', 'Tooltip overflow alternatives are inactive');
-  await page.evaluate(() => {
-    document.body.style.minHeight = '1600px';
-    window.scrollTo(0, 300);
-  });
+  await assertTooltipReceivesPointer(tooltip);
+  await page.evaluate(() => window.scrollBy(0, 12));
+  const triggerRect = await rtlTrigger.boundingBox();
+  assert(triggerRect && triggerRect.y >= 0 && triggerRect.y < 60, 'Scrolled trigger left viewport');
   assertWithinViewport(await tooltip.boundingBox(), viewport.width, viewport.height);
+  await assertTooltipReceivesPointer(tooltip);
   await captureNativeViewport(page, join(output, 'native-ui-rtl-tooltip.png'));
   const tooltipObservation = { id: tooltipId, rect: tooltipRect, anchorPosition };
 
   await rtlTrigger.blur();
-  await rtlTrigger.evaluate((element) => element.parentElement?.removeAttribute('style'));
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.locator('[data-testid="language-selector"]').selectOption('en');
   await page.evaluate(() => window.scrollTo(0, 0));
