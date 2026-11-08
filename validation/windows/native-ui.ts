@@ -7,6 +7,20 @@ import { basename, dirname, join } from 'node:path';
 
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 
+async function captureNativeViewport(page: Page, outputPath: string): Promise<void> {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { data } = await session.send('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: false,
+    });
+    await writeFile(outputPath, Buffer.from(data, 'base64'));
+  } finally {
+    await session.detach();
+  }
+}
+
 function assertWithinViewport(
   rect: { x: number; y: number; width: number; height: number } | null,
   width: number,
@@ -25,6 +39,7 @@ function assertWithinViewport(
 export async function exerciseNativeUi(
   page: Page,
   fixturePath: string,
+  output: string,
   setPhase: (phase: string) => void = () => {}
 ) {
   setPhase('initial-tooltip');
@@ -72,6 +87,7 @@ export async function exerciseNativeUi(
     window.scrollTo(0, 300);
   });
   assertWithinViewport(await tooltip.boundingBox(), viewport.width, viewport.height);
+  await captureNativeViewport(page, join(output, 'native-ui-rtl-tooltip.png'));
   const tooltipObservation = { id: tooltipId, rect: tooltipRect, anchorPosition };
 
   await rtlTrigger.blur();
@@ -195,8 +211,8 @@ export async function exerciseNativeTooltipZoom(
     });
     const height = await appPage.evaluate(() => innerHeight);
     const rect = assertWithinViewport(await tooltip.boundingBox(), actual.width, height);
-    await appPage.screenshot({ path: join(output, 'native-ui-chrome-zoom.png'), fullPage: true });
-    result = { browserIdentity, baseline, actual, rect, factor: 2 };
+    await captureNativeViewport(appPage, join(output, 'native-ui-chrome-zoom.png'));
+    result = { browserIdentity, baseline, actual, rect, factor: 2, capture: 'native-viewport' };
   } catch (error) {
     failure = error;
   } finally {

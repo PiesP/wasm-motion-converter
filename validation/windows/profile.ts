@@ -2988,7 +2988,7 @@ export async function run({
         if (message.type() === 'error') errors.push(message.text().slice(0, 300));
       });
       observations.document = await loadApplication(page, started.url);
-      observations.checks = await exerciseNativeUi(page, fixturePath, (phase) => {
+      observations.checks = await exerciseNativeUi(page, fixturePath, output, (phase) => {
         observations.phase = phase;
       });
       await page.screenshot({ path: join(output, 'native-ui.png'), fullPage: true });
