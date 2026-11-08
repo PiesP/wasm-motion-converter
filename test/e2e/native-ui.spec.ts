@@ -69,3 +69,59 @@ test('native confirmation keeps keyboard, backdrop, focus, and callbacks in one 
   await expect(page.locator('body')).not.toHaveAttribute('data-confirm-count', /.+/);
 });
 
+test('anchored tooltip follows focus and stays within a changed viewport', async ({ page }) => {
+  await page.goto('/');
+  const trigger = page.getByRole('button', { name: 'Information about Output Format' });
+  const tooltip = page.getByRole('tooltip');
+  await trigger.focus();
+  await expect(tooltip).toBeVisible();
+  const tooltipId = await tooltip.getAttribute('id');
+  await expect(trigger).toHaveAttribute('aria-describedby', tooltipId!);
+  await page.keyboard.press('Escape');
+  await expect(tooltip).toHaveCount(0);
+
+  await trigger.blur();
+  await trigger.hover();
+  await expect(tooltip).toBeVisible();
+  const hoverBounds = await tooltip.boundingBox();
+  expect(hoverBounds).not.toBeNull();
+  await page.mouse.move(
+    hoverBounds!.x + hoverBounds!.width / 2,
+    hoverBounds!.y + hoverBounds!.height / 2
+  );
+  await page.waitForTimeout(130);
+  await expect(tooltip).toBeVisible();
+  await page.mouse.move(1, 1);
+  await expect(tooltip).toHaveCount(0);
+
+  await page.setViewportSize({ width: 320, height: 480 });
+  await page.evaluate(() => {
+    document.documentElement.dir = 'rtl';
+    const button = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Information about Output Format"]'
+    );
+    if (!button?.parentElement) throw new Error('Tooltip anchor is missing');
+    Object.assign(button.parentElement.style, { position: 'fixed', top: '2px', right: '2px' });
+  });
+  await trigger.blur();
+  await trigger.focus();
+  await expect(tooltip).toBeVisible();
+  await tooltip.evaluate((element) => {
+    element.textContent = 'Long localized explanation. '.repeat(16);
+  });
+  const bounds = await tooltip.boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(320);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(480);
+
+  await page.evaluate(() => {
+    document.body.style.minHeight = '1600px';
+    window.scrollTo(0, 300);
+  });
+  const scrolledBounds = await tooltip.boundingBox();
+  expect(scrolledBounds).not.toBeNull();
+  expect(scrolledBounds!.y).toBeGreaterThanOrEqual(0);
+  expect(scrolledBounds!.y + scrolledBounds!.height).toBeLessThanOrEqual(480);
+});

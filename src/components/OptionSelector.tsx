@@ -104,13 +104,6 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
     );
   };
 
-  const handleTooltipKeyDown: JSX.EventHandlerUnion<HTMLButtonElement, KeyboardEvent> = (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      event.currentTarget.click();
-    }
-  };
-
   return (
     <fieldset
       class={`mb-6 ${local.disabled ? 'opacity-50 pointer-events-none' : ''}`}
@@ -132,10 +125,6 @@ const OptionSelector = <T extends OptionValue>(props: OptionSelectorProps<T>) =>
                 tabIndex={0}
                 class="inline-flex items-center justify-center w-11 h-11 -m-2 min-h-target-minimum focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/50 rounded-md cursor-pointer"
                 aria-label={t('option.aria.tooltipInfo', { title: local.title })}
-                onKeyDown={(event) => {
-                  tooltipTriggerProps.onKeyDown(event);
-                  handleTooltipKeyDown(event);
-                }}
               >
                 <Icon name="info" size="sm" class="text-text-quaternary cursor-help" />
               </button>

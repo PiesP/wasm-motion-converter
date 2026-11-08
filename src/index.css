@@ -115,6 +115,21 @@ body {
   backdrop-filter: blur(4px);
 }
 
+.anchored-tooltip {
+  position: fixed;
+  position-area: top;
+  position-try-fallbacks:
+    bottom,
+    top right,
+    bottom right,
+    top left,
+    bottom left;
+  margin: 4px;
+  max-inline-size: min(240px, calc(100dvw - 16px));
+  max-block-size: calc(100dvh - 16px);
+  overflow: auto;
+}
+
 /**
  * Dark mode body background
  *

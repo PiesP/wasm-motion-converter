@@ -4,11 +4,6 @@
 import type { Component, JSX } from 'solid-js';
 import { createSignal, onCleanup, Show, splitProps } from 'solid-js';
 
-const TOOLTIP_Z_INDEX = 'z-10';
-const TOOLTIP_ARROW_SIZE = 'w-2 h-2';
-const TOOLTIP_MARGIN_PX = 4;
-const TOOLTIP_ESTIMATED_HEIGHT = 40;
-
 interface TooltipProps {
   content: string;
   children: (triggerProps: TooltipTriggerProps) => JSX.Element;
@@ -26,30 +21,16 @@ interface TooltipTriggerProps {
 const Tooltip: Component<TooltipProps> = (props) => {
   const [local] = splitProps(props, ['content', 'children']);
   const [isVisible, setIsVisible] = createSignal(false);
-  const [placement, setPlacement] = createSignal<'above' | 'below'>('above');
   const [tooltipId] = createSignal(`tooltip-${crypto.randomUUID()}`);
-  let triggerEl: HTMLElement | undefined;
+  const anchorName = `--${tooltipId()}`;
   let enterTimeout: ReturnType<typeof setTimeout> | undefined;
   let leaveTimeout: ReturnType<typeof setTimeout> | undefined;
 
-  const showTooltipImmediate = (event?: Event) => {
-    if (event?.currentTarget instanceof HTMLElement) {
-      triggerEl = event.currentTarget;
-    }
-    // Check if showing above would overflow viewport
-    const triggerRect = triggerEl?.getBoundingClientRect();
-    if (triggerRect) {
-      if (triggerRect.top - TOOLTIP_ESTIMATED_HEIGHT - TOOLTIP_MARGIN_PX < 0) {
-        setPlacement('below');
-      } else {
-        setPlacement('above');
-      }
-    }
+  const showTooltipImmediate = () => {
     setIsVisible(true);
   };
 
-  const showTooltipDelayed = (event: MouseEvent) => {
-    triggerEl = event.currentTarget as HTMLElement;
+  const showTooltipDelayed = () => {
     clearTimeout(enterTimeout);
     clearTimeout(leaveTimeout);
     enterTimeout = setTimeout(() => {
@@ -82,12 +63,7 @@ const Tooltip: Component<TooltipProps> = (props) => {
   onCleanup(() => {
     clearTimeout(enterTimeout);
     clearTimeout(leaveTimeout);
-    triggerEl = undefined;
   });
-
-  const tooltipClass = () => (placement() === 'above' ? 'bottom-full mb-1' : 'top-full mt-1');
-
-  const arrowClass = () => (placement() === 'above' ? '-bottom-1' : '-top-1');
 
   const triggerProps: TooltipTriggerProps = {
     'aria-describedby': tooltipId(),
@@ -99,20 +75,18 @@ const Tooltip: Component<TooltipProps> = (props) => {
   };
 
   return (
-    <div class="relative inline-block">
+    <div class="inline-block" style={{ 'anchor-name': anchorName }}>
       {local.children(triggerProps)}
       <Show when={isVisible()}>
         <div
           id={tooltipId()}
-          class={`absolute ${TOOLTIP_Z_INDEX} px-3 py-2 text-xs text-text-primary bg-bg-elevated rounded-lg shadow-lg ${tooltipClass()} left-1/2 -translate-x-1/2 w-max max-w-[240px] whitespace-normal`}
+          class="anchored-tooltip z-10 w-max rounded-lg bg-bg-elevated px-3 py-2 text-xs text-text-primary shadow-lg whitespace-normal"
+          style={{ 'position-anchor': anchorName }}
           role="tooltip"
           onMouseEnter={keepTooltipVisible}
           onMouseLeave={hideTooltip}
         >
           {local.content}
-          <div
-            class={`absolute ${TOOLTIP_ARROW_SIZE} bg-bg-elevated rotate-45 left-1/2 -translate-x-1/2 ${arrowClass()}`}
-          />
         </div>
       </Show>
     </div>
