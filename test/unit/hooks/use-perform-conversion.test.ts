@@ -80,7 +80,8 @@ vi.mock('@stores/confirmation-store', () => ({
     mocks.showConfirmation(warnings, onConfirm, onCancel);
   },
 }));
-vi.mock('@services/conversion-worker/main-thread-proxy', () => ({
+vi.mock('@services/conversion-worker/main-thread-proxy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@services/conversion-worker/main-thread-proxy')>()),
   runPipelineWithFallback: mocks.runPipelineWithFallback,
 }));
 vi.mock('@services/conversion-pipeline', () => ({
@@ -96,6 +97,12 @@ vi.mock('@utils/dom-utils', () => ({
 
 import { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
 import * as conversionModule from '@hooks/conversion-handlers/use-perform-conversion';
+import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
+import {
+  WorkerMemoryLimitError,
+  WorkerPipelineError,
+  WorkerTimeoutError,
+} from '@services/conversion-worker/main-thread-proxy';
 
 const { handleCancelConversion, handleConvert, handleDismissError, handleRetry } = conversionModule;
 
@@ -724,4 +731,63 @@ it('offers terminal recovery for initialization wrapped by frame processing, eve
   expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
     expect.objectContaining({ outputBlob: expect.any(Blob) }),
   ]);
+});
+
+it.each([
+  ['gif', new WorkerMemoryLimitError('Worker diagnostic changed'), 'OUT_OF_MEMORY', 'memory'],
+  [
+    'webp',
+    new ConversionMemoryLimitError('Main-thread memory estimate reached 240MB of 256MB limit'),
+    'OUT_OF_MEMORY',
+    'memory',
+  ],
+  ['gif', new WorkerTimeoutError(1000), 'TIMEOUT', 'timeout'],
+  [
+    'gif',
+    new WorkerPipelineError('ENCODER_ERROR', 'Diagnostic changed'),
+    'ENCODER_ERROR',
+    'format',
+  ],
+] as const)(
+  'publishes the %s producer code through the conversion handler',
+  async (format, failure, code, type) => {
+    mocks.settings = { ...mocks.settings, format };
+    mocks.validateVideoDuration.mockResolvedValue({ duration: 1000, warnings: [] });
+    const pipeline = format === 'gif' ? mocks.runPipelineWithFallback : mocks.runConversionPipeline;
+    pipeline.mockRejectedValueOnce(failure);
+
+    await handleConvert(createRuntime(), localizedProgressT);
+
+    expect(mocks.setErrorContext).toHaveBeenCalledWith(
+      expect.objectContaining({ code, type, originalError: failure.message })
+    );
+    expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
+    expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
+      expect.objectContaining({ outputBlob: expect.any(Blob) }),
+    ]);
+  }
+);
+
+it('keeps a known nested Worker code and leaves an untyped failure on text fallback', async () => {
+  mocks.validateVideoDuration.mockResolvedValue({ duration: 1000, warnings: [] });
+  mocks.runPipelineWithFallback.mockRejectedValueOnce(
+    new Error('Frame failed', {
+      cause: new WorkerPipelineError('DECODER_ERROR', 'Changed diagnostic'),
+    })
+  );
+  await handleConvert(createRuntime(), localizedProgressT);
+  expect(mocks.setErrorContext).toHaveBeenCalledWith(
+    expect.objectContaining({
+      code: 'DECODER_ERROR',
+      type: 'format',
+      originalError: 'Frame failed',
+    })
+  );
+
+  mocks.setErrorContext.mockClear();
+  mocks.runPipelineWithFallback.mockRejectedValueOnce(new Error('Unfamiliar external failure'));
+  await handleConvert(createRuntime(), localizedProgressT);
+  expect(mocks.setErrorContext).toHaveBeenCalledWith(
+    expect.objectContaining({ code: 'UNKNOWN', type: 'general' })
+  );
 });

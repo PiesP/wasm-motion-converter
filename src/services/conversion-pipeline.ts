@@ -39,6 +39,7 @@ import { getMemoryUsageMB } from '@utils/memory-monitor';
 import { createThrottledProgress } from '@utils/throttled-progress';
 
 import { globalBufferPool } from './buffer-pool';
+import { ConversionMemoryLimitError } from './conversion-memory-limit-error';
 import {
   clearLastConversionProfileReport,
   setLastConversionProfileReport,
@@ -175,7 +176,7 @@ async function _runPipelineInner(
         retainedInputBytes + globalBufferPool.totalRetainedMemory + additionalBytes;
       const estimatedMB = Math.ceil(estimatedBytes / BYTES_PER_MB);
       if (estimatedMB >= maxMemoryMB * MEMORY_CRITICAL_RATIO) {
-        throw new Error(
+        throw new ConversionMemoryLimitError(
           `Main-thread memory estimate reached ${estimatedMB}MB of ${maxMemoryMB}MB limit`
         );
       }

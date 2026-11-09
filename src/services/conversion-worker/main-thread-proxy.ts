@@ -35,6 +35,7 @@ import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerReques
  * Error thrown when a worker operation exceeds the timeout.
  */
 export class WorkerTimeoutError extends Error {
+  readonly code = 'TIMEOUT' as const;
   constructor(ms: number) {
     super(`Worker timed out after ${ms}ms`);
     this.name = 'WorkerTimeoutError';
@@ -43,6 +44,7 @@ export class WorkerTimeoutError extends Error {
 
 /** A worker reached its conservative memory budget and must not be retried. */
 export class WorkerMemoryLimitError extends Error {
+  readonly code = 'OUT_OF_MEMORY' as const;
   constructor(message: string) {
     super(`Worker ran out of memory: ${message}`);
     this.name = 'WorkerMemoryLimitError';

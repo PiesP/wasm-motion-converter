@@ -11,6 +11,7 @@
  */
 
 import { globalBufferPool } from '@services/buffer-pool';
+import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
 import { demuxVideo } from '@services/demuxer-service';
 import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder-common';
@@ -153,7 +154,9 @@ export async function runWorkerPipeline(
   const assertMemoryBudget = (additionalBytes = 0): number => {
     const memoryMB = sampleMemoryMB(additionalBytes);
     if (memoryMB >= maxMemoryMB * MEMORY_CRITICAL_RATIO) {
-      throw new Error(`Worker memory estimate reached ${memoryMB}MB of ${maxMemoryMB}MB limit`);
+      throw new ConversionMemoryLimitError(
+        `Worker memory estimate reached ${memoryMB}MB of ${maxMemoryMB}MB limit`
+      );
     }
     return memoryMB;
   };

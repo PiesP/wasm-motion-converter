@@ -2,8 +2,14 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
 import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
-import { runPipelineWithFallback } from '@services/conversion-worker/main-thread-proxy';
+import {
+  runPipelineWithFallback,
+  WorkerMemoryLimitError,
+  WorkerPipelineError,
+  WorkerTimeoutError,
+} from '@services/conversion-worker/main-thread-proxy';
 import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
@@ -35,12 +41,16 @@ import type {
   ConversionProgress,
   ConversionResult,
   ConversionSettings,
+  ErrorCode,
   ProgressCallback,
   ProgressPhase,
   VideoMetadata,
 } from '@t/conversion-types';
 import type { TFunction, TranslationKey } from '@t/i18n-types';
-import { classifyConversionError } from '@utils/classify-conversion-error';
+import {
+  classifyConversionError,
+  isKnownConversionErrorCode,
+} from '@utils/classify-conversion-error';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
 import { focusElementUnlessUserIsEditing, focusPrimaryErrorAction } from '@utils/dom-utils';
 import { validateVideoDuration } from '@utils/file-validation';
@@ -62,6 +72,26 @@ import { handleFileSelected } from './use-handle-file-selected';
 
 const focusDownloadButton = (): void =>
   focusElementUnlessUserIsEditing('[data-testid="download-result-button"]');
+
+function knownConversionErrorCode(error: unknown): ErrorCode | undefined {
+  const seen = new Set<Error>();
+  let current = error;
+  for (let depth = 0; depth < 16 && current instanceof Error && !seen.has(current); depth++) {
+    seen.add(current);
+    if (
+      current instanceof ConversionMemoryLimitError ||
+      current instanceof WorkerMemoryLimitError ||
+      current instanceof WorkerTimeoutError
+    ) {
+      return current.code;
+    }
+    if (current instanceof WorkerPipelineError && isKnownConversionErrorCode(current.code)) {
+      return current.code;
+    }
+    current = current.cause;
+  }
+  return undefined;
+}
 
 function finishConversionRun(runtime: ConversionRuntimeController, intent: ConversionIntent): void {
   const wasCancelled = intent.signal.aborted;
@@ -158,7 +188,8 @@ export async function handleConvert(
                     getErrorMessage(error) || t('error.conversionFailed'),
                     videoMetadata(),
                     settings,
-                    t
+                    t,
+                    knownConversionErrorCode(error)
                   );
                   setErrorMessage(context.originalError);
                   setErrorContext(context);
@@ -510,7 +541,8 @@ async function handleConversionError(
     initializationError?.message ?? errorMessage_,
     videoMetadata(),
     settings,
-    t
+    t,
+    knownConversionErrorCode(error)
   );
   context.originalError = errorMessage_;
   if (initializationError) setWebpReloadRequired(true);

@@ -276,9 +276,16 @@ describe('worker pipeline smart frame skip forwarding', () => {
       | undefined;
 
     expect(() => encoderOptions?.assertAdditionalMemoryBytes?.(1024)).not.toThrow();
-    expect(() => encoderOptions?.assertAdditionalMemoryBytes?.(461 * 1024 * 1024)).toThrow(
-      'Worker memory estimate reached'
-    );
+    try {
+      encoderOptions?.assertAdditionalMemoryBytes?.(461 * 1024 * 1024);
+      throw new Error('Expected the Worker memory guard to refuse the allocation');
+    } catch (error) {
+      expect(error).toMatchObject({
+        name: 'ConversionMemoryLimitError',
+        code: 'OUT_OF_MEMORY',
+        message: expect.stringContaining('Worker memory estimate reached'),
+      });
+    }
   });
 
   it('forwards smartFrameSkip to the WebP encoder', async () => {
