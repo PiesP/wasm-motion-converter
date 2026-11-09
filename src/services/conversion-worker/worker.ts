@@ -134,7 +134,8 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
   }
 };
 
-// Ready signal for the main thread
+// Instance-scoped readiness is a control event, separate from request logs.
+self.postMessage({ type: 'ready', requestId: '' } satisfies WorkerResponse);
 self.postMessage({
   type: 'log',
   requestId: '',

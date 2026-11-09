@@ -419,6 +419,15 @@ describe('isWorkerResponse', () => {
     message: 'Worker initialized',
   };
 
+  const validReady = { type: 'ready', requestId: '' };
+
+  it('accepts only an instance-scoped readiness control message', () => {
+    expect(isWorkerResponse(validReady)).toBe(true);
+    expect(isWorkerResponse({ ...validReady, requestId: 'req-123' })).toBe(false);
+    expect(isWorkerResponse({ type: 'ready' })).toBe(false);
+    expect(isWorkerResponse({ ...validReady, message: 'Worker initialized' })).toBe(false);
+  });
+
   it('accepts valid progress message', () => {
     expect(isWorkerResponse(validProgress)).toBe(true);
     expect(isWorkerResponse({ ...validProgress, etaSeconds: null })).toBe(true);

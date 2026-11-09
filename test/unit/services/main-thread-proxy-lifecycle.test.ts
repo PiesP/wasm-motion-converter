@@ -595,13 +595,7 @@ describe('runPipelineViaWorker lifecycle', () => {
         if (terminal === 'post-bootstrap error') {
           worker.onmessage?.(
             new MessageEvent('message', {
-              data: {
-                type: 'log',
-                requestId: '',
-                level: 'info',
-                category: 'general',
-                message: 'Worker initialized',
-              },
+              data: { type: 'ready', requestId: '' },
             })
           );
           worker.onerror?.(new ErrorEvent('error', { message: 'post-bootstrap failure' }));
@@ -747,6 +741,95 @@ describe('runPipelineViaWorker lifecycle', () => {
     expect(runConversionPipeline.mock.calls[0]?.[0]).not.toHaveProperty('inputBuffer');
     expect(readWholeFile).not.toHaveBeenCalled();
     expect(ThrowingWorker.instance?.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('keeps diagnostic logs out of bootstrap control and falls back on a pre-ready error', async () => {
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    const input = new Blob(['video']);
+    const output = new ArrayBuffer(4);
+    runConversionPipeline.mockResolvedValueOnce(output);
+    try {
+      const pending = runPipelineWithFallback(input, validDecoderConfig, validOptions, vi.fn());
+      const worker = ThrowingWorker.instance!;
+      emitWorkerMessage(worker, {
+        type: 'log',
+        requestId: '',
+        level: 'info',
+        category: 'general',
+        message: 'Worker initialized',
+      });
+      emitWorkerMessage(worker, {
+        type: 'log',
+        requestId: '',
+        level: 'warn',
+        category: 'conversion',
+        message: 'Diagnostic wording changed',
+      });
+      worker.onerror?.(new ErrorEvent('error', { message: 'module did not finish loading' }));
+
+      await expect(pending).resolves.toBe(output);
+      expect(runConversionPipeline).toHaveBeenCalledOnce();
+      expect(worker.terminate).toHaveBeenCalledOnce();
+      expect(logger.warn).toHaveBeenCalledWith('conversion', 'Diagnostic wording changed', {
+        source: 'worker',
+        requestId: null,
+      });
+    } finally {
+      post.mockRestore();
+    }
+  });
+
+  it('accepts one instance-ready control and treats later errors as terminal', async () => {
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    try {
+      const pending = runPipelineWithFallback(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        vi.fn()
+      );
+      const rejection = expect(pending).rejects.toMatchObject({
+        name: 'WorkerPipelineError',
+        code: 'WORKER_RUNTIME_ERROR',
+      });
+      const worker = ThrowingWorker.instance!;
+      emitWorkerMessage(worker, { type: 'ready', requestId: 'foreign-request' });
+      emitWorkerMessage(worker, { type: 'ready', requestId: '', message: 'malformed' });
+      emitWorkerMessage(worker, { type: 'ready', requestId: '' });
+      emitWorkerMessage(worker, { type: 'ready', requestId: '' });
+      worker.onerror?.(new ErrorEvent('error', { message: 'post-ready failure' }));
+
+      await rejection;
+      expect(runConversionPipeline).not.toHaveBeenCalled();
+      expect(worker.terminate).toHaveBeenCalledOnce();
+      emitWorkerMessage(worker, { type: 'ready', requestId: '' });
+      expect(worker.terminate).toHaveBeenCalledOnce();
+    } finally {
+      post.mockRestore();
+    }
+  });
+
+  it('does not let an invalid readiness event prevent bootstrap fallback', async () => {
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    const output = new ArrayBuffer(4);
+    runConversionPipeline.mockResolvedValueOnce(output);
+    try {
+      const pending = runPipelineWithFallback(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        vi.fn()
+      );
+      const worker = ThrowingWorker.instance!;
+      emitWorkerMessage(worker, { type: 'ready', requestId: 'request-1' });
+      worker.onerror?.(new ErrorEvent('error', { message: 'bootstrap failure' }));
+
+      await expect(pending).resolves.toBe(output);
+      expect(runConversionPipeline).toHaveBeenCalledOnce();
+      expect(worker.terminate).toHaveBeenCalledOnce();
+    } finally {
+      post.mockRestore();
+    }
   });
 
   it('rejects an oversized codec description before constructing a Worker', async () => {
@@ -999,7 +1082,11 @@ describe('runPipelineViaWorker lifecycle', () => {
       runPipelineViaWorker(new ArrayBuffer(8), validDecoderConfig, validOptions, vi.fn())
     ).resolves.toBe(outputBuffer);
 
-    expect(logger.warn).toHaveBeenCalledOnce();
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith('general', 'not a valid bootstrap message', {
+      source: 'worker',
+      requestId: null,
+    });
     expect(logger.warn).toHaveBeenCalledWith('encoders', 'request checkpoint', {
       source: 'worker',
       requestId: 'request-1',

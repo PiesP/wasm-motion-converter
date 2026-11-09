@@ -60,6 +60,19 @@ describe('conversion worker message security', () => {
     );
   });
 
+  it('emits the validated readiness control event from the actual Worker entry', async () => {
+    const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+    vi.stubGlobal('self', workerScope);
+    await import('@services/conversion-worker/worker');
+
+    expect(workerScope.postMessage.mock.calls[0]?.[0]).toEqual({ type: 'ready', requestId: '' });
+    expect(workerScope.postMessage.mock.calls[1]?.[0]).toMatchObject({
+      type: 'log',
+      requestId: '',
+      message: 'Worker initialized',
+    });
+  });
+
   it('rejects a recognizable malformed start request immediately', async () => {
     const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
     vi.stubGlobal('self', workerScope);

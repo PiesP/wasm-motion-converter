@@ -571,12 +571,12 @@ test.describe('conversion Worker fallback boundary', () => {
             this.inner = new NativeWorker(url, options);
             this.inner.onmessage = (event) => {
               this.onmessage?.(event);
-              const data = event.data as { type?: string; message?: string } | null;
+              const data = event.data as { type?: string; requestId?: string } | null;
               if (
                 !injectedFailure &&
                 !this.injected &&
-                data?.type === 'log' &&
-                data.message === 'Worker initialized'
+                data?.type === 'ready' &&
+                data.requestId === ''
               ) {
                 this.injected = true;
                 injectedFailure = true;

@@ -549,6 +549,15 @@ failed WASM initialization state until an explicit reload. These native error
 types support `instanceof` checks or existing error handling at their direct
 call sites; they do not form a product-internal implementation base class.
 
+Main and Worker conversion-owned memory guards emit `ConversionMemoryLimitError`;
+the Worker entry sends its `OUT_OF_MEMORY` code with the diagnostic text. The UI
+keeps known producer codes through presentation and uses text classification for
+untyped external failures. Worker bootstrap readiness is a validated,
+instance-scoped `ready` control event. Request progress, result and error still
+require their exact request ID. Worker logs remain diagnostic and cannot grant
+readiness or change fallback eligibility; the existing timeout owns a Worker
+that never becomes ready.
+
 Browser Mode coverage in
 `test/browser/components/settings-persistence.browser.test.tsx` mounts the real
 App through its initial effect, debounced edits and unmount flush; the store
