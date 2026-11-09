@@ -270,6 +270,10 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
   if (!isRecord(value)) return false;
 
   switch (value.type) {
+    case 'ready': {
+      // Readiness belongs to this Worker instance, not a conversion request.
+      return value.requestId === '' && Object.keys(value).length === 2;
+    }
     case 'progress': {
       if (!isNonEmptyString(value.requestId)) return false;
       if (!['demuxing', 'decoding', 'encoding', 'assembling'].includes(value.phase as string))

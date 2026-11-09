@@ -300,9 +300,11 @@ describe('main conversion pipeline encoder options', () => {
       return new Uint8Array([1, 2, 3]);
     });
 
-    await expect(runConversionPipeline(baseRequest, vi.fn())).rejects.toThrow(
-      'Main-thread memory estimate reached'
-    );
+    await expect(runConversionPipeline(baseRequest, vi.fn())).rejects.toMatchObject({
+      name: 'ConversionMemoryLimitError',
+      code: 'OUT_OF_MEMORY',
+      message: expect.stringContaining('Main-thread memory estimate reached'),
+    });
     expect(demuxResult.dispose).toHaveBeenCalledOnce();
   });
 

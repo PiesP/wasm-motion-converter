@@ -35,6 +35,7 @@ import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerReques
  * Error thrown when a worker operation exceeds the timeout.
  */
 export class WorkerTimeoutError extends Error {
+  readonly code = 'TIMEOUT' as const;
   constructor(ms: number) {
     super(`Worker timed out after ${ms}ms`);
     this.name = 'WorkerTimeoutError';
@@ -43,6 +44,7 @@ export class WorkerTimeoutError extends Error {
 
 /** A worker reached its conservative memory budget and must not be retried. */
 export class WorkerMemoryLimitError extends Error {
+  readonly code = 'OUT_OF_MEMORY' as const;
   constructor(message: string) {
     super(`Worker ran out of memory: ${message}`);
     this.name = 'WorkerMemoryLimitError';
@@ -91,6 +93,10 @@ export async function runPipelineViaWorker(
   if (!isBoundedCodecDescription(config.description)) {
     throw new Error('Invalid worker codec description');
   }
+  // A cancelled request must not turn a construction failure into fallback.
+  if (signal?.aborted) {
+    throw new DOMException('Cancelled', 'AbortError');
+  }
 
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const requestId = crypto.randomUUID();
@@ -104,7 +110,7 @@ export async function runPipelineViaWorker(
       reject(new WorkerUnavailableError(getErrorMessage(error), { cause: error }));
       return;
     }
-    let workerInitialized = false;
+    let workerReady = false;
 
     let lastProgressTime = Number.NEGATIVE_INFINITY;
     let lastDeliveredPercent = 0;
@@ -199,15 +205,15 @@ export async function runPipelineViaWorker(
       if (!isWorkerResponse(event.data)) return;
 
       const response = event.data;
-      const isBootstrapLog =
-        response.type === 'log' &&
-        response.requestId === '' &&
-        response.level === 'info' &&
-        response.category === 'general' &&
-        response.message === 'Worker initialized';
-      if (response.requestId !== requestId && !isBootstrapLog) return;
+      const isInstanceMessage =
+        response.type === 'ready' || (response.type === 'log' && response.requestId === '');
+      if (response.requestId !== requestId && !isInstanceMessage) return;
 
       switch (response.type) {
+        case 'ready': {
+          workerReady = true;
+          break;
+        }
         case 'progress': {
           throttledProgress({
             // phase is now the proper union type from WorkerResponse — no cast needed
@@ -259,7 +265,6 @@ export async function runPipelineViaWorker(
         }
 
         case 'log': {
-          if (isBootstrapLog) workerInitialized = true;
           logger[response.level](response.category, response.message, {
             source: 'worker',
             requestId: response.requestId || null,
@@ -282,7 +287,7 @@ export async function runPipelineViaWorker(
       settled = true;
       cleanup();
       worker.terminate();
-      if (!workerInitialized) {
+      if (!workerReady) {
         reject(new WorkerUnavailableError(error.message));
       } else {
         reject(new WorkerPipelineError('WORKER_RUNTIME_ERROR', error.message));

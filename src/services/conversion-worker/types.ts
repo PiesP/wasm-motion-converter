@@ -34,6 +34,7 @@ export type WorkerRequest =
   | { type: 'abort'; requestId: string };
 
 export type WorkerResponse =
+  | { type: 'ready'; requestId: '' }
   | {
       type: 'progress';
       requestId: string;

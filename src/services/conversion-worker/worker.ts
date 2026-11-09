@@ -10,6 +10,7 @@
  */
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
 
 import { classifyWorkerError } from './classify-worker-error';
 import { isWorkerRequest } from './guards';
@@ -96,7 +97,12 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
       } catch (err) {
         const message = getErrorMessage(err);
         // Classify error using the same compact rules as pipeline-worker.ts
-        const code = isCancellationError(err) ? 'CANCELLED' : classifyWorkerError(message);
+        const code =
+          err instanceof ConversionMemoryLimitError
+            ? err.code
+            : isCancellationError(err)
+              ? 'CANCELLED'
+              : classifyWorkerError(message);
 
         respond({
           type: 'error',
@@ -128,7 +134,8 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
   }
 };
 
-// Ready signal for the main thread
+// Instance-scoped readiness is a control event, separate from request logs.
+self.postMessage({ type: 'ready', requestId: '' } satisfies WorkerResponse);
 self.postMessage({
   type: 'log',
   requestId: '',

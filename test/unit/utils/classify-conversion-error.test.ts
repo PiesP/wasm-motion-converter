@@ -14,6 +14,47 @@ describe('classifyConversionError', () => {
     ).toMatchObject({ code: 'OUT_OF_MEMORY', type: 'memory' });
   });
 
+  it('uses a producer memory code when diagnostic wording does not match a rule', () => {
+    const message = 'Main-thread memory estimate reached 240MB of 256MB limit';
+    expect(classifyConversionError(message, null)).toMatchObject({
+      type: 'general',
+      code: 'UNKNOWN',
+    });
+    const context = classifyConversionError(message, null, undefined, undefined, 'OUT_OF_MEMORY');
+    expect(context).toMatchObject({ type: 'memory', code: 'OUT_OF_MEMORY' });
+    expect(context.suggestion).toContain('smaller video');
+    expect(context.originalError).toBe(message);
+    expect(
+      classifyConversionError(
+        'Diagnostic wording changed',
+        null,
+        undefined,
+        undefined,
+        'OUT_OF_MEMORY'
+      )
+    ).toMatchObject({ type: 'memory', code: 'OUT_OF_MEMORY' });
+  });
+
+  it('retains known timeout, codec, decoder and encoder codes while untyped errors use text', () => {
+    for (const [code, type] of [
+      ['TIMEOUT', 'timeout'],
+      ['CODEC_NOT_SUPPORTED', 'codec'],
+      ['DECODER_ERROR', 'format'],
+      ['ENCODER_ERROR', 'format'],
+    ] as const) {
+      expect(
+        classifyConversionError('Changed diagnostic', null, undefined, undefined, code)
+      ).toMatchObject({
+        code,
+        type,
+      });
+    }
+    expect(classifyConversionError('Changed diagnostic', null)).toMatchObject({
+      type: 'general',
+      code: 'UNKNOWN',
+    });
+  });
+
   beforeEach(() => {
     vi.spyOn(performance, 'now').mockReturnValue(1000);
   });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@services/conversion-worker/pipeline-worker', () => ({
@@ -16,6 +17,60 @@ describe('conversion worker message security', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
+  });
+
+  it('preserves an owned memory refusal code at the Worker entry', async () => {
+    const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+    vi.stubGlobal('self', workerScope);
+    const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+    vi.mocked(runWorkerPipeline).mockRejectedValueOnce(
+      new ConversionMemoryLimitError('Diagnostic wording changed')
+    );
+    await import('@services/conversion-worker/worker');
+    workerScope.postMessage.mockClear();
+
+    await workerScope.onmessage?.({
+      source: null,
+      data: {
+        type: 'start',
+        requestId: 'memory-request',
+        inputBlob: new Blob(['video']),
+        config: { codec: 'vp09', codedHeight: 16, codedWidth: 16 },
+        options: {
+          format: 'gif',
+          fps: 30,
+          maxFrames: 1,
+          maxOutputBytes: 1024,
+          quality: 'medium',
+          scale: 1,
+          trimEnd: 0,
+          trimStart: 0,
+        },
+      },
+    } as unknown as MessageEvent);
+
+    expect(workerScope.postMessage).toHaveBeenCalledWith(
+      {
+        type: 'error',
+        requestId: 'memory-request',
+        code: 'OUT_OF_MEMORY',
+        message: 'Diagnostic wording changed',
+      },
+      []
+    );
+  });
+
+  it('emits the validated readiness control event from the actual Worker entry', async () => {
+    const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+    vi.stubGlobal('self', workerScope);
+    await import('@services/conversion-worker/worker');
+
+    expect(workerScope.postMessage.mock.calls[0]?.[0]).toEqual({ type: 'ready', requestId: '' });
+    expect(workerScope.postMessage.mock.calls[1]?.[0]).toMatchObject({
+      type: 'log',
+      requestId: '',
+      message: 'Worker initialized',
+    });
   });
 
   it('rejects a recognizable malformed start request immediately', async () => {

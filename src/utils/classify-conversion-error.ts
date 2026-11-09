@@ -4,8 +4,8 @@
 /**
  * Conversion Error Classification Utility
  *
- * Analyzes conversion error messages to determine root cause and provide
- * context-aware suggestions. Classifies errors into categories (memory, format, codec, general) based on error messages, video metadata, and conversion settings.
+ * Classifies producer-owned error codes first, then untyped error messages,
+ * metadata, and settings to provide context-aware recovery guidance.
  *
  * Uses a declarative rule-based system with regex patterns for maintainability.
  * Rules are evaluated in order; the first matching rule wins.
@@ -204,6 +204,27 @@ const ERROR_RULES: readonly ErrorRule[] = [
   },
 ];
 
+const KNOWN_CODE_RULE_NAMES: Partial<Record<ErrorCode, string>> = {
+  CANCELLED: 'abort-error-cancelled',
+  OUT_OF_MEMORY: 'out-of-memory',
+  TIMEOUT: 'conversion-timeout',
+  CODEC_NOT_SUPPORTED: 'codec-error',
+  ENCODER_ERROR: 'encoder-error',
+};
+
+/** Only codes in the application's error vocabulary may override text classification. */
+export function isKnownConversionErrorCode(value: string): value is ErrorCode {
+  return (
+    value === 'CANCELLED' ||
+    value === 'OUT_OF_MEMORY' ||
+    value === 'TIMEOUT' ||
+    value === 'CODEC_NOT_SUPPORTED' ||
+    value === 'DECODER_ERROR' ||
+    value === 'ENCODER_ERROR' ||
+    value === 'CORRUPT_OUTPUT'
+  );
+}
+
 /**
  * Check whether the video is too complex (high total pixel count).
  */
@@ -224,13 +245,15 @@ function isVideoTooComplex(metadata: VideoMetadata): boolean {
  * @param metadata - Video metadata for context-aware classification
  * @param conversionSettings - The settings used for conversion (optional)
  * @param t - Translation function for localized suggestions
+ * @param knownCode - A code retained from an application-owned error
  * @returns ErrorContext with error type, phase, and user-friendly suggestion
  */
 export function classifyConversionError(
   errorMessage: string,
   metadata: VideoMetadata | null,
   conversionSettings?: ConversionSettings,
-  t?: TFunction
+  t?: TFunction,
+  knownCode?: ErrorCode
 ): ErrorContext {
   const msg = errorMessage.toLowerCase();
   const timestamp = performance.now();
@@ -255,24 +278,36 @@ export function classifyConversionError(
     };
   }
 
-  for (const rule of ERROR_RULES) {
-    if (!rule.pattern.test(msg)) {
-      continue;
-    }
-
-    if (rule.condition && !rule.condition(msg, metadata)) {
-      continue;
-    }
-
+  // A known producer code survives harmless diagnostic wording changes.
+  // Keep the more specific existing rule when its code agrees with the producer.
+  const matchingRule = ERROR_RULES.find(
+    (rule) => rule.pattern.test(msg) && (!rule.condition || rule.condition(msg, metadata))
+  );
+  const selectedRule =
+    knownCode && knownCode !== 'UNKNOWN' && matchingRule?.code !== knownCode
+      ? ERROR_RULES.find((rule) => rule.name === KNOWN_CODE_RULE_NAMES[knownCode])
+      : matchingRule;
+  if (selectedRule) {
     const suggestion =
-      typeof rule.suggestion === 'function' ? rule.suggestion(msg, metadata) : rule.suggestion;
-
+      typeof selectedRule.suggestion === 'function'
+        ? selectedRule.suggestion(msg, metadata)
+        : selectedRule.suggestion;
     return {
-      type: rule.type,
-      code: rule.code,
+      type: selectedRule.type,
+      code: selectedRule.code,
       ...baseContext,
-      phase: rule.phase ?? 'unknown',
+      phase: selectedRule.phase ?? 'unknown',
       suggestion,
+    };
+  }
+
+  if (knownCode === 'DECODER_ERROR' || knownCode === 'CORRUPT_OUTPUT') {
+    return {
+      ...baseContext,
+      type: 'format',
+      code: knownCode,
+      suggestion:
+        'The video or converted output could not be read. Try a different video file or format.',
     };
   }
 
