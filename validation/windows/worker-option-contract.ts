@@ -222,7 +222,7 @@ export async function exerciseInvalidWorkerOptions(page: Page, workerUrl: string
       });
     try {
       const ready = await receive('');
-      if (ready.type !== 'log' || ready.message !== 'Worker initialized') {
+      if (ready.type !== 'ready' || ready.requestId !== '' || Object.keys(ready).length !== 2) {
         throw new Error('Built conversion Worker did not initialize');
       }
       const observations: {

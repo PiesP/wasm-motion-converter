@@ -93,6 +93,10 @@ export async function runPipelineViaWorker(
   if (!isBoundedCodecDescription(config.description)) {
     throw new Error('Invalid worker codec description');
   }
+  // A cancelled request must not turn a construction failure into fallback.
+  if (signal?.aborted) {
+    throw new DOMException('Cancelled', 'AbortError');
+  }
 
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const requestId = crypto.randomUUID();

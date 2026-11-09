@@ -178,6 +178,66 @@ describe('runPipelineViaWorker lifecycle', () => {
     for (const method of Object.values(logger)) method.mockReset();
   });
 
+  it('rejects a pre-aborted request without starting or transferring to the Worker', async () => {
+    vi.useFakeTimers();
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage');
+    try {
+      const controller = new AbortController();
+      controller.abort();
+      const input = new ArrayBuffer(8);
+      const onProgress = vi.fn();
+
+      await expect(
+        runPipelineWithFallback(
+          input,
+          validDecoderConfig,
+          validOptions,
+          onProgress,
+          controller.signal,
+          new Blob(['fallback source'])
+        )
+      ).rejects.toMatchObject({ name: 'AbortError' });
+
+      if (ThrowingWorker.instance) expect(ThrowingWorker.instance.terminate).toHaveBeenCalledOnce();
+      expect(post).not.toHaveBeenCalled();
+      expect(input.byteLength).toBe(8);
+      expect(onProgress).not.toHaveBeenCalled();
+      expect(runConversionPipeline).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      post.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps pre-aborted cancellation when Worker construction also fails', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    ThrowingWorker.constructionError = new Error('Worker constructor unavailable');
+
+    await expect(
+      runPipelineViaWorker(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        vi.fn(),
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    await expect(
+      runPipelineWithFallback(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        vi.fn(),
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(runConversionPipeline).not.toHaveBeenCalled();
+  });
+
   it('delivers a valid intermediate update received at 99ms while conversion remains active', async () => {
     vi.useFakeTimers();
     const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
@@ -416,6 +476,49 @@ describe('runPipelineViaWorker lifecycle', () => {
       expect(onProgress).toHaveBeenCalledTimes(1);
     } finally {
       post.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps timeout terminal after readiness and clears its owned listeners', async () => {
+    vi.useFakeTimers();
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage').mockImplementation(() => {});
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+    const onProgress = vi.fn();
+    try {
+      const pending = runPipelineWithFallback(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        onProgress,
+        controller.signal
+      );
+      const rejection = expect(pending).rejects.toMatchObject({
+        name: 'WorkerTimeoutError',
+        code: 'TIMEOUT',
+      });
+      const worker = ThrowingWorker.instance!;
+      emitWorkerMessage(worker, { type: 'ready', requestId: '' });
+      await vi.advanceTimersByTimeAsync(WORKER_PIPELINE_TIMEOUT_MS);
+
+      await rejection;
+      expect(runConversionPipeline).not.toHaveBeenCalled();
+      expect(worker.terminate).toHaveBeenCalledOnce();
+      expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+      emitWorkerMessage(worker, { type: 'ready', requestId: '' });
+      emitWorkerMessage(worker, {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer: new ArrayBuffer(4),
+        durationMs: 1,
+      });
+      expect(onProgress).not.toHaveBeenCalled();
+      expect(worker.terminate).toHaveBeenCalledOnce();
+    } finally {
+      post.mockRestore();
+      removeListener.mockRestore();
       vi.useRealTimers();
     }
   });
@@ -1193,6 +1296,54 @@ describe('runPipelineViaWorker lifecycle', () => {
       undefined
     );
     expect(runConversionPipeline.mock.calls[0]?.[0]).not.toHaveProperty('inputBuffer');
+  });
+
+  it('rejects bootstrap failure after buffer transfer when no fallback source remains', async () => {
+    vi.useFakeTimers();
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage');
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener');
+    const input = new ArrayBuffer(8);
+    const onProgress = vi.fn();
+    ThrowingWorker.workerError = new ErrorEvent('error', { message: 'module failed to load' });
+    try {
+      await expect(
+        runPipelineWithFallback(
+          input,
+          validDecoderConfig,
+          validOptions,
+          onProgress,
+          controller.signal
+        )
+      ).rejects.toThrow(
+        'Cannot fall back to main thread: inputBuffer is detached and no inputBlob available.'
+      );
+
+      const worker = ThrowingWorker.instance!;
+      expect(post).toHaveBeenCalledOnce();
+      expect(post).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'start', inputBuffer: input }),
+        [input]
+      );
+      expect(input.byteLength).toBe(0);
+      expect(runConversionPipeline).not.toHaveBeenCalled();
+      expect(worker.terminate).toHaveBeenCalledOnce();
+      expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+      emitWorkerMessage(worker, { type: 'ready', requestId: '' });
+      emitWorkerMessage(worker, {
+        type: 'complete',
+        requestId: 'request-1',
+        outputBuffer: new ArrayBuffer(4),
+        durationMs: 1,
+      });
+      expect(onProgress).not.toHaveBeenCalled();
+      expect(worker.terminate).toHaveBeenCalledOnce();
+    } finally {
+      post.mockRestore();
+      removeListener.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it('does not retry a media pipeline failure on the main thread', async () => {
