@@ -103,3 +103,45 @@ it('finds key packets across cue-less WebM clusters and bounds retained lookup e
     bounded.dispose();
   }
 });
+
+it('rejects a cached WebM cluster again after its summary reservation fails', async () => {
+  const encoded = readFileSync(
+    resolve('test/fixtures/mediabunny-clustered-no-cues.base64'),
+    'utf8'
+  );
+  const media = Uint8Array.from(Buffer.from(encoded, 'base64')).buffer;
+  type SegmentProbe = {
+    clusterSeekStartPos: number;
+    lastReadCluster: unknown | null;
+    clusterSummaries: Map<number, unknown>;
+  };
+  const input = createMediaBunnyInput(media) as ReturnType<typeof createMediaBunnyInput> & {
+    _maxBufferedPacketBytes: number;
+    _getDemuxer(): Promise<{
+      segments: SegmentProbe[];
+      readCluster(position: number, segment: SegmentProbe): Promise<unknown>;
+    }>;
+  };
+
+  try {
+    expect(await input.getPrimaryVideoTrack()).not.toBeNull();
+    const demuxer = await input._getDemuxer();
+    const segment = demuxer.segments[0];
+    expect(segment).toBeDefined();
+    const startPos = segment!.clusterSeekStartPos;
+    expect(startPos).toBeGreaterThan(0);
+
+    // One 96-byte position entry fits, but the cluster summary cannot fit.
+    input._maxBufferedPacketBytes = 128;
+    await expect(demuxer.readCluster(startPos, segment!)).rejects.toThrow(
+      'Matroska lookup cache exceeds the configured memory limit.'
+    );
+    expect(segment!.clusterSummaries.has(startPos)).toBe(false);
+    await expect(demuxer.readCluster(startPos, segment!)).rejects.toThrow(
+      'Matroska lookup cache exceeds the configured memory limit.'
+    );
+    expect(segment!.lastReadCluster).toBeNull();
+  } finally {
+    input.dispose();
+  }
+});

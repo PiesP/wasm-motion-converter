@@ -186,7 +186,7 @@ overrides:
   '@voidzero-dev/vite-plus-core@1.5.0>esbuild': '-'
 
 patchedDependencies:
-  mediabunny@1.65.2: ee366ef69aa7c7f9c3ca1e7e7e603a6b4fb27ce6c9c03c39b0bd96584027ad4d
+  mediabunny@1.65.2: 287dfa9c9b41da1ae087d34aa1d048571d147b7a7653f9d3830f22037621f4d9
   wasm-webp@0.1.0: bef378941329357206c2b92a9ed683d03a25ca0c9331dd09f664fe0392d0b6f5
 
 importers:
@@ -201,7 +201,7 @@ importers:
         version: 1.0.3
       mediabunny:
         specifier: 1.65.2
-        version: 1.65.2(patch_hash=ee366ef69aa7c7f9c3ca1e7e7e603a6b4fb27ce6c9c03c39b0bd96584027ad4d)
+        version: 1.65.2(patch_hash=287dfa9c9b41da1ae087d34aa1d048571d147b7a7653f9d3830f22037621f4d9)
       solid-js:
         specifier: 1.9.18
         version: 1.9.18
@@ -2536,7 +2536,7 @@ snapshots:
       '@babel/types': 7.29.11
       source-map-js: 1.2.2
 
-  mediabunny@1.65.2(patch_hash=ee366ef69aa7c7f9c3ca1e7e7e603a6b4fb27ce6c9c03c39b0bd96584027ad4d):
+  mediabunny@1.65.2(patch_hash=287dfa9c9b41da1ae087d34aa1d048571d147b7a7653f9d3830f22037621f4d9):
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13

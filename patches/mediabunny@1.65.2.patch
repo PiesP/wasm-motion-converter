@@ -747,16 +747,18 @@ index 0ce440c..2a93173 100644
                  track.clusterPositionCache.splice(insertionIndex + 1, 0, {
                      elementStartPos: cluster.elementStartPos,
                      startTimestamp: trackData.startTimestamp,
-@@ -479,6 +502,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -479,7 +502,10 @@ export class MatroskaDemuxer extends Demuxer {
              }
          }
-         segment.lastReadCluster = cluster;
+-        segment.lastReadCluster = cluster;
 +        if (!segment.clusterSummaries.has(startPos)) {
 +            this.reserveLookupCache(128 + 64 * cluster.trackData.size);
 +        }
          segment.clusterSummaries.set(startPos, {
              elementEndPos: cluster.elementEndPos,
              trackIds: new Set(cluster.trackData.keys()),
+         });
++        segment.lastReadCluster = cluster;
 @@ -610,6 +636,8 @@ export class MatroskaDemuxer extends Demuxer {
          return expandedBlocks;
      }
@@ -2086,16 +2088,19 @@ index c17ac37..64fc214 100644
  				track.clusterPositionCache.splice(insertionIndex + 1, 0, {
  					elementStartPos: cluster.elementStartPos,
  					startTimestamp: trackData.startTimestamp,
-@@ -815,6 +839,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -815,7 +839,10 @@ export class MatroskaDemuxer extends Demuxer {
  		}
  
- 		segment.lastReadCluster = cluster;
+-		segment.lastReadCluster = cluster;
 +		if (!segment.clusterSummaries.has(startPos)) {
 +			this.reserveLookupCache(128 + 64 * cluster.trackData.size);
 +		}
  		segment.clusterSummaries.set(startPos, {
  			elementEndPos: cluster.elementEndPos,
  			trackIds: new Set(cluster.trackData.keys()),
+-		});
++		});
++		segment.lastReadCluster = cluster;
 @@ -970,6 +997,7 @@ export class MatroskaDemuxer extends Demuxer {
  	}
  
