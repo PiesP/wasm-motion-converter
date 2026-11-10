@@ -58,6 +58,15 @@ updates:
           - "minor"
           - "patch"
 
+      # Keep the test runner and direct browser API on one Playwright version.
+      playwright:
+        patterns:
+          - "@playwright/test"
+          - "playwright"
+        update-types:
+          - "minor"
+          - "patch"
+
       # TypeScript ecosystem
       typescript:
         patterns:
