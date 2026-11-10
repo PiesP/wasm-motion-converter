@@ -142,7 +142,7 @@ index 5bd4ec6..7dacdc4 100644
              for (const format of this._formats) {
                  const canRead = await format._canReadInput(this);
 diff --git a/dist/modules/src/isobmff/isobmff-demuxer.js b/dist/modules/src/isobmff/isobmff-demuxer.js
-index 2a744c4..d3dacef 100644
+index fb67849..5ca5ec9 100644
 --- a/dist/modules/src/isobmff/isobmff-demuxer.js
 +++ b/dist/modules/src/isobmff/isobmff-demuxer.js
 @@ -17,6 +17,7 @@ import { readBytes, readF64Be, readI16Be, readI32Be, readI64Be, readU16Be, readU
@@ -257,7 +257,7 @@ index 2a744c4..d3dacef 100644
                  }
                  else {
                      const lastCacheIndex = binarySearchLessOrEqual(fragmentPositionCache, fragment.moofOffset - 1, x => x.moofOffset);
-@@ -473,7 +519,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -474,7 +520,7 @@ export class IsobmffDemuxer extends Demuxer {
              }
              // If senc wasn't parsed but saiz+saio were, fetch the aux info now and stamp each sample with it
              if (trackData.encryptionAuxInfo && track.encryptionInfo) {
@@ -266,7 +266,7 @@ index 2a744c4..d3dacef 100644
                  for (let i = 0; i < Math.min(trackData.samples.length, entries.length); i++) {
                      const entry = entries[i];
                      trackData.samples[i].encryption = entry;
-@@ -514,6 +560,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -515,6 +561,7 @@ export class IsobmffDemuxer extends Demuxer {
          }
      }
      traverseBox(slice) {
@@ -274,7 +274,7 @@ index 2a744c4..d3dacef 100644
          const startPos = slice.filePos;
          const boxInfo = readBoxHeader(slice);
          if (!boxInfo) {
-@@ -1558,11 +1605,20 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1559,11 +1606,20 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      slice.skip(4); // Version + flags
                      const entryCount = readU32Be(slice);
@@ -295,7 +295,7 @@ index 2a744c4..d3dacef 100644
                          track.sampleTable.sampleTimingEntries.push({
                              startIndex: currentIndex,
                              startDecodeTimestamp: currentTimestamp,
-@@ -1572,6 +1628,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1573,6 +1629,7 @@ export class IsobmffDemuxer extends Demuxer {
                          currentIndex += sampleCount;
                          currentTimestamp += sampleCount * sampleDelta;
                      }
@@ -303,7 +303,7 @@ index 2a744c4..d3dacef 100644
                  }
                  ;
                  break;
-@@ -1586,10 +1643,16 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1587,10 +1644,16 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      slice.skip(1 + 3); // Version + flags
                      const entryCount = readU32Be(slice);
@@ -320,7 +320,7 @@ index 2a744c4..d3dacef 100644
                          track.sampleTable.sampleCompositionTimeOffsets.push({
                              startIndex: sampleIndex,
                              count: sampleCount,
-@@ -1600,6 +1663,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1601,6 +1664,7 @@ export class IsobmffDemuxer extends Demuxer {
                          });
                          sampleIndex += sampleCount;
                      }
@@ -328,7 +328,7 @@ index 2a744c4..d3dacef 100644
                  }
                  ;
                  break;
-@@ -1615,6 +1679,13 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1616,6 +1680,13 @@ export class IsobmffDemuxer extends Demuxer {
                      slice.skip(4); // Version + flags
                      const sampleSize = readU32Be(slice);
                      const sampleCount = readU32Be(slice);
@@ -342,7 +342,7 @@ index 2a744c4..d3dacef 100644
                      if (sampleSize === 0) {
                          for (let i = 0; i < sampleCount; i++) {
                              const sampleSize = readU32Be(slice);
-@@ -1641,6 +1712,16 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1642,6 +1713,16 @@ export class IsobmffDemuxer extends Demuxer {
                      slice.skip(3); // Reserved
                      const fieldSize = readU8(slice); // in bits
                      const sampleCount = readU32Be(slice);
@@ -359,7 +359,7 @@ index 2a744c4..d3dacef 100644
                      if (fieldSize !== 4 && fieldSize !== 8 && fieldSize !== 16) {
                          throw new Error(`Invalid stz2 box: unsupported field size ${fieldSize}.`);
                      }
-@@ -1666,6 +1747,11 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1667,6 +1748,11 @@ export class IsobmffDemuxer extends Demuxer {
                      slice.skip(4); // Version + flags
                      track.sampleTable.keySampleIndices = [];
                      const entryCount = readU32Be(slice);
@@ -371,7 +371,7 @@ index 2a744c4..d3dacef 100644
                      for (let i = 0; i < entryCount; i++) {
                          const sampleIndex = readU32Be(slice) - 1; // Convert to 0-indexed
                          track.sampleTable.keySampleIndices.push(sampleIndex);
-@@ -1692,10 +1778,19 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1693,10 +1779,19 @@ export class IsobmffDemuxer extends Demuxer {
                      slice.skip(4);
                      const entryCount = readU32Be(slice);
                      let skippedEntryCount = 0;
@@ -391,7 +391,7 @@ index 2a744c4..d3dacef 100644
                          const lastEntry = last(track.sampleTable.sampleToChunk);
                          if (lastEntry && startChunkIndex <= lastEntry.startChunkIndex) {
                              // Keeping it would mess up the sample-to-chunk mapping and make chunk iteration blow up
-@@ -1721,6 +1816,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1722,6 +1817,7 @@ export class IsobmffDemuxer extends Demuxer {
                              const chunkCount = nextChunk.startChunkIndex
                                  - track.sampleTable.sampleToChunk[i].startChunkIndex;
                              startSampleIndex += chunkCount * track.sampleTable.sampleToChunk[i].samplesPerChunk;
@@ -399,7 +399,7 @@ index 2a744c4..d3dacef 100644
                          }
                      }
                  }
-@@ -1737,6 +1833,11 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1738,6 +1834,11 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      slice.skip(4); // Version + flags
                      const entryCount = readU32Be(slice);
@@ -411,7 +411,7 @@ index 2a744c4..d3dacef 100644
                      for (let i = 0; i < entryCount; i++) {
                          const chunkOffset = readU32Be(slice);
                          track.sampleTable.chunkOffsets.push(chunkOffset);
-@@ -1755,6 +1856,11 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1756,6 +1857,11 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      slice.skip(4); // Version + flags
                      const entryCount = readU32Be(slice);
@@ -423,7 +423,7 @@ index 2a744c4..d3dacef 100644
                      for (let i = 0; i < entryCount; i++) {
                          const chunkOffset = readU64Be(slice);
                          track.sampleTable.chunkOffsets.push(chunkOffset);
-@@ -1815,6 +1921,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1816,6 +1922,8 @@ export class IsobmffDemuxer extends Demuxer {
                      const readTrunNum = functions[lengthSizeOfTrunNum];
                      const readSampleNum = functions[lengthSizeOfSampleNum];
                      const numberOfEntries = readU32Be(slice);
@@ -432,7 +432,7 @@ index 2a744c4..d3dacef 100644
                      for (let i = 0; i < numberOfEntries; i++) {
                          const time = version === 1 ? readU64Be(slice) : readU32Be(slice);
                          const moofOffset = version === 1 ? readU64Be(slice) : readU32Be(slice);
-@@ -1842,6 +1950,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1843,6 +1951,7 @@ export class IsobmffDemuxer extends Demuxer {
                      if (this.currentFragment) {
                          break; // Nested moof boxes make no sense
                      }
@@ -440,7 +440,7 @@ index 2a744c4..d3dacef 100644
                      this.currentFragment = {
                          moofOffset: startPos,
                          moofSize: boxInfo.totalSize,
-@@ -1855,6 +1964,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1856,6 +1965,8 @@ export class IsobmffDemuxer extends Demuxer {
                          this.lastReadFragment = this.currentFragment;
                      }
                      finally {
@@ -449,7 +449,7 @@ index 2a744c4..d3dacef 100644
                          this.currentFragment = null;
                          this.currentTrack = null;
                      }
-@@ -1884,6 +1995,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1885,6 +1996,7 @@ export class IsobmffDemuxer extends Demuxer {
                                  this.currentFragment.trackData.delete(this.currentTrack.id);
                                  break cond;
                              }
@@ -457,7 +457,7 @@ index 2a744c4..d3dacef 100644
                              trackData.presentationTimestamps = trackData.samples
                                  .map((x, i) => ({ presentationTimestamp: x.presentationTimestamp, sampleIndex: i }))
                                  .sort((a, b) => a.presentationTimestamp - b.presentationTimestamp);
-@@ -2073,6 +2185,16 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2074,6 +2186,16 @@ export class IsobmffDemuxer extends Demuxer {
                          this.currentFragment.trackData.set(track.id, trackData);
                      }
                      trackData.trunSampleCounts.push(sampleCount);
@@ -474,7 +474,7 @@ index 2a744c4..d3dacef 100644
                      for (let i = 0; i < sampleCount; i++) {
                          let sampleDuration;
                          if (sampleDurationPresent) {
-@@ -2105,6 +2227,11 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2106,6 +2228,11 @@ export class IsobmffDemuxer extends Demuxer {
                              // safe to do this.
                              sampleCompositionTimeOffset = readI32Be(slice);
                          }
@@ -486,7 +486,7 @@ index 2a744c4..d3dacef 100644
                          const isKeyFrame = !(sampleFlags & 0x00010000);
                          trackData.samples.push({
                              presentationTimestamp: trackData.currentTimestamp + sampleCompositionTimeOffset,
-@@ -2140,6 +2267,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2141,6 +2268,8 @@ export class IsobmffDemuxer extends Demuxer {
                      }
                      const defaultSampleInfoSize = readU8(slice);
                      const sampleCount = readU32Be(slice);
@@ -495,7 +495,7 @@ index 2a744c4..d3dacef 100644
                      let sampleSizes = null;
                      if (defaultSampleInfoSize === 0 && sampleCount > 0) {
                          sampleSizes = readBytes(slice, sampleCount);
-@@ -2204,6 +2333,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2205,6 +2334,7 @@ export class IsobmffDemuxer extends Demuxer {
                      if (ivSize === null) {
                          throw new Error('Invalid file: encrypted track is missing its tenc box.');
                      }
@@ -503,7 +503,7 @@ index 2a744c4..d3dacef 100644
                      for (let i = 0; i < Math.min(sampleCount, trackData.samples.length); i++) {
                          // Normalize the IV to 16 bytes so downstream code can assume a full-length buffer. For CTR with
                          // an 8-byte per-sample IV the lower 8 bytes are zero (that's the CENC spec's block counter start);
-@@ -2221,6 +2351,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2222,6 +2352,8 @@ export class IsobmffDemuxer extends Demuxer {
                          let subsamples = null;
                          if (useSubsamples) {
                              const subsampleCount = readU16Be(slice);
@@ -512,7 +512,7 @@ index 2a744c4..d3dacef 100644
                              subsamples = [];
                              for (let j = 0; j < subsampleCount; j++) {
                                  const clearLen = readU16Be(slice);
-@@ -2829,6 +2961,9 @@ class IsobmffTrackBacking {
+@@ -2830,6 +2962,9 @@ class IsobmffTrackBacking {
              data = PLACEHOLDER_DATA;
          }
          else {
@@ -522,7 +522,7 @@ index 2a744c4..d3dacef 100644
              let slice = this.internalTrack.demuxer.reader.requestSlice(sampleInfo.sampleOffset, sampleInfo.sampleSize);
              if (isThenable(slice))
                  slice = await slice;
-@@ -2839,7 +2974,7 @@ class IsobmffTrackBacking {
+@@ -2840,7 +2975,7 @@ class IsobmffTrackBacking {
              if (this.internalTrack.encryptionInfo) {
                  let sampleEncryption = null;
                  if (this.internalTrack.encryptionAuxInfo) {
@@ -531,7 +531,7 @@ index 2a744c4..d3dacef 100644
                      if (sampleIndex < entries.length) {
                          sampleEncryption = entries[sampleIndex];
                      }
-@@ -2869,6 +3004,9 @@ class IsobmffTrackBacking {
+@@ -2870,6 +3005,9 @@ class IsobmffTrackBacking {
              data = PLACEHOLDER_DATA;
          }
          else {
@@ -649,8 +649,23 @@ index 0000000..b994275
 +        this.reserve(count, 192, true);
 +    }
 +}
+diff --git a/dist/modules/src/matroska/matroska-demuxer.d.ts b/dist/modules/src/matroska/matroska-demuxer.d.ts
+index 7fb8f95..846e56f 100644
+--- a/dist/modules/src/matroska/matroska-demuxer.d.ts
++++ b/dist/modules/src/matroska/matroska-demuxer.d.ts
+@@ -188,7 +188,10 @@ export declare class MatroskaDemuxer extends Demuxer {
+     isWebM: boolean;
+     claimedSeekTargets: Set<number>;
+     elementNestingDepth: number;
++    lookupCacheBytes: number;
+     constructor(input: Input);
++    get skipDescriptiveMetadata(): boolean;
++    reserveLookupCache(bytes: number): void;
+     getTrackBackings(): Promise<InputTrackBacking[]>;
+     getMimeType(): Promise<string>;
+     getMetadataTags(): Promise<MetadataTags>;
 diff --git a/dist/modules/src/matroska/matroska-demuxer.js b/dist/modules/src/matroska/matroska-demuxer.js
-index ea18ec1..2cd2a6f 100644
+index 0ce440c..2a93173 100644
 --- a/dist/modules/src/matroska/matroska-demuxer.js
 +++ b/dist/modules/src/matroska/matroska-demuxer.js
 @@ -41,6 +41,13 @@ const METADATA_ELEMENTS = [
@@ -667,17 +682,27 @@ index ea18ec1..2cd2a6f 100644
  const MAX_RESYNC_LENGTH = 10 * 2 ** 20; // 10 MiB
  const MAX_ELEMENT_NESTING_DEPTH = 64;
  export class MatroskaDemuxer extends Demuxer {
-@@ -63,6 +70,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -61,8 +68,19 @@ export class MatroskaDemuxer extends Demuxer {
+         this.isWebM = false;
+         this.claimedSeekTargets = new Set();
          this.elementNestingDepth = 0;
++        this.lookupCacheBytes = 0;
          this.reader = input._reader;
      }
 +    get skipDescriptiveMetadata() {
 +        return this.input._skipMatroskaDescriptiveMetadata === true;
 +    }
++    reserveLookupCache(bytes) {
++        // Conservative object, array, map, and set cost for entries retained across cluster reads.
++        if (bytes > this.input._maxBufferedPacketBytes - this.lookupCacheBytes) {
++            throw new RangeError('Matroska lookup cache exceeds the configured memory limit.');
++        }
++        this.lookupCacheBytes += bytes;
++    }
      async getTrackBackings() {
          await this.readMetadata();
          return this.segments.flatMap(segment => segment.tracks.map(track => track.trackBacking));
-@@ -80,6 +90,8 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -80,6 +98,8 @@ export class MatroskaDemuxer extends Demuxer {
      }
      async getMetadataTags() {
          await this.readMetadata();
@@ -686,7 +711,7 @@ index ea18ec1..2cd2a6f 100644
          // Load metadata tags from each segment lazily (only once)
          for (const segment of this.segments) {
              if (!segment.metadataTagsPromise) {
-@@ -228,7 +240,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -228,7 +248,7 @@ export class MatroskaDemuxer extends Demuxer {
                  }
              }
              else if (id === EBMLId.Tags || id === EBMLId.Attachments) {
@@ -695,7 +720,7 @@ index ea18ec1..2cd2a6f 100644
                  if (id === EBMLId.Tags) {
                      this.currentSegment.tagsSeen = true;
                  }
-@@ -236,11 +248,13 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -236,11 +256,13 @@ export class MatroskaDemuxer extends Demuxer {
                      this.currentSegment.attachmentsSeen = true;
                  }
                  assertDefinedSize(size);
@@ -714,7 +739,25 @@ index ea18ec1..2cd2a6f 100644
                  }
              }
              else if (id === EBMLId.Cluster) {
-@@ -609,6 +623,8 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -471,6 +493,7 @@ export class MatroskaDemuxer extends Demuxer {
+             // Only remember it if the timestamp order matches the cluster position order
+             if ((!previousEntry || previousEntry.elementStartPos < elementStartPos)
+                 && (!nextEntry || nextEntry.elementStartPos > elementStartPos)) {
++                this.reserveLookupCache(96);
+                 track.clusterPositionCache.splice(insertionIndex + 1, 0, {
+                     elementStartPos: cluster.elementStartPos,
+                     startTimestamp: trackData.startTimestamp,
+@@ -479,6 +502,9 @@ export class MatroskaDemuxer extends Demuxer {
+             }
+         }
+         segment.lastReadCluster = cluster;
++        if (!segment.clusterSummaries.has(startPos)) {
++            this.reserveLookupCache(128 + 64 * cluster.trackData.size);
++        }
+         segment.clusterSummaries.set(startPos, {
+             elementEndPos: cluster.elementEndPos,
+             trackIds: new Set(cluster.trackData.keys()),
+@@ -610,6 +636,8 @@ export class MatroskaDemuxer extends Demuxer {
          return expandedBlocks;
      }
      async loadSegmentMetadata(segment) {
@@ -723,7 +766,7 @@ index ea18ec1..2cd2a6f 100644
          for (const seekEntry of segment.seekEntries) {
              if (seekEntry.id === EBMLId.Tags && !segment.tagsSeen) {
                  // We need to load the tags
-@@ -692,6 +708,12 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -693,6 +721,12 @@ export class MatroskaDemuxer extends Demuxer {
          const { id, size } = header;
          const dataStartPos = slice.filePos;
          assertDefinedSize(size);
@@ -736,7 +779,7 @@ index ea18ec1..2cd2a6f 100644
          if (dataStartPos + size > slice.end) {
              return false; // The element doesn't fit into its parent
          }
-@@ -1421,6 +1443,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1422,6 +1456,9 @@ export class MatroskaDemuxer extends Demuxer {
                          // https://github.com/Vanilagy/mediabunny/issues/192
                          isKeyFrame = true;
                      }
@@ -746,7 +789,7 @@ index ea18ec1..2cd2a6f 100644
                      const blockData = readBytes(blockSlice, blockSlice.remainingLength);
                      const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
                      trackData.blocks.push({
-@@ -1459,6 +1484,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1460,6 +1497,9 @@ export class MatroskaDemuxer extends Demuxer {
                      const relativeTimestamp = readI16Be(blockSlice);
                      const flags = readU8(blockSlice);
                      const lacing = (flags >> 1) & 0x3; // If the block is laced, we'll expand it later
@@ -756,7 +799,7 @@ index ea18ec1..2cd2a6f 100644
                      const blockData = readBytes(blockSlice, blockSlice.remainingLength);
                      const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
                      this.currentBlock = {
-@@ -1504,6 +1532,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1505,6 +1545,9 @@ export class MatroskaDemuxer extends Demuxer {
                  {
                      if (!this.currentBlockAdditional)
                          break;
@@ -766,7 +809,7 @@ index ea18ec1..2cd2a6f 100644
                      this.currentBlockAdditional.data = readBytes(slice, size);
                  }
                  ;
-@@ -1772,7 +1803,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1773,7 +1816,7 @@ export class MatroskaDemuxer extends Demuxer {
          slice.filePos = dataStartPos + size;
          return true;
      }
@@ -775,7 +818,7 @@ index ea18ec1..2cd2a6f 100644
          assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
          let currentData = rawData;
          for (const instruction of track.decodingInstructions) {
-@@ -1785,6 +1816,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1786,6 +1829,9 @@ export class MatroskaDemuxer extends Demuxer {
                                  {
                                      if (instruction.data.settings && instruction.data.settings.length > 0) {
                                          const prefix = instruction.data.settings;
@@ -785,7 +828,7 @@ index ea18ec1..2cd2a6f 100644
                                          const newData = new Uint8Array(prefix.length + currentData.length);
                                          newData.set(prefix, 0);
                                          newData.set(currentData, prefix.length);
-@@ -2118,9 +2152,13 @@ class MatroskaTrackBacking {
+@@ -2119,9 +2165,13 @@ class MatroskaTrackBacking {
          const trackData = cluster.trackData.get(this.internalTrack.id);
          const block = trackData.blocks[blockIndex];
          assert(block);
@@ -800,7 +843,7 @@ index ea18ec1..2cd2a6f 100644
              block.decoded = true;
          }
          if (!block.postProcessed) {
-@@ -2134,6 +2172,9 @@ class MatroskaTrackBacking {
+@@ -2135,6 +2185,9 @@ class MatroskaTrackBacking {
                      && block.data[7] === 102; // 'f'
                  if (!hasFrameContainer) {
                      // Wrap the frame in a frame container
@@ -810,7 +853,7 @@ index ea18ec1..2cd2a6f 100644
                      const newData = new Uint8Array(block.data.length + 8);
                      const newDataView = toDataView(newData);
                      newDataView.setUint32(0, newData.length, false);
-@@ -2151,6 +2192,9 @@ class MatroskaTrackBacking {
+@@ -2152,6 +2205,9 @@ class MatroskaTrackBacking {
          const { codecDelay, segment } = this.internalTrack;
          const timestamp = (block.timestamp - codecDelay) / segment.timestampFactor;
          const duration = block.duration / segment.timestampFactor;
@@ -1431,7 +1474,7 @@ index 26a436f..9693a80 100644
  
  			for (const format of this._formats) {
 diff --git a/src/isobmff/isobmff-demuxer.ts b/src/isobmff/isobmff-demuxer.ts
-index e2103b7..3e8462c 100644
+index f5da13e..fdffdbf 100644
 --- a/src/isobmff/isobmff-demuxer.ts
 +++ b/src/isobmff/isobmff-demuxer.ts
 @@ -121,6 +121,7 @@ import {
@@ -1442,7 +1485,7 @@ index e2103b7..3e8462c 100644
  import { Aes128CbcContext } from '../aes';
  import { Logging } from '../logging';
  
-@@ -201,6 +202,10 @@ type InternalVideoTrack = InternalTrack & {	info: { type: 'video' } };
+@@ -202,6 +203,10 @@ type InternalVideoTrack = InternalTrack & {	info: { type: 'video' } };
  type InternalAudioTrack = InternalTrack & {	info: { type: 'audio' } };
  
  type SampleTable = {
@@ -1453,7 +1496,7 @@ index e2103b7..3e8462c 100644
  	sampleTimingEntries: SampleTimingEntry[];
  	sampleCompositionTimeOffsets: SampleCompositionTimeOffsetEntry[];
  	sampleSizes: number[];
-@@ -363,10 +368,13 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -364,10 +369,13 @@ export class IsobmffDemuxer extends Demuxer {
  	decryptionKeyCache = new Map<string, Promise<Uint8Array>>();
  	boxNestingDepth = 0;
  
@@ -1467,7 +1510,7 @@ index e2103b7..3e8462c 100644
  	}
  
  	override async getTrackBackings() {
-@@ -586,11 +594,16 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -587,11 +595,16 @@ export class IsobmffDemuxer extends Demuxer {
  	}
  
  	getSampleTableForTrack(internalTrack: InternalTrack) {
@@ -1484,7 +1527,7 @@ index e2103b7..3e8462c 100644
  			sampleTimingEntries: [],
  			sampleCompositionTimeOffsets: [],
  			sampleSizes: [],
-@@ -617,11 +630,46 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -618,11 +631,46 @@ export class IsobmffDemuxer extends Demuxer {
  			this.traverseBox(stblContainerSlice);
  		} catch (error) {
  			internalTrack.sampleTable = null;
@@ -1532,7 +1575,7 @@ index e2103b7..3e8462c 100644
  		const lastTimingEntry = last(sampleTable.sampleTimingEntries);
  		const lastChunkEntryIndex = binarySearchLessOrEqual(
  			sampleTable.sampleToChunk,
-@@ -663,6 +711,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -664,6 +712,7 @@ export class IsobmffDemuxer extends Demuxer {
  			assert(internalTrack.info?.type === 'audio');
  			const pcmInfo = parsePcmCodec(internalTrack.info.codec as PcmAudioCodec);
  
@@ -1540,7 +1583,7 @@ index e2103b7..3e8462c 100644
  			const newSampleTimingEntries: SampleTimingEntry[] = [];
  			const newSampleSizes: number[] = [];
  
-@@ -733,6 +782,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -734,6 +783,7 @@ export class IsobmffDemuxer extends Demuxer {
  		}
  
  		if (sampleTable.sampleCompositionTimeOffsets.length > 0) {
@@ -1548,7 +1591,7 @@ index e2103b7..3e8462c 100644
  			// Presentation order differs from decode order. Let's prepare the offset entries for timestamped-keyed
  			// random access later
  			const entries = sampleTable.sampleCompositionTimeOffsets;
-@@ -767,6 +817,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -768,6 +818,7 @@ export class IsobmffDemuxer extends Demuxer {
  			};
  
  			for (const entry of sortedEntries) {
@@ -1556,7 +1599,7 @@ index e2103b7..3e8462c 100644
  				const lastSampleIndex = entry.startIndex + entry.count - 1;
  				entry.startTimestamp = getDecodeTimestampAhead(entry.startIndex) + entry.offset;
  				entry.lastTimestamp = getDecodeTimestampAhead(lastSampleIndex) + entry.offset;
-@@ -895,6 +946,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -896,6 +947,7 @@ export class IsobmffDemuxer extends Demuxer {
  				(!previousEntry || previousEntry.moofOffset < fragment.moofOffset)
  				&& (!nextEntry || nextEntry.moofOffset > fragment.moofOffset)
  			) {
@@ -1564,7 +1607,7 @@ index e2103b7..3e8462c 100644
  				fragmentPositionCache.splice(insertionIndex + 1, 0, {
  					moofOffset: fragment.moofOffset,
  					startTimestamp: trackData.startTimestamp,
-@@ -908,6 +960,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -910,6 +962,7 @@ export class IsobmffDemuxer extends Demuxer {
  					this.reader,
  					track.encryptionInfo,
  					trackData.encryptionAuxInfo,
@@ -1572,7 +1615,7 @@ index e2103b7..3e8462c 100644
  				);
  
  				for (let i = 0; i < Math.min(trackData.samples.length, entries.length); i++) {
-@@ -958,6 +1011,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -960,6 +1013,7 @@ export class IsobmffDemuxer extends Demuxer {
  	}
  
  	traverseBox(slice: FileSlice): boolean {
@@ -1580,7 +1623,7 @@ index e2103b7..3e8462c 100644
  		const startPos = slice.filePos;
  		const boxInfo = readBoxHeader(slice);
  		if (!boxInfo) {
-@@ -2036,6 +2090,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2038,6 +2092,10 @@ export class IsobmffDemuxer extends Demuxer {
  				slice.skip(4); // Version + flags
  
  				const entryCount = readU32Be(slice);
@@ -1591,7 +1634,7 @@ index e2103b7..3e8462c 100644
  
  				let currentIndex = 0;
  				let currentTimestamp = 0;
-@@ -2043,6 +2101,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2045,6 +2103,10 @@ export class IsobmffDemuxer extends Demuxer {
  				for (let i = 0; i < entryCount; i++) {
  					const sampleCount = readU32Be(slice);
  					const sampleDelta = readU32Be(slice);
@@ -1602,7 +1645,7 @@ index e2103b7..3e8462c 100644
  
  					track.sampleTable.sampleTimingEntries.push({
  						startIndex: currentIndex,
-@@ -2054,6 +2116,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2056,6 +2118,7 @@ export class IsobmffDemuxer extends Demuxer {
  					currentIndex += sampleCount;
  					currentTimestamp += sampleCount * sampleDelta;
  				}
@@ -1610,7 +1653,7 @@ index e2103b7..3e8462c 100644
  			}; break;
  
  			case 'ctts': {
-@@ -2069,11 +2132,16 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2071,11 +2134,16 @@ export class IsobmffDemuxer extends Demuxer {
  				slice.skip(1 + 3); // Version + flags
  
  				const entryCount = readU32Be(slice);
@@ -1627,7 +1670,7 @@ index e2103b7..3e8462c 100644
  
  					track.sampleTable.sampleCompositionTimeOffsets.push({
  						startIndex: sampleIndex,
-@@ -2086,6 +2154,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2088,6 +2156,7 @@ export class IsobmffDemuxer extends Demuxer {
  
  					sampleIndex += sampleCount;
  				}
@@ -1635,7 +1678,7 @@ index e2103b7..3e8462c 100644
  			}; break;
  
  			case 'stsz': {
-@@ -2102,6 +2171,12 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2104,6 +2173,12 @@ export class IsobmffDemuxer extends Demuxer {
  
  				const sampleSize = readU32Be(slice);
  				const sampleCount = readU32Be(slice);
@@ -1648,7 +1691,7 @@ index e2103b7..3e8462c 100644
  
  				if (sampleSize === 0) {
  					for (let i = 0; i < sampleCount; i++) {
-@@ -2130,6 +2205,15 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2132,6 +2207,15 @@ export class IsobmffDemuxer extends Demuxer {
  
  				const fieldSize = readU8(slice); // in bits
  				const sampleCount = readU32Be(slice);
@@ -1664,7 +1707,7 @@ index e2103b7..3e8462c 100644
  
  				if (fieldSize !== 4 && fieldSize !== 8 && fieldSize !== 16) {
  					throw new Error(`Invalid stz2 box: unsupported field size ${fieldSize}.`);
-@@ -2161,6 +2245,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2163,6 +2247,10 @@ export class IsobmffDemuxer extends Demuxer {
  				track.sampleTable.keySampleIndices = [];
  
  				const entryCount = readU32Be(slice);
@@ -1675,7 +1718,7 @@ index e2103b7..3e8462c 100644
  				for (let i = 0; i < entryCount; i++) {
  					const sampleIndex = readU32Be(slice) - 1; // Convert to 0-indexed
  					track.sampleTable.keySampleIndices.push(sampleIndex);
-@@ -2190,11 +2278,19 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2192,11 +2280,19 @@ export class IsobmffDemuxer extends Demuxer {
  
  				const entryCount = readU32Be(slice);
  				let skippedEntryCount = 0;
@@ -1695,7 +1738,7 @@ index e2103b7..3e8462c 100644
  
  					const lastEntry = last(track.sampleTable.sampleToChunk);
  					if (lastEntry && startChunkIndex <= lastEntry.startChunkIndex) {
-@@ -2227,6 +2323,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2229,6 +2325,7 @@ export class IsobmffDemuxer extends Demuxer {
  						const chunkCount = nextChunk.startChunkIndex
  							- track.sampleTable.sampleToChunk[i]!.startChunkIndex;
  						startSampleIndex += chunkCount * track.sampleTable.sampleToChunk[i]!.samplesPerChunk;
@@ -1703,7 +1746,7 @@ index e2103b7..3e8462c 100644
  					}
  				}
  			}; break;
-@@ -2244,6 +2341,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2246,6 +2343,10 @@ export class IsobmffDemuxer extends Demuxer {
  				slice.skip(4); // Version + flags
  
  				const entryCount = readU32Be(slice);
@@ -1714,7 +1757,7 @@ index e2103b7..3e8462c 100644
  
  				for (let i = 0; i < entryCount; i++) {
  					const chunkOffset = readU32Be(slice);
-@@ -2264,6 +2365,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2266,6 +2367,10 @@ export class IsobmffDemuxer extends Demuxer {
  				slice.skip(4); // Version + flags
  
  				const entryCount = readU32Be(slice);
@@ -1725,7 +1768,7 @@ index e2103b7..3e8462c 100644
  
  				for (let i = 0; i < entryCount; i++) {
  					const chunkOffset = readU64Be(slice);
-@@ -2326,6 +2431,10 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2328,6 +2433,10 @@ export class IsobmffDemuxer extends Demuxer {
  				const readSampleNum = functions[lengthSizeOfSampleNum]!;
  
  				const numberOfEntries = readU32Be(slice);
@@ -1736,7 +1779,7 @@ index e2103b7..3e8462c 100644
  				for (let i = 0; i < numberOfEntries; i++) {
  					const time = version === 1 ? readU64Be(slice) : readU32Be(slice);
  					const moofOffset = version === 1 ? readU64Be(slice) : readU32Be(slice);
-@@ -2354,6 +2463,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2356,6 +2465,7 @@ export class IsobmffDemuxer extends Demuxer {
  					break; // Nested moof boxes make no sense
  				}
  
@@ -1744,7 +1787,7 @@ index e2103b7..3e8462c 100644
  				this.currentFragment = {
  					moofOffset: startPos,
  					moofSize: boxInfo.totalSize,
-@@ -2367,6 +2477,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2369,6 +2479,8 @@ export class IsobmffDemuxer extends Demuxer {
  					this.readContiguousBoxes(slice.slice(contentStartPos, boxInfo.contentSize));
  					this.lastReadFragment = this.currentFragment;
  				} finally {
@@ -1753,7 +1796,7 @@ index e2103b7..3e8462c 100644
  					this.currentFragment = null;
  					this.currentTrack = null;
  				}
-@@ -2397,6 +2509,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2399,6 +2511,7 @@ export class IsobmffDemuxer extends Demuxer {
  							break cond;
  						}
  
@@ -1761,7 +1804,7 @@ index e2103b7..3e8462c 100644
  						trackData.presentationTimestamps = trackData.samples
  							.map((x, i) => ({ presentationTimestamp: x.presentationTimestamp, sampleIndex: i }))
  							.sort((a, b) => a.presentationTimestamp - b.presentationTimestamp);
-@@ -2609,6 +2722,19 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2611,6 +2724,19 @@ export class IsobmffDemuxer extends Demuxer {
  
  				trackData.trunSampleCounts.push(sampleCount);
  
@@ -1781,7 +1824,7 @@ index e2103b7..3e8462c 100644
  				for (let i = 0; i < sampleCount; i++) {
  					let sampleDuration: number;
  					if (sampleDurationPresent) {
-@@ -2642,6 +2768,11 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2644,6 +2770,11 @@ export class IsobmffDemuxer extends Demuxer {
  						sampleCompositionTimeOffset = readI32Be(slice);
  					}
  
@@ -1793,7 +1836,7 @@ index e2103b7..3e8462c 100644
  					const isKeyFrame = !(sampleFlags & 0x00010000);
  
  					trackData.samples.push({
-@@ -2681,6 +2812,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2683,6 +2814,8 @@ export class IsobmffDemuxer extends Demuxer {
  
  				const defaultSampleInfoSize = readU8(slice);
  				const sampleCount = readU32Be(slice);
@@ -1802,7 +1845,7 @@ index e2103b7..3e8462c 100644
  
  				let sampleSizes: Uint8Array | null = null;
  				if (defaultSampleInfoSize === 0 && sampleCount > 0) {
-@@ -2753,6 +2886,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2755,6 +2888,7 @@ export class IsobmffDemuxer extends Demuxer {
  					throw new Error('Invalid file: encrypted track is missing its tenc box.');
  				}
  
@@ -1810,7 +1853,7 @@ index e2103b7..3e8462c 100644
  				for (let i = 0; i < Math.min(sampleCount, trackData.samples.length); i++) {
  					// Normalize the IV to 16 bytes so downstream code can assume a full-length buffer. For CTR with
  					// an 8-byte per-sample IV the lower 8 bytes are zero (that's the CENC spec's block counter start);
-@@ -2769,6 +2903,8 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -2771,6 +2905,8 @@ export class IsobmffDemuxer extends Demuxer {
  					let subsamples: SampleEncryptionInfo['subsamples'] = null;
  					if (useSubsamples) {
  						const subsampleCount = readU16Be(slice);
@@ -1819,7 +1862,7 @@ index e2103b7..3e8462c 100644
  						subsamples = [];
  						for (let j = 0; j < subsampleCount; j++) {
  							const clearLen = readU16Be(slice);
-@@ -3427,6 +3563,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+@@ -3430,6 +3566,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
  		if (options.metadataOnly) {
  			data = PLACEHOLDER_DATA;
  		} else {
@@ -1829,7 +1872,7 @@ index e2103b7..3e8462c 100644
  			let slice = this.internalTrack.demuxer.reader.requestSlice(
  				sampleInfo.sampleOffset,
  				sampleInfo.sampleSize,
-@@ -3446,6 +3585,7 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+@@ -3449,6 +3588,7 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
  						this.internalTrack.demuxer.reader,
  						this.internalTrack.encryptionInfo,
  						this.internalTrack.encryptionAuxInfo,
@@ -1837,7 +1880,7 @@ index e2103b7..3e8462c 100644
  					);
  
  					if (sampleIndex < entries.length) {
-@@ -3490,6 +3630,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
+@@ -3493,6 +3633,9 @@ abstract class IsobmffTrackBacking implements InputTrackBacking {
  		if (options.metadataOnly) {
  			data = PLACEHOLDER_DATA;
  		} else {
@@ -1847,7 +1890,7 @@ index e2103b7..3e8462c 100644
  			let slice = this.internalTrack.demuxer.reader.requestSlice(
  				fragmentSample.byteOffset,
  				fragmentSample.byteSize,
-@@ -4186,6 +4329,7 @@ const resolveEncryptionAuxInfo = async (
+@@ -4178,6 +4321,7 @@ const resolveEncryptionAuxInfo = async (
  	reader: Reader,
  	encryptionInfo: TrackEncryptionInfo,
  	aux: SampleEncryptionAuxInfo,
@@ -1855,7 +1898,7 @@ index e2103b7..3e8462c 100644
  ) => {
  	if (aux.resolved) {
  		return aux.resolved;
-@@ -4237,6 +4381,7 @@ const resolveEncryptionAuxInfo = async (
+@@ -4229,6 +4373,7 @@ const resolveEncryptionAuxInfo = async (
  		let subsamples: { clearLen: number; protectedLen: number }[] | null = null;
  		if (entrySize > ivSize) {
  			const subsampleCount = readU16Be(slice);
@@ -1956,10 +1999,10 @@ index 0000000..07202d9
 +	}
 +}
 diff --git a/src/matroska/matroska-demuxer.ts b/src/matroska/matroska-demuxer.ts
-index 02b62e4..2febd96 100644
+index c17ac37..64fc214 100644
 --- a/src/matroska/matroska-demuxer.ts
 +++ b/src/matroska/matroska-demuxer.ts
-@@ -267,6 +267,13 @@ const METADATA_ELEMENTS = [
+@@ -268,6 +268,13 @@ const METADATA_ELEMENTS = [
  	{ id: EBMLId.Tracks, flag: 'tracksSeen' },
  	{ id: EBMLId.Cues, flag: 'cuesSeen' },
  ] as const;
@@ -1973,7 +2016,15 @@ index 02b62e4..2febd96 100644
  const MAX_RESYNC_LENGTH = 10 * 2 ** 20; // 10 MiB
  const MAX_ELEMENT_NESTING_DEPTH = 64;
  
-@@ -307,6 +314,10 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -301,6 +308,7 @@ export class MatroskaDemuxer extends Demuxer {
+ 	isWebM = false;
+ 	claimedSeekTargets = new Set<number>();
+ 	elementNestingDepth = 0;
++	lookupCacheBytes = 0;
+ 
+ 	constructor(input: Input) {
+ 		super(input);
+@@ -308,6 +316,18 @@ export class MatroskaDemuxer extends Demuxer {
  		this.reader = input._reader;
  	}
  
@@ -1981,10 +2032,18 @@ index 02b62e4..2febd96 100644
 +		return (this.input as Input & { _skipMatroskaDescriptiveMetadata?: boolean })._skipMatroskaDescriptiveMetadata === true;
 +	}
 +
++	reserveLookupCache(bytes: number) {
++		// Conservative object, array, map, and set cost for entries retained across cluster reads.
++		if (bytes > this.input._maxBufferedPacketBytes - this.lookupCacheBytes) {
++			throw new RangeError('Matroska lookup cache exceeds the configured memory limit.');
++		}
++		this.lookupCacheBytes += bytes;
++	}
++
  	async getTrackBackings() {
  		await this.readMetadata();
  		return this.segments.flatMap(segment => segment.tracks.map(track => track.trackBacking!));
-@@ -330,6 +341,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -331,6 +351,7 @@ export class MatroskaDemuxer extends Demuxer {
  
  	async getMetadataTags() {
  		await this.readMetadata();
@@ -1992,7 +2051,7 @@ index 02b62e4..2febd96 100644
  
  		// Load metadata tags from each segment lazily (only once)
  		for (const segment of this.segments) {
-@@ -510,7 +522,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -511,7 +532,7 @@ export class MatroskaDemuxer extends Demuxer {
  					this.readContiguousElements(slice);
  				}
  			} else if (id === EBMLId.Tags || id === EBMLId.Attachments) {
@@ -2001,7 +2060,7 @@ index 02b62e4..2febd96 100644
  				if (id === EBMLId.Tags) {
  					this.currentSegment.tagsSeen = true;
  				} else {
-@@ -519,11 +531,13 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -520,11 +541,13 @@ export class MatroskaDemuxer extends Demuxer {
  
  				assertDefinedSize(size);
  
@@ -2019,7 +2078,25 @@ index 02b62e4..2febd96 100644
  				}
  			} else if (id === EBMLId.Cluster) {
  				this.currentSegment.clusterSeekStartPos = elementStartPos;
-@@ -968,6 +982,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -806,6 +829,7 @@ export class MatroskaDemuxer extends Demuxer {
+ 				(!previousEntry || previousEntry.elementStartPos < elementStartPos)
+ 				&& (!nextEntry || nextEntry.elementStartPos > elementStartPos)
+ 			) {
++				this.reserveLookupCache(96);
+ 				track.clusterPositionCache.splice(insertionIndex + 1, 0, {
+ 					elementStartPos: cluster.elementStartPos,
+ 					startTimestamp: trackData.startTimestamp,
+@@ -815,6 +839,9 @@ export class MatroskaDemuxer extends Demuxer {
+ 		}
+ 
+ 		segment.lastReadCluster = cluster;
++		if (!segment.clusterSummaries.has(startPos)) {
++			this.reserveLookupCache(128 + 64 * cluster.trackData.size);
++		}
+ 		segment.clusterSummaries.set(startPos, {
+ 			elementEndPos: cluster.elementEndPos,
+ 			trackIds: new Set(cluster.trackData.keys()),
+@@ -970,6 +997,7 @@ export class MatroskaDemuxer extends Demuxer {
  	}
  
  	async loadSegmentMetadata(segment: Segment) {
@@ -2027,7 +2104,7 @@ index 02b62e4..2febd96 100644
  		for (const seekEntry of segment.seekEntries) {
  			if (seekEntry.id === EBMLId.Tags && !segment.tagsSeen) {
  				// We need to load the tags
-@@ -1063,6 +1078,12 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1065,6 +1093,12 @@ export class MatroskaDemuxer extends Demuxer {
  		const { id, size } = header;
  		const dataStartPos = slice.filePos;
  		assertDefinedSize(size);
@@ -2040,7 +2117,7 @@ index 02b62e4..2febd96 100644
  
  		if (dataStartPos + size > slice.end) {
  			return false; // The element doesn't fit into its parent
-@@ -1703,6 +1724,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1705,6 +1739,9 @@ export class MatroskaDemuxer extends Demuxer {
  					isKeyFrame = true;
  				}
  
@@ -2050,7 +2127,7 @@ index 02b62e4..2febd96 100644
  				const blockData = readBytes(blockSlice, blockSlice.remainingLength);
  				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
  
-@@ -1742,6 +1766,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1744,6 +1781,9 @@ export class MatroskaDemuxer extends Demuxer {
  				const flags = readU8(blockSlice);
  				const lacing = (flags >> 1) & 0x3 as BlockLacing; // If the block is laced, we'll expand it later
  
@@ -2060,7 +2137,7 @@ index 02b62e4..2febd96 100644
  				const blockData = readBytes(blockSlice, blockSlice.remainingLength);
  				const hasDecodingInstructions = trackData.track.decodingInstructions.length > 0;
  
-@@ -1784,6 +1811,9 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -1786,6 +1826,9 @@ export class MatroskaDemuxer extends Demuxer {
  			case EBMLId.BlockAdditional: {
  				if (!this.currentBlockAdditional) break;
  
@@ -2070,7 +2147,7 @@ index 02b62e4..2febd96 100644
  				this.currentBlockAdditional.data = readBytes(slice, size);
  			}; break;
  
-@@ -2018,7 +2048,7 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -2020,7 +2063,7 @@ export class MatroskaDemuxer extends Demuxer {
  		return true;
  	}
  
@@ -2079,7 +2156,7 @@ index 02b62e4..2febd96 100644
  		assert(track.decodingInstructions.length > 0); // This method shouldn't be called otherwise
  
  		let currentData = rawData;
-@@ -2032,6 +2062,12 @@ export class MatroskaDemuxer extends Demuxer {
+@@ -2034,6 +2077,12 @@ export class MatroskaDemuxer extends Demuxer {
  						case ContentCompAlgo.HeaderStripping: {
  							if (instruction.data.settings && instruction.data.settings.length > 0) {
  								const prefix = instruction.data.settings;
@@ -2092,7 +2169,7 @@ index 02b62e4..2febd96 100644
  								const newData = new Uint8Array(prefix.length + currentData.length);
  
  								newData.set(prefix, 0);
-@@ -2420,10 +2456,18 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2423,10 +2472,18 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  		const trackData = cluster.trackData.get(this.internalTrack.id)!;
  		const block = trackData.blocks[blockIndex];
  		assert(block);
@@ -2112,7 +2189,7 @@ index 02b62e4..2febd96 100644
  			block.decoded = true;
  		}
  
-@@ -2440,6 +2484,12 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2443,6 +2500,12 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  
  				if (!hasFrameContainer) {
  					// Wrap the frame in a frame container
@@ -2125,7 +2202,7 @@ index 02b62e4..2febd96 100644
  					const newData = new Uint8Array(block.data.length + 8);
  					const newDataView = toDataView(newData);
  
-@@ -2461,6 +2511,9 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
+@@ -2464,6 +2527,9 @@ abstract class MatroskaTrackBacking implements InputTrackBacking {
  		const { codecDelay, segment } = this.internalTrack;
  		const timestamp = (block.timestamp - codecDelay) / segment.timestampFactor;
  		const duration = block.duration / segment.timestampFactor;
