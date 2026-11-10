@@ -50,10 +50,16 @@ function runCiSummary(event: string, results: Record<string, string> = {}) {
 }
 
 function runSecuritySummary(event: string, results: Record<string, string> = {}) {
+  const pins = JSON.parse(readFileSync(resolve(root, 'scripts/ci/pinned-tools.json'), 'utf8')) as {
+    osv: { image: string };
+    semgrep: { image: string };
+  };
   return runWorkflowDecision('security.yaml', 'security-summary', {
     EVENT_NAME: event,
     CHANGES_RESULT: 'success',
     PIN_METADATA_RESULT: 'success',
+    OSV_SCANNER_IMAGE: pins.osv.image,
+    SEMGREP_IMAGE: pins.semgrep.image,
     PINNED_TOOLS_RESULT: ['push', 'schedule', 'workflow_dispatch'].includes(event)
       ? 'success'
       : 'skipped',
@@ -218,6 +224,24 @@ describe('Release infrastructure', () => {
         .status
     ).toBe(0);
   });
+
+  it.each(['pull_request', 'push'])(
+    'requires digest-shaped scanner outputs even for a %s dependency no-op',
+    (event) => {
+      const noOp = {
+        DEPENDENCY_REQUIRED: 'false',
+        SEMGREP_REQUIRED: 'false',
+      };
+      expect(runSecuritySummary(event, noOp).status).toBe(0);
+      for (const output of ['OSV_SCANNER_IMAGE', 'SEMGREP_IMAGE']) {
+        for (const invalid of ['', 'unresolved', 'semgrep/semgrep:1.184.0@sha256:short']) {
+          const result = runSecuritySummary(event, { ...noOp, [output]: invalid });
+          expect(result.status, `${event} ${output}: ${invalid}`).toBe(1);
+          expect(result.stderr).toContain('image output');
+        }
+      }
+    }
+  );
 
   it('makes the single public OSV context depend on the completed security decision', () => {
     expect(
