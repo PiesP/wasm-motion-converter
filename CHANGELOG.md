@@ -8,6 +8,26 @@ roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-11
+
+### Fixed
+
+- **Conversion ownership** — Cancel pending analysis, retire idle WebP Workers, preserve Worker error codes and explicit readiness, and reject already-cancelled work before starting it. Subsequent conversions remain available after cancellation or a Worker failure.
+- **GIF and color handling** — Run GIF conversion in a module Worker and carry the selected color-space metadata through the conversion pipeline. This does not establish universal codec, GPU or display color fidelity.
+- **Settings** — Preserve settings from a future schema and guard invalid option combinations without overwriting unfamiliar stored data.
+
+### Changed
+
+- **Native controls** — Use the browser's native dialog, CSS anchor positioning and captured pointer events for trim interactions and tooltips.
+- **Media and tooling** — Adopt the qualified MediaBunny 1.65.2 packet-lookup changes and reviewed package/tool maintenance while preserving parser and aggregate resource limits, strict CSP, COOP/COEP and client-local media processing.
+
+### Support, upgrade and rollback
+
+- Support remains the latest stable Chrome, Edge, Firefox and Safari on the documented desktop/mobile surfaces. Earlier browser versions are excluded. Native dialog, CSS anchor positioning and Pointer Capture are runtime requirements; the build target does not establish a tested minimum browser version. Repository Chromium/Firefox/WebKit fixtures and recorded Windows Edge/Chrome cases cover their stated scenarios, rather than all native browsers, devices or codecs.
+- Existing readable conversion settings remain usable without a reset. A running tab keeps its downloadable result until the user clears it; finish or cancel active work, download any result, then use the offered reload or reload manually. Media stays local and is not uploaded by conversion.
+- This archive succeeds the v0.2.4 file release; the hosted application has its own source-bound deployment history. Keep the previous verified archive for rollback, restore its complete tree on an appropriate local server, and preserve user settings. Restoring the archive does not roll back the public Pages deployment or recover an uncached removed asset.
+- No measured speed, memory, hardware or universal compatibility improvement is claimed. GIF/WebP timing, short-scene coalescing, unsupported input and memory limits retain their documented boundaries.
+
 ## [0.2.4] - 2026-10-28
 
 ### Fixed

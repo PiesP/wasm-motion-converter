@@ -677,10 +677,10 @@ importing the alias map does not load the production source or service-worker li
 The browser-app preset lazily imports and creates Solid and Tailwind plugins for
 Vite execution, keeping metadata-only lint, format, check and task lookup lightweight.
 
-The Vite alias reports Vite+ `1.5.0` and bundles Vite `8.3.5`. Strict peer
+The Vite alias reports Vite+ `1.5.1` and bundles Vite `8.3.7`. Strict peer
 validation stays enabled. `pnpm-workspace.yaml` permits only that exact alias
 for the reviewed Vitest, mocker, Tailwind, Solid plugin and vitefu versions,
-whose declared Vite ranges include 8.3.5. Recheck callers, their original
+whose declared Vite ranges include 8.3.7. Recheck callers, their original
 ranges and both versions together on updates; never widen this to `allowAny`.
 Validate a fresh dependency resolution as well as the frozen install, since
 a migration lockfile can otherwise hide peer metadata conflicts.
