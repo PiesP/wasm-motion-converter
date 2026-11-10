@@ -2673,9 +2673,7 @@ async function exercisePublicTarget(
         '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
       )
       .click();
-    await page.locator('[data-testid="file-input"]').setInputFiles(fixturePath);
-    await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
-    assert.equal(await page.locator('[data-testid="convert-button"]').isEnabled(), true);
+    await selectFixture(page, fixturePath);
     assert.equal(
       await page.evaluate(() => performance.timeOrigin),
       documentIdentity,
