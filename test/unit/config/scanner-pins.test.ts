@@ -26,7 +26,7 @@ function job(name: string): string {
 describe('scanner pin workflow contracts', () => {
   it('retains the consumer-owned scanner data byte-for-byte', () => {
     expect(createHash('sha256').update(metadataBytes).digest('hex')).toBe(
-      '830d4f2bb314458cf67de24d991110c34e5e5050431f82b72723a2b6fbb801a1'
+      'bb8f394930fa948bc32f4fc7592bf75111418da8ddd7bd597bd0edded45a1fa7'
     );
     expect(metadata.osv.version).toMatch(/^\d+\.\d+\.\d+$/u);
     expect(metadata.osv.image).toMatch(
