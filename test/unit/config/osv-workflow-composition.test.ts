@@ -49,8 +49,12 @@ describe('shared consumer OSV workflow composition', () => {
     for (const event of ['push', 'workflow_dispatch', 'merge_group', 'schedule']) {
       expect(full).toContain(`github.event_name == '${event}'`);
     }
+    expect(pr).toContain('name: OSV PR diff scan');
+    expect(full).toContain('name: OSV full scan');
+    expect(job('osv-required')).toContain('name: pr-gate/osv / osv-scan');
+    expect(job('osv-required')).toContain('needs: security-summary');
+    expect(workflow.match(/^    name: pr-gate\/osv \/ osv-scan$/gm)).toHaveLength(1);
     for (const body of [pr, full]) {
-      expect(body).toContain('name: pr-gate/osv / osv-scan');
       expect(step(body, '⏭️ No dependency-relevant changes')).toContain(`if: ${inactive}`);
       expect(step(body, '📊 Upload OSV SARIF to GitHub Security')).toContain(`if: ${upload}`);
       expect(step(body, '📊 Upload OSV SARIF to GitHub Security')).toContain(

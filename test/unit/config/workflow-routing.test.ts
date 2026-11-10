@@ -743,10 +743,20 @@ describe('Workflow change routing', () => {
       'pr-gate/build',
       'pr-gate/osv / osv-scan',
       'pr-gate/semgrep',
+      'CI gate summary',
+      'Security scan summary',
     ];
 
     for (const name of requiredNames) {
-      expect(`${ci}\n${security}`).toContain(`name: ${name}`);
+      expect(
+        `${ci}\n${security}`.match(new RegExp(`^    name: ${name.replaceAll('/', '\\/')}$`, 'gm'))
+      ).toHaveLength(1);
+    }
+    expect(ci).toContain('name: CI gate summary');
+    expect(security).toContain('name: Security scan summary');
+    const settings = readFileSync(resolve(root, '.github/settings.yml'), 'utf8');
+    for (const name of requiredNames) {
+      expect(settings).toContain(`context: "${name}"`);
     }
     for (const workflow of [ci, security]) {
       expect(workflow).not.toContain('report-pr-gate-statuses:');
