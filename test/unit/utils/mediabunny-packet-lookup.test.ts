@@ -50,3 +50,98 @@ it('keeps key-packet lookup valid after reading no-index fragments without key p
     input.dispose();
   }
 });
+
+// Generated from an owned 16x16 black source at 4 fps for four seconds:
+// ffmpeg -f lavfi -i color=c=black:s=16x16:r=4:d=4 -c:v libvpx -b:v 100k
+//   -g 4 -keyint_min 4 -cluster_time_limit 250 -live 1 -an -f webm
+// The live WebM has no Cues and eight clusters, including clusters without a key frame.
+// SHA-256 of the decoded fixture: 2bd09d4830f8d9c96ae540cba9ab596a55aea4da88d74bbc9aeb95ddae29c607.
+it('finds key packets across cue-less WebM clusters and bounds retained lookup entries', async () => {
+  const encoded = readFileSync(
+    resolve('test/fixtures/mediabunny-clustered-no-cues.base64'),
+    'utf8'
+  );
+  const bytes = Buffer.from(encoded, 'base64');
+  expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+    '2bd09d4830f8d9c96ae540cba9ab596a55aea4da88d74bbc9aeb95ddae29c607'
+  );
+  const media = Uint8Array.from(bytes).buffer;
+  const input = createMediaBunnyInput(media);
+  try {
+    const track = await input.getPrimaryVideoTrack();
+    expect(track).not.toBeNull();
+    const sink = new EncodedPacketSink(track!);
+    expect((await sink.getKeyPacket(0.6, { verifyKeyPackets: true }))?.timestamp).toBe(0);
+    expect((await sink.getKeyPacket(2.6, { verifyKeyPackets: true }))?.timestamp).toBe(2);
+
+    let packetCount = 0;
+    for await (const packet of sink.packets()) {
+      expect(packet.timestamp).toBeGreaterThanOrEqual(0);
+      packetCount++;
+    }
+    expect(packetCount).toBe(16);
+    expect((await sink.getKeyPacket(0.6, { verifyKeyPackets: true }))?.timestamp).toBe(0);
+    expect((await sink.getKeyPacket(2.6, { verifyKeyPackets: true }))?.timestamp).toBe(2);
+  } finally {
+    input.dispose();
+  }
+
+  const bounded = createMediaBunnyInput(media) as ReturnType<typeof createMediaBunnyInput> & {
+    _maxBufferedPacketBytes: number;
+  };
+  bounded._maxBufferedPacketBytes = 900;
+  try {
+    const track = await bounded.getPrimaryVideoTrack();
+    expect(track).not.toBeNull();
+    const sink = new EncodedPacketSink(track!);
+    await expect(async () => {
+      for await (const packet of sink.packets()) {
+        expect(packet.timestamp).toBeGreaterThanOrEqual(0);
+      }
+    }).rejects.toThrow('Matroska lookup cache exceeds the configured memory limit.');
+  } finally {
+    bounded.dispose();
+  }
+});
+
+it('rejects a cached WebM cluster again after its summary reservation fails', async () => {
+  const encoded = readFileSync(
+    resolve('test/fixtures/mediabunny-clustered-no-cues.base64'),
+    'utf8'
+  );
+  const media = Uint8Array.from(Buffer.from(encoded, 'base64')).buffer;
+  type SegmentProbe = {
+    clusterSeekStartPos: number;
+    lastReadCluster: unknown | null;
+    clusterSummaries: Map<number, unknown>;
+  };
+  const input = createMediaBunnyInput(media) as ReturnType<typeof createMediaBunnyInput> & {
+    _maxBufferedPacketBytes: number;
+    _getDemuxer(): Promise<{
+      segments: SegmentProbe[];
+      readCluster(position: number, segment: SegmentProbe): Promise<unknown>;
+    }>;
+  };
+
+  try {
+    expect(await input.getPrimaryVideoTrack()).not.toBeNull();
+    const demuxer = await input._getDemuxer();
+    const segment = demuxer.segments[0];
+    expect(segment).toBeDefined();
+    const startPos = segment!.clusterSeekStartPos;
+    expect(startPos).toBeGreaterThan(0);
+
+    // One 96-byte position entry fits, but the cluster summary cannot fit.
+    input._maxBufferedPacketBytes = 128;
+    await expect(demuxer.readCluster(startPos, segment!)).rejects.toThrow(
+      'Matroska lookup cache exceeds the configured memory limit.'
+    );
+    expect(segment!.clusterSummaries.has(startPos)).toBe(false);
+    await expect(demuxer.readCluster(startPos, segment!)).rejects.toThrow(
+      'Matroska lookup cache exceeds the configured memory limit.'
+    );
+    expect(segment!.lastReadCluster).toBeNull();
+  } finally {
+    input.dispose();
+  }
+});

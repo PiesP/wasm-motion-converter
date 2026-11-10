@@ -69,12 +69,12 @@ Bundled native source references and their attribution limits are recorded with 
 
 ## mediabunny
 
-- **Version:** 1.65.0
+- **Version:** 1.65.2
 - **License:** MPL-2.0
 - **Repository:** https://github.com/Vanilagy/mediabunny
 - **Purpose:** Video demuxing (Input, BufferSource, EncodedPacketSink)
 
-Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/patches/mediabunny@1.65.0.patch
+Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/patches/mediabunny@1.65.2.patch
 
 ### LICENSE
 

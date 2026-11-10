@@ -2,14 +2,14 @@
 
 ## MediaBunny memory limits
 
-`mediabunny@1.65.0.patch` applies to the exact published 1.65.0 package. The
+`mediabunny@1.65.2.patch` applies to the exact published 1.65.2 package. The
 application sets finite limits in `src/utils/mediabunny-utils.ts`; the patch
 enforces them in the imported ESM modules and mirrors the changes in the shipped
 TypeScript source. It bounds contiguous reads, encoded packets, retained parser
 buffers, nested HLS inputs, and packet-sink prefetch. MP4 parsing also enforces
 cumulative metadata and logical-sample budgets before expanding tables or
 fragments. FLAC, Ogg, Matroska, and MPEG-TS apply the same input budgets to their
-retained data. The reader declaration matches its patched constructor.
+retained data. The Reader and Matroska declarations match their patched source.
 
 WMC does not use Matroska tags or attachments. Its inputs opt into skipping these
 descriptive elements before reading their payloads, including leading metadata
@@ -22,40 +22,53 @@ test sets its 256-byte Reader limit before format detection and checks reads at
 and beyond that boundary; changing the Input field afterward would not update
 the Reader.
 
-The 1.65.0 port preserves upstream backwards fragment/cluster lookup,
-position-cache recovery for fragments without a key frame, and the 1.63.0
-reference-PES header retention fix. That upstream fix does not bound MPEG-TS
+The 1.65.2 port preserves upstream iterative fragment/cluster lookup and skips
+position-cache entries without a key frame during key-packet searches. It also
+retains the 1.63.0 reference-PES header fix. That upstream fix does not bound MPEG-TS
 section, PES, or reordered packet buffers, so the local first-section reread and
 byte budgets remain. The local MP4 sample and metadata budgets, both encryption
 auxiliary-info reservations, Matroska descriptive skip and final packet/side-data
 check, nested HLS budgets, and finite-budget packet-sink on-demand mode also
 remain. The port mirrors these limits in the imported ESM modules and shipped
-TypeScript, with the Reader constructor declaration updated. The installed-parser
-tests in
+TypeScript and matching declarations. MP4 fragment-position cache entries retain
+their 96-byte metadata reservation. Matroska cluster-position cache entries and
+cluster summaries now share a finite lookup-cache allowance based on the input's
+buffered-packet budget; conservative estimates reserve 96 bytes per position,
+128 bytes per summary, and 64 bytes per summarized track before insertion.
+The installed-parser tests in
 `test/unit/utils/mediabunny-memory-limits.test.ts` and
 `test/unit/utils/mediabunny-mp4-metadata-limits.test.ts` exercise bounded
 rejection and valid media with the actual patched package.
 `test/unit/utils/mediabunny-matroska-metadata.test.ts` covers the Matroska skip
 policy and the dependency's unchanged default metadata behavior.
+`test/unit/utils/mediabunny-packet-lookup.test.ts` covers cold and warm key-packet
+lookup in cue-less WebM clusters and no-index MP4 fragments, plus a finite
+Matroska lookup-cache rejection.
 
-The port was checked against the published [1.65.0 npm tarball](https://registry.npmjs.org/mediabunny/-/mediabunny-1.65.0.tgz)
-(`sha512-TNnDNOmD5Fme4rwMGWuNv485a9iQwd9lgw88PI9zQ0FMnzEUoo6EJpG7ZhdJ2iwZFWo8AzNkP1KPq5IAHaktKw==`)
-and upstream [1.63.0](https://github.com/Vanilagy/mediabunny/releases/tag/v1.63.0),
-[1.64.0](https://github.com/Vanilagy/mediabunny/releases/tag/v1.64.0), and
-[1.65.0](https://github.com/Vanilagy/mediabunny/releases/tag/v1.65.0) notes.
+The port was checked against the published [1.65.2 npm tarball](https://registry.npmjs.org/mediabunny/-/mediabunny-1.65.2.tgz)
+(`sha512-goZpibvo/5hkc/56WVNm93Ini+o7K4y8aXA20c/BN1B+m3L5aHQa8MTvO+S1APg/YI8kMILtrX6QCqUtxLW7bA==`,
+SHA-256 `93bceb27fd807e06e8b6a0e9e02350bf69e1d70da12d685dd0b133b54c3b1ff6`),
+the [1.65.0...1.65.2 source delta](https://github.com/Vanilagy/mediabunny/compare/v1.65.0...v1.65.2),
+and [1.65.2 release notes](https://github.com/Vanilagy/mediabunny/releases/tag/v1.65.2).
+The 1.65.1 retention decision in issue #453 remains historical evidence for
+that version; the later key-packet lookup changes reach WMC's nonzero-trim path.
 The 1.63.0 reference-PES change is upstream; the local limits above are still
 required. The two MP4 auxiliary-info call sites retain their reservation
-callback, the Matroska final packet check follows 1.65.0's codec-delay handling,
+callback, the Matroska final packet check follows codec-delay handling,
 and the MPEG-TS first-section reread follows the moved packet lookup method.
-The 1.65.0 `@mediabunny/server` fix does not affect this browser package.
+The 1.65.2 MP4 output-flag change is outside WMC's demux-only MediaBunny use.
+The AES stream error close can affect encrypted HLS input, but does not change
+WMC's locally imposed nested-reader and packet budgets.
 
 For a later MediaBunny update, review the complete published package delta and
 port the patch to its runtime modules, source, and declarations. Update the exact
-`package.json` version, `pnpm-workspace.yaml` selector, patch filename, and
-`pnpm-lock.yaml` together. Run a clean frozen install and the installed-parser
-tests before the full verification gate. pnpm's unused-patch error is a guard
+`package.json` version, `pnpm-workspace.yaml` selector, patch filename,
+`pnpm-lock.yaml`, and generated `public/LICENSES.md` together. Run a clean
+frozen install and the installed-parser tests before the full verification gate.
+pnpm's unused-patch error is a guard
 against shipping an unreviewed package. To roll back this update, restore those
-four files together from the previous revision and use a frozen install.
+five artifacts and this patch mapping together from the previous revision, then
+use a frozen install.
 
 ## wasm-webp strict-CSP patch
 
