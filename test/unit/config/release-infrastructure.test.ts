@@ -19,28 +19,54 @@ function jobBlock(workflow: string, jobId: string): string {
   return workflow.slice(start, nextJob === -1 ? undefined : afterMarker + nextJob);
 }
 
-function runSecuritySummary(event: string, results: Record<string, string> = {}) {
-  const workflow = readFileSync(resolve(root, '.github/workflows/security.yaml'), 'utf8');
-  const script = jobBlock(workflow, 'security-summary').split('        run: |\n')[1];
-  if (!script) throw new Error('Security summary script not found');
-
+function runWorkflowDecision(file: string, job: string, env: Record<string, string>) {
+  const workflow = readFileSync(resolve(root, `.github/workflows/${file}`), 'utf8');
+  const script = jobBlock(workflow, job).split('        run: |\n')[1];
+  if (!script) throw new Error(`${job} decision script not found`);
   return spawnSync('bash', ['-c', script.replace(/^ {10}/gm, '')], {
     encoding: 'utf8',
     env: {
       ...process.env,
       GITHUB_STEP_SUMMARY: '/dev/null',
-      EVENT_NAME: event,
-      PINNED_TOOLS_RESULT: ['push', 'schedule', 'workflow_dispatch'].includes(event)
-        ? 'success'
-        : 'skipped',
-      OSV_PR_RESULT: event === 'pull_request' ? 'success' : 'skipped',
-      OSV_FULL_RESULT: event === 'pull_request' ? 'skipped' : 'success',
-      CODEQL_RESULT: 'success',
-      SEMGREP_RESULT: 'success',
-      CODEQL_REQUIRED: 'true',
-      PINNED_TOOLS_REQUIRED: 'true',
-      ...results,
+      ...env,
     },
+  });
+}
+
+function runCiSummary(event: string, results: Record<string, string> = {}) {
+  return runWorkflowDecision('ci.yaml', 'ci-summary', {
+    EVENT_NAME: event,
+    CHANGES_RESULT: 'success',
+    QUALITY_SELECTED: 'true',
+    UNIT_SELECTED: 'true',
+    E2E_SELECTED: 'true',
+    BUILD_SELECTED: 'true',
+    QUALITY_RESULT: 'success',
+    UNIT_RESULT: 'success',
+    E2E_RESULT: 'success',
+    BUILD_RESULT: 'success',
+    ...results,
+  });
+}
+
+function runSecuritySummary(event: string, results: Record<string, string> = {}) {
+  return runWorkflowDecision('security.yaml', 'security-summary', {
+    EVENT_NAME: event,
+    CHANGES_RESULT: 'success',
+    PIN_METADATA_RESULT: 'success',
+    PINNED_TOOLS_RESULT: ['push', 'schedule', 'workflow_dispatch'].includes(event)
+      ? 'success'
+      : 'skipped',
+    OSV_PR_RESULT: event === 'pull_request' ? 'success' : 'skipped',
+    OSV_FULL_RESULT: event === 'pull_request' ? 'skipped' : 'success',
+    CODEQL_RESULT: 'success',
+    SEMGREP_RESULT: 'success',
+    CODEQL_REQUIRED: 'true',
+    PINNED_TOOLS_REQUIRED: 'true',
+    DEPENDENCY_REQUIRED: 'true',
+    SEMGREP_REQUIRED: 'true',
+    SEMGREP_FULL_REQUIRED: 'true',
+    ...results,
   });
 }
 
@@ -79,6 +105,43 @@ describe('Release infrastructure', () => {
     expect(workflow).toContain('expect_when_required "$CODEQL_REQUIRED" "CodeQL" "$CODEQL_RESULT"');
     expect(workflow).toContain('expect_success "Semgrep" "$SEMGREP_RESULT"');
     expect(workflow).toContain('expect_success "OSV full" "$OSV_FULL_RESULT"');
+  });
+
+  it('rejects incomplete CI routing and skipped or failed dependent jobs', () => {
+    expect(runCiSummary('pull_request').status).toBe(0);
+    for (const changes of ['failure', 'cancelled', 'skipped', '']) {
+      expect(runCiSummary('pull_request', { CHANGES_RESULT: changes }).status, changes).toBe(1);
+    }
+    for (const selected of [
+      'QUALITY_SELECTED',
+      'UNIT_SELECTED',
+      'E2E_SELECTED',
+      'BUILD_SELECTED',
+    ]) {
+      for (const invalid of ['', 'unknown', 'TRUE']) {
+        expect(runCiSummary('pull_request', { [selected]: invalid }).status, selected).toBe(1);
+      }
+    }
+    for (const result of ['QUALITY_RESULT', 'UNIT_RESULT', 'E2E_RESULT', 'BUILD_RESULT']) {
+      for (const outcome of ['', 'failure', 'cancelled', 'skipped']) {
+        expect(runCiSummary('pull_request', { [result]: outcome }).status, result).toBe(1);
+      }
+    }
+    expect(runCiSummary('unknown').status).toBe(1);
+  });
+
+  it('accepts explicit unaffected CI no-ops only after routing and jobs succeed', () => {
+    const noOp = runCiSummary('pull_request', {
+      QUALITY_SELECTED: 'false',
+      UNIT_SELECTED: 'false',
+      E2E_SELECTED: 'false',
+      BUILD_SELECTED: 'false',
+    });
+    expect(noOp.status, noOp.stderr).toBe(0);
+    expect(noOp.stdout).toContain('validation did not run');
+    expect(
+      runCiSummary('pull_request', { QUALITY_SELECTED: 'false', QUALITY_RESULT: 'skipped' }).status
+    ).toBe(1);
   });
 
   it.each(['pull_request', 'merge_group', 'push', 'schedule', 'workflow_dispatch'])(
@@ -124,6 +187,48 @@ describe('Release infrastructure', () => {
       }).status
     ).toBe(1);
     expect(runSecuritySummary('unknown').status).toBe(1);
+  });
+
+  it('rejects failed prerequisites, invalid security routing, and an unexpected OSV alternate', () => {
+    for (const prerequisite of ['CHANGES_RESULT', 'PIN_METADATA_RESULT']) {
+      for (const outcome of ['', 'failure', 'cancelled', 'skipped']) {
+        expect(
+          runSecuritySummary('pull_request', { [prerequisite]: outcome }).status,
+          prerequisite
+        ).toBe(1);
+      }
+    }
+    for (const selected of [
+      'CODEQL_REQUIRED',
+      'PINNED_TOOLS_REQUIRED',
+      'DEPENDENCY_REQUIRED',
+      'SEMGREP_REQUIRED',
+      'SEMGREP_FULL_REQUIRED',
+    ]) {
+      for (const invalid of ['', 'unknown']) {
+        expect(runSecuritySummary('pull_request', { [selected]: invalid }).status, selected).toBe(
+          1
+        );
+      }
+    }
+    expect(runSecuritySummary('pull_request', { OSV_FULL_RESULT: 'success' }).status).toBe(1);
+    expect(runSecuritySummary('merge_group', { OSV_PR_RESULT: 'success' }).status).toBe(1);
+    expect(
+      runSecuritySummary('pull_request', { CODEQL_REQUIRED: 'false', CODEQL_RESULT: 'skipped' })
+        .status
+    ).toBe(0);
+  });
+
+  it('makes the single public OSV context depend on the completed security decision', () => {
+    expect(
+      runWorkflowDecision('security.yaml', 'osv-required', { SECURITY_RESULT: 'success' }).status
+    ).toBe(0);
+    for (const outcome of ['', 'failure', 'cancelled', 'skipped']) {
+      expect(
+        runWorkflowDecision('security.yaml', 'osv-required', { SECURITY_RESULT: outcome }).status,
+        outcome
+      ).toBe(1);
+    }
   });
 
   it('publishes a checksum-verifiable archive without flattening the app tree', () => {

@@ -226,7 +226,7 @@ jobs:
           retention-days: 7
 
   osv-scan-pr:
-    name: pr-gate/osv / osv-scan
+    name: OSV PR diff scan
     needs: [changes, pin-metadata]
     if: ${{ !cancelled() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
@@ -322,7 +322,7 @@ jobs:
           sarif_file: ${{ runner.temp }}/osv-results/osv-results.sarif
 
   osv-scan-dispatch:
-    name: pr-gate/osv / osv-scan
+    name: OSV full scan
     needs: [changes, pin-metadata]
     if: ${{ !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || github.event_name == 'schedule') }}
     runs-on: ubuntu-24.04
@@ -523,7 +523,7 @@ jobs:
     name: Security scan summary
     if: ${{ always() }}
     needs:
-      [changes, pinned-tools, osv-scan-pr, osv-scan-dispatch, codeql, semgrep]
+      [changes, pin-metadata, pinned-tools, osv-scan-pr, osv-scan-dispatch, codeql, semgrep]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -532,6 +532,8 @@ jobs:
       - name: Summarize and validate event-specific scans
         env:
           EVENT_NAME: ${{ github.event_name }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          PIN_METADATA_RESULT: ${{ needs.pin-metadata.result }}
           PINNED_TOOLS_RESULT: ${{ needs.pinned-tools.result }}
           OSV_PR_RESULT: ${{ needs.osv-scan-pr.result }}
           OSV_FULL_RESULT: ${{ needs.osv-scan-dispatch.result }}
@@ -539,6 +541,9 @@ jobs:
           SEMGREP_RESULT: ${{ needs.semgrep.result }}
           CODEQL_REQUIRED: ${{ needs.changes.outputs.codeql }}
           PINNED_TOOLS_REQUIRED: ${{ needs.changes.outputs.security_tools }}
+          DEPENDENCY_REQUIRED: ${{ needs.changes.outputs.dependency }}
+          SEMGREP_REQUIRED: ${{ needs.changes.outputs.semgrep }}
+          SEMGREP_FULL_REQUIRED: ${{ needs.changes.outputs.semgrep_full }}
         run: |
           set -euo pipefail
 
@@ -547,6 +552,8 @@ jobs:
             echo
             echo "| Check | Result |"
             echo "| --- | --- |"
+            echo "| Security routing | $CHANGES_RESULT |"
+            echo "| Scanner pin metadata | $PIN_METADATA_RESULT |"
             echo "| Pinned tool freshness | $PINNED_TOOLS_RESULT |"
             echo "| OSV PR diff | $OSV_PR_RESULT |"
             echo "| OSV full | $OSV_FULL_RESULT |"
@@ -576,22 +583,35 @@ jobs:
             fi
           }
 
+          expect_success "security routing" "$CHANGES_RESULT"
+          expect_success "scanner pin metadata" "$PIN_METADATA_RESULT"
+          for selection in "$CODEQL_REQUIRED" "$PINNED_TOOLS_REQUIRED" "$DEPENDENCY_REQUIRED" "$SEMGREP_REQUIRED" "$SEMGREP_FULL_REQUIRED"; do
+            if [[ ! "$selection" =~ ^(true|false)$ ]]; then
+              echo "Missing or invalid security routing decision: $selection" >&2
+              failed=1
+            fi
+          done
+
           expect_when_required "$CODEQL_REQUIRED" "CodeQL" "$CODEQL_RESULT"
           expect_success "Semgrep" "$SEMGREP_RESULT"
           case "$EVENT_NAME" in
             pull_request)
               expect_success "OSV PR diff" "$OSV_PR_RESULT"
+              expect_when_required "false" "OSV full alternate" "$OSV_FULL_RESULT"
               ;;
             merge_group)
               expect_success "OSV full" "$OSV_FULL_RESULT"
+              expect_when_required "false" "OSV PR alternate" "$OSV_PR_RESULT"
               ;;
             push|schedule)
               expect_when_required "$PINNED_TOOLS_REQUIRED" "pinned tool freshness" "$PINNED_TOOLS_RESULT"
               expect_success "OSV full" "$OSV_FULL_RESULT"
+              expect_when_required "false" "OSV PR alternate" "$OSV_PR_RESULT"
               ;;
             workflow_dispatch)
               expect_success "pinned tool freshness" "$PINNED_TOOLS_RESULT"
               expect_success "OSV full" "$OSV_FULL_RESULT"
+              expect_when_required "false" "OSV PR alternate" "$OSV_PR_RESULT"
               ;;
             *)
               echo "Unsupported security workflow event: $EVENT_NAME" >&2
@@ -600,3 +620,18 @@ jobs:
           esac
 
           exit "$failed"
+
+  osv-required:
+    # Keep the live required name while the event-selected scan jobs use unique identities.
+    name: pr-gate/osv / osv-scan
+    if: ${{ always() }}
+    needs: security-summary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the event-selected OSV security decision
+        env:
+          SECURITY_RESULT: ${{ needs.security-summary.result }}
+        run: |
+          set -euo pipefail
+          [[ "$SECURITY_RESULT" == success ]] || { echo "Security scan summary did not succeed: $SECURITY_RESULT" >&2; exit 1; }

@@ -299,3 +299,50 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 9
+
+  ci-summary:
+    name: CI gate summary
+    if: ${{ always() }}
+    needs: [changes, quality, unit, e2e, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Validate routing and selected CI jobs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          QUALITY_SELECTED: ${{ needs.changes.outputs.quality }}
+          UNIT_SELECTED: ${{ needs.changes.outputs.unit }}
+          E2E_SELECTED: ${{ needs.changes.outputs.e2e }}
+          BUILD_SELECTED: ${{ needs.changes.outputs.build }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+
+          [[ "$EVENT_NAME" =~ ^(pull_request|push|merge_group|workflow_dispatch)$ ]]
+          [[ "$CHANGES_RESULT" == success ]] || { echo "CI routing did not complete: $CHANGES_RESULT" >&2; exit 1; }
+          for selection in "$QUALITY_SELECTED" "$UNIT_SELECTED" "$E2E_SELECTED" "$BUILD_SELECTED"; do
+            [[ "$selection" =~ ^(true|false)$ ]] || { echo "Missing or invalid CI routing decision: $selection" >&2; exit 1; }
+          done
+
+          failed=0
+          for gate in quality unit e2e build; do
+            case "$gate" in
+              quality) selected="$QUALITY_SELECTED"; result="$QUALITY_RESULT" ;;
+              unit) selected="$UNIT_SELECTED"; result="$UNIT_RESULT" ;;
+              e2e) selected="$E2E_SELECTED"; result="$E2E_RESULT" ;;
+              build) selected="$BUILD_SELECTED"; result="$BUILD_RESULT" ;;
+            esac
+            if [[ "$result" != success ]]; then
+              echo "CI $gate ($selected) did not succeed: $result" >&2
+              failed=1
+            elif [[ "$selected" == false && "$gate" != build ]]; then
+              echo "CI $gate: explicit unchanged-path no-op; validation did not run."
+            elif [[ "$selected" == false ]]; then
+              echo "CI build: no-op on PR/merge-group/manual, protected push still builds."
+            fi
+          done
+          exit "$failed"

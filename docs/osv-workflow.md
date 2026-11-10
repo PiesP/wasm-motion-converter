@@ -8,6 +8,18 @@ provide the security workflow helper. The scanner image is resolved independentl
 from the reviewed tool-metadata source by the `pin-metadata` job; failed metadata
 preparation fails both OSV jobs even when the changed-path scan would be skipped.
 
+The PR diff and full OSV jobs have distinct check names. The single
+`pr-gate/osv / osv-scan` compatibility job requires `Security scan summary` to
+succeed, which validates routing, reviewed scanner metadata, the event-selected
+OSV job, Semgrep, and applicable CodeQL and tool-freshness results. An unaffected
+dependency path is an explicit successful no-op in its selected OSV job; it is
+not a fresh dependency scan. Successful CodeQL analysis establishes completed
+analysis, not zero CodeQL alerts. The separate CI workflow emits `CI gate
+summary`, which requires completed routing and successful quality, unit, E2E,
+and build jobs, including their explicit unaffected-path no-ops. The settings
+declaration names both summaries with GitHub Actions App ID 15368; live branch
+protection must be checked separately after the producers run on a PR.
+
 For pull requests, the workflow checks out the target history, switches to the
 trusted PR base, initializes that base's submodule, sets up Node without a
 dependency install, and prepares the helper. It scans the base, restores the
