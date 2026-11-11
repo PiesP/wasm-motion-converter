@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vite-plus/test';
 
 const root = resolve(import.meta.dirname, '../../..');
-const definition = resolve(root, 'scripts/build/node-build-definitions/26.13.0');
+const definition = resolve(root, 'scripts/build/node-build-definitions/26.13.1');
 
 function runDefinition(os: string, arch: string, options: Record<string, string | undefined> = {}) {
   return spawnSync(
@@ -50,7 +50,7 @@ function runDefinition(os: string, arch: string, options: Record<string, string 
 
 describe('Pages node-build definition', () => {
   it('matches the exact project runtime pin', () => {
-    expect(readFileSync(resolve(root, '.node-version'), 'utf8').trim()).toBe('26.13.0');
+    expect(readFileSync(resolve(root, '.node-version'), 'utf8').trim()).toBe('26.13.1');
   });
 
   it.each(['x86_64', 'amd64'])('installs only the official Linux %s binary', (arch) => {
@@ -58,8 +58,8 @@ describe('Pages node-build definition', () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split('\n')).toEqual([
-      'node-v26.13.0-linux-x64',
-      'https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.gz#5848553868b402d3fabb5b09270649977780a390f832155721025a08b5104455',
+      'node-v26.13.1-linux-x64',
+      'https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-x64.tar.gz#518674de2b621728a5e4486f5fb3b7d2900bb3cc4aa97969edaa463db99f9778',
       'copy',
     ]);
   });
