@@ -12,11 +12,13 @@
 
 import { globalBufferPool } from '@services/buffer-pool';
 import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
+import { ConversionProfiler } from '@services/conversion-profiler';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
 import { demuxVideo } from '@services/demuxer-service';
 import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder-common';
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
+import { motionMeasurementEnabled, resetMotionMeasurements } from '@services/motion-measurement';
 import { encodeWebp } from '@services/webp-encoder-service';
 import {
   BYTES_PER_MB,
@@ -104,9 +106,12 @@ export async function runWorkerPipeline(
   framerate?: number
 ): Promise<{ outputBuffer: ArrayBuffer; profile?: ConversionProfileReport }> {
   const pipelineStart = performance.now();
-  const profilerClass = import.meta.env.DEV
-    ? (await import('@services/conversion-profiler')).ConversionProfiler
-    : undefined;
+  resetMotionMeasurements();
+  const profilerClass = motionMeasurementEnabled
+    ? ConversionProfiler
+    : import.meta.env.DEV
+      ? (await import('@services/conversion-profiler')).ConversionProfiler
+      : undefined;
   const profiler = profilerClass ? new profilerClass() : null;
   const profileOperation = profiler?.recordOperation;
   const profileCopyPath = profiler?.recordCopyPath;

@@ -20,6 +20,7 @@
 
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { LruMap } from '@piesp/browser-core/util';
+import { recordMotionDimensions } from '@services/motion-measurement';
 import type { SmartFrameSkipMode } from '@t/conversion-types';
 import {
   DEFAULT_FPS,
@@ -967,15 +968,29 @@ export async function decodeFrames(
             }
 
             const shouldMeasureMotion = skipThreshold >= 0 || isAdaptive;
+            if (shouldMeasureMotion)
+              recordMotionDimensions(width, height, pixelFormat === 'rgba' ? 4 : 3);
             const motionFeatureStart =
               profileOperation && shouldMeasureMotion ? performance.now() : null;
             const signature = shouldMeasureMotion
               ? computeMotionSignature(pixelData, width, height, pixelFormat === 'rgba' ? 4 : 3)
               : null;
+            if (motionFeatureStart !== null)
+              profileOperation?.(
+                'motionSignature',
+                Math.max(0, performance.now() - motionFeatureStart)
+              );
+            const comparisonStart =
+              profileOperation && shouldMeasureMotion ? performance.now() : null;
             const frameDistance =
               signature !== null && previousMotion !== null
                 ? compareMotionSignatures(signature, previousMotion).distance
                 : null;
+            if (comparisonStart !== null && signature !== null && previousMotion !== null)
+              profileOperation?.(
+                'motionComparison',
+                Math.max(0, performance.now() - comparisonStart)
+              );
             if (motionFeatureStart !== null) {
               profileOperation?.(
                 'motionFeatures',

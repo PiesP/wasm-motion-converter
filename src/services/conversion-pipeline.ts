@@ -11,7 +11,7 @@
  * 2. Dynamic decimation: adjusts frame skip ratio based on real-time memory
  * 3. Buffer pooling: reuses Uint8Array allocations across frames
  * 4. Profiling: per-phase timing, memory, and throughput measurement
- * 5. Resource cleanup: profiler removed from active map on completion/failure
+ * 5. Diagnostics: an invocation-local profiler retains only its completed report
  */
 
 import type {
@@ -44,6 +44,7 @@ import {
   clearLastConversionProfileReport,
   setLastConversionProfileReport,
 } from './conversion-profile-store';
+import { ConversionProfiler } from './conversion-profiler';
 import { buildEncodingProgress } from './conversion-progress';
 import { decodeFrames } from './decoder-service';
 import { demuxVideo } from './demuxer-service';
@@ -56,6 +57,7 @@ import {
   resolveVideoDimensions,
 } from './frame-utils';
 import { encodeGif } from './gif-encoder-service';
+import { motionMeasurementEnabled, resetMotionMeasurements } from './motion-measurement';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { resolveOutputLimits } from './output-limits';
 import { createStreamingWebpEncoder, type StreamingWebpEncoder } from './parallel-webp-encoder';
@@ -104,9 +106,12 @@ export async function runConversionPipeline(
 
   // Initialize profiler — in DEV, dynamically import the real profiler
   // (tree-shaken from production bundles). In prod, use null.
-  const profilerClass = isDev
-    ? (await import('./conversion-profiler')).ConversionProfiler
-    : undefined;
+  resetMotionMeasurements();
+  const profilerClass = motionMeasurementEnabled
+    ? ConversionProfiler
+    : isDev
+      ? (await import('./conversion-profiler')).ConversionProfiler
+      : undefined;
   const profiler: import('./conversion-profiler').ConversionProfiler | null = profilerClass
     ? new profilerClass()
     : null;

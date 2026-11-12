@@ -37,6 +37,13 @@ import {
   readCancellationInspector,
 } from './cancellation-inspector.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
+import {
+  exerciseMotionSignature,
+  MOTION_PRIMARY_FIXTURE,
+  MOTION_SIGNATURE_OVERHEAD_SCENARIO,
+  MOTION_SIGNATURE_SCENARIO,
+  MOTION_SMALL_FIXTURE,
+} from './motion-signature.ts';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
 import {
   exerciseNarrowOutput,
@@ -2952,6 +2959,125 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const motionSelectors = [MOTION_SIGNATURE_SCENARIO, MOTION_SIGNATURE_OVERHEAD_SCENARIO] as const;
+  const motionPresent = await Promise.all(
+    motionSelectors.map(async (scenario) => {
+      try {
+        return (
+          await stat(resolve(bundleRoot, `validation/windows/inputs/${scenario}.json`))
+        ).isFile();
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+        throw error;
+      }
+    })
+  );
+  assert(motionPresent.filter(Boolean).length <= 1, 'Conflicting motion signature selectors');
+  const motionIndex = motionPresent.findIndex(Boolean);
+  if (motionIndex >= 0) {
+    const scenario = motionSelectors[motionIndex]!;
+    const selectorPath = `validation/windows/inputs/${scenario}.json`;
+    const selected: unknown = JSON.parse(
+      await readFile(await validateBundleFile(bundleRoot, selectorPath), 'utf8')
+    );
+    assert.deepEqual(selected, { scenario });
+    const presentSelectors = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      [
+        'analysis-worker-recovery.json',
+        'app-update.json',
+        'conversion-option-contract.json',
+        'motion-signature.json',
+        'motion-signature-overhead.json',
+        'narrow-output.json',
+        'native-ui.json',
+        'output-finalization-v2.json',
+        'output-finalization.json',
+        'packet-lookup.json',
+        'preview-retry.json',
+        'recovery.json',
+        'selection-preview.json',
+        'service-worker-handoff.json',
+        'settings-schema.json',
+        'trim-submission.json',
+        'webp-initialization.json',
+      ].filter((name) => name !== `${scenario}.json` && presentSelectors.includes(name)),
+      [],
+      'Motion signature measurement requires one focused selector'
+    );
+    const [smallPath, primaryPath, build] = await Promise.all([
+      validateBundleFile(bundleRoot, MOTION_SMALL_FIXTURE),
+      validateBundleFile(bundleRoot, MOTION_PRIMARY_FIXTURE),
+      readBuild(bundleRoot, 'dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+    ]);
+    const smallSha256 = sha256(await readFile(smallPath));
+    const primarySha256 = sha256(await readFile(primaryPath));
+    const workloads = [
+      {
+        id: 'primary-enabled',
+        fixture: primaryPath,
+        inputSha256: primarySha256,
+        width: 320,
+        height: 180,
+        smartFrameSkip: 'low',
+      },
+      {
+        id: 'small-enabled',
+        fixture: smallPath,
+        inputSha256: smallSha256,
+        width: 160,
+        height: 90,
+        smartFrameSkip: 'low',
+      },
+      {
+        id: 'primary-off',
+        fixture: primaryPath,
+        inputSha256: primarySha256,
+        width: 320,
+        height: 180,
+        smartFrameSkip: 'off',
+      },
+    ] as const;
+    const started = await startStaticServer(bundleRoot);
+    const evidencePath = join(output, `${scenario}.json`);
+    const samples: unknown[] = [];
+    let result: Record<string, unknown> = {
+      scenario,
+      status: 'started',
+      build,
+      fixtureSha256: { small: smallSha256, primary: primarySha256 },
+      samples,
+    };
+    try {
+      const measured = await exerciseMotionSignature(
+        browser,
+        started.url,
+        workloads,
+        async (sample) => {
+          samples.push(sample);
+          await mkdir(output, { recursive: true });
+          await writeFile(
+            evidencePath,
+            `${JSON.stringify({ ...result, status: 'running', samples }, null, 2)}\n`
+          );
+        },
+        scenario === MOTION_SIGNATURE_SCENARIO ? 'enabled' : 'disabled',
+        output
+      );
+      result = { ...result, ...measured };
+      return { profile: scenario, ...result };
+    } catch (error) {
+      result = { ...result, status: 'failed', error: String(error) };
+      throw error;
+    } finally {
+      await closeServer(started.server);
+      await mkdir(output, { recursive: true });
+      await writeFile(evidencePath, `${JSON.stringify(result, null, 2)}\n`);
+    }
+  }
   const nativeUiSelector = resolve(bundleRoot, 'validation/windows/inputs/native-ui.json');
   let nativeUiSelectorText: string | undefined;
   try {

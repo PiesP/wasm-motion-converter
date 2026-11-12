@@ -33,6 +33,8 @@ describe('ConversionProfiler', () => {
       operationTotals: {
         pixelCopy: { wallMs: 0, samples: 0 },
         motionFeatures: { wallMs: 0, samples: 0 },
+        motionSignature: { wallMs: 0, samples: 0 },
+        motionComparison: { wallMs: 0, samples: 0 },
         motionDecision: { wallMs: 0, samples: 0 },
         gifPixelPreparation: { wallMs: 0, samples: 0 },
         gifQuantization: { wallMs: 0, samples: 0 },

@@ -8,6 +8,8 @@
       "conversion-option-contract.json",
       "narrow-output.json",
       "native-ui.json",
+      "motion-signature.json",
+      "motion-signature-overhead.json",
       "output-finalization-v2.json",
       "output-finalization.json",
       "packet-lookup.json",
@@ -20,6 +22,42 @@
       "webp-initialization.json"
     ],
     "scenarios": {
+      "motion-signature": {
+        "selector": "motion-signature.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "public/test-video-ci-high-motion-120fps.mp4",
+          "validation/windows/inputs/motion-signature.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
+      "motion-signature-overhead": {
+        "selector": "motion-signature-overhead.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "public/test-video-ci-high-motion-120fps.mp4",
+          "validation/windows/inputs/motion-signature-overhead.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
       "native-ui": {
         "selector": "native-ui.json",
         "browsers": ["msedge", "chrome"],
@@ -88,6 +126,7 @@
     "validation/windows/output-contract.json",
     "validation/windows/output-contract.ts",
     "validation/windows/output-finalization.ts",
+    "validation/windows/motion-signature.ts",
     "validation/windows/output-finalization-observer.ts",
     "validation/windows/mp4-budget-fixture.ts",
     "public/test-video-contract-bframes.mp4",

@@ -59,6 +59,35 @@ The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
 
+For the bounded motion-signature experiment in #483, prepare the small CI H.264
+and 320×180/120-fps high-motion fixtures with `vp run prepare:e2e:fixture`.
+Select `--scenario motion-signature` with installed Edge or Chrome in desktop
+mode. The focused controller builds and packages the selected source, both
+fixtures, and `validation/windows/motion-signature.ts`; it needs no prior build
+or public target. The task's measured build must set
+`VITE_MOTION_MEASUREMENT=1` before the controller starts so its inherited build
+environment emits the separate signature and comparison operation totals and
+per-call dimensions. The matching `motion-signature-overhead` scenario uses the
+same source and settings with that variable unset; it requires the production
+profile globals to be absent. Record the effective environment and resulting
+build hashes for each invocation.
+
+Each controller invocation measures one primary first-use conversion in a fresh
+browser profile, then one same-document warm conversion with a new conversion
+Worker. Small enabled and primary skip-off controls use fresh contexts in the
+same browser process; their first conversions are not fresh-profile cold starts.
+Run five separate, balanced controller invocations per compared variant/cache
+condition, keeping all raw samples and failed attempts. The fixed GIF settings
+are high quality, scale 1, and low smart-frame-skip for the enabled workloads;
+the off control differs only in skip mode. The scenario records the selected
+Worker route, start options, signature calls/dimensions, operation timings,
+request-click to GIF Blob publication, and downloaded file hashes. It decodes
+the saved bytes with the installed browser's `ImageDecoder` after timing and
+records every frame's duration and composited RGBA hash. Compare those frame
+records across variants and independently inspect the retained screenshot and
+failure receipts. This scenario does not perform service-worker offline or
+recovery qualification; run those checks separately.
+
 For analysis cancellation and idle worker recovery, prepare the CI fixture and
 select `{"scenario":"analysis-worker-recovery"}` in the ignored
 `validation/windows/inputs/analysis-worker-recovery.json`, preserving other

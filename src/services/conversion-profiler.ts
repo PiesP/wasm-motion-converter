@@ -4,6 +4,12 @@
 import { BYTES_PER_MB } from '@utils/constants';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
 
+import {
+  motionMeasurementEnabled,
+  readMotionDimensions,
+  type MotionDimensions,
+} from './motion-measurement';
+
 /**
  * Conversion profiler for the pipeline's real, non-overlapping wall-clock
  * stages. Decode and encode are intentionally one transcoding stage because
@@ -16,6 +22,8 @@ export type ProfileStage = 'demuxing' | 'transcoding' | 'finalizing';
 export const PROFILE_OPERATIONS = [
   'pixelCopy',
   'motionFeatures',
+  'motionSignature',
+  'motionComparison',
   'motionDecision',
   'gifPixelPreparation',
   'gifQuantization',
@@ -110,6 +118,7 @@ export interface ProfileSpan<S extends ProfileStage> {
 
 export interface ConversionProfileReport {
   schemaVersion: 4;
+  motionDimensions?: readonly MotionDimensions[];
   totalDurationMs: number;
   heapStartMB: number | null;
   heapEndMB: number | null;
@@ -283,6 +292,7 @@ export class ConversionProfiler {
     const frozenStages = Object.freeze(stages.map((stage) => Object.freeze({ ...stage })));
     this.finishedReport = Object.freeze({
       schemaVersion: 4 as const,
+      ...(motionMeasurementEnabled ? { motionDimensions: readMotionDimensions() } : {}),
       totalDurationMs,
       heapStartMB: this.heapStartMB,
       heapEndMB,
