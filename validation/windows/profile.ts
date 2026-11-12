@@ -3019,6 +3019,10 @@ export async function run({
   const bundleRoot = await realpath(resolve(root));
   const motionSelectors = [
     {
+      scenario: 'motion-signature-owner-video',
+      path: 'validation/windows/inputs/motion-signature-owner-video.json',
+    },
+    {
       scenario: MOTION_SIGNATURE_SCENARIO,
       path: 'validation/windows/inputs/motion-signature.json',
     },
@@ -3051,6 +3055,7 @@ export async function run({
         'analysis-worker-recovery.json',
         'app-update.json',
         'conversion-option-contract.json',
+        'motion-signature-owner-video.json',
         'motion-signature.json',
         'motion-signature-recovery.json',
         'narrow-output.json',
@@ -3069,9 +3074,13 @@ export async function run({
       [],
       'Motion signature measurement requires one focused selector'
     );
+    const ownerVideo = scenario === 'motion-signature-owner-video';
     const [smallPath, primaryPath, build, headersPath] = await Promise.all([
       validateBundleFile(bundleRoot, MOTION_SMALL_FIXTURE),
-      validateBundleFile(bundleRoot, MOTION_PRIMARY_FIXTURE),
+      validateBundleFile(
+        bundleRoot,
+        ownerVideo ? 'validation/windows/inputs/motion-owner-video.mp4' : MOTION_PRIMARY_FIXTURE
+      ),
       readBuild(bundleRoot, 'dist', validateBundleFile, {
         verifyInventory: true,
         exactInventory: true,
@@ -3081,6 +3090,41 @@ export async function run({
     const headerRules = parseHeaderRules(await readFile(headersPath, 'utf8'));
     const smallSha256 = sha256(await readFile(smallPath));
     const primarySha256 = sha256(await readFile(primaryPath));
+    const ownerManifest = ownerVideo
+      ? (JSON.parse(
+          await readFile(
+            await validateBundleFile(bundleRoot, 'validation/windows/motion-owner-video.json'),
+            'utf8'
+          )
+        ) as {
+          input: { bytes: number; sha256: string; videoDurationUs: number };
+          settings: { quality: 'medium'; scale: number };
+          oracle: { width: number; height: number; durationToleranceUs: number };
+        })
+      : null;
+    if (ownerManifest) {
+      assert.equal(
+        primarySha256,
+        ownerManifest.input.sha256,
+        'Guest input digest differs from frozen owner manifest'
+      );
+      assert.equal(
+        (await stat(primaryPath)).size,
+        ownerManifest.input.bytes,
+        'Guest input size differs from frozen owner manifest'
+      );
+    }
+    const ownerSettings = ownerManifest
+      ? {
+          quality: ownerManifest.settings.quality,
+          scale: ownerManifest.settings.scale,
+          width: ownerManifest.oracle.width,
+          height: ownerManifest.oracle.height,
+          expectedDurationUs: ownerManifest.input.videoDurationUs,
+          durationToleranceUs: ownerManifest.oracle.durationToleranceUs,
+          oracleKind: 'owner-video' as const,
+        }
+      : {};
     const workloads = [
       {
         id: 'primary-enabled',
@@ -3089,6 +3133,7 @@ export async function run({
         width: 320,
         height: 180,
         smartFrameSkip: 'low',
+        ...ownerSettings,
       },
       {
         id: 'small-enabled',
@@ -3105,6 +3150,7 @@ export async function run({
         width: 320,
         height: 180,
         smartFrameSkip: 'off',
+        ...ownerSettings,
       },
     ] as const;
     const started = await startStaticServer(bundleRoot);
@@ -3131,6 +3177,7 @@ export async function run({
       status: 'started',
       build,
       fixtureSha256: { small: smallSha256, primary: primarySha256 },
+      inputManifest: ownerManifest,
       staticServerJsAssetRequests: assetRequests(),
       samples,
       diagnostics,
@@ -3293,7 +3340,7 @@ export async function run({
         output,
         diagnostics
       );
-      result = { ...result, ...measured };
+      result = { ...result, ...measured, scenario };
       return { profile: scenario, ...result };
     } catch (error) {
       result = { ...result, status: 'failed', error: String(error) };

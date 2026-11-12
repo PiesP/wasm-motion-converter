@@ -96,6 +96,30 @@ records across variants and independently inspect the retained screenshot and
 failure receipts. This scenario does not perform service-worker offline or
 recovery qualification; run those checks separately.
 
+For the separately identified owner-video follow-up, use
+`--scenario motion-signature-owner-video`. Stage the unchanged private original
+as `validation/windows/inputs/motion-owner-video.mp4`, outside `public/`, in an
+independent clean controller-admitted clone. The source-owned
+[`motion-owner-video.json`](motion-owner-video.json) binds its size, SHA-256,
+video timeline, geometry and frozen settings. This input is ignored and must
+never be committed or included in a public build. Build only in a checkout
+whose `public/` contains no private video; postbuild's synthetic-name cleanup
+is not a private-media exclusion policy. Inspect `dist/` and its deployment
+inventory before staging the bundle. The guest verifies the staged input's
+size and digest before conversion.
+
+This cohort starts with the full 720×720 original, GIF medium quality (12 fps),
+scale 1, low smart frame skip, plus the same-input skip-off and synthetic small
+controls. Its video PTS are variable and its video duration is 11.157178 s;
+audio/container duration is not the output oracle. Retain the 180-second,
+96-MiB and 400-decoded-output-frame bounds. Independently decode saved output,
+check geometry, positive durations, infinite looping, visible variation and
+video duration within 250 ms; freeze the qualified current-TS composited-frame
+and timeline record before candidate timing. Synthetic 3-second/count/change
+assertions do not apply. Each workload runs first use, same-document warm with
+a new Worker, then context cleanup before the next workload. Historical
+synthetic receipts retain their original protocol and result unchanged.
+
 Select `--scenario motion-signature-recovery` for the separate functional
 cancel-and-recover check. It uses the same high-motion fixture for the existing
 GIF high-quality adaptive-skip cancellation exercise, requiring observed

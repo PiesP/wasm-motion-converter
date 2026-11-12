@@ -15,19 +15,26 @@ export const MOTION_SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
 const MAX_VERIFIED_OUTPUT_BYTES = 96 * 1024 * 1024;
 const CONVERSION_TIMEOUT_MS = 180_000;
 
-type Workload = {
+export type MotionWorkload = {
   id: 'primary-enabled' | 'small-enabled' | 'primary-off';
   fixture: string;
   inputSha256: string;
   width: number;
   height: number;
   smartFrameSkip: 'low' | 'off';
+  quality?: 'low' | 'medium' | 'high';
+  scale?: number;
+  oracleKind?: 'owner-video';
+  expectedDurationUs?: number;
+  durationToleranceUs?: number;
+  minimumFrameCount?: number;
+  minimumDistinctFrames?: number;
 };
 
 type WorkerEvent = {
   url: string;
   starts: { requestId: string; options: Record<string, unknown> }[];
-  completes: { requestId: string; outputBytes: number }[];
+  completes: { requestId: string; outputBytes: number; profile: unknown | null }[];
   errors: { requestId: string; code: string }[];
   terminationCalls: number;
 };
@@ -50,7 +57,7 @@ type MotionObserver = {
 };
 
 export type MotionDiagnostic = {
-  workload: Workload['id'];
+  workload: MotionWorkload['id'];
   pageErrors: string[];
   consoleErrors: string[];
   expectedBlobAborts: { protocol: string; resourceType: string; path: string }[];
@@ -142,6 +149,10 @@ export function installMotionObserver() {
           this.entry.completes.push({
             requestId: 'requestId' in data ? String(data.requestId) : '',
             outputBytes: data.outputBuffer.byteLength,
+            profile:
+              'profile' in data && data.profile && typeof data.profile === 'object'
+                ? data.profile
+                : null,
           });
         } else if (data.type === 'error') {
           this.entry.errors.push({
@@ -330,7 +341,7 @@ function gifLoopCount(bytes: Buffer): number | null {
 }
 
 /** Independent browser decode, after the latency interval has ended. */
-async function inspectGif(page: Page, data: Buffer, workload: Workload) {
+async function inspectGif(page: Page, data: Buffer, workload: MotionWorkload) {
   return page.evaluate(
     async ({ encoded, width, height }) => {
       if (typeof ImageDecoder !== 'function') throw new Error('ImageDecoder unavailable');
@@ -398,7 +409,7 @@ async function heapPoint(page: Page) {
 
 export async function measure(
   page: Page,
-  workload: Workload,
+  workload: MotionWorkload,
   condition: 'cold-first-use' | 'fresh-context' | 'warm',
   index: number
 ) {
@@ -449,8 +460,14 @@ export async function measure(
       scale: worker.starts[0]?.options.scale,
       smartFrameSkip: worker.starts[0]?.options.smartFrameSkip,
     },
-    { format: 'gif', quality: 'low', scale: 1, smartFrameSkip: workload.smartFrameSkip }
+    {
+      format: 'gif',
+      quality: workload.quality ?? 'low',
+      scale: workload.scale ?? 1,
+      smartFrameSkip: workload.smartFrameSkip,
+    }
   );
+  assert.equal(worker.terminationCalls, 1, 'Completed Worker was not terminated once');
   const href = await page.locator('[data-testid="download-result-button"]').getAttribute('href');
   assert(href?.startsWith('blob:'), 'GIF result has no Blob URL');
   const rendererHeapAfterReady = await heapPoint(page);
@@ -498,12 +515,22 @@ export async function measure(
     wallStart,
     timeOrigin: observation.timeOrigin,
     inputSha256: workload.inputSha256,
-    settings: { format: 'gif', quality: 'low', scale: 1, smartFrameSkip: workload.smartFrameSkip },
+    settings: {
+      format: 'gif',
+      quality: workload.quality ?? 'low',
+      scale: workload.scale ?? 1,
+      smartFrameSkip: workload.smartFrameSkip,
+    },
     outputRoute: 'gif-worker',
     routeBasis: 'owned-built-worker-start-format-gif-and-complete-matched-saved-bytes',
     requestToDownloadReadyMs: elapsedMs,
     requestToBlobPublicationMs: ready.atMs - observation.clickMs,
-    worker: { url: worker.url, starts: worker.starts, completes: worker.completes },
+    worker: {
+      url: worker.url,
+      starts: worker.starts,
+      completes: worker.completes,
+      terminationCalls: worker.terminationCalls,
+    },
     cacheObservation,
     memory: {
       rendererHeapBefore,
@@ -519,13 +546,39 @@ export async function measure(
   };
 }
 
-function assertUsefulOutput(sample: Awaited<ReturnType<typeof measure>>) {
+export type MotionOutputSample = {
+  workload: MotionWorkload['id'];
+  decoded: {
+    durationUs: number;
+    frames: readonly { durationUs: number; pixelSha256: string }[];
+  };
+};
+
+export function assertUsefulOutput(sample: MotionOutputSample, workload: MotionWorkload) {
   const primary = sample.workload !== 'small-enabled';
-  const expectedDurationUs = primary ? 3_000_000 : 1_000_000;
+  const expectedDurationUs = workload.expectedDurationUs ?? (primary ? 3_000_000 : 1_000_000);
   assert(
-    Math.abs(sample.decoded.durationUs - expectedDurationUs) <= 250_000,
+    Math.abs(sample.decoded.durationUs - expectedDurationUs) <=
+      (workload.durationToleranceUs ?? 250_000),
     'Saved GIF duration missed the frozen source-duration tolerance'
   );
+  if (workload.oracleKind === 'owner-video') {
+    const frames = sample.decoded.frames;
+    assert(
+      frames.length >= (workload.minimumFrameCount ?? 2),
+      'Owner-video output had too few composited frames'
+    );
+    assert(
+      frames.every((frame) => frame.durationUs > 0),
+      'Owner-video output contained a nonpositive frame duration'
+    );
+    assert(
+      new Set(frames.map((frame) => frame.pixelSha256)).size >=
+        (workload.minimumDistinctFrames ?? 2),
+      'Owner-video output did not preserve visible motion'
+    );
+    return;
+  }
   if (!primary) return;
   const frames = sample.decoded.frames;
   assert(frames.length >= 16, 'Primary high-motion output had fewer than 16 frames');
@@ -547,7 +600,7 @@ function assertUsefulOutput(sample: Awaited<ReturnType<typeof measure>>) {
 export async function exerciseMotionSignature(
   browser: Browser,
   url: string,
-  workloads: readonly Workload[],
+  workloads: readonly MotionWorkload[],
   onSample: (sample: Awaited<ReturnType<typeof measure>>) => Promise<void>,
   output: string,
   diagnostics: MotionDiagnostic[]
@@ -560,7 +613,8 @@ export async function exerciseMotionSignature(
   const orderedWorkloads = [primary, small, off];
   const artifacts: { file: string; bytes: number; sha256: string }[] = [];
   const contexts = new Set<BrowserContext>();
-  const retained = new Map<string, { page: Page; timeOrigin: number }>();
+  const closedContexts: string[] = [];
+  let measurementOverhead: ReturnType<NonNullable<MotionObserver['calibrate']>> | undefined;
   let primaryFailure: unknown;
   let failed = false;
   try {
@@ -636,55 +690,48 @@ export async function exerciseMotionSignature(
       await page.locator('[data-testid="file-input"]').setInputFiles(workload.fixture);
       await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
       await choose(page, 'format', 'gif');
-      await choose(page, 'quality', 'low');
-      await choose(page, 'scale', '1');
+      await choose(page, 'quality', workload.quality ?? 'low');
+      await choose(page, 'scale', String(workload.scale ?? 1));
       await choose(page, 'smart-frame-skip', workload.smartFrameSkip);
       const condition = workload.id === 'primary-enabled' ? 'cold-first-use' : 'fresh-context';
       const sample = await measure(page, workload, condition, 0);
       samples.push(sample);
       await onSample(sample);
-      assertUsefulOutput(sample);
+      assertUsefulOutput(sample, workload);
       assertNoUnexpectedDiagnostics(diagnostic);
-      retained.set(workload.id, {
-        page,
-        timeOrigin: await page.evaluate(() => performance.timeOrigin),
-      });
-    }
-    for (const workload of orderedWorkloads) {
-      const entry = retained.get(workload.id);
-      assert(entry, 'No retained same-document page for warm comparison');
-      const sample = await measure(entry.page, workload, 'warm', 0);
-      samples.push(sample);
-      await onSample(sample);
-      assertUsefulOutput(sample);
-      const diagnostic = diagnostics.find((entry) => entry.workload === workload.id);
-      assert(diagnostic);
+      const warm = await measure(page, workload, 'warm', 0);
+      samples.push(warm);
+      await onSample(warm);
+      assertUsefulOutput(warm, workload);
       assertNoUnexpectedDiagnostics(diagnostic);
       if (workload.id === 'primary-enabled') {
         const file = 'motion-signature-result.png';
-        const bytes = await entry.page.screenshot({ path: join(output, file), fullPage: true });
+        const bytes = await page.screenshot({ path: join(output, file), fullPage: true });
         artifacts.push({
           file,
           bytes: bytes.byteLength,
           sha256: createHash('sha256').update(bytes).digest('hex'),
         });
+        measurementOverhead = await page.evaluate(() => {
+          const observer = Reflect.get(globalThis, '__wmcMotionObserver') as MotionObserver;
+          if (!observer.calibrate) throw new Error('Observer calibration unavailable');
+          return observer.calibrate();
+        });
       }
-      assert.equal(await entry.page.evaluate(() => performance.timeOrigin), entry.timeOrigin);
+      assert.equal(await page.evaluate(() => performance.timeOrigin), sample.timeOrigin);
+      await context.close();
+      contexts.delete(context);
+      closedContexts.push(workload.id);
     }
-    const calibrationPage = retained.get(primary.id)?.page;
-    assert(calibrationPage, 'Primary page missing for post-trial calibration');
-    const measurementOverhead = await calibrationPage.evaluate(() => {
-      const observer = Reflect.get(globalThis, '__wmcMotionObserver') as MotionObserver;
-      if (!observer.calibrate) throw new Error('Observer calibration unavailable');
-      return observer.calibrate();
-    });
+    assert(measurementOverhead, 'Primary measurement calibration was not recorded');
     return {
       measurementOverhead,
+      ownedContextCleanup: { closedWorkloads: closedContexts, remaining: contexts.size },
       scenario: MOTION_SIGNATURE_SCENARIO,
       status: 'passed' as const,
       browserVersion: browser.version(),
       samplingPlan:
-        'one primary cold first-use and one same-document warm attempt per controller invocation; run five fresh controller invocations per variant',
+        'For each workload: first use, same-document warm with a new conversion Worker, then context cleanup. Primary pair precedes controls. Run five fresh controller invocations per variant.',
       artifacts,
       diagnostics,
       samples,

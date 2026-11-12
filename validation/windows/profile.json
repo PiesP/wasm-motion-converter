@@ -19,7 +19,8 @@
       "service-worker-handoff.json",
       "settings-schema.json",
       "trim-submission.json",
-      "webp-initialization.json"
+      "webp-initialization.json",
+      "motion-signature-owner-video.json"
     ],
     "scenarios": {
       "motion-signature": {
@@ -106,6 +107,25 @@
           "validation/windows/prior-dist",
           "validation/windows/public-target.json"
         ]
+      },
+      "motion-signature-owner-video": {
+        "selector": "motion-signature-owner-video.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "validation/windows/inputs/motion-owner-video.mp4",
+          "validation/windows/motion-owner-video.json",
+          "validation/windows/inputs/motion-signature-owner-video.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
       }
     }
   },
@@ -146,6 +166,8 @@
     "validation/windows/webp-initialization.ts",
     "validation/windows/settings-schema.ts",
     "validation/windows/analysis-worker-recovery.ts",
-    "validation/windows/worker-option-contract.ts"
+    "validation/windows/worker-option-contract.ts",
+    "validation/windows/inputs/motion-owner-video.mp4",
+    "validation/windows/motion-owner-video.json"
   ]
 }
