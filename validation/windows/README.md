@@ -120,6 +120,22 @@ assertions do not apply. Each workload runs first use, same-document warm with
 a new Worker, then context cleanup before the next workload. Historical
 synthetic receipts retain their original protocol and result unchanged.
 
+Use `--scenario motion-signature-owner-recovery` for the separate owner-video
+cancel-and-recover gate. It stages the same unchanged private input, exercises
+the existing high-quality adaptive-skip cancellation flow, requires effective
+Stop-to-idle within 500 ms and no stale Worker completion, then independently
+verifies a successful small GIF in the same document. This functional run is
+separate from the frozen medium-quality timing cohort.
+
+The verifier transfers saved GIF bytes to the independent browser decoder as
+base64 after the timing interval to keep the transport compact. The first
+owner-video attempt exhausted the Node heap while using numeric-array transfer;
+the retained byte-exact transfer repair completed the 19.6 MB output within the
+original bounds. The exact original allocation site was not traced.
+Verification allocations can remain until garbage collection before the warm
+job, so renderer heap observations include harness effects and do not establish
+product retention or peak memory.
+
 Select `--scenario motion-signature-recovery` for the separate functional
 cancel-and-recover check. It uses the same high-motion fixture for the existing
 GIF high-quality adaptive-skip cancellation exercise, requiring observed

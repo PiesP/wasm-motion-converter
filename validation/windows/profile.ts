@@ -3019,6 +3019,10 @@ export async function run({
   const bundleRoot = await realpath(resolve(root));
   const motionSelectors = [
     {
+      scenario: 'motion-signature-owner-recovery',
+      path: 'validation/windows/inputs/motion-signature-owner-recovery.json',
+    },
+    {
       scenario: 'motion-signature-owner-video',
       path: 'validation/windows/inputs/motion-signature-owner-video.json',
     },
@@ -3055,6 +3059,7 @@ export async function run({
         'analysis-worker-recovery.json',
         'app-update.json',
         'conversion-option-contract.json',
+        'motion-signature-owner-recovery.json',
         'motion-signature-owner-video.json',
         'motion-signature.json',
         'motion-signature-recovery.json',
@@ -3074,7 +3079,8 @@ export async function run({
       [],
       'Motion signature measurement requires one focused selector'
     );
-    const ownerVideo = scenario === 'motion-signature-owner-video';
+    const ownerVideo =
+      scenario === 'motion-signature-owner-video' || scenario === 'motion-signature-owner-recovery';
     const [smallPath, primaryPath, build, headersPath] = await Promise.all([
       validateBundleFile(bundleRoot, MOTION_SMALL_FIXTURE),
       validateBundleFile(
@@ -3182,7 +3188,10 @@ export async function run({
       samples,
       diagnostics,
     };
-    if (scenario === MOTION_SIGNATURE_RECOVERY_SCENARIO) {
+    if (
+      scenario === MOTION_SIGNATURE_RECOVERY_SCENARIO ||
+      scenario === 'motion-signature-owner-recovery'
+    ) {
       let context: BrowserContext | undefined;
       let failure: unknown;
       let failed = false;
@@ -3232,7 +3241,9 @@ export async function run({
           output,
           artifacts
         );
-        result.cancellation = cancellation;
+        result.cancellation = ownerVideo
+          ? { ...cancellation, id: 'cancel-owner-video', inputSha256: primarySha256 }
+          : cancellation;
         assert.equal(
           cancellation.effective,
           true,
