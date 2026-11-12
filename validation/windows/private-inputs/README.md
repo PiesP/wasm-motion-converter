@@ -11,3 +11,8 @@ The default full profile does not require the owner-provided file. A focused
 owner scenario validates that the staged file exists, has the frozen byte count
 and digest before starting conversion. A controller plan checks the containing
 directory; its presence alone does not qualify the private file.
+
+A full campaign packages declared directories when present. Use an isolated
+task checkout and clear only the task-owned staged copy after collection before
+reusing it for unrelated campaigns. Preserve the owner's original and retained
+private evidence.
