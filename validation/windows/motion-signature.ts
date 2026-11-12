@@ -12,7 +12,7 @@ export const MOTION_SIGNATURE_RECOVERY_SCENARIO = 'motion-signature-recovery';
 export const MOTION_PRIMARY_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 export const MOTION_SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
 
-const MAX_OUTPUT_BYTES = 96 * 1024 * 1024;
+const MAX_VERIFIED_OUTPUT_BYTES = 96 * 1024 * 1024;
 const CONVERSION_TIMEOUT_MS = 180_000;
 
 type Workload = {
@@ -225,7 +225,10 @@ async function downloadIdentity(page: Page) {
   for await (const chunk of stream) {
     const part = Buffer.from(chunk);
     bytes += part.length;
-    assert(bytes <= MAX_OUTPUT_BYTES, 'Saved GIF exceeded the unchanged 96 MiB limit');
+    assert(
+      bytes <= MAX_VERIFIED_OUTPUT_BYTES,
+      'Saved GIF exceeded the 96 MiB scenario verification bound'
+    );
     hash.update(part);
     parts.push(part);
     if (header.length < 6) header = Buffer.concat([header, part.subarray(0, 6 - header.length)]);

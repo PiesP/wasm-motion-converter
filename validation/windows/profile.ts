@@ -2986,7 +2986,12 @@ async function finishMotionProfile({
   const writeEvidence = () => writeFile(evidencePath, `${JSON.stringify(result, null, 2)}\n`);
   const priorErrors = cleanupErrors.length;
   await attempt('evidence write', writeEvidence);
-  if (cleanupErrors.length > priorErrors) await attempt('evidence write retry', writeEvidence);
+  if (cleanupErrors.length > priorErrors)
+    await attempt('evidence write failure sidecar', () =>
+      writeFile(`${evidencePath}.write-failure.json`, `${JSON.stringify(result, null, 2)}\n`, {
+        flag: 'wx',
+      })
+    );
   if (cleanupErrors.length)
     throw new AggregateError(
       [...(failed ? [failure] : []), ...cleanupReasons],
