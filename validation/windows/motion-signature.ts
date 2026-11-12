@@ -359,7 +359,7 @@ async function measure(
       scale: worker.starts[0]?.options.scale,
       smartFrameSkip: worker.starts[0]?.options.smartFrameSkip,
     },
-    { format: 'gif', quality: 'high', scale: 1, smartFrameSkip: workload.smartFrameSkip }
+    { format: 'gif', quality: 'low', scale: 1, smartFrameSkip: workload.smartFrameSkip }
   );
   if (instrumentation === 'enabled') {
     assert(observation.profile, 'Measured production build omitted the motion profile');
@@ -417,6 +417,12 @@ async function measure(
     'Worker output size differs from saved file'
   );
   const decoded = await inspectGif(page, data, workload);
+  if (workload.id !== 'small-enabled') {
+    assert(
+      new Set(decoded.frames.map((frame) => frame.pixelSha256)).size >= 2,
+      'Primary high-motion output did not retain two distinct composited frames'
+    );
+  }
   const rendererHeapAfter = await heapPoint(page);
   assert(
     ready.atMs <= observation.readyMs,
@@ -431,7 +437,7 @@ async function measure(
     wallStart,
     timeOrigin: observation.timeOrigin,
     inputSha256: workload.inputSha256,
-    settings: { format: 'gif', quality: 'high', scale: 1, smartFrameSkip: workload.smartFrameSkip },
+    settings: { format: 'gif', quality: 'low', scale: 1, smartFrameSkip: workload.smartFrameSkip },
     instrumentation,
     outputRoute: 'gif-worker',
     routeBasis:
@@ -518,7 +524,7 @@ export async function exerciseMotionSignature(
         await page.locator('[data-testid="file-input"]').setInputFiles(workload.fixture);
         await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
         await choose(page, 'format', 'gif');
-        await choose(page, 'quality', 'high');
+        await choose(page, 'quality', 'low');
         await choose(page, 'scale', '1');
         await choose(page, 'smart-frame-skip', workload.smartFrameSkip);
         const condition = workload.id === 'primary-enabled' ? 'cold-first-use' : 'fresh-context';

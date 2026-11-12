@@ -78,8 +78,9 @@ Worker. Small enabled and primary skip-off controls use fresh contexts in the
 same browser process; their first conversions are not fresh-profile cold starts.
 Run five separate, balanced controller invocations per compared variant/cache
 condition, keeping all raw samples and failed attempts. The fixed GIF settings
-are high quality, scale 1, and low smart-frame-skip for the enabled workloads;
-the off control differs only in skip mode. The scenario records the selected
+are low quality, scale 1, and low smart-frame-skip for the enabled workloads;
+the off control differs only in skip mode. The two primary workloads must decode
+to at least two distinct composited pixel hashes. The scenario records the selected
 Worker route, start options, signature calls/dimensions, operation timings,
 request-click to a visible matching GIF download button (with Blob publication
 recorded separately), bounded page/console/request failures, and downloaded
