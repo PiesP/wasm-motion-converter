@@ -64,7 +64,7 @@ export type WorkerResponse =
       requestId: string;
       outputBuffer: ArrayBuffer;
       durationMs: number;
-      /** Development or explicitly opted-in experiment profile from the Worker realm. */
+      /** Development-only profile captured inside the Worker realm. */
       profile?: ConversionProfileReport;
     }
   | { type: 'error'; requestId: string; message: string; code: string }

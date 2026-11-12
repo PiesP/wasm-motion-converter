@@ -59,18 +59,14 @@ The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
 
-For the bounded motion-signature experiment in #483, prepare the small CI H.264
+For motion-signature regression and timing in #483, prepare the small CI H.264
 and 320×180/120-fps high-motion fixtures with `vp run prepare:e2e:fixture`.
 Select `--scenario motion-signature` with installed Edge or Chrome in desktop
-mode. The focused controller builds and packages the selected source, both
-fixtures, and `validation/windows/motion-signature.ts`; it needs no prior build
-or public target. The task's measured build must set
-`VITE_MOTION_MEASUREMENT=1` before the controller starts so its inherited build
-environment emits the separate signature and comparison operation totals and
-per-call dimensions. The matching `motion-signature-overhead` scenario uses the
-same source and settings with that variable unset; it requires the production
-profile globals to be absent. Record the effective environment and resulting
-build hashes for each invocation.
+mode. The focused controller builds the ordinary production source and packages
+that build, both fixtures, and `validation/windows/motion-signature.ts`; it
+needs no prior build, public target, profiler flag, or development global.
+Historical instrumented component timings are recorded in the issue evidence,
+not produced or inferred by this retained scenario.
 
 Each controller invocation measures one primary first-use conversion in a fresh
 browser profile, then one same-document warm conversion with a new conversion
@@ -81,12 +77,16 @@ condition, keeping all raw samples and failed attempts. The fixed GIF settings
 are low quality, scale 1, and low smart-frame-skip for the enabled workloads;
 the off control differs only in skip mode. Each primary output must decode to at
 least 16 frames, 15 adjacent composited pixel changes, positive frame durations,
-and 3 seconds within 250 ms. The scenario records the selected
-Worker route, start options, signature calls/dimensions, operation timings,
+and 3 seconds within 250 ms. The scenario records the owned GIF Worker route
+from its start options and completed saved bytes, plus
 request-click to a visible matching GIF download button (with Blob publication
 recorded separately), bounded page/console/request/HTTP failures and separately
 classified Blob `net::ERR_ABORTED` events, and downloaded
-file hashes. Renderer heap point samples cover before click, after button
+file hashes. Each sample also retains the bounded static-server JavaScript
+request list, the built Worker's declared `dist/_headers` cache policy,
+available Resource Timing transfer sizes and delivery type for its exact URL,
+and the service-worker controller path. These observations do not by
+themselves establish a cache hit. Renderer heap point samples cover before click, after button
 readiness, and after saved-output verification; the last sample includes harness
 decoding. Worker heap, native GPU memory, and memory peaks remain unmeasured.
 The scenario decodes
@@ -95,6 +95,18 @@ records every frame's duration and composited RGBA hash. Compare those frame
 records across variants and independently inspect the retained screenshot and
 failure receipts. This scenario does not perform service-worker offline or
 recovery qualification; run those checks separately.
+
+Select `--scenario motion-signature-recovery` for the separate functional
+cancel-and-recover check. It uses the same high-motion fixture for the existing
+GIF high-quality adaptive-skip cancellation exercise, requiring observed
+nonzero progress, an effective Stop action, Worker termination, no stale result,
+and return to an idle conversion control within 500 ms of the actual Stop click.
+It then converts the small fixture in the same document with GIF low quality,
+scale 1, and low smart-frame-skip, verifies the downloaded bytes and independent
+decoded timeline, and checks that the cancelled Worker did not complete later.
+If the high-motion job finishes before Stop can take effect, the attempt records
+that limitation; it does not qualify cancellation. This scenario has its own
+source-bound receipt and is not pooled with timing samples.
 
 For analysis cancellation and idle worker recovery, prepare the CI fixture and
 select `{"scenario":"analysis-worker-recovery"}` in the ignored

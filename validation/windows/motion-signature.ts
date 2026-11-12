@@ -5,10 +5,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
-import type { Browser, Page } from '@playwright/test';
+import type { Browser, BrowserContext, Page } from '@playwright/test';
 
 export const MOTION_SIGNATURE_SCENARIO = 'motion-signature';
-export const MOTION_SIGNATURE_OVERHEAD_SCENARIO = 'motion-signature-overhead';
+export const MOTION_SIGNATURE_RECOVERY_SCENARIO = 'motion-signature-recovery';
 export const MOTION_PRIMARY_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 export const MOTION_SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
 
@@ -29,12 +29,15 @@ type WorkerEvent = {
   starts: { requestId: string; options: Record<string, unknown> }[];
   completes: { requestId: string; outputBytes: number }[];
   errors: { requestId: string; code: string }[];
+  terminationCalls: number;
 };
 
 type MotionObserver = {
   clickMs: number | null;
   outputUrls: { url: string; size: number; type: string; atMs: number }[];
   readyMs: number | null;
+  stopClickMs: number | null;
+  idleAfterStopMs: number | null;
   workers: WorkerEvent[];
   reset: () => void;
 };
@@ -54,7 +57,7 @@ function recordBounded<T>(entries: T[], item: T, diagnostic: MotionDiagnostic, l
   else diagnostic.overflow++;
 }
 
-function assertNoUnexpectedDiagnostics(diagnostic: MotionDiagnostic) {
+export function assertNoUnexpectedDiagnostics(diagnostic: MotionDiagnostic) {
   assert.deepEqual(diagnostic.pageErrors, [], 'Page emitted an unhandled error');
   assert.deepEqual(diagnostic.consoleErrors, [], 'Page emitted a console error');
   assert.deepEqual(diagnostic.failedRequests, [], 'Page had a failed request');
@@ -63,11 +66,13 @@ function assertNoUnexpectedDiagnostics(diagnostic: MotionDiagnostic) {
 }
 
 /** Installed before the application; keeps all measurement events in one page clock. */
-function installMotionObserver() {
+export function installMotionObserver() {
   const observed: MotionObserver = {
     clickMs: null,
     outputUrls: [],
     readyMs: null,
+    stopClickMs: null,
+    idleAfterStopMs: null,
     workers: [],
     reset() {
       this.clickMs = null;
@@ -92,7 +97,18 @@ function installMotionObserver() {
       observed.readyMs = performance.now();
     }
   };
-  new MutationObserver(checkDownloadReady).observe(document, {
+  const checkIdleAfterStop = () => {
+    if (observed.stopClickMs === null || observed.idleAfterStopMs !== null) return;
+    const convert = document.querySelector<HTMLButtonElement>('[data-testid="convert-button"]');
+    const stop = document.querySelector('[data-testid="stop-conversion-button"]');
+    if (convert && !convert.disabled && convert.getClientRects().length > 0 && !stop) {
+      observed.idleAfterStopMs = performance.now();
+    }
+  };
+  new MutationObserver(() => {
+    checkDownloadReady();
+    checkIdleAfterStop();
+  }).observe(document, {
     subtree: true,
     childList: true,
     attributes: true,
@@ -106,7 +122,7 @@ function installMotionObserver() {
       super(scriptURL, options);
       const url = new URL(String(scriptURL), location.href);
       this.entry = /^\/assets\/worker-[\w-]+\.js$/.test(url.pathname)
-        ? { url: url.href, starts: [], completes: [], errors: [] }
+        ? { url: url.href, starts: [], completes: [], errors: [], terminationCalls: 0 }
         : null;
       if (this.entry) observed.workers.push(this.entry);
       this.addEventListener('message', ({ data }: MessageEvent<unknown>) => {
@@ -148,6 +164,11 @@ function installMotionObserver() {
       if (Array.isArray(options)) return super.postMessage(message, options);
       return super.postMessage(message, options);
     }
+
+    override terminate() {
+      if (this.entry) this.entry.terminationCalls++;
+      return super.terminate();
+    }
   };
 
   const createObjectURL = URL.createObjectURL;
@@ -173,12 +194,18 @@ function installMotionObserver() {
       ) {
         observed.clickMs = performance.now();
       }
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[data-testid="stop-conversion-button"]')
+      ) {
+        observed.stopClickMs = performance.now();
+      }
     },
     true
   );
 }
 
-async function choose(page: Page, group: string, value: string) {
+export async function choose(page: Page, group: string, value: string) {
   const option = page.locator(`[data-testid="option-${group}-${value}"]`);
   if (!(await option.isVisible()))
     await page.locator('[data-testid="advanced-settings"] summary').click();
@@ -302,12 +329,11 @@ async function heapPoint(page: Page) {
   }
 }
 
-async function measure(
+export async function measure(
   page: Page,
   workload: Workload,
   condition: 'cold-first-use' | 'fresh-context' | 'warm',
-  index: number,
-  instrumentation: 'enabled' | 'disabled'
+  index: number
 ) {
   const rendererHeapBefore = await heapPoint(page);
   const before = await page.evaluate(() => {
@@ -339,10 +365,6 @@ async function measure(
       readyMs: observer.readyMs,
       workers: observer.workers.slice(workerCount),
       timeOrigin: performance.timeOrigin,
-      profile: Reflect.get(globalThis, '__wmcMotionProfile') as Record<string, unknown> | undefined,
-      dimensions: Reflect.get(globalThis, '__wmcMotionDimensions') as
-        | { width: number; height: number; stride: number }[]
-        | undefined,
     };
   }, before.workerCount);
   assert.equal(observation.timeOrigin, before.timeOrigin, 'Document changed during conversion');
@@ -362,48 +384,6 @@ async function measure(
     },
     { format: 'gif', quality: 'low', scale: 1, smartFrameSkip: workload.smartFrameSkip }
   );
-  if (instrumentation === 'enabled') {
-    assert(observation.profile, 'Measured production build omitted the motion profile');
-    assert(observation.dimensions, 'Measured production build omitted motion dimensions');
-    assert.equal(observation.profile.encoderRoute, 'gif-worker', 'Profile selected another route');
-  } else {
-    assert.equal(
-      observation.profile,
-      undefined,
-      'Overhead control unexpectedly enabled motion profiling'
-    );
-    assert.equal(
-      observation.dimensions,
-      undefined,
-      'Overhead control unexpectedly recorded dimensions'
-    );
-  }
-  const operations = observation.profile?.operationTotals as
-    | Record<string, { wallMs: number; samples: number }>
-    | undefined;
-  if (instrumentation === 'enabled') {
-    assert(operations, 'Motion operation totals missing');
-    const signature = operations.motionSignature;
-    const comparison = operations.motionComparison;
-    assert(signature && comparison, 'Separated signature/comparison timings missing');
-    assert.equal(
-      signature.samples,
-      observation.dimensions?.length,
-      'Signature call count mismatch'
-    );
-    assert(
-      observation.dimensions?.every(
-        (entry) =>
-          entry.width === workload.width &&
-          entry.height === workload.height &&
-          (entry.stride === 3 || entry.stride === 4)
-      ),
-      'Unexpected motion signature dimensions or stride'
-    );
-    if (workload.smartFrameSkip === 'off') assert.equal(signature.samples, 0);
-    else assert(signature.samples > 0, 'Enabled skip did not call the signature kernel');
-  }
-
   const href = await page.locator('[data-testid="download-result-button"]').getAttribute('href');
   assert(href?.startsWith('blob:'), 'GIF result has no Blob URL');
   const rendererHeapAfterReady = await heapPoint(page);
@@ -419,6 +399,25 @@ async function measure(
   );
   const decoded = await inspectGif(page, data, workload);
   const rendererHeapAfter = await heapPoint(page);
+  const cacheObservation = await page.evaluate((workerUrl) => {
+    const workerResourceTimings = performance
+      .getEntriesByName(workerUrl, 'resource')
+      .map((entry) => {
+        const resource = entry as PerformanceResourceTiming;
+        const deliveryType = Reflect.get(resource, 'deliveryType');
+        return {
+          transferSize: resource.transferSize,
+          encodedBodySize: resource.encodedBodySize,
+          decodedBodySize: resource.decodedBodySize,
+          deliveryType: typeof deliveryType === 'string' ? deliveryType : null,
+        };
+      });
+    const controller = navigator.serviceWorker?.controller;
+    return {
+      workerResourceTimings,
+      serviceWorkerController: controller ? new URL(controller.scriptURL).pathname : null,
+    };
+  }, worker.url);
   assert(
     ready.atMs <= observation.readyMs,
     'Button was ready before its matching Blob URL existed'
@@ -433,18 +432,12 @@ async function measure(
     timeOrigin: observation.timeOrigin,
     inputSha256: workload.inputSha256,
     settings: { format: 'gif', quality: 'low', scale: 1, smartFrameSkip: workload.smartFrameSkip },
-    instrumentation,
     outputRoute: 'gif-worker',
-    routeBasis:
-      instrumentation === 'enabled'
-        ? 'production-profile-encoderRoute'
-        : 'owned-built-worker-start-format-gif-and-complete-matched-saved-bytes',
+    routeBasis: 'owned-built-worker-start-format-gif-and-complete-matched-saved-bytes',
     requestToDownloadReadyMs: elapsedMs,
     requestToBlobPublicationMs: ready.atMs - observation.clickMs,
-    operationTotals: operations,
-    dimensions: observation.dimensions,
-    frames: observation.profile?.stages ?? null,
     worker: { url: worker.url, starts: worker.starts, completes: worker.completes },
+    cacheObservation,
     memory: {
       rendererHeapBefore,
       rendererHeapAfterReady,
@@ -489,7 +482,6 @@ export async function exerciseMotionSignature(
   url: string,
   workloads: readonly Workload[],
   onSample: (sample: Awaited<ReturnType<typeof measure>>) => Promise<void>,
-  instrumentation: 'enabled' | 'disabled',
   output: string,
   diagnostics: MotionDiagnostic[]
 ) {
@@ -500,13 +492,14 @@ export async function exerciseMotionSignature(
   const off = workloads[2]!;
   const orderedWorkloads = [primary, small, off];
   const artifacts: { file: string; bytes: number; sha256: string }[] = [];
-  const retained = new Map<
-    string,
-    { page: Page; close: () => Promise<void>; timeOrigin: number }
-  >();
+  const contexts = new Set<BrowserContext>();
+  const retained = new Map<string, { page: Page; timeOrigin: number }>();
+  let primaryFailure: unknown;
+  let failed = false;
   try {
     for (const workload of orderedWorkloads) {
       const context = await browser.newContext({ acceptDownloads: true, locale: 'en-US' });
+      contexts.add(context);
       const page = await context.newPage();
       const diagnostic: MotionDiagnostic = {
         workload: workload.id,
@@ -569,37 +562,31 @@ export async function exerciseMotionSignature(
           diagnostic
         );
       });
-      try {
-        await page.addInitScript(installMotionObserver);
-        const response = await page.goto(url);
-        assert(response?.ok(), 'Production app failed to load');
-        assert(await page.evaluate(() => crossOriginIsolated), 'Production page is not isolated');
-        await page.locator('[data-testid="file-input"]').setInputFiles(workload.fixture);
-        await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
-        await choose(page, 'format', 'gif');
-        await choose(page, 'quality', 'low');
-        await choose(page, 'scale', '1');
-        await choose(page, 'smart-frame-skip', workload.smartFrameSkip);
-        const condition = workload.id === 'primary-enabled' ? 'cold-first-use' : 'fresh-context';
-        const sample = await measure(page, workload, condition, 0, instrumentation);
-        samples.push(sample);
-        await onSample(sample);
-        assertUsefulOutput(sample);
-        assertNoUnexpectedDiagnostics(diagnostic);
-        retained.set(workload.id, {
-          page,
-          close: () => context.close(),
-          timeOrigin: await page.evaluate(() => performance.timeOrigin),
-        });
-      } catch (error) {
-        await context.close();
-        throw error;
-      }
+      await page.addInitScript(installMotionObserver);
+      const response = await page.goto(url);
+      assert(response?.ok(), 'Production app failed to load');
+      assert(await page.evaluate(() => crossOriginIsolated), 'Production page is not isolated');
+      await page.locator('[data-testid="file-input"]').setInputFiles(workload.fixture);
+      await page.locator('[data-testid="convert-button"]').waitFor({ state: 'visible' });
+      await choose(page, 'format', 'gif');
+      await choose(page, 'quality', 'low');
+      await choose(page, 'scale', '1');
+      await choose(page, 'smart-frame-skip', workload.smartFrameSkip);
+      const condition = workload.id === 'primary-enabled' ? 'cold-first-use' : 'fresh-context';
+      const sample = await measure(page, workload, condition, 0);
+      samples.push(sample);
+      await onSample(sample);
+      assertUsefulOutput(sample);
+      assertNoUnexpectedDiagnostics(diagnostic);
+      retained.set(workload.id, {
+        page,
+        timeOrigin: await page.evaluate(() => performance.timeOrigin),
+      });
     }
     for (const workload of orderedWorkloads) {
       const entry = retained.get(workload.id);
       assert(entry, 'No retained same-document page for warm comparison');
-      const sample = await measure(entry.page, workload, 'warm', 0, instrumentation);
+      const sample = await measure(entry.page, workload, 'warm', 0);
       samples.push(sample);
       await onSample(sample);
       assertUsefulOutput(sample);
@@ -618,10 +605,7 @@ export async function exerciseMotionSignature(
       assert.equal(await entry.page.evaluate(() => performance.timeOrigin), entry.timeOrigin);
     }
     return {
-      scenario:
-        instrumentation === 'enabled'
-          ? MOTION_SIGNATURE_SCENARIO
-          : MOTION_SIGNATURE_OVERHEAD_SCENARIO,
+      scenario: MOTION_SIGNATURE_SCENARIO,
       status: 'passed' as const,
       browserVersion: browser.version(),
       samplingPlan:
@@ -630,7 +614,19 @@ export async function exerciseMotionSignature(
       diagnostics,
       samples,
     };
+  } catch (error) {
+    primaryFailure = error;
+    failed = true;
+    throw error;
   } finally {
-    await Promise.all([...retained.values()].map((entry) => entry.close()));
+    const cleanup = await Promise.allSettled([...contexts].map((context) => context.close()));
+    const cleanupErrors = cleanup.flatMap((outcome) =>
+      outcome.status === 'rejected' ? [outcome.reason] : []
+    );
+    if (cleanupErrors.length)
+      throw new AggregateError(
+        [...(failed ? [primaryFailure] : []), ...cleanupErrors],
+        'Motion signature validation or context cleanup failed'
+      );
   }
 }

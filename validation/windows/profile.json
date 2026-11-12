@@ -9,7 +9,7 @@
       "narrow-output.json",
       "native-ui.json",
       "motion-signature.json",
-      "motion-signature-overhead.json",
+      "motion-signature-recovery.json",
       "output-finalization-v2.json",
       "output-finalization.json",
       "packet-lookup.json",
@@ -40,15 +40,15 @@
           "validation/windows/public-target.json"
         ]
       },
-      "motion-signature-overhead": {
-        "selector": "motion-signature-overhead.json",
+      "motion-signature-recovery": {
+        "selector": "motion-signature-recovery.json",
         "browsers": ["msedge", "chrome"],
         "modes": ["desktop"],
         "required_inputs": [
           "dist",
           "public/test-video-ci-h264.mp4",
           "public/test-video-ci-high-motion-120fps.mp4",
-          "validation/windows/inputs/motion-signature-overhead.json"
+          "validation/windows/inputs/motion-signature-recovery.json"
         ],
         "generated_assets": ["dist"],
         "bundle_asset_policy": "source-modules-and-required-inputs",
