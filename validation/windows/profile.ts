@@ -3085,7 +3085,9 @@ export async function run({
       validateBundleFile(bundleRoot, MOTION_SMALL_FIXTURE),
       validateBundleFile(
         bundleRoot,
-        ownerVideo ? 'validation/windows/inputs/motion-owner-video.mp4' : MOTION_PRIMARY_FIXTURE
+        ownerVideo
+          ? 'validation/windows/private-inputs/motion-owner-video.mp4'
+          : MOTION_PRIMARY_FIXTURE
       ),
       readBuild(bundleRoot, 'dist', validateBundleFile, {
         verifyInventory: true,

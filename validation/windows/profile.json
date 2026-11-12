@@ -116,7 +116,7 @@
         "required_inputs": [
           "dist",
           "public/test-video-ci-h264.mp4",
-          "validation/windows/inputs/motion-owner-video.mp4",
+          "validation/windows/private-inputs",
           "validation/windows/motion-owner-video.json",
           "validation/windows/inputs/motion-signature-owner-video.json"
         ],
@@ -135,7 +135,7 @@
         "required_inputs": [
           "dist",
           "public/test-video-ci-h264.mp4",
-          "validation/windows/inputs/motion-owner-video.mp4",
+          "validation/windows/private-inputs",
           "validation/windows/motion-owner-video.json",
           "validation/windows/inputs/motion-signature-owner-recovery.json"
         ],
@@ -187,7 +187,7 @@
     "validation/windows/settings-schema.ts",
     "validation/windows/analysis-worker-recovery.ts",
     "validation/windows/worker-option-contract.ts",
-    "validation/windows/inputs/motion-owner-video.mp4",
+    "validation/windows/private-inputs",
     "validation/windows/motion-owner-video.json"
   ]
 }

@@ -98,7 +98,7 @@ recovery qualification; run those checks separately.
 
 For the separately identified owner-video follow-up, use
 `--scenario motion-signature-owner-video`. Stage the unchanged private original
-as `validation/windows/inputs/motion-owner-video.mp4`, outside `public/`, in an
+as `validation/windows/private-inputs/motion-owner-video.mp4`, outside `public/`, in an
 independent clean controller-admitted clone. The source-owned
 [`motion-owner-video.json`](motion-owner-video.json) binds its size, SHA-256,
 video timeline, geometry and frozen settings. This input is ignored and must
@@ -106,7 +106,10 @@ never be committed or included in a public build. Build only in a checkout
 whose `public/` contains no private video; postbuild's synthetic-name cleanup
 is not a private-media exclusion policy. Inspect `dist/` and its deployment
 inventory before staging the bundle. The guest verifies the staged input's
-size and digest before conversion.
+size and digest before conversion. The dedicated staging directory contains only
+task-owned inputs and its tracked README; the default full profile does not
+require this private file. Controller planning checks the directory, while
+staging checks and the focused guest scenario validate the literal file.
 
 This cohort starts with the full 720×720 original, GIF medium quality (12 fps),
 scale 1, low smart frame skip, plus the same-input skip-off and synthetic small
