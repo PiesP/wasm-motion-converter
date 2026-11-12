@@ -33,23 +33,67 @@ type WorkerEvent = {
 
 type MotionObserver = {
   clickMs: number | null;
-  outputUrls: { size: number; type: string; atMs: number }[];
+  outputUrls: { url: string; size: number; type: string; atMs: number }[];
+  readyMs: number | null;
   workers: WorkerEvent[];
   reset: () => void;
 };
+
+export type MotionDiagnostic = {
+  workload: Workload['id'];
+  pageErrors: string[];
+  consoleErrors: string[];
+  failedRequests: { path: string; error: string }[];
+  overflow: number;
+};
+
+function recordBounded<T>(entries: T[], item: T, diagnostic: MotionDiagnostic) {
+  if (entries.length < 16) entries.push(item);
+  else diagnostic.overflow++;
+}
+
+function assertNoUnexpectedDiagnostics(diagnostic: MotionDiagnostic) {
+  assert.deepEqual(diagnostic.pageErrors, [], 'Page emitted an unhandled error');
+  assert.deepEqual(diagnostic.consoleErrors, [], 'Page emitted a console error');
+  assert.deepEqual(diagnostic.failedRequests, [], 'Page had a failed request');
+  assert.equal(diagnostic.overflow, 0, 'Page diagnostics exceeded bounded capacity');
+}
 
 /** Installed before the application; keeps all measurement events in one page clock. */
 function installMotionObserver() {
   const observed: MotionObserver = {
     clickMs: null,
     outputUrls: [],
+    readyMs: null,
     workers: [],
     reset() {
       this.clickMs = null;
       this.outputUrls = [];
+      this.readyMs = null;
     },
   };
   Reflect.set(globalThis, '__wmcMotionObserver', observed);
+
+  const checkDownloadReady = () => {
+    if (observed.readyMs !== null || observed.outputUrls.length === 0) return;
+    const latest = observed.outputUrls.at(-1);
+    const button = document.querySelector<HTMLAnchorElement>(
+      '[data-testid="download-result-button"]'
+    );
+    if (
+      latest &&
+      button?.getAttribute('href') === latest.url &&
+      button.getClientRects().length > 0 &&
+      getComputedStyle(button).visibility !== 'hidden'
+    ) {
+      observed.readyMs = performance.now();
+    }
+  };
+  new MutationObserver(checkDownloadReady).observe(document, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+  });
 
   const NativeWorker = Worker;
   globalThis.Worker = class ObservedWorker extends NativeWorker {
@@ -107,7 +151,13 @@ function installMotionObserver() {
   URL.createObjectURL = function (object: Blob | MediaSource) {
     const url = createObjectURL.call(URL, object);
     if (object instanceof Blob && object.type === 'image/gif') {
-      observed.outputUrls.push({ size: object.size, type: object.type, atMs: performance.now() });
+      observed.outputUrls.push({
+        url,
+        size: object.size,
+        type: object.type,
+        atMs: performance.now(),
+      });
+      checkDownloadReady();
     }
     return url;
   };
@@ -154,6 +204,34 @@ async function downloadIdentity(page: Page) {
   return { bytes, sha256: hash.digest('hex'), data: Buffer.concat(parts) };
 }
 
+function gifLoopCount(bytes: Buffer): number | null {
+  assert(bytes.length >= 13, 'Saved GIF has no logical screen descriptor');
+  const packed = bytes[10]!;
+  let cursor = 13 + ((packed & 0x80) !== 0 ? 3 * 2 ** ((packed & 0x07) + 1) : 0);
+  while (cursor < bytes.length) {
+    const kind = bytes[cursor++];
+    if (kind === 0x2c || kind === 0x3b) return null; // First image or trailer.
+    assert.equal(kind, 0x21, 'Malformed GIF extension boundary');
+    const label = bytes[cursor++];
+    const blockSize = bytes[cursor]!;
+    if (label === 0xff && blockSize === 11) {
+      const identifier = bytes.toString('ascii', cursor + 1, cursor + 12);
+      if (identifier === 'NETSCAPE2.0' || identifier === 'ANIMEXTS1.0') {
+        assert.equal(bytes[cursor + 12], 3, 'Malformed GIF loop sub-block');
+        assert.equal(bytes[cursor + 13], 1, 'Malformed GIF loop sub-block marker');
+        assert.equal(bytes[cursor + 16], 0, 'Malformed GIF loop terminator');
+        return bytes.readUInt16LE(cursor + 14);
+      }
+    }
+    while (cursor < bytes.length) {
+      const size = bytes[cursor++]!;
+      if (size === 0) break;
+      cursor += size;
+    }
+  }
+  return null;
+}
+
 /** Independent browser decode, after the latency interval has ended. */
 async function inspectGif(page: Page, data: Buffer, workload: Workload) {
   return page.evaluate(
@@ -194,7 +272,7 @@ async function inspectGif(page: Page, data: Buffer, workload: Workload) {
           throw new Error(`Unexpected GIF duration ${durationUs}`);
         return {
           frameCount: track.frameCount,
-          repetitionCount: track.repetitionCount,
+          imageDecoderRepetitionCount: track.repetitionCount ?? null,
           durationUs,
           frames,
         };
@@ -206,6 +284,23 @@ async function inspectGif(page: Page, data: Buffer, workload: Workload) {
   );
 }
 
+async function heapPoint(page: Page) {
+  try {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const usage = await session.send('Runtime.getHeapUsage');
+      return { usedSize: usage.usedSize, totalSize: usage.totalSize };
+    } finally {
+      await session.detach();
+    }
+  } catch (error) {
+    return {
+      unavailable:
+        error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+    };
+  }
+}
+
 async function measure(
   page: Page,
   workload: Workload,
@@ -213,6 +308,7 @@ async function measure(
   index: number,
   instrumentation: 'enabled' | 'disabled'
 ) {
+  const rendererHeapBefore = await heapPoint(page);
   const before = await page.evaluate(() => {
     const observer = Reflect.get(globalThis, '__wmcMotionObserver') as MotionObserver;
     observer.reset();
@@ -226,7 +322,7 @@ async function measure(
     () => {
       const observer = Reflect.get(globalThis, '__wmcMotionObserver') as MotionObserver;
       return (
-        observer.outputUrls.length > 0 &&
+        observer.readyMs !== null &&
         document.querySelector('[data-testid="result-section"]')?.getClientRects().length
       );
     },
@@ -239,6 +335,7 @@ async function measure(
     return {
       clickMs: observer.clickMs,
       outputUrls: [...observer.outputUrls],
+      readyMs: observer.readyMs,
       workers: observer.workers.slice(workerCount),
       timeOrigin: performance.timeOrigin,
       profile: Reflect.get(globalThis, '__wmcMotionProfile') as Record<string, unknown> | undefined,
@@ -249,6 +346,7 @@ async function measure(
   }, before.workerCount);
   assert.equal(observation.timeOrigin, before.timeOrigin, 'Document changed during conversion');
   assert(observation.clickMs !== null, 'Request click was not observed');
+  assert(observation.readyMs !== null, 'Matching download button readiness was not observed');
   assert.equal(observation.workers.length, 1, 'A new conversion Worker was not created');
   const worker = observation.workers[0]!;
   assert.equal(worker.starts.length, 1, 'Worker did not receive exactly one start');
@@ -266,6 +364,7 @@ async function measure(
   if (instrumentation === 'enabled') {
     assert(observation.profile, 'Measured production build omitted the motion profile');
     assert(observation.dimensions, 'Measured production build omitted motion dimensions');
+    assert.equal(observation.profile.encoderRoute, 'gif-worker', 'Profile selected another route');
   } else {
     assert.equal(
       observation.profile,
@@ -307,6 +406,8 @@ async function measure(
   const href = await page.locator('[data-testid="download-result-button"]').getAttribute('href');
   assert(href?.startsWith('blob:'), 'GIF result has no Blob URL');
   const { data, ...saved } = await downloadIdentity(page);
+  const loopCount = gifLoopCount(data);
+  assert.equal(loopCount, 0, 'Saved GIF does not have the existing infinite-loop extension');
   const ready = observation.outputUrls.findLast((event) => event.size === saved.bytes);
   assert(ready, 'Saved GIF had no matching Blob publication event');
   assert.equal(
@@ -315,7 +416,12 @@ async function measure(
     'Worker output size differs from saved file'
   );
   const decoded = await inspectGif(page, data, workload);
-  const elapsedMs = ready.atMs - observation.clickMs;
+  const rendererHeapAfter = await heapPoint(page);
+  assert(
+    ready.atMs <= observation.readyMs,
+    'Button was ready before its matching Blob URL existed'
+  );
+  const elapsedMs = observation.readyMs - observation.clickMs;
   assert(elapsedMs > 0, 'Invalid request-to-download-ready interval');
   return {
     workload: workload.id,
@@ -326,13 +432,25 @@ async function measure(
     inputSha256: workload.inputSha256,
     settings: { format: 'gif', quality: 'high', scale: 1, smartFrameSkip: workload.smartFrameSkip },
     instrumentation,
-    outputRoute: observation.profile?.encoderRoute ?? 'unobserved',
+    outputRoute: 'gif-worker',
+    routeBasis:
+      instrumentation === 'enabled'
+        ? 'production-profile-encoderRoute'
+        : 'owned-built-worker-start-format-gif-and-complete-matched-saved-bytes',
     requestToDownloadReadyMs: elapsedMs,
+    requestToBlobPublicationMs: ready.atMs - observation.clickMs,
     operationTotals: operations,
     dimensions: observation.dimensions,
     frames: observation.profile?.stages ?? null,
     worker: { url: worker.url, starts: worker.starts, completes: worker.completes },
-    saved,
+    memory: {
+      rendererHeapBefore,
+      rendererHeapAfter,
+      workerHeap: null,
+      nativeGpuMemory: null,
+      scope: 'Renderer Runtime.getHeapUsage point samples only; no peak or native memory claim',
+    },
+    saved: { ...saved, loopCount },
     decoded,
   };
 }
@@ -343,7 +461,8 @@ export async function exerciseMotionSignature(
   workloads: readonly Workload[],
   onSample: (sample: Awaited<ReturnType<typeof measure>>) => Promise<void>,
   instrumentation: 'enabled' | 'disabled',
-  output: string
+  output: string,
+  diagnostics: MotionDiagnostic[]
 ) {
   assert.equal(workloads.length, 3);
   const samples: Awaited<ReturnType<typeof measure>>[] = [];
@@ -360,6 +479,34 @@ export async function exerciseMotionSignature(
     for (const workload of orderedWorkloads) {
       const context = await browser.newContext({ acceptDownloads: true, locale: 'en-US' });
       const page = await context.newPage();
+      const diagnostic: MotionDiagnostic = {
+        workload: workload.id,
+        pageErrors: [],
+        consoleErrors: [],
+        failedRequests: [],
+        overflow: 0,
+      };
+      diagnostics.push(diagnostic);
+      page.on('pageerror', (error) =>
+        recordBounded(diagnostic.pageErrors, error.message.slice(0, 400), diagnostic)
+      );
+      page.on('console', (message) => {
+        if (message.type() === 'error')
+          recordBounded(diagnostic.consoleErrors, message.text().slice(0, 400), diagnostic);
+      });
+      page.on('requestfailed', (request) => {
+        let path = 'unparseable';
+        try {
+          path = new URL(request.url()).pathname.slice(0, 160);
+        } catch {
+          // Preserve the failure without copying an unparsed URL or query string.
+        }
+        recordBounded(
+          diagnostic.failedRequests,
+          { path, error: (request.failure()?.errorText ?? 'unknown').slice(0, 200) },
+          diagnostic
+        );
+      });
       try {
         await page.addInitScript(installMotionObserver);
         const response = await page.goto(url);
@@ -373,6 +520,7 @@ export async function exerciseMotionSignature(
         await choose(page, 'smart-frame-skip', workload.smartFrameSkip);
         const condition = workload.id === 'primary-enabled' ? 'cold-first-use' : 'fresh-context';
         const sample = await measure(page, workload, condition, 0, instrumentation);
+        assertNoUnexpectedDiagnostics(diagnostic);
         samples.push(sample);
         await onSample(sample);
         retained.set(workload.id, {
@@ -389,6 +537,9 @@ export async function exerciseMotionSignature(
       const entry = retained.get(workload.id);
       assert(entry, 'No retained same-document page for warm comparison');
       const sample = await measure(entry.page, workload, 'warm', 0, instrumentation);
+      const diagnostic = diagnostics.find((entry) => entry.workload === workload.id);
+      assert(diagnostic);
+      assertNoUnexpectedDiagnostics(diagnostic);
       samples.push(sample);
       await onSample(sample);
       if (workload.id === 'primary-enabled') {
@@ -412,6 +563,7 @@ export async function exerciseMotionSignature(
       samplingPlan:
         'one primary cold first-use and one same-document warm attempt per controller invocation; run five fresh controller invocations per variant',
       artifacts,
+      diagnostics,
       samples,
     };
   } finally {

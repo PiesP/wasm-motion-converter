@@ -81,7 +81,11 @@ condition, keeping all raw samples and failed attempts. The fixed GIF settings
 are high quality, scale 1, and low smart-frame-skip for the enabled workloads;
 the off control differs only in skip mode. The scenario records the selected
 Worker route, start options, signature calls/dimensions, operation timings,
-request-click to GIF Blob publication, and downloaded file hashes. It decodes
+request-click to a visible matching GIF download button (with Blob publication
+recorded separately), bounded page/console/request failures, and downloaded
+file hashes. Renderer heap point samples bracket the conversion and saved-output
+verification; Worker heap, native GPU memory, and memory peaks remain unmeasured.
+The scenario decodes
 the saved bytes with the installed browser's `ImageDecoder` after timing and
 records every frame's duration and composited RGBA hash. Compare those frame
 records across variants and independently inspect the retained screenshot and

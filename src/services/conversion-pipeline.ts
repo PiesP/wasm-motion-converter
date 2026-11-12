@@ -104,8 +104,8 @@ export async function runConversionPipeline(
   // Clear buffer pool from any previous conversion
   globalBufferPool.clear();
 
-  // Initialize profiler — in DEV, dynamically import the real profiler
-  // (tree-shaken from production bundles). In prod, use null.
+  // Ordinary production builds omit profiling. This experiment uses the same
+  // explicit measurement opt-in in both comparator and candidate builds.
   resetMotionMeasurements();
   const profilerClass = motionMeasurementEnabled
     ? ConversionProfiler

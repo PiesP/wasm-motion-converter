@@ -43,6 +43,7 @@ import {
   MOTION_SIGNATURE_OVERHEAD_SCENARIO,
   MOTION_SIGNATURE_SCENARIO,
   MOTION_SMALL_FIXTURE,
+  type MotionDiagnostic,
 } from './motion-signature.ts';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
 import {
@@ -3044,12 +3045,14 @@ export async function run({
     const started = await startStaticServer(bundleRoot);
     const evidencePath = join(output, `${scenario}.json`);
     const samples: unknown[] = [];
+    const diagnostics: MotionDiagnostic[] = [];
     let result: Record<string, unknown> = {
       scenario,
       status: 'started',
       build,
       fixtureSha256: { small: smallSha256, primary: primarySha256 },
       samples,
+      diagnostics,
     };
     try {
       const measured = await exerciseMotionSignature(
@@ -3065,7 +3068,8 @@ export async function run({
           );
         },
         scenario === MOTION_SIGNATURE_SCENARIO ? 'enabled' : 'disabled',
-        output
+        output,
+        diagnostics
       );
       result = { ...result, ...measured };
       return { profile: scenario, ...result };
