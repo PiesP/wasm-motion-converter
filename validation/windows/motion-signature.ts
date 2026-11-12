@@ -346,7 +346,7 @@ async function inspectGif(page: Page, data: Buffer, workload: MotionWorkload) {
     async ({ encoded, width, height }) => {
       if (typeof ImageDecoder !== 'function') throw new Error('ImageDecoder unavailable');
       const decoder = new ImageDecoder({
-        data: new Uint8Array(encoded),
+        data: Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0)),
         type: 'image/gif',
         preferAnimation: true,
       });
@@ -386,7 +386,7 @@ async function inspectGif(page: Page, data: Buffer, workload: MotionWorkload) {
         decoder.close();
       }
     },
-    { encoded: [...data], width: workload.width, height: workload.height }
+    { encoded: data.toString('base64'), width: workload.width, height: workload.height }
   );
 }
 
