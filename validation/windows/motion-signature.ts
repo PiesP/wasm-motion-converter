@@ -40,6 +40,13 @@ type MotionObserver = {
   idleAfterStopMs: number | null;
   workers: WorkerEvent[];
   reset: () => void;
+  calibrate?: () => {
+    iterations: number;
+    clockPairNs: number[];
+    readinessCallbackNs: number[];
+    blobWrapperExtraNs: number[];
+    scope: string;
+  };
 };
 
 export type MotionDiagnostic = {
@@ -184,6 +191,63 @@ export function installMotionObserver() {
       checkDownloadReady();
     }
     return url;
+  };
+  // Run only after every timed conversion. Own and revoke only calibration URLs.
+  observed.calibrate = () => {
+    const iterations = 200;
+    const clockPairNs: number[] = [];
+    const readinessCallbackNs: number[] = [];
+    const blobWrapperExtraNs: number[] = [];
+    const savedUrls = observed.outputUrls;
+    const savedReady = observed.readyMs;
+    const blob = new Blob(['calibration'], { type: 'image/gif' });
+    const elapsed = (action: () => void) => {
+      const start = performance.now();
+      for (let index = 0; index < iterations; index++) action();
+      return ((performance.now() - start) * 1_000_000) / iterations;
+    };
+    try {
+      for (let round = 0; round < 5; round++) {
+        clockPairNs.push(
+          elapsed(() => {
+            performance.now();
+            performance.now();
+          })
+        );
+        observed.outputUrls = savedUrls;
+        readinessCallbackNs.push(
+          elapsed(() => {
+            observed.readyMs = null;
+            checkDownloadReady();
+          })
+        );
+        observed.readyMs = savedReady;
+        observed.outputUrls = [];
+        const native = () => URL.revokeObjectURL(createObjectURL.call(URL, blob));
+        const wrapped = () => URL.revokeObjectURL(URL.createObjectURL(blob));
+        let nativeNs: number;
+        let wrappedNs: number;
+        if (round % 2 === 0) {
+          nativeNs = elapsed(native);
+          wrappedNs = elapsed(wrapped);
+        } else {
+          wrappedNs = elapsed(wrapped);
+          nativeNs = elapsed(native);
+        }
+        blobWrapperExtraNs.push(wrappedNs - nativeNs);
+      }
+    } finally {
+      observed.outputUrls = savedUrls;
+      observed.readyMs = savedReady;
+    }
+    return {
+      iterations,
+      clockPairNs,
+      readinessCallbackNs,
+      blobWrapperExtraNs,
+      scope:
+        'Post-trial main-realm timer-pair, actual readiness-callback self-cost, and balanced native-versus-wrapped Blob URL cost. Excludes MutationObserver dispatch, Worker profiling/serialization, and whole-build instrumentation effects; not conversion samples.',
+    };
   };
   document.addEventListener(
     'click',
@@ -607,7 +671,15 @@ export async function exerciseMotionSignature(
       }
       assert.equal(await entry.page.evaluate(() => performance.timeOrigin), entry.timeOrigin);
     }
+    const calibrationPage = retained.get(primary.id)?.page;
+    assert(calibrationPage, 'Primary page missing for post-trial calibration');
+    const measurementOverhead = await calibrationPage.evaluate(() => {
+      const observer = Reflect.get(globalThis, '__wmcMotionObserver') as MotionObserver;
+      if (!observer.calibrate) throw new Error('Observer calibration unavailable');
+      return observer.calibrate();
+    });
     return {
+      measurementOverhead,
       scenario: MOTION_SIGNATURE_SCENARIO,
       status: 'passed' as const,
       browserVersion: browser.version(),
