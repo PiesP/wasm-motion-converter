@@ -3017,13 +3017,20 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
-  const motionSelectors = [MOTION_SIGNATURE_SCENARIO, MOTION_SIGNATURE_RECOVERY_SCENARIO] as const;
+  const motionSelectors = [
+    {
+      scenario: MOTION_SIGNATURE_SCENARIO,
+      path: 'validation/windows/inputs/motion-signature.json',
+    },
+    {
+      scenario: MOTION_SIGNATURE_RECOVERY_SCENARIO,
+      path: 'validation/windows/inputs/motion-signature-recovery.json',
+    },
+  ] as const;
   const motionPresent = await Promise.all(
-    motionSelectors.map(async (scenario) => {
+    motionSelectors.map(async ({ path }) => {
       try {
-        return (
-          await stat(resolve(bundleRoot, `validation/windows/inputs/${scenario}.json`))
-        ).isFile();
+        return (await stat(resolve(bundleRoot, path))).isFile();
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
         throw error;
@@ -3033,8 +3040,7 @@ export async function run({
   assert(motionPresent.filter(Boolean).length <= 1, 'Conflicting motion signature selectors');
   const motionIndex = motionPresent.findIndex(Boolean);
   if (motionIndex >= 0) {
-    const scenario = motionSelectors[motionIndex]!;
-    const selectorPath = `validation/windows/inputs/${scenario}.json`;
+    const { scenario, path: selectorPath } = motionSelectors[motionIndex]!;
     const selected: unknown = JSON.parse(
       await readFile(await validateBundleFile(bundleRoot, selectorPath), 'utf8')
     );
