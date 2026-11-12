@@ -43,12 +43,14 @@ export type MotionDiagnostic = {
   workload: Workload['id'];
   pageErrors: string[];
   consoleErrors: string[];
-  failedRequests: { path: string; error: string }[];
+  expectedBlobAborts: { protocol: string; resourceType: string; path: string }[];
+  failedRequests: { protocol: string; resourceType: string; path: string; error: string }[];
+  failedResponses: { protocol: string; path: string; status: number }[];
   overflow: number;
 };
 
-function recordBounded<T>(entries: T[], item: T, diagnostic: MotionDiagnostic) {
-  if (entries.length < 16) entries.push(item);
+function recordBounded<T>(entries: T[], item: T, diagnostic: MotionDiagnostic, limit = 16) {
+  if (entries.length < limit) entries.push(item);
   else diagnostic.overflow++;
 }
 
@@ -56,6 +58,7 @@ function assertNoUnexpectedDiagnostics(diagnostic: MotionDiagnostic) {
   assert.deepEqual(diagnostic.pageErrors, [], 'Page emitted an unhandled error');
   assert.deepEqual(diagnostic.consoleErrors, [], 'Page emitted a console error');
   assert.deepEqual(diagnostic.failedRequests, [], 'Page had a failed request');
+  assert.deepEqual(diagnostic.failedResponses, [], 'Page had an HTTP error response');
   assert.equal(diagnostic.overflow, 0, 'Page diagnostics exceeded bounded capacity');
 }
 
@@ -268,8 +271,6 @@ async function inspectGif(page: Page, data: Buffer, workload: Workload) {
           }
         }
         const durationUs = frames.reduce((total, frame) => total + frame.durationUs, 0);
-        if (Math.abs(durationUs - (width === 320 ? 3_000_000 : 1_000_000)) > 250_000)
-          throw new Error(`Unexpected GIF duration ${durationUs}`);
         return {
           frameCount: track.frameCount,
           imageDecoderRepetitionCount: track.repetitionCount ?? null,
@@ -417,12 +418,6 @@ async function measure(
     'Worker output size differs from saved file'
   );
   const decoded = await inspectGif(page, data, workload);
-  if (workload.id !== 'small-enabled') {
-    assert(
-      new Set(decoded.frames.map((frame) => frame.pixelSha256)).size >= 2,
-      'Primary high-motion output did not retain two distinct composited frames'
-    );
-  }
   const rendererHeapAfter = await heapPoint(page);
   assert(
     ready.atMs <= observation.readyMs,
@@ -464,6 +459,31 @@ async function measure(
   };
 }
 
+function assertUsefulOutput(sample: Awaited<ReturnType<typeof measure>>) {
+  const primary = sample.workload !== 'small-enabled';
+  const expectedDurationUs = primary ? 3_000_000 : 1_000_000;
+  assert(
+    Math.abs(sample.decoded.durationUs - expectedDurationUs) <= 250_000,
+    'Saved GIF duration missed the frozen source-duration tolerance'
+  );
+  if (!primary) return;
+  const frames = sample.decoded.frames;
+  assert(frames.length >= 16, 'Primary high-motion output had fewer than 16 frames');
+  assert(
+    frames.every((frame) => frame.durationUs > 0),
+    'Primary high-motion output contained a nonpositive frame duration'
+  );
+  assert(
+    new Set(frames.map((frame) => frame.pixelSha256)).size >= 2,
+    'Primary high-motion output did not retain two distinct composited frames'
+  );
+  assert(
+    frames.slice(1).filter((frame, index) => frame.pixelSha256 !== frames[index]!.pixelSha256)
+      .length >= 15,
+    'Primary high-motion output had fewer than 15 adjacent pixel changes'
+  );
+}
+
 export async function exerciseMotionSignature(
   browser: Browser,
   url: string,
@@ -492,7 +512,9 @@ export async function exerciseMotionSignature(
         workload: workload.id,
         pageErrors: [],
         consoleErrors: [],
+        expectedBlobAborts: [],
         failedRequests: [],
+        failedResponses: [],
         overflow: 0,
       };
       diagnostics.push(diagnostic);
@@ -505,14 +527,45 @@ export async function exerciseMotionSignature(
       });
       page.on('requestfailed', (request) => {
         let path = 'unparseable';
+        let protocol = 'unknown';
         try {
-          path = new URL(request.url()).pathname.slice(0, 160);
+          const url = new URL(request.url());
+          path = url.pathname.slice(0, 160);
+          protocol = url.protocol;
         } catch {
           // Preserve the failure without copying an unparsed URL or query string.
         }
+        const error = (request.failure()?.errorText ?? 'unknown').slice(0, 200);
+        const resourceType = request.resourceType();
+        if (protocol === 'blob:' && error === 'net::ERR_ABORTED') {
+          recordBounded(
+            diagnostic.expectedBlobAborts,
+            { protocol, resourceType, path },
+            diagnostic,
+            256
+          );
+          return;
+        }
         recordBounded(
           diagnostic.failedRequests,
-          { path, error: (request.failure()?.errorText ?? 'unknown').slice(0, 200) },
+          { protocol, resourceType, path, error },
+          diagnostic
+        );
+      });
+      page.on('response', (response) => {
+        if (response.status() < 400) return;
+        let path = 'unparseable';
+        let protocol = 'unknown';
+        try {
+          const url = new URL(response.url());
+          path = url.pathname.slice(0, 160);
+          protocol = url.protocol;
+        } catch {
+          // Preserve the status without copying an unparsed URL or query string.
+        }
+        recordBounded(
+          diagnostic.failedResponses,
+          { protocol, path, status: response.status() },
           diagnostic
         );
       });
@@ -529,9 +582,10 @@ export async function exerciseMotionSignature(
         await choose(page, 'smart-frame-skip', workload.smartFrameSkip);
         const condition = workload.id === 'primary-enabled' ? 'cold-first-use' : 'fresh-context';
         const sample = await measure(page, workload, condition, 0, instrumentation);
-        assertNoUnexpectedDiagnostics(diagnostic);
         samples.push(sample);
         await onSample(sample);
+        assertUsefulOutput(sample);
+        assertNoUnexpectedDiagnostics(diagnostic);
         retained.set(workload.id, {
           page,
           close: () => context.close(),
@@ -546,11 +600,12 @@ export async function exerciseMotionSignature(
       const entry = retained.get(workload.id);
       assert(entry, 'No retained same-document page for warm comparison');
       const sample = await measure(entry.page, workload, 'warm', 0, instrumentation);
+      samples.push(sample);
+      await onSample(sample);
+      assertUsefulOutput(sample);
       const diagnostic = diagnostics.find((entry) => entry.workload === workload.id);
       assert(diagnostic);
       assertNoUnexpectedDiagnostics(diagnostic);
-      samples.push(sample);
-      await onSample(sample);
       if (workload.id === 'primary-enabled') {
         const file = 'motion-signature-result.png';
         const bytes = await entry.page.screenshot({ path: join(output, file), fullPage: true });

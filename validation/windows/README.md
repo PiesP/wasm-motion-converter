@@ -79,11 +79,13 @@ same browser process; their first conversions are not fresh-profile cold starts.
 Run five separate, balanced controller invocations per compared variant/cache
 condition, keeping all raw samples and failed attempts. The fixed GIF settings
 are low quality, scale 1, and low smart-frame-skip for the enabled workloads;
-the off control differs only in skip mode. The two primary workloads must decode
-to at least two distinct composited pixel hashes. The scenario records the selected
+the off control differs only in skip mode. Each primary output must decode to at
+least 16 frames, 15 adjacent composited pixel changes, positive frame durations,
+and 3 seconds within 250 ms. The scenario records the selected
 Worker route, start options, signature calls/dimensions, operation timings,
 request-click to a visible matching GIF download button (with Blob publication
-recorded separately), bounded page/console/request failures, and downloaded
+recorded separately), bounded page/console/request/HTTP failures and separately
+classified Blob `net::ERR_ABORTED` events, and downloaded
 file hashes. Renderer heap point samples cover before click, after button
 readiness, and after saved-output verification; the last sample includes harness
 decoding. Worker heap, native GPU memory, and memory peaks remain unmeasured.
