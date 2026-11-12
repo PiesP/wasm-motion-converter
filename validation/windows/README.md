@@ -83,8 +83,9 @@ the off control differs only in skip mode. The scenario records the selected
 Worker route, start options, signature calls/dimensions, operation timings,
 request-click to a visible matching GIF download button (with Blob publication
 recorded separately), bounded page/console/request failures, and downloaded
-file hashes. Renderer heap point samples bracket the conversion and saved-output
-verification; Worker heap, native GPU memory, and memory peaks remain unmeasured.
+file hashes. Renderer heap point samples cover before click, after button
+readiness, and after saved-output verification; the last sample includes harness
+decoding. Worker heap, native GPU memory, and memory peaks remain unmeasured.
 The scenario decodes
 the saved bytes with the installed browser's `ImageDecoder` after timing and
 records every frame's duration and composited RGBA hash. Compare those frame

@@ -405,6 +405,7 @@ async function measure(
 
   const href = await page.locator('[data-testid="download-result-button"]').getAttribute('href');
   assert(href?.startsWith('blob:'), 'GIF result has no Blob URL');
+  const rendererHeapAfterReady = await heapPoint(page);
   const { data, ...saved } = await downloadIdentity(page);
   const loopCount = gifLoopCount(data);
   assert.equal(loopCount, 0, 'Saved GIF does not have the existing infinite-loop extension');
@@ -445,10 +446,12 @@ async function measure(
     worker: { url: worker.url, starts: worker.starts, completes: worker.completes },
     memory: {
       rendererHeapBefore,
-      rendererHeapAfter,
+      rendererHeapAfterReady,
+      rendererHeapAfterVerification: rendererHeapAfter,
       workerHeap: null,
       nativeGpuMemory: null,
-      scope: 'Renderer Runtime.getHeapUsage point samples only; no peak or native memory claim',
+      scope:
+        'Renderer Runtime.getHeapUsage point samples; after-verification includes harness GIF decoding and cannot establish product retention or peak/native memory',
     },
     saved: { ...saved, loopCount },
     decoded,
