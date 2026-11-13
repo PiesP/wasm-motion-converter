@@ -1,0 +1,218 @@
+diff --git a/src/services/frame-utils.ts b/src/services/frame-utils.ts
+index bf3482ec..90446e83 100644
+--- a/src/services/frame-utils.ts
++++ b/src/services/frame-utils.ts
+@@ -414,9 +414,10 @@ const MOTION_TILE_COLUMNS = 16;
+ const MOTION_TILE_COUNT = MOTION_TILE_COLUMNS * MOTION_TILE_COLUMNS;
+ const MOTION_CHANNELS = 3;
+ 
+-/** Two ordered signatures, including all typed-array backing storage. */
++/** Two ordered signatures and the temporary column-boundary backing storage. */
+ export const MOTION_SIGNATURE_PEAK_BYTES =
+-  2 * MOTION_TILE_COUNT * (MOTION_CHANNELS * (3 + 4 + 8 + 8) + 4);
++  2 * MOTION_TILE_COUNT * (MOTION_CHANNELS * (3 + 4 + 8 + 8) + 4) +
++  (MOTION_TILE_COLUMNS + 1) * Uint32Array.BYTES_PER_ELEMENT;
+ 
+ /**
+  * RGB area statistics for a fixed spatial grid. Every source pixel contributes
+@@ -473,30 +474,42 @@ export function computeMotionSignature(
+   const maxima = new Uint8Array(sums.length);
+   minima.fill(255);
+ 
++  // A column starts at the first pixel whose integer tile index reaches it.
++  // Empty columns are possible when the frame is narrower than the tile grid.
++  const columnStarts = new Uint32Array(MOTION_TILE_COLUMNS + 1);
++  for (let column = 0; column <= MOTION_TILE_COLUMNS; column++) {
++    columnStarts[column] = Math.ceil((column * width) / MOTION_TILE_COLUMNS);
++  }
++
+   for (let y = 0; y < height; y++) {
+     const tileRow = Math.min(
+       MOTION_TILE_COLUMNS - 1,
+       Math.floor((y * MOTION_TILE_COLUMNS) / height)
+     );
+-    for (let x = 0; x < width; x++) {
+-      const tileColumn = Math.min(
+-        MOTION_TILE_COLUMNS - 1,
+-        Math.floor((x * MOTION_TILE_COLUMNS) / width)
+-      );
+-      const tile = tileRow * MOTION_TILE_COLUMNS + tileColumn;
++    const rowTileBase = tileRow * MOTION_TILE_COLUMNS;
++    const localY = y - Math.ceil((tileRow * height) / MOTION_TILE_COLUMNS);
++    const rowPixelOffset = y * width * pixelStride;
++    for (let tileColumn = 0; tileColumn < MOTION_TILE_COLUMNS; tileColumn++) {
++      const tile = rowTileBase + tileColumn;
+       const tileOffset = tile * MOTION_CHANNELS;
+-      const localX = x - Math.ceil((tileColumn * width) / MOTION_TILE_COLUMNS);
+-      const localY = y - Math.ceil((tileRow * height) / MOTION_TILE_COLUMNS);
+-      const pixelOffset = (y * width + x) * pixelStride;
+-      counts[tile]!++;
+-      for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
+-        const value = pixelData[pixelOffset + channel]!;
+-        const offset = tileOffset + channel;
+-        sums[offset] = sums[offset]! + value;
+-        horizontalMoments[offset] = horizontalMoments[offset]! + value * localX;
+-        verticalMoments[offset] = verticalMoments[offset]! + value * localY;
+-        if (value < minima[offset]!) minima[offset] = value;
+-        if (value > maxima[offset]!) maxima[offset] = value;
++      const firstX = columnStarts[tileColumn]!;
++      const lastX = columnStarts[tileColumn + 1]!;
++      for (
++        let x = firstX, pixelOffset = rowPixelOffset + firstX * pixelStride;
++        x < lastX;
++        x++, pixelOffset += pixelStride
++      ) {
++        const localX = x - firstX;
++        counts[tile]!++;
++        for (let channel = 0; channel < MOTION_CHANNELS; channel++) {
++          const value = pixelData[pixelOffset + channel]!;
++          const offset = tileOffset + channel;
++          sums[offset] = sums[offset]! + value;
++          horizontalMoments[offset] = horizontalMoments[offset]! + value * localX;
++          verticalMoments[offset] = verticalMoments[offset]! + value * localY;
++          if (value < minima[offset]!) minima[offset] = value;
++          if (value > maxima[offset]!) maxima[offset] = value;
++        }
+       }
+     }
+   }
+diff --git a/test/unit/services/frame-utils.test.ts b/test/unit/services/frame-utils.test.ts
+index d5e2f056..ae71f8ff 100644
+--- a/test/unit/services/frame-utils.test.ts
++++ b/test/unit/services/frame-utils.test.ts
+@@ -8,8 +8,10 @@ import {
+   computeMotionSignature,
+   convertRGBAToRGB,
+   copyFrameToPixels,
++  getSkipThreshold,
+   resolveVideoDimensions,
+ } from '@services/frame-utils';
++import type { MotionSignature } from '@services/frame-utils';
+ import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
+ import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+ 
+@@ -18,6 +20,70 @@ afterEach(() => {
+   vi.unstubAllGlobals();
+ });
+ 
++// Frozen pre-optimization pixel traversal from 8fbef739. Keep this independent
++// of the production tile iteration so the differential test catches boundary
++// and moment changes instead of repeating the optimized implementation.
++function referenceMotionSignature(
++  pixels: Uint8Array,
++  width: number,
++  height: number,
++  stride: 3 | 4
++): MotionSignature {
++  const tileColumns = 16;
++  const tileCount = tileColumns * tileColumns;
++  const channels = 3;
++  const sums = new Uint32Array(tileCount * channels);
++  const counts = new Uint32Array(tileCount);
++  const horizontalMoments = new Float64Array(sums.length);
++  const verticalMoments = new Float64Array(sums.length);
++  const minima = new Uint8Array(sums.length);
++  const maxima = new Uint8Array(sums.length);
++  minima.fill(255);
++
++  for (let y = 0; y < height; y++) {
++    const tileRow = Math.min(tileColumns - 1, Math.floor((y * tileColumns) / height));
++    for (let x = 0; x < width; x++) {
++      const tileColumn = Math.min(tileColumns - 1, Math.floor((x * tileColumns) / width));
++      const tile = tileRow * tileColumns + tileColumn;
++      const tileOffset = tile * channels;
++      const localX = x - Math.ceil((tileColumn * width) / tileColumns);
++      const localY = y - Math.ceil((tileRow * height) / tileColumns);
++      const pixelOffset = (y * width + x) * stride;
++      counts[tile]!++;
++      for (let channel = 0; channel < channels; channel++) {
++        const value = pixels[pixelOffset + channel]!;
++        const offset = tileOffset + channel;
++        sums[offset] = sums[offset]! + value;
++        horizontalMoments[offset] = horizontalMoments[offset]! + value * localX;
++        verticalMoments[offset] = verticalMoments[offset]! + value * localY;
++        if (value < minima[offset]!) minima[offset] = value;
++        if (value > maxima[offset]!) maxima[offset] = value;
++      }
++    }
++  }
++
++  const means = new Uint8Array(sums.length);
++  for (let tile = 0; tile < tileCount; tile++) {
++    const count = counts[tile]!;
++    if (count === 0) continue;
++    for (let channel = 0; channel < channels; channel++) {
++      const offset = tile * channels + channel;
++      means[offset] = Math.round(sums[offset]! / count);
++    }
++  }
++  return {
++    width,
++    height,
++    means,
++    colorSums: sums,
++    minima,
++    maxima,
++    counts,
++    horizontalMoments,
++    verticalMoments,
++  };
++}
++
+ describe('bounded color-aware motion signatures', () => {
+   const width = 128;
+   const height = 128;
+@@ -126,6 +192,53 @@ describe('bounded color-aware motion signatures', () => {
+       )
+     ).toThrow(RangeError);
+   });
++
++  it('exactly matches the frozen traversal and downstream skip comparisons', () => {
++    const dimensions = [
++      [1, 1],
++      [1, 17],
++      [17, 1],
++      [3, 2],
++      [17, 19],
++      [31, 47],
++      [320, 180],
++      [641, 359],
++      [1920, 1080],
++    ] as const;
++    for (const [frameWidth, frameHeight] of dimensions) {
++      for (const stride of [3, 4] as const) {
++        const length = frameWidth * frameHeight * stride;
++        const backing = new Uint8Array(length + 13);
++        const pixels = backing.subarray(7, 7 + length);
++        const changed = pixels.slice();
++        for (let index = 0; index < pixels.length; index++) {
++          // Alternating extrema, deterministic noise and alpha changes expose
++          // skipped/shifted pixels and exact integer moment differences.
++          pixels[index] = index % 11 === 0 ? 255 : (index * 73 + 19) % 256;
++        }
++        changed.set(pixels);
++        const cursor =
++          (Math.floor(frameHeight / 2) * frameWidth + Math.floor(frameWidth / 2)) * stride;
++        changed[cursor] = changed[cursor] === 255 ? 0 : 255;
++        if (stride === 4) changed[cursor + 3] = 0;
++
++        const actual = computeMotionSignature(pixels, frameWidth, frameHeight, stride);
++        const expected = referenceMotionSignature(pixels, frameWidth, frameHeight, stride);
++        expect(actual).toEqual(expected);
++        const actualChanged = computeMotionSignature(changed, frameWidth, frameHeight, stride);
++        const expectedChanged = referenceMotionSignature(changed, frameWidth, frameHeight, stride);
++        expect(actualChanged).toEqual(expectedChanged);
++        const actualComparison = compareMotionSignatures(actualChanged, actual);
++        const expectedComparison = compareMotionSignatures(expectedChanged, expected);
++        expect(actualComparison).toEqual(expectedComparison);
++        for (const mode of ['low', 'medium', 'high'] as const) {
++          expect(actualComparison.distance <= getSkipThreshold(mode)).toBe(
++            expectedComparison.distance <= getSkipThreshold(mode)
++          );
++        }
++      }
++    }
++  });
+ });
+ 
+ describe('resolveVideoDimensions', () => {

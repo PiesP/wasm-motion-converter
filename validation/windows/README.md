@@ -59,6 +59,98 @@ The generated MP4/WebM fixtures and `dist/` are ignored build artifacts. Their
 presence in the runner bundle is therefore a required precondition, not a
 tracked-source guarantee.
 
+For motion-signature regression and timing in #483, prepare the small CI H.264
+and 320×180/120-fps high-motion fixtures with `vp run prepare:e2e:fixture`.
+Select `--scenario motion-signature` with installed Edge or Chrome in desktop
+mode. The focused controller builds the ordinary production source and packages
+that build, both fixtures, and `validation/windows/motion-signature.ts`; it
+needs no prior build, public target, profiler flag, or development global.
+Historical instrumented component timings are recorded in the issue evidence,
+not produced or inferred by this retained scenario.
+
+Each controller invocation measures one primary first-use conversion in a fresh
+browser profile, then one same-document warm conversion with a new conversion
+Worker. Small enabled and primary skip-off controls use fresh contexts in the
+same browser process; their first conversions are not fresh-profile cold starts.
+Run five separate, balanced controller invocations per compared variant/cache
+condition, keeping all raw samples and failed attempts. The fixed GIF settings
+are low quality, scale 1, and low smart-frame-skip for the enabled workloads;
+the off control differs only in skip mode. Each primary output must decode to at
+least 16 frames, 15 adjacent composited pixel changes, positive frame durations,
+and 3 seconds within 250 ms. The scenario records the owned GIF Worker route
+from its start options and completed saved bytes, plus
+request-click to a visible matching GIF download button (with Blob publication
+recorded separately), bounded page/console/request/HTTP failures and separately
+classified Blob `net::ERR_ABORTED` events, and downloaded
+file hashes. Each sample also retains the bounded static-server JavaScript
+request list, the built Worker's declared `dist/_headers` cache policy,
+available Resource Timing transfer sizes and delivery type for its exact URL,
+and the service-worker controller path. These observations do not by
+themselves establish a cache hit. Renderer heap point samples cover before click, after button
+readiness, and after saved-output verification; the last sample includes harness
+decoding. Worker heap, native GPU memory, and memory peaks remain unmeasured.
+The scenario decodes
+the saved bytes with the installed browser's `ImageDecoder` after timing and
+records every frame's duration and composited RGBA hash. Compare those frame
+records across variants and independently inspect the retained screenshot and
+failure receipts. This scenario does not perform service-worker offline or
+recovery qualification; run those checks separately.
+
+For the separately identified owner-video follow-up, use
+`--scenario motion-signature-owner-video`. Stage the unchanged private original
+as `validation/windows/private-inputs/motion-owner-video.mp4`, outside `public/`, in an
+independent clean controller-admitted clone. The source-owned
+[`motion-owner-video.json`](motion-owner-video.json) binds its size, SHA-256,
+video timeline, geometry and frozen settings. This input is ignored and must
+never be committed or included in a public build. Build only in a checkout
+whose `public/` contains no private video; postbuild's synthetic-name cleanup
+is not a private-media exclusion policy. Inspect `dist/` and its deployment
+inventory before staging the bundle. The guest verifies the staged input's
+size and digest before conversion. The dedicated staging directory contains only
+task-owned inputs and its tracked README; the default full profile does not
+require this private file. Controller planning checks the directory, while
+staging checks and the focused guest scenario validate the literal file.
+
+This cohort starts with the full 720×720 original, GIF medium quality (12 fps),
+scale 1, low smart frame skip, plus the same-input skip-off and synthetic small
+controls. Its video PTS are variable and its video duration is 11.157178 s;
+audio/container duration is not the output oracle. Retain the 180-second,
+96-MiB and 400-decoded-output-frame bounds. Independently decode saved output,
+check geometry, positive durations, infinite looping, visible variation and
+video duration within 250 ms; freeze the qualified current-TS composited-frame
+and timeline record before candidate timing. Synthetic 3-second/count/change
+assertions do not apply. Each workload runs first use, same-document warm with
+a new Worker, then context cleanup before the next workload. Historical
+synthetic receipts retain their original protocol and result unchanged.
+
+Use `--scenario motion-signature-owner-recovery` for the separate owner-video
+cancel-and-recover gate. It stages the same unchanged private input, exercises
+the existing high-quality adaptive-skip cancellation flow, requires effective
+Stop-to-idle within 500 ms and no stale Worker completion, then independently
+verifies a successful small GIF in the same document. This functional run is
+separate from the frozen medium-quality timing cohort.
+
+The verifier transfers saved GIF bytes to the independent browser decoder as
+base64 after the timing interval to keep the transport compact. The first
+owner-video attempt exhausted the Node heap while using numeric-array transfer;
+the retained byte-exact transfer repair completed the 19.6 MB output within the
+original bounds. The exact original allocation site was not traced.
+Verification allocations can remain until garbage collection before the warm
+job, so renderer heap observations include harness effects and do not establish
+product retention or peak memory.
+
+Select `--scenario motion-signature-recovery` for the separate functional
+cancel-and-recover check. It uses the same high-motion fixture for the existing
+GIF high-quality adaptive-skip cancellation exercise, requiring observed
+nonzero progress, an effective Stop action, Worker termination, no stale result,
+and return to an idle conversion control within 500 ms of the actual Stop click.
+It then converts the small fixture in the same document with GIF low quality,
+scale 1, and low smart-frame-skip, verifies the downloaded bytes and independent
+decoded timeline, and checks that the cancelled Worker did not complete later.
+If the high-motion job finishes before Stop can take effect, the attempt records
+that limitation; it does not qualify cancellation. This scenario has its own
+source-bound receipt and is not pooled with timing samples.
+
 For analysis cancellation and idle worker recovery, prepare the CI fixture and
 select `{"scenario":"analysis-worker-recovery"}` in the ignored
 `validation/windows/inputs/analysis-worker-recovery.json`, preserving other

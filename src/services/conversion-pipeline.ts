@@ -11,7 +11,7 @@
  * 2. Dynamic decimation: adjusts frame skip ratio based on real-time memory
  * 3. Buffer pooling: reuses Uint8Array allocations across frames
  * 4. Profiling: per-phase timing, memory, and throughput measurement
- * 5. Resource cleanup: profiler removed from active map on completion/failure
+ * 5. Diagnostics: an invocation-local profiler retains only its completed report
  */
 
 import type {

@@ -1,0 +1,51 @@
+diff --git a/src/services/conversion-worker/pipeline-worker.ts b/src/services/conversion-worker/pipeline-worker.ts
+index e0b123ff..b534307a 100644
+--- a/src/services/conversion-worker/pipeline-worker.ts
++++ b/src/services/conversion-worker/pipeline-worker.ts
+@@ -104,9 +104,7 @@ export async function runWorkerPipeline(
+   framerate?: number
+ ): Promise<{ outputBuffer: ArrayBuffer; profile?: ConversionProfileReport }> {
+   const pipelineStart = performance.now();
+-  const profilerClass = import.meta.env.DEV
+-    ? (await import('@services/conversion-profiler')).ConversionProfiler
+-    : undefined;
++  const profilerClass = (await import('@services/conversion-profiler')).ConversionProfiler;
+   const profiler = profilerClass ? new profilerClass() : null;
+   const profileOperation = profiler?.recordOperation;
+   const profileCopyPath = profiler?.recordCopyPath;
+@@ -437,7 +435,10 @@ export async function runWorkerPipeline(
+     postProgress('assembling', true, output.byteLength);
+ 
+     finalizationSpan?.end();
+-    const profile = profiler?.finish();
++    const report = profiler?.finish();
++    const profile = report
++      ? { ...report, motionSignatureGeometry: Reflect.get(globalThis, '__wmcMotionGeometry') ?? [] }
++      : undefined;
+ 
+     return { outputBuffer: output, ...(profile ? { profile } : {}) };
+   } finally {
+diff --git a/src/services/frame-utils.ts b/src/services/frame-utils.ts
+index 90446e83..f414d99b 100644
+--- a/src/services/frame-utils.ts
++++ b/src/services/frame-utils.ts
+@@ -464,6 +464,19 @@ export function computeMotionSignature(
+     throw new RangeError('Invalid motion signature frame dimensions or pixels');
+   }
+ 
++  const geometries = (Reflect.get(globalThis, '__wmcMotionGeometry') ?? []) as {
++    width: number;
++    height: number;
++    pixelStride: number;
++    calls: number;
++  }[];
++  const geometry = geometries.find(
++    (entry) => entry.width === width && entry.height === height && entry.pixelStride === pixelStride
++  );
++  if (geometry) geometry.calls++;
++  else geometries.push({ width, height, pixelStride, calls: 1 });
++  Reflect.set(globalThis, '__wmcMotionGeometry', geometries);
++
+   const sums = new Uint32Array(MOTION_TILE_COUNT * MOTION_CHANNELS);
+   const counts = new Uint32Array(MOTION_TILE_COUNT);
+   // Keep unrounded integer sums. At the hard pixel ceiling, tile-relative

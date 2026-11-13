@@ -28,6 +28,23 @@ const profile = JSON.parse(
 const source = readFileSync(resolve(root, 'validation/windows/profile.ts'), 'utf8');
 
 describe('Windows campaign preparation contract', () => {
+  it('does not make private owner media mandatory for the default full campaign', () => {
+    const stagingDirectory = 'validation/windows/private-inputs';
+    const privateFile = `${stagingDirectory}/motion-owner-video.mp4`;
+    expect(profile.assets).toContain(stagingDirectory);
+    expect(profile.assets).not.toContain(privateFile);
+    expect(profile.assets).not.toContain('validation/windows/inputs/motion-owner-video.mp4');
+    expect(readFileSync(resolve(root, stagingDirectory, 'README.md'), 'utf8')).toContain(
+      'default full profile does not require'
+    );
+    for (const name of ['motion-signature-owner-video', 'motion-signature-owner-recovery']) {
+      const selected = profile.preparation.scenarios[name]!;
+      expect(selected.required_inputs).toContain(stagingDirectory);
+      expect(selected.required_inputs).not.toContain(privateFile);
+    }
+    expect(source).toContain(privateFile);
+  });
+
   it('covers focused selector paths referenced by the executing profile', () => {
     const referenced = [...source.matchAll(/inputs\/([a-z][a-z0-9-]+\.json)/g)]
       .map((match) => match[1]!)

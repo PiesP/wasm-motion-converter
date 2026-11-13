@@ -37,6 +37,17 @@ import {
   readCancellationInspector,
 } from './cancellation-inspector.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
+import {
+  choose as chooseMotionOption,
+  exerciseMotionSignature,
+  installMotionObserver,
+  measure as measureMotion,
+  MOTION_PRIMARY_FIXTURE,
+  MOTION_SIGNATURE_RECOVERY_SCENARIO,
+  MOTION_SIGNATURE_SCENARIO,
+  MOTION_SMALL_FIXTURE,
+  type MotionDiagnostic,
+} from './motion-signature.ts';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
 import {
   exerciseNarrowOutput,
@@ -2935,6 +2946,60 @@ export async function finishMediaProfile({
   if (cleanupErrors.length) throw new Error(cleanupErrors.join('; '));
 }
 
+async function finishMotionProfile({
+  context,
+  server,
+  output,
+  evidencePath,
+  result,
+  assetRequests,
+  failed,
+  failure,
+}: {
+  context: BrowserContext | undefined;
+  server: Server;
+  output: string;
+  evidencePath: string;
+  result: Record<string, unknown>;
+  assetRequests: () => { paths: string[]; overflow: boolean };
+  failed: boolean;
+  failure: unknown;
+}) {
+  const cleanupErrors: { stage: string; error: string }[] = [];
+  const cleanupReasons: unknown[] = [];
+  const attempt = async (stage: string, action: () => Promise<unknown>) => {
+    try {
+      await action();
+    } catch (error) {
+      cleanupErrors.push({ stage, error: describeMediaFailure(error) });
+      cleanupReasons.push(error);
+      result.status = 'failed';
+    }
+  };
+  await attempt('context close', async () => context?.close());
+  await attempt('server close', async () => closeServer(server));
+  result.staticServerJsAssetRequests = assetRequests();
+  if (failed || cleanupErrors.length) result.status = 'failed';
+  result.cleanupErrors = cleanupErrors;
+  await attempt('evidence directory', async () => mkdir(output, { recursive: true }));
+  if (cleanupErrors.length) result.status = 'failed';
+  const writeEvidence = () => writeFile(evidencePath, `${JSON.stringify(result, null, 2)}\n`);
+  const priorErrors = cleanupErrors.length;
+  await attempt('evidence write', writeEvidence);
+  if (cleanupErrors.length > priorErrors)
+    await attempt('evidence write failure sidecar', () =>
+      writeFile(`${evidencePath}.write-failure.json`, `${JSON.stringify(result, null, 2)}\n`, {
+        flag: 'wx',
+      })
+    );
+  if (cleanupErrors.length)
+    throw new AggregateError(
+      [...(failed ? [failure] : []), ...cleanupReasons],
+      'Motion validation or owned cleanup failed'
+    );
+  if (failed) throw failure;
+}
+
 export async function run({
   browser,
   root,
@@ -2952,6 +3017,363 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const motionSelectors = [
+    {
+      scenario: 'motion-signature-owner-recovery',
+      path: 'validation/windows/inputs/motion-signature-owner-recovery.json',
+    },
+    {
+      scenario: 'motion-signature-owner-video',
+      path: 'validation/windows/inputs/motion-signature-owner-video.json',
+    },
+    {
+      scenario: MOTION_SIGNATURE_SCENARIO,
+      path: 'validation/windows/inputs/motion-signature.json',
+    },
+    {
+      scenario: MOTION_SIGNATURE_RECOVERY_SCENARIO,
+      path: 'validation/windows/inputs/motion-signature-recovery.json',
+    },
+  ] as const;
+  const motionPresent = await Promise.all(
+    motionSelectors.map(async ({ path }) => {
+      try {
+        return (await stat(resolve(bundleRoot, path))).isFile();
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
+        throw error;
+      }
+    })
+  );
+  assert(motionPresent.filter(Boolean).length <= 1, 'Conflicting motion signature selectors');
+  const motionIndex = motionPresent.findIndex(Boolean);
+  if (motionIndex >= 0) {
+    const { scenario, path: selectorPath } = motionSelectors[motionIndex]!;
+    const selected: unknown = JSON.parse(
+      await readFile(await validateBundleFile(bundleRoot, selectorPath), 'utf8')
+    );
+    assert.deepEqual(selected, { scenario });
+    const presentSelectors = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      [
+        'analysis-worker-recovery.json',
+        'app-update.json',
+        'conversion-option-contract.json',
+        'motion-signature-owner-recovery.json',
+        'motion-signature-owner-video.json',
+        'motion-signature.json',
+        'motion-signature-recovery.json',
+        'narrow-output.json',
+        'native-ui.json',
+        'output-finalization-v2.json',
+        'output-finalization.json',
+        'packet-lookup.json',
+        'preview-retry.json',
+        'recovery.json',
+        'selection-preview.json',
+        'service-worker-handoff.json',
+        'settings-schema.json',
+        'trim-submission.json',
+        'webp-initialization.json',
+      ].filter((name) => name !== `${scenario}.json` && presentSelectors.includes(name)),
+      [],
+      'Motion signature measurement requires one focused selector'
+    );
+    const ownerVideo =
+      scenario === 'motion-signature-owner-video' || scenario === 'motion-signature-owner-recovery';
+    const [smallPath, primaryPath, build, headersPath] = await Promise.all([
+      validateBundleFile(bundleRoot, MOTION_SMALL_FIXTURE),
+      validateBundleFile(
+        bundleRoot,
+        ownerVideo
+          ? 'validation/windows/private-inputs/motion-owner-video.mp4'
+          : MOTION_PRIMARY_FIXTURE
+      ),
+      readBuild(bundleRoot, 'dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+      validateBundleFile(bundleRoot, 'dist/_headers'),
+    ]);
+    const headerRules = parseHeaderRules(await readFile(headersPath, 'utf8'));
+    const smallSha256 = sha256(await readFile(smallPath));
+    const primarySha256 = sha256(await readFile(primaryPath));
+    const ownerManifest = ownerVideo
+      ? (JSON.parse(
+          await readFile(
+            await validateBundleFile(bundleRoot, 'validation/windows/motion-owner-video.json'),
+            'utf8'
+          )
+        ) as {
+          input: { bytes: number; sha256: string; videoDurationUs: number };
+          settings: { quality: 'medium'; scale: number };
+          oracle: { width: number; height: number; durationToleranceUs: number };
+        })
+      : null;
+    if (ownerManifest) {
+      assert.equal(
+        primarySha256,
+        ownerManifest.input.sha256,
+        'Guest input digest differs from frozen owner manifest'
+      );
+      assert.equal(
+        (await stat(primaryPath)).size,
+        ownerManifest.input.bytes,
+        'Guest input size differs from frozen owner manifest'
+      );
+    }
+    const ownerSettings = ownerManifest
+      ? {
+          quality: ownerManifest.settings.quality,
+          scale: ownerManifest.settings.scale,
+          width: ownerManifest.oracle.width,
+          height: ownerManifest.oracle.height,
+          expectedDurationUs: ownerManifest.input.videoDurationUs,
+          durationToleranceUs: ownerManifest.oracle.durationToleranceUs,
+          oracleKind: 'owner-video' as const,
+        }
+      : {};
+    const workloads = [
+      {
+        id: 'primary-enabled',
+        fixture: primaryPath,
+        inputSha256: primarySha256,
+        width: 320,
+        height: 180,
+        smartFrameSkip: 'low',
+        ...ownerSettings,
+      },
+      {
+        id: 'small-enabled',
+        fixture: smallPath,
+        inputSha256: smallSha256,
+        width: 160,
+        height: 90,
+        smartFrameSkip: 'low',
+      },
+      {
+        id: 'primary-off',
+        fixture: primaryPath,
+        inputSha256: primarySha256,
+        width: 320,
+        height: 180,
+        smartFrameSkip: 'off',
+        ...ownerSettings,
+      },
+    ] as const;
+    const started = await startStaticServer(bundleRoot);
+    const assetRequests = () => ({
+      paths: [...started.observedAssetRequests],
+      overflow: started.observedAssetOverflow,
+    });
+    const attachDeliveryEvidence = (sample: Awaited<ReturnType<typeof measureMotion>>) => {
+      const workerPath = new URL(sample.worker.url).pathname;
+      return Object.assign(sample, {
+        deliveryEvidence: {
+          staticServerJsAssetRequests: assetRequests(),
+          workerCacheControlFromDistHeaders:
+            matchedHeaders(headerRules, workerPath).get('cache-control') ?? null,
+          workerCacheHeaderSource: 'dist/_headers',
+        },
+      });
+    };
+    const evidencePath = join(output, `${scenario}.json`);
+    const samples: unknown[] = [];
+    const diagnostics: MotionDiagnostic[] = [];
+    let result: Record<string, unknown> = {
+      scenario,
+      status: 'started',
+      build,
+      fixtureSha256: { small: smallSha256, primary: primarySha256 },
+      inputManifest: ownerManifest,
+      staticServerJsAssetRequests: assetRequests(),
+      samples,
+      diagnostics,
+    };
+    if (
+      scenario === MOTION_SIGNATURE_RECOVERY_SCENARIO ||
+      scenario === 'motion-signature-owner-recovery'
+    ) {
+      let context: BrowserContext | undefined;
+      let failure: unknown;
+      let failed = false;
+      const artifacts: Artifact[] = [];
+      const network: MediaNetworkDiagnostics = {
+        pageErrors: [],
+        consoleErrors: [],
+        failedRequests: [],
+        failedResponses: [],
+      };
+      const expectedBlobAborts: { resourceType: string; protocol: 'blob:' }[] = [];
+      result = { ...result, network, expectedBlobAborts, artifacts };
+      try {
+        context = await browser.newContext({ acceptDownloads: true, locale: 'en-US' });
+        const page = await context.newPage();
+        page.on('pageerror', (error) => network.pageErrors.push(error.message.slice(0, 400)));
+        page.on('console', (message) => {
+          if (message.type() === 'error') network.consoleErrors.push(message.text().slice(0, 400));
+        });
+        page.on('requestfailed', (request) => {
+          const failedUrl = new URL(request.url());
+          const error = request.failure()?.errorText ?? 'unknown';
+          if (failedUrl.protocol === 'blob:' && error === 'net::ERR_ABORTED') {
+            if (expectedBlobAborts.length < 128)
+              expectedBlobAborts.push({ resourceType: request.resourceType(), protocol: 'blob:' });
+            else network.failedRequests.push({ url: 'blob-overflow', error });
+            return;
+          }
+          network.failedRequests.push({
+            url: failedUrl.pathname.slice(0, 160),
+            error: error.slice(0, 200),
+          });
+        });
+        page.on('response', (response) => {
+          if (response.status() >= 400)
+            network.failedResponses.push({
+              status: response.status(),
+              url: new URL(response.url()).pathname.slice(0, 160),
+            });
+        });
+        await mkdir(output, { recursive: true });
+        await page.addInitScript(installMotionObserver);
+        const cancellation = await exerciseCancellation(
+          page,
+          started.url,
+          primaryPath,
+          output,
+          artifacts
+        );
+        result.cancellation = ownerVideo
+          ? { ...cancellation, id: 'cancel-owner-video', inputSha256: primarySha256 }
+          : cancellation;
+        assert.equal(
+          cancellation.effective,
+          true,
+          cancellation.reason ?? 'Effective cancellation missing'
+        );
+        const cancelled = await page.evaluate(() => {
+          const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+            stopClickMs: number | null;
+            idleAfterStopMs: number | null;
+            workers: {
+              starts: { options: Record<string, unknown> }[];
+              completes: unknown[];
+              terminationCalls: number;
+            }[];
+            timeOrigin: number;
+          };
+          return {
+            stopClickMs: observed.stopClickMs,
+            idleAfterStopMs: observed.idleAfterStopMs,
+            workers: observed.workers,
+            timeOrigin: performance.timeOrigin,
+          };
+        });
+        result.cancelledWorker = cancelled;
+        assert(cancelled.stopClickMs !== null && cancelled.idleAfterStopMs !== null);
+        const stopToIdleMs = cancelled.idleAfterStopMs - cancelled.stopClickMs;
+        result.stopToIdleMs = stopToIdleMs;
+        assert(
+          stopToIdleMs >= 0 && stopToIdleMs <= 500,
+          'Stop-to-idle exceeded the frozen 500 ms budget'
+        );
+        const cancelledWorkers = cancelled.workers.filter((worker) =>
+          worker.starts.some((start) => start.options.format === 'gif')
+        );
+        assert.equal(cancelledWorkers.length, 1, 'Cancellation did not own one GIF Worker');
+        assert.equal(
+          cancelledWorkers[0]?.completes.length,
+          0,
+          'Cancelled Worker produced a result'
+        );
+        assert.equal(
+          cancelledWorkers[0]?.terminationCalls,
+          1,
+          'Cancelled Worker was not terminated once'
+        );
+        await selectFixture(page, smallPath);
+        await chooseMotionOption(page, 'format', 'gif');
+        await chooseMotionOption(page, 'quality', 'low');
+        await chooseMotionOption(page, 'scale', '1');
+        await chooseMotionOption(page, 'smart-frame-skip', 'low');
+        const recovered = attachDeliveryEvidence(
+          await measureMotion(page, workloads[1]!, 'warm', 0)
+        );
+        result.recovery = recovered;
+        assert(
+          Math.abs(recovered.decoded.durationUs - 1_000_000) <= 250_000,
+          'Recovery GIF missed the source duration'
+        );
+        assert.equal(await page.evaluate(() => performance.timeOrigin), cancelled.timeOrigin);
+        const stale = await page.evaluate(() => {
+          const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+            workers: { completes: unknown[]; terminationCalls: number }[];
+          };
+          return observed.workers[0];
+        });
+        assert.equal(stale?.completes.length, 0, 'Cancelled Worker completed after recovery');
+        assert.equal(stale?.terminationCalls, 1, 'Cancelled Worker termination changed');
+        await assertMediaNetworkDiagnostics(output, network);
+        result = { ...result, status: 'passed' };
+        return { profile: scenario, ...result };
+      } catch (error) {
+        result = { ...result, status: 'failed', error: String(error) };
+        if (error instanceof AggregateError)
+          result.errorDetails = error.errors.map((entry) => describeMediaFailure(entry));
+        failure = error;
+        failed = true;
+      } finally {
+        await finishMotionProfile({
+          context,
+          server: started.server,
+          output,
+          evidencePath,
+          result,
+          assetRequests,
+          failed,
+          failure,
+        });
+      }
+    }
+    let failure: unknown;
+    let failed = false;
+    try {
+      const measured = await exerciseMotionSignature(
+        browser,
+        started.url,
+        workloads,
+        async (sample) => {
+          samples.push(attachDeliveryEvidence(sample));
+          await mkdir(output, { recursive: true });
+          await writeFile(
+            evidencePath,
+            `${JSON.stringify({ ...result, status: 'running', samples, staticServerJsAssetRequests: assetRequests() }, null, 2)}\n`
+          );
+        },
+        output,
+        diagnostics
+      );
+      result = { ...result, ...measured, scenario };
+      return { profile: scenario, ...result };
+    } catch (error) {
+      result = { ...result, status: 'failed', error: String(error) };
+      if (error instanceof AggregateError)
+        result.errorDetails = error.errors.map((entry) => describeMediaFailure(entry));
+      failure = error;
+      failed = true;
+    } finally {
+      await finishMotionProfile({
+        context: undefined,
+        server: started.server,
+        output,
+        evidencePath,
+        result,
+        assetRequests,
+        failed,
+        failure,
+      });
+    }
+  }
   const nativeUiSelector = resolve(bundleRoot, 'validation/windows/inputs/native-ui.json');
   let nativeUiSelectorText: string | undefined;
   try {

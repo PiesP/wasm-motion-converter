@@ -972,10 +972,22 @@ export async function decodeFrames(
             const signature = shouldMeasureMotion
               ? computeMotionSignature(pixelData, width, height, pixelFormat === 'rgba' ? 4 : 3)
               : null;
+            if (motionFeatureStart !== null)
+              profileOperation?.(
+                'motionSignature',
+                Math.max(0, performance.now() - motionFeatureStart)
+              );
+            const comparisonStart =
+              profileOperation && shouldMeasureMotion ? performance.now() : null;
             const frameDistance =
               signature !== null && previousMotion !== null
                 ? compareMotionSignatures(signature, previousMotion).distance
                 : null;
+            if (comparisonStart !== null && signature !== null && previousMotion !== null)
+              profileOperation?.(
+                'motionComparison',
+                Math.max(0, performance.now() - comparisonStart)
+              );
             if (motionFeatureStart !== null) {
               profileOperation?.(
                 'motionFeatures',

@@ -16,6 +16,8 @@ export type ProfileStage = 'demuxing' | 'transcoding' | 'finalizing';
 export const PROFILE_OPERATIONS = [
   'pixelCopy',
   'motionFeatures',
+  'motionSignature',
+  'motionComparison',
   'motionDecision',
   'gifPixelPreparation',
   'gifQuantization',

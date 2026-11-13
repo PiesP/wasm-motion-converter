@@ -1,0 +1,323 @@
+{
+  "schemaVersion": 1,
+  "disposition": "RETAIN_CURRENT",
+  "scope": "#483 matched instrumented component cohort only; do not pool with production end-to-end samples",
+  "source": {
+    "refreshedBase": "8fbef7391eb7fbc2f2cc6aeb960e032e02871b5c",
+    "applicationAndHarnessCommits": {
+      "A": "814893f031e2d95c4d8128a476b50f05076dcf99",
+      "B": "fdf7879060e419c84458f693cc203b6bd8891ff9"
+    },
+    "coreGitlink": "4638d703806b38734430a761104ee73512cbdf5c",
+    "harnessBundleFileSha256": {
+      "validation/windows/profile.ts": "f89be58b812b5bc891f6d8dc132cfb7d25adf47f580bb586898d6df936bbf1d1",
+      "validation/windows/motion-signature.ts": "bb8447a77226c098a4e5baf7094d74e5131ff1f8660436dc8cee2f94ef636375",
+      "validation/windows/profile.json": "ce2ccb9919f600538eca66359203d2cf3d9f27814f9d912ce66965a7710b0cfd",
+      "validation/windows/inputs/motion-signature.json": "79514e48c30aaf45c8c3a112c81aee2271e4efe2d9060a5d7bf14ea90a03e27f"
+    },
+    "controllerSha256": "e1f11715f20bdb6fa0ea882c31ea7a696505cd2b53ea7ed5ab1bdc01180a81c9",
+    "packagerSha256": "5518e93ac858711084b650cf255f44be1bf770ccc6e9575297fbb45c74ae7049"
+  },
+  "plan": {
+    "retainedAmendedDocument": "frozen-wmc-plan.md",
+    "retainedAmendedSha256": "f0d6f3001663d839dee0c914fcc95ab18eec2374a84437c09b74ed57b6cb0de7",
+    "originalPreAmendmentDigest": "unavailable",
+    "timing": "Initial freeze after exploratory A-01 and before B timing; high-quality route corrected to low-quality 8-fps before B timing. Retained document includes later amendments; its current digest is not the original pre-B digest."
+  },
+  "cohort": {
+    "browser": "installed Edge 157.0.4341.46",
+    "status": "10 successful controller invocations, five per variant; 60 verified workload samples",
+    "instrumentation": "enabled in both variants; per-operation intervals may overlap and are not CPU shares",
+    "invocationOrder": "A1/B1, B2/A2, A3/B3, B4/A4, A5/B5",
+    "withinInvocationOrder": "primary first-use, small first-use, off first-use in separate retained contexts; then primary warm, small warm, off warm in those same documents and browser process",
+    "remainingLimitation": "Primary warm is a second same-document job after small/off first jobs in the same browser process; background or GC effects are possible but unproven.",
+    "fixtures": {
+      "primarySha256": "36dd064afeefde15ecceea49109fffee6b17cdf0962de6eb21e0255fdd0cb8f8",
+      "smallSha256": "de4c15ff513d41c964eadb5d45ce08030b2a94eea501e9f86edfd8a301e1411e"
+    },
+    "settings": "GIF, low quality, scale 1, full duration; smart frame skip low for primary and small, off for primary-off"
+  },
+  "outputEquivalence": {
+    "canonicalSummarySha256": "3abb6a073fa2c6fe097d9b4d597e01d14150d1c7aede68c7eceac9d60a2b9791",
+    "canonicalization": "SHA-256 of UTF-8 JSON with sorted keys and compact separators over outputEquivalenceSummary",
+    "summary": {
+      "primary": {
+        "savedSha256": "22976f24e1abb28d0a43f8f3f166cb3de6ace5f9718cbacdb6aeba5063e03c9a",
+        "savedBytes": 7717,
+        "loopCount": 0,
+        "decodedFrameCount": 22,
+        "durationUs": 3000000,
+        "frames": [
+          {
+            "durationUs": 380000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          },
+          {
+            "durationUs": 130000,
+            "pixelSha256": "6f77f852d070d718abceaf639531c5424c1abecf4b2b603c640169f3546be7a1"
+          },
+          {
+            "durationUs": 120000,
+            "pixelSha256": "1516b21572cdecd2baad775e49c4a2d235b7ce37c9692d90df6b9e0df92f820c"
+          }
+        ]
+      },
+      "small": {
+        "savedSha256": "ccf94435e52830cc74a4ac4a8223e69634fe4b71b412ace49ab7110f06586214",
+        "savedBytes": 17590,
+        "loopCount": 0,
+        "decodedFrameCount": 8,
+        "durationUs": 1000000,
+        "frames": [
+          {
+            "durationUs": 200000,
+            "pixelSha256": "60fbc581fe9720b77b818849434be6e60be1b3cd8f77c9efc8e0393e9e42e66b"
+          },
+          {
+            "durationUs": 100000,
+            "pixelSha256": "96f0b17102a69d519a505744d8933b6f240b4bbf8ab029e6d3dfe679219deb62"
+          },
+          {
+            "durationUs": 100000,
+            "pixelSha256": "f6e959fe91f29236496dd5d785cfd6efc2d94c8bf56e98b06152ad6712dc5966"
+          },
+          {
+            "durationUs": 100000,
+            "pixelSha256": "133083d464b210eae8c5e213a6f7115b1b24f3e8bec272fd158289ec91980217"
+          },
+          {
+            "durationUs": 200000,
+            "pixelSha256": "3b0ffd371c647f230cf26f6d4f83b0f9f66947a8c659dbf0c54a5009afba6c69"
+          },
+          {
+            "durationUs": 100000,
+            "pixelSha256": "93bea2dfda10a289a9d5e4bf3bc02bea90c568053c6fa15c0c2328ceb84c568a"
+          },
+          {
+            "durationUs": 100000,
+            "pixelSha256": "07a43a272bcbb72ea0e3e9a165eba415f85515af452809158813cdb9feae231b"
+          },
+          {
+            "durationUs": 100000,
+            "pixelSha256": "48f7cca75948cd1de58645b9e506ec806859695119a72520e040f4933171be3c"
+          }
+        ]
+      }
+    },
+    "fullSavedAndDecodedRecords": "The two complete saved-output records, including each frame duration and composited RGBA SHA-256, are identical in all 60 original private receipts."
+  },
+  "sourceEvidence": {
+    "privateVerifiedAggregateSha256": "cb27ea83c7d5f6c3834d871988599d103a9e1811bcf9cdf680f881e2275c9ed6",
+    "originalReceipts": "Ten source-bound bundle, result, profile, collection, and cleanup receipts were checked against every derived row; original failures remain preserved separately.",
+    "receiptDigests": [
+      {
+        "variant": "A",
+        "invocation": 1,
+        "bundle": "d16a7f62e10d0c33d25b151d038bab266c139287cca54402af1e9d4bbb50c43f",
+        "result": "0d75075a931d2dcc661b095abba33f50ba88dcef3e7b77f0e6abd9b5241b9bb6",
+        "collection": "cbd2a75baaf18d34d210d1e775870ac65f695db5c811e32f1c3dff9475aacfef"
+      },
+      {
+        "variant": "A",
+        "invocation": 2,
+        "bundle": "d2140ef00140ebca6b8a25262b112af65b9bd26c612b2eed00951fd1cc9ba119",
+        "result": "56711ea4cc667f5b7db74cc7e6d7be74995117f01775bd7c2535bf073a1da04d",
+        "collection": "fe66bf88422a316f84efd5acbaa5c014b918bc1d495b0d4823186e8819b9149e"
+      },
+      {
+        "variant": "A",
+        "invocation": 3,
+        "bundle": "7de65c61de6d69afc88e018d5395eb914a6ca8f75b1cbe1f17e4466860224a58",
+        "result": "7951f2cf83daeb8b129d209857c5845203323aeabae33f8d432d413b33bc3e3d",
+        "collection": "d528f3e373ba3fe3e66d17d41b69d8cb6b5331c689ee473ec0d3f70f790f66f2"
+      },
+      {
+        "variant": "A",
+        "invocation": 4,
+        "bundle": "65bc6c476c72df6d7306ce0158c4e32652663c814466f7e4cc7ac5e09ebef996",
+        "result": "1725011fcf649e008c3b9a66f5963d37ba7c87744aebca9bce9c007c3642eadd",
+        "collection": "54fa814a2862b682ea2ae40d6e34d43fc25b5d1963e6792e6c679c2f210c4b22"
+      },
+      {
+        "variant": "A",
+        "invocation": 5,
+        "bundle": "1130000b9c79d62e2b5664d607a654c09cfb56807de62b7e0752cb5d74eedaf8",
+        "result": "70e51170d5e626e200101fbd6e27a4fee1a9b2642289cefea341682aca285d2b",
+        "collection": "6e765b8bc30ae119f99220fb7e38ae30c10849d78e19e6d210dd45f072b8a757"
+      },
+      {
+        "variant": "B",
+        "invocation": 1,
+        "bundle": "852556d0293fd79e6acba6d7bc291680279c1d3a48f8da012ac817ff672c7980",
+        "result": "ecfc5d85ccb9ff30deeb9b60a4115ea564e5b9dab99fe098191b6490d564f94e",
+        "collection": "7b4fd7326caabbf4d93401d130ceef7d1b69cd2d6943ce6e32ff859d0e42946b"
+      },
+      {
+        "variant": "B",
+        "invocation": 2,
+        "bundle": "4b304b7693fbf7520726fb4c419fdb3b9245d24c8a5191e96e2ece2c74731157",
+        "result": "b4b39d1997cb326df2fcdb9ab587504ab853c29a6b195ec8759c6e305ea5344a",
+        "collection": "98ac92c81e5dafd00d9359127ed038a62f34ce799138950ba84ab3605a87c32d"
+      },
+      {
+        "variant": "B",
+        "invocation": 3,
+        "bundle": "7ca1a30647e3432cf1a49fda273b314d6a32480816bc218cd91fc2234051deb8",
+        "result": "69b90535c69b3d79c28b2d95a65693d5681fad6f13326135efaf535fe53d7f22",
+        "collection": "589074611e538883875a60fae553f9b77034e7b85634ecb7bfac184ea7e3f4fc"
+      },
+      {
+        "variant": "B",
+        "invocation": 4,
+        "bundle": "7ca1a30647e3432cf1a49fda273b314d6a32480816bc218cd91fc2234051deb8",
+        "result": "7c12fb9c705f932c0d7cc3e9d1a35d2328885b3687449d8b40fd47fa6071f7ba",
+        "collection": "ab40f9386042ab89c30d5580f20ff8c84bce8b42e79de66137b256c7351935a0"
+      },
+      {
+        "variant": "B",
+        "invocation": 5,
+        "bundle": "13ce1eb06e9b4c20916c3d1654fbb1823e7d56f6c0f765e9450bc12fd8c4bbaa",
+        "result": "3b5523812d55555ad55a26940b93b251721335fd5e4dbe55429afc6077440491",
+        "collection": "95012e4b8a33a95d0b3d8c917e2a5112a09ac3e3f13d69193343e9fd3007cf6d"
+      }
+    ]
+  },
+  "samples": [
+    {"variant":"A","invocation":1,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":25.58,"motionSignatureCalls":24,"motionComparisonMs":0.61,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":1,"workload":"primary-enabled","condition":"warm","motionSignatureMs":25.76,"motionSignatureCalls":24,"motionComparisonMs":0.93,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":1,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":3.92,"motionSignatureCalls":8,"motionComparisonMs":0.52,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":1,"workload":"small-enabled","condition":"warm","motionSignatureMs":3.71,"motionSignatureCalls":8,"motionComparisonMs":1.02,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":1,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":1,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":2,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":27.25,"motionSignatureCalls":24,"motionComparisonMs":0.97,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":2,"workload":"primary-enabled","condition":"warm","motionSignatureMs":24.98,"motionSignatureCalls":24,"motionComparisonMs":0.7,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":2,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":4.56,"motionSignatureCalls":8,"motionComparisonMs":0.8,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":2,"workload":"small-enabled","condition":"warm","motionSignatureMs":4.55,"motionSignatureCalls":8,"motionComparisonMs":0.88,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":2,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":2,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":3,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":26.42,"motionSignatureCalls":24,"motionComparisonMs":0.63,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":3,"workload":"primary-enabled","condition":"warm","motionSignatureMs":26.3,"motionSignatureCalls":24,"motionComparisonMs":0.63,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":3,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":4.9,"motionSignatureCalls":8,"motionComparisonMs":0.81,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":3,"workload":"small-enabled","condition":"warm","motionSignatureMs":4.01,"motionSignatureCalls":8,"motionComparisonMs":0.53,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":3,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":3,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":4,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":28.43,"motionSignatureCalls":24,"motionComparisonMs":0.74,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":4,"workload":"primary-enabled","condition":"warm","motionSignatureMs":25.35,"motionSignatureCalls":24,"motionComparisonMs":0.67,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":4,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":3.9,"motionSignatureCalls":8,"motionComparisonMs":0.53,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":4,"workload":"small-enabled","condition":"warm","motionSignatureMs":3.74,"motionSignatureCalls":8,"motionComparisonMs":0.43,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":4,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":4,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":5,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":27.63,"motionSignatureCalls":24,"motionComparisonMs":0.87,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":5,"workload":"primary-enabled","condition":"warm","motionSignatureMs":25.11,"motionSignatureCalls":24,"motionComparisonMs":0.6,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":5,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":3.96,"motionSignatureCalls":8,"motionComparisonMs":0.56,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":5,"workload":"small-enabled","condition":"warm","motionSignatureMs":4.07,"motionSignatureCalls":8,"motionComparisonMs":0.67,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"A","invocation":5,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"A","invocation":5,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":1,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":23.85,"motionSignatureCalls":24,"motionComparisonMs":0.73,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":1,"workload":"primary-enabled","condition":"warm","motionSignatureMs":20.12,"motionSignatureCalls":24,"motionComparisonMs":0.83,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":1,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":4.18,"motionSignatureCalls":8,"motionComparisonMs":0.71,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":1,"workload":"small-enabled","condition":"warm","motionSignatureMs":2.99,"motionSignatureCalls":8,"motionComparisonMs":0.49,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":1,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":1,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":2,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":21.68,"motionSignatureCalls":24,"motionComparisonMs":0.69,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":2,"workload":"primary-enabled","condition":"warm","motionSignatureMs":22.93,"motionSignatureCalls":24,"motionComparisonMs":0.68,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":2,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":4.93,"motionSignatureCalls":8,"motionComparisonMs":0.78,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":2,"workload":"small-enabled","condition":"warm","motionSignatureMs":3.84,"motionSignatureCalls":8,"motionComparisonMs":0.44,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":2,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":2,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":3,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":22.52,"motionSignatureCalls":24,"motionComparisonMs":0.83,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":3,"workload":"primary-enabled","condition":"warm","motionSignatureMs":22.97,"motionSignatureCalls":24,"motionComparisonMs":0.7,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":3,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":5.25,"motionSignatureCalls":8,"motionComparisonMs":0.52,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":3,"workload":"small-enabled","condition":"warm","motionSignatureMs":3.97,"motionSignatureCalls":8,"motionComparisonMs":0.46,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":3,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":3,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":4,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":22.81,"motionSignatureCalls":24,"motionComparisonMs":0.7,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":4,"workload":"primary-enabled","condition":"warm","motionSignatureMs":21.42,"motionSignatureCalls":24,"motionComparisonMs":0.67,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":4,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":5.41,"motionSignatureCalls":8,"motionComparisonMs":0.83,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":4,"workload":"small-enabled","condition":"warm","motionSignatureMs":3.52,"motionSignatureCalls":8,"motionComparisonMs":0.72,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":4,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":4,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":5,"workload":"primary-enabled","condition":"cold-first-use","motionSignatureMs":21.84,"motionSignatureCalls":24,"motionComparisonMs":0.82,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":5,"workload":"primary-enabled","condition":"warm","motionSignatureMs":20.79,"motionSignatureCalls":24,"motionComparisonMs":0.98,"motionComparisonCalls":23,"signatureInput":{"width":320,"height":180,"stride":4},"decodedFrames":360,"selectedFrames":22,"encodedFrames":22,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":5,"workload":"small-enabled","condition":"fresh-context","motionSignatureMs":4.05,"motionSignatureCalls":8,"motionComparisonMs":0.6,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":5,"workload":"small-enabled","condition":"warm","motionSignatureMs":3.47,"motionSignatureCalls":8,"motionComparisonMs":0.75,"motionComparisonCalls":7,"signatureInput":{"width":160,"height":90,"stride":4},"decodedFrames":10,"selectedFrames":8,"encodedFrames":8,"emittedFrames":8,"outputKey":"small"},
+    {"variant":"B","invocation":5,"workload":"primary-off","condition":"fresh-context","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"},
+    {"variant":"B","invocation":5,"workload":"primary-off","condition":"warm","motionSignatureMs":0,"motionSignatureCalls":0,"motionComparisonMs":0,"motionComparisonCalls":0,"signatureInput":null,"decodedFrames":360,"selectedFrames":24,"encodedFrames":24,"emittedFrames":22,"outputKey":"primary"}
+  ]
+}
