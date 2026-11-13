@@ -603,14 +603,14 @@ export async function exerciseMotionSignature(
   workloads: readonly MotionWorkload[],
   onSample: (sample: Awaited<ReturnType<typeof measure>>) => Promise<void>,
   output: string,
-  diagnostics: MotionDiagnostic[]
+  diagnostics: MotionDiagnostic[],
+  mode: 'three-pair-cohort' | 'single-pair' | 'single-correctness' = 'three-pair-cohort'
 ) {
-  assert.equal(workloads.length, 3);
+  assert.equal(workloads.length, mode === 'three-pair-cohort' ? 3 : 1);
   const samples: Awaited<ReturnType<typeof measure>>[] = [];
   const primary = workloads[0]!;
-  const small = workloads[1]!;
-  const off = workloads[2]!;
-  const orderedWorkloads = [primary, small, off];
+  const orderedWorkloads =
+    mode === 'three-pair-cohort' ? [primary, workloads[1]!, workloads[2]!] : [primary];
   const artifacts: { file: string; bytes: number; sha256: string }[] = [];
   const contexts = new Set<BrowserContext>();
   const closedContexts: string[] = [];
@@ -693,18 +693,23 @@ export async function exerciseMotionSignature(
       await choose(page, 'quality', workload.quality ?? 'low');
       await choose(page, 'scale', String(workload.scale ?? 1));
       await choose(page, 'smart-frame-skip', workload.smartFrameSkip);
-      const condition = workload.id === 'primary-enabled' ? 'cold-first-use' : 'fresh-context';
+      const condition =
+        mode !== 'three-pair-cohort' || workload.id === 'primary-enabled'
+          ? 'cold-first-use'
+          : 'fresh-context';
       const sample = await measure(page, workload, condition, 0);
       samples.push(sample);
       await onSample(sample);
       assertUsefulOutput(sample, workload);
       assertNoUnexpectedDiagnostics(diagnostic);
-      const warm = await measure(page, workload, 'warm', 0);
-      samples.push(warm);
-      await onSample(warm);
-      assertUsefulOutput(warm, workload);
-      assertNoUnexpectedDiagnostics(diagnostic);
-      if (workload.id === 'primary-enabled') {
+      if (mode !== 'single-correctness') {
+        const warm = await measure(page, workload, 'warm', 0);
+        samples.push(warm);
+        await onSample(warm);
+        assertUsefulOutput(warm, workload);
+        assertNoUnexpectedDiagnostics(diagnostic);
+      }
+      if (mode !== 'three-pair-cohort' || workload.id === 'primary-enabled') {
         const file = 'motion-signature-result.png';
         const bytes = await page.screenshot({ path: join(output, file), fullPage: true });
         artifacts.push({
@@ -731,7 +736,11 @@ export async function exerciseMotionSignature(
       status: 'passed' as const,
       browserVersion: browser.version(),
       samplingPlan:
-        'For each workload: first use, same-document warm with a new conversion Worker, then context cleanup. Primary pair precedes controls. Run five fresh controller invocations per variant.',
+        mode === 'single-correctness'
+          ? 'One default-settings correctness and loading conversion; no timing cohort claim.'
+          : mode === 'single-pair'
+            ? 'One workload in a fresh browser process/profile: first use then same-document warm with a new Worker; five balanced invocations per variant and workload.'
+            : 'For each workload: first use, same-document warm with a new conversion Worker, then context cleanup. Primary pair precedes controls. Run five fresh controller invocations per variant.',
       artifacts,
       diagnostics,
       samples,

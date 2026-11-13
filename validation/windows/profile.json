@@ -3,6 +3,10 @@
   "entry": "validation/windows/profile.ts",
   "preparation": {
     "selector_files": [
+      "gif-quantization-default.json",
+      "gif-quantization-primary.json",
+      "gif-quantization-secondary.json",
+      "gif-quantization-small.json",
       "analysis-worker-recovery.json",
       "app-update.json",
       "conversion-option-contract.json",
@@ -24,6 +28,82 @@
       "motion-signature-owner-recovery.json"
     ],
     "scenarios": {
+      "gif-quantization-primary": {
+        "selector": "gif-quantization-primary.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "validation/windows/private-inputs",
+          "validation/windows/gif-quantization-owner-video.json",
+          "validation/windows/inputs/gif-quantization-primary.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
+      "gif-quantization-secondary": {
+        "selector": "gif-quantization-secondary.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "validation/windows/private-inputs",
+          "validation/windows/gif-quantization-owner-video.json",
+          "validation/windows/inputs/gif-quantization-secondary.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
+      "gif-quantization-small": {
+        "selector": "gif-quantization-small.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "validation/windows/private-inputs",
+          "validation/windows/gif-quantization-owner-video.json",
+          "validation/windows/inputs/gif-quantization-small.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
+      "gif-quantization-default": {
+        "selector": "gif-quantization-default.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "validation/windows/private-inputs",
+          "validation/windows/gif-quantization-owner-video.json",
+          "validation/windows/inputs/gif-quantization-default.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
       "motion-signature": {
         "selector": "motion-signature.json",
         "browsers": ["msedge", "chrome"],
@@ -188,6 +268,7 @@
     "validation/windows/analysis-worker-recovery.ts",
     "validation/windows/worker-option-contract.ts",
     "validation/windows/private-inputs",
+    "validation/windows/gif-quantization-owner-video.json",
     "validation/windows/motion-owner-video.json"
   ]
 }

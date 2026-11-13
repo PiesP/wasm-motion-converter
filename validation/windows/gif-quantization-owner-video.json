@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "experiment": "gif-quantization-490",
+  "input": {
+    "path": "validation/windows/private-inputs/motion-owner-video.mp4",
+    "bytes": 1092710,
+    "sha256": "c1ebdf56c8af5d830c6b86689d2bff05cbc3f371da3b1c898c4cfad8a335373c",
+    "width": 720,
+    "height": 720,
+    "decodedSourceFrames": 671,
+    "videoDurationUs": 11157178
+  },
+  "smallControl": {
+    "path": "public/test-video-ci-h264.mp4",
+    "bytes": 5184,
+    "sha256": "de4c15ff513d41c964eadb5d45ce08030b2a94eea501e9f86edfd8a301e1411e",
+    "quality": "low",
+    "scale": 1,
+    "smartFrameSkip": "low"
+  },
+  "settings": {
+    "format": "gif",
+    "quality": "medium",
+    "scale": 1,
+    "smartFrameSkip": "low",
+    "secondarySmartFrameSkip": "off",
+    "trim": "full-video"
+  },
+  "defaultQualification": {
+    "quality": "medium",
+    "scale": 0.75,
+    "smartFrameSkip": "off",
+    "width": 540,
+    "height": 540
+  },
+  "oracle": {
+    "width": 720,
+    "height": 720,
+    "durationUs": 11157178,
+    "durationToleranceUs": 250000,
+    "maxDecodedOutputFrames": 400,
+    "maxSavedBytes": 100663296,
+    "loopCount": 0
+  }
+}
