@@ -42,6 +42,16 @@ raw samples, median, range and MAD. Quantizer-stage diagnostic builds are
 separately identified and excluded from the product timing set. Do not overlap
 VM timing with another shared campaign or task-owned heavy work.
 
+The helper calls the second conversion `warm` because it is in the same
+document; that label alone does not prove a browser cache hit. Classify each
+Worker URL using its Resource Timing transfer/delivery fields, the static
+server's request list before and after the pair, and service-worker controller
+state. A zero-transfer resource entry with a body and no controlling service
+worker, or an explicit cache delivery type under the same condition, supports
+browser-cache classification. New static-server requests or ambiguous/missing
+signals remain separately reported. Do not call an unclassified sample a
+warm-cache result or use it to satisfy a cache-specific gate.
+
 Adopt TypeScript only if the primary warm median saves more than 5 ms and more
 than `3 × max(baseline MAD, candidate MAD)`, with the added maintenance,
 bytes and memory justified. A scalar Rust/WASM candidate is admitted only if
