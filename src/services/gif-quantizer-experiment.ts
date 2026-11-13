@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// Adapted from gifenc 1.0.3 src/pnnquant2.js (MIT), by Mark Tyler,
-// Dmitry Groshev, and Miller Cy Chan. See public/LICENSES.md for notices.
+// Adapted from gifenc 1.0.3 src/pnnquant2.js (MIT), Copyright (c) 2017
+// Matt DesLauriers; PNN origin Copyright (C) 2004-2019 Mark Tyler and
+// Dmitry Groshev, and Copyright (c) 2018-2021 Miller Cy Chan.
+// See public/LICENSES.md for the full gifenc license.
 
 /**
  * Exact rgb565 PNN quantizer experiment. The histogram, heap and bin objects
