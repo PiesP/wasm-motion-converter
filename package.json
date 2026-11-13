@@ -56,7 +56,7 @@
     "@piesp/browser-core": "file:packages/core",
     "gifenc": "^1.0.3",
     "mediabunny": "1.65.2",
-    "solid-js": "1.9.18",
+    "solid-js": "1.9.19",
     "wasm-webp": "^0.1.0"
   },
   "devDependencies": {
