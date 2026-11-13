@@ -55,7 +55,12 @@ describe('Windows campaign preparation contract', () => {
   it('binds each quantization workload to one focused controller scenario', () => {
     const manifest = JSON.parse(
       readFileSync(resolve(root, 'validation/windows/gif-quantization-owner-video.json'), 'utf8')
-    ) as { experiment: string; input: { sha256: string }; smallControl: { sha256: string } };
+    ) as {
+      experiment: string;
+      input: { sha256: string };
+      smallControl: { sha256: string };
+      settings: { smartFrameSkip: string; secondarySmartFrameSkip: string };
+    };
     expect(manifest.experiment).toBe('gif-quantization-490');
     expect(manifest.input.sha256).toBe(
       'c1ebdf56c8af5d830c6b86689d2bff05cbc3f371da3b1c898c4cfad8a335373c'
@@ -63,6 +68,8 @@ describe('Windows campaign preparation contract', () => {
     expect(manifest.smallControl.sha256).toBe(
       'de4c15ff513d41c964eadb5d45ce08030b2a94eea501e9f86edfd8a301e1411e'
     );
+    expect(manifest.settings.smartFrameSkip).toBe('off');
+    expect(manifest.settings.secondarySmartFrameSkip).toBe('low');
     for (const name of ['primary', 'secondary', 'small', 'default']) {
       const scenario = `gif-quantization-${name}`;
       const selected = profile.preparation.scenarios[scenario]!;

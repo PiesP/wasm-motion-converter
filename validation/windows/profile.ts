@@ -3138,8 +3138,8 @@ export async function run({
           settings: {
             quality: 'medium';
             scale: number;
-            smartFrameSkip?: 'low';
-            secondarySmartFrameSkip?: 'off';
+            smartFrameSkip?: 'off';
+            secondarySmartFrameSkip?: 'low';
           };
           oracle: {
             width: number;
@@ -3187,7 +3187,7 @@ export async function run({
             primarySkip: ownerManifest.settings.smartFrameSkip,
             secondarySkip: ownerManifest.settings.secondarySmartFrameSkip,
           },
-          { quality: 'medium', scale: 1, primarySkip: 'low', secondarySkip: 'off' }
+          { quality: 'medium', scale: 1, primarySkip: 'off', secondarySkip: 'low' }
         );
         assert.deepEqual(
           ownerManifest.smallControl && {

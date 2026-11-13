@@ -22,8 +22,8 @@
     "format": "gif",
     "quality": "medium",
     "scale": 1,
-    "smartFrameSkip": "low",
-    "secondarySmartFrameSkip": "off",
+    "smartFrameSkip": "off",
+    "secondarySmartFrameSkip": "low",
     "trim": "full-video"
   },
   "defaultQualification": {
