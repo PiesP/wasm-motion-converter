@@ -9,12 +9,15 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vite-plus/test';
+
+import { excludeDeclaredPrivateInput, postbuild } from '../../../scripts/build/postbuild';
 
 const project = resolve(import.meta.dirname, '../../..');
 const roots: string[] = [];
@@ -39,6 +42,7 @@ function fixture() {
     'scripts/build/deployment-state.ts',
     'scripts/build/verify-service-worker-output.ts',
     'scripts/build/gifenc-pnn-NOTICES.txt',
+    'validation/windows/gif-quantization-owner-video.json',
   ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     copyFileSync(join(project, path), join(root, path));
@@ -61,6 +65,20 @@ function stub(path: string, contents: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `#!/bin/sh\n${contents}\n`);
   chmodSync(path, 0o755);
+}
+
+function declareSyntheticOwnerInput(root: string, bytes: Buffer): void {
+  writeFileSync(
+    join(root, 'validation/windows/gif-quantization-owner-video.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      input: {
+        path: 'validation/windows/private-inputs/motion-owner-video.mp4',
+        bytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      },
+    })
+  );
 }
 
 describe('direct Node script boundaries', () => {
@@ -422,8 +440,21 @@ export const quantize = () => {};
     writeFileSync(join(root, 'dist/assets/b.wasm'), 'same');
     writeFileSync(join(root, 'dist/assets/app.js'), 'fetch("/assets/b.wasm")');
     writeFileSync(join(root, 'dist/test-video-sample.mp4'), 'omit');
+    const privateBytes = Buffer.from('synthetic-private-owner-input');
+    declareSyntheticOwnerInput(root, privateBytes);
+    writeFileSync(join(root, 'public/preserved-original.mp4'), privateBytes);
+    mkdirSync(join(root, 'dist/nested'));
+    writeFileSync(join(root, 'dist/nested/arbitrary-name.bin'), privateBytes);
+    const safeBytes = Buffer.from(privateBytes);
+    safeBytes[0] = 0;
+    writeFileSync(join(root, 'dist/nested/safe-same-size.bin'), safeBytes);
     const result = run('scripts/build/postbuild.ts');
     expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Excluded 1 declared private input copies');
+    expect(result.stdout).not.toContain('arbitrary-name.bin');
+    expect(existsSync(join(root, 'dist/nested/arbitrary-name.bin'))).toBe(false);
+    expect(readFileSync(join(root, 'dist/nested/safe-same-size.bin'))).toEqual(safeBytes);
+    expect(readFileSync(join(root, 'public/preserved-original.mp4'))).toEqual(privateBytes);
     expect(readFileSync(join(root, 'dist/assets/app.js'), 'utf8')).toContain('/assets/a.wasm');
     expect(existsSync(join(root, 'dist/assets/b.wasm'))).toBe(false);
     expect(existsSync(join(root, 'dist/test-video-sample.mp4'))).toBe(false);
@@ -438,6 +469,37 @@ export const quantize = () => {};
     const invalid = run('scripts/build/postbuild.ts');
     expect(invalid.status).not.toBe(0);
     expect(invalid.stderr).toContain('Inline application scripts are forbidden');
+  });
+
+  it('fails postbuild when an exact private copy cannot be removed', () => {
+    const { root } = fixture();
+    mkdirSync(join(root, 'dist'));
+    const privateBytes = Buffer.from('synthetic-removal-failure');
+    declareSyntheticOwnerInput(root, privateBytes);
+    const copy = join(root, 'dist/arbitrary-name.bin');
+    writeFileSync(copy, privateBytes);
+    expect(() =>
+      postbuild(root, () => {
+        throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      })
+    ).toThrow('Declared private input exclusion failed (EACCES)');
+    expect(readFileSync(copy)).toEqual(privateBytes);
+    expect(existsSync(join(root, 'dist/deployment-state.json'))).toBe(false);
+  });
+
+  it('rejects a dist symlink without reading or removing its external target', () => {
+    const { root } = fixture();
+    mkdirSync(join(root, 'dist'));
+    mkdirSync(join(root, 'public'));
+    const privateBytes = Buffer.from('synthetic-symlink-target');
+    declareSyntheticOwnerInput(root, privateBytes);
+    const original = join(root, 'public/preserved-original.mp4');
+    writeFileSync(original, privateBytes);
+    symlinkSync(original, join(root, 'dist/linked-copy.bin'));
+    expect(() => excludeDeclaredPrivateInput(root, join(root, 'dist'))).toThrow(
+      'Declared private input exclusion failed'
+    );
+    expect(readFileSync(original)).toEqual(privateBytes);
   });
 
   it('checks matching and mismatching locale keys through the real CLI', () => {
