@@ -51,10 +51,12 @@ vi.mock('gifenc', async (importOriginal) => {
   const actual = await importOriginal<typeof import('gifenc')>();
   return {
     ...actual,
-    quantize: () => mocks.frames[mocks.currentFrame]!.palette,
     applyPalette: () => mocks.frames[mocks.currentFrame]!.indices.slice(),
   };
 });
+vi.mock('@services/gif-quantizer-experiment', () => ({
+  createExactRgb565Quantizer: () => () => mocks.frames[mocks.currentFrame]!.palette,
+}));
 
 import { encodeGif } from '@services/gif-encoder-service';
 import { GIFEncoder } from 'gifenc';
@@ -273,7 +275,7 @@ describe('GIF exact indexed representation', () => {
       { startUs: 25_000, endUs: 25_001, palette: [[2, 0, 0]], indices: Uint8Array.of(0) },
     ];
 
-    const frames = readGif(await encodeFrames(1, 1, 'low', 20_000)).frames;
+    const frames = readGif(await encodeFrames(1, 1, 'low', 16 * 1024 * 1024 + 20_000)).frames;
     expect(frames.map((frame) => frame.colors[0])).toEqual([0x010000]);
     expect(frames.map((frame) => frame.delayCs)).toEqual([3]);
   });
@@ -568,7 +570,7 @@ describe('GIF exact indexed representation', () => {
       },
     ];
 
-    const output = readGif(await encodeFrames(1, 1, 'low', 20_000));
+    const output = readGif(await encodeFrames(1, 1, 'low', 16 * 1024 * 1024 + 20_000));
 
     expect(output.frames.map((frame) => frame.colors)).toEqual([[0xff0000], [0x0000ff]]);
     expect(output.frames.map((frame) => frame.delayCs)).toEqual([10, 10]);

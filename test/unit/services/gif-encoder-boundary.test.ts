@@ -57,9 +57,17 @@ vi.mock('gifenc', async (importOriginal) => {
       }) as typeof encoder.writeFrame;
       return encoder;
     },
-    quantize: (...args: Parameters<typeof actual.quantize>) => {
-      mocks.quantizeInputs.push(args[0]);
-      return actual.quantize(...args);
+  };
+});
+vi.mock('@services/gif-quantizer-experiment', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@services/gif-quantizer-experiment')>();
+  return {
+    createExactRgb565Quantizer: () => {
+      const quantize = actual.createExactRgb565Quantizer();
+      return (rgba: Uint8Array, maxColors: number) => {
+        mocks.quantizeInputs.push(rgba);
+        return quantize(rgba, maxColors);
+      };
     },
   };
 });

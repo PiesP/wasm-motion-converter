@@ -25,7 +25,9 @@ vi.mock('gifenc', () => ({
     },
     writeFrame: mocks.writeFrame,
   }),
-  quantize: mocks.quantize,
+}));
+vi.mock('@services/gif-quantizer-experiment', () => ({
+  createExactRgb565Quantizer: () => mocks.quantize,
 }));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {

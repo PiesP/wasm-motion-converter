@@ -72,7 +72,9 @@ vi.mock('gifenc', () => ({
       writeFrame: mocks.writeFrame,
     };
   },
-  quantize: (rgba: Uint8Array) => [[rgba[0]!, rgba[0]!, rgba[0]!]],
+}));
+vi.mock('@services/gif-quantizer-experiment', () => ({
+  createExactRgb565Quantizer: () => (rgba: Uint8Array) => [[rgba[0]!, rgba[0]!, rgba[0]!]],
 }));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
@@ -189,7 +191,9 @@ describe('encodeGif output budgets', () => {
     mocks.state.frameCount = 1;
     mocks.state.bytesWrittenPerFrame = 5000;
     const assertAdditionalMemoryBytes = vi.fn((additionalBytes: number) => {
-      if (additionalBytes > 10_000) throw new Error('aggregate memory limit exceeded');
+      if (additionalBytes > 16 * 1024 * 1024 + 10_000) {
+        throw new Error('aggregate memory limit exceeded');
+      }
     });
 
     await expect(
@@ -204,7 +208,7 @@ describe('encodeGif output budgets', () => {
       })
     ).rejects.toThrow('aggregate memory limit exceeded');
 
-    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(12_293);
+    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(16 * 1024 * 1024 + 12_293);
     expect(mocks.state.cursor).toBe(0);
   });
 
