@@ -15,6 +15,243 @@ export const MOTION_SMALL_FIXTURE = 'public/test-video-ci-h264.mp4';
 const MAX_VERIFIED_OUTPUT_BYTES = 96 * 1024 * 1024;
 const CONVERSION_TIMEOUT_MS = 180_000;
 
+export type MotionWasmAsset = { path: string; sha256: string; size: number };
+type WasmCacheObservation = {
+  status:
+    | 'not-applicable'
+    | 'unavailable'
+    | 'missing'
+    | 'ambiguous'
+    | 'oversize'
+    | 'mismatch'
+    | 'matched';
+  path: string | null;
+  cacheName: string | null;
+  sha256: string | null;
+  bytes: number | null;
+  phase: 'after-first-before-warm' | 'after-warm';
+  observedAtUtc: string;
+  responseStatus: number | null;
+  contentType: string | null;
+  admission: string | null;
+  sourceHeader: string | null;
+  sourcePath: string | null;
+  sourceOriginMatches: boolean | null;
+  responseUrlEmpty: boolean | null;
+};
+type HostAssetRequests = { paths: string[]; overflow: boolean };
+
+/** Reads only an existing, source-bound CacheStorage key after download readiness. */
+async function readWasmCache(
+  page: Page,
+  asset: MotionWasmAsset | null,
+  phase: WasmCacheObservation['phase']
+): Promise<WasmCacheObservation> {
+  const observedAtUtc = new Date().toISOString();
+  if (!asset) {
+    return {
+      status: 'not-applicable',
+      path: null,
+      cacheName: null,
+      sha256: null,
+      bytes: null,
+      phase,
+      observedAtUtc,
+      responseStatus: null,
+      contentType: null,
+      admission: null,
+      sourceHeader: null,
+      sourcePath: null,
+      sourceOriginMatches: null,
+      responseUrlEmpty: null,
+    };
+  }
+  return page.evaluate(
+    async ({ expected, phase, observedAtUtc }) => {
+      const base = {
+        path: expected.path,
+        cacheName: null,
+        sha256: null,
+        bytes: null,
+        phase,
+        observedAtUtc,
+        responseStatus: null,
+        contentType: null,
+        admission: null,
+        sourceHeader: null,
+        sourcePath: null,
+        sourceOriginMatches: null,
+        responseUrlEmpty: null,
+      };
+      if (!('caches' in globalThis) || !globalThis.crypto?.subtle) {
+        return { ...base, status: 'unavailable' as const };
+      }
+      try {
+        const names = (await caches.keys()).filter((name) =>
+          name.startsWith('dropconvert-dynamic-')
+        );
+        if (names.length > 16) return { ...base, status: 'ambiguous' as const };
+        const key = new URL(expected.path, location.origin).href;
+        const matches: { name: string; response: Response }[] = [];
+        for (const name of names) {
+          const response = await caches.match(key, { cacheName: name });
+          if (response) matches.push({ name, response });
+        }
+        if (matches.length === 0) return { ...base, status: 'missing' as const };
+        if (matches.length !== 1) return { ...base, status: 'ambiguous' as const };
+        const { name, response } = matches[0]!;
+        const sourceHeader = response.headers.get('x-dropconvert-asset-source');
+        let sourcePath: string | null = null;
+        let sourceOriginMatches = false;
+        try {
+          const source = new URL(sourceHeader ?? '');
+          sourcePath = source.pathname;
+          sourceOriginMatches = source.origin === location.origin;
+        } catch {
+          // Preserve malformed cache metadata as an explicit mismatch.
+        }
+        const found = {
+          ...base,
+          cacheName: name,
+          responseStatus: response.status,
+          contentType: response.headers.get('content-type'),
+          admission: response.headers.get('x-dropconvert-asset-admission'),
+          sourceHeader,
+          sourcePath,
+          sourceOriginMatches,
+          responseUrlEmpty: response.url === '',
+        };
+        if (!response.body) return { ...found, status: 'mismatch' as const };
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let length = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            length += value.byteLength;
+            if (length > 128 * 1024) {
+              await reader.cancel();
+              return { ...found, status: 'oversize' as const, bytes: length };
+            }
+            chunks.push(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        const bytes = new Uint8Array(length);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        const sha256 = Array.from(new Uint8Array(digest), (byte) =>
+          byte.toString(16).padStart(2, '0')
+        ).join('');
+        const headersValid =
+          found.responseStatus === 200 &&
+          found.responseUrlEmpty &&
+          found.contentType?.split(';')[0]?.trim().toLowerCase() === 'application/wasm' &&
+          found.admission === 'body-checked-v1' &&
+          sourceHeader === key &&
+          found.sourcePath === expected.path &&
+          found.sourceOriginMatches;
+        return {
+          ...found,
+          status:
+            headersValid && length === expected.size && sha256 === expected.sha256
+              ? ('matched' as const)
+              : ('mismatch' as const),
+          sha256,
+          bytes: length,
+        };
+      } catch {
+        return { ...base, status: 'unavailable' as const };
+      }
+    },
+    { expected: asset, phase, observedAtUtc }
+  );
+}
+
+export function classifyWasmWarmCache({
+  asset,
+  first,
+  warm,
+  firstHost,
+  warmHost,
+  firstController,
+  warmController,
+}: {
+  asset: MotionWasmAsset | null;
+  first: WasmCacheObservation;
+  warm: WasmCacheObservation;
+  firstHost: HostAssetRequests;
+  warmHost: HostAssetRequests;
+  firstController: string | null;
+  warmController: string | null;
+}) {
+  const counts = {
+    firstHostCount: firstHost.paths.length,
+    warmHostCount: warmHost.paths.length,
+    newHostCount:
+      warmHost.paths.length >= firstHost.paths.length &&
+      firstHost.paths.every((path, index) => warmHost.paths[index] === path)
+        ? warmHost.paths.length - firstHost.paths.length
+        : null,
+  };
+  if (!asset) return { qualified: false, reason: 'no-gif-wasm-asset', ...counts };
+  const exactSourceHeader = (value: string | null) => {
+    try {
+      const source = new URL(value ?? '');
+      return source.pathname === asset.path && source.search === '' && source.hash === '';
+    } catch {
+      return false;
+    }
+  };
+  const verified = (entry: WasmCacheObservation, phase: WasmCacheObservation['phase']) =>
+    entry.status === 'matched' &&
+    entry.phase === phase &&
+    entry.path === asset.path &&
+    entry.sha256 === asset.sha256 &&
+    entry.bytes === asset.size &&
+    entry.responseStatus === 200 &&
+    entry.contentType?.split(';')[0]?.trim().toLowerCase() === 'application/wasm' &&
+    entry.admission === 'body-checked-v1' &&
+    exactSourceHeader(entry.sourceHeader) &&
+    entry.sourcePath === asset.path &&
+    entry.sourceOriginMatches === true &&
+    entry.responseUrlEmpty === true &&
+    entry.cacheName?.startsWith('dropconvert-dynamic-') === true;
+  if (!verified(first, 'after-first-before-warm') || !verified(warm, 'after-warm')) {
+    return { qualified: false, reason: 'cache-entry-unverified', ...counts };
+  }
+  if (
+    first.path !== asset.path ||
+    warm.path !== asset.path ||
+    first.sha256 !== asset.sha256 ||
+    warm.sha256 !== asset.sha256 ||
+    first.cacheName !== warm.cacheName
+  ) {
+    return { qualified: false, reason: 'cache-identity-mismatch', ...counts };
+  }
+  if (firstController !== '/service-worker.js' || warmController !== '/service-worker.js') {
+    return { qualified: false, reason: 'service-worker-uncontrolled', ...counts };
+  }
+  if (
+    firstHost.overflow ||
+    warmHost.overflow ||
+    warmHost.paths.length < firstHost.paths.length ||
+    firstHost.paths.some((path, index) => warmHost.paths[index] !== path)
+  ) {
+    return { qualified: false, reason: 'host-request-log-incomplete', ...counts };
+  }
+  if (warmHost.paths.length !== firstHost.paths.length) {
+    return { qualified: false, reason: 'new-host-wasm-request', ...counts };
+  }
+  return { qualified: true, reason: 'matched-cache-and-no-new-host-wasm-request', ...counts };
+}
+
 export type MotionWorkload = {
   id: 'primary-enabled' | 'small-enabled' | 'primary-off';
   fixture: string;
@@ -411,7 +648,8 @@ export async function measure(
   page: Page,
   workload: MotionWorkload,
   condition: 'cold-first-use' | 'fresh-context' | 'warm',
-  index: number
+  index: number,
+  wasmAsset: MotionWasmAsset | null = null
 ) {
   const rendererHeapBefore = await heapPoint(page);
   const before = await page.evaluate(() => {
@@ -502,6 +740,11 @@ export async function measure(
       serviceWorkerController: controller ? new URL(controller.scriptURL).pathname : null,
     };
   }, worker.url);
+  const wasmAssetCache = await readWasmCache(
+    page,
+    wasmAsset,
+    condition === 'warm' ? 'after-warm' : 'after-first-before-warm'
+  );
   assert(
     ready.atMs <= observation.readyMs,
     'Button was ready before its matching Blob URL existed'
@@ -531,7 +774,7 @@ export async function measure(
       completes: worker.completes,
       terminationCalls: worker.terminationCalls,
     },
-    cacheObservation,
+    cacheObservation: { ...cacheObservation, wasmAssetCache },
     memory: {
       rendererHeapBefore,
       rendererHeapAfterReady,
@@ -604,7 +847,8 @@ export async function exerciseMotionSignature(
   onSample: (sample: Awaited<ReturnType<typeof measure>>) => Promise<void>,
   output: string,
   diagnostics: MotionDiagnostic[],
-  mode: 'three-pair-cohort' | 'single-pair' | 'single-correctness' = 'three-pair-cohort'
+  mode: 'three-pair-cohort' | 'single-pair' | 'single-correctness' = 'three-pair-cohort',
+  wasmAsset: MotionWasmAsset | null = null
 ) {
   assert.equal(workloads.length, mode === 'three-pair-cohort' ? 3 : 1);
   const samples: Awaited<ReturnType<typeof measure>>[] = [];
@@ -697,13 +941,13 @@ export async function exerciseMotionSignature(
         mode !== 'three-pair-cohort' || workload.id === 'primary-enabled'
           ? 'cold-first-use'
           : 'fresh-context';
-      const sample = await measure(page, workload, condition, 0);
+      const sample = await measure(page, workload, condition, 0, wasmAsset);
       samples.push(sample);
       await onSample(sample);
       assertUsefulOutput(sample, workload);
       assertNoUnexpectedDiagnostics(diagnostic);
       if (mode !== 'single-correctness') {
-        const warm = await measure(page, workload, 'warm', 0);
+        const warm = await measure(page, workload, 'warm', 0, wasmAsset);
         samples.push(warm);
         await onSample(warm);
         assertUsefulOutput(warm, workload);
