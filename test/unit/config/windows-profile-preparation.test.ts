@@ -52,6 +52,35 @@ describe('Windows campaign preparation contract', () => {
     expect([...new Set(referenced)].sort()).toEqual([...profile.preparation.selector_files].sort());
   });
 
+  it('binds each quantization workload to one focused controller scenario', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'validation/windows/gif-quantization-owner-video.json'), 'utf8')
+    ) as { experiment: string; input: { sha256: string }; smallControl: { sha256: string } };
+    expect(manifest.experiment).toBe('gif-quantization-490');
+    expect(manifest.input.sha256).toBe(
+      'c1ebdf56c8af5d830c6b86689d2bff05cbc3f371da3b1c898c4cfad8a335373c'
+    );
+    expect(manifest.smallControl.sha256).toBe(
+      'de4c15ff513d41c964eadb5d45ce08030b2a94eea501e9f86edfd8a301e1411e'
+    );
+    for (const name of ['primary', 'secondary', 'small', 'default']) {
+      const scenario = `gif-quantization-${name}`;
+      const selected = profile.preparation.scenarios[scenario]!;
+      expect(selected.selector).toBe(`${scenario}.json`);
+      expect(selected.required_inputs).toContain(
+        'validation/windows/gif-quantization-owner-video.json'
+      );
+      expect(selected.required_inputs).toContain('validation/windows/private-inputs');
+      expect(selected.required_inputs).toContain('public/test-video-ci-h264.mp4');
+      expect(selected.required_inputs).toContain(`validation/windows/inputs/${scenario}.json`);
+      expect(profile.preparation.selector_files).toContain(selected.selector);
+    }
+    expect(source).toContain("scenario === 'gif-quantization-primary'");
+    expect(source).toContain("scenario === 'gif-quantization-secondary'");
+    expect(source).toContain("scenario === 'gif-quantization-small'");
+    expect(source).toContain("scenario === 'gif-quantization-default'");
+  });
+
   it('keeps settings-schema inputs scoped to the branch that executes it', () => {
     const selected = profile.preparation.scenarios['settings-schema']!;
     expect(selected.selector).toBe('settings-schema.json');

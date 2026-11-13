@@ -1,7 +1,8 @@
 # Private Windows validation inputs
 
 Stage only the byte-identical task-owned `motion-owner-video.mp4` copy here for
-the focused owner-video scenarios. Verify it against `../motion-owner-video.json`.
+the focused owner-video and GIF quantization scenarios. Verify it against
+`../motion-owner-video.json` or `../gif-quantization-owner-video.json`.
 Keep this dedicated directory free of unrelated files; the controller packages
 the declared directory as a private validation asset. Media is ignored and must
 never be committed, placed under `public/`, or published.
