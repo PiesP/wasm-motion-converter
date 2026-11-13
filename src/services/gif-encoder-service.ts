@@ -814,7 +814,8 @@ export async function encodeGif(
     ) {
       throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
     }
-    opts.assertAdditionalMemoryBytes?.(finalCopyPeakBytes);
+    // The conversion-local quantizer closure still owns its bin pool here.
+    opts.assertAdditionalMemoryBytes?.(finalCopyPeakBytes + GIF_EXACT_QUANTIZER_RESERVED_BYTES);
     const copyStart = opts.profileOperation ? performance.now() : null;
     const rawBytes = encoder.bytes();
     if (copyStart !== null) opts.profileOperation?.('outputCopy', performance.now() - copyStart);

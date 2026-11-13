@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 const mocks = vi.hoisted(() => {
   const state = {
     allocations: [] as number[],
+    bytesCalls: 0,
     bytesWrittenPerFrame: 16,
     capacity: 0,
     cursor: 0,
@@ -65,7 +66,10 @@ vi.mock('gifenc', () => ({
       },
     };
     return {
-      bytes: () => new Uint8Array(mocks.state.cursor),
+      bytes: () => {
+        mocks.state.bytesCalls++;
+        return new Uint8Array(mocks.state.cursor);
+      },
       bytesView: () => new Uint8Array(mocks.state.cursor),
       finish: () => mocks.stream.writeByte(0x3b),
       stream: mocks.stream,
@@ -126,6 +130,7 @@ const demux = {
 
 beforeEach(() => {
   mocks.state.allocations = [];
+  mocks.state.bytesCalls = 0;
   mocks.state.bytesWrittenPerFrame = 16;
   mocks.state.capacity = 0;
   mocks.state.cursor = 0;
@@ -210,6 +215,31 @@ describe('encodeGif output budgets', () => {
 
     expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(16 * 1024 * 1024 + 12_293);
     expect(mocks.state.cursor).toBe(0);
+  });
+
+  it('charges retained quantizer bins before the final output copy', async () => {
+    mocks.state.frameCount = 1;
+    const reserve = 16 * 1024 * 1024;
+    const assertAdditionalMemoryBytes = vi.fn((additionalBytes: number) => {
+      if (additionalBytes > reserve + 4_110) {
+        throw new Error('aggregate memory limit exceeded');
+      }
+    });
+
+    await expect(
+      encodeGif(demux, {
+        width: 1,
+        height: 1,
+        quality: 'low',
+        scale: 1,
+        maxFrames: 1,
+        maxOutputBytes: 8_192,
+        assertAdditionalMemoryBytes,
+      })
+    ).rejects.toThrow('aggregate memory limit exceeded');
+
+    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(reserve + 4_113);
+    expect(mocks.state.bytesCalls).toBe(0);
   });
 
   it('allows ordinary output within both limits', async () => {
