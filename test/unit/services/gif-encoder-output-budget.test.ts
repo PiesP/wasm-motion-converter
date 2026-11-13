@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     cursor: 0,
     frameCount: 2,
     inputPacketCount: 2,
+    simulateWasmGrowth: false,
   };
   let stream: {
     readonly buffer: { byteLength: number };
@@ -74,6 +75,24 @@ vi.mock('gifenc', () => ({
   },
   quantize: (rgba: Uint8Array) => [[rgba[0]!, rgba[0]!, rgba[0]!]],
 }));
+vi.mock('@services/gif-scalar-wasm', () => ({
+  createGifScalarQuantizer: async (
+    assertCapacity: (oldBytes: number, newBytes: number) => void,
+    setCapacity: (bytes: number) => void
+  ) => {
+    if (mocks.state.simulateWasmGrowth) {
+      assertCapacity(0, 8 * 1024 * 1024);
+      setCapacity(8 * 1024 * 1024);
+    }
+    return (rgba: Uint8Array) => {
+      if (mocks.state.simulateWasmGrowth) {
+        assertCapacity(8 * 1024 * 1024, 12 * 1024 * 1024);
+        setCapacity(12 * 1024 * 1024);
+      }
+      return [[rgba[0]!, rgba[0]!, rgba[0]!]];
+    };
+  },
+}));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     if (options.maxInputChunks && mocks.state.inputPacketCount > options.maxInputChunks) {
@@ -129,6 +148,7 @@ beforeEach(() => {
   mocks.state.cursor = 0;
   mocks.state.frameCount = 2;
   mocks.state.inputPacketCount = 2;
+  mocks.state.simulateWasmGrowth = false;
   mocks.writeFrame.mockClear();
 });
 
@@ -205,6 +225,31 @@ describe('encodeGif output budgets', () => {
     ).rejects.toThrow('aggregate memory limit exceeded');
 
     expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(12_293);
+    expect(mocks.state.cursor).toBe(0);
+  });
+
+  it('charges old and new WASM capacities with live scratch before growth', async () => {
+    mocks.state.frameCount = 1;
+    mocks.state.simulateWasmGrowth = true;
+    const assertAdditionalMemoryBytes = vi.fn((additionalBytes: number) => {
+      if (additionalBytes > 20 * 1024 * 1024) throw new Error('aggregate memory limit exceeded');
+    });
+
+    await expect(
+      encodeGif(demux, {
+        width: 1,
+        height: 1,
+        quality: 'low',
+        scale: 1,
+        maxFrames: 1,
+        maxOutputBytes: 8192,
+        assertAdditionalMemoryBytes,
+      })
+    ).rejects.toThrow('aggregate memory limit exceeded');
+
+    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(
+      20 * 1024 * 1024 + 4096 + 4 + 32 * 1024
+    );
     expect(mocks.state.cursor).toBe(0);
   });
 

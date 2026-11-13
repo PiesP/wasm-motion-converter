@@ -73,7 +73,7 @@ function extractUrl(pkgJson: Record<string, unknown>): string | null {
 
 function inferPurpose(name: string): string {
   const purposes: Record<string, string> = {
-    gifenc: 'GIF encoding (quantize, applyPalette, GIFEncoder)',
+    gifenc: 'GIF palette mapping and encoding; scalar WASM adapts its PNN quantizer',
     'wasm-webp': 'WebP encoding via WebAssembly (encodeRGB)',
     mediabunny: 'Video demuxing (Input, BufferSource, EncodedPacketSink)',
     'solid-js': 'UI framework (reactive signals, components)',
@@ -165,6 +165,10 @@ Bundled native source references and their attribution limits are recorded with 
     md += `- **Purpose:** ${entry.purpose}\n\n`;
     if (entry.name === 'mediabunny' || entry.name === 'wasm-webp') {
       md += `Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/patches/${entry.name}@${entry.version}.patch\n\n`;
+    }
+    if (entry.name === 'gifenc') {
+      md +=
+        'Local RGB565 PNN adaptation: `crates/gif-scalar-quantizer/src/lib.rs` (MIT); original gifenc notice follows.\n\n';
     }
     if (entry.name === 'wasm-webp') {
       if (entry.version !== '0.1.0') {

@@ -55,6 +55,9 @@ vi.mock('gifenc', async (importOriginal) => {
     applyPalette: () => mocks.frames[mocks.currentFrame]!.indices.slice(),
   };
 });
+vi.mock('@services/gif-scalar-wasm', () => ({
+  createGifScalarQuantizer: async () => () => mocks.frames[mocks.currentFrame]!.palette,
+}));
 
 import { encodeGif } from '@services/gif-encoder-service';
 import { GIFEncoder } from 'gifenc';

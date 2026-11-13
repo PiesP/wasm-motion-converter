@@ -42,7 +42,9 @@ Bundled native source references and their attribution limits are recorded with 
 - **Version:** 1.0.3
 - **License:** MIT
 - **Repository:** https://github.com/mattdesl/gifenc
-- **Purpose:** GIF encoding (quantize, applyPalette, GIFEncoder)
+- **Purpose:** GIF palette mapping and encoding; scalar WASM adapts its PNN quantizer
+
+Local RGB565 PNN adaptation: `crates/gif-scalar-quantizer/src/lib.rs` (MIT); original gifenc notice follows.
 
 ### LICENSE.md
 

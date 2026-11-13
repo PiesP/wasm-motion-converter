@@ -27,13 +27,14 @@ import {
   GIF_MIN_FRAME_DELAY_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
-import { applyPalette, GIFEncoder, quantize } from 'gifenc';
+import { applyPalette, GIFEncoder } from 'gifenc';
 
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames, type PresentationInterval } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
+import { createGifScalarQuantizer } from './gif-scalar-wasm';
 import { OutputLimitError, resolveOutputLimits } from './output-limits';
 
 const QUALITY_COLORS: Record<BaseEncoderOptions['quality'], number> = {
@@ -55,6 +56,8 @@ const QUALITY_DITHER_STRENGTH: Record<BaseEncoderOptions['quality'], number> = {
 
 /** Conservative allowance for the bounded 256-color remap and hash tables. */
 const GIF_PALETTE_COMPARISON_BYTES = 32 * 1024;
+/** Ordered number[][] conversion and retained GIF palettes (at most 256 colors). */
+const GIF_SCALAR_PALETTE_BYTES = 32 * 1024;
 
 interface GifEncoderOptions extends BaseEncoderOptions {
   /** Assert the aggregate Worker budget using the GIF stream's live peak bytes. */
@@ -278,18 +281,39 @@ export async function encodeGif(
   let lastIndexedData: Uint8Array | null = null;
   let liveIndexedBytes = 0;
   let comparisonWorkingBytes = 0;
+  let wasmCapacity = 0;
 
   const assertGifWorkingMemory = (
     streamPeakBytes: number,
     scratchBytes = exactRgbaScratch?.byteLength ?? 0,
-    indexedBytes = liveIndexedBytes + comparisonWorkingBytes
+    indexedBytes = liveIndexedBytes + comparisonWorkingBytes,
+    wasmPeakBytes = wasmCapacity
   ): void => {
-    const additionalBytes = streamPeakBytes + scratchBytes + indexedBytes;
+    const additionalBytes =
+      streamPeakBytes +
+      scratchBytes +
+      indexedBytes +
+      wasmPeakBytes +
+      (wasmPeakBytes > 0 ? GIF_SCALAR_PALETTE_BYTES : 0);
     if (!Number.isSafeInteger(additionalBytes)) {
       throw new RangeError('GIF working memory estimate exceeds the safe integer range');
     }
     opts.assertAdditionalMemoryBytes?.(additionalBytes);
   };
+
+  const quantizePalette = await createGifScalarQuantizer(
+    (oldBytes, newBytes) =>
+      assertGifWorkingMemory(
+        encoder.stream.buffer.byteLength,
+        exactRgbaScratch?.byteLength ?? 0,
+        liveIndexedBytes + comparisonWorkingBytes,
+        oldBytes + newBytes
+      ),
+    (bytes) => {
+      wasmCapacity = bytes;
+    },
+    signal
+  );
 
   // gifenc grows its stream automatically. Wrap every supported write method so
   // each logical write and any geometric capacity growth are authorized before
@@ -678,7 +702,7 @@ export async function encodeGif(
             // Quantize independently; only an exact post-quantization match may
             // extend the pending frame's source presentation interval.
             const quantizationStart = opts.profileOperation ? performance.now() : null;
-            const framePalette = quantize(exactRgbaScratch, maxColors, { format: 'rgb565' });
+            const framePalette = quantizePalette(exactRgbaScratch, maxColors);
             if (quantizationStart !== null) {
               opts.profileOperation?.(
                 'gifQuantization',
@@ -809,7 +833,9 @@ export async function encodeGif(
     ) {
       throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
     }
-    opts.assertAdditionalMemoryBytes?.(finalCopyPeakBytes);
+    opts.assertAdditionalMemoryBytes?.(
+      finalCopyPeakBytes + wasmCapacity + (wasmCapacity > 0 ? GIF_SCALAR_PALETTE_BYTES : 0)
+    );
     const copyStart = opts.profileOperation ? performance.now() : null;
     const rawBytes = encoder.bytes();
     if (copyStart !== null) opts.profileOperation?.('outputCopy', performance.now() - copyStart);

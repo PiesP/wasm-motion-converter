@@ -10,16 +10,12 @@ function rgba(...colors: Array<readonly [number, number, number]>): Uint8Array {
 
 describe('locked gifenc 1.0.3 rgb565 behavior', () => {
   it('retains the installed green packing mask and f64 rounding', () => {
-    expect(quantize(rgba([0, 0, 0], [0, 7, 0]), 2, { format: 'rgb565' })).toEqual([
-      [0, 4, 0],
-    ]);
+    expect(quantize(rgba([0, 0, 0], [0, 7, 0]), 2, { format: 'rgb565' })).toEqual([[0, 4, 0]]);
     expect(quantize(rgba([0, 0, 0], [0, 8, 0]), 2, { format: 'rgb565' })).toEqual([
       [0, 0, 0],
       [0, 8, 0],
     ]);
-    expect(quantize(rgba([0, 0, 0], [1, 1, 1]), 1, { format: 'rgb565' })).toEqual([
-      [1, 1, 1],
-    ]);
+    expect(quantize(rgba([0, 0, 0], [1, 1, 1]), 1, { format: 'rgb565' })).toEqual([[1, 1, 1]]);
   });
 
   it('retains ordered palette entries and first-pixel packed-key caching', () => {
@@ -37,11 +33,7 @@ describe('locked gifenc 1.0.3 rgb565 behavior', () => {
       [0, 0, 0],
       [0, 7, 0],
     ];
-    expect([...applyPalette(rgba([0, 0, 0], [0, 7, 0]), tiePalette, 'rgb565')]).toEqual([
-      0, 0,
-    ]);
-    expect([...applyPalette(rgba([0, 7, 0], [0, 0, 0]), tiePalette, 'rgb565')]).toEqual([
-      1, 1,
-    ]);
+    expect([...applyPalette(rgba([0, 0, 0], [0, 7, 0]), tiePalette, 'rgb565')]).toEqual([0, 0]);
+    expect([...applyPalette(rgba([0, 7, 0], [0, 0, 0]), tiePalette, 'rgb565')]).toEqual([1, 1]);
   });
 });

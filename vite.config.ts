@@ -37,6 +37,7 @@ export default defineConfig(({ command }) => {
         },
         'build:ci': {
           command: [
+            'vp run build:gif-wasm',
             'node --experimental-strip-types scripts/build/generate-licenses.ts',
             'vp build',
             'node --experimental-strip-types scripts/build/postbuild.ts',

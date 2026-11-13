@@ -63,6 +63,13 @@ vi.mock('gifenc', async (importOriginal) => {
     },
   };
 });
+vi.mock('@services/gif-scalar-wasm', async () => {
+  const gifenc = await import('gifenc');
+  return {
+    createGifScalarQuantizer: async () => (rgba: Uint8Array, colors: number) =>
+      gifenc.quantize(rgba, colors, { format: 'rgb565' }),
+  };
+});
 
 import { globalBufferPool } from '@services/buffer-pool';
 import { encodeGif } from '@services/gif-encoder-service';
