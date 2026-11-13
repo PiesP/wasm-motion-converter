@@ -38,6 +38,7 @@ function fixture() {
     'scripts/release/published-asset.ts',
     'scripts/build/deployment-state.ts',
     'scripts/build/verify-service-worker-output.ts',
+    'scripts/build/gifenc-pnn-NOTICES.txt',
   ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     copyFileSync(join(project, path), join(root, path));
@@ -193,6 +194,61 @@ describe('direct Node script boundaries', () => {
       expect(dated.status, dated.stderr).toBe(0);
       expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toBe(generated);
     }
+  });
+
+  it('retains gifenc MIT text and its source-pinned PNN attribution', () => {
+    const { root, run } = fixture();
+    mkdirSync(join(root, 'node_modules/gifenc/src'), { recursive: true });
+    mkdirSync(join(root, 'public'));
+    writeFileSync(
+      join(root, 'package.json'),
+      '{"type":"module","dependencies":{"gifenc":"1.0.3"}}'
+    );
+    const metadata = {
+      version: '1.0.3',
+      license: 'MIT',
+      repository: { url: 'https://github.com/mattdesl/gifenc' },
+    };
+    const metadataPath = join(root, 'node_modules/gifenc/package.json');
+    writeFileSync(metadataPath, JSON.stringify(metadata));
+    writeFileSync(
+      join(root, 'node_modules/gifenc/LICENSE'),
+      'MIT License\nCopyright (c) 2017 Matt DesLauriers\n'
+    );
+    const sourcePath = join(root, 'node_modules/gifenc/src/pnnquant2.js');
+    const source = `// Modified from:
+// https://github.com/mcychan/PnnQuant.js/blob/master/src/pnnquant.js
+
+/* Fast pairwise nearest neighbor based algorithm for multilevel thresholding
+Copyright (C) 2004-2019 Mark Tyler and Dmitry Groshev
+Copyright (c) 2018-2021 Miller Cy Chan
+* error measure; time used is proportional to number of bins squared - WJ */
+
+export const quantize = () => {};
+`;
+    writeFileSync(sourcePath, source);
+    const output = join(root, 'public/LICENSES.md');
+    const generated = run('scripts/build/generate-licenses.ts');
+    expect(generated.status, generated.stderr).toBe(0);
+    const notices = readFileSync(output, 'utf8');
+    expect(notices).toContain('MIT License');
+    expect(notices).toContain('Copyright (c) 2017 Matt DesLauriers');
+    expect(notices).toContain('Copyright (C) 2004-2019 Mark Tyler and Dmitry Groshev');
+    expect(notices).toContain('Copyright (c) 2018-2021 Miller Cy Chan');
+    expect(notices).toContain('https://github.com/mcychan/PnnQuant.js/blob/master/src/pnnquant.js');
+
+    writeFileSync(sourcePath, source.replace('Mark Tyler', 'Changed author'));
+    const changedHeader = run('scripts/build/generate-licenses.ts');
+    expect(changedHeader.status).toBe(1);
+    expect(changedHeader.stderr).toContain('Review changed gifenc PNN source header');
+    expect(readFileSync(output, 'utf8')).toBe(notices);
+
+    writeFileSync(sourcePath, source);
+    writeFileSync(metadataPath, JSON.stringify({ ...metadata, version: '1.0.4' }));
+    const changedVersion = run('scripts/build/generate-licenses.ts');
+    expect(changedVersion.status).toBe(1);
+    expect(changedVersion.stderr).toContain('Review PNN attribution for the new gifenc version');
+    expect(readFileSync(output, 'utf8')).toBe(notices);
   });
 
   it('includes the installed Vite helper owner notice when Vite is declared', () => {

@@ -4,7 +4,7 @@
 > Do not edit manually — run `vp run build` to regenerate.
 
 Declared runtime dependencies and their installed license/notice texts follow.
-Bundled native source references and their attribution limits are recorded with wasm-webp.
+Supplemental source attributions for gifenc and wasm-webp follow their installed notices.
 
 ## @piesp/browser-core
 
@@ -68,6 +68,19 @@ Local RGB565 PNN adaptation: `crates/gif-scalar-quantizer/src/lib.rs` (MIT); ori
     DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
     OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
     OR OTHER DEALINGS IN THE SOFTWARE.
+
+### PNN source attribution
+
+    PNN attribution recorded in the installed gifenc@1.0.3 source.
+    Source: src/pnnquant2.js in https://github.com/mattdesl/gifenc
+
+    // Modified from:
+    // https://github.com/mcychan/PnnQuant.js/blob/master/src/pnnquant.js
+
+    /* Fast pairwise nearest neighbor based algorithm for multilevel thresholding
+    Copyright (C) 2004-2019 Mark Tyler and Dmitry Groshev
+    Copyright (c) 2018-2021 Miller Cy Chan
+    * error measure; time used is proportional to number of bins squared - WJ */
 
 ## mediabunny
 

@@ -9,7 +9,6 @@ node_modules/
 # Build output
 dist/
 /crates/gif-scalar-quantizer/target/
-/src/services/gif-scalar-quantizer.wasm
 /build/
 /release-bundle/
 .vite-sw-temp/

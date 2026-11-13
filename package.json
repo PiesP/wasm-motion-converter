@@ -33,6 +33,8 @@
     "circular": "vp lint src --deny-warnings",
     "prebuild": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts && node --experimental-strip-types scripts/build/generate-licenses.ts && vp run quality",
     "build:gif-wasm": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts",
+    "build:gif-wasm:check": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts --check",
+    "build:gif-wasm:generate": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts --generate",
     "build": "vp build",
     "postbuild": "node --experimental-strip-types scripts/build/postbuild.ts",
     "preview": "vp preview",

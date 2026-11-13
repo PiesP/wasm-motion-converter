@@ -131,6 +131,9 @@ jobs:
           rustup toolchain install 1.99.1 --profile minimal
           rustup target add wasm32-unknown-unknown --toolchain 1.99.1
 
+      - name: 🔒 Rebuild and compare vendored GIF WASM
+        run: vp run build:gif-wasm:check
+
       - name: 🎭 Install Chromium for Browser Mode coverage
         run: vp exec playwright install --with-deps chromium
 
@@ -174,6 +177,9 @@ jobs:
         run: |
           rustup toolchain install 1.99.1 --profile minimal
           rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+
+      - name: 🔒 Rebuild and compare vendored GIF WASM
+        run: vp run build:gif-wasm:check
 
       - name: 🎭 Resolve installed Playwright version
         id: playwright
@@ -233,6 +239,9 @@ jobs:
         run: |
           rustup toolchain install 1.99.1 --profile minimal
           rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+
+      - name: 🔒 Rebuild and compare vendored GIF WASM
+        run: vp run build:gif-wasm:check
 
       - name: 🏗️ Build app
         run: vp run build:ci

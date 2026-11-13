@@ -173,6 +173,10 @@ jobs:
           rustup toolchain install 1.99.1 --profile minimal
           rustup target add wasm32-unknown-unknown --toolchain 1.99.1
 
+      - name: 🔒 Rebuild and compare vendored GIF WASM
+        if: ${{ needs.changes.outputs.unit == 'true' }}
+        run: vp run build:gif-wasm:check
+
       - name: Record release setup inputs
         if: ${{ needs.changes.outputs.unit == 'true' }}
         run: sha256sum .node-version package.json pnpm-lock.yaml pnpm-workspace.yaml > "$RUNNER_TEMP/release-setup-inputs.sha256"
@@ -236,6 +240,10 @@ jobs:
         run: |
           rustup toolchain install 1.99.1 --profile minimal
           rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+
+      - name: 🔒 Rebuild and compare vendored GIF WASM
+        if: ${{ needs.changes.outputs.e2e == 'true' }}
+        run: vp run build:gif-wasm:check
 
       - name: 🎭 Resolve installed Playwright version
         id: playwright
@@ -303,6 +311,10 @@ jobs:
         run: |
           rustup toolchain install 1.99.1 --profile minimal
           rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+
+      - name: 🔒 Rebuild and compare vendored GIF WASM
+        if: ${{ needs.changes.outputs.build == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/master') }}
+        run: vp run build:gif-wasm:check
 
       - name: 🏗️ Build app
         if: ${{ needs.changes.outputs.build == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/master') }}
