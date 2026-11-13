@@ -6,14 +6,19 @@ import { deepStrictEqual } from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  closeSync,
+  constants,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import type { Stats } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -53,10 +58,39 @@ const wasmRuntime = (
   }
 ).WebAssembly;
 
+function sameFile(left: Stats, right: Stats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+export function readOpenedRegularFile(fd: number, path: string): Buffer {
+  const opened = fstatSync(fd);
+  const pathname = lstatSync(path);
+  if (!opened.isFile() || !pathname.isFile() || !sameFile(opened, pathname)) {
+    throw new Error(`GIF scalar WASM requires an unchanged regular file: ${path}`);
+  }
+  const bytes = readFileSync(fd);
+  if (!sameFile(opened, fstatSync(fd)) || !sameFile(opened, lstatSync(path))) {
+    throw new Error(`GIF scalar WASM file changed while reading: ${path}`);
+  }
+  return bytes;
+}
+
 function readRegularFile(path: string): Buffer {
-  if (!lstatSync(path).isFile())
-    throw new Error(`GIF scalar WASM requires a regular file: ${path}`);
-  return readFileSync(path);
+  const fd = openSync(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
+  );
+  try {
+    return readOpenedRegularFile(fd, path);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function sha256(bytes: Uint8Array): string {

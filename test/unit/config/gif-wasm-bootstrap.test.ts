@@ -1,11 +1,16 @@
 import { spawnSync } from 'node:child_process';
 import {
   appendFileSync,
+  closeSync,
+  constants,
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,6 +22,7 @@ import {
   assertClosedCompilationInputs,
   assertPinnedToolchain,
   pinnedCargoEnvironment,
+  readOpenedRegularFile,
 } from '../../../scripts/build/build-gif-scalar-wasm';
 
 const sourceRoot = resolve(import.meta.dirname, '../../..');
@@ -64,6 +70,22 @@ afterEach(() => {
 });
 
 describe('GIF WASM source bootstrap', () => {
+  it('rejects a path replaced after opening its source file', () => {
+    const root = fixture();
+    const source = join(root, 'crates/gif-scalar-quantizer/Cargo.lock');
+    const target = join(root, 'private-target');
+    writeFileSync(target, 'synthetic-private-target');
+    const fd = openSync(source, constants.O_RDONLY);
+    try {
+      unlinkSync(source);
+      symlinkSync(target, source);
+      expect(() => readOpenedRegularFile(fd, source)).toThrow('unchanged regular file');
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(target, 'utf8')).toBe('synthetic-private-target');
+  });
+
   it('ignores external Cargo state for Node verification but rejects it for regeneration', () => {
     for (const [path, contents] of [
       ['.cargo/config.toml', '[build]\nrustflags = []\n'],

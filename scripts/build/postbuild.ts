@@ -27,7 +27,7 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fingerprintedAssetHeaders, writeDeploymentState } from './deployment-state.ts';
 import { verifyServiceWorkerOutput } from './verify-service-worker-output.ts';
 
-type PrivateInputFingerprint = { bytes: number; sha256: string };
+export type PrivateInputFingerprint = { bytes: number; sha256: string };
 
 function declaredPrivateInput(root: string): PrivateInputFingerprint {
   const declaration = JSON.parse(
@@ -68,39 +68,46 @@ function sameFile(left: Stats, right: Stats): boolean {
 }
 
 function matchesPrivateInput(path: string, expected: PrivateInputFingerprint): boolean {
-  const before = lstatSync(path);
-  if (!before.isFile()) throw new Error('Unexpected non-file in dist');
-  if (before.size !== expected.bytes) return false;
   const fd = openSync(
     path,
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
   );
-  let digest: string;
   try {
-    const opened = fstatSync(fd);
-    if (!opened.isFile() || !sameFile(before, opened)) {
-      throw new Error('Private input candidate changed before reading');
-    }
-    const hash = createHash('sha256');
-    const chunk = Buffer.allocUnsafe(64 * 1024);
-    let offset = 0;
-    while (offset < expected.bytes) {
-      const count = readSync(fd, chunk, 0, Math.min(chunk.length, expected.bytes - offset), offset);
-      if (count === 0) throw new Error('Private input candidate truncated while reading');
-      hash.update(chunk.subarray(0, count));
-      offset += count;
-    }
-    if (!sameFile(opened, fstatSync(fd))) {
-      throw new Error('Private input candidate changed while reading');
-    }
-    digest = hash.digest('hex');
+    return matchesOpenedPrivateInput(fd, path, expected);
   } finally {
     closeSync(fd);
   }
-  if (!sameFile(before, lstatSync(path))) {
-    throw new Error('Private input candidate changed before exclusion');
+}
+
+export function matchesOpenedPrivateInput(
+  fd: number,
+  path: string,
+  expected: PrivateInputFingerprint
+): boolean {
+  const opened = fstatSync(fd);
+  const pathname = lstatSync(path);
+  if (!opened.isFile() || !pathname.isFile() || !sameFile(opened, pathname)) {
+    throw new Error('Private input candidate changed before reading');
   }
-  return digest === expected.sha256;
+  if (opened.size !== expected.bytes) {
+    if (!sameFile(opened, fstatSync(fd)) || !sameFile(opened, lstatSync(path))) {
+      throw new Error('Private input candidate changed before exclusion');
+    }
+    return false;
+  }
+  const hash = createHash('sha256');
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  let offset = 0;
+  while (offset < expected.bytes) {
+    const count = readSync(fd, chunk, 0, Math.min(chunk.length, expected.bytes - offset), offset);
+    if (count === 0) throw new Error('Private input candidate truncated while reading');
+    hash.update(chunk.subarray(0, count));
+    offset += count;
+  }
+  if (!sameFile(opened, fstatSync(fd)) || !sameFile(opened, lstatSync(path))) {
+    throw new Error('Private input candidate changed while reading');
+  }
+  return hash.digest('hex') === expected.sha256;
 }
 
 export function excludeDeclaredPrivateInput(
@@ -123,7 +130,7 @@ export function excludeDeclaredPrivateInput(
         const state = lstatSync(path);
         if (state.isDirectory()) walk(path);
         else if (state.isFile()) {
-          if (state.size === expected.bytes && matchesPrivateInput(path, expected)) {
+          if (matchesPrivateInput(path, expected)) {
             remove(path);
             removed += 1;
           }

@@ -16,7 +16,7 @@
     "crates/gif-scalar-quantizer/Cargo.lock": "c51878d6042db126c8210ce237011bba55b7224d8db874eeab2b588caacafccc",
     "crates/gif-scalar-quantizer/rust-toolchain.toml": "60c5407645e5d56f600e6ae713f0afc4aebbb858c5ceeef4a79c22b7dd2b51c9",
     "crates/gif-scalar-quantizer/src/lib.rs": "af02bda75ff7516b50f4829ae7f1136433db920ee0e122bfc817405bf32997c3",
-    "scripts/build/build-gif-scalar-wasm.ts": "78374a2fbc6dde49192be9cd004a4f10f63df0f9dc4230ce039a6a6213a622cb"
+    "scripts/build/build-gif-scalar-wasm.ts": "370a0444e2e202aa7f970fdc64f2990edc1bad444c0a3de0420fec09d7c0f612"
   },
   "artifact": {
     "sha256": "fb6b33b702fb4aae6a0e9f2cc36a799c16ef6db46be942ac2fa409a9795264c3",

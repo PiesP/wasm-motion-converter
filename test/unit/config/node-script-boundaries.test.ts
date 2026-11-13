@@ -2,14 +2,18 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
+  closeSync,
+  constants,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,7 +21,11 @@ import { dirname, join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vite-plus/test';
 
-import { excludeDeclaredPrivateInput, postbuild } from '../../../scripts/build/postbuild';
+import {
+  excludeDeclaredPrivateInput,
+  matchesOpenedPrivateInput,
+  postbuild,
+} from '../../../scripts/build/postbuild';
 
 const project = resolve(import.meta.dirname, '../../..');
 const roots: string[] = [];
@@ -500,6 +508,31 @@ export const quantize = () => {};
       'Declared private input exclusion failed'
     );
     expect(readFileSync(original)).toEqual(privateBytes);
+  });
+
+  it('rejects a private candidate path replaced after its file is opened', () => {
+    const { root } = fixture();
+    mkdirSync(join(root, 'dist'));
+    mkdirSync(join(root, 'public'));
+    const bytes = Buffer.from('synthetic-opened-candidate');
+    const path = join(root, 'dist/candidate.bin');
+    const target = join(root, 'public/private-target');
+    writeFileSync(path, bytes);
+    writeFileSync(target, 'synthetic-private-target');
+    const fd = openSync(path, constants.O_RDONLY);
+    try {
+      unlinkSync(path);
+      symlinkSync(target, path);
+      expect(() =>
+        matchesOpenedPrivateInput(fd, path, {
+          bytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        })
+      ).toThrow('changed before reading');
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(target, 'utf8')).toBe('synthetic-private-target');
   });
 
   it('checks matching and mismatching locale keys through the real CLI', () => {
