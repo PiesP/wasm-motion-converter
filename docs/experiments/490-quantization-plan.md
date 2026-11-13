@@ -46,11 +46,18 @@ The helper calls the second conversion `warm` because it is in the same
 document; that label alone does not prove a browser cache hit. Classify each
 Worker URL using its Resource Timing transfer/delivery fields, the static
 server's request list before and after the pair, and service-worker controller
-state. A zero-transfer resource entry with a body and no controlling service
-worker, or an explicit cache delivery type under the same condition, supports
-browser-cache classification. New static-server requests or ambiguous/missing
-signals remain separately reported. Do not call an unclassified sample a
-warm-cache result or use it to satisfy a cache-specific gate.
+state. A pre-candidate amendment (private record SHA-256
+`a2ebe8fe0d5ba5274f4f4a7b231f60c15aa146917e2f64c4ea5bbd0179c45eaa`)
+also admits a distinct service-worker CacheStorage class: the exact Worker
+resource must report `deliveryType: cache-storage`, retain the same controlling
+service worker, and add no host request for its source-bound Worker asset. With
+no controller, an explicit browser cache delivery type or zero transfer with a
+positive encoded body and no new host request supports the separate browser
+HTTP-cache class. New host requests, overflow, or ambiguous or missing signals
+remain unqualified. The amendment was frozen after baseline row 1 and before
+any candidate timing; it changed no numeric gate or execution limit. The
+original plan's browser-cache-only wording is preserved in its recorded digest
+`e79fe1d071312c316289d279b6ddeb8e8f77ab3ff0099c076768b102a9c5bdf7`.
 
 Adopt TypeScript only if the primary warm median saves more than 5 ms and more
 than `3 × max(baseline MAD, candidate MAD)`, with the added maintenance,
