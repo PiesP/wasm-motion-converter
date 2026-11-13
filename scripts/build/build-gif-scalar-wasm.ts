@@ -207,6 +207,7 @@ function verifyVendored(): Buffer {
 function compilePinned(): Buffer {
   // Cargo also reads configuration from directories above the checkout.
   assertClosedCompilationInputs(root, true);
+  assertPinnedToolchain(readRegularFile(join(crate, 'rust-toolchain.toml')).toString('utf8'));
   const temporary = mkdtempSync(join(tmpdir(), 'wmc-gif-wasm-'));
   let completed = false;
   try {
@@ -240,8 +241,9 @@ function compilePinned(): Buffer {
 export function buildGifScalarWasm(mode: 'verify' | 'check' | 'generate' = 'verify'): void {
   if (mode === 'generate') {
     const bytes = compilePinned();
+    const manifest = `${JSON.stringify(expectedProvenance(bytes), null, 2)}\n`;
     writeFileSync(output, bytes);
-    writeFileSync(provenance, `${JSON.stringify(expectedProvenance(bytes), null, 2)}\n`);
+    writeFileSync(provenance, manifest);
   } else {
     const vendored = verifyVendored();
     if (mode === 'check') {

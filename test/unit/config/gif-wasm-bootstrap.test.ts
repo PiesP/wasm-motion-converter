@@ -116,6 +116,33 @@ describe('GIF WASM source bootstrap', () => {
     }
   });
 
+  it('leaves the vendored files untouched when explicit generation finds a wrong toolchain', () => {
+    const root = fixture();
+    const script = join(root, 'scripts/build/build-gif-scalar-wasm.ts');
+    const asset = join(root, 'src/services/gif-scalar-quantizer.wasm');
+    const manifest = join(root, 'crates/gif-scalar-quantizer/wasm-provenance.json');
+    const originalAsset = readFileSync(asset);
+    const originalManifest = readFileSync(manifest);
+    writeFileSync(
+      join(root, 'crates/gif-scalar-quantizer/rust-toolchain.toml'),
+      '[toolchain]\nchannel = "1.98.0"\ntargets = ["wasm32-unknown-unknown"]\nprofile = "minimal"\n'
+    );
+    const result = spawnSync(
+      process.execPath,
+      ['--experimental-strip-types', script, '--generate'],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, PATH: join(root, 'no-compiler-on-path') },
+      }
+    );
+    if (result.error) throw result.error;
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('Rust toolchain pin differs');
+    expect(readFileSync(asset).equals(originalAsset)).toBe(true);
+    expect(readFileSync(manifest).equals(originalManifest)).toBe(true);
+  });
+
   it('removes ambient Cargo and Rust compiler overrides from regeneration', () => {
     const env = pinnedCargoEnvironment('/isolated', {
       PATH: '/tools',

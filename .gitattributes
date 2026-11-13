@@ -19,6 +19,11 @@
 *.html text eol=lf
 *.md text eol=lf
 
+# Source-bound GIF scalar WASM inputs and supplemental notice
+crates/gif-scalar-quantizer/src/lib.rs text eol=lf
+crates/gif-scalar-quantizer/Cargo.lock text eol=lf
+scripts/build/gifenc-pnn-NOTICES.txt text eol=lf
+
 # Binary
 *.png binary
 *.jpg binary
