@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { describe, expect, it, vi } from 'vite-plus/test';
+import { readFileSync } from 'node:fs';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
@@ -51,6 +53,21 @@ vi.mock('@services/streaming-webp-encoder', async (importOriginal) => {
 
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebp } from '@services/webp-encoder-service';
+
+const wasmUrl = new URL('../../../src/services/gif-scalar-quantizer.wasm', import.meta.url);
+const wasmBytes = readFileSync(wasmUrl);
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+    expect(input).toBe(wasmUrl.href);
+    return new Response(wasmBytes, {
+      status: 200,
+      headers: { 'content-type': 'application/wasm' },
+    });
+  });
+});
+
+afterEach(() => vi.unstubAllGlobals());
 
 const demux = {
   chunks: [],
