@@ -257,10 +257,14 @@ impl ResourcePlan {
     }
 
     /// Recheck observed WebAssembly.Memory capacity after allocation or growth.
-    /// This does not prove Rust allocator use or browser/GPU process peak.
+    /// The projected capacity is a pre-admitted upper reservation, not a lower
+    /// bound on actual allocation. Charge the full projection in the aggregate;
+    /// the caller must measure capacity at bounded stage boundaries. This does
+    /// not prove Rust allocator use or browser/GPU process peak.
     pub(crate) fn admit_actual_capacity(self, actual_capacity: u32) -> Result<(), Status> {
         let actual = u64::from(actual_capacity);
-        if actual % PAGE != 0 || actual < u64::from(self.linear_capacity_bytes) {
+        let projected = u64::from(self.linear_capacity_bytes);
+        if actual == 0 || actual % PAGE != 0 || actual > projected {
             return Err(Status::MemoryAdmission);
         }
         let aggregate = add(
@@ -269,11 +273,11 @@ impl ResourcePlan {
                 u64::from(self.request.external_live_bytes),
             )?,
             add(
-                add(u64::from(self.request.retained_output_bytes), actual)?,
+                add(u64::from(self.request.retained_output_bytes), projected)?,
                 u64::from(self.host_output_copy_bytes),
             )?,
         )?;
-        if actual > MAX_LINEAR_BYTES || aggregate > CONVERSION_BUDGET_BYTES {
+        if projected > MAX_LINEAR_BYTES || aggregate > CONVERSION_BUDGET_BYTES {
             return Err(Status::MemoryAdmission);
         }
         Ok(())
@@ -420,8 +424,19 @@ mod tests {
         assert!(final_plan
             .admit_actual_capacity(final_plan.linear_capacity_bytes)
             .is_ok());
+        assert!(final_plan
+            .admit_actual_capacity(final_plan.linear_capacity_bytes - PAGE as u32)
+            .is_ok());
         assert_eq!(
-            final_plan.admit_actual_capacity(final_plan.linear_capacity_bytes - PAGE as u32),
+            final_plan.admit_actual_capacity(0),
+            Err(Status::MemoryAdmission)
+        );
+        assert_eq!(
+            final_plan.admit_actual_capacity(final_plan.linear_capacity_bytes + PAGE as u32),
+            Err(Status::MemoryAdmission)
+        );
+        assert_eq!(
+            final_plan.admit_actual_capacity(final_plan.linear_capacity_bytes - 1),
             Err(Status::MemoryAdmission)
         );
         let tight = ResourcePlan::checked(Request {
