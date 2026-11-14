@@ -25,7 +25,8 @@
       "trim-submission.json",
       "webp-initialization.json",
       "motion-signature-owner-video.json",
-      "motion-signature-owner-recovery.json"
+      "motion-signature-owner-recovery.json",
+      "gif-owned-fallback-recovery.json"
     ],
     "scenarios": {
       "gif-quantization-primary": {
@@ -218,6 +219,25 @@
           "validation/windows/private-inputs",
           "validation/windows/motion-owner-video.json",
           "validation/windows/inputs/motion-signature-owner-recovery.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
+      "gif-owned-fallback-recovery": {
+        "selector": "gif-owned-fallback-recovery.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "validation/windows/private-inputs",
+          "validation/windows/motion-owner-video.json",
+          "validation/windows/inputs/gif-owned-fallback-recovery.json"
         ],
         "generated_assets": ["dist"],
         "bundle_asset_policy": "source-modules-and-required-inputs",
