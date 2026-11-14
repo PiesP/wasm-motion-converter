@@ -253,7 +253,7 @@ pub fn parse_moov(data: &[u8]) -> Result<(Track, Option<(usize, usize)>), Error>
     if movie_scale == 0 {
         return Err(Error::Invalid);
     }
-    let trex = child(data, *b"mvex")?;
+    let mvex = child(data, *b"mvex")?;
     let children = atoms(data)?;
     for atom in children {
         if atom.kind != *b"trak" {
@@ -282,9 +282,17 @@ pub fn parse_moov(data: &[u8]) -> Result<(Track, Option<(usize, usize)>), Error>
         let minf = required(mdia, *b"minf")?;
         let stbl = required(minf, *b"stbl")?;
         let sample = sample_description(required(stbl, *b"stsd")?)?;
-        let defaults = trex
-            .and_then(|mvex| child(mvex, *b"trex").ok().flatten())
-            .filter(|entry| u32be(entry, 4).ok() == Some(track_id));
+        let mut defaults = None;
+        if let Some(mvex) = mvex {
+            for entry in atoms(mvex)? {
+                if entry.kind != *b"trex" || u32be(entry.data, 4)? != track_id {
+                    continue;
+                }
+                if defaults.replace(entry.data).is_some() {
+                    return Err(Error::Invalid);
+                }
+            }
+        }
         let (fragment_default_duration, fragment_default_size, fragment_default_flags) =
             if let Some(entry) = defaults {
                 if u32be(entry, 8)? != 1 {
@@ -767,6 +775,105 @@ mod tests {
         let (edited, _) = parse_moov(&moov(true)).unwrap();
         assert_eq!(edited.edit_shift, 500);
         assert_eq!(edited.duration, 0);
+    }
+
+    #[test]
+    fn fragmented_video_uses_its_own_trex_after_audio_defaults() {
+        fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut bytes = Vec::with_capacity(body.len() + 8);
+            bytes.extend_from_slice(&((body.len() + 8) as u32).to_be_bytes());
+            bytes.extend_from_slice(kind);
+            bytes.extend_from_slice(body);
+            bytes
+        }
+        fn moov(video_trex_count: usize) -> Vec<u8> {
+            let mut mvhd = [0; 20];
+            mvhd[12..16].copy_from_slice(&1000u32.to_be_bytes());
+
+            let mut audio_hdlr = [0; 12];
+            audio_hdlr[8..12].copy_from_slice(b"soun");
+            let audio_trak = atom(b"trak", &atom(b"mdia", &atom(b"hdlr", &audio_hdlr)));
+
+            let mut tkhd = [0; 60];
+            tkhd[12..16].copy_from_slice(&2u32.to_be_bytes());
+            let mut mdhd = [0; 20];
+            mdhd[12..16].copy_from_slice(&1000u32.to_be_bytes());
+            let mut video_hdlr = [0; 12];
+            video_hdlr[8..12].copy_from_slice(b"vide");
+            let mut entry = [0; 86];
+            entry[32..34].copy_from_slice(&16u16.to_be_bytes());
+            entry[34..36].copy_from_slice(&16u16.to_be_bytes());
+            let mut entry = [entry.as_slice(), atom(b"vpcC", &[1]).as_slice()].concat();
+            let entry_len = entry.len() as u32;
+            entry[..4].copy_from_slice(&entry_len.to_be_bytes());
+            entry[4..8].copy_from_slice(b"vp09");
+            let mut stsd = vec![0; 8];
+            stsd[4..8].copy_from_slice(&1u32.to_be_bytes());
+            stsd.extend_from_slice(&entry);
+            let stbl = atom(b"stbl", &atom(b"stsd", &stsd));
+            let minf = atom(b"minf", &stbl);
+            let video_mdia = atom(
+                b"mdia",
+                &[atom(b"hdlr", &video_hdlr), atom(b"mdhd", &mdhd), minf].concat(),
+            );
+            let video_trak = atom(b"trak", &[atom(b"tkhd", &tkhd), video_mdia].concat());
+
+            let mut audio_trex = [0; 24];
+            audio_trex[4..8].copy_from_slice(&1u32.to_be_bytes());
+            audio_trex[8..12].copy_from_slice(&1u32.to_be_bytes());
+            audio_trex[12..16].copy_from_slice(&100u32.to_be_bytes());
+            audio_trex[16..20].copy_from_slice(&17u32.to_be_bytes());
+            let mut video_trex = [0; 24];
+            video_trex[4..8].copy_from_slice(&2u32.to_be_bytes());
+            video_trex[8..12].copy_from_slice(&1u32.to_be_bytes());
+            video_trex[12..16].copy_from_slice(&40u32.to_be_bytes());
+            video_trex[16..20].copy_from_slice(&3u32.to_be_bytes());
+            video_trex[20..24].copy_from_slice(&0x0001_0000u32.to_be_bytes());
+            let mut mvex = atom(b"trex", &audio_trex);
+            for _ in 0..video_trex_count {
+                mvex.extend_from_slice(&atom(b"trex", &video_trex));
+            }
+            [
+                atom(b"mvhd", &mvhd),
+                audio_trak,
+                video_trak,
+                atom(b"mvex", &mvex),
+            ]
+            .concat()
+        }
+
+        let (mut video, table) = parse_moov(&moov(1)).unwrap();
+        assert_eq!(table, None);
+        assert_eq!(video.track_id, 2);
+        assert_eq!(video.fragment_default_duration, 40);
+        assert_eq!(video.fragment_default_size, 3);
+        assert_eq!(video.fragment_default_flags, 0x0001_0000);
+
+        // The fragment provides neither duration, size nor flags per sample.
+        let mut tfhd = vec![0, 0, 0, 1];
+        tfhd.extend_from_slice(&2u32.to_be_bytes());
+        tfhd.extend_from_slice(&500u64.to_be_bytes());
+        let tfdt = [0; 8];
+        let mut trun = [0; 8];
+        trun[4..8].copy_from_slice(&1u32.to_be_bytes());
+        let traf = atom(
+            b"traf",
+            &[
+                atom(b"tfhd", &tfhd),
+                atom(b"tfdt", &tfdt),
+                atom(b"trun", &trun),
+            ]
+            .concat(),
+        );
+        let mut fragment = FragmentBuilder::new(traf, 0, 1000).unwrap();
+        assert!(fragment.advance(&mut video, 64).unwrap());
+        assert_eq!(video.packets.len(), 1);
+        assert_eq!(video.packets[0].offset, 500);
+        assert_eq!(video.packets[0].size, 3);
+        assert_eq!(video.packets[0].duration, 40);
+        assert!(!video.packets[0].key);
+
+        assert_eq!(parse_moov(&moov(2)).err(), Some(Error::Invalid));
     }
 
     #[test]
