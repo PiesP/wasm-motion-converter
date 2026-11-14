@@ -38,6 +38,7 @@ import {
 } from './cancellation-inspector.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
 import {
+  assertUsefulOutput,
   classifyWasmWarmCache,
   choose as chooseMotionOption,
   exerciseMotionSignature,
@@ -49,6 +50,7 @@ import {
   MOTION_SIGNATURE_SCENARIO,
   MOTION_SMALL_FIXTURE,
   type MotionDiagnostic,
+  type MotionWorkload,
   type MotionWasmAsset,
 } from './motion-signature.ts';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
@@ -3025,6 +3027,252 @@ async function finishMotionProfile({
   if (failed) throw failure;
 }
 
+type OwnedCancellationSetting = {
+  id: 'primary' | 'default' | 'small';
+  workload: MotionWorkload;
+  quality: 'low' | 'medium';
+  scale: 1 | 0.75;
+  smartFrameSkip: 'low' | 'off';
+};
+
+async function exerciseOwnedCancellationCase(
+  page: Page,
+  baseUrl: string,
+  setting: OwnedCancellationSetting,
+  fallback: boolean,
+  wasmAsset: MotionWasmAsset | null
+) {
+  await loadApplication(page, baseUrl);
+  await selectFixture(page, setting.workload.fixture);
+  await chooseMotionOption(page, 'format', 'gif');
+  await chooseMotionOption(page, 'quality', setting.quality);
+  await chooseMotionOption(page, 'scale', String(setting.scale));
+  await chooseMotionOption(page, 'smart-frame-skip', setting.smartFrameSkip);
+  await page.evaluate(
+    ({ fallback, wasmPath }) => {
+      const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+        workers: { starts: { options: { format?: string } }[] }[];
+        workerConstructionFailures: unknown[];
+      };
+      const state: {
+        clicked: boolean;
+        progress: number | null;
+        route: 'worker' | 'main-thread-fallback' | null;
+        atMs: number | null;
+        completedBeforeClick: boolean;
+      } = {
+        clicked: false,
+        progress: null,
+        route: null,
+        atMs: null,
+        completedBeforeClick: false,
+      };
+      const resourceSeen = () =>
+        wasmPath !== null &&
+        performance
+          .getEntriesByType('resource')
+          .some((entry) => new URL(entry.name).pathname === wasmPath);
+      const visible = (element: Element | null) =>
+        element instanceof HTMLElement && element.getClientRects().length > 0;
+      const check = () => {
+        if (state.clicked || state.completedBeforeClick) return;
+        if (
+          visible(document.querySelector('[data-testid="result-section"]')) ||
+          visible(document.querySelector('[data-testid="error-display"]'))
+        ) {
+          state.completedBeforeClick = true;
+          mutation.disconnect();
+          resource.disconnect();
+          return;
+        }
+        const progress = Number(
+          document
+            .querySelector('[data-testid="dropzone"] [role="progressbar"]')
+            ?.getAttribute('data-progress')
+        );
+        const stop = document.querySelector<HTMLButtonElement>(
+          '[data-testid="stop-conversion-button"]'
+        );
+        const routeReady = fallback
+          ? observed.workerConstructionFailures.length === 1 && resourceSeen()
+          : observed.workers.some((worker) =>
+              worker.starts.some((start) => start.options.format === 'gif')
+            );
+        if (
+          !routeReady ||
+          !stop ||
+          stop.disabled ||
+          !visible(stop) ||
+          progress < 74 ||
+          progress >= 100
+        )
+          return;
+        state.clicked = true;
+        state.progress = progress;
+        state.route = fallback ? 'main-thread-fallback' : 'worker';
+        state.atMs = performance.now();
+        mutation.disconnect();
+        resource.disconnect();
+        stop.click();
+      };
+      const mutation = new MutationObserver(check);
+      const resource = new PerformanceObserver(check);
+      mutation.observe(document, { subtree: true, childList: true, attributes: true });
+      resource.observe({ type: 'resource', buffered: true });
+      Reflect.set(globalThis, '__wmcOwnedCancellation', state);
+      check();
+    },
+    { fallback, wasmPath: wasmAsset?.path ?? null }
+  );
+  await page.locator('[data-testid="convert-button"]').click();
+  await proceedIfPrompted(page);
+  await page.waitForFunction(
+    () => {
+      const state = Reflect.get(globalThis, '__wmcOwnedCancellation') as {
+        clicked: boolean;
+        completedBeforeClick: boolean;
+      };
+      return state.clicked || state.completedBeforeClick;
+    },
+    undefined,
+    { timeout: CANCELLATION_TIMEOUT_MS }
+  );
+  const trigger = await page.evaluate(
+    () =>
+      Reflect.get(globalThis, '__wmcOwnedCancellation') as {
+        clicked: boolean;
+        progress: number | null;
+        route: 'worker' | 'main-thread-fallback' | null;
+        atMs: number | null;
+        completedBeforeClick: boolean;
+      }
+  );
+  if (!trigger.clicked)
+    return {
+      id: setting.id,
+      route: fallback ? 'main-thread-fallback' : 'worker',
+      status: 'unverified' as const,
+      reason: 'conversion-completed-before-active-stop',
+      trigger,
+    };
+  await page.waitForFunction(
+    () => {
+      const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+        idleAfterStopMs: number | null;
+      };
+      return observed.idleAfterStopMs !== null;
+    },
+    undefined,
+    { timeout: CANCELLATION_TIMEOUT_MS }
+  );
+  const cancelled = await page.evaluate(() => {
+    const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+      stopClickMs: number | null;
+      idleAfterStopMs: number | null;
+      gifPublicationCount: number;
+      outputUrls: unknown[];
+      workers: {
+        starts: { options: Record<string, unknown> }[];
+        completes: unknown[];
+        terminationCalls: number;
+      }[];
+      workerConstructionFailures: { name: string }[];
+    };
+    return {
+      stopClickMs: observed.stopClickMs,
+      idleAfterStopMs: observed.idleAfterStopMs,
+      gifPublicationCount: observed.gifPublicationCount,
+      outputUrls: observed.outputUrls,
+      workers: observed.workers,
+      workerConstructionFailures: observed.workerConstructionFailures,
+      timeOrigin: performance.timeOrigin,
+    };
+  });
+  assert(cancelled.stopClickMs !== null && cancelled.idleAfterStopMs !== null);
+  const stopToIdleMs = cancelled.idleAfterStopMs - cancelled.stopClickMs;
+  assert(stopToIdleMs >= 0 && stopToIdleMs <= 500, 'Active Stop-to-idle exceeded 500 ms');
+  assert(trigger.atMs !== null && cancelled.stopClickMs >= trigger.atMs);
+  assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), false);
+  assert.equal(await page.locator('[data-testid="error-display"]').isVisible(), false);
+  assert.equal(cancelled.gifPublicationCount, 0, 'Cancelled GIF published a Blob');
+  assert.deepEqual(cancelled.outputUrls, [], 'Cancelled GIF retained an output URL');
+  if (fallback) {
+    assert(wasmAsset, 'Owned GIF WASM asset is absent');
+    assert.deepEqual(cancelled.workers, [], 'Fallback created a conversion Worker');
+    assert.equal(cancelled.workerConstructionFailures.length, 1);
+    assert.equal(cancelled.workerConstructionFailures[0]?.name, 'NotSupportedError');
+  } else {
+    const workers = cancelled.workers.filter((worker) =>
+      worker.starts.some((start) => start.options.format === 'gif')
+    );
+    assert.equal(workers.length, 1, 'Cancelled GIF did not own one Worker');
+    const options = workers[0]?.starts[0]?.options;
+    assert.deepEqual(
+      {
+        format: options?.format,
+        quality: options?.quality,
+        scale: options?.scale,
+        smartFrameSkip: options?.smartFrameSkip,
+      },
+      {
+        format: 'gif',
+        quality: setting.quality,
+        scale: setting.scale,
+        smartFrameSkip: setting.smartFrameSkip,
+      }
+    );
+    assert.equal(workers[0]?.completes.length, 0, 'Cancelled Worker completed');
+    assert.equal(workers[0]?.terminationCalls, 1, 'Cancelled Worker was not terminated once');
+  }
+  const recovery = fallback
+    ? await measureFallback(page, setting.workload)
+    : await measureMotion(page, setting.workload, 'warm', 0, wasmAsset);
+  assertUsefulOutput(
+    { workload: setting.workload.id, decoded: recovery.decoded },
+    setting.workload
+  );
+  assert.equal(await page.evaluate(() => performance.timeOrigin), cancelled.timeOrigin);
+  const after = await page.evaluate(() => {
+    const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+      gifPublicationCount: number;
+      workers: { completes: unknown[]; terminationCalls: number }[];
+      workerConstructionFailures: unknown[];
+    };
+    return {
+      gifPublicationCount: observed.gifPublicationCount,
+      workers: observed.workers,
+      workerConstructionFailures: observed.workerConstructionFailures,
+    };
+  });
+  assert.equal(after.gifPublicationCount, 1, 'Recovery had stale or duplicate GIF publication');
+  if (fallback) {
+    assert.equal(after.workers.length, 0);
+    assert.equal(after.workerConstructionFailures.length, 2);
+  } else {
+    assert.equal(
+      after.workers[0]?.completes.length,
+      0,
+      'Cancelled Worker completed after recovery'
+    );
+    assert.equal(after.workers[0]?.terminationCalls, 1);
+  }
+  return {
+    id: setting.id,
+    route: fallback ? 'main-thread-fallback' : 'worker',
+    status: 'passed' as const,
+    inputSha256: setting.workload.inputSha256,
+    settings: {
+      quality: setting.quality,
+      scale: setting.scale,
+      smartFrameSkip: setting.smartFrameSkip,
+    },
+    trigger,
+    stopToIdleMs,
+    cancelled,
+    recovery,
+  };
+}
+
 export async function run({
   browser,
   root,
@@ -3043,6 +3291,10 @@ export async function run({
 
   const bundleRoot = await realpath(resolve(root));
   const motionSelectors = [
+    {
+      scenario: 'gif-owned-cancellation-matrix',
+      path: 'validation/windows/inputs/gif-owned-cancellation-matrix.json',
+    },
     {
       scenario: 'gif-quantization-default',
       path: 'validation/windows/inputs/gif-quantization-default.json',
@@ -3108,6 +3360,7 @@ export async function run({
         'gif-quantization-primary.json',
         'gif-quantization-secondary.json',
         'gif-quantization-small.json',
+        'gif-owned-cancellation-matrix.json',
         'gif-owned-fallback-recovery.json',
         'motion-signature-owner-recovery.json',
         'motion-signature-owner-video.json',
@@ -3129,7 +3382,8 @@ export async function run({
       [],
       'GIF measurement requires one focused selector'
     );
-    const quantizationScenario = scenario.startsWith('gif-quantization-');
+    const cancellationMatrix = scenario === 'gif-owned-cancellation-matrix';
+    const quantizationScenario = scenario.startsWith('gif-quantization-') || cancellationMatrix;
     const ownerVideo =
       quantizationScenario ||
       scenario === 'motion-signature-owner-video' ||
@@ -3355,6 +3609,197 @@ export async function run({
       samples,
       diagnostics,
     };
+    if (cancellationMatrix) {
+      let context: BrowserContext | undefined;
+      let failure: unknown;
+      let failed = false;
+      const cases: unknown[] = [];
+      const network: MediaNetworkDiagnostics = {
+        pageErrors: [],
+        consoleErrors: [],
+        failedRequests: [],
+        failedResponses: [],
+      };
+      const expectedBlobAborts: { resourceType: string; protocol: 'blob:' }[] = [];
+      result = { ...result, cases, network, expectedBlobAborts };
+      try {
+        assert(ownerManifest, 'Frozen owner input manifest is absent');
+        assert(wasmAsset, 'Built owned GIF WASM asset is absent');
+        const defaultSetting = ownerManifest.defaultQualification;
+        assert(defaultSetting, 'Frozen owner default settings are absent');
+        assert.deepEqual(defaultSetting, {
+          quality: 'medium',
+          scale: 0.75,
+          smartFrameSkip: 'off',
+          width: 540,
+          height: 540,
+        });
+        const settings: OwnedCancellationSetting[] = [
+          {
+            id: 'primary',
+            workload: { ...workloads[2]!, quality: 'medium', scale: 1 },
+            quality: 'medium',
+            scale: 1,
+            smartFrameSkip: 'off',
+          },
+          {
+            id: 'default',
+            workload: {
+              ...workloads[2]!,
+              quality: 'medium',
+              scale: 0.75,
+              width: defaultSetting.width,
+              height: defaultSetting.height,
+            },
+            quality: 'medium',
+            scale: 0.75,
+            smartFrameSkip: 'off',
+          },
+          {
+            id: 'small',
+            workload: { ...workloads[1]!, quality: 'low', scale: 1 },
+            quality: 'low',
+            scale: 1,
+            smartFrameSkip: 'low',
+          },
+        ];
+        context = await browser.newContext({ acceptDownloads: true, locale: 'en-US' });
+        await mkdir(output, { recursive: true });
+        for (const fallback of [false, true]) {
+          for (const setting of settings) {
+            result.activeCase = {
+              id: setting.id,
+              route: fallback ? 'main-thread-fallback' : 'worker',
+            };
+            const page = await context.newPage();
+            page.on('pageerror', (error) => network.pageErrors.push(error.message.slice(0, 400)));
+            page.on('console', (message) => {
+              if (message.type() === 'error')
+                network.consoleErrors.push(message.text().slice(0, 400));
+            });
+            page.on('requestfailed', (request) => {
+              const failedUrl = new URL(request.url());
+              const error = request.failure()?.errorText ?? 'unknown';
+              if (failedUrl.protocol === 'blob:' && error === 'net::ERR_ABORTED') {
+                if (expectedBlobAborts.length < 128)
+                  expectedBlobAborts.push({
+                    resourceType: request.resourceType(),
+                    protocol: 'blob:',
+                  });
+                else network.failedRequests.push({ url: 'blob-overflow', error });
+                return;
+              }
+              network.failedRequests.push({
+                url: failedUrl.pathname.slice(0, 160),
+                error: error.slice(0, 200),
+              });
+            });
+            page.on('response', (response) => {
+              if (response.status() >= 400)
+                network.failedResponses.push({
+                  status: response.status(),
+                  url: new URL(response.url()).pathname.slice(0, 160),
+                });
+            });
+            let caseFailure: unknown;
+            let caseRecorded = false;
+            try {
+              await page.addInitScript(installMotionObserver, {
+                forceConversionWorkerFailure: fallback,
+              });
+              const one = await exerciseOwnedCancellationCase(
+                page,
+                started.url,
+                setting,
+                fallback,
+                wasmAsset
+              );
+              cases.push(one);
+              caseRecorded = true;
+              assert.equal(
+                one.status,
+                'passed',
+                `Active cancellation ${setting.id}/${one.route} was unverified: ${one.status === 'unverified' ? one.reason : 'unknown'}`
+              );
+            } catch (error) {
+              caseFailure = error;
+              if (!caseRecorded) {
+                const observation = await page
+                  .evaluate(() => {
+                    const motion = Reflect.get(globalThis, '__wmcMotionObserver') as
+                      | {
+                          stopClickMs: number | null;
+                          idleAfterStopMs: number | null;
+                          gifPublicationCount: number;
+                          workers: unknown[];
+                          workerConstructionFailures: unknown[];
+                        }
+                      | undefined;
+                    return {
+                      trigger: Reflect.get(globalThis, '__wmcOwnedCancellation') ?? null,
+                      motion: motion
+                        ? {
+                            stopClickMs: motion.stopClickMs,
+                            idleAfterStopMs: motion.idleAfterStopMs,
+                            gifPublicationCount: motion.gifPublicationCount,
+                            workers: motion.workers,
+                            workerConstructionFailures: motion.workerConstructionFailures,
+                          }
+                        : null,
+                    };
+                  })
+                  .catch(() => null);
+                cases.push({
+                  id: setting.id,
+                  route: fallback ? 'main-thread-fallback' : 'worker',
+                  status: 'failed',
+                  error: describeMediaFailure(error),
+                  observation,
+                });
+              }
+              throw error;
+            } finally {
+              try {
+                await page.close();
+              } catch (closeError) {
+                if (caseFailure)
+                  throw new AggregateError(
+                    [caseFailure, closeError],
+                    'Cancellation case and page cleanup both failed'
+                  );
+                throw closeError;
+              }
+            }
+            await writeFile(
+              evidencePath,
+              `${JSON.stringify({ ...result, status: 'running', activeCase: null }, null, 2)}\n`
+            );
+          }
+        }
+        result.activeCase = null;
+        await assertMediaNetworkDiagnostics(output, network);
+        result = { ...result, browserVersion: browser.version(), status: 'passed' };
+        return { profile: scenario, ...result };
+      } catch (error) {
+        result = { ...result, status: 'failed', error: describeMediaFailure(error) };
+        if (error instanceof AggregateError)
+          result.errorDetails = error.errors.map((entry) => describeMediaFailure(entry));
+        failure = error;
+        failed = true;
+      } finally {
+        await finishMotionProfile({
+          context,
+          server: started.server,
+          output,
+          evidencePath,
+          result,
+          assetRequests,
+          wasmAssetRequests,
+          failed,
+          failure,
+        });
+      }
+    }
     if (
       scenario === MOTION_SIGNATURE_RECOVERY_SCENARIO ||
       scenario === 'motion-signature-owner-recovery' ||
