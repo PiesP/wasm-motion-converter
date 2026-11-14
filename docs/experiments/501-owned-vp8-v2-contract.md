@@ -163,6 +163,11 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   `test/fixtures/owned-vp8/tuning-photo-PROVENANCE.md` now add a distinct CC0
   photographic tuning source; all prior 23 entries and 15 held-out entries are
   unchanged. Thresholds and historical failures remain unchanged.
+- Fixed provenance discrepancy in PR #503: `crates/owned-vp8/wasm-provenance.json`
+  still listed the earlier README hash after its entropy/barrier description was
+  updated. `scripts/build/build-owned-vp8-wasm.ts --check` correctly rejected it
+  in CI. Regeneration refreshed the source manifest; an isolated offline rebuild
+  retained identical WASM bytes. The failed receipt remains part of the record.
 - Fixed software-route overview: `src/services/webp-encoder-service.ts` claimed
   only one RGB frame could exist during encoding. Its `stagedCopyLookahead: true`
   and `src/services/decoder-service.ts` ordered/staged tails allow one staged RGB
@@ -177,7 +182,7 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   tests check them. No modification to the external RFC is claimed.
 
 - External reference discrepancy, unchanged: RFC 6386 section 9.3 prose reverses
-  absolute/delta segment-feature-mode values relative to its Annex header table.
+  absolute/delta segment-feature-mode values relative to its section 19.2 header table.
   The table agrees with libvpx v1.13.1 `vp8/common/blockd.h`
   (`SEGMENT_ABSDATA = 1`) and its decoder branch. Segment implementation follows
   bit 1 for absolute quantizers and must pass independent decoding. This does not
