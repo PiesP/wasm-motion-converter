@@ -12,9 +12,12 @@ const { default: instantiateOracle } = await import(moduleUrl.href) as {
 };
 const oracle = await instantiateOracle();
 const wasm = readFileSync(resolve('crates/owned-vp8/target/wasm32-unknown-unknown/release/owned_vp8.wasm'));
-const { instance } = await WebAssembly.instantiate(wasm);
+const wasmApi = (globalThis as unknown as { WebAssembly: {
+  instantiate(bytes: Uint8Array): Promise<{ instance: { exports: Record<string, unknown> } }>;
+} }).WebAssembly;
+const { instance } = await wasmApi.instantiate(wasm);
 const candidate = instance.exports as unknown as {
-  memory: WebAssembly.Memory;
+  memory: { buffer: ArrayBuffer };
   vp8_reserve_input(length: number): number;
   vp8_encode(width: number, height: number, stride: number, format: number, quality: number, length: number): number;
   vp8_output_ptr(): number;
