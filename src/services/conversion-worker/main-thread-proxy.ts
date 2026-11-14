@@ -362,7 +362,7 @@ export async function runPipelineWithFallback(
 
     // Fall back to the main thread without allocating another full-file copy.
     // Reuse an attached buffer when Worker startup failed before transfer;
-    // otherwise let MediaBunny consume the original Blob lazily.
+    // otherwise let the owned demux host read the original Blob lazily.
     const fallbackBuffer = input instanceof ArrayBuffer && input.byteLength > 0 ? input : undefined;
     const fallbackBlob =
       input instanceof Blob ? input : fallbackBuffer === undefined ? inputBlob : undefined;

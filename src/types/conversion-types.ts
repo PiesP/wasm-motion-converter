@@ -263,7 +263,7 @@ export type ProgressCallback = (progress: ConversionProgress) => void;
 export interface ConversionRequest {
   /** Full file content for worker/legacy paths. Omit when inputBlob is provided. */
   inputBuffer?: ArrayBuffer | undefined;
-  /** File as Blob — enables on-demand reading via BlobSource, avoiding full memory load */
+  /** File as Blob — enables bounded range reads without a full input copy */
   inputBlob?: Blob | undefined;
   /** Omit for programmatic callers that need demux to extract metadata once. */
   preComputedMetadata?: PrecomputedVideoMetadata | undefined;

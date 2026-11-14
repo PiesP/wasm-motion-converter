@@ -674,7 +674,7 @@ test.describe('opt-in Chromium resource profile', () => {
     });
 
     try {
-      // Exclude one-time application and MediaBunny initialization from leak slopes.
+      // Exclude one-time application and owned demux initialization from leak slopes.
       await runMeasuredHostileParRejection(page, browserCdp);
 
       const measurements: RejectedInputMeasurement[] = [];

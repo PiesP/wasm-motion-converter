@@ -5,7 +5,7 @@
  * Application state
  *
  * - `idle`: Waiting for user to select a video file
- * - `analyzing`: Extracting video metadata via mediabunny
+ * - `analyzing`: Extracting video metadata through the owned demux host
  * - `converting`: Active video conversion in progress
  * - `cancelling`: Cancelling an active operation
  * - `done`: Conversion completed successfully
