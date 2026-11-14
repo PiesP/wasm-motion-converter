@@ -7,6 +7,15 @@ use crate::{BoolWriter, EncodeError};
 pub(crate) trait BoolSink {
     fn write(&mut self, probability_of_zero: u8, bit: bool) -> Result<(), EncodeError>;
 
+    fn write_coeff(
+        &mut self,
+        _index: usize,
+        probability: u8,
+        bit: bool,
+    ) -> Result<(), EncodeError> {
+        self.write(probability, bit)
+    }
+
     fn bit(&mut self, bit: bool) -> Result<(), EncodeError> {
         self.write(128, bit)
     }
@@ -89,12 +98,7 @@ pub(crate) struct RateCounter {
 
 impl BoolSink for RateCounter {
     fn write(&mut self, probability_of_zero: u8, bit: bool) -> Result<(), EncodeError> {
-        let probability = if bit {
-            256 - u32::from(probability_of_zero)
-        } else {
-            u32::from(probability_of_zero)
-        };
-        self.cost += u64::from(bit_cost(probability));
+        self.cost += u64::from(probability_cost(probability_of_zero, bit));
         Ok(())
     }
 }
@@ -182,6 +186,14 @@ const COSTS: [u16; 257] = {
 
 fn bit_cost(probability: u32) -> u32 {
     u32::from(COSTS[probability as usize])
+}
+
+pub(crate) fn probability_cost(probability_of_zero: u8, bit: bool) -> u32 {
+    bit_cost(if bit {
+        256 - u32::from(probability_of_zero)
+    } else {
+        u32::from(probability_of_zero)
+    })
 }
 
 #[cfg(test)]

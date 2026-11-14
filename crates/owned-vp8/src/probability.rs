@@ -94,6 +94,7 @@ impl Model {
             .ok_or(EncodeError::InvalidInput)
     }
 
+    #[cfg(test)]
     pub(crate) fn estimated_saving(&self, index: usize) -> Result<u128, EncodeError> {
         self.estimated_savings
             .get(index)

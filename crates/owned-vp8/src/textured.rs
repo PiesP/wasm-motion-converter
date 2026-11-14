@@ -9,7 +9,8 @@ use crate::{
     bmode_probs::BMODE_PROBS,
     limits::{Request, ResourcePlan, Status},
     prediction::{self, LargeMode, SmallMode},
-    rate::{BoolSink, CountingBoolSink, OpBuffer, RateCounter},
+    probability::{Model, Statistics, NODE_COUNT},
+    rate::{probability_cost, BoolSink, CountingBoolSink, OpBuffer, RateCounter},
     residual, transform,
 };
 
@@ -1016,6 +1017,63 @@ fn write_header_suffix(sink: &mut impl BoolSink) -> Result<(), EncodeError> {
     sink.literal(128, 8)
 }
 
+fn write_updates(
+    sink: &mut impl BoolSink,
+    model: Option<&Model>,
+    start: usize,
+    end: usize,
+) -> Result<(), EncodeError> {
+    for index in start..end {
+        let updated =
+            model.is_some_and(|model| model.updated(index).expect("valid coefficient node"));
+        sink.write(super::COEFF_UPDATE_PROBS[index], updated)?;
+        if updated {
+            sink.literal(
+                model.expect("updated model").probabilities()[index] as u32,
+                8,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+struct StatsSink<'a>(&'a mut Statistics);
+
+impl BoolSink for StatsSink<'_> {
+    fn write(&mut self, _probability: u8, _bit: bool) -> Result<(), EncodeError> {
+        Ok(())
+    }
+    fn write_coeff(
+        &mut self,
+        index: usize,
+        _probability: u8,
+        bit: bool,
+    ) -> Result<(), EncodeError> {
+        self.0.observe(index, bit)
+    }
+}
+
+struct ModelSink<'a, S> {
+    inner: &'a mut S,
+    model: Option<&'a Model>,
+}
+
+impl<S: BoolSink> BoolSink for ModelSink<'_, S> {
+    fn write(&mut self, probability: u8, bit: bool) -> Result<(), EncodeError> {
+        self.inner.write(probability, bit)
+    }
+    fn write_coeff(&mut self, index: usize, probability: u8, bit: bool) -> Result<(), EncodeError> {
+        debug_assert_eq!(
+            probability,
+            crate::default_coeff_probs::DEFAULT_COEFF_PROBS[index]
+        );
+        self.inner.write(
+            self.model.map_or(probability, |m| m.probabilities()[index]),
+            bit,
+        )
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn write_macroblock(
     header: &mut impl BoolSink,
@@ -1060,39 +1118,38 @@ fn emit_frame(
 ) -> Result<Vec<u8>, EncodeError> {
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
-    let mut header = BoolWriter::new();
-    write_header_prefix(&mut header, qindex)?;
-    for probability in super::COEFF_UPDATE_PROBS {
-        header.write(probability, false)?;
+    let model = model_frozen(blocks, blocks_x, blocks_y)?;
+    let default_sizes = count_partitions(blocks, blocks_x, blocks_y, qindex, None)?;
+    let modeled_sizes = count_partitions(blocks, blocks_x, blocks_y, qindex, Some(&model))?;
+    let use_model = modeled_sizes.0 <= 0x7ffff
+        && modeled_sizes.0 + modeled_sizes.1 < default_sizes.0 + default_sizes.1;
+    let selected = if use_model {
+        modeled_sizes
+    } else {
+        default_sizes
+    };
+    let total = 10usize
+        .checked_add(selected.0)
+        .and_then(|n| n.checked_add(selected.1))
+        .ok_or(EncodeError::OutputLimit)?;
+    if selected.0 > 0x7ffff || total > MAX_OUTPUT_BYTES {
+        return Err(EncodeError::OutputLimit);
     }
-    write_header_suffix(&mut header)?;
-    let mut token = BoolWriter::new();
-    let mut contexts = CoeffContexts::new(blocks_x);
-    let mut above_modes = vec![0u8; blocks_x * 4];
-    let mut left_modes = [0u8; 4];
-    for my in 0..blocks_y {
-        contexts.row();
-        left_modes.fill(0);
-        for mx in 0..blocks_x {
-            let block = &blocks[my * blocks_x + mx];
-            write_macroblock(
-                &mut header,
-                &mut token,
-                &mut contexts,
-                &mut above_modes,
-                &mut left_modes,
-                mx,
-                block,
-            )?;
-        }
-    }
+    let selected_model = use_model.then_some(&model);
+    let mut header = BoolWriter::with_capacity(selected.0)?;
+    let mut token = BoolWriter::with_capacity(selected.1)?;
+    code_partitions(
+        blocks,
+        blocks_x,
+        blocks_y,
+        qindex,
+        selected_model,
+        &mut header,
+        &mut token,
+    )?;
     let first = header.finish()?;
     let second = token.finish()?;
-    let total = 10usize
-        .checked_add(first.len())
-        .and_then(|n| n.checked_add(second.len()))
-        .ok_or(EncodeError::OutputLimit)?;
-    if first.len() > 0x7ffff || total > MAX_OUTPUT_BYTES {
+    if first.len() != selected.0 || second.len() != selected.1 {
         return Err(EncodeError::OutputLimit);
     }
     let mut result = Vec::new();
@@ -1107,6 +1164,90 @@ fn emit_frame(
     result.extend_from_slice(&first);
     result.extend_from_slice(&second);
     Ok(result)
+}
+
+fn model_frozen(
+    blocks: &[Macroblock],
+    blocks_x: usize,
+    blocks_y: usize,
+) -> Result<Model, EncodeError> {
+    let mut stats = Statistics::new();
+    let mut contexts = CoeffContexts::new(blocks_x);
+    for my in 0..blocks_y {
+        contexts.row();
+        for mx in 0..blocks_x {
+            let block = &blocks[my * blocks_x + mx];
+            contexts.encode_coefficients(&mut StatsSink(&mut stats), block, mx)?;
+        }
+    }
+    let mut model = Model::new();
+    for start in (0..NODE_COUNT).step_by(64) {
+        model.optimize_range(
+            &stats,
+            start,
+            (NODE_COUNT - start).min(64),
+            &probability_cost,
+        )?;
+    }
+    Ok(model)
+}
+
+fn code_partitions(
+    blocks: &[Macroblock],
+    blocks_x: usize,
+    blocks_y: usize,
+    qindex: usize,
+    model: Option<&Model>,
+    header: &mut impl BoolSink,
+    token: &mut impl BoolSink,
+) -> Result<(), EncodeError> {
+    write_header_prefix(header, qindex)?;
+    write_updates(header, model, 0, NODE_COUNT)?;
+    write_header_suffix(header)?;
+    let mut contexts = CoeffContexts::new(blocks_x);
+    let mut above_modes = vec![0u8; blocks_x * 4];
+    let mut left_modes = [0u8; 4];
+    for my in 0..blocks_y {
+        contexts.row();
+        left_modes.fill(0);
+        for mx in 0..blocks_x {
+            let block = &blocks[my * blocks_x + mx];
+            write_macroblock(
+                header,
+                &mut ModelSink {
+                    inner: token,
+                    model,
+                },
+                &mut contexts,
+                &mut above_modes,
+                &mut left_modes,
+                mx,
+                block,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn count_partitions(
+    blocks: &[Macroblock],
+    blocks_x: usize,
+    blocks_y: usize,
+    qindex: usize,
+    model: Option<&Model>,
+) -> Result<(usize, usize), EncodeError> {
+    let mut first = CountingBoolSink::default();
+    let mut second = CountingBoolSink::default();
+    code_partitions(
+        blocks,
+        blocks_x,
+        blocks_y,
+        qindex,
+        model,
+        &mut first,
+        &mut second,
+    )?;
+    Ok((first.finish_size()?, second.finish_size()?))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1127,6 +1268,8 @@ enum Stage {
     FinalizeTokens = 12,
     Assemble = 13,
     Done = 14,
+    CollectStats = 15,
+    Optimize = 16,
 }
 
 /// One step initializes at most 64 KiB, converts one YUV row pair, analyzes
@@ -1148,6 +1291,14 @@ pub(crate) struct FrameEncoder {
     left_modes: [u8; 4],
     count_header: CountingBoolSink,
     count_token: CountingBoolSink,
+    stats: Statistics,
+    model: Model,
+    model_count_pass: bool,
+    use_model: bool,
+    default_sizes: (u32, u32),
+    default_frame_bytes: u32,
+    selected_frame_bytes: u32,
+    update_count: u32,
     header: Option<BoolWriter>,
     token: Option<BoolWriter>,
     pending_header: OpBuffer,
@@ -1215,6 +1366,14 @@ impl FrameEncoder {
             left_modes: [0; 4],
             count_header: CountingBoolSink::default(),
             count_token: CountingBoolSink::default(),
+            stats: Statistics::new(),
+            model: Model::new(),
+            model_count_pass: false,
+            use_model: false,
+            default_sizes: (0, 0),
+            default_frame_bytes: 0,
+            selected_frame_bytes: 0,
+            update_count: 0,
             header: None,
             token: None,
             pending_header: OpBuffer::new().map_err(|_| Status::MemoryAdmission)?,
@@ -1250,7 +1409,10 @@ impl FrameEncoder {
                 (done as u32, self.plan.yuv_plane_set_bytes * 2)
             }
             Stage::Color => (self.cursor as u32, pairs),
-            Stage::Analyze | Stage::CountBlocks | Stage::EmitBlocks => (self.cursor as u32, blocks),
+            Stage::Analyze | Stage::CollectStats | Stage::CountBlocks | Stage::EmitBlocks => {
+                (self.cursor as u32, blocks)
+            }
+            Stage::Optimize => (self.cursor as u32, NODE_COUNT as u32),
             Stage::CountUpdates | Stage::EmitUpdates => {
                 (self.cursor as u32, super::COEFF_UPDATE_PROBS.len() as u32)
             }
@@ -1266,6 +1428,19 @@ impl FrameEncoder {
         } else {
             &[]
         }
+    }
+
+    #[allow(dead_code)] // Read by the ABI metrics record after lane integration.
+    pub(crate) fn update_count(&self) -> u32 {
+        self.update_count
+    }
+    #[allow(dead_code)] // Read by the ABI metrics record after lane integration.
+    pub(crate) fn default_frame_bytes(&self) -> u32 {
+        self.default_frame_bytes
+    }
+    #[allow(dead_code)] // Read by the ABI metrics record after lane integration.
+    pub(crate) fn selected_frame_bytes(&self) -> u32 {
+        self.selected_frame_bytes
     }
 
     pub(crate) fn take_input(&mut self) -> Vec<u8> {
@@ -1412,8 +1587,8 @@ impl FrameEncoder {
         self.blocks.push(block);
         self.cursor += 1;
         if self.cursor == self.plan.macroblock_count as usize {
-            self.cursor = 0;
-            self.stage = Stage::CountPrefix;
+            self.reset_coding_state();
+            self.stage = Stage::CollectStats;
         }
         Ok(())
     }
@@ -1429,7 +1604,10 @@ impl FrameEncoder {
         if counting {
             write_macroblock(
                 &mut self.count_header,
-                &mut self.count_token,
+                &mut ModelSink {
+                    inner: &mut self.count_token,
+                    model: self.model_count_pass.then_some(&self.model),
+                },
                 &mut self.contexts,
                 &mut self.above_modes,
                 &mut self.left_modes,
@@ -1440,7 +1618,10 @@ impl FrameEncoder {
         } else {
             write_macroblock(
                 &mut self.pending_header,
-                &mut self.pending_token,
+                &mut ModelSink {
+                    inner: &mut self.pending_token,
+                    model: self.use_model.then_some(&self.model),
+                },
                 &mut self.contexts,
                 &mut self.above_modes,
                 &mut self.left_modes,
@@ -1457,6 +1638,40 @@ impl FrameEncoder {
                 let second = self.count_token.finish_size().map_err(encode_status)?;
                 let first = u32::try_from(first).map_err(|_| Status::PartitionLimit)?;
                 let second = u32::try_from(second).map_err(|_| Status::OutputLimit)?;
+                if !self.model_count_pass {
+                    self.default_sizes = (first, second);
+                    self.default_frame_bytes = first
+                        .checked_add(second)
+                        .and_then(|n| n.checked_add(10))
+                        .ok_or(Status::OutputLimit)?;
+                    self.count_header = CountingBoolSink::default();
+                    self.count_token = CountingBoolSink::default();
+                    self.model_count_pass = true;
+                    self.stage = Stage::CountPrefix;
+                    return Ok(());
+                }
+                let proposed_total = first
+                    .checked_add(second)
+                    .and_then(|n| n.checked_add(10))
+                    .ok_or(Status::OutputLimit)?;
+                self.use_model = first <= 0x7ffff && proposed_total < self.default_frame_bytes;
+                let (first, second) = if self.use_model {
+                    (first, second)
+                } else {
+                    self.default_sizes
+                };
+                self.selected_frame_bytes = if self.use_model {
+                    proposed_total
+                } else {
+                    self.default_frame_bytes
+                };
+                self.update_count = if self.use_model {
+                    (0..NODE_COUNT)
+                        .filter(|&i| self.model.updated(i).expect("valid coefficient node"))
+                        .count() as u32
+                } else {
+                    0
+                };
                 self.plan = self.plan.with_output_sizes(first, second)?;
                 self.header = Some(
                     BoolWriter::with_capacity(first as usize)
@@ -1527,18 +1742,50 @@ impl FrameEncoder {
             Stage::Initialize => self.initialize_one_chunk()?,
             Stage::Color => self.color_one_pair()?,
             Stage::Analyze => self.analyze_one_step()?,
+            Stage::CollectStats => {
+                let blocks_x = self.plan.padded_width as usize / 16;
+                let mx = self.cursor % blocks_x;
+                if mx == 0 {
+                    self.contexts.row();
+                }
+                self.contexts
+                    .encode_coefficients(
+                        &mut StatsSink(&mut self.stats),
+                        &self.blocks[self.cursor],
+                        mx,
+                    )
+                    .map_err(encode_status)?;
+                self.cursor += 1;
+                if self.cursor == self.blocks.len() {
+                    self.cursor = 0;
+                    self.stage = Stage::Optimize;
+                }
+            }
+            Stage::Optimize => {
+                let count = (NODE_COUNT - self.cursor).min(64);
+                self.model
+                    .optimize_range(&self.stats, self.cursor, count, &probability_cost)
+                    .map_err(encode_status)?;
+                self.cursor += count;
+                if self.cursor == NODE_COUNT {
+                    self.cursor = 0;
+                    self.stage = Stage::CountPrefix;
+                }
+            }
             Stage::CountPrefix => {
                 let qindex = self.qindex();
                 write_header_prefix(&mut self.count_header, qindex).map_err(encode_status)?;
                 self.stage = Stage::CountUpdates;
             }
             Stage::CountUpdates => {
-                let end = (self.cursor + 64).min(super::COEFF_UPDATE_PROBS.len());
-                for &probability in &super::COEFF_UPDATE_PROBS[self.cursor..end] {
-                    self.count_header
-                        .write(probability, false)
-                        .map_err(encode_status)?;
-                }
+                let end = (self.cursor + 64).min(NODE_COUNT);
+                write_updates(
+                    &mut self.count_header,
+                    self.model_count_pass.then_some(&self.model),
+                    self.cursor,
+                    end,
+                )
+                .map_err(encode_status)?;
                 self.cursor = end;
                 if end == super::COEFF_UPDATE_PROBS.len() {
                     self.cursor = 0;
@@ -1557,11 +1804,14 @@ impl FrameEncoder {
                 self.stage = Stage::EmitUpdates;
             }
             Stage::EmitUpdates => {
-                let end = (self.cursor + 64).min(super::COEFF_UPDATE_PROBS.len());
-                let header = &mut self.pending_header;
-                for &probability in &super::COEFF_UPDATE_PROBS[self.cursor..end] {
-                    header.write(probability, false).map_err(encode_status)?;
-                }
+                let end = (self.cursor + 64).min(NODE_COUNT);
+                write_updates(
+                    &mut self.pending_header,
+                    self.use_model.then_some(&self.model),
+                    self.cursor,
+                    end,
+                )
+                .map_err(encode_status)?;
                 self.cursor = end;
                 if end == super::COEFF_UPDATE_PROBS.len() {
                     self.cursor = 0;
@@ -1639,6 +1889,133 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn frozen_frame_adopts_only_a_smaller_complete_model() {
+        let small = vec![Macroblock::default()];
+        let small_model = model_frozen(&small, 1, 1).unwrap();
+        assert!((0..NODE_COUNT).all(|i| !small_model.updated(i).unwrap()));
+        let small_default = count_partitions(&small, 1, 1, 22, None).unwrap();
+        assert_eq!(
+            emit_frame(&small, 16, 16, 22).unwrap().len(),
+            10 + small_default.0 + small_default.1
+        );
+
+        let blocks: Vec<_> = (0..256)
+            .map(|_| {
+                let mut block = Macroblock::default();
+                block.y[0][0] = 1;
+                block.u[0][0] = 1;
+                block.v[0][0] = -1;
+                block
+            })
+            .collect();
+        let model = model_frozen(&blocks, 16, 16).unwrap();
+        assert!((0..NODE_COUNT).any(|i| model.updated(i).unwrap()));
+        let default = count_partitions(&blocks, 16, 16, 22, None).unwrap();
+        let proposed = count_partitions(&blocks, 16, 16, 22, Some(&model)).unwrap();
+        assert!(proposed.0 <= 0x7ffff);
+        assert!(proposed.0 + proposed.1 < default.0 + default.1);
+        let frame = emit_frame(&blocks, 256, 256, 22).unwrap();
+        assert_eq!(frame.len(), 10 + proposed.0 + proposed.1);
+        assert_eq!(
+            ((u32::from(frame[0]) | u32::from(frame[1]) << 8 | u32::from(frame[2]) << 16) >> 5)
+                as usize,
+            proposed.0
+        );
+        assert_eq!(frame, emit_frame(&blocks, 256, 256, 22).unwrap());
+    }
+
+    #[test]
+    fn unchanged_model_preserves_all_coefficient_tree_probabilities() {
+        struct Operations(Vec<(u8, bool)>);
+        impl BoolSink for Operations {
+            fn write(&mut self, probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push((probability, bit));
+                Ok(())
+            }
+        }
+        let mut block = Macroblock::default();
+        let magnitudes = [1, 2, 3, 4, 5, 6, 7, 10, 11, 18, 19, 34, 35, 66, 67, 2114];
+        for (position, magnitude) in magnitudes.into_iter().enumerate() {
+            block.y[0][residual::SCAN[position]] = magnitude;
+            block.u[0][residual::SCAN[position]] = -magnitude;
+        }
+        let mut plain = Operations(Vec::new());
+        let mut modeled = Operations(Vec::new());
+        CoeffContexts::new(1)
+            .encode_coefficients(&mut plain, &block, 0)
+            .unwrap();
+        CoeffContexts::new(1)
+            .encode_coefficients(
+                &mut ModelSink {
+                    inner: &mut modeled,
+                    model: Some(&Model::new()),
+                },
+                &block,
+                0,
+            )
+            .unwrap();
+        assert_eq!(modeled.0, plain.0);
+    }
+
+    #[test]
+    fn coefficient_update_header_roundtrip() {
+        let mut stats = Statistics::new();
+        for _ in 0..8 {
+            stats.observe(528, true).unwrap();
+        }
+        let mut model = Model::new();
+        model.optimize_one(&stats, 528, &probability_cost).unwrap();
+        assert!(model.updated(528).unwrap());
+        let mut header = BoolWriter::new();
+        write_header_prefix(&mut header, 8).unwrap();
+        write_updates(&mut header, Some(&model), 0, NODE_COUNT).unwrap();
+        write_header_suffix(&mut header).unwrap();
+        let bytes = header.finish().unwrap();
+        let mut value = (u32::from(bytes[0]) << 8) | u32::from(bytes[1]);
+        let (mut offset, mut range, mut count) = (2, 255, 0);
+        let mut read = |probability: u8| {
+            let split = 1 + (((range - 1) * u32::from(probability)) >> 8);
+            let bit = value >= split << 8;
+            if bit {
+                value -= split << 8;
+                range -= split;
+            } else {
+                range = split;
+            }
+            while range < 128 {
+                range <<= 1;
+                value <<= 1;
+                count += 1;
+                if count == 8 {
+                    count = 0;
+                    value |= u32::from(bytes[offset]);
+                    offset += 1;
+                }
+            }
+            bit
+        };
+        for _ in 0..16 {
+            read(128);
+        }
+        for shift in (0..7).rev() {
+            assert_eq!(read(128), 8 & (1 << shift) != 0);
+        }
+        for _ in 0..6 {
+            read(128);
+        }
+        for index in 0..NODE_COUNT {
+            let updated = read(super::super::COEFF_UPDATE_PROBS[index]);
+            assert_eq!(updated, index == 528, "index={index}");
+            if updated {
+                for shift in (0..8).rev() {
+                    assert_eq!(read(128), model.probabilities()[index] & (1 << shift) != 0);
+                }
+            }
+        }
+        assert!(read(128));
+    }
 
     #[test]
     fn engine_yields_inside_a_long_carry_and_a_symbol_batch() {
@@ -1743,7 +2120,7 @@ mod tests {
                 let (after, _) = engine.progress();
                 let bound = match stage {
                     0 | 13 => 65_536,
-                    4 | 8 => 64,
+                    4 | 8 | 16 => 64,
                     _ => 1,
                 };
                 assert!(after >= before && after - before <= bound, "stage={stage}");
@@ -1837,6 +2214,12 @@ mod tests {
                     "{width}x{height} layout={layout}"
                 );
                 assert_eq!(engine.plan().frame_bytes as usize, expected.len());
+                assert_eq!(engine.selected_frame_bytes() as usize, expected.len());
+                assert!(engine.default_frame_bytes() >= engine.selected_frame_bytes());
+                assert_eq!(
+                    engine.update_count() == 0,
+                    engine.default_frame_bytes() == engine.selected_frame_bytes()
+                );
                 assert!(engine.plan().first_partition_bytes > 0);
                 assert!(engine.plan().coefficient_partition_bytes > 0);
                 assert_eq!(engine.take_input().len(), request.input_bytes as usize);
