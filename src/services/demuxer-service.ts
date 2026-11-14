@@ -7,9 +7,11 @@ import {
   classifyOwnedDemuxError,
   computeOwnedPacketStats,
   createOwnedDemuxSession,
+  OwnedDemuxAbiError,
   OwnedDemuxConversionError,
   OwnedDemuxResourceError,
 } from '@services/owned-demux-core';
+import { isOwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import type {
   ConversionRequest,
   PrecomputedVideoMetadata,
@@ -23,6 +25,8 @@ import {
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getTrimmedDurationSeconds } from '@utils/trim-time';
+
+import { fingerprintOwnedDemuxSource } from './owned-demux-index-snapshot';
 
 export interface DemuxResult {
   /** One-shot packet stream. The producer advances only when the decoder requests a chunk. */
@@ -43,6 +47,10 @@ export interface DemuxResult {
   rotation?: VideoRotation | undefined;
   /** Idempotently release the conversion-owned parser if the stream is not consumed. */
   dispose?: (() => void) | undefined;
+  /** A matching selected-file index avoids reparsing this conversion. */
+  indexRoute?: 'imported' | 'parsed' | undefined;
+  /** One per-job copy; the main realm holds another master copy. */
+  indexSnapshotBytes?: number | undefined;
 }
 
 type DemuxPreparedCallback = (estimatedTotalFrames: number) => void;
@@ -84,7 +92,23 @@ export async function demuxVideo(
   signal?.addEventListener('abort', dispose, { once: true });
   try {
     signal?.throwIfAborted();
-    const track = await session.analyze(signal);
+    const cached = request.indexSnapshot;
+    if (cached !== undefined && !isOwnedInputIndexSnapshot(cached))
+      throw new OwnedDemuxAbiError('Owned demux index snapshot envelope is invalid');
+    if (cached && !(inputSource instanceof Blob))
+      throw new OwnedDemuxAbiError('Owned demux index snapshot requires a Blob source');
+    let indexRoute: 'imported' | 'parsed' = 'parsed';
+    const indexSnapshotBytes = cached?.bytes.byteLength ?? 0;
+    let track: Awaited<ReturnType<typeof session.analyze>> | undefined;
+    if (cached && cached.sourceSize === inputSizeBytes) {
+      const fingerprint = await fingerprintOwnedDemuxSource(inputSource, signal);
+      signal?.throwIfAborted();
+      if (fingerprint === cached.fingerprint) {
+        track = await session.importIndex(cached.bytes, signal);
+        indexRoute = 'imported';
+      }
+    }
+    track ??= await session.analyze(signal);
     const config = preComputedMetadata?.config ?? ownedDecoderConfig(track);
     const configDescriptionBytes = config.description?.byteLength ?? 0;
     if (!Number.isSafeInteger(configDescriptionBytes) || configDescriptionBytes > 1024 * 1024)
@@ -126,6 +150,8 @@ export async function demuxVideo(
         ENCODED_PACKET_BUDGET_BYTES -
         descriptionReserveBytes -
         HEADER_WINDOW_OVERLAP_BYTES -
+        // Snapshot master (main realm) and this transferred copy stay live.
+        2 * indexSnapshotBytes -
         seekWorkspaceBytes
     );
     const packetBudgetBytes = ENCODED_PACKET_BUDGET_BYTES;
@@ -152,6 +178,8 @@ export async function demuxVideo(
       packetBudgetBytes,
       chunkBudgetBytes,
       wasmCapacityBytes,
+      indexRoute,
+      indexSnapshotBytes,
     });
 
     // The generator updates this result after it returns to its owner.
@@ -224,6 +252,8 @@ export async function demuxVideo(
       totalFrames: estimatedTotalFrames,
       duration,
       sourceTotalMs: 0,
+      indexRoute,
+      indexSnapshotBytes,
       framerate,
       trimStartUs: request.trimStart * 1_000_000,
       ...(request.trimEnd > 0 ? { trimEndUs: request.trimEnd * 1_000_000 } : {}),

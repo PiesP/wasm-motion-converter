@@ -16,6 +16,7 @@ import type {
 } from '@services/conversion-worker/types';
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
+import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
 import { findWasmWebpInitializationError } from '@services/wasm-webp-singleton';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
@@ -576,6 +577,7 @@ export function handleCancelConversion(runtime: ConversionRuntimeController): vo
 }
 
 export function handleCancelAnalysis(runtime: ConversionRuntimeController): void {
+  clearOwnedInputSelection();
   // Invalidate any in-flight conversions so queued microtasks from
   // this analysis can't override a newly started file selection.
   runtime.invalidateActiveConversions();
@@ -589,6 +591,7 @@ export function handleCancelAnalysis(runtime: ConversionRuntimeController): void
 }
 
 export function handleReset(runtime: ConversionRuntimeController): void {
+  clearOwnedInputSelection();
   runtime.invalidateActiveConversions();
   runtime.resetRuntimeState();
   setErrorMessage(null);

@@ -7,11 +7,16 @@ import {
   computeOwnedPacketStats,
   createOwnedDemuxSession,
 } from '@services/owned-demux-core';
+import {
+  activeOwnedInputGeneration,
+  publishOwnedInputIndex,
+} from '@services/owned-input-index-cache';
 import type { VideoMetadata, VideoRotation } from '@t/conversion-types';
 import { DEFAULT_FPS } from '@utils/constants';
 import { logger } from '@utils/logger';
 
 import { resolveVideoDimensions } from './frame-utils';
+import { fingerprintOwnedDemuxSource } from './owned-demux-index-snapshot';
 
 /** Extract the first supported video track through bounded, local range reads. */
 export async function extractVideoMetadata(
@@ -44,6 +49,15 @@ export async function extractVideoMetadata(
       stats && Number.isFinite(stats.averageBitrate) && stats.averageBitrate > 0
         ? Math.round(stats.averageBitrate)
         : 0;
+    const selectedGeneration = source instanceof Blob ? activeOwnedInputGeneration(source) : null;
+    if (source instanceof Blob && selectedGeneration !== null) {
+      const snapshot = await session.exportIndex(signal);
+      if (snapshot) {
+        const fingerprint = await fingerprintOwnedDemuxSource(source, signal);
+        signal?.throwIfAborted();
+        publishOwnedInputIndex(source, selectedGeneration, snapshot, fingerprint, signal);
+      }
+    }
     const rotation: VideoRotation =
       track.rotation === 90 || track.rotation === 180 || track.rotation === 270
         ? track.rotation

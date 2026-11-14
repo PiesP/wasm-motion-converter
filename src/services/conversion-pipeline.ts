@@ -164,16 +164,26 @@ async function _runPipelineInner(
       Math.max(WORKER_MIN_MEMORY_MB, configuredMaxMemoryMB)
     );
     const retainedInputBytes = request.inputBuffer?.byteLength ?? 0;
+    // The selected-file master remains in the main realm alongside this job's
+    // copy. Both are outside WASM capacity and the frame pool.
+    const retainedIndexBytes = 2 * (request.indexSnapshot?.bytes.byteLength ?? 0);
     const sampleAccountedMemoryMB = (additionalBytes = 0): number =>
       Math.ceil(
-        (retainedInputBytes + globalBufferPool.totalRetainedMemory + additionalBytes) / BYTES_PER_MB
+        (retainedInputBytes +
+          retainedIndexBytes +
+          globalBufferPool.totalRetainedMemory +
+          additionalBytes) /
+          BYTES_PER_MB
       );
     const decimationMemoryCheck = () => ({
       usagePercentage: Math.min(100, (sampleAccountedMemoryMB() / maxMemoryMB) * 100),
     });
     const assertMemoryBudget = (additionalBytes = 0): void => {
       const estimatedBytes =
-        retainedInputBytes + globalBufferPool.totalRetainedMemory + additionalBytes;
+        retainedInputBytes +
+        retainedIndexBytes +
+        globalBufferPool.totalRetainedMemory +
+        additionalBytes;
       const estimatedMB = Math.ceil(estimatedBytes / BYTES_PER_MB);
       if (estimatedMB >= maxMemoryMB * MEMORY_CRITICAL_RATIO) {
         throw new ConversionMemoryLimitError(

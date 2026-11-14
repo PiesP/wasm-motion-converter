@@ -54,6 +54,12 @@ vi.stubGlobal('crypto', { randomUUID: () => 'request-1' });
 
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import {
+  beginOwnedInputSelection,
+  clearOwnedInputSelection,
+  copyOwnedInputIndex,
+  publishOwnedInputIndex,
+} from '@services/owned-input-index-cache';
+import {
   runPipelineViaWorker,
   runPipelineWithFallback,
 } from '@services/conversion-worker/main-thread-proxy';
@@ -844,6 +850,33 @@ describe('runPipelineViaWorker lifecycle', () => {
     expect(runConversionPipeline.mock.calls[0]?.[0]).not.toHaveProperty('inputBuffer');
     expect(readWholeFile).not.toHaveBeenCalled();
     expect(ThrowingWorker.instance?.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('transfers only a job copy and gives bootstrap fallback a fresh index copy', async () => {
+    const input = new Blob(['video']);
+    const generation = beginOwnedInputSelection(input);
+    const master = new ArrayBuffer(96);
+    new Uint8Array(master)[0] = 31;
+    expect(publishOwnedInputIndex(input, generation, master, 'a'.repeat(64))).toBe(true);
+    ThrowingWorker.workerError = new ErrorEvent('error', { message: 'Worker bootstrap failed' });
+    runConversionPipeline.mockResolvedValue(new ArrayBuffer(4));
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage');
+    try {
+      await runPipelineWithFallback(input, validDecoderConfig, validOptions, vi.fn());
+      const sent = post.mock.calls[0]?.[0] as { indexSnapshot?: { bytes: ArrayBuffer } };
+      const transfer = post.mock.calls[0]?.[1] ?? [];
+      expect(transfer).toHaveLength(1);
+      expect(sent.indexSnapshot?.bytes.byteLength).toBe(0);
+      const fallback = runConversionPipeline.mock.calls[0]?.[0] as {
+        indexSnapshot?: { bytes: ArrayBuffer };
+      };
+      expect(fallback.indexSnapshot?.bytes.byteLength).toBe(96);
+      expect(fallback.indexSnapshot?.bytes).not.toBe(master);
+      expect(new Uint8Array(copyOwnedInputIndex(input)!.bytes)[0]).toBe(31);
+    } finally {
+      post.mockRestore();
+      clearOwnedInputSelection(generation);
+    }
   });
 
   it('keeps diagnostic logs out of bootstrap control and falls back on a pre-ready error', async () => {

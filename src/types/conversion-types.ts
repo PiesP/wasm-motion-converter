@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
+
 /**
  * Conversion Types
  *
@@ -265,6 +267,8 @@ export interface ConversionRequest {
   inputBuffer?: ArrayBuffer | undefined;
   /** File as Blob — enables bounded range reads without a full input copy */
   inputBlob?: Blob | undefined;
+  /** One conversion-owned logical index copy, distinct from the selected-file master. */
+  indexSnapshot?: OwnedInputIndexSnapshot | undefined;
   /** Omit for programmatic callers that need demux to extract metadata once. */
   preComputedMetadata?: PrecomputedVideoMetadata | undefined;
   fileName: string;

@@ -101,6 +101,34 @@ describe('isWorkerRequest', () => {
     expect(isWorkerRequest({ ...request, inputBlob: null })).toBe(false);
   });
 
+  it('accepts only a bounded selected-Blob index envelope', () => {
+    const { inputBuffer: _, ...request } = validStart;
+    const source = new Blob(['video']);
+    const indexSnapshot = {
+      version: 1,
+      generation: 2,
+      sourceSize: source.size,
+      fingerprint: 'a'.repeat(64),
+      bytes: new ArrayBuffer(96),
+    };
+    expect(isWorkerRequest({ ...request, inputBlob: source, indexSnapshot })).toBe(true);
+    expect(isWorkerRequest({ ...validStart, indexSnapshot })).toBe(false);
+    expect(
+      isWorkerRequest({
+        ...request,
+        inputBlob: source,
+        indexSnapshot: { ...indexSnapshot, sourceSize: source.size + 1 },
+      })
+    ).toBe(false);
+    expect(
+      isWorkerRequest({
+        ...request,
+        inputBlob: source,
+        indexSnapshot: { ...indexSnapshot, bytes: new ArrayBuffer(8) },
+      })
+    ).toBe(false);
+  });
+
   it('accepts valid abort message', () => {
     expect(isWorkerRequest(validAbort)).toBe(true);
   });

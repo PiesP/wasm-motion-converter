@@ -3,6 +3,11 @@
 
 import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
 import type { SerializedConversionOptions } from '@services/conversion-worker/types';
+import {
+  beginOwnedInputSelection,
+  clearOwnedInputSelection,
+  publishOwnedInputIndex,
+} from '@services/owned-input-index-cache';
 import { WORKER_MAX_MEMORY_MB } from '@utils/constants';
 import { describe, expect, it } from 'vite-plus/test';
 
@@ -44,6 +49,27 @@ describe('buildConversionRequest', () => {
 
     expect(request.inputBlob).toBe(blob);
     expect(request.fileName).toBe('myvideo.webm');
+  });
+
+  it('copies the selected Blob index once per main-thread conversion', () => {
+    const source = new Blob(['clip']);
+    const generation = beginOwnedInputSelection(source);
+    try {
+      const master = new ArrayBuffer(96);
+      new Uint8Array(master)[0] = 31;
+      expect(publishOwnedInputIndex(source, generation, master, 'a'.repeat(64))).toBe(true);
+      const first = buildConversionRequest(undefined, baseOptions, WORKER_MAX_MEMORY_MB, source);
+      const second = buildConversionRequest(undefined, baseOptions, WORKER_MAX_MEMORY_MB, source);
+      expect(first.indexSnapshot?.bytes).not.toBe(second.indexSnapshot?.bytes);
+      expect(first.indexSnapshot?.bytes).not.toBe(master);
+      new Uint8Array(first.indexSnapshot!.bytes)[0] = 0;
+      expect(new Uint8Array(second.indexSnapshot!.bytes)[0]).toBe(31);
+      expect(
+        buildConversionRequest(undefined, baseOptions, WORKER_MAX_MEMORY_MB, new Blob(['clip']))
+      ).not.toHaveProperty('indexSnapshot');
+    } finally {
+      clearOwnedInputSelection(generation);
+    }
   });
 
   it('reuses the admitted decoder fields without normalizing false, zero, or absent fields', () => {

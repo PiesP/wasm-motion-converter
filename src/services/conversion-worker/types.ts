@@ -4,6 +4,7 @@
 // Message protocol types for the conversion worker
 
 import type { ConversionProfileReport } from '@services/conversion-profiler';
+import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import type {
   ConversionFormat,
   ConversionQuality,
@@ -30,6 +31,8 @@ export type WorkerRequest =
       /** Pre-computed metadata to skip redundant extractVideoMetadata in worker */
       duration?: number;
       framerate?: number;
+      /** Checked logical index copied from the exact selected Blob. */
+      indexSnapshot?: OwnedInputIndexSnapshot;
     } & WorkerInput)
   | { type: 'abort'; requestId: string };
 

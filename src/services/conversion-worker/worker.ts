@@ -56,7 +56,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
 
   switch (request.type) {
     case 'start': {
-      const { requestId, config, options, duration, framerate } = request;
+      const { requestId, config, options, duration, framerate, indexSnapshot } = request;
       const input = request.inputBlob ?? request.inputBuffer;
       const pipelineStart = performance.now();
 
@@ -78,7 +78,8 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
           abortController.signal,
           config,
           duration,
-          framerate
+          framerate,
+          indexSnapshot
         );
 
         const durationMs = Math.round(performance.now() - pipelineStart);

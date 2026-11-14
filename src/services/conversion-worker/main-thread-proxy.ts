@@ -23,6 +23,8 @@ import {
   setLastConversionProfileReport,
 } from '@services/conversion-profile-store';
 import { resolveVideoDimensions } from '@services/frame-utils';
+import { copyOwnedInputIndex } from '@services/owned-input-index-cache';
+import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -294,6 +296,18 @@ export async function runPipelineViaWorker(
       }
     };
 
+    // Keep the selected-file master in this realm. A conversion gets one owned
+    // copy, transferred only after Worker construction and abort registration.
+    let indexSnapshot: OwnedInputIndexSnapshot | null;
+    try {
+      indexSnapshot = input instanceof Blob ? copyOwnedInputIndex(input) : null;
+    } catch (error) {
+      settled = true;
+      cleanup();
+      worker.terminate();
+      reject(error);
+      return;
+    }
     // Blob handles use structured cloning and remain available for startup
     // fallback. ArrayBuffer ownership moves to the worker through the transfer list.
     const startMsg: WorkerRequest = {
@@ -304,9 +318,13 @@ export async function runPipelineViaWorker(
       options,
       ...(duration !== undefined ? { duration } : {}),
       ...(framerate !== undefined ? { framerate } : {}),
+      ...(indexSnapshot ? { indexSnapshot } : {}),
     };
     try {
-      worker.postMessage(startMsg, input instanceof ArrayBuffer ? [input] : []);
+      worker.postMessage(startMsg, [
+        ...(input instanceof ArrayBuffer ? [input] : []),
+        ...(indexSnapshot ? [indexSnapshot.bytes] : []),
+      ]);
     } catch (error) {
       settled = true;
       cleanup();

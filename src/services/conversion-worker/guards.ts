@@ -18,6 +18,7 @@ import {
   PROFILE_OPERATIONS,
   type StageMetrics,
 } from '@services/conversion-profiler';
+import { isOwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import { isConversionFormat, isConversionQuality, isSmartFrameSkipMode } from '@t/conversion-types';
 
 import type { WorkerRequest, WorkerResponse } from './types';
@@ -251,6 +252,13 @@ export function isWorkerRequest(value: unknown): value is WorkerRequest {
       // Optional pre-computed metadata
       if (value.duration !== undefined && !isFiniteNonNegative(value.duration)) return false;
       if (value.framerate !== undefined && !isFiniteNumber(value.framerate)) return false;
+      if (
+        value.indexSnapshot !== undefined &&
+        (!(value.inputBlob instanceof Blob) ||
+          !isOwnedInputIndexSnapshot(value.indexSnapshot) ||
+          value.indexSnapshot.sourceSize !== value.inputBlob.size)
+      )
+        return false;
       return true;
     }
     case 'abort': {

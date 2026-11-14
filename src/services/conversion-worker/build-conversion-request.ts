@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { resolveOutputLimits } from '@services/output-limits';
+import { copyOwnedInputIndex } from '@services/owned-input-index-cache';
+import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import type { ConversionRequest, PrecomputedVideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS, WORKER_MAX_MEMORY_MB } from '@utils/constants';
 
@@ -52,15 +54,18 @@ export function buildConversionRequest(
   fileName = 'input.webm',
   config?: SerializedDecoderConfig,
   duration?: number,
-  framerate?: number
+  framerate?: number,
+  indexSnapshot?: OwnedInputIndexSnapshot
 ): ConversionRequest {
   const outputLimits = resolveOutputLimits(options.format, {
     maxFrames: options.maxFrames,
     maxOutputBytes: options.maxOutputBytes,
   });
+  const selectedSnapshot = indexSnapshot ?? (inputBlob ? copyOwnedInputIndex(inputBlob) : null);
   return {
     ...(inputBuffer !== undefined ? { inputBuffer } : {}),
     ...(inputBlob !== undefined ? { inputBlob } : {}),
+    ...(selectedSnapshot ? { indexSnapshot: selectedSnapshot } : {}),
     ...(config !== undefined
       ? { preComputedMetadata: toPrecomputedVideoMetadata(config, duration, framerate) }
       : {}),
