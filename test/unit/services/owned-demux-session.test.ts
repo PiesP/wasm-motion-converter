@@ -13,6 +13,9 @@ describe('owned demux bitstream key verification', () => {
     await expect(verifyOwnedVideoKey('VP90', new Uint8Array(), vp9)).resolves.toBe(true);
     await expect(verifyOwnedVideoKey('av01', new Uint8Array(), av1)).resolves.toBe(true);
     await expect(verifyOwnedVideoKey('AV01', new Uint8Array(), av1)).resolves.toBe(true);
+    await expect(verifyOwnedVideoKey('av01',
+      new Uint8Array([0x81, 0, 0, 0, 0x0a, 1, 0x08]),
+      new Uint8Array([0x32, 1, 0xe0]))).resolves.toBe(true);
   });
 
   it('classifies length-prefixed and Annex-B AVC/HEVC pictures', async () => {

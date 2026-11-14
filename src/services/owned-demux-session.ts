@@ -86,7 +86,13 @@ export async function verifyOwnedVideoKey(codec: string, description: Uint8Array
     let at = 0;
     let units = 0;
     let lastYield = 0;
-    let reduced = false;
+    // av1C can carry the Sequence Header while samples contain only frame OBUs.
+    const configHeader = description.length > 6 ? description[4]! : 0;
+    const configSize = description.length > 6 ? description[5]! : 0;
+    let reduced = (description[0]! & 0x80) !== 0 &&
+      ((configHeader >> 3) & 15) === 1 && (configHeader & 2) !== 0 &&
+      (configSize & 0x80) === 0 && configSize > 0 &&
+      (description[6]! & 0x08) !== 0;
     while (at < bytes.length) {
       signal?.throwIfAborted();
       const header = bytes[at++]!;
