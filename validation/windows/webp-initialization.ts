@@ -57,7 +57,7 @@ export async function exerciseWebpInitialization(
       mode === 'import'
         ? /\/(?:webp-wasm|wasm-webp)[.-].*\.js$/.test(path) ||
           /wasm-webp_dist_esm_webp-wasm_+js\.js$/.test(path)
-        : path.endsWith('.wasm');
+        : /\/(?:webp-wasm|wasm-webp)(?:[.-][^/]*)?\.wasm$/.test(path);
     if (!target || failures > 0) return route.continue();
     failures++;
     blocked();
