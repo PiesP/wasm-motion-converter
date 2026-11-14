@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 // Original token encoder; tree, scan and band constants: RFC 6386 section 13.
 
-use crate::{default_coeff_probs::DEFAULT_COEFF_PROBS, BoolWriter, EncodeError};
+use crate::{default_coeff_probs::DEFAULT_COEFF_PROBS, rate::BoolSink, EncodeError};
 
 pub(crate) const SCAN: [usize; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15];
 const BANDS: [usize; 16] = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7];
@@ -10,7 +10,7 @@ const BANDS: [usize; 16] = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7];
 /// Coefficients are in raster order. `plane=0` omits DC (supplied by Y2).
 /// A zero token guarantees a later nonzero, so its successor omits the EOB node.
 pub(crate) fn encode_block(
-    writer: &mut BoolWriter,
+    writer: &mut impl BoolSink,
     values: &[i16; 16],
     plane: usize,
     mut context: usize,

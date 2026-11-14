@@ -4,9 +4,12 @@
 // Complete residual engineering path; product/preset qualification is unfinished.
 
 mod ac_quant;
+mod bmode_probs;
 mod coeff_update_probs;
 mod dc_quant;
 mod default_coeff_probs;
+mod prediction;
+mod rate;
 mod residual;
 mod textured;
 mod transform;
