@@ -4,8 +4,9 @@
 
 dropconvert is a static, client-side Vite and SolidJS application. It accepts one
 local video `File`, parses and decodes it with MediaBunny and WebCodecs, and
-encodes GIF or animated WebP output with gifenc, Canvas, WebCodecs, or bundled
-wasm-webp code. Conversion must remain local: there is no backend, account,
+encodes GIF or animated WebP output with gifenc, the local GIF scalar Rust/WASM
+module, Canvas, WebCodecs, or bundled wasm-webp code. Conversion must remain
+local: there is no backend, account,
 application session, upload API, or runtime CDN dependency.
 
 Protect these assets:
@@ -26,6 +27,9 @@ Protect these assets:
   transferables, cancellation, and lifecycle state require validation.
 - Browser APIs, codec implementations, Canvas, WebCodecs, WebAssembly, and
   MediaBunny cross from JavaScript into native or third-party code.
+- The GIF scalar module crosses a JavaScript/WASM boundary. Rust uses raw
+  pointers into linear memory; the JavaScript loader and Rust entrypoints must
+  keep offsets, lengths, palette order, and allocations bounded.
 - The service worker and browser cache form a persistent boundary across
   deployments. Network responses and request URLs must not weaken same-origin
   behavior or persist attacker-selected content.
@@ -49,6 +53,9 @@ Protect these assets:
   permits WebAssembly compilation, not JavaScript `eval` or `Function`.
 - Runtime code is bundled and same-origin. Dependency build scripts, recent
   releases, and trust downgrades remain subject to the pnpm policy.
+- The GIF scalar WASM must have no host imports. Its exports, initial memory,
+  source inputs, toolchain, and byte budget must match the reviewed build
+  contract before the app consumes it.
 - Release and CI workflows use least privilege, immutable action pins, trusted
   inputs, and do not expose credentials to code from untrusted pull requests.
 
@@ -59,6 +66,9 @@ Protect these assets:
   memory planning.
 - `src/services/conversion-worker/`, `src/services/worker-pool.ts`, Worker
   protocols, fallback paths, timeouts, cancellation, and cleanup.
+- `crates/gif-scalar-quantizer/src/lib.rs` unsafe state and pointer handling,
+  `src/services/gif-scalar-wasm.ts` ABI and memory checks, and
+  `scripts/build/build-gif-scalar-wasm.ts` source/binary provenance.
 - `worker/service-worker.ts`, emitted `dist/service-worker.js`,
   `src/sw-register.ts`, `public/_headers`, `vite.config.ts`, and generated build
   integrity checks.
@@ -77,6 +87,12 @@ cannot prove browser-codec safety, GPU/VRAM behavior, WebCodecs implementation
 behavior, WASM/native allocator bounds, real process PSS/RSS, Cloudflare's live
 headers, or service-worker behavior in an installed browser. Report these as
 deferred runtime coverage rather than inferring safety or a vulnerability.
+Routine CodeQL covers Actions and JavaScript/TypeScript; routine Semgrep covers
+secrets, not Rust source. Node-only build verification checks consistency within
+the trusted checkout; the isolated pinned Cargo `--check` compares regenerated
+WASM with the committed bytes. Neither proves runtime safety. Review Rust unsafe
+code and use compiled-WASM tests for palette order, ABI, and memory guards as
+separate evidence.
 Browser/PSS/RSS tests, deployed-header checks, and dependency scanners remain
 separate evidence. Generated output, coverage data, and historical reports are
 not source-of-truth review targets.

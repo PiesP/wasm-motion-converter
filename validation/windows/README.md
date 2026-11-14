@@ -123,6 +123,34 @@ assertions do not apply. Each workload runs first use, same-document warm with
 a new Worker, then context cleanup before the next workload. Historical
 synthetic receipts retain their original protocol and result unchanged.
 
+For [GIF quantization experiment 490](../../docs/experiments/490-quantization-plan.md),
+use one of `--scenario gif-quantization-primary`,
+`gif-quantization-secondary`, or `gif-quantization-small` per controller
+invocation. Each selector packages one declared input/workload and launches a
+fresh browser process/profile. The helper records first use and same-document
+warm use with a new Worker, source-bound saved GIF bytes and independent
+`ImageDecoder` composited-frame hashes/timeline/loop after latency, then closes
+its context and browser. The primary is full owner video, medium, scale 1,
+skip off; secondary is identical except low skip; small is the maintained
+synthetic control. Five balanced invocations per variant and workload are
+required for the timing comparison. `--scenario gif-quantization-default` runs
+the owner video at medium, scale 0.75, skip off once per variant for correctness
+and loading; it is excluded from timing medians. The source-owned
+[`gif-quantization-owner-video.json`](gif-quantization-owner-video.json) fixes
+input digests, settings and verification bounds. Keep the private MP4 outside
+`public/` and confirm the built `dist/` omits it.
+
+For a scalar GIF WASM build, each sample reads the source-inventory-bound
+WASM CacheStorage entry after download readiness and GIF verification. The
+first snapshot finishes before the warm click; the second follows warm use.
+Both snapshots include a bounded body SHA-256 and cache-admission headers. A
+warm WASM cache classification requires matching first/warm entries, the same
+controlling service worker, and no new host `.wasm` request. This is an
+inference from CacheStorage and host-request evidence; the page's Worker JS
+Resource Timing does not observe the Worker's WASM fetch. Missing or ambiguous
+evidence stays unqualified. Baseline builds without GIF WASM record
+`not-applicable` for this additional field.
+
 Use `--scenario motion-signature-owner-recovery` for the separate owner-video
 cancel-and-recover gate. It stages the same unchanged private input, exercises
 the existing high-quality adaptive-skip cancellation flow, requires effective

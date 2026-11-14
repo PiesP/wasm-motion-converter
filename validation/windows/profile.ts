@@ -38,6 +38,7 @@ import {
 } from './cancellation-inspector.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
 import {
+  classifyWasmWarmCache,
   choose as chooseMotionOption,
   exerciseMotionSignature,
   installMotionObserver,
@@ -47,6 +48,7 @@ import {
   MOTION_SIGNATURE_SCENARIO,
   MOTION_SMALL_FIXTURE,
   type MotionDiagnostic,
+  type MotionWasmAsset,
 } from './motion-signature.ts';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
 import {
@@ -537,6 +539,8 @@ export async function startStaticServer(
   const assetFailureRequests: { path: string; mode: AssetFailure['mode'] }[] = [];
   const observedAssetRequests: string[] = [];
   let observedAssetOverflow = false;
+  const observedWasmAssetRequests: string[] = [];
+  let observedWasmAssetOverflow = false;
   const missingAssetResponses: { path: string; status: number }[] = [];
   function setAssetFailure(failure: AssetFailure | null) {
     assert(
@@ -586,6 +590,10 @@ export async function startStaticServer(
       if (/^\/assets\/[\w.-]+\.js$/.test(pathname)) {
         if (observedAssetRequests.length < 512) observedAssetRequests.push(pathname);
         else observedAssetOverflow = true;
+      }
+      if (/^\/assets\/[\w.-]+\.wasm$/.test(pathname)) {
+        if (observedWasmAssetRequests.length < 512) observedWasmAssetRequests.push(pathname);
+        else observedWasmAssetOverflow = true;
       }
       if (assetFailure && pathname === assetFailure.path) {
         if (assetFailureRequests.length < 128)
@@ -668,6 +676,10 @@ export async function startStaticServer(
     observedAssetRequests,
     get observedAssetOverflow() {
       return observedAssetOverflow;
+    },
+    observedWasmAssetRequests,
+    get observedWasmAssetOverflow() {
+      return observedWasmAssetOverflow;
     },
     missingAssetResponses,
   };
@@ -2953,6 +2965,7 @@ async function finishMotionProfile({
   evidencePath,
   result,
   assetRequests,
+  wasmAssetRequests,
   failed,
   failure,
 }: {
@@ -2962,6 +2975,7 @@ async function finishMotionProfile({
   evidencePath: string;
   result: Record<string, unknown>;
   assetRequests: () => { paths: string[]; overflow: boolean };
+  wasmAssetRequests: () => { paths: string[]; overflow: boolean };
   failed: boolean;
   failure: unknown;
 }) {
@@ -2979,6 +2993,7 @@ async function finishMotionProfile({
   await attempt('context close', async () => context?.close());
   await attempt('server close', async () => closeServer(server));
   result.staticServerJsAssetRequests = assetRequests();
+  result.staticServerWasmAssetRequests = wasmAssetRequests();
   if (failed || cleanupErrors.length) result.status = 'failed';
   result.cleanupErrors = cleanupErrors;
   await attempt('evidence directory', async () => mkdir(output, { recursive: true }));
@@ -3018,6 +3033,22 @@ export async function run({
 
   const bundleRoot = await realpath(resolve(root));
   const motionSelectors = [
+    {
+      scenario: 'gif-quantization-default',
+      path: 'validation/windows/inputs/gif-quantization-default.json',
+    },
+    {
+      scenario: 'gif-quantization-primary',
+      path: 'validation/windows/inputs/gif-quantization-primary.json',
+    },
+    {
+      scenario: 'gif-quantization-secondary',
+      path: 'validation/windows/inputs/gif-quantization-secondary.json',
+    },
+    {
+      scenario: 'gif-quantization-small',
+      path: 'validation/windows/inputs/gif-quantization-small.json',
+    },
     {
       scenario: 'motion-signature-owner-recovery',
       path: 'validation/windows/inputs/motion-signature-owner-recovery.json',
@@ -3059,6 +3090,10 @@ export async function run({
         'analysis-worker-recovery.json',
         'app-update.json',
         'conversion-option-contract.json',
+        'gif-quantization-default.json',
+        'gif-quantization-primary.json',
+        'gif-quantization-secondary.json',
+        'gif-quantization-small.json',
         'motion-signature-owner-recovery.json',
         'motion-signature-owner-video.json',
         'motion-signature.json',
@@ -3077,10 +3112,13 @@ export async function run({
         'webp-initialization.json',
       ].filter((name) => name !== `${scenario}.json` && presentSelectors.includes(name)),
       [],
-      'Motion signature measurement requires one focused selector'
+      'GIF measurement requires one focused selector'
     );
+    const quantizationScenario = scenario.startsWith('gif-quantization-');
     const ownerVideo =
-      scenario === 'motion-signature-owner-video' || scenario === 'motion-signature-owner-recovery';
+      quantizationScenario ||
+      scenario === 'motion-signature-owner-video' ||
+      scenario === 'motion-signature-owner-recovery';
     const [smallPath, primaryPath, build, headersPath] = await Promise.all([
       validateBundleFile(bundleRoot, MOTION_SMALL_FIXTURE),
       validateBundleFile(
@@ -3096,18 +3134,61 @@ export async function run({
       validateBundleFile(bundleRoot, 'dist/_headers'),
     ]);
     const headerRules = parseHeaderRules(await readFile(headersPath, 'utf8'));
+    const gifWasmFiles = build.state.files.filter((file) =>
+      /^assets\/gif-scalar-quantizer[-.][\w-]{8}\.wasm$/.test(file.path)
+    );
+    assert(gifWasmFiles.length <= 1, 'Build contains multiple scalar GIF WASM assets');
+    const wasmAsset: MotionWasmAsset | null = gifWasmFiles[0]
+      ? {
+          path: `/${gifWasmFiles[0].path}`,
+          sha256: gifWasmFiles[0].sha256,
+          size: gifWasmFiles[0].size,
+        }
+      : null;
     const smallSha256 = sha256(await readFile(smallPath));
     const primarySha256 = sha256(await readFile(primaryPath));
     const ownerManifest = ownerVideo
       ? (JSON.parse(
           await readFile(
-            await validateBundleFile(bundleRoot, 'validation/windows/motion-owner-video.json'),
+            await validateBundleFile(
+              bundleRoot,
+              quantizationScenario
+                ? 'validation/windows/gif-quantization-owner-video.json'
+                : 'validation/windows/motion-owner-video.json'
+            ),
             'utf8'
           )
         ) as {
+          experiment?: string;
           input: { bytes: number; sha256: string; videoDurationUs: number };
-          settings: { quality: 'medium'; scale: number };
-          oracle: { width: number; height: number; durationToleranceUs: number };
+          settings: {
+            quality: 'medium';
+            scale: number;
+            smartFrameSkip?: 'off';
+            secondarySmartFrameSkip?: 'low';
+          };
+          oracle: {
+            width: number;
+            height: number;
+            durationToleranceUs: number;
+            maxDecodedOutputFrames?: number;
+            maxSavedBytes?: number;
+            loopCount?: number;
+          };
+          smallControl?: {
+            bytes: number;
+            sha256: string;
+            quality: 'low';
+            scale: number;
+            smartFrameSkip: 'low';
+          };
+          defaultQualification?: {
+            quality: 'medium';
+            scale: number;
+            smartFrameSkip: 'off';
+            width: number;
+            height: number;
+          };
         })
       : null;
     if (ownerManifest) {
@@ -3121,13 +3202,55 @@ export async function run({
         ownerManifest.input.bytes,
         'Guest input size differs from frozen owner manifest'
       );
+      if (quantizationScenario) {
+        assert.equal(ownerManifest.experiment, 'gif-quantization-490');
+        assert.equal(smallSha256, ownerManifest.smallControl?.sha256);
+        assert.equal((await stat(smallPath)).size, ownerManifest.smallControl?.bytes);
+        assert.deepEqual(
+          {
+            quality: ownerManifest.settings.quality,
+            scale: ownerManifest.settings.scale,
+            primarySkip: ownerManifest.settings.smartFrameSkip,
+            secondarySkip: ownerManifest.settings.secondarySmartFrameSkip,
+          },
+          { quality: 'medium', scale: 1, primarySkip: 'off', secondarySkip: 'low' }
+        );
+        assert.deepEqual(
+          ownerManifest.smallControl && {
+            quality: ownerManifest.smallControl.quality,
+            scale: ownerManifest.smallControl.scale,
+            skip: ownerManifest.smallControl.smartFrameSkip,
+          },
+          { quality: 'low', scale: 1, skip: 'low' }
+        );
+        assert.deepEqual(
+          {
+            frames: ownerManifest.oracle.maxDecodedOutputFrames,
+            bytes: ownerManifest.oracle.maxSavedBytes,
+            loop: ownerManifest.oracle.loopCount,
+          },
+          { frames: 400, bytes: 100_663_296, loop: 0 }
+        );
+      }
+    }
+    const defaultQualification =
+      scenario === 'gif-quantization-default' ? ownerManifest?.defaultQualification : undefined;
+    if (scenario === 'gif-quantization-default') {
+      assert(defaultQualification, 'Default qualification settings missing');
+      assert.deepEqual(defaultQualification, {
+        quality: 'medium',
+        scale: 0.75,
+        smartFrameSkip: 'off',
+        width: 540,
+        height: 540,
+      });
     }
     const ownerSettings = ownerManifest
       ? {
           quality: ownerManifest.settings.quality,
-          scale: ownerManifest.settings.scale,
-          width: ownerManifest.oracle.width,
-          height: ownerManifest.oracle.height,
+          scale: defaultQualification?.scale ?? ownerManifest.settings.scale,
+          width: defaultQualification?.width ?? ownerManifest.oracle.width,
+          height: defaultQualification?.height ?? ownerManifest.oracle.height,
           expectedDurationUs: ownerManifest.input.videoDurationUs,
           durationToleranceUs: ownerManifest.oracle.durationToleranceUs,
           oracleKind: 'owner-video' as const,
@@ -3166,11 +3289,35 @@ export async function run({
       paths: [...started.observedAssetRequests],
       overflow: started.observedAssetOverflow,
     });
+    const wasmAssetRequests = () => ({
+      paths: [...started.observedWasmAssetRequests],
+      overflow: started.observedWasmAssetOverflow,
+    });
+    let firstSample: {
+      sample: Awaited<ReturnType<typeof measureMotion>>;
+      wasmRequests: ReturnType<typeof wasmAssetRequests>;
+    } | null = null;
     const attachDeliveryEvidence = (sample: Awaited<ReturnType<typeof measureMotion>>) => {
       const workerPath = new URL(sample.worker.url).pathname;
+      const wasmRequests = wasmAssetRequests();
+      const wasmWarmCache =
+        sample.condition === 'warm' && firstSample?.sample.workload === sample.workload
+          ? classifyWasmWarmCache({
+              asset: wasmAsset,
+              first: firstSample.sample.cacheObservation.wasmAssetCache,
+              warm: sample.cacheObservation.wasmAssetCache,
+              firstHost: firstSample.wasmRequests,
+              warmHost: wasmRequests,
+              firstController: firstSample.sample.cacheObservation.serviceWorkerController,
+              warmController: sample.cacheObservation.serviceWorkerController,
+            })
+          : null;
+      if (sample.condition !== 'warm') firstSample = { sample, wasmRequests };
       return Object.assign(sample, {
         deliveryEvidence: {
           staticServerJsAssetRequests: assetRequests(),
+          staticServerWasmAssetRequests: wasmRequests,
+          wasmWarmCache,
           workerCacheControlFromDistHeaders:
             matchedHeaders(headerRules, workerPath).get('cache-control') ?? null,
           workerCacheHeaderSource: 'dist/_headers',
@@ -3186,7 +3333,9 @@ export async function run({
       build,
       fixtureSha256: { small: smallSha256, primary: primarySha256 },
       inputManifest: ownerManifest,
+      gifWasmAsset: wasmAsset,
       staticServerJsAssetRequests: assetRequests(),
+      staticServerWasmAssetRequests: wasmAssetRequests(),
       samples,
       diagnostics,
     };
@@ -3297,7 +3446,7 @@ export async function run({
         await chooseMotionOption(page, 'scale', '1');
         await chooseMotionOption(page, 'smart-frame-skip', 'low');
         const recovered = attachDeliveryEvidence(
-          await measureMotion(page, workloads[1]!, 'warm', 0)
+          await measureMotion(page, workloads[1]!, 'warm', 0, wasmAsset)
         );
         result.recovery = recovered;
         assert(
@@ -3330,6 +3479,7 @@ export async function run({
           evidencePath,
           result,
           assetRequests,
+          wasmAssetRequests,
           failed,
           failure,
         });
@@ -3341,17 +3491,29 @@ export async function run({
       const measured = await exerciseMotionSignature(
         browser,
         started.url,
-        workloads,
+        scenario === 'gif-quantization-primary' || scenario === 'gif-quantization-default'
+          ? [workloads[2]!]
+          : scenario === 'gif-quantization-secondary'
+            ? [workloads[0]!]
+            : scenario === 'gif-quantization-small'
+              ? [workloads[1]!]
+              : workloads,
         async (sample) => {
           samples.push(attachDeliveryEvidence(sample));
           await mkdir(output, { recursive: true });
           await writeFile(
             evidencePath,
-            `${JSON.stringify({ ...result, status: 'running', samples, staticServerJsAssetRequests: assetRequests() }, null, 2)}\n`
+            `${JSON.stringify({ ...result, status: 'running', samples, staticServerJsAssetRequests: assetRequests(), staticServerWasmAssetRequests: wasmAssetRequests() }, null, 2)}\n`
           );
         },
         output,
-        diagnostics
+        diagnostics,
+        scenario === 'gif-quantization-default'
+          ? 'single-correctness'
+          : quantizationScenario
+            ? 'single-pair'
+            : 'three-pair-cohort',
+        wasmAsset
       );
       result = { ...result, ...measured, scenario };
       return { profile: scenario, ...result };
@@ -3369,6 +3531,7 @@ export async function run({
         evidencePath,
         result,
         assetRequests,
+        wasmAssetRequests,
         failed,
         failure,
       });

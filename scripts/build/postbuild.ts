@@ -6,16 +6,156 @@
  * Provider-side HTML injection is controlled in Pages settings, after build.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import type { Stats } from 'node:fs';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { fingerprintedAssetHeaders, writeDeploymentState } from './deployment-state.ts';
 import { verifyServiceWorkerOutput } from './verify-service-worker-output.ts';
 
-export function postbuild(): void {
-  const dist = resolve('dist');
+export type PrivateInputFingerprint = { bytes: number; sha256: string };
+
+function declaredPrivateInput(root: string): PrivateInputFingerprint {
+  const declaration = JSON.parse(
+    readFileSync(resolve(root, 'validation/windows/gif-quantization-owner-video.json'), 'utf8')
+  ) as unknown;
+  if (!declaration || typeof declaration !== 'object' || Array.isArray(declaration)) {
+    throw new Error('Invalid declared private input');
+  }
+  const record = declaration as { schemaVersion?: unknown; input?: unknown };
+  const input = record.input;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Invalid declared private input');
+  }
+  const fields = input as { path?: unknown; bytes?: unknown; sha256?: unknown };
+  if (
+    record.schemaVersion !== 1 ||
+    typeof fields.path !== 'string' ||
+    !/^validation\/windows\/private-inputs\/[A-Za-z0-9._-]+\.mp4$/u.test(fields.path) ||
+    typeof fields.bytes !== 'number' ||
+    !Number.isSafeInteger(fields.bytes) ||
+    fields.bytes <= 0 ||
+    typeof fields.sha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(fields.sha256)
+  ) {
+    throw new Error('Invalid declared private input');
+  }
+  return { bytes: fields.bytes, sha256: fields.sha256 };
+}
+
+function sameFile(left: Stats, right: Stats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+function matchesPrivateInput(path: string, expected: PrivateInputFingerprint): boolean {
+  const fd = openSync(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)
+  );
+  try {
+    return matchesOpenedPrivateInput(fd, path, expected);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function matchesOpenedPrivateInput(
+  fd: number,
+  path: string,
+  expected: PrivateInputFingerprint
+): boolean {
+  const opened = fstatSync(fd);
+  const pathname = lstatSync(path);
+  if (!opened.isFile() || !pathname.isFile() || !sameFile(opened, pathname)) {
+    throw new Error('Private input candidate changed before reading');
+  }
+  if (opened.size !== expected.bytes) {
+    if (!sameFile(opened, fstatSync(fd)) || !sameFile(opened, lstatSync(path))) {
+      throw new Error('Private input candidate changed before exclusion');
+    }
+    return false;
+  }
+  const hash = createHash('sha256');
+  const chunk = Buffer.allocUnsafe(64 * 1024);
+  let offset = 0;
+  while (offset < expected.bytes) {
+    const count = readSync(fd, chunk, 0, Math.min(chunk.length, expected.bytes - offset), offset);
+    if (count === 0) throw new Error('Private input candidate truncated while reading');
+    hash.update(chunk.subarray(0, count));
+    offset += count;
+  }
+  if (!sameFile(opened, fstatSync(fd)) || !sameFile(opened, lstatSync(path))) {
+    throw new Error('Private input candidate changed while reading');
+  }
+  return hash.digest('hex') === expected.sha256;
+}
+
+export function excludeDeclaredPrivateInput(
+  root: string,
+  dist: string,
+  remove: (path: string) => void = unlinkSync
+): number {
+  try {
+    const expected = declaredPrivateInput(root);
+    const distRoot = resolve(dist);
+    let removed = 0;
+    const walk = (directory: string): void => {
+      if (!lstatSync(directory).isDirectory()) throw new Error('Unexpected non-directory in dist');
+      for (const name of readdirSync(directory).sort()) {
+        const path = resolve(directory, name);
+        const inside = relative(distRoot, path);
+        if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+          throw new Error('Path escaped dist');
+        }
+        const state = lstatSync(path);
+        if (state.isDirectory()) walk(path);
+        else if (state.isFile()) {
+          if (matchesPrivateInput(path, expected)) {
+            remove(path);
+            removed += 1;
+          }
+        } else {
+          throw new Error('Unexpected link or special file in dist');
+        }
+      }
+    };
+    walk(distRoot);
+    return removed;
+  } catch (error) {
+    const code = error instanceof Error && 'code' in error ? String(error.code) : 'invalid';
+    throw new Error(`[postbuild] Declared private input exclusion failed (${code})`);
+  }
+}
+
+export function postbuild(
+  root = resolve('.'),
+  removePrivateCopy: (path: string) => void = unlinkSync
+): void {
+  const dist = resolve(root, 'dist');
+  const excluded = excludeDeclaredPrivateInput(root, dist, removePrivateCopy);
+  console.log(`[postbuild] Excluded ${excluded} declared private input copies from dist`);
   const indexPath = resolve(dist, 'index.html');
-  const workerHash = verifyServiceWorkerOutput(resolve('.'), dist);
+  const workerHash = verifyServiceWorkerOutput(root, dist);
   console.log(`[postbuild] Verified emitted service-worker.js ${workerHash}`);
 
   const html = readFileSync(indexPath, 'utf-8');
@@ -101,11 +241,11 @@ export function postbuild(): void {
   writeFileSync(
     resolve(dist, '_headers'),
     fingerprintedAssetHeaders(
-      readFileSync(resolve('public/_headers'), 'utf8'),
+      readFileSync(resolve(root, 'public/_headers'), 'utf8'),
       readdirSync(assetsDir)
     )
   );
-  writeDeploymentState(resolve('.'), dist);
+  writeDeploymentState(root, dist);
 }
 
 if (import.meta.main) postbuild();

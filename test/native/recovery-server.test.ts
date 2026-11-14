@@ -19,6 +19,10 @@ test('owned Pages-compatible server injects one real asset failure at a time', a
     await writeFile(join(distRoot, 'index.html'), '<!doctype html><title>Recovery</title>');
     await writeFile(join(distRoot, 'assets', 'es.Abc123_X.js'), 'export default "es";');
     await writeFile(
+      join(distRoot, 'assets', 'gif-scalar-quantizer-Abc123_X.wasm'),
+      new Uint8Array([0, 97, 115, 109])
+    );
+    await writeFile(
       join(distRoot, '_headers'),
       "/*\n  Content-Security-Policy: default-src 'self'\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n"
     );
@@ -49,6 +53,13 @@ test('owned Pages-compatible server injects one real asset failure at a time', a
     assert.deepEqual(started.assetFailureRequests, []);
     assert.deepEqual(started.observedAssetRequests, [path, path, path, path, path]);
     assert.equal(started.observedAssetOverflow, false);
+    const wasmPath = '/assets/gif-scalar-quantizer-Abc123_X.wasm';
+    const wasmResponse = await fetch(`${started.url}${wasmPath}`);
+    assert.equal(wasmResponse.headers.get('content-type'), 'application/wasm');
+    assert.deepEqual([...new Uint8Array(await wasmResponse.arrayBuffer())], [0, 97, 115, 109]);
+    assert.deepEqual(started.observedWasmAssetRequests, [wasmPath]);
+    assert.equal(started.observedWasmAssetOverflow, false);
+    assert.deepEqual(started.observedAssetRequests, [path, path, path, path, path]);
     const nextRoot = join(bundleRoot, 'next');
     await mkdir(nextRoot);
     await writeFile(join(nextRoot, 'index.html'), '<!doctype html><title>Next</title>');

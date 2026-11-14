@@ -55,7 +55,9 @@ describe('Playwright workflow profiles', () => {
     const e2eJob = workflow.slice(workflow.indexOf('  e2e:\n'), workflow.indexOf('\n  build:\n'));
 
     expect(packageJson.scripts?.['test:e2e:ci']).toContain('run-playwright.ts ci');
-    expect(packageJson.scripts?.['pretest:e2e:ci']).toBe('vp run prepare:e2e:fixture');
+    expect(packageJson.scripts?.['pretest:e2e:ci']).toBe(
+      'vp run build:gif-wasm && vp run prepare:e2e:fixture'
+    );
     expect(workflow).toContain('vp run test:e2e:ci');
     expect(workflow).toContain('sudo apt-get install --yes ffmpeg');
     expect(e2eJob).toContain('timeout-minutes: 90');

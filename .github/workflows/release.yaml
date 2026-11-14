@@ -126,6 +126,14 @@ jobs:
         with:
           node-version: ${{ needs.provenance.outputs.node-version }}
 
+      - name: 🦀 Prepare pinned GIF WASM compiler
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+
+      - name: 🔒 Rebuild and compare vendored GIF WASM
+        run: vp run build:gif-wasm:check
+
       - name: 🎭 Install Chromium for Browser Mode coverage
         run: vp exec playwright install --with-deps chromium
 
@@ -164,6 +172,14 @@ jobs:
         uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc
         with:
           node-version: ${{ needs.provenance.outputs.node-version }}
+
+      - name: 🦀 Prepare pinned GIF WASM compiler
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+
+      - name: 🔒 Rebuild and compare vendored GIF WASM
+        run: vp run build:gif-wasm:check
 
       - name: 🎭 Resolve installed Playwright version
         id: playwright
@@ -218,6 +234,14 @@ jobs:
         uses: PiesP/browser-core/automation/actions/setup-project@38cd1cb18c9c37e57e8b53a98e811450bb1a18fc
         with:
           node-version: ${{ needs.provenance.outputs.node-version }}
+
+      - name: 🦀 Prepare pinned GIF WASM compiler
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+
+      - name: 🔒 Rebuild and compare vendored GIF WASM
+        run: vp run build:gif-wasm:check
 
       - name: 🏗️ Build app
         run: vp run build:ci

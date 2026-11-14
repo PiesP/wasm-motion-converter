@@ -1,0 +1,375 @@
+{
+  "schemaVersion": 1,
+  "scope": "Sanitized immutable 45-invocation production timing summary; no diagnostic timing, private paths, media, machine IDs, or access data",
+  "sourceAudits": {
+    "tsProductionAuditSha256": "86f156529566972941b96a13a39bab42d7b48a94500ef7b2cc004a7dac1b5ba3",
+    "scalarProductionAuditSha256": "28f235b04ab5652b9e764e00c7bca2b7e74d4988576e885c35b6026187b9a2ae",
+    "conditionalScheduleSha256": "7a11ffa0fada627c5065934165fd1eb96682c501fd23ca446415f3181bd5c863"
+  },
+  "input": {
+    "ownerMp4Sha256": "c1ebdf56c8af5d830c6b86689d2bff05cbc3f371da3b1c898c4cfad8a335373c",
+    "ownerMp4Bytes": 1092710,
+    "smallMp4Sha256": "de4c15ff513d41c964eadb5d45ce08030b2a94eea501e9f86edfd8a301e1411e",
+    "smallMp4Bytes": 5184
+  },
+  "outputOracle": {
+    "primaryAndSecondary": {
+      "savedBytes": 19607211,
+      "savedSha256": "efb2532834c56d2ae723e5c94ef05422a150b6391085bd9a0da62a21f5457169",
+      "frames": 134,
+      "durationUs": 11160000,
+      "loopCount": 0
+    },
+    "small": {
+      "savedBytes": 17590,
+      "savedSha256": "ccf94435e52830cc74a4ac4a8223e69634fe4b71b412ace49ab7110f06586214",
+      "frames": 8,
+      "durationUs": 1000000,
+      "loopCount": 0
+    }
+  },
+  "cohorts": [
+    {
+      "variant": "baseline-ts",
+      "sourceSha": "ae676d228b7a3a05e8a4c0860982a580095a9a25",
+      "workload": "primary",
+      "condition": "cold-first-use",
+      "samplesMs": [
+        19765.50499999989,
+        16072.129999998957,
+        16149.064999999478,
+        16149.570000000298,
+        17204.870000001043
+      ],
+      "medianMs": 16149.570000000298,
+      "rangeMs": [
+        16072.129999998957,
+        19765.50499999989
+      ],
+      "madMs": 77.4400000013411
+    },
+    {
+      "variant": "baseline-ts",
+      "sourceSha": "ae676d228b7a3a05e8a4c0860982a580095a9a25",
+      "workload": "primary",
+      "condition": "warm",
+      "samplesMs": [
+        19381.455000000075,
+        15922.855000000447,
+        16041.665000000969,
+        16036.464999999851,
+        17212.455000000075
+      ],
+      "medianMs": 16041.665000000969,
+      "rangeMs": [
+        15922.855000000447,
+        19381.455000000075
+      ],
+      "madMs": 118.81000000052154
+    },
+    {
+      "variant": "baseline-ts",
+      "sourceSha": "ae676d228b7a3a05e8a4c0860982a580095a9a25",
+      "workload": "secondary",
+      "condition": "cold-first-use",
+      "samplesMs": [
+        20895.485000000335,
+        17018.319999998435,
+        16997.18999999948,
+        16941.445000000298,
+        18046.950000001118
+      ],
+      "medianMs": 17018.319999998435,
+      "rangeMs": [
+        16941.445000000298,
+        20895.485000000335
+      ],
+      "madMs": 76.87499999813735
+    },
+    {
+      "variant": "baseline-ts",
+      "sourceSha": "ae676d228b7a3a05e8a4c0860982a580095a9a25",
+      "workload": "secondary",
+      "condition": "warm",
+      "samplesMs": [
+        21050.64000000013,
+        16887.79000000097,
+        16896.514999998733,
+        16812.169999999925,
+        18143.16000000015
+      ],
+      "medianMs": 16896.514999998733,
+      "rangeMs": [
+        16812.169999999925,
+        21050.64000000013
+      ],
+      "madMs": 84.3449999988079
+    },
+    {
+      "variant": "baseline-ts",
+      "sourceSha": "ae676d228b7a3a05e8a4c0860982a580095a9a25",
+      "workload": "small",
+      "condition": "cold-first-use",
+      "samplesMs": [
+        240.49000000022352,
+        181.67999999970198,
+        169.64000000059605,
+        184.75499999895692,
+        202.16500000096858
+      ],
+      "medianMs": 184.75499999895692,
+      "rangeMs": [
+        169.64000000059605,
+        240.49000000022352
+      ],
+      "madMs": 15.114999998360872
+    },
+    {
+      "variant": "baseline-ts",
+      "sourceSha": "ae676d228b7a3a05e8a4c0860982a580095a9a25",
+      "workload": "small",
+      "condition": "warm",
+      "samplesMs": [
+        167.77500000037253,
+        121.82500000111759,
+        120.31000000052154,
+        124.375,
+        173.47000000067055
+      ],
+      "medianMs": 124.375,
+      "rangeMs": [
+        120.31000000052154,
+        173.47000000067055
+      ],
+      "madMs": 4.064999999478459
+    },
+    {
+      "variant": "candidate-ts",
+      "sourceSha": "023673400e1d9529deb7f7703d4e31b32b2fa2a8",
+      "workload": "primary",
+      "condition": "cold-first-use",
+      "samplesMs": [
+        18931.980000000447,
+        15767.794999999925,
+        15937,
+        15869.065000001341,
+        16819.445000000298
+      ],
+      "medianMs": 15937,
+      "rangeMs": [
+        15767.794999999925,
+        18931.980000000447
+      ],
+      "madMs": 169.2050000000745
+    },
+    {
+      "variant": "candidate-ts",
+      "sourceSha": "023673400e1d9529deb7f7703d4e31b32b2fa2a8",
+      "workload": "primary",
+      "condition": "warm",
+      "samplesMs": [
+        18924.59500000067,
+        15740.185000000522,
+        15846.310000000522,
+        16708.490000000224,
+        17032.125
+      ],
+      "medianMs": 16708.490000000224,
+      "rangeMs": [
+        15740.185000000522,
+        18924.59500000067
+      ],
+      "madMs": 862.179999999702
+    },
+    {
+      "variant": "candidate-ts",
+      "sourceSha": "023673400e1d9529deb7f7703d4e31b32b2fa2a8",
+      "workload": "secondary",
+      "condition": "cold-first-use",
+      "samplesMs": [
+        20137.120000001043,
+        16739.789999999106,
+        17099.830000000075,
+        17880.18999999948,
+        17957.224999999627
+      ],
+      "medianMs": 17880.18999999948,
+      "rangeMs": [
+        16739.789999999106,
+        20137.120000001043
+      ],
+      "madMs": 780.359999999404
+    },
+    {
+      "variant": "candidate-ts",
+      "sourceSha": "023673400e1d9529deb7f7703d4e31b32b2fa2a8",
+      "workload": "secondary",
+      "condition": "warm",
+      "samplesMs": [
+        20518.824999999255,
+        16773.390000000596,
+        16861.259999999776,
+        18010.195000000298,
+        18069.605000000447
+      ],
+      "medianMs": 18010.195000000298,
+      "rangeMs": [
+        16773.390000000596,
+        20518.824999999255
+      ],
+      "madMs": 1148.9350000005215
+    },
+    {
+      "variant": "candidate-ts",
+      "sourceSha": "023673400e1d9529deb7f7703d4e31b32b2fa2a8",
+      "workload": "small",
+      "condition": "cold-first-use",
+      "samplesMs": [
+        228.02500000037253,
+        178.41499999910593,
+        195.10999999940395,
+        262.59000000171363,
+        178.77999999932945
+      ],
+      "medianMs": 195.10999999940395,
+      "rangeMs": [
+        178.41499999910593,
+        262.59000000171363
+      ],
+      "madMs": 16.695000000298023
+    },
+    {
+      "variant": "candidate-ts",
+      "sourceSha": "023673400e1d9529deb7f7703d4e31b32b2fa2a8",
+      "workload": "small",
+      "condition": "warm",
+      "samplesMs": [
+        156.05000000074506,
+        126.70000000111759,
+        120.0449999999255,
+        128.88499999977648,
+        121.89000000059605
+      ],
+      "medianMs": 126.70000000111759,
+      "rangeMs": [
+        120.0449999999255,
+        156.05000000074506
+      ],
+      "madMs": 4.810000000521541
+    },
+    {
+      "variant": "scalar-wasm",
+      "sourceSha": "17478a2dba35caf3e3fd1cf54b8f402fb55db81f",
+      "workload": "primary",
+      "condition": "cold-first-use",
+      "samplesMs": [
+        13152.22000000067,
+        13340.599999999627,
+        13278.234999999404,
+        14284.664999999106,
+        14204.285000000149
+      ],
+      "medianMs": 13340.599999999627,
+      "rangeMs": [
+        13152.22000000067,
+        14284.664999999106
+      ],
+      "madMs": 188.37999999895692
+    },
+    {
+      "variant": "scalar-wasm",
+      "sourceSha": "17478a2dba35caf3e3fd1cf54b8f402fb55db81f",
+      "workload": "primary",
+      "condition": "warm",
+      "samplesMs": [
+        13101.445000000298,
+        13264.959999999031,
+        13276.75500000082,
+        14127.129999998957,
+        14187.445000000298
+      ],
+      "medianMs": 13276.75500000082,
+      "rangeMs": [
+        13101.445000000298,
+        14187.445000000298
+      ],
+      "madMs": 175.31000000052154
+    },
+    {
+      "variant": "scalar-wasm",
+      "sourceSha": "17478a2dba35caf3e3fd1cf54b8f402fb55db81f",
+      "workload": "secondary",
+      "condition": "cold-first-use",
+      "samplesMs": [
+        14179.464999999851,
+        14243.205000000075,
+        14257.214999999851,
+        15373.445000000298,
+        15043.299999998882
+      ],
+      "medianMs": 14257.214999999851,
+      "rangeMs": [
+        14179.464999999851,
+        15373.445000000298
+      ],
+      "madMs": 77.75
+    },
+    {
+      "variant": "scalar-wasm",
+      "sourceSha": "17478a2dba35caf3e3fd1cf54b8f402fb55db81f",
+      "workload": "secondary",
+      "condition": "warm",
+      "samplesMs": [
+        14056.23999999836,
+        14178.035000000149,
+        14160.02999999933,
+        15225.089999999851,
+        15179.115000000224
+      ],
+      "medianMs": 14178.035000000149,
+      "rangeMs": [
+        14056.23999999836,
+        15225.089999999851
+      ],
+      "madMs": 121.79500000178814
+    },
+    {
+      "variant": "scalar-wasm",
+      "sourceSha": "17478a2dba35caf3e3fd1cf54b8f402fb55db81f",
+      "workload": "small",
+      "condition": "cold-first-use",
+      "samplesMs": [
+        185.0650000013411,
+        174.0449999999255,
+        186.7949999999255,
+        182.0800000000745,
+        210.375
+      ],
+      "medianMs": 185.0650000013411,
+      "rangeMs": [
+        174.0449999999255,
+        210.375
+      ],
+      "madMs": 2.9850000012665987
+    },
+    {
+      "variant": "scalar-wasm",
+      "sourceSha": "17478a2dba35caf3e3fd1cf54b8f402fb55db81f",
+      "workload": "small",
+      "condition": "warm",
+      "samplesMs": [
+        125.4199999999255,
+        122.53999999910593,
+        126.82499999925494,
+        121.02500000037253,
+        123.08999999985099
+      ],
+      "medianMs": 123.08999999985099,
+      "rangeMs": [
+        121.02500000037253,
+        126.82499999925494
+      ],
+      "madMs": 2.0649999994784594
+    }
+  ]
+}

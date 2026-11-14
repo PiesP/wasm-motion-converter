@@ -27,6 +27,9 @@ vi.mock('gifenc', () => ({
   }),
   quantize: mocks.quantize,
 }));
+vi.mock('@services/gif-scalar-wasm', () => ({
+  createGifScalarQuantizer: async () => mocks.quantize,
+}));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     if (mocks.timedFrames) {

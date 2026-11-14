@@ -8,6 +8,7 @@ node_modules/
 
 # Build output
 dist/
+/crates/gif-scalar-quantizer/target/
 /build/
 /release-bundle/
 .vite-sw-temp/

@@ -2,19 +2,30 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
+  closeSync,
+  constants,
   copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vite-plus/test';
+
+import {
+  excludeDeclaredPrivateInput,
+  matchesOpenedPrivateInput,
+  postbuild,
+} from '../../../scripts/build/postbuild';
 
 const project = resolve(import.meta.dirname, '../../..');
 const roots: string[] = [];
@@ -38,6 +49,8 @@ function fixture() {
     'scripts/release/published-asset.ts',
     'scripts/build/deployment-state.ts',
     'scripts/build/verify-service-worker-output.ts',
+    'scripts/build/gifenc-pnn-NOTICES.txt',
+    'validation/windows/gif-quantization-owner-video.json',
   ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     copyFileSync(join(project, path), join(root, path));
@@ -60,6 +73,20 @@ function stub(path: string, contents: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `#!/bin/sh\n${contents}\n`);
   chmodSync(path, 0o755);
+}
+
+function declareSyntheticOwnerInput(root: string, bytes: Buffer): void {
+  writeFileSync(
+    join(root, 'validation/windows/gif-quantization-owner-video.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      input: {
+        path: 'validation/windows/private-inputs/motion-owner-video.mp4',
+        bytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      },
+    })
+  );
 }
 
 describe('direct Node script boundaries', () => {
@@ -193,6 +220,61 @@ describe('direct Node script boundaries', () => {
       expect(dated.status, dated.stderr).toBe(0);
       expect(readFileSync(join(root, 'public/LICENSES.md'), 'utf8')).toBe(generated);
     }
+  });
+
+  it('retains gifenc MIT text and its source-pinned PNN attribution', () => {
+    const { root, run } = fixture();
+    mkdirSync(join(root, 'node_modules/gifenc/src'), { recursive: true });
+    mkdirSync(join(root, 'public'));
+    writeFileSync(
+      join(root, 'package.json'),
+      '{"type":"module","dependencies":{"gifenc":"1.0.3"}}'
+    );
+    const metadata = {
+      version: '1.0.3',
+      license: 'MIT',
+      repository: { url: 'https://github.com/mattdesl/gifenc' },
+    };
+    const metadataPath = join(root, 'node_modules/gifenc/package.json');
+    writeFileSync(metadataPath, JSON.stringify(metadata));
+    writeFileSync(
+      join(root, 'node_modules/gifenc/LICENSE'),
+      'MIT License\nCopyright (c) 2017 Matt DesLauriers\n'
+    );
+    const sourcePath = join(root, 'node_modules/gifenc/src/pnnquant2.js');
+    const source = `// Modified from:
+// https://github.com/mcychan/PnnQuant.js/blob/master/src/pnnquant.js
+
+/* Fast pairwise nearest neighbor based algorithm for multilevel thresholding
+Copyright (C) 2004-2019 Mark Tyler and Dmitry Groshev
+Copyright (c) 2018-2021 Miller Cy Chan
+* error measure; time used is proportional to number of bins squared - WJ */
+
+export const quantize = () => {};
+`;
+    writeFileSync(sourcePath, source);
+    const output = join(root, 'public/LICENSES.md');
+    const generated = run('scripts/build/generate-licenses.ts');
+    expect(generated.status, generated.stderr).toBe(0);
+    const notices = readFileSync(output, 'utf8');
+    expect(notices).toContain('MIT License');
+    expect(notices).toContain('Copyright (c) 2017 Matt DesLauriers');
+    expect(notices).toContain('Copyright (C) 2004-2019 Mark Tyler and Dmitry Groshev');
+    expect(notices).toContain('Copyright (c) 2018-2021 Miller Cy Chan');
+    expect(notices).toContain('https://github.com/mcychan/PnnQuant.js/blob/master/src/pnnquant.js');
+
+    writeFileSync(sourcePath, source.replace('Mark Tyler', 'Changed author'));
+    const changedHeader = run('scripts/build/generate-licenses.ts');
+    expect(changedHeader.status).toBe(1);
+    expect(changedHeader.stderr).toContain('Review changed gifenc PNN source header');
+    expect(readFileSync(output, 'utf8')).toBe(notices);
+
+    writeFileSync(sourcePath, source);
+    writeFileSync(metadataPath, JSON.stringify({ ...metadata, version: '1.0.4' }));
+    const changedVersion = run('scripts/build/generate-licenses.ts');
+    expect(changedVersion.status).toBe(1);
+    expect(changedVersion.stderr).toContain('Review PNN attribution for the new gifenc version');
+    expect(readFileSync(output, 'utf8')).toBe(notices);
   });
 
   it('includes the installed Vite helper owner notice when Vite is declared', () => {
@@ -366,8 +448,21 @@ describe('direct Node script boundaries', () => {
     writeFileSync(join(root, 'dist/assets/b.wasm'), 'same');
     writeFileSync(join(root, 'dist/assets/app.js'), 'fetch("/assets/b.wasm")');
     writeFileSync(join(root, 'dist/test-video-sample.mp4'), 'omit');
+    const privateBytes = Buffer.from('synthetic-private-owner-input');
+    declareSyntheticOwnerInput(root, privateBytes);
+    writeFileSync(join(root, 'public/preserved-original.mp4'), privateBytes);
+    mkdirSync(join(root, 'dist/nested'));
+    writeFileSync(join(root, 'dist/nested/arbitrary-name.bin'), privateBytes);
+    const safeBytes = Buffer.from(privateBytes);
+    safeBytes[0] = 0;
+    writeFileSync(join(root, 'dist/nested/safe-same-size.bin'), safeBytes);
     const result = run('scripts/build/postbuild.ts');
     expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Excluded 1 declared private input copies');
+    expect(result.stdout).not.toContain('arbitrary-name.bin');
+    expect(existsSync(join(root, 'dist/nested/arbitrary-name.bin'))).toBe(false);
+    expect(readFileSync(join(root, 'dist/nested/safe-same-size.bin'))).toEqual(safeBytes);
+    expect(readFileSync(join(root, 'public/preserved-original.mp4'))).toEqual(privateBytes);
     expect(readFileSync(join(root, 'dist/assets/app.js'), 'utf8')).toContain('/assets/a.wasm');
     expect(existsSync(join(root, 'dist/assets/b.wasm'))).toBe(false);
     expect(existsSync(join(root, 'dist/test-video-sample.mp4'))).toBe(false);
@@ -382,6 +477,62 @@ describe('direct Node script boundaries', () => {
     const invalid = run('scripts/build/postbuild.ts');
     expect(invalid.status).not.toBe(0);
     expect(invalid.stderr).toContain('Inline application scripts are forbidden');
+  });
+
+  it('fails postbuild when an exact private copy cannot be removed', () => {
+    const { root } = fixture();
+    mkdirSync(join(root, 'dist'));
+    const privateBytes = Buffer.from('synthetic-removal-failure');
+    declareSyntheticOwnerInput(root, privateBytes);
+    const copy = join(root, 'dist/arbitrary-name.bin');
+    writeFileSync(copy, privateBytes);
+    expect(() =>
+      postbuild(root, () => {
+        throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      })
+    ).toThrow('Declared private input exclusion failed (EACCES)');
+    expect(readFileSync(copy)).toEqual(privateBytes);
+    expect(existsSync(join(root, 'dist/deployment-state.json'))).toBe(false);
+  });
+
+  it('rejects a dist symlink without reading or removing its external target', () => {
+    const { root } = fixture();
+    mkdirSync(join(root, 'dist'));
+    mkdirSync(join(root, 'public'));
+    const privateBytes = Buffer.from('synthetic-symlink-target');
+    declareSyntheticOwnerInput(root, privateBytes);
+    const original = join(root, 'public/preserved-original.mp4');
+    writeFileSync(original, privateBytes);
+    symlinkSync(original, join(root, 'dist/linked-copy.bin'));
+    expect(() => excludeDeclaredPrivateInput(root, join(root, 'dist'))).toThrow(
+      'Declared private input exclusion failed'
+    );
+    expect(readFileSync(original)).toEqual(privateBytes);
+  });
+
+  it('rejects a private candidate path replaced after its file is opened', () => {
+    const { root } = fixture();
+    mkdirSync(join(root, 'dist'));
+    mkdirSync(join(root, 'public'));
+    const bytes = Buffer.from('synthetic-opened-candidate');
+    const path = join(root, 'dist/candidate.bin');
+    const target = join(root, 'public/private-target');
+    writeFileSync(path, bytes);
+    writeFileSync(target, 'synthetic-private-target');
+    const fd = openSync(path, constants.O_RDONLY);
+    try {
+      unlinkSync(path);
+      symlinkSync(target, path);
+      expect(() =>
+        matchesOpenedPrivateInput(fd, path, {
+          bytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        })
+      ).toThrow('changed before reading');
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(target, 'utf8')).toBe('synthetic-private-target');
   });
 
   it('checks matching and mismatching locale keys through the real CLI', () => {

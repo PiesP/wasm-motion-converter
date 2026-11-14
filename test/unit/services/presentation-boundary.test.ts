@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { readFileSync } from 'node:fs';
+
 import {
   buildConversionMemoryPlan,
   resolveMemoryPressureDecimation,
@@ -18,6 +20,19 @@ import { encodeWebp } from '@services/webp-encoder-service';
 import type { EncodeTask, WebpWorkerPool } from '@services/worker-pool';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
+
+const wasmUrl = new URL('../../../src/services/gif-scalar-quantizer.wasm', import.meta.url);
+const wasmBytes = readFileSync(wasmUrl);
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+    expect(input).toBe(wasmUrl.href);
+    return new Response(wasmBytes, {
+      status: 200,
+      headers: { 'content-type': 'application/wasm' },
+    });
+  });
+});
 
 function vp8Frame(color: number): Uint8Array<ArrayBuffer> {
   // A VP8 keyframe with an 8x8 coded canvas and a scene-specific payload byte.

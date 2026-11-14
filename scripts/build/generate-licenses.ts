@@ -8,6 +8,7 @@
 // Usage: node --experimental-strip-types scripts/build/generate-licenses.ts
 // Called automatically during `vp run build` via the `prebuild` script.
 
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,7 +74,7 @@ function extractUrl(pkgJson: Record<string, unknown>): string | null {
 
 function inferPurpose(name: string): string {
   const purposes: Record<string, string> = {
-    gifenc: 'GIF encoding (quantize, applyPalette, GIFEncoder)',
+    gifenc: 'GIF palette mapping and encoding; scalar WASM adapts its PNN quantizer',
     'wasm-webp': 'WebP encoding via WebAssembly (encodeRGB)',
     mediabunny: 'Video demuxing (Input, BufferSource, EncodedPacketSink)',
     'solid-js': 'UI framework (reactive signals, components)',
@@ -154,7 +155,7 @@ function generateLicenseText(
 > Do not edit manually — run \`vp run build\` to regenerate.
 
 Declared runtime dependencies and their installed license/notice texts follow.
-Bundled native source references and their attribution limits are recorded with wasm-webp.
+Supplemental source attributions for gifenc and wasm-webp follow their installed notices.
 
 `;
   for (const entry of entries) {
@@ -165,6 +166,26 @@ Bundled native source references and their attribution limits are recorded with 
     md += `- **Purpose:** ${entry.purpose}\n\n`;
     if (entry.name === 'mediabunny' || entry.name === 'wasm-webp') {
       md += `Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/patches/${entry.name}@${entry.version}.patch\n\n`;
+    }
+    if (entry.name === 'gifenc') {
+      if (entry.version !== '1.0.3') {
+        throw new Error(
+          'Review PNN attribution for the new gifenc version before generating licenses.'
+        );
+      }
+      const source = readFileSync(join(ROOT, 'node_modules/gifenc/src/pnnquant2.js'), 'utf-8');
+      const header = `${source.split('\n').slice(0, 8).join('\n')}\n`;
+      if (
+        createHash('sha256').update(header).digest('hex') !==
+        '8707698903f06b547aeb06ccb3233671baef59d067db6ab930550cae7643836e'
+      ) {
+        throw new Error('Review changed gifenc PNN source header before generating licenses.');
+      }
+      md +=
+        'Local RGB565 PNN adaptation: `crates/gif-scalar-quantizer/src/lib.rs` (MIT); original gifenc notice follows.\n\n';
+      const text = readFileSync(join(__dirname, 'gifenc-pnn-NOTICES.txt'), 'utf-8').trim();
+      if (!text) throw new Error('Empty supplemental PNN attribution for gifenc.');
+      entry.notices.push({ file: 'PNN source attribution', text });
     }
     if (entry.name === 'wasm-webp') {
       if (entry.version !== '0.1.0') {
