@@ -11,13 +11,23 @@ export type NativeVp8ProbeResult =
       frameType: EncodedVideoChunkType;
       decodedWidth: number;
       decodedHeight: number;
+      decodedCodedWidth: number;
+      decodedCodedHeight: number;
       encodedBytes: number;
     };
 
 // Self-contained so Playwright can serialize it into an actual browser page.
 export async function runOwnedVp8NativeProbe({
-  rgba, width, height, bitrate = 800_000,
-}: { rgba: number[]; width: number; height: number; bitrate?: number }): Promise<NativeVp8ProbeResult> {
+  rgba,
+  width,
+  height,
+  bitrate = 800_000,
+}: {
+  rgba: number[];
+  width: number;
+  height: number;
+  bitrate?: number;
+}): Promise<NativeVp8ProbeResult> {
   async function bounded<T>(operation: Promise<T>, label: string): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -61,7 +71,8 @@ export async function runOwnedVp8NativeProbe({
     latencyMode: 'realtime',
   };
   const supported = await bounded(VideoEncoder.isConfigSupported(requested), 'VP8 support check');
-  if (!supported.supported || !supported.config) return { status: 'unsupported', stage: 'configuration' };
+  if (!supported.supported || !supported.config)
+    return { status: 'unsupported', stage: 'configuration' };
   const copies: Uint8Array[] = [];
   const types: EncodedVideoChunkType[] = [];
   let encoderError: DOMException | undefined;
@@ -72,7 +83,9 @@ export async function runOwnedVp8NativeProbe({
       copies.push(bytes);
       types.push(chunk.type);
     },
-    error(error) { encoderError = error; },
+    error(error) {
+      encoderError = error;
+    },
   });
   let frame: VideoFrame | undefined;
   try {
@@ -93,7 +106,9 @@ export async function runOwnedVp8NativeProbe({
     if (
       rawFrame.byteLength < 10 ||
       (rawFrame[0]! & 1) !== 0 ||
-      rawFrame[3] !== 0x9d || rawFrame[4] !== 0x01 || rawFrame[5] !== 0x2a ||
+      rawFrame[3] !== 0x9d ||
+      rawFrame[4] !== 0x01 ||
+      rawFrame[5] !== 0x2a ||
       ((rawFrame[6]! | (rawFrame[7]! << 8)) & 0x3fff) !== width ||
       ((rawFrame[8]! | (rawFrame[9]! << 8)) & 0x3fff) !== height
     ) {
@@ -104,31 +119,74 @@ export async function runOwnedVp8NativeProbe({
       VideoDecoder.isConfigSupported({ codec: 'vp8', codedWidth: width, codedHeight: height }),
       'VP8 decode support check'
     );
-    if (!decoderSupport.supported || !decoderSupport.config) return { status: 'unsupported', stage: 'decoder' };
-    const decoded: Array<{ width: number; height: number }> = [];
+    if (!decoderSupport.supported || !decoderSupport.config)
+      return { status: 'unsupported', stage: 'decoder' };
+    const decoded: Array<{
+      width: number;
+      height: number;
+      codedWidth: number;
+      codedHeight: number;
+      visible: { x: number; y: number; width: number; height: number } | null;
+    }> = [];
     let decoderError: DOMException | undefined;
     const decoder = new VideoDecoder({
       output(output) {
-        decoded.push({ width: output.codedWidth, height: output.codedHeight });
+        const visible = output.visibleRect;
+        decoded.push({
+          width: output.displayWidth,
+          height: output.displayHeight,
+          codedWidth: output.codedWidth,
+          codedHeight: output.codedHeight,
+          visible: visible && {
+            x: visible.x,
+            y: visible.y,
+            width: visible.width,
+            height: visible.height,
+          },
+        });
         output.close();
       },
-      error(error) { decoderError = error; },
+      error(error) {
+        decoderError = error;
+      },
     });
     try {
       decoder.configure(decoderSupport.config);
       decoder.decode(new EncodedVideoChunk({ type: 'key', timestamp: 0, data: rawFrame }));
       await bounded(decoder.flush(), 'VP8 browser decode');
       if (decoderError) throw decoderError;
-      if (decoded.length !== 1 || decoded[0]!.width !== width || decoded[0]!.height !== height) {
-        throw new Error('VP8 browser decode returned incompatible geometry');
+      // Coded storage may include padding; verify the VP8 header and visible/display extents.
+      // https://www.w3.org/TR/webcodecs/#dom-videoframe-codedwidth
+      const geometry = decoded[0];
+      if (
+        decoded.length !== 1 ||
+        !geometry ||
+        geometry.width !== width ||
+        geometry.height !== height ||
+        geometry.codedWidth < width ||
+        geometry.codedHeight < height ||
+        geometry.visible?.x !== 0 ||
+        geometry.visible.y !== 0 ||
+        geometry.visible.width !== width ||
+        geometry.visible.height !== height
+      ) {
+        throw new Error(
+          `VP8 browser decode returned incompatible geometry: ${JSON.stringify(decoded)}`
+        );
       }
     } finally {
       decoder.close();
     }
     return {
-      status: 'encoded', actualConfig: supported.config, rawFrame: Array.from(rawFrame),
-      frameType: types[0]!, encodedBytes: rawFrame.byteLength,
-      decodedWidth: decoded[0]!.width, decodedHeight: decoded[0]!.height,
+      status: 'encoded',
+      actualConfig: supported.config,
+      rawFrame: Array.from(rawFrame),
+      frameType: types[0]!,
+      encodedBytes: rawFrame.byteLength,
+      decodedWidth: decoded[0]!.width,
+      decodedHeight: decoded[0]!.height,
+      decodedCodedWidth: decoded[0]!.codedWidth,
+      decodedCodedHeight: decoded[0]!.codedHeight,
     };
   } finally {
     frame?.close();
