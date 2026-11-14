@@ -5,7 +5,238 @@ import { readFileSync } from 'node:fs';
 
 import { OwnedDemuxSession } from '@services/owned-demux-session';
 import { verifyOwnedVideoKey } from '@services/owned-demux-session';
-import { describe, expect, it } from 'vite-plus/test';
+import { ownedReadCreditStats, readOwnedRange } from '@services/owned-demux-source-reads';
+import { describe, expect, it, vi } from 'vite-plus/test';
+
+async function fixtureSession(
+  id = 'avc-baseline.mp4',
+  appendFree = false
+): Promise<{
+  session: OwnedDemuxSession;
+  source: Blob;
+  bytes: Uint8Array;
+}> {
+  const module = await WebAssembly.compile(
+    Uint8Array.from(
+      readFileSync(new URL('../../../src/services/owned-demux.wasm', import.meta.url))
+    )
+  );
+  const base64 = readFileSync(
+    new URL(`../../fixtures/owned-demux/${id}.base64`, import.meta.url),
+    'utf8'
+  );
+  let bytes = Uint8Array.from(Buffer.from(base64, 'base64'));
+  if (appendFree) {
+    const free = new Uint8Array(100_000);
+    new DataView(free.buffer).setUint32(0, free.length);
+    free.set([0x66, 0x72, 0x65, 0x65], 4);
+    const extended = new Uint8Array(bytes.length + free.length);
+    extended.set(bytes);
+    extended.set(free, bytes.length);
+    bytes = extended;
+  }
+  const source = new Blob([bytes]);
+  return { session: new OwnedDemuxSession(source, module), source, bytes };
+}
+
+describe('conversion owned packet source window', () => {
+  it('uses one clipped Blob read for adjacent packets and returns independent exact bytes', async () => {
+    const { session, source, bytes } = await fixtureSession();
+    try {
+      await session.analyze();
+      const first = session.packet(0);
+      const second = session.packet(1);
+      expect(second.offset).toBe(first.offset + BigInt(first.byteLength));
+      const slice = vi.spyOn(source, 'slice');
+      const arrayBuffer = vi.spyOn(Blob.prototype, 'arrayBuffer');
+      session.enablePacketReadWindow();
+      const firstData = await session.readPacket(first);
+      const secondData = await session.readPacket(second);
+      expect(slice).toHaveBeenCalledOnce();
+      expect(arrayBuffer).toHaveBeenCalledOnce();
+      expect(slice).toHaveBeenCalledWith(Number(first.offset), source.size);
+      expect(new Uint8Array(firstData)).toEqual(
+        bytes.slice(Number(first.offset), Number(first.offset) + first.byteLength)
+      );
+      expect(new Uint8Array(secondData)).toEqual(
+        bytes.slice(Number(second.offset), Number(second.offset) + second.byteLength)
+      );
+      expect(session.transferStats.packetReadBytes).toBe(first.byteLength + second.byteLength);
+      expect(ownedReadCreditStats().liveBytes).toBe(source.size - Number(first.offset));
+      session.release();
+      expect(ownedReadCreditStats().liveBytes).toBe(0);
+      expect(new Uint8Array(firstData)).toEqual(
+        bytes.slice(Number(first.offset), Number(first.offset) + first.byteLength)
+      );
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('keeps metadata-style sessions on exact reads until conversion admission', async () => {
+    const { session, source } = await fixtureSession();
+    try {
+      await session.analyze();
+      const packet = session.packet(0);
+      const slice = vi.spyOn(source, 'slice');
+      await session.readPacket(packet);
+      await session.readPacket(packet);
+      expect(slice).toHaveBeenCalledTimes(2);
+      expect(slice).toHaveBeenCalledWith(
+        Number(packet.offset),
+        Number(packet.offset) + packet.byteLength
+      );
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('evicts before a distant miss and large exact read, preserving prior packet bytes', async () => {
+    const { session, source, bytes } = await fixtureSession('avc-baseline.mp4', true);
+    try {
+      await session.analyze();
+      session.enablePacketReadWindow();
+      const packet = session.packet(0);
+      const original = await session.readPacket(packet);
+      const internal = session as unknown as {
+        readOrdinaryPacket(start: number, length: number): Promise<ArrayBuffer>;
+      };
+      const originalSlice = source.slice.bind(source);
+      const creditAtSlice: number[] = [];
+      const slice = vi.spyOn(source, 'slice').mockImplementation((start, end, contentType) => {
+        creditAtSlice.push(ownedReadCreditStats().liveBytes);
+        return originalSlice(start, end, contentType);
+      });
+      const far = await internal.readOrdinaryPacket(0, 16);
+      expect(new Uint8Array(far)).toEqual(bytes.slice(0, 16));
+      expect(slice).toHaveBeenCalledWith(0, 64 * 1024);
+      expect(creditAtSlice[0]).toBe(64 * 1024);
+      expect(ownedReadCreditStats().liveBytes).toBe(64 * 1024);
+      const large = await internal.readOrdinaryPacket(0, 64 * 1024 + 1);
+      expect(new Uint8Array(large)).toEqual(bytes.slice(0, 64 * 1024 + 1));
+      expect(slice).toHaveBeenCalledWith(0, 64 * 1024 + 1);
+      expect(creditAtSlice[1]).toBe(64 * 1024 + 1);
+      expect(ownedReadCreditStats().liveBytes).toBe(0);
+      expect(new Uint8Array(original)).toEqual(
+        bytes.slice(Number(packet.offset), Number(packet.offset) + packet.byteLength)
+      );
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('chooses the exact read before I/O when window credit is unavailable', async () => {
+    const { session, source } = await fixtureSession();
+    const delayed = Promise.withResolvers<ArrayBuffer>();
+    const heldSource = { slice: vi.fn(() => ({ arrayBuffer: () => delayed.promise })) };
+    try {
+      await session.analyze();
+      session.enablePacketReadWindow();
+      const packet = session.packet(0);
+      const held = readOwnedRange(heldSource, 0, 16 * 1024 * 1024);
+      await vi.waitFor(() => expect(heldSource.slice).toHaveBeenCalledOnce());
+      const slice = vi.spyOn(source, 'slice');
+      const read = session.readPacket(packet);
+      await vi.waitFor(() => expect(ownedReadCreditStats().waiters).toBe(1));
+      expect(slice).not.toHaveBeenCalled();
+      delayed.resolve(new ArrayBuffer(0));
+      await held;
+      await expect(read).resolves.toHaveProperty('byteLength', packet.byteLength);
+      expect(slice).toHaveBeenCalledOnce();
+      expect(slice).toHaveBeenCalledWith(
+        Number(packet.offset),
+        Number(packet.offset) + packet.byteLength
+      );
+      expect(ownedReadCreditStats().liveBytes).toBe(0);
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('treats a short started window read as terminal without an exact retry', async () => {
+    const { session, source } = await fixtureSession();
+    try {
+      await session.analyze();
+      session.enablePacketReadWindow();
+      const slice = vi.spyOn(source, 'slice').mockReturnValue({
+        arrayBuffer: async () => new ArrayBuffer(0),
+      } as Blob);
+      await expect(session.readPacket(session.packet(0))).rejects.toThrow('truncated read');
+      expect(slice).toHaveBeenCalledOnce();
+      expect(ownedReadCreditStats().liveBytes).toBe(0);
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('does not retry a failed started window read', async () => {
+    const { session, source } = await fixtureSession();
+    try {
+      await session.analyze();
+      session.enablePacketReadWindow();
+      const slice = vi.spyOn(source, 'slice').mockReturnValue({
+        arrayBuffer: async () => Promise.reject(new Error('source failed')),
+      } as Blob);
+      await expect(session.readPacket(session.packet(0))).rejects.toThrow('source failed');
+      expect(slice).toHaveBeenCalledOnce();
+      expect(ownedReadCreditStats().liveBytes).toBe(0);
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('rejects a late window read after release without publishing stale bytes', async () => {
+    const { session, source } = await fixtureSession();
+    const delayed = Promise.withResolvers<ArrayBuffer>();
+    try {
+      await session.analyze();
+      session.enablePacketReadWindow();
+      const packet = session.packet(0);
+      const range = new Blob();
+      vi.spyOn(range, 'arrayBuffer').mockReturnValue(delayed.promise);
+      const slice = vi.spyOn(source, 'slice').mockReturnValue(range);
+      const read = session.readPacket(packet);
+      await vi.waitFor(() => expect(slice).toHaveBeenCalledOnce());
+      session.release();
+      expect(ownedReadCreditStats().liveBytes).toBe(source.size - Number(packet.offset));
+      delayed.resolve(new ArrayBuffer(source.size - Number(packet.offset)));
+      await expect(read).rejects.toThrow('read invalidated');
+      expect(session.transferStats.packetReadBytes).toBe(0);
+      expect(ownedReadCreditStats()).toEqual({ liveBytes: 0, retiredBytes: 0, waiters: 0 });
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('keeps reconstructed TS packets on their existing exact range path', async () => {
+    const { session, source } = await fixtureSession('avc.ts');
+    try {
+      const track = await session.analyze();
+      session.enablePacketReadWindow();
+      const packet = Array.from({ length: track.packetCount }, (_, index) =>
+        session.packet(index)
+      ).find((item) => item.sourceEnd !== null);
+      expect(packet).toBeDefined();
+      const slice = vi.spyOn(source, 'slice');
+      await expect(session.readPacket(packet!)).resolves.toHaveProperty(
+        'byteLength',
+        packet!.byteLength
+      );
+      expect(slice).toHaveBeenCalled();
+      expect(ownedReadCreditStats().liveBytes).toBe(0);
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+});
 
 describe('owned demux bitstream key verification', () => {
   it('accepts MP4 and Matroska FourCC spelling for VP9 and AV1', async () => {
@@ -109,13 +340,15 @@ describe('owned demux late range reads', () => {
       const slice = vi.spyOn(source, 'slice').mockReturnValue(range);
       const controller = new AbortController();
       const packet = session.packet(0);
+      session.enablePacketReadWindow();
       const read = session.readPacket(packet, controller.signal);
       await vi.waitFor(() => expect(slice).toHaveBeenCalledOnce());
       controller.abort();
       await expect(read).rejects.toMatchObject({ name: 'AbortError' });
       session.release();
+      expect(ownedReadCreditStats().retiredBytes).toBe(source.size - Number(packet.offset));
       pending.resolve(new ArrayBuffer(packet.byteLength));
-      await Promise.resolve();
+      await vi.waitFor(() => expect(ownedReadCreditStats().liveBytes).toBe(0));
       expect(session.transferStats.packetReadBytes).toBe(0);
     } finally {
       session.release();

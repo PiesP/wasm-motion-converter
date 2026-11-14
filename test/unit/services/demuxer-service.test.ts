@@ -2,30 +2,41 @@
 // Copyright (c) 2026 PiesP
 
 import type { ConversionRequest, VideoMetadata } from '@t/conversion-types';
-import { DEMUX_MEMORY_BUDGET_BYTES, ENCODED_CHUNK_BUDGET_BYTES } from '@utils/constants';
+import {
+  DEMUX_MEMORY_BUDGET_BYTES,
+  ENCODED_CHUNK_BUDGET_BYTES,
+  ENCODED_PACKET_BUDGET_BYTES,
+} from '@utils/constants';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const mocks = vi.hoisted(() => ({
   analyze: vi.fn(),
+  importIndex: vi.fn(),
   findVerifiedKey: vi.fn(),
   packet: vi.fn(),
   readPacket: vi.fn(),
   release: vi.fn(),
+  enablePacketReadWindow: vi.fn(),
   transferStats: { wasmCapacityBytes: 8 * 1024 * 1024 },
 }));
 vi.mock('@services/owned-demux-core', () => ({
   createOwnedDemuxSession: vi.fn(async () => ({
     analyze: mocks.analyze,
+    importIndex: mocks.importIndex,
     findVerifiedKey: mocks.findVerifiedKey,
     packetAsync: mocks.packet,
     readPacket: mocks.readPacket,
     release: mocks.release,
+    enablePacketReadWindow: mocks.enablePacketReadWindow,
     seekWorkspaceBytes: 0,
     transferStats: mocks.transferStats,
   })),
   computeOwnedPacketStats: vi.fn(async () => ({ averagePacketRate: 6, averageBitrate: 48_000 })),
   classifyOwnedDemuxError: (error: unknown) => error,
   OwnedDemuxResourceError: class extends Error {},
+}));
+vi.mock('@services/owned-demux-index-snapshot', () => ({
+  fingerprintOwnedDemuxSource: vi.fn(async () => 'a'.repeat(64)),
 }));
 vi.mock('@services/owned-demux-config', () => ({
   ownedDecoderConfig: () => ({ codec: 'avc1.4d400a', codedWidth: 96, codedHeight: 64 }),
@@ -88,6 +99,7 @@ describe('demuxVideo owned packet route', () => {
     vi.stubGlobal('EncodedVideoChunk', TestEncodedVideoChunk);
     track.maxPacketBytes = 4;
     mocks.analyze.mockResolvedValue(track);
+    mocks.importIndex.mockResolvedValue(track);
     mocks.findVerifiedKey.mockResolvedValue(6);
     mocks.packet.mockImplementation((index: number) => ({
       index,
@@ -140,11 +152,62 @@ describe('demuxVideo owned packet route', () => {
     result.dispose?.();
   });
 
+  it('enables the window after admission on parsed and imported conversion routes', async () => {
+    const parsed = await demuxVideo(request(1), metadata);
+    expect(parsed.indexRoute).toBe('parsed');
+    expect(mocks.enablePacketReadWindow).toHaveBeenCalledOnce();
+    expect(mocks.enablePacketReadWindow.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.analyze.mock.invocationCallOrder[0]!
+    );
+    expect(mocks.enablePacketReadWindow.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.findVerifiedKey.mock.invocationCallOrder[0]!
+    );
+    parsed.dispose?.();
+
+    vi.clearAllMocks();
+    mocks.importIndex.mockResolvedValue(track);
+    mocks.findVerifiedKey.mockResolvedValue(6);
+    const source = new Blob([new Uint8Array(128)]);
+    const imported = await demuxVideo(
+      {
+        ...request(1),
+        inputBuffer: undefined,
+        inputBlob: source,
+        indexSnapshot: {
+          version: 1,
+          generation: 1,
+          sourceSize: source.size,
+          fingerprint: 'a'.repeat(64),
+          bytes: new ArrayBuffer(96),
+        },
+      },
+      metadata
+    );
+    expect(imported.indexRoute).toBe('imported');
+    expect(mocks.analyze).not.toHaveBeenCalled();
+    expect(mocks.importIndex).toHaveBeenCalledOnce();
+    expect(mocks.enablePacketReadWindow.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mocks.importIndex.mock.invocationCallOrder[0]!
+    );
+    expect(mocks.enablePacketReadWindow.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.findVerifiedKey.mock.invocationCallOrder[0]!
+    );
+    imported.dispose?.();
+  });
+
   it('rejects the aggregate reserve before reading any oversized packet', async () => {
     track.maxPacketBytes = DEMUX_MEMORY_BUDGET_BYTES;
     await expect(demuxVideo(request(), metadata)).rejects.toThrow('Demux memory limit exceeded');
     expect(mocks.readPacket).not.toHaveBeenCalled();
     expect(mocks.release).toHaveBeenCalledOnce();
+  });
+
+  it('preserves admission for the existing maximum packet size', async () => {
+    track.maxPacketBytes = ENCODED_PACKET_BUDGET_BYTES - 1024;
+    const result = await demuxVideo(request(), metadata);
+    expect(result.encodedChunkBudgetBytes).toBeGreaterThanOrEqual(track.maxPacketBytes + 1024);
+    expect(mocks.enablePacketReadWindow).toHaveBeenCalledOnce();
+    result.dispose?.();
   });
 
   it('bounds a reused decoder description before reserving the packet stream', async () => {

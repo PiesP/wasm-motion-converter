@@ -40,6 +40,66 @@ function release(length: number, retired: boolean): void {
   drain();
 }
 
+export type OwnedReadLease = Readonly<{
+  length: number;
+  release(): void;
+}>;
+
+type InternalReadLease = OwnedReadLease & {
+  begin(): void;
+  retire(): void;
+  finish(): void;
+};
+
+function makeLease(length: number): InternalReadLease {
+  let started = false;
+  let pending = false;
+  let released = false;
+  let retired = false;
+  let returned = false;
+  const returnCredit = (): void => {
+    if (returned || pending || !released) return;
+    returned = true;
+    release(length, retired);
+  };
+  return {
+    length,
+    begin: () => {
+      if (started || released) throw new Error('Owned demux read lease invalid');
+      started = true;
+      pending = true;
+    },
+    retire: () => {
+      if (pending && !retired) {
+        retired = true;
+        retiredBytes += length;
+      }
+    },
+    finish: () => {
+      pending = false;
+      returnCredit();
+    },
+    release: () => {
+      if (released) return;
+      released = true;
+      if (pending && !retired) {
+        retired = true;
+        retiredBytes += length;
+      }
+      returnCredit();
+    },
+  };
+}
+
+/** Fair, non-waiting admission for an optional retained source window. */
+export function tryAcquireOwnedReadLease(length: number): OwnedReadLease | null {
+  if (!Number.isSafeInteger(length) || length < 1 || length > MAX_OUTSTANDING_READ_BYTES)
+    throw new Error('Owned demux resource limit: read extent invalid');
+  if (waiters.length > 0 || liveBytes + length > MAX_OUTSTANDING_READ_BYTES) return null;
+  liveBytes += length;
+  return makeLease(length);
+}
+
 function acquire(length: number, signal?: AbortSignal): Promise<void> {
   if (!Number.isSafeInteger(length) || length < 1 || length > MAX_OUTSTANDING_READ_BYTES)
     return Promise.reject(new Error('Owned demux resource limit: read extent invalid'));
@@ -89,23 +149,26 @@ function acquire(length: number, signal?: AbortSignal): Promise<void> {
 }
 
 /** Return promptly on abort, retaining credit until the actual read promise settles. */
-export async function readOwnedRange(
+export async function readOwnedRangeWithLease(
   source: RangeSource,
   start: number,
   end: number,
+  lease: OwnedReadLease,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
+  const internal = lease as InternalReadLease;
+  // Claim before any validation or cleanup that could mutate an existing owner.
+  // A duplicate caller fails without touching the first read's pending credit.
+  internal.begin();
   const length = end - start;
-  await acquire(length, signal);
-  if (signal?.aborted) {
-    release(length, false);
-    signal.throwIfAborted();
-  }
   let read: Promise<ArrayBuffer>;
   try {
+    if (length !== lease.length) throw new Error('Owned demux read lease extent invalid');
+    signal?.throwIfAborted();
     read = source.slice(start, end).arrayBuffer();
   } catch (error) {
-    release(length, false);
+    internal.finish();
+    lease.release();
     throw error;
   }
   return new Promise((resolve, reject) => {
@@ -114,7 +177,8 @@ export async function readOwnedRange(
     const onAbort = (): void => {
       if (settled || retired) return;
       retired = true;
-      retiredBytes += length;
+      internal.retire();
+      lease.release();
       signal?.removeEventListener('abort', onAbort);
       reject(signal?.reason ?? new DOMException('Owned demux read aborted', 'AbortError'));
     };
@@ -123,16 +187,34 @@ export async function readOwnedRange(
       (buffer) => {
         settled = true;
         signal?.removeEventListener('abort', onAbort);
-        release(length, retired);
+        internal.finish();
         resolve(buffer);
       },
       (error: unknown) => {
         settled = true;
         signal?.removeEventListener('abort', onAbort);
-        release(length, retired);
+        lease.release();
+        internal.finish();
         reject(error);
       }
     );
     if (signal?.aborted) onAbort();
   });
+}
+
+/** Return promptly on abort, retaining credit until the actual read settles. */
+export async function readOwnedRange(
+  source: RangeSource,
+  start: number,
+  end: number,
+  signal?: AbortSignal
+): Promise<ArrayBuffer> {
+  const length = end - start;
+  await acquire(length, signal);
+  const lease = makeLease(length);
+  try {
+    return await readOwnedRangeWithLease(source, start, end, lease, signal);
+  } finally {
+    lease.release();
+  }
 }

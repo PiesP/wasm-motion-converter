@@ -162,6 +162,11 @@ export async function demuxVideo(
     )
       throw new OwnedDemuxResourceError('Demux memory limit exceeded before packet streaming');
 
+    // A retained 64 KiB source window remains charged to the realm's 16 MiB
+    // read credit. The independent small packet copy fits in this existing
+    // overlap reserve; no additional header or chunk admission is needed.
+    session.enablePacketReadWindow();
+
     // A nonzero trim begins at the latest verified presentation-time key at or
     // before the requested boundary; earlier packets remain decoder preroll.
     const startIndex =

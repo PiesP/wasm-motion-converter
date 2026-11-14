@@ -5,13 +5,20 @@
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 
-import { ownedReadCreditStats, readOwnedRange } from './owned-demux-source-reads';
+import {
+  ownedReadCreditStats,
+  readOwnedRange,
+  readOwnedRangeWithLease,
+  tryAcquireOwnedReadLease,
+  type OwnedReadLease,
+} from './owned-demux-source-reads';
 
 const ABI_VERSION = 4;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const SNAPSHOT_STEP_BYTES = 8 * 1024;
 const MAX_INPUT_BYTES = 500 * 1024 * 1024;
 const MAX_PACKET_BYTES = 16 * 1024 * 1024 - 1024;
+const PACKET_WINDOW_BYTES = 64 * 1024;
 const MAX_WASM_CAPACITY_BYTES = 64 * 1024 * 1024;
 const MAX_INDEX_BYTES = 32 * 1024 * 1024;
 const MAX_TRACK_PACKETS = 100_000_000;
@@ -292,6 +299,7 @@ async function nextTask(): Promise<void> {
 export class OwnedDemuxSession {
   private readonly wasm: DemuxExports;
   private readonly source: RangeSource;
+  private readonly sourceIsBlob: boolean;
   private active = true;
   private ready = false;
   private analyzing = false;
@@ -313,6 +321,20 @@ export class OwnedDemuxSession {
   private preparedWasmCapacityBytes = 0;
   private analyzedTrack: OwnedDemuxTrack | null = null;
   private lastNativePacket: Readonly<OwnedDemuxPacket> | null = null;
+  private packetWindowEnabled = false;
+  private packetWindow: { start: number; bytes: Uint8Array; lease: OwnedReadLease } | null = null;
+
+  /** Called only after the conversion's aggregate memory admission succeeds. */
+  enablePacketReadWindow(): void {
+    if (!this.active || !this.ready) throw new Error('Owned demux packet window unavailable');
+    this.packetWindowEnabled = this.sourceIsBlob;
+  }
+
+  private evictPacketWindow(): void {
+    const window = this.packetWindow;
+    this.packetWindow = null;
+    window?.lease.release();
+  }
 
   /** Additional seek memory beyond the current WASM capacity, or the expanded JS heap. */
   get seekWorkspaceBytes(): number {
@@ -343,6 +365,7 @@ export class OwnedDemuxSession {
   }
 
   constructor(source: Blob | ArrayBuffer, module: WebAssembly.Module) {
+    this.sourceIsBlob = source instanceof Blob;
     const rangeSource: RangeSource =
       source instanceof Blob
         ? source
@@ -746,8 +769,13 @@ export class OwnedDemuxSession {
       index >= (this.indexInfo?.packetCount ?? 0)
     )
       throw new Error('Owned demux packet query lease invalid');
-    signal?.throwIfAborted();
-    return this.queryPacketRecord(index, signal);
+    try {
+      signal?.throwIfAborted();
+      return await this.queryPacketRecord(index, signal);
+    } catch (error) {
+      this.evictPacketWindow();
+      throw error;
+    }
   }
 
   private readPacketRecord(index: number): OwnedDemuxPacket {
@@ -852,11 +880,13 @@ export class OwnedDemuxSession {
       this.packetQueryInProgress ||
       (this.seeking && !fromSeek) ||
       this.snapshotOperation
-    )
+    ) {
+      this.evictPacketWindow();
       throw new Error('Owned demux packet lease invalid');
-    signal?.throwIfAborted();
+    }
     this.packetReadInProgress = true;
     try {
+      signal?.throwIfAborted();
       const current = await this.queryPacketRecord(packet.index, signal);
       signal?.throwIfAborted();
       if (!this.active) throw new Error('Owned demux session released');
@@ -870,7 +900,10 @@ export class OwnedDemuxSession {
         current.key !== packet.key
       )
         throw new Error('Owned demux packet descriptor invalid');
-      if (packet.sourceEnd !== null) return await this.readTsPacket(packet, signal);
+      if (packet.sourceEnd !== null) {
+        this.evictPacketWindow();
+        return await this.readTsPacket(packet, signal);
+      }
       const start = safeOffset(packet.offset);
       if (
         packet.byteLength < 1 ||
@@ -878,16 +911,66 @@ export class OwnedDemuxSession {
         start + packet.byteLength > this.source.size
       )
         throw new Error('Owned demux packet range invalid');
-      const data = await readOwnedRange(this.source, start, start + packet.byteLength, signal);
-      this.rangeReads++;
-      this.sourceReadBytes += data.byteLength;
+      const data = await this.readOrdinaryPacket(start, packet.byteLength, signal);
       this.packetReadBytes += data.byteLength;
       signal?.throwIfAborted();
       if (!this.active || data.byteLength !== packet.byteLength)
         throw new Error('Owned demux packet read invalidated');
       return data;
+    } catch (error) {
+      this.evictPacketWindow();
+      throw error;
     } finally {
       this.packetReadInProgress = false;
+    }
+  }
+
+  private async readOrdinaryPacket(
+    start: number,
+    length: number,
+    signal?: AbortSignal
+  ): Promise<ArrayBuffer> {
+    if (!this.packetWindowEnabled || length > PACKET_WINDOW_BYTES) {
+      this.evictPacketWindow();
+      const data = await readOwnedRange(this.source, start, start + length, signal);
+      this.rangeReads++;
+      this.sourceReadBytes += data.byteLength;
+      return data;
+    }
+    {
+      const window = this.packetWindow;
+      if (window && start >= window.start && start + length <= window.start + window.bytes.length)
+        return window.bytes.slice(start - window.start, start - window.start + length).buffer;
+    }
+
+    // The window and one independent small packet copy fit within the already
+    // reserved 16 MiB host-read/packet overlap slot. The separate maxPacketBytes
+    // reserve covers the returned packet, and the window retains realm read credit.
+    this.evictPacketWindow();
+    const end = Math.min(this.source.size, start + PACKET_WINDOW_BYTES);
+    const lease = tryAcquireOwnedReadLease(end - start);
+    if (!lease) {
+      // Capacity is decided before I/O: a failed or short window read is terminal.
+      const data = await readOwnedRange(this.source, start, start + length, signal);
+      this.rangeReads++;
+      this.sourceReadBytes += data.byteLength;
+      return data;
+    }
+    const generation = this.generation;
+    try {
+      const data = await readOwnedRangeWithLease(this.source, start, end, lease, signal);
+      this.rangeReads++;
+      this.sourceReadBytes += data.byteLength;
+      signal?.throwIfAborted();
+      if (!this.active || generation !== this.generation)
+        throw new Error('Owned demux packet read invalidated');
+      if (data.byteLength !== end - start) throw new Error('Owned demux truncated read');
+      const bytes = new Uint8Array(data);
+      this.packetWindow = { start, bytes, lease };
+      return bytes.slice(0, length).buffer;
+    } catch (error) {
+      lease.release();
+      throw error;
     }
   }
 
@@ -1059,6 +1142,9 @@ export class OwnedDemuxSession {
         await nextTask();
       }
       return null;
+    } catch (error) {
+      this.evictPacketWindow();
+      throw error;
     } finally {
       this.seeking = false;
     }
@@ -1120,6 +1206,8 @@ export class OwnedDemuxSession {
 
   release(): void {
     if (!this.active) return;
+    this.evictPacketWindow();
+    this.packetWindowEnabled = false;
     this.active = false;
     this.ready = false;
     this.analyzedTrack = null;
