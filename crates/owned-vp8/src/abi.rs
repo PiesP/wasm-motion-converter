@@ -317,13 +317,19 @@ impl State {
     }
 }
 
+fn capacity_word(pages: u64) -> u32 {
+    pages
+        .checked_mul(65_536)
+        .and_then(|bytes| u32::try_from(bytes).ok())
+        .unwrap_or(u32::MAX)
+}
 #[cfg(target_arch = "wasm32")]
 fn memory_capacity() -> u32 {
-    (core::arch::wasm32::memory_size::<0>() * 65_536) as u32
+    capacity_word(core::arch::wasm32::memory_size::<0>() as u64)
 }
 #[cfg(not(target_arch = "wasm32"))]
 fn memory_capacity() -> u32 {
-    0
+    capacity_word(0)
 }
 
 static STATE: Mutex<State> = Mutex::new(State::new());
@@ -388,6 +394,14 @@ pub extern "C" fn vp8_v2_retire() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capacity_conversion_never_turns_4gib_into_an_unchecked_zero() {
+        assert_eq!(capacity_word(18), 18 * 65_536);
+        assert_eq!(capacity_word(3072), 192 * 1024 * 1024);
+        assert_eq!(capacity_word(65_536), u32::MAX);
+        assert_eq!(capacity_word(u64::MAX), u32::MAX);
+    }
 
     fn planned(bytes: u32) -> State {
         let mut state = State::new();

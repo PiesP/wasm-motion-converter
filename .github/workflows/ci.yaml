@@ -186,7 +186,7 @@ jobs:
           cargo +1.99.1 fmt --manifest-path crates/owned-vp8/Cargo.toml --check
           cargo +1.99.1 clippy --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --all-targets -- -D warnings
           cargo +1.99.1 test --manifest-path crates/owned-vp8/Cargo.toml --locked --offline -- --include-ignored
-          cargo +1.99.1 build --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --release --target wasm32-unknown-unknown
+          node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --check
           node --experimental-strip-types scripts/test/owned-vp8-compiled.ts
 
       - name: Record release setup inputs

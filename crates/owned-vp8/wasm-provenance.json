@@ -23,8 +23,8 @@
     "crates/owned-vp8/rust-toolchain.toml": "60c5407645e5d56f600e6ae713f0afc4aebbb858c5ceeef4a79c22b7dd2b51c9",
     "crates/owned-vp8/LICENSE.libwebp": "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf",
     "crates/owned-vp8/PATENTS.libwebp": "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c",
-    "crates/owned-vp8/README.md": "222d14b74779e4c6f942a0b647c491564063469816dcf405dcd53023e96ca07c",
-    "crates/owned-vp8/src/abi.rs": "11c6cdc15e862c2f5f5b9d2bb4a98b48524df153d8cd3739f74aa2847f2cb2f0",
+    "crates/owned-vp8/README.md": "8d430840493b972b6a76266c70b95d5e2b58f67da6dce885b0cfa6173fbbed48",
+    "crates/owned-vp8/src/abi.rs": "a2f3caa8747667299222978a632e9a7f8d4a6b539e1e7cc09fcbf0caeecccb16",
     "crates/owned-vp8/src/ac_quant.rs": "490562412dc5b3bb8076088141fe9e2829e5639e04e26db6bde3b8457ff8808b",
     "crates/owned-vp8/src/bmode_probs.rs": "abd7bd0e0e6d0e21d4711f4b8d65261357514a536c7f90213571b1725e5e1ef4",
     "crates/owned-vp8/src/coeff_update_probs.rs": "ad7ba79c9921dde735afd234f252db001733fdc804750d9cdb0cc74f3f706e4e",
@@ -42,9 +42,9 @@
     "scripts/build/build-gif-scalar-wasm.ts": "18dba1528631fd1cd29c5cb8c3b1725dd8f9139a4b3ca93ddc42d5ae6cd59dfd"
   },
   "artifact": {
-    "sha256": "e5979d5a7828706ba928a2f088b6feed06581e6c0f6dd595ccd423f2b25c1bfa",
-    "rawBytes": 131599,
-    "gzipBytes": 28105,
+    "sha256": "0ab98c3cb37635597d216494ebd5b3a53edd9ffd175a639c29d33f67b18a7d34",
+    "rawBytes": 131659,
+    "gzipBytes": 28131,
     "gzipMethod": "gzip level 9, mtime 0",
     "initialLinearBytes": 1179648,
     "maxLinearBytes": 201326592

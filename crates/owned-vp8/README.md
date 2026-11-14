@@ -9,8 +9,8 @@ The residual path now codes all sixteen coefficients using B_PRED/B_DC predictio
 plus a separately exercised I16/DC and Y2/WHT path. The default experimental
 entrypoint now selects bounded I16/I4/UV modes using distortion and estimated
 mode/coefficient/skip bit costs. Trials isolate reconstruction and contexts.
-Color/preset calibration, filtering, bounded resumable ABI2 and product
-qualification are unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
+The bounded resumable ABI2 core is implemented. Color/preset calibration,
+filter tuning, and browser/product qualification remain unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
 or removal of `wasm-webp`.
 
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
@@ -58,9 +58,10 @@ capacity can exceed logical input length and must be admitted explicitly.
 macroblock analysis, exact partition-length counting, frozen-decision emission,
 finalization and assembly. Finalized sizes are admitted before output allocation;
 first-partition overflow is separate from total output overflow. Output remains
-hidden until arithmetic coding and final assembly finish. The current long-0xff
-carry scan still needs bounded continuation, and browser cancellation/resource
-qualification is unfinished. These plans and Node/Rust tests do not establish
+hidden until arithmetic coding and final assembly finish. Carry scans and finalization resume in bounded units; emission retains at most
+8192 two-byte operations per partition for one macroblock, drains at most 1024
+symbols and 64 KiB of carry per step, and then yields through its host. Browser
+cancellation/resource qualification is unfinished. These plans and Node/Rust tests do not establish
 browser/GPU peak, physical zero-copy or product adoption.
 
 ## Engineering checks
@@ -74,6 +75,19 @@ cargo fmt --check
 cargo clippy --locked --offline --all-targets -- -D warnings
 cargo build --locked --offline --release --target wasm32-unknown-unknown
 ```
+
+From the repository root, use the project-selected Node to generate or verify
+the development-only bounded artifact and its source provenance:
+
+```sh
+vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --generate
+vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --check
+vp exec node --experimental-strip-types scripts/test/owned-vp8-compiled.ts
+```
+
+The artifact is `owned-vp8.wasm` in this crate, outside the production import
+and delivery graph. Its memory declaration has an exact 192-MiB maximum; raw
+Cargo development output without that declaration does not qualify delivery.
 
 Ignored tests explicitly require FFmpeg's native `vp8` and separate `libvpx`
 decoders. They compare every visible YUV byte against encoder reconstruction

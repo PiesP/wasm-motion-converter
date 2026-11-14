@@ -10,7 +10,7 @@ import { setImmediate } from 'node:timers/promises';
 import { compileVp8, Vp8TestJob } from './owned-vp8-v2-abi.ts';
 import { FIXTURES, generateFixture, QUALITIES } from './owned-vp8-v2-fixtures.ts';
 
-const wasmPath = resolve('crates/owned-vp8/target/wasm32-unknown-unknown/release/owned_vp8.wasm');
+const wasmPath = resolve('crates/owned-vp8/owned-vp8.wasm');
 const compiled = compileVp8(readFileSync(wasmPath));
 const root = mkdtempSync(join(tmpdir(), 'owned-vp8-abi2-'));
 const results: object[] = [];
@@ -247,46 +247,82 @@ async function cancellation(): Promise<object> {
 }
 
 try {
-  for (const [width, height, layout] of [
-    [16, 16, 0],
-    [17, 13, 1],
-  ] as const) {
-    const stride = width * 4 + 8;
-    const pixels = new Uint8Array(stride * height);
-    for (let y = 0; y < height; y++)
-      for (let x = 0; x < width; x++) pixels.set([128, 128, 128, 255], y * stride + x * 4);
-    for (const quality of QUALITIES)
-      await check(pixels, width, height, stride, layout, quality, `neutral-${width}x${height}`);
+  const largeOnly = process.argv.includes('--large-only');
+  if (!largeOnly) {
+    for (const [width, height, layout] of [
+      [16, 16, 0],
+      [17, 13, 1],
+    ] as const) {
+      const stride = width * 4 + 8;
+      const pixels = new Uint8Array(stride * height);
+      for (let y = 0; y < height; y++)
+        for (let x = 0; x < width; x++) pixels.set([128, 128, 128, 255], y * stride + x * 4);
+      for (const quality of QUALITIES)
+        await check(pixels, width, height, stride, layout, quality, `neutral-${width}x${height}`);
+    }
+    for (const fixture of FIXTURES.filter((entry) => entry.split === 'tuning')) {
+      const pixels = generateFixture(fixture.id);
+      for (const quality of QUALITIES)
+        await check(
+          pixels.pixels,
+          pixels.width,
+          pixels.height,
+          pixels.stride,
+          0,
+          quality,
+          fixture.id
+        );
+    }
+    for (const layout of [0, 1, 2, 3, 4]) {
+      const width = 17;
+      const height = 13;
+      const bpp = layout === 4 ? 3 : 4;
+      const stride = width * bpp + 8;
+      const pixels = new Uint8Array(stride * height);
+      for (let y = 0; y < height; y++)
+        for (let x = 0; x < width; x++) {
+          const rgb = [x * 11, y * 15, (x + y) * 7];
+          if (layout === 1 || layout === 3) rgb.reverse();
+          pixels.set(bpp === 3 ? rgb : [...rgb, layout < 2 ? 255 : 13], y * stride + x * bpp);
+        }
+      await check(pixels, width, height, stride, layout, 75, `layout-${layout}`);
+    }
+    const layoutResults = results.filter((entry) =>
+      (entry as { id: string }).id.startsWith('layout-')
+    ) as Array<{ decodedSha256: string }>;
+    assert.equal(
+      new Set(layoutResults.map((entry) => entry.decodedSha256)).size,
+      1,
+      'Equivalent packed layouts preserve color'
+    );
+    for (const [width, height] of [
+      [16383, 1],
+      [1, 16383],
+    ] as const) {
+      const pixels = new Uint8Array(width * height * 4);
+      for (let at = 0; at < pixels.length; at += 4) pixels.set([128, 128, 128, 255], at);
+      await check(pixels, width, height, width * 4, 0, 75, `axis-${width}x${height}`);
+    }
+    await leases();
   }
-  for (const fixture of FIXTURES.filter((entry) => entry.split === 'tuning')) {
-    const pixels = generateFixture(fixture.id);
-    for (const quality of QUALITIES)
-      await check(
-        pixels.pixels,
-        pixels.width,
-        pixels.height,
-        pixels.stride,
-        0,
-        quality,
-        fixture.id
-      );
+  let cancel: object | null = null;
+  if (largeOnly) {
+    const width = 4096;
+    const height = 2048;
+    const pixels = new Uint8Array(width * height * 4);
+    let seed = 0x501b0a;
+    for (let at = 0; at < pixels.length; at += 4) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      pixels.set([seed & 255, (seed >>> 8) & 255, (seed >>> 16) & 255, 255], at);
+    }
+    await check(pixels, width, height, width * 4, 0, 85, 'engineering-large-noise');
+    assert.ok(
+      (results[0] as { rawBytes: number }).rawBytes > 4 * 1024 * 1024,
+      'Resource probe must cross the retired prototype output cap'
+    );
+  } else {
+    cancel = await cancellation();
   }
-  for (const layout of [0, 1, 2, 3, 4]) {
-    const width = 17;
-    const height = 13;
-    const bpp = layout === 4 ? 3 : 4;
-    const stride = width * bpp + 8;
-    const pixels = new Uint8Array(stride * height);
-    for (let y = 0; y < height; y++)
-      for (let x = 0; x < width; x++) {
-        const rgb = [x * 11, y * 15, (x + y) * 7];
-        if (layout === 1 || layout === 3) rgb.reverse();
-        pixels.set(bpp === 3 ? rgb : [...rgb, layout < 2 ? 255 : 13], y * stride + x * bpp);
-      }
-    await check(pixels, width, height, stride, layout, 75, `layout-${layout}`);
-  }
-  await leases();
-  const cancel = await cancellation();
   console.log(
     JSON.stringify(
       {

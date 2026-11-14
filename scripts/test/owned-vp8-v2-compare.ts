@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -149,17 +149,25 @@ export async function compare(options: {
   output: string;
   split: FixtureSplit;
   sources: SourcePaths;
+  candidateRoot?: string;
 }): Promise<object> {
   const output = resolve(options.output);
+  const candidateRoot = resolve(options.candidateRoot ?? ROOT);
   for (const forbidden of ['public', 'dist']) {
     const path = join(ROOT, forbidden);
     if (output === path || output.startsWith(path + sep))
       throw new Error('Evidence must remain outside delivered assets');
   }
   mkdirSync(output, { recursive: true });
-  const wasmFile = join(
-    ROOT,
-    'crates/owned-vp8/target/wasm32-unknown-unknown/release/owned_vp8.wasm'
+  const wasmFile = join(candidateRoot, 'crates/owned-vp8/owned-vp8.wasm');
+  execFileSync(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      join(candidateRoot, 'scripts/build/build-owned-vp8-wasm.ts'),
+      '--verify-prebuilt',
+    ],
+    { cwd: candidateRoot }
   );
   const candidateBytes = readFileSync(wasmFile);
   const oracleWasm = readFileSync(join(ROOT, 'node_modules/wasm-webp/dist/esm/webp-wasm.wasm'));
@@ -179,14 +187,41 @@ export async function compare(options: {
     fixtures: Array<{ id: string; sha256: string }>;
   };
   const identities = {
-    source: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(),
+    source: execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: candidateRoot,
+      encoding: 'utf8',
+    }).trim(),
     dirty:
-      execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' }).trim() !== '',
+      execFileSync('git', ['status', '--porcelain'], {
+        cwd: candidateRoot,
+        encoding: 'utf8',
+      }).trim() !== '',
+    candidateRustInputs: Object.fromEntries(
+      [
+        'Cargo.toml',
+        'Cargo.lock',
+        'rust-toolchain.toml',
+        ...readdirSync(join(candidateRoot, 'crates/owned-vp8/src'))
+          .filter((name) => name.endsWith('.rs'))
+          .sort()
+          .map((name) => `src/${name}`),
+      ].map((name) => [name, digest(readFileSync(join(candidateRoot, 'crates/owned-vp8', name)))])
+    ),
     node: process.version,
     ffmpeg: execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0],
     oracleVersion: oracle.encoder_version(),
     oracleWasmSha256: digest(oracleWasm),
     candidateWasmSha256: digest(candidateBytes),
+    candidateProvenanceSha256: digest(
+      readFileSync(join(candidateRoot, 'crates/owned-vp8/wasm-provenance.json'))
+    ),
+    harnessSource: execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    }).trim(),
+    harnessDirty:
+      execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' }).trim() !== '',
+    boundedPrebuiltVerified: true,
     fixtureManifestSha256: digest(
       readFileSync(join(ROOT, 'docs/experiments/501-owned-vp8-v2-fixtures.json'))
     ),
@@ -199,6 +234,9 @@ export async function compare(options: {
         ? 'TUNING_ONLY_NOT_ACCEPTANCE'
         : 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
   };
+  if (options.split === 'held-out' && (identities.dirty || identities.harnessDirty)) {
+    throw new Error('Held-out acceptance requires committed candidate and harness identities');
+  }
   writeFileSync(join(output, 'identities.json'), `${JSON.stringify(identities, null, 2)}\n`, {
     flag: 'wx',
   });
@@ -291,6 +329,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const photo = args.includes('--photo') ? args[args.indexOf('--photo') + 1] : undefined;
   const video = args.includes('--video') ? args[args.indexOf('--video') + 1] : undefined;
   const acceptance = args.includes('--acceptance');
+  const candidateRoot = args.includes('--candidate-root')
+    ? args[args.indexOf('--candidate-root') + 1]
+    : undefined;
   if (!args.includes('--output') || !output)
     throw new Error(
       'Use --output NEW_EVIDENCE_DIRECTORY [--photo PATH --video PATH] [--acceptance]'
@@ -299,6 +340,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     output,
     split: acceptance ? 'held-out' : 'tuning',
     sources: { ...(photo ? { photo } : {}), ...(video ? { video } : {}) },
+    ...(candidateRoot ? { candidateRoot } : {}),
   });
   console.log(JSON.stringify(report, null, 2));
 }
