@@ -122,12 +122,28 @@ bytes are separate deployment evidence. Real Safari/mobile remain UNVERIFIED
 until observed; managed WebKit is not Safari. Concrete missing-platform impact
 must follow the existing acceptance policy without blocking independent work.
 
+## Metric definition addendum before held-out measurements
+
+`scripts/test/owned-vp8-v2-compare.ts` uses PSNR over all RGB bytes and FFmpeg's
+SSIM filter on planar RGB (`gbrp`). For a dimension below eight pixels, only the
+metric input is nearest-neighbor replicated to a minimum of eight; encoder input
+and decoded visible geometry are unchanged. This prevents undefined tiny-window
+statistics and applies identically to baseline and candidate. Exact zero-MSE
+images use an explicit exact flag; a finite candidate cannot pass against an
+exact baseline through Infinity/NaN subtraction. Thresholds remain unchanged.
+These fixed-pixel checks do not qualify product timing, animation or memory.
+
 ## Discrepancy inventory
 
 - Fixed during M1 integration: `crates/owned-vp8/Cargo.toml` initially retained
   MIT-only package metadata after `src/transform.rs` introduced attributed adapted
   libwebp arithmetic (`MIT AND BSD-3-Clause`). The manifest now matches that
   expression; `LICENSE.libwebp` and `PATENTS.libwebp` preserve upstream terms.
+- Fixed during M2 integration: `crates/owned-vp8/README.md` retained the M1
+  B_PRED-only and unfinished-search description after `src/textured.rs`
+  `encode_observed` began selecting I16/I4/UV modes. `src/lib.rs`
+  `encode_opaque_keyframe` also retained its B_PRED-only API comment. Both now
+  describe the implemented search while keeping calibration/qualification open.
 - External reference discrepancy, unchanged: RFC 6386 section 13.3's illustrative
   coefficient pseudocode swaps plane labels relative to its detailed probability
   table and sets `prevCoeffWasZero` unconditionally. The detailed table/narrative

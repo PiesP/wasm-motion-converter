@@ -37,7 +37,7 @@ impl BoolSink for RateCounter {
     }
 }
 
-fn bit_cost(probability: u32) -> u32 {
+const fn calculate_cost(probability: u32) -> u32 {
     if probability == 0 {
         return 4096;
     }
@@ -45,9 +45,11 @@ fn bit_cost(probability: u32) -> u32 {
         return 0;
     }
     let exponent = 31 - probability.leading_zeros();
-    let mut normalized = (u64::from(probability) << (8 - exponent)) << 16;
+    let mut normalized = ((probability as u64) << (8 - exponent)) << 16;
     let mut fractional = 0u32;
-    for shift in (0..8).rev() {
+    let mut shift = 8;
+    while shift > 0 {
+        shift -= 1;
         normalized = (normalized * normalized) >> 24;
         if normalized >= (512 << 16) {
             normalized >>= 1;
@@ -55,6 +57,20 @@ fn bit_cost(probability: u32) -> u32 {
         }
     }
     (8 - exponent) * 256 - fractional
+}
+
+const COSTS: [u16; 257] = {
+    let mut result = [0; 257];
+    let mut probability = 0;
+    while probability <= 256 {
+        result[probability] = calculate_cost(probability as u32) as u16;
+        probability += 1;
+    }
+    result
+};
+
+fn bit_cost(probability: u32) -> u32 {
+    u32::from(COSTS[probability as usize])
 }
 
 #[cfg(test)]

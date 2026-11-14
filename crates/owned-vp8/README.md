@@ -7,9 +7,10 @@ historical DC-only result and receipts remain in `497-owned-vp8-result.md`.
 
 The residual path now codes all sixteen coefficients using B_PRED/B_DC prediction,
 plus a separately exercised I16/DC and Y2/WHT path. The default experimental
-entrypoint still selects B_PRED. Rate-distortion mode search, color/preset
-calibration, filtering, bounded resumable ABI2 and product qualification are
-unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
+entrypoint now selects bounded I16/I4/UV modes using distortion and estimated
+mode/coefficient/skip bit costs. Trials isolate reconstruction and contexts.
+Color/preset calibration, filtering, bounded resumable ABI2 and product
+qualification are unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
 or removal of `wasm-webp`.
 
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),

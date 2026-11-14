@@ -269,7 +269,7 @@ pub fn encode_neutral_keyframe(
 }
 
 /// Encode checked opaque RGBA/BGRA input with the experimental full-residual
-/// B_PRED path. This does not yet satisfy product quality or preset parity.
+/// intra-mode search. This does not yet satisfy product quality or preset parity.
 pub fn encode_opaque_keyframe(
     pixels: &[u8],
     width: u32,
@@ -280,7 +280,6 @@ pub fn encode_opaque_keyframe(
 ) -> Result<Vec<u8>, EncodeError> {
     let input_end = validate_shape(pixels, width, height, stride, format, quality)?;
     let row_bytes = width as usize * 4;
-    let mut neutral = true;
     for row in 0..height as usize {
         for pixel in pixels[row * stride as usize..row * stride as usize + row_bytes]
             .as_chunks::<4>()
@@ -289,16 +288,9 @@ pub fn encode_opaque_keyframe(
             if pixel[3] != 255 {
                 return Err(EncodeError::UnsupportedPixels);
             }
-            if *pixel != [128, 128, 128, 255] {
-                neutral = false;
-            }
         }
     }
-    if neutral {
-        encode_neutral_keyframe(&pixels[..input_end], width, height, stride, format, quality)
-    } else {
-        textured::encode_textured(&pixels[..input_end], width, height, stride, format, quality)
-    }
+    textured::encode_textured(&pixels[..input_end], width, height, stride, format, quality)
 }
 
 #[derive(Default)]
@@ -380,6 +372,19 @@ pub extern "C" fn vp8_reset() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn neutral_pixels_use_the_same_color_contract_as_other_grays() {
+        for gray in [127, 128, 129] {
+            let input = [gray, gray, gray, 255].repeat(17 * 13);
+            for quality in [60, 75, 85] {
+                assert_eq!(
+                    encode_opaque_keyframe(&input, 17, 13, 68, 0, quality).unwrap(),
+                    textured::encode_textured(&input, 17, 13, 68, 0, quality).unwrap()
+                );
+            }
+        }
+    }
 
     #[test]
     fn arithmetic_finalization_known_answer() {
