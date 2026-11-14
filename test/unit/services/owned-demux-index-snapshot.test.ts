@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { describe, expect, it } from 'vitest';
-
 import { fingerprintOwnedDemuxSource } from '@services/owned-demux-index-snapshot';
+import { describe, expect, it } from 'vite-plus/test';
 
 describe('owned demux source fingerprint', () => {
   it('binds source size and bounded head/tail ranges', async () => {
@@ -27,7 +26,8 @@ describe('owned demux source fingerprint', () => {
   it('rejects a cancelled fingerprint before a source read', async () => {
     const controller = new AbortController();
     controller.abort(new DOMException('cancelled', 'AbortError'));
-    await expect(fingerprintOwnedDemuxSource(new Blob([new Uint8Array(8)]), controller.signal))
-      .rejects.toMatchObject({ name: 'AbortError' });
+    await expect(
+      fingerprintOwnedDemuxSource(new Blob([new Uint8Array(8)]), controller.signal)
+    ).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

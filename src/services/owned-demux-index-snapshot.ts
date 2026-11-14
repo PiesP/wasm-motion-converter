@@ -11,20 +11,26 @@ export async function fingerprintOwnedDemuxSource(
   source: Blob | ArrayBuffer,
   signal?: AbortSignal
 ): Promise<string> {
-  const rangeSource = source instanceof Blob
-    ? source
-    : {
-        size: source.byteLength,
-        slice: (start: number, end: number) => ({ arrayBuffer: async () => source.slice(start, end) }),
-      };
+  const rangeSource =
+    source instanceof Blob
+      ? source
+      : {
+          size: source.byteLength,
+          slice: (start: number, end: number) => ({
+            arrayBuffer: async () => source.slice(start, end),
+          }),
+        };
   if (rangeSource.size < 8 || rangeSource.size > MAX_SOURCE_BYTES)
     throw new Error('Owned demux fingerprint source size invalid');
   const headLength = Math.min(EDGE_BYTES, rangeSource.size);
   const tailLength = Math.min(EDGE_BYTES, rangeSource.size - headLength);
   const head = new Uint8Array(await readOwnedRange(rangeSource, 0, headLength, signal));
-  const tail = tailLength > 0
-    ? new Uint8Array(await readOwnedRange(rangeSource, rangeSource.size - tailLength, rangeSource.size, signal))
-    : new Uint8Array();
+  const tail =
+    tailLength > 0
+      ? new Uint8Array(
+          await readOwnedRange(rangeSource, rangeSource.size - tailLength, rangeSource.size, signal)
+        )
+      : new Uint8Array();
   signal?.throwIfAborted();
   if (head.length !== headLength || tail.length !== tailLength)
     throw new Error('Owned demux fingerprint read truncated');

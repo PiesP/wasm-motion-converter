@@ -249,12 +249,18 @@ function checkSnapshotStatus(status: number): number {
   const word = status >>> 0;
   if (word < 0x8000_0000) return word;
   switch (word & 0x7fff_ffff) {
-    case 1: throw new Error('Owned demux snapshot invalid input');
-    case 2: throw new Error('Owned demux snapshot truncated input');
-    case 3: throw new Error('Owned demux snapshot resource limit exceeded');
-    case 4: throw new Error('Owned demux snapshot format unsupported');
-    case 5: throw new Error('Owned demux snapshot value overflow');
-    default: throw new Error('Owned demux snapshot ABI error code invalid');
+    case 1:
+      throw new Error('Owned demux snapshot invalid input');
+    case 2:
+      throw new Error('Owned demux snapshot truncated input');
+    case 3:
+      throw new Error('Owned demux snapshot resource limit exceeded');
+    case 4:
+      throw new Error('Owned demux snapshot format unsupported');
+    case 5:
+      throw new Error('Owned demux snapshot value overflow');
+    default:
+      throw new Error('Owned demux snapshot ABI error code invalid');
   }
 }
 
@@ -432,7 +438,14 @@ export class OwnedDemuxSession {
 
   /** Export only a logical index; the selected-source generation stays with its host owner. */
   async exportIndex(signal?: AbortSignal): Promise<ArrayBuffer | null> {
-    if (!this.active || !this.ready || this.analyzing || this.packetReadInProgress || this.seeking || this.snapshotOperation)
+    if (
+      !this.active ||
+      !this.ready ||
+      this.analyzing ||
+      this.packetReadInProgress ||
+      this.seeking ||
+      this.snapshotOperation
+    )
       throw new Error('Owned demux snapshot lease invalid');
     this.snapshotOperation = true;
     try {
@@ -473,7 +486,14 @@ export class OwnedDemuxSession {
 
   /** Import into a fresh conversion-owned instance. A malformed import is terminal. */
   async importIndex(snapshot: ArrayBuffer, signal?: AbortSignal): Promise<OwnedDemuxTrack> {
-    if (!this.active || this.ready || this.analyzing || this.packetReadInProgress || this.seeking || this.snapshotOperation)
+    if (
+      !this.active ||
+      this.ready ||
+      this.analyzing ||
+      this.packetReadInProgress ||
+      this.seeking ||
+      this.snapshotOperation
+    )
       throw new Error('Owned demux snapshot import state invalid');
     this.snapshotOperation = true;
     try {
@@ -481,7 +501,10 @@ export class OwnedDemuxSession {
       const bytes = new Uint8Array(snapshot);
       if (bytes.byteLength < 64 + 64 + 40 + 4 || bytes.byteLength > MAX_SNAPSHOT_BYTES)
         throw new Error('Owned demux snapshot size invalid');
-      if (this.wasm.memory.buffer.byteLength + bytes.byteLength + 16 * 1024 * 1024 > 128 * 1024 * 1024)
+      if (
+        this.wasm.memory.buffer.byteLength + bytes.byteLength + 16 * 1024 * 1024 >
+        128 * 1024 * 1024
+      )
         throw new Error('Owned demux snapshot resource limit exceeded');
       if (checkSnapshotStatus(this.wasm.demux_snapshot_import_begin(bytes.byteLength)) !== 1)
         throw new Error('Owned demux snapshot import admission failed');
@@ -492,7 +515,9 @@ export class OwnedDemuxSession {
         const pointer = this.wasm.demux_input_ptr();
         if (pointer <= 0 || pointer + length > this.wasm.memory.buffer.byteLength)
           throw new Error('Owned demux snapshot destination invalid');
-        new Uint8Array(this.wasm.memory.buffer, pointer, length).set(bytes.subarray(at, at + length));
+        new Uint8Array(this.wasm.memory.buffer, pointer, length).set(
+          bytes.subarray(at, at + length)
+        );
         this.inputCopiedToWasmBytes += length;
         this.snapshotCopiedToWasmBytes += length;
         if (checkSnapshotStatus(this.wasm.demux_snapshot_import_feed(length)) !== 1)
@@ -507,7 +532,8 @@ export class OwnedDemuxSession {
         if (status === 0) throw new Error('Owned demux snapshot import invalid');
         if (status === 2) break;
         await nextTask();
-        if (steps === MAX_STEPS - 1) throw new Error('Owned demux snapshot logical work limit exceeded');
+        if (steps === MAX_STEPS - 1)
+          throw new Error('Owned demux snapshot logical work limit exceeded');
       }
       const track = this.readTrackRecord();
       let reconstructs = false;
@@ -601,7 +627,13 @@ export class OwnedDemuxSession {
   }
 
   packet(index: number): OwnedDemuxPacket {
-    if (!this.active || !this.ready || this.snapshotOperation || !Number.isSafeInteger(index) || index < 0)
+    if (
+      !this.active ||
+      !this.ready ||
+      this.snapshotOperation ||
+      !Number.isSafeInteger(index) ||
+      index < 0
+    )
       throw new Error('Owned demux packet index invalid');
     return this.readPacketRecord(index);
   }
@@ -756,7 +788,14 @@ export class OwnedDemuxSession {
 
   /** Choose a verified random-access packet at or before the requested presentation time. */
   async findVerifiedKey(seconds: number, signal?: AbortSignal): Promise<number | null> {
-    if (!this.active || !this.ready || this.seeking || this.snapshotOperation || !Number.isFinite(seconds) || seconds < 0)
+    if (
+      !this.active ||
+      !this.ready ||
+      this.seeking ||
+      this.snapshotOperation ||
+      !Number.isFinite(seconds) ||
+      seconds < 0
+    )
       throw new Error('Owned demux seek request invalid');
     this.seeking = true;
     try {

@@ -54,12 +54,6 @@ vi.stubGlobal('crypto', { randomUUID: () => 'request-1' });
 
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import {
-  beginOwnedInputSelection,
-  clearOwnedInputSelection,
-  copyOwnedInputIndex,
-  publishOwnedInputIndex,
-} from '@services/owned-input-index-cache';
-import {
   runPipelineViaWorker,
   runPipelineWithFallback,
 } from '@services/conversion-worker/main-thread-proxy';
@@ -67,6 +61,12 @@ import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
 } from '@services/conversion-worker/types';
+import {
+  beginOwnedInputSelection,
+  clearOwnedInputSelection,
+  copyOwnedInputIndex,
+  publishOwnedInputIndex,
+} from '@services/owned-input-index-cache';
 import { MAX_CODEC_DESCRIPTION_BYTES, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 
 const validDecoderConfig: SerializedDecoderConfig = {
