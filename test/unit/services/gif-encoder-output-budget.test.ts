@@ -82,7 +82,7 @@ describe('owned GIF output admission', () => {
         quality: 'low',
         scale: 1,
         maxFrames: 1,
-        maxOutputBytes: 1024,
+        maxOutputBytes: 32_768,
       })
     ).rejects.toThrow('GIF output frame limit exceeded');
     expect(mocks.writeFrame).toHaveBeenCalledOnce();
