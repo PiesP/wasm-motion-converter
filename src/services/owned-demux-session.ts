@@ -5,10 +5,11 @@
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 
-const ABI_VERSION = 1;
+const ABI_VERSION = 2;
 const MAX_INPUT_BYTES = 500 * 1024 * 1024;
 const MAX_PACKET_BYTES = 16 * 1024 * 1024 - 1024;
-const MAX_TRACK_PACKETS = Math.floor(32 * 1024 * 1024 / 40);
+const MAX_WASM_CAPACITY_BYTES = 64 * 1024 * 1024;
+const MAX_TRACK_PACKETS = Math.floor((32 * 1024 * 1024) / 48);
 const EVENT_BYTES = 64;
 const MAX_STEPS = 2_000_000;
 let nextSessionId = 1;
@@ -27,9 +28,15 @@ type DemuxExports = {
   demux_packet(index: number): number;
   demux_packet_begin(index: number): number;
   demux_prepare_packets(maxPacket: number): number;
+  demux_probe_vp9(prefixLength: number): number;
   demux_packet_feed(length: number): number;
   demux_packet_finish(): number;
   demux_release(): void;
+};
+
+type RangeSource = {
+  size: number;
+  slice(start: number, end: number): { arrayBuffer(): Promise<ArrayBuffer> };
 };
 
 export type OwnedDemuxTrack = {
@@ -59,7 +66,7 @@ export type OwnedDemuxPacket = {
   byteLength: number;
   dtsTicks: bigint;
   ptsTicks: bigint;
-  durationTicks: number;
+  durationTicks: bigint;
   key: boolean;
   sourceEnd: bigint | null;
 };
@@ -75,8 +82,12 @@ export type OwnedDemuxTransferStats = {
 };
 
 /** Only accepts a container key hint after inspecting the actual compressed frame. */
-export async function verifyOwnedVideoKey(codec: string, description: Uint8Array,
-  bytes: Uint8Array, signal?: AbortSignal): Promise<boolean> {
+export async function verifyOwnedVideoKey(
+  codec: string,
+  description: Uint8Array,
+  bytes: Uint8Array,
+  signal?: AbortSignal
+): Promise<boolean> {
   if (bytes.length === 0) return false;
   if (codec === 'VP80') return (bytes[0]! & 1) === 0;
   if (codec === 'VP90' || codec === 'vp09') {
@@ -92,9 +103,12 @@ export async function verifyOwnedVideoKey(codec: string, description: Uint8Array
     // av1C can carry the Sequence Header while samples contain only frame OBUs.
     const configHeader = description.length > 6 ? description[4]! : 0;
     const configSize = description.length > 6 ? description[5]! : 0;
-    let reduced = (description[0]! & 0x80) !== 0 &&
-      ((configHeader >> 3) & 15) === 1 && (configHeader & 2) !== 0 &&
-      (configSize & 0x80) === 0 && configSize > 0 &&
+    let reduced =
+      (description[0]! & 0x80) !== 0 &&
+      ((configHeader >> 3) & 15) === 1 &&
+      (configHeader & 2) !== 0 &&
+      (configSize & 0x80) === 0 &&
+      configSize > 0 &&
       (description[6]! & 0x08) !== 0;
     while (at < bytes.length) {
       signal?.throwIfAborted();
@@ -132,9 +146,14 @@ export async function verifyOwnedVideoKey(codec: string, description: Uint8Array
   }
   if (codec === 'avc1' || codec === 'avc3' || codec === 'hvc1' || codec === 'hev1') {
     const avc = codec === 'avc1' || codec === 'avc3';
-    const width = description.length >= 5
-      ? (avc ? (description[4]! & 3) + 1 : description.length >= 22 ? (description[21]! & 3) + 1 : 0)
-      : 0;
+    const width =
+      description.length >= 5
+        ? avc
+          ? (description[4]! & 3) + 1
+          : description.length >= 22
+            ? (description[21]! & 3) + 1
+            : 0
+        : 0;
     const classify = (type: number): boolean | null => {
       if (avc) {
         if (type >= 1 && type <= 4) return false;
@@ -170,8 +189,11 @@ export async function verifyOwnedVideoKey(codec: string, description: Uint8Array
       let scanned = 0;
       while (at + 3 < bytes.length) {
         signal?.throwIfAborted();
-        if (bytes[at] === 0 && bytes[at + 1] === 0 &&
-          (bytes[at + 2] === 1 || (bytes[at + 2] === 0 && bytes[at + 3] === 1))) {
+        if (
+          bytes[at] === 0 &&
+          bytes[at + 1] === 0 &&
+          (bytes[at + 2] === 1 || (bytes[at + 2] === 0 && bytes[at + 3] === 1))
+        ) {
           const start = at + (bytes[at + 2] === 1 ? 3 : 4);
           if (start >= bytes.length) return false;
           const kind = avc ? bytes[start]! & 31 : (bytes[start]! >> 1) & 63;
@@ -192,7 +214,13 @@ export async function verifyOwnedVideoKey(codec: string, description: Uint8Array
 }
 
 function eventView(wasm: DemuxExports, pointer: number): DataView {
-  if (!Number.isInteger(pointer) || pointer <= 0 || pointer + EVENT_BYTES > wasm.memory.buffer.byteLength)
+  if (wasm.memory.buffer.byteLength > MAX_WASM_CAPACITY_BYTES)
+    throw new Error('Owned demux WASM capacity limit exceeded');
+  if (
+    !Number.isInteger(pointer) ||
+    pointer <= 0 ||
+    pointer + EVENT_BYTES > wasm.memory.buffer.byteLength
+  )
     throw new Error('Owned demux invalid ABI event pointer');
   return new DataView(wasm.memory.buffer, pointer, EVENT_BYTES);
 }
@@ -209,7 +237,7 @@ async function nextTask(): Promise<void> {
 
 export class OwnedDemuxSession {
   private readonly wasm: DemuxExports;
-  private readonly source: Blob;
+  private readonly source: RangeSource;
   private active = true;
   private ready = false;
   private analyzing = false;
@@ -237,15 +265,47 @@ export class OwnedDemuxSession {
     };
   }
 
-  constructor(source: Blob, module: WebAssembly.Module) {
-    if (source.size < 8 || source.size > MAX_INPUT_BYTES)
+  constructor(source: Blob | ArrayBuffer, module: WebAssembly.Module) {
+    const rangeSource: RangeSource =
+      source instanceof Blob
+        ? source
+        : {
+            size: source.byteLength,
+            slice: (start, end) => ({ arrayBuffer: async () => source.slice(start, end) }),
+          };
+    if (rangeSource.size < 8 || rangeSource.size > MAX_INPUT_BYTES)
       throw new Error('Owned demux input size limit exceeded');
     const instance = new WebAssembly.Instance(module, {});
+    const exports = instance.exports as unknown as Record<string, unknown>;
+    if (
+      !(exports.memory instanceof WebAssembly.Memory) ||
+      (
+        [
+          'demux_abi_version',
+          'demux_init',
+          'demux_input_ptr',
+          'demux_step',
+          'demux_feed',
+          'demux_track',
+          'demux_description_ptr',
+          'demux_codec_ptr',
+          'demux_packet_count',
+          'demux_packet',
+          'demux_prepare_packets',
+          'demux_probe_vp9',
+          'demux_packet_begin',
+          'demux_packet_feed',
+          'demux_packet_finish',
+          'demux_release',
+        ] as const
+      ).some((name) => typeof exports[name] !== 'function')
+    )
+      throw new Error('Owned demux ABI exports missing');
     this.wasm = instance.exports as unknown as DemuxExports;
     if (this.wasm.demux_abi_version() !== ABI_VERSION)
       throw new Error('Owned demux ABI version mismatch');
-    this.source = source;
-    const size = BigInt(source.size);
+    this.source = rangeSource;
+    const size = BigInt(rangeSource.size);
     const pointer = this.wasm.demux_init(Number(size & 0xffff_ffffn), Number(size >> 32n));
     if (!pointer) throw new Error('Owned demux initialization failed');
     eventView(this.wasm, pointer);
@@ -268,7 +328,9 @@ export class OwnedDemuxSession {
           const start = safeOffset(offset);
           if (length < 1 || length > 64 * 1024 || start + length > this.source.size)
             throw new Error('Owned demux invalid input request');
-          const window = new Uint8Array(await this.source.slice(start, start + length).arrayBuffer());
+          const window = new Uint8Array(
+            await this.source.slice(start, start + length).arrayBuffer()
+          );
           this.rangeReads++;
           this.sourceReadBytes += window.byteLength;
           signal?.throwIfAborted();
@@ -284,7 +346,7 @@ export class OwnedDemuxSession {
         } else if (status === 2) {
           await nextTask();
         } else if (status === 3) {
-          const track = this.readTrackRecord();
+          let track = this.readTrackRecord();
           let reconstructs = false;
           for (let index = 0; index < track.packetCount; index++) {
             if (index % 256 === 0) {
@@ -295,6 +357,10 @@ export class OwnedDemuxSession {
             const packet = this.readPacketRecord(index);
             this.maxPacketBytes = Math.max(this.maxPacketBytes, packet.byteLength);
             reconstructs ||= packet.sourceEnd !== null;
+          }
+          if (track.codec === 'VP90') {
+            await this.probeVp9(signal);
+            track = this.readTrackRecord();
           }
           if (reconstructs && !this.wasm.demux_prepare_packets(this.maxPacketBytes))
             throw new Error('Owned demux packet workspace admission failed');
@@ -339,27 +405,49 @@ export class OwnedDemuxSession {
     const colorMatrix = view.getUint16(52, true);
     const colorFullRange = view.getInt8(54);
     const codecLength = view.getUint32(56, true);
-    if (![ -1, 0, 1 ].includes(colorFullRange))
-      throw new Error('Owned demux invalid color range');
+    if (![-1, 0, 1].includes(colorFullRange)) throw new Error('Owned demux invalid color range');
     const pointer = this.wasm.demux_description_ptr();
-    if (descriptionLength > 1024 * 1024 || (descriptionLength > 0 &&
-      (pointer <= 0 || pointer + descriptionLength > this.wasm.memory.buffer.byteLength)))
+    if (
+      descriptionLength > 1024 * 1024 ||
+      (descriptionLength > 0 &&
+        (pointer <= 0 || pointer + descriptionLength > this.wasm.memory.buffer.byteLength))
+    )
       throw new Error('Owned demux description out of range');
     const description = new Uint8Array(this.wasm.memory.buffer, pointer, descriptionLength).slice();
     const codecPointer = this.wasm.demux_codec_ptr();
-    if (codecLength > 128 || (codecLength > 0 &&
-      (codecPointer <= 0 || codecPointer + codecLength > this.wasm.memory.buffer.byteLength)))
+    if (
+      codecLength > 128 ||
+      (codecLength > 0 &&
+        (codecPointer <= 0 || codecPointer + codecLength > this.wasm.memory.buffer.byteLength))
+    )
       throw new Error('Owned demux codec string out of range');
-    const codecString = codecLength > 0
-      ? new TextDecoder('ascii', { fatal: true }).decode(new Uint8Array(this.wasm.memory.buffer, codecPointer, codecLength))
-      : null;
+    const codecString =
+      codecLength > 0
+        ? new TextDecoder('ascii', { fatal: true }).decode(
+            new Uint8Array(this.wasm.memory.buffer, codecPointer, codecLength)
+          )
+        : null;
     const packetCount = this.wasm.demux_packet_count();
     if (packetCount < 1 || packetCount > MAX_TRACK_PACKETS)
       throw new Error('Owned demux packet index limit exceeded');
-    return { codec, codecString, width, height, displayWidth, displayHeight,
-      colorPrimaries, colorTransfer, colorMatrix, colorFullRange: colorFullRange as -1 | 0 | 1,
-      timescale, durationTicks, rotation, description, packetCount,
-      maxPacketBytes: this.maxPacketBytes };
+    return {
+      codec,
+      codecString,
+      width,
+      height,
+      displayWidth,
+      displayHeight,
+      colorPrimaries,
+      colorTransfer,
+      colorMatrix,
+      colorFullRange: colorFullRange as -1 | 0 | 1,
+      timescale,
+      durationTicks,
+      rotation,
+      description,
+      packetCount,
+      maxPacketBytes: this.maxPacketBytes,
+    };
   }
 
   packet(index: number): OwnedDemuxPacket {
@@ -373,37 +461,58 @@ export class OwnedDemuxSession {
     if (view.getUint32(0, true) !== 5) throw new Error('Owned demux packet unavailable');
     const offset = view.getBigUint64(8, true);
     const byteLength = view.getUint32(16, true);
-    const sourceEnd = view.getBigUint64(44, true);
-    if (byteLength < 1 || byteLength > MAX_PACKET_BYTES ||
+    const sourceEnd = view.getBigUint64(48, true);
+    if (
+      byteLength < 1 ||
+      byteLength > MAX_PACKET_BYTES ||
       (sourceEnd === 0n && safeOffset(offset) + byteLength > this.source.size) ||
-      (sourceEnd !== 0n && (sourceEnd <= offset || safeOffset(sourceEnd) > this.source.size)))
+      (sourceEnd !== 0n && (sourceEnd <= offset || safeOffset(sourceEnd) > this.source.size))
+    )
       throw new Error('Owned demux packet range invalid');
     return {
-      index, sessionId: this.sessionId, generation: this.generation,
-      offset, byteLength, sourceEnd: sourceEnd === 0n ? null : sourceEnd,
+      index,
+      sessionId: this.sessionId,
+      generation: this.generation,
+      offset,
+      byteLength,
+      sourceEnd: sourceEnd === 0n ? null : sourceEnd,
       key: view.getUint32(20, true) === 1,
       dtsTicks: view.getBigInt64(24, true),
       ptsTicks: view.getBigInt64(32, true),
-      durationTicks: view.getUint32(40, true),
+      durationTicks: view.getBigUint64(40, true),
     };
   }
 
   async readPacket(packet: OwnedDemuxPacket, signal?: AbortSignal): Promise<ArrayBuffer> {
-    if (!this.active || !this.ready || packet.sessionId !== this.sessionId ||
-      packet.generation !== this.generation || this.packetReadInProgress)
+    if (
+      !this.active ||
+      !this.ready ||
+      packet.sessionId !== this.sessionId ||
+      packet.generation !== this.generation ||
+      this.packetReadInProgress
+    )
       throw new Error('Owned demux packet lease invalid');
     signal?.throwIfAborted();
     this.packetReadInProgress = true;
     try {
       const current = this.packet(packet.index);
-      if (current.offset !== packet.offset || current.byteLength !== packet.byteLength ||
-        current.sourceEnd !== packet.sourceEnd || current.dtsTicks !== packet.dtsTicks ||
-        current.ptsTicks !== packet.ptsTicks || current.durationTicks !== packet.durationTicks ||
-        current.key !== packet.key)
+      if (
+        current.offset !== packet.offset ||
+        current.byteLength !== packet.byteLength ||
+        current.sourceEnd !== packet.sourceEnd ||
+        current.dtsTicks !== packet.dtsTicks ||
+        current.ptsTicks !== packet.ptsTicks ||
+        current.durationTicks !== packet.durationTicks ||
+        current.key !== packet.key
+      )
         throw new Error('Owned demux packet descriptor invalid');
       if (packet.sourceEnd !== null) return await this.readTsPacket(packet, signal);
       const start = safeOffset(packet.offset);
-      if (packet.byteLength < 1 || packet.byteLength > MAX_PACKET_BYTES || start + packet.byteLength > this.source.size)
+      if (
+        packet.byteLength < 1 ||
+        packet.byteLength > MAX_PACKET_BYTES ||
+        start + packet.byteLength > this.source.size
+      )
         throw new Error('Owned demux packet range invalid');
       const data = await this.source.slice(start, start + packet.byteLength).arrayBuffer();
       this.rangeReads++;
@@ -458,17 +567,49 @@ export class OwnedDemuxSession {
     return data;
   }
 
+  private async probeVp9(signal?: AbortSignal): Promise<void> {
+    const packetCount = this.wasm.demux_packet_count();
+    for (let index = 0; index < packetCount; index++) {
+      if (index % 256 === 0) {
+        signal?.throwIfAborted();
+        if (!this.active) throw new Error('Owned demux session released');
+        await nextTask();
+      }
+      const packet = this.readPacketRecord(index);
+      if (!packet.key || packet.sourceEnd !== null) continue;
+      const start = safeOffset(packet.offset);
+      const length = Math.min(packet.byteLength, 4096);
+      const prefix = new Uint8Array(await this.source.slice(start, start + length).arrayBuffer());
+      this.rangeReads++;
+      this.sourceReadBytes += prefix.byteLength;
+      signal?.throwIfAborted();
+      if (!this.active || prefix.byteLength !== length)
+        throw new Error('Owned demux VP9 prefix read invalidated');
+      const destination = this.wasm.demux_input_ptr();
+      if (destination <= 0 || destination + length > this.wasm.memory.buffer.byteLength)
+        throw new Error('Owned demux VP9 prefix destination invalid');
+      new Uint8Array(this.wasm.memory.buffer, destination, length).set(prefix);
+      this.inputCopiedToWasmBytes += length;
+      const status = this.wasm.demux_probe_vp9(length);
+      if (status === 1) return;
+      if (status === 3) continue;
+      if (status === 2) throw new Error('Owned demux VP9 profile unsupported');
+      if (status === 4) throw new Error('Owned demux VP9 resource limit exceeded');
+      if (status === 5) throw new Error('Owned demux VP9 value overflow');
+      throw new Error('Owned demux VP9 probe state invalid');
+    }
+    throw new Error('Owned demux VP9 key configuration unavailable');
+  }
+
   /** Choose a verified random-access packet at or before the requested presentation time. */
   async findVerifiedKey(seconds: number, signal?: AbortSignal): Promise<number | null> {
-    if (!this.active || !this.ready || this.seeking ||
-      !Number.isFinite(seconds) || seconds < 0)
+    if (!this.active || !this.ready || this.seeking || !Number.isFinite(seconds) || seconds < 0)
       throw new Error('Owned demux seek request invalid');
     this.seeking = true;
     try {
       const track = this.track();
       const scaled = Math.trunc(seconds * track.timescale);
-      if (!Number.isSafeInteger(scaled))
-        throw new Error('Owned demux seek timestamp out of range');
+      if (!Number.isSafeInteger(scaled)) throw new Error('Owned demux seek timestamp out of range');
       const target = BigInt(scaled);
       // The two typed arrays use at most 12 bytes per admitted indexed packet.
       // Heap insertion and removal are logarithmic; no whole-index sort occurs.
@@ -478,7 +619,8 @@ export class OwnedDemuxSession {
       const higher = (a: number, b: number): boolean =>
         points[a]! > points[b]! || (points[a] === points[b] && indices[a]! > indices[b]!);
       const swap = (a: number, b: number): void => {
-        const point = points[a]!, index = indices[a]!;
+        const point = points[a]!,
+          index = indices[a]!;
         points[a] = points[b]!;
         indices[a] = indices[b]!;
         points[b] = point;
@@ -512,7 +654,8 @@ export class OwnedDemuxSession {
           points[0] = points[count]!;
           let at = 0;
           for (;;) {
-            const left = at * 2 + 1, right = left + 1;
+            const left = at * 2 + 1,
+              right = left + 1;
             if (left >= count) break;
             const child = right < count && higher(right, left) ? right : left;
             if (!higher(child, at)) break;
@@ -522,7 +665,8 @@ export class OwnedDemuxSession {
         }
         const packet = this.packet(index);
         const payload = new Uint8Array(await this.readPacket(packet, signal));
-        if (await verifyOwnedVideoKey(track.codec, track.description, payload, signal)) return index;
+        if (await verifyOwnedVideoKey(track.codec, track.description, payload, signal))
+          return index;
         await nextTask();
       }
       return null;

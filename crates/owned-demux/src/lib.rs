@@ -12,7 +12,7 @@ mod ts;
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 pub const INPUT_CAPACITY: usize = 64 * 1024;
 pub const METADATA_BUDGET: usize = 32 * 1024 * 1024;
 pub const PACKET_BUDGET: u32 = 16 * 1024 * 1024 - 1024;
@@ -33,7 +33,7 @@ pub struct Packet {
     pub size: u32,
     pub dts: i64,
     pub pts: i64,
-    pub duration: u32,
+    pub duration: u64,
     pub key: bool,
 }
 
@@ -55,7 +55,7 @@ pub struct Track {
     pub rotation: u16,
     pub description: Vec<u8>,
     pub packets: Vec<Packet>,
-    pub fragment_default_duration: u32,
+    pub fragment_default_duration: u64,
     pub fragment_default_size: u32,
     pub fragment_default_flags: u32,
     pub edit_shift: i64,
@@ -124,6 +124,7 @@ struct EbmlState {
     observed_duration: u64,
     cluster_time: u64,
     presentation: BTreeMap<(i64, usize), usize>,
+    display_explicit: bool,
 }
 impl Default for EbmlState {
     fn default() -> Self {
@@ -134,6 +135,7 @@ impl Default for EbmlState {
             observed_duration: 0,
             cluster_time: 0,
             presentation: BTreeMap::new(),
+            display_explicit: false,
         }
     }
 }
@@ -148,7 +150,7 @@ struct PendingBox {
 
 impl Mp4Session {
     pub fn new(len: u64) -> Result<Self, Error> {
-        if len < 8 || len > 500 * 1024 * 1024 {
+        if !(8..=500 * 1024 * 1024).contains(&len) {
             return Err(Error::ResourceLimit);
         }
         Ok(Self {
@@ -200,6 +202,44 @@ impl Mp4Session {
     }
     fn codec_string(&self) -> &str {
         &self.codec_string
+    }
+
+    fn probe_vp9(&mut self, length: usize) -> Result<(), Error> {
+        if self.format != Format::Ebml
+            || self.status != Status::Complete
+            || !self.codec_string.is_empty()
+            || length == 0
+            || length > 4096
+        {
+            return Err(Error::Invalid);
+        }
+        let track = self.track.as_mut().ok_or(Error::Invalid)?;
+        if track.codec != *b"VP90" {
+            return Err(Error::Unsupported);
+        }
+        let metadata = codec_metadata::vp9_from_keyframe(&self.input[..length])?;
+        let codec = metadata.codec_string()?;
+        if codec.len() > 128 {
+            return Err(Error::ResourceLimit);
+        }
+        if !self.ebml.display_explicit {
+            track.display_width = metadata.render_width;
+            track.display_height = metadata.render_height;
+        }
+        if track.color_primaries == 0 {
+            track.color_primaries = metadata.color_primaries as u16;
+        }
+        if track.color_transfer == 0 {
+            track.color_transfer = metadata.color_transfer as u16;
+        }
+        if track.color_matrix == 0 {
+            track.color_matrix = metadata.color_matrix as u16;
+        }
+        if track.color_full_range == -1 {
+            track.color_full_range = i8::from(metadata.full_range);
+        }
+        self.codec_string = codec;
+        Ok(())
     }
 
     fn begin_ts_packet(&mut self, index: usize) -> Result<(), Error> {
@@ -328,13 +368,14 @@ impl Mp4Session {
         Ok(None)
     }
 
-    /// Each call performs at most `work_credit` top-level box or 64 KiB copy steps.
-    /// The host must return to a real task between yielded calls.
+    /// Each call performs at most `work_credit` outer steps. An index step
+    /// expands at most 64 samples; a source-copy or TS-feed step reads at most
+    /// 64 KiB. The host returns to a browser task between yielded calls.
     pub fn step(&mut self, work_credit: u32) -> Status {
         if self.status == Status::Error || self.status == Status::Complete || self.need.is_some() {
             return self.status;
         }
-        let result = self.step_inner(work_credit.min(64).max(1));
+        let result = self.step_inner(work_credit.clamp(1, 64));
         if let Err(error) = result {
             self.error = Some(error);
             self.status = Status::Error;
@@ -431,7 +472,9 @@ impl Mp4Session {
                     for packet in &track.packets[self.final_scan..end_at] {
                         let next = packet
                             .pts
-                            .checked_add(packet.duration as i64)
+                            .checked_add(
+                                i64::try_from(packet.duration).map_err(|_| Error::Overflow)?,
+                            )
                             .ok_or(Error::Overflow)?;
                         self.final_end = self.final_end.max(next);
                     }
@@ -551,13 +594,11 @@ impl Mp4Session {
                     if let Some(track) = &mut self.track {
                         track.duration = self.ebml.duration;
                     }
-                } else if pending.kind == *b"trks" {
-                    if self.track.is_none() {
-                        self.track = Some(
-                            ebml::parse_tracks(&pending.data, self.ebml.scale, self.ebml.duration)?
-                                .0,
-                        );
-                    }
+                } else if pending.kind == *b"trks" && self.track.is_none() {
+                    let (track, _, display_explicit) =
+                        ebml::parse_tracks(&pending.data, self.ebml.scale, self.ebml.duration)?;
+                    self.track = Some(track);
+                    self.ebml.display_explicit = display_explicit;
                 }
                 continue;
             }
@@ -572,7 +613,7 @@ impl Mp4Session {
                     let packet = &self.track.as_ref().ok_or(Error::Invalid)?.packets[*index];
                     let end = packet
                         .pts
-                        .checked_add(packet.duration as i64)
+                        .checked_add(i64::try_from(packet.duration).map_err(|_| Error::Overflow)?)
                         .ok_or(Error::Overflow)?;
                     self.ebml.observed_duration = self
                         .ebml
@@ -747,8 +788,7 @@ impl Mp4Session {
                     if let Some(track) = self.track.as_mut() {
                         let count = track.packets.len().saturating_sub(index);
                         if count > 0 {
-                            let per_frame = u32::try_from(ticks / count as u64)
-                                .map_err(|_| Error::ResourceLimit)?;
+                            let per_frame = ticks / count as u64;
                             for packet in &mut track.packets[index..] {
                                 packet.duration = per_frame;
                             }
@@ -839,7 +879,10 @@ impl Mp4Session {
                         let next_pts = pts
                             .checked_add(
                                 (lace_index as i64)
-                                    .checked_mul(track.fragment_default_duration as i64)
+                                    .checked_mul(
+                                        i64::try_from(track.fragment_default_duration)
+                                            .map_err(|_| Error::Overflow)?,
+                                    )
                                     .ok_or(Error::Overflow)?,
                             )
                             .ok_or(Error::Overflow)?;
@@ -858,13 +901,13 @@ impl Mp4Session {
                             .next()
                             .map(|(position, _)| position.0);
                         if let Some((prev_pts, prev_index)) = previous {
-                            track.packets[prev_index].duration = u32::try_from(
+                            track.packets[prev_index].duration = u64::try_from(
                                 next_pts.checked_sub(prev_pts).ok_or(Error::Overflow)?,
                             )
                             .map_err(|_| Error::ResourceLimit)?;
                         }
                         let duration = if let Some(following_pts) = following {
-                            u32::try_from(
+                            u64::try_from(
                                 following_pts.checked_sub(next_pts).ok_or(Error::Overflow)?,
                             )
                             .map_err(|_| Error::ResourceLimit)?
@@ -1063,6 +1106,11 @@ pub extern "C" fn demux_packet(index: u32) -> u32 {
     else {
         return 0;
     };
+    if state.session.as_ref().is_some_and(|session| {
+        session.format == Format::Ts && session.ts_source(index as usize).is_none()
+    }) {
+        return 0;
+    }
     state.event.fill(0);
     state.event[0..4].copy_from_slice(&5u32.to_le_bytes());
     state.event[8..16].copy_from_slice(&packet.offset.to_le_bytes());
@@ -1070,16 +1118,16 @@ pub extern "C" fn demux_packet(index: u32) -> u32 {
     state.event[20..24].copy_from_slice(&(packet.key as u32).to_le_bytes());
     state.event[24..32].copy_from_slice(&packet.dts.to_le_bytes());
     state.event[32..40].copy_from_slice(&packet.pts.to_le_bytes());
-    state.event[40..44].copy_from_slice(&packet.duration.to_le_bytes());
+    state.event[40..48].copy_from_slice(&packet.duration.to_le_bytes());
     if let Some(source) = state
         .session
         .as_ref()
         .and_then(|session| session.ts_source(index as usize))
     {
-        state.event[44..52].copy_from_slice(&source.end.to_le_bytes());
-        state.event[52..54].copy_from_slice(&source.pid.to_le_bytes());
-        state.event[54..56].copy_from_slice(&source.stride.to_le_bytes());
-        state.event[56] = source.prefix;
+        state.event[48..56].copy_from_slice(&source.end.to_le_bytes());
+        state.event[56..58].copy_from_slice(&source.pid.to_le_bytes());
+        state.event[58..60].copy_from_slice(&source.stride.to_le_bytes());
+        state.event[60] = source.prefix;
     }
     state.event.as_ptr() as u32
 }
@@ -1104,6 +1152,23 @@ pub extern "C" fn demux_prepare_packets(max_packet: u32) -> u32 {
         .session
         .as_mut()
         .is_some_and(|session| session.prepare_ts_packets(max_packet).is_ok()) as u32
+}
+
+#[no_mangle]
+pub extern "C" fn demux_probe_vp9(length: u32) -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    let Some(session) = state.session.as_mut() else {
+        return 0;
+    };
+    match session.probe_vp9(length as usize) {
+        Ok(()) => 1,
+        Err(Error::Unsupported) => 2,
+        Err(Error::Invalid | Error::Truncated) => 3,
+        Err(Error::ResourceLimit) => 4,
+        Err(Error::Overflow) => 5,
+    }
 }
 
 #[no_mangle]
@@ -1172,5 +1237,43 @@ mod tests {
         assert_eq!(session.step(1), Status::Error);
         assert_eq!(session.error(), Some(Error::ResourceLimit));
         assert!(session.pending.is_none());
+    }
+
+    #[test]
+    fn malformed_ranges_terminate_and_new_sessions_reset_state() {
+        let mut seed = 0x05ee_d492_u32;
+        for length in [8usize, 17, 257, 4096] {
+            for _ in 0..16 {
+                let mut source = vec![0u8; length];
+                for byte in &mut source {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    *byte = seed as u8;
+                }
+                let mut session = Mp4Session::new(length as u64).unwrap();
+                let mut terminal = false;
+                for _ in 0..256 {
+                    match session.step(64) {
+                        Status::NeedInput => {
+                            let request = session.request().unwrap();
+                            let start = request.offset as usize;
+                            let end = start + request.length as usize;
+                            assert!(end <= source.len());
+                            session.input[..request.length as usize]
+                                .copy_from_slice(&source[start..end]);
+                            session.feed(request.length as usize).unwrap();
+                        }
+                        Status::Yield => {}
+                        Status::Error => {
+                            terminal = true;
+                            break;
+                        }
+                        Status::Complete => panic!("malformed media completed"),
+                    }
+                }
+                assert!(terminal, "malformed input failed to terminate");
+            }
+        }
     }
 }

@@ -114,7 +114,9 @@ fn find(data: &[u8], id: u64) -> Result<Option<&[u8]>, Error> {
         .map(|(_, body)| body))
 }
 
-fn video_size(data: &[u8]) -> Result<(u32, u32, u32, u32, u16, u16, u16, i8), Error> {
+type VideoSize = (u32, u32, u32, u32, u16, u16, u16, i8);
+
+fn video_size(data: &[u8]) -> Result<VideoSize, Error> {
     let width = find(data, 0xb0)?
         .ok_or(Error::Unsupported)
         .and_then(unsigned)?;
@@ -163,7 +165,7 @@ fn video_size(data: &[u8]) -> Result<(u32, u32, u32, u32, u16, u16, u16, i8), Er
     ))
 }
 
-pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u64), Error> {
+pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u64, bool), Error> {
     for (id, entry) in children(data, 256)? {
         if id != TRACK_ENTRY {
             continue;
@@ -188,6 +190,7 @@ pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u6
             _ => return Err(Error::Unsupported),
         };
         let video = find(entry, 0xe0)?.ok_or(Error::Unsupported)?;
+        let display_explicit = find(video, 0x54b0)?.is_some() || find(video, 0x54ba)?.is_some();
         let (
             width,
             height,
@@ -226,7 +229,6 @@ pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u6
             .map(unsigned)
             .transpose()?
             .unwrap_or(0);
-        let default_duration = u32::try_from(default_duration).map_err(|_| Error::ResourceLimit)?;
         return Ok((
             Track {
                 track_id: number_u32,
@@ -250,6 +252,7 @@ pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u6
                 edit_shift: 0,
             },
             scale,
+            display_explicit,
         ));
     }
     Err(Error::Unsupported)
@@ -396,5 +399,33 @@ mod tests {
         video.extend(element(&[0x54, 0xba], &[8]));
         video.extend(element(&[0x55, 0xb0], &color));
         assert_eq!(video_size(&video), Ok((16, 8, 32, 8, 1, 13, 6, 1)));
+    }
+
+    #[test]
+    fn default_duration_can_exceed_four_billion_nanoseconds() {
+        fn element(id: &[u8], body: &[u8]) -> Vec<u8> {
+            let mut bytes = id.to_vec();
+            bytes.push(0x80 | body.len() as u8);
+            bytes.extend_from_slice(body);
+            bytes
+        }
+        let mut video = element(&[0xb0], &[16]);
+        video.extend(element(&[0xba], &[16]));
+        let mut entry = element(&[0xd7], &[1]);
+        entry.extend(element(&[0x83], &[1]));
+        entry.extend(element(&[0x86], b"V_VP8"));
+        entry.extend(element(&[0xe0], &video));
+        entry.extend(element(
+            &[0x23, 0xe3, 0x83],
+            &5_000_000_000u64.to_be_bytes()[3..],
+        ));
+        let track = element(&[0xae], &entry);
+        assert_eq!(
+            parse_tracks(&track, 1_000_000, 0)
+                .unwrap()
+                .0
+                .fragment_default_duration,
+            5_000_000_000
+        );
     }
 }
