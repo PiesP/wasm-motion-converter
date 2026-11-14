@@ -3138,13 +3138,26 @@ export async function run({
       observation.error = describeMediaFailure(error);
       throw error;
     } finally {
-      await context?.close();
-      await closeServer(started.server);
+      const cleanupErrors: unknown[] = [];
+      try {
+        await context?.close();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        await closeServer(started.server);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
       observation.errors = errors;
+      observation.cleanupErrors = cleanupErrors.map(describeMediaFailure);
+      if (cleanupErrors.length) observation.status = 'failed';
       await writeFile(
         join(output, 'owned-vp8-native.json'),
         `${JSON.stringify(observation, null, 2)}\n`
       );
+      if (cleanupErrors.length)
+        throw new AggregateError(cleanupErrors, 'Native VP8 probe cleanup failed');
     }
   }
   const motionSelectors = [
