@@ -673,6 +673,24 @@ impl Mp4Session {
                 if total > 1024 * 1024 {
                     return Err(Error::ResourceLimit);
                 }
+                let retained = self.track.as_ref().map_or(0, |track| {
+                    track.packets.capacity() * std::mem::size_of::<Packet>()
+                        + track.description.capacity()
+                });
+                let presentation = self
+                    .ebml
+                    .presentation
+                    .len()
+                    .checked_mul(96)
+                    .ok_or(Error::Overflow)?;
+                if total
+                    .checked_add(retained)
+                    .and_then(|n| n.checked_add(presentation))
+                    .and_then(|n| n.checked_add(INPUT_CAPACITY + 1024 * 1024))
+                    .is_none_or(|n| n > METADATA_BUDGET)
+                {
+                    return Err(Error::ResourceLimit);
+                }
                 self.pending = Some(PendingBox {
                     kind: if id == ebml::INFO { *b"info" } else { *b"trks" },
                     box_start: cursor,
@@ -796,7 +814,7 @@ impl Mp4Session {
                         .checked_mul(std::mem::size_of::<Packet>())
                         .and_then(|n| n.checked_add(needed.checked_mul(96)?))
                         .and_then(|n| n.checked_add(track.description.capacity()))
-                        .and_then(|n| n.checked_add(INPUT_CAPACITY))
+                        .and_then(|n| n.checked_add(INPUT_CAPACITY + 8 * 1024))
                         .ok_or(Error::Overflow)?;
                     if live_bytes > METADATA_BUDGET {
                         return Err(Error::ResourceLimit);
