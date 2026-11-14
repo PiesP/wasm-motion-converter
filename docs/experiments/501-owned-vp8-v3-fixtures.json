@@ -1,0 +1,363 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v3",
+  "purpose": "Fresh held-out acceptance after corrected-v2 44/45 rejection; initial-v1 and corrected-v2 remain exposed regression evidence",
+  "tuningBasis": "Three new broad chroma-edge controls derive from the exposed fresh2-chroma-edge class; tuning-only, never held-out acceptance",
+  "rejectedCandidate": "c49ecb80005aa28d9d0f45bf67947ccb8656c582",
+  "rejectedWasmSha256": "8d82889c45a9ed6e65639e767b7ea11cd75235b8ffcdc792332cf91952cb8ce2",
+  "previousOutcome": {
+    "jointPasses": 44,
+    "conditions": 45,
+    "failed": {
+      "fixture": "fresh2-chroma-edge",
+      "quality": 75,
+      "gate": "ssim",
+      "baseline": 0.198264,
+      "candidate": 0.186469,
+      "required": 0.188264
+    }
+  },
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "bounds": {
+    "maxWidth": 16383,
+    "maxHeight": 16383,
+    "maxPixels": 10066329,
+    "photoBytes": 2579282,
+    "videoBytes": 3145371
+  },
+  "sources": {
+    "photo": {
+      "name": "Flower , photography.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Flower_,_photography.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Flower_,_photography.jpg&oldid=1255273783",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/6/66/Flower_%2C_photography.jpg",
+      "license": "CC0-1.0",
+      "author": "Obusaranya sekar",
+      "originalWidth": 4000,
+      "originalHeight": 2992,
+      "bytes": 2579282,
+      "sha1": "0c048fb0b7fc81a38227ca26eae2741ece19770c",
+      "sha256": "f98721a4d3398a8a317dca93c5c609f655526cab1b81af68c5ab4d68f500fc09"
+    },
+    "video": {
+      "name": "V8.webm",
+      "page": "https://commons.wikimedia.org/wiki/File:V8.webm",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/a/a7/V8.webm",
+      "license": "CC0-1.0",
+      "author": "BMKME",
+      "sha256": "c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1",
+      "bytes": 3145371
+    }
+  },
+  "priorManifestSha256": {
+    "initialV1": "75646176a29a6cc6506b07d5ad955401571573df1cd7f2c217f9b7565b7f5918",
+    "correctedV2": "015b9a64af8cdc648f7ac976c14e64ae355a239f343115d21f2269c381afeb81"
+  },
+  "generator": "scripts/test/owned-vp8-v3-fixtures.ts; source-only generation, no codec outputs",
+  "generatorSha256": "b937cf63b517801d2ef5d5baf5ad34eb1e4b0791632d452e58e58b82588fb49d",
+  "externalDecode": {
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "command": "ffmpeg -v error -noautorotate -i SOURCE -vf FILTER -frames:v 1 -f rawvideo -pix_fmt rgba pipe:1",
+    "photoFilter": "scale=509:381:flags=bicubic",
+    "videoFilter": "select=eq(n\\,FRAME),scale=480:270:flags=bicubic"
+  },
+  "fixtures": [
+    {
+      "id": "tune3-chroma-diagonal-3",
+      "split": "tuning",
+      "class": "chroma",
+      "width": 192,
+      "height": 128,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 768,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "e5cfb759e459211b7307b8e0d4724af0abfe6f596a32e49f4c0d2a8d59f888cf"
+    },
+    {
+      "id": "tune3-chroma-stripe-5",
+      "split": "tuning",
+      "class": "chroma",
+      "width": 224,
+      "height": 144,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 896,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a4654ea6b0f0ec1f1498358d2c99d523d1ad09665f0c11efc6091805c6de2b9e"
+    },
+    {
+      "id": "tune3-chroma-diagonal-7",
+      "split": "tuning",
+      "class": "chroma",
+      "width": 256,
+      "height": 160,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1024,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "11f390bf6403582196538a6c13188329b6cf55f9367ec6253a439fa034d6488a"
+    },
+    {
+      "id": "fresh3-gray",
+      "split": "held-out",
+      "class": "grayscale",
+      "width": 487,
+      "height": 281,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1948,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "5ce27ca9da20b39612dd92e0c18e10aaadf9d55bdb8bfc8174aa52f079cf3420"
+    },
+    {
+      "id": "fresh3-gradient",
+      "split": "held-out",
+      "class": "gradient",
+      "width": 373,
+      "height": 257,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1492,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "5cf5d0aedc60c37d1729b6b34793a5e91d50d44ea6fad0bb8f11329d78bae6fc"
+    },
+    {
+      "id": "fresh3-chroma-edge",
+      "split": "held-out",
+      "class": "chroma",
+      "width": 347,
+      "height": 239,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1388,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "5ef6efc268106d95dffbe7c6d57d9260f95a2141f7cb4953ab638a1979fa77f7"
+    },
+    {
+      "id": "fresh3-text",
+      "split": "held-out",
+      "class": "text",
+      "width": 397,
+      "height": 283,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1588,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "725ef3a89302371c9c7d01f22800b7b391c674c6a9c3ffd97d32eb551a0bd4e0"
+    },
+    {
+      "id": "fresh3-noise",
+      "split": "held-out",
+      "class": "noise",
+      "width": 293,
+      "height": 181,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1172,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "50d28460d514129d9230dd8fc5860596c72e004e2386bf686c0e40648453fc27"
+    },
+    {
+      "id": "fresh3-tiny",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 3,
+      "height": 2,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 12,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "215da8106debe36ecf3f89819e6a9c8f8feb888afa9bfedde8a5a4f4652d0f29"
+    },
+    {
+      "id": "fresh3-one-column",
+      "split": "held-out",
+      "class": "odd",
+      "width": 1,
+      "height": 271,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a6872980c7294dbcb8f2c5120e808da731321af9dc1d604ea40a4d803e0867ff"
+    },
+    {
+      "id": "fresh3-one-row",
+      "split": "held-out",
+      "class": "odd",
+      "width": 277,
+      "height": 1,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1108,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "cffc0502e5c47a3f586fb8c79fdcc09694b1459835b4ce6fb7c7afa9d69e91d1"
+    },
+    {
+      "id": "fresh3-large-admitted",
+      "split": "held-out",
+      "class": "large",
+      "width": 4160,
+      "height": 2419,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 16640,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "64a2df1acced98fc6ca73d54d65b7cbacc2b849957216f2d7f5a43383eceeebf"
+    },
+    {
+      "id": "fresh3-bgra",
+      "split": "held-out",
+      "class": "layout",
+      "width": 269,
+      "height": 137,
+      "layout": "BGRA",
+      "source": "generated",
+      "stride": 1076,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "9e82a7b38059b20868db5d3b46487b85fffa79d489b714a4215e6d0b0c7785e1"
+    },
+    {
+      "id": "fresh3-rgbx",
+      "split": "held-out",
+      "class": "layout",
+      "width": 269,
+      "height": 137,
+      "layout": "RGBX",
+      "source": "generated",
+      "stride": 1076,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "b6e86de3a50887f9edef15a3b65f0ece5d076e442e01964529b5f4bad4cf460c"
+    },
+    {
+      "id": "fresh3-photo",
+      "split": "held-out",
+      "class": "photograph",
+      "width": 509,
+      "height": 381,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 2036,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "dc5056a5948c0c52fbb88c698574d3e713c3b68ec473b4c1e133850a11a0d667"
+    },
+    {
+      "id": "fresh3-video-40",
+      "split": "held-out",
+      "class": "video",
+      "width": 480,
+      "height": 270,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 40,
+      "stride": 1920,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "1b80d5e31401b2ac268810a06b3092a79a575248058999e95b4dbe254a4e47ba"
+    },
+    {
+      "id": "fresh3-video-120",
+      "split": "held-out",
+      "class": "video",
+      "width": 480,
+      "height": 270,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 120,
+      "stride": 1920,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d8b0963024371f050977eed8c3e2b0e4f94c245b9b5893a1c627503048231bd7"
+    },
+    {
+      "id": "fresh3-duplicate-hold",
+      "split": "held-out",
+      "class": "duplicate-hold",
+      "width": 480,
+      "height": 270,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 40,
+      "repeatOf": "fresh3-video-40",
+      "stride": 1920,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "1b80d5e31401b2ac268810a06b3092a79a575248058999e95b4dbe254a4e47ba"
+    }
+  ]
+}

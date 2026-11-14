@@ -124,8 +124,33 @@ not establish the general size/quality frontier. Complete the remaining I4 modes
 and independently verified filter support before new calibration/acceptance;
 this is correctable implementation work, not a reinterpretation of the rejected
 candidate. New sources are pinned outside public assets; source/license metadata
-and input hashes are in the correction manifest. Select `--cohort corrected-v2`
-explicitly for new tuning or fresh acceptance. Do not replace earlier evidence.
+and input hashes are in the correction manifest. At that stage, `--cohort corrected-v2`
+selected new tuning or fresh acceptance. Following its rejection below, its held-out
+set requires `--regression`. Do not replace earlier evidence.
+
+## Corrected-v3 cohort after the second held-out rejection
+
+Candidate `c49ecb80005aa28d9d0f45bf67947ccb8656c582` / WASM
+`8d82889c45a9ed6e65639e767b7ea11cd75235b8ffcdc792332cf91952cb8ce2`
+passed 36/36 corrected-v2 tuning conditions, then passed 44/45 fresh held-out
+conditions. The sole failure was `fresh2-chroma-edge` at quality 75: baseline
+SSIM 0.198264, candidate 0.186469, required minimum 0.188264. It is
+**REJECTED for adoption**. Preserve the original corrected-v2 generator,
+manifest, results and thresholds byte-for-byte; corrected-v2 is now exposed
+regression evidence and requires explicit `--regression` in the comparison tool.
+
+Before any new candidate output or comparator measurement,
+`501-owned-vp8-v3-fixtures.json` freezes 15 new held-out inputs / 45 conditions,
+including a different CC0 photograph and previously unmeasured V8 video frames.
+The new generator is `scripts/test/owned-vp8-v3-fixtures.ts`. Its three additional
+chroma-edge controls are **tuning-only**, derived from the exposed failure class;
+the original nine plus corrected-v2's three plus these three form 15 tuning
+inputs / 45 conditions. No corrected-v2 held-out fixture is relabeled fresh.
+The separate new photograph, external video digest, source geometry, decode
+settings, generated pixel hashes and generator hash are frozen in the v3 manifest.
+All PSNR, SSIM, size, performance, resource and delivery thresholds remain
+unchanged. Select `--cohort corrected-v3` for new tuning or fresh held-out
+acceptance. Retain initial-v1 and corrected-v2 as explicit regression cohorts.
 
 ## Resources and adoption
 
