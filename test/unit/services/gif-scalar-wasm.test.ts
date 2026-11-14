@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { OwnedGifWriter } from '@services/gif-owned-writer';
 import {
   createGifScalarQuantizer,
+  GifScalarAbiError,
   GifScalarLoadError,
   GifScalarMemoryError,
 } from '@services/gif-scalar-wasm';
@@ -521,6 +522,8 @@ describe('conversion-owned WASM glue', () => {
       [250, 240, 230, 255],
     ]);
     expect(quantize(input, 2)).toEqual(reference(input, 2));
+    expect(() => quantize(null as never, 2)).toThrow(GifScalarAbiError);
+    expect(() => quantize.quantizePrepared(2)).toThrow(GifScalarAbiError);
     expect(admissions[0]).toEqual([0, 8 * 1024 * 1024]);
     expect(capacities[0]).toBeLessThanOrEqual(8 * 1024 * 1024);
     expect(capacities.at(-1)).toBeLessThanOrEqual(12 * 1024 * 1024);

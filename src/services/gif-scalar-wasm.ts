@@ -153,6 +153,9 @@ export async function createGifScalarQuantizer(
     return new Uint8Array(wasm.memory.buffer, pointer, length);
   }
   const quantizer: GifScalarQuantizer = (rgba, colors) => {
+    if (!(rgba instanceof Uint8Array)) {
+      throw new GifScalarAbiError('GIF scalar WASM requires Uint8Array RGBA');
+    }
     quantizer.prepare(rgba, rgba.byteLength / 4, 1, 0);
     return quantizer.quantizePrepared(colors);
   };
@@ -204,6 +207,8 @@ export async function createGifScalarQuantizer(
     if (preparedInput === null || !Number.isInteger(colors) || colors < 1 || colors > 256) {
       throw new GifScalarAbiError('GIF scalar WASM requires prepared RGBA and 1–256 colors');
     }
+    const rgba = preparedInput;
+    preparedInput = null;
     const count = wasm.quantize(reservedLength, colors);
     if (count < 0) {
       throwStatus(count, 'quantization');
@@ -229,8 +234,7 @@ export async function createGifScalarQuantizer(
       const offset = index * 3;
       palette.push([bytes[offset]!, bytes[offset + 1]!, bytes[offset + 2]!]);
     }
-    lastInput = preparedInput;
-    preparedInput = null;
+    lastInput = rgba;
     abort();
     return palette;
   };
