@@ -37,6 +37,8 @@ function fixture() {
   git(root, 'init', '-q', '-b', 'master', source);
   git(source, 'config', 'user.name', 'Release fixture');
   git(source, 'config', 'user.email', 'fixture@example.invalid');
+  // Synthetic provenance commits must not require a maintainer signing key.
+  git(source, 'config', 'commit.gpgSign', 'false');
   git(source, 'config', 'tag.gpgSign', 'false');
   git(source, 'remote', 'add', 'origin', origin);
   writeFileSync(output, '');
