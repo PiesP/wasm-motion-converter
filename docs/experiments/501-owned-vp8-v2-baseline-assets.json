@@ -1,0 +1,158 @@
+{
+  "source": "be35f5fa89a60189475fe2ef7fd446e9fa18cef4",
+  "compression": "Python gzip.compress default level 9 mtime=0, each executable asset independently",
+  "rawTotal": 1269603,
+  "gzipTotal": 448218,
+  "files": [
+    {
+      "path": "assets/__vite-browser-external-Cz17a1zo.js",
+      "raw": 112,
+      "gzip": 126,
+      "sha256": "41bec85a9923dc9b6d96dde6cbdb5897cc9130d649f3310d6b92fa5dd8f30280"
+    },
+    {
+      "path": "assets/__vite-browser-external.leW0L_I9.js",
+      "raw": 103,
+      "gzip": 117,
+      "sha256": "d7b40f2790c54c192fb6231f869ba3f808c98f1fb6b2a92ed7916a8ea8fb1008"
+    },
+    {
+      "path": "assets/ar.BV_h1dDz.js",
+      "raw": 14791,
+      "gzip": 4601,
+      "sha256": "6475a9370935a41bd186aeaf7d00124c5620244e16a7915c73146c5bb2be19a8"
+    },
+    {
+      "path": "assets/conversion-pipeline.Dl9WEMix.js",
+      "raw": 81318,
+      "gzip": 24167,
+      "sha256": "f8745266b663b98aad72ede8ef7b4a440c5c920183173264fee8ee9be8b9cfb5"
+    },
+    {
+      "path": "assets/es.C6MHiEW-.js",
+      "raw": 12430,
+      "gzip": 4330,
+      "sha256": "ddccd9cda335a63b61ef7acada32a64df9fb97c25162481300f3504e3a18149d"
+    },
+    {
+      "path": "assets/gif-scalar-quantizer-Dtg-UZzk.wasm",
+      "raw": 27206,
+      "gzip": 11219,
+      "sha256": "b9ac86604ce9fbd372139cc53446e173cb4c4ca4b28cd3d15e7e56f6b5728156"
+    },
+    {
+      "path": "assets/index.CwidbHMh.js",
+      "raw": 211705,
+      "gzip": 64218,
+      "sha256": "83d69682efeddfc65bbc88c0f24352f43056a2c0d40b192fd03c66512dcf7b9a"
+    },
+    {
+      "path": "assets/ja.BbILiaIy.js",
+      "raw": 13628,
+      "gzip": 4688,
+      "sha256": "64d1d94af557e6cb5fff3b450ea8bc6827c1227fedf693045f7b1734706ffad7"
+    },
+    {
+      "path": "assets/ko.D8gAwq2s.js",
+      "raw": 12780,
+      "gzip": 4574,
+      "sha256": "96a055641129ceb8fcdd3fc8d490266f1822f27e6f86f791b01c2381eacd7974"
+    },
+    {
+      "path": "assets/owned-demux-LsgIUcSY.wasm",
+      "raw": 138868,
+      "gzip": 54872,
+      "sha256": "09ca2d7162d384ff53994c5fef20cbdf2741523f930663ece43d39892fa67c45"
+    },
+    {
+      "path": "assets/owned-demux-index-snapshot.BpQefNsP.js",
+      "raw": 34258,
+      "gzip": 9299,
+      "sha256": "7cf10c9cbf870662d7620222089deb24f10154d75d18e6f5951d18a3191d3d45"
+    },
+    {
+      "path": "assets/preload-helper.7y9sWmk5.js",
+      "raw": 1615,
+      "gzip": 831,
+      "sha256": "564eabb7e91110d437ceb9cb09dadea1e9bbbe5fcb5480b8d981c1a20d30f4fc"
+    },
+    {
+      "path": "assets/rolldown-runtime.XKyaHtl9.js",
+      "raw": 726,
+      "gzip": 431,
+      "sha256": "548d1dbf321e7d2ae804fcc158b588706a7c52f8ca175de1490c6ccb4dbe55b7"
+    },
+    {
+      "path": "assets/video-metadata.D033_sNP.js",
+      "raw": 1594,
+      "gzip": 810,
+      "sha256": "a92bc1450093681b3c92e98cfa5f7197b1bb1eff753db46ec97c1b6def7ccef6"
+    },
+    {
+      "path": "assets/wasm-webp.Wg4Zhl1L.js",
+      "raw": 51996,
+      "gzip": 19173,
+      "sha256": "591bd59ee5da2104693bf7e5bec2b8c1dc85527d3ca21d7b05231c2b1c25499b"
+    },
+    {
+      "path": "assets/webp-encoder-worker-Dt0iE3Ie.js",
+      "raw": 4181,
+      "gzip": 1781,
+      "sha256": "bd7fcb5bb7cf7e284a4947b0c5d54d28560c48a9568d8998a9b092cd6504d44c"
+    },
+    {
+      "path": "assets/webp-wasm-BqUWQtOZ.js",
+      "raw": 52286,
+      "gzip": 19294,
+      "sha256": "15cd582651f78831babe9b54012388f22614c48b39c899fa2772e62b037dae47"
+    },
+    {
+      "path": "assets/webp-wasm-DhoM6Y9t.wasm",
+      "raw": 482273,
+      "gzip": 184377,
+      "sha256": "4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22"
+    },
+    {
+      "path": "assets/worker-BFNdoMgh.js",
+      "raw": 112807,
+      "gzip": 33164,
+      "sha256": "4624354da88ca2cce0b510e89ca827f98f9b6c786382e54991cfe0923a092d61"
+    },
+    {
+      "path": "assets/zh-CN.CwDWTPax.js",
+      "raw": 10581,
+      "gzip": 4244,
+      "sha256": "426b5a10ba1d26c7ad170efba00f9aff64ead49c96ca87f1f1012562d58027be"
+    },
+    {
+      "path": "service-worker.js",
+      "raw": 4345,
+      "gzip": 1902,
+      "sha256": "4b093a8e79e86373ea8e1f81bed45ce1e7415aed73069be8d2434cc8803db461"
+    }
+  ],
+  "initialStaticClosure": {
+    "paths": [
+      "assets/index.CwidbHMh.js",
+      "assets/rolldown-runtime.XKyaHtl9.js",
+      "assets/preload-helper.7y9sWmk5.js"
+    ],
+    "raw": 214046,
+    "gzip": 65480
+  },
+  "deferredAndBackground": {
+    "raw": 1055557,
+    "gzip": 382738,
+    "note": "Includes locale alternatives, optional workers and service worker; total delivered files, not a single-session wire trace."
+  },
+  "prospectiveBudgets": {
+    "initialGzip": 68754,
+    "deferredAndBackgroundGzip": 382738,
+    "totalGzip": 448218,
+    "totalRaw": 1269603,
+    "ownedVp8WasmRaw": 482273,
+    "ownedVp8WasmGzip": 184377,
+    "ownedVp8LinearCapacity": 201326592,
+    "note": "Linear limit is additionally subject to unchanged aggregate product admission; not an unconditional memory allowance."
+  }
+}
