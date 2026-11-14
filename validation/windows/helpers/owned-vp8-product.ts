@@ -1,0 +1,1115 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 PiesP
+
+import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import type { Browser, BrowserContext, Page } from '@playwright/test';
+
+import { installMotionObserver } from '../motion-signature.ts';
+
+type Build = {
+  relativePath: string;
+  manifestSha256: string;
+  state: {
+    sourceSha: string;
+    treeSha: string;
+    coreSha: string;
+    files: { path: string; size: number; sha256: string }[];
+  };
+};
+type Server = {
+  url: string;
+  setDistribution: (path: string) => Promise<void>;
+};
+type Fixture = {
+  id: string;
+  path: string;
+  mime: string;
+  width: number;
+  height: number;
+  durationMs: number;
+};
+type Quality = 'low' | 'medium' | 'high';
+type Sample = {
+  build: 'prior' | 'candidate';
+  fixture: string;
+  quality: Quality;
+  condition: string;
+  [key: string]: unknown;
+};
+
+const MAX_INPUT_BYTES = 8 * 1024 * 1024;
+const MAX_OUTPUT_BYTES = 96 * 1024 * 1024;
+const MAX_FRAMES = 400;
+const CONVERSION_TIMEOUT_MS = 180_000;
+const CADENCE: Readonly<Record<Quality, number>> = { low: 12, medium: 18, high: 30 };
+const FIXTURES: readonly Fixture[] = [
+  {
+    id: 'h264-ci',
+    path: 'public/test-video-ci-h264.mp4',
+    mime: 'video/mp4',
+    width: 160,
+    height: 90,
+    durationMs: 1_000,
+  },
+  {
+    id: 'clusters',
+    path: 'public/test-video-contract-clusters.webm',
+    mime: 'video/webm',
+    width: 96,
+    height: 64,
+    durationMs: 4_000,
+  },
+];
+const V8_FIXTURE: Fixture = {
+  id: 'v8-full',
+  path: 'validation/windows/owned-vp8-inputs/v8.webm',
+  mime: 'video/webm',
+  width: 1920,
+  height: 1080,
+  durationMs: 6_400,
+};
+const V8_SHA256 = 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1';
+const STOP_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
+const OWNED_FIELDS = [
+  'ownedVp8Frames',
+  'ownedVp8Steps',
+  'ownedVp8HostTaskYields',
+  'ownedVp8PeakActualLinearCapacityBytes',
+  'ownedVp8PeakReservedLinearCapacityBytes',
+] as const;
+
+function digest(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function failure(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
+function u24(bytes: Buffer, offset: number): number {
+  assert(offset + 3 <= bytes.length, 'Truncated WebP 24-bit field');
+  return bytes[offset]! | (bytes[offset + 1]! << 8) | (bytes[offset + 2]! << 16);
+}
+
+export function parseAnimatedWebp(bytes: Buffer) {
+  assert(
+    bytes.length >= 30 && bytes.length <= MAX_OUTPUT_BYTES,
+    'WebP output size is outside bound'
+  );
+  assert.equal(bytes.toString('ascii', 0, 4), 'RIFF');
+  assert.equal(bytes.toString('ascii', 8, 12), 'WEBP');
+  assert.equal(bytes.readUInt32LE(4) + 8, bytes.length, 'WebP RIFF length differs from file');
+  let offset = 12;
+  let canvas: { width: number; height: number } | null = null;
+  let loopCount: number | null = null;
+  const frames: Array<{
+    index: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    durationMs: number;
+    flags: number;
+    vp8Sha256: string;
+  }> = [];
+  while (offset + 8 <= bytes.length) {
+    const tag = bytes.toString('ascii', offset, offset + 4);
+    const size = bytes.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    const end = start + size;
+    assert(end + (size & 1) <= bytes.length, `Truncated WebP ${tag} chunk`);
+    if (size & 1) assert.equal(bytes[end], 0, `Nonzero WebP ${tag} padding`);
+    if (tag === 'VP8X') {
+      assert.equal(canvas, null, 'Repeated VP8X chunk');
+      assert.equal(size, 10);
+      assert(bytes[start]! & 0x02, 'WebP animation flag is absent');
+      canvas = { width: u24(bytes, start + 4) + 1, height: u24(bytes, start + 7) + 1 };
+    } else if (tag === 'ANIM') {
+      assert(canvas && loopCount === null, 'ANIM is missing or repeated');
+      assert.equal(size, 6);
+      loopCount = bytes.readUInt16LE(start + 4);
+    } else if (tag === 'ANMF') {
+      assert(canvas && loopCount !== null, 'ANMF preceded animation header');
+      assert(size >= 16, 'ANMF header is truncated');
+      const frame = {
+        index: frames.length,
+        x: 2 * u24(bytes, start),
+        y: 2 * u24(bytes, start + 3),
+        width: u24(bytes, start + 6) + 1,
+        height: u24(bytes, start + 9) + 1,
+        durationMs: u24(bytes, start + 12),
+        flags: bytes[start + 15]!,
+        vp8Sha256: '',
+      };
+      assert(frame.durationMs > 0, 'ANMF has a zero hold');
+      assert(
+        frame.x + frame.width <= canvas.width && frame.y + frame.height <= canvas.height,
+        'ANMF geometry escapes canvas'
+      );
+      let child = start + 16;
+      let vp8 = 0;
+      while (child + 8 <= end) {
+        const childTag = bytes.toString('ascii', child, child + 4);
+        const childSize = bytes.readUInt32LE(child + 4);
+        const childStart = child + 8;
+        const childEnd = childStart + childSize;
+        assert(childEnd + (childSize & 1) <= end, 'ANMF child escapes frame');
+        assert.equal(childTag, 'VP8 ', 'Owned software output must contain opaque VP8 frames');
+        assert.equal(vp8++, 0, 'ANMF contains multiple VP8 payloads');
+        assert(childSize >= 10, 'VP8 payload is truncated');
+        assert.equal(
+          bytes.toString('hex', childStart + 3, childStart + 6),
+          '9d012a',
+          'VP8 keyframe marker differs'
+        );
+        const codedWidth = bytes.readUInt16LE(childStart + 6) & 0x3fff;
+        const codedHeight = bytes.readUInt16LE(childStart + 8) & 0x3fff;
+        assert.equal(codedWidth, frame.width, 'VP8 coded width differs from ANMF');
+        assert.equal(codedHeight, frame.height, 'VP8 coded height differs from ANMF');
+        frame.vp8Sha256 = digest(bytes.subarray(childStart, childEnd));
+        child = childEnd + (childSize & 1);
+      }
+      assert.equal(vp8, 1, 'ANMF has no VP8 payload');
+      assert.equal(child, end, 'ANMF child boundary differs');
+      frames.push(frame);
+      assert(frames.length <= MAX_FRAMES, 'WebP frame count exceeded verification bound');
+    }
+    offset = end + (size & 1);
+  }
+  assert.equal(offset, bytes.length, 'WebP trailing bytes differ');
+  assert(
+    canvas && loopCount === 0 && frames.length > 0,
+    'WebP animation or infinite loop is missing'
+  );
+  assert.equal(frames[0]!.x, 0, 'First frame is not anchored at origin');
+  assert.equal(frames[0]!.y, 0, 'First frame is not anchored at origin');
+  assert.equal(frames[0]!.width, canvas.width, 'First frame does not cover canvas width');
+  assert.equal(frames[0]!.height, canvas.height, 'First frame does not cover canvas height');
+  return {
+    canvas,
+    loopCount,
+    frames,
+    totalDurationMs: frames.reduce((sum, frame) => sum + frame.durationMs, 0),
+  };
+}
+
+/** Independent installed-browser decode, after the conversion timing interval. */
+async function decodeWebp(page: Page, bytes: Buffer) {
+  return page.evaluate(async (base64) => {
+    assertDecoder();
+    function assertDecoder() {
+      if (typeof ImageDecoder !== 'function') throw new Error('ImageDecoder unavailable');
+    }
+    const data = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    const decoder = new ImageDecoder({ data, type: 'image/webp', preferAnimation: true });
+    try {
+      await decoder.tracks.ready;
+      const track = decoder.tracks.selectedTrack;
+      if (!track || track.frameCount < 1 || track.frameCount > 400)
+        throw new Error('Decoded WebP frame count outside bound');
+      const frames: Array<{
+        width: number;
+        height: number;
+        durationMs: number;
+        centerRgb: number[];
+        pixelSha256: string;
+      }> = [];
+      const canvas = new OffscreenCanvas(16, 16);
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('ImageDecoder sample canvas unavailable');
+      for (let index = 0; index < track.frameCount; index++) {
+        const result = await decoder.decode({ frameIndex: index, completeFramesOnly: true });
+        const image = result.image;
+        try {
+          if (!result.complete) throw new Error(`Incomplete WebP frame ${index}`);
+          const width = image.displayWidth;
+          const height = image.displayHeight;
+          // Decode every frame at native geometry, then hash a fixed spatial
+          // sample. A full 1080p RGBA copy per frame would add verification
+          // memory and time unrelated to the sealed conversion interval.
+          context.drawImage(image, 0, 0, 16, 16);
+          const pixels = context.getImageData(0, 0, 16, 16).data;
+          const center = (8 * 16 + 8) * 4;
+          const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', pixels));
+          frames.push({
+            width,
+            height,
+            durationMs: (image.duration ?? 0) / 1_000,
+            centerRgb: Array.from(pixels.subarray(center, center + 3)),
+            pixelSha256: Array.from(hash, (value) => value.toString(16).padStart(2, '0')).join(''),
+          });
+        } finally {
+          image.close();
+        }
+      }
+      return { repetitionCount: track.repetitionCount, frames };
+    } finally {
+      decoder.close();
+    }
+  }, bytes.toString('base64'));
+}
+
+async function downloadWebp(page: Page): Promise<Buffer> {
+  const pending = page.waitForEvent('download', { timeout: 30_000 });
+  await page.locator('[data-testid="download-result-button"]').click();
+  const stream = await (await pending).createReadStream();
+  assert(stream, 'Browser WebP download has no readable stream');
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const part of stream) {
+    const bytes = Buffer.from(part);
+    size += bytes.length;
+    assert(size <= MAX_OUTPUT_BYTES, 'WebP download exceeded bound');
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks);
+}
+
+function installProductObserver() {
+  const observed = {
+    clickMs: null as number | null,
+    readyMs: null as number | null,
+    stopMs: null as number | null,
+    idleMs: null as number | null,
+    publications: [] as Array<{ url: string; size: number; atMs: number }>,
+    reset() {
+      this.clickMs = null;
+      this.readyMs = null;
+      this.stopMs = null;
+      this.idleMs = null;
+      this.publications = [];
+    },
+  };
+  Reflect.set(globalThis, '__wmcVp8ProductObserver', observed);
+  const original = URL.createObjectURL;
+  URL.createObjectURL = function (object: Blob | MediaSource) {
+    const url = original.call(URL, object);
+    if (object instanceof Blob && object.type === 'image/webp') {
+      observed.publications.push({ url, size: object.size, atMs: performance.now() });
+      check();
+    }
+    return url;
+  };
+  function check() {
+    const button = document.querySelector<HTMLAnchorElement>(
+      '[data-testid="download-result-button"]'
+    );
+    const last = observed.publications.at(-1);
+    if (
+      observed.clickMs !== null &&
+      observed.readyMs === null &&
+      last &&
+      button?.getAttribute('href') === last.url &&
+      button.getClientRects().length
+    )
+      observed.readyMs = performance.now();
+    const convert = document.querySelector<HTMLButtonElement>('[data-testid="convert-button"]');
+    const stop = document.querySelector('[data-testid="stop-conversion-button"]');
+    if (
+      observed.stopMs !== null &&
+      observed.idleMs === null &&
+      convert &&
+      !convert.disabled &&
+      convert.getClientRects().length &&
+      !stop
+    )
+      observed.idleMs = performance.now();
+  }
+  new MutationObserver(check).observe(document, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+  });
+  document.addEventListener(
+    'click',
+    (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest('[data-testid="convert-button"]'))
+        observed.clickMs = performance.now();
+      if (event.target.closest('[data-testid="stop-conversion-button"]'))
+        observed.stopMs = performance.now();
+    },
+    true
+  );
+}
+
+function disableCanvasWebp() {
+  if (typeof OffscreenCanvas !== 'undefined')
+    Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+      configurable: true,
+      value: undefined,
+    });
+}
+
+function instrumentOwnedInstance() {
+  const NativeInstance = WebAssembly.Instance;
+  const state = { instances: 0, stepCalls: 0, statusCounts: {} as Record<string, number> };
+  Reflect.set(globalThis, '__wmcVp8AbiProbe', state);
+  WebAssembly.Instance = new Proxy(NativeInstance, {
+    construct(target, args, newTarget) {
+      const instance = Reflect.construct(target, args, newTarget);
+      const exported = instance.exports as Record<string, unknown>;
+      if (typeof exported.vp8_v2_step !== 'function') return instance;
+      state.instances++;
+      // WASM export properties are nonconfigurable and nonwritable; a Proxy
+      // cannot substitute one of their values. Copy the namespace instead.
+      const wrapped = Object.fromEntries(
+        Object.entries(exported).map(([key, value]) => [
+          key,
+          key === 'vp8_v2_step' && typeof value === 'function'
+            ? (...parameters: unknown[]) => {
+                state.stepCalls++;
+                const status = Reflect.apply(value, exported, parameters) as number;
+                state.statusCounts[String(status)] = (state.statusCounts[String(status)] ?? 0) + 1;
+                return status;
+              }
+            : value,
+        ])
+      );
+      return new Proxy(instance, {
+        get(source, key) {
+          return key === 'exports' ? wrapped : Reflect.get(source, key);
+        },
+      });
+    },
+  });
+}
+
+async function configurePage(page: Page, fixturePath: string, fixture: Fixture, quality: Quality) {
+  await page.locator('[data-testid="file-input"]').setInputFiles(fixturePath);
+  await page
+    .locator('[data-testid="convert-button"]')
+    .waitFor({ state: 'visible', timeout: 30_000 });
+  await page.waitForFunction(() => {
+    const button = document.querySelector<HTMLButtonElement>('[data-testid="convert-button"]');
+    return button && !button.disabled;
+  });
+  assert(
+    (await page.locator('[data-testid="video-metadata"]').textContent())?.includes(
+      fixturePath.split(/[\\/]/).at(-1)!
+    ),
+    `${fixture.id} fixture name is absent from metadata`
+  );
+  for (const [group, value] of [
+    ['format', 'webp'],
+    ['quality', quality],
+    ['scale', '1'],
+    ['smart-frame-skip', 'off'],
+  ] as const) {
+    const option = page.locator(`[data-testid="option-${group}-${value}"]`);
+    if (!(await option.isVisible()))
+      await page.locator('[data-testid="advanced-settings"] summary').click();
+    await option.click();
+    assert.equal(await option.locator('input').isChecked(), true);
+  }
+}
+
+async function measureJob(
+  page: Page,
+  fixture: Fixture,
+  fixtureDigest: string,
+  quality: Quality,
+  build: 'prior' | 'candidate',
+  condition: 'first-in-document' | 'same-document-warm',
+  output: string,
+  caseId: string
+): Promise<Sample> {
+  const before = await page.evaluate(() => {
+    const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as { reset: () => void };
+    observed.reset();
+    return {
+      timeOrigin: performance.timeOrigin,
+      navigation: performance.getEntriesByType('navigation').length,
+    };
+  });
+  const wallStart = new Date().toISOString();
+  await page.locator('[data-testid="convert-button"]').click();
+  const prompt = page.locator('[data-testid="modal-confirm-button"]');
+  if (await prompt.isVisible()) await prompt.click();
+  await page.waitForFunction(
+    () => {
+      const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
+        readyMs: number | null;
+      };
+      return (
+        observed.readyMs !== null ||
+        !!document.querySelector('[data-testid="error-display"]')?.getClientRects().length
+      );
+    },
+    undefined,
+    { timeout: CONVERSION_TIMEOUT_MS }
+  );
+  const error = page.locator('[data-testid="error-display"]');
+  assert.equal(
+    await error.isVisible(),
+    false,
+    `WebP conversion failed: ${(await error.textContent())?.trim()}`
+  );
+  const timing = await page.evaluate(() => {
+    const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
+      clickMs: number | null;
+      readyMs: number | null;
+      publications: Array<{ url: string; size: number; atMs: number }>;
+    };
+    return {
+      timeOrigin: performance.timeOrigin,
+      clickMs: observed.clickMs,
+      readyMs: observed.readyMs,
+      publications: observed.publications,
+      resourceEntries: performance
+        .getEntriesByType('resource')
+        .filter((entry) => entry.name.endsWith('.wasm'))
+        .map((entry) => ({
+          name: entry.name,
+          transferSize: (entry as PerformanceResourceTiming).transferSize,
+          encodedBodySize: (entry as PerformanceResourceTiming).encodedBodySize,
+        })),
+    };
+  });
+  assert.equal(timing.timeOrigin, before.timeOrigin, 'Conversion changed document');
+  assert(timing.clickMs !== null && timing.readyMs !== null && timing.readyMs > timing.clickMs);
+  assert.equal(timing.publications.length, 1, 'WebP job did not publish exactly one Blob');
+  assert(
+    timing.publications[0]!.atMs >= timing.clickMs && timing.publications[0]!.atMs <= timing.readyMs
+  );
+  // Timing is sealed before browser transfer, filesystem writes, parsing or decoding.
+  const bytes = await downloadWebp(page);
+  assert.equal(
+    bytes.length,
+    timing.publications[0]!.size,
+    'Downloaded bytes differ from published Blob'
+  );
+  const file = `${caseId}.webp`;
+  await writeFile(join(output, file), bytes);
+  const parsed = parseAnimatedWebp(bytes);
+  assert.deepEqual(parsed.canvas, { width: fixture.width, height: fixture.height });
+  assert(
+    Math.abs(parsed.totalDurationMs - fixture.durationMs) <= 250,
+    'WebP timeline differs from source by over 250ms'
+  );
+  const decoded = await decodeWebp(page, bytes);
+  assert.equal(
+    decoded.frames.length,
+    parsed.frames.length,
+    'ImageDecoder frame count differs from RIFF'
+  );
+  for (let index = 0; index < decoded.frames.length; index++) {
+    const frame = decoded.frames[index]!;
+    assert.equal(frame.width, fixture.width);
+    assert.equal(frame.height, fixture.height);
+    assert(
+      Math.abs(frame.durationMs - parsed.frames[index]!.durationMs) <= 1,
+      `Decoded hold ${index} differs from RIFF`
+    );
+  }
+  if (fixture.id === 'v8-full') {
+    const expected = (fixture.durationMs * CADENCE[quality]) / 1_000;
+    assert(
+      decoded.frames.length >= Math.floor(expected) - 4 &&
+        decoded.frames.length <= Math.ceil(expected) + 4,
+      `Full V8 output omitted the selected ${CADENCE[quality]} fps cadence`
+    );
+  }
+  if (fixture.id === 'clusters') {
+    const color = (rgb: number[]) => {
+      const [r, g, b] = rgb;
+      if (r! > 120 && g! < 110 && b! < 110) return 'red';
+      if (g! > 100 && r! < 120 && b! < 120) return 'lime';
+      if (b! > 110 && r! < 120 && g! < 120) return 'blue';
+      if (r! > 110 && g! > 100 && b! < 120) return 'yellow';
+      return 'unknown';
+    };
+    const sequence = decoded.frames.map((frame) => color(frame.centerRgb));
+    const groups = sequence.filter((name, index) => index === 0 || name !== sequence[index - 1]);
+    assert.deepEqual(groups, ['red', 'lime', 'blue', 'yellow'], 'Cluster scene order differs');
+  }
+  return {
+    build,
+    fixture: fixture.id,
+    quality,
+    condition,
+    targetCadenceFps: CADENCE[quality],
+    scale: 1,
+    smartFrameSkip: 'off',
+    wallStart,
+    inputSha256: fixtureDigest,
+    timeOrigin: timing.timeOrigin,
+    contextCacheScope:
+      'new browser context for this build; first is first-in-document, not proven fresh-profile cold',
+    navigationCount: before.navigation,
+    requestToDownloadReadyMs: timing.readyMs - timing.clickMs,
+    requestToBlobPublicationMs: timing.publications[0]!.atMs - timing.clickMs,
+    wasmResources: timing.resourceEntries,
+    saved: { file, bytes: bytes.length, sha256: digest(bytes) },
+    parsed,
+    decoded,
+  };
+}
+
+async function createContext(
+  browser: Browser,
+  build: Build,
+  functional: boolean,
+  main: boolean,
+  workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }>
+): Promise<BrowserContext> {
+  const context = await browser.newContext({
+    locale: 'en-US',
+    acceptDownloads: true,
+    serviceWorkers: 'block',
+    viewport: { width: 1280, height: 800 },
+  });
+  await context.addInitScript(disableCanvasWebp);
+  if (functional) {
+    if (main)
+      await context.addInitScript(() => {
+        const NativeWorker = Worker;
+        globalThis.Worker = class DisabledConversionWorker extends NativeWorker {
+          constructor(url: string | URL, options?: WorkerOptions) {
+            if (/^\/assets\/worker-[\w-]+\.js$/.test(new URL(String(url), location.href).pathname))
+              throw new DOMException('Controlled conversion Worker failure', 'NotSupportedError');
+            super(url, options);
+          }
+        };
+      });
+    else await context.addInitScript(installMotionObserver);
+    if (main) await context.addInitScript(instrumentOwnedInstance);
+  }
+  await context.addInitScript(installProductObserver);
+  await context.route('**/assets/worker-*.js', async (route) => {
+    const path = new URL(route.request().url()).pathname.slice(1);
+    if (!/^assets\/worker-[\w-]+\.js$/.test(path)) return route.continue();
+    const file = build.state.files.find((entry) => entry.path === path);
+    assert(file, `Built conversion Worker ${path} is absent from inventory`);
+    const response = await route.fetch();
+    assert.equal(response.status(), 200);
+    const original = Buffer.from(await response.body());
+    assert.equal(digest(original), file.sha256, 'Served Worker differs from built inventory');
+    const patch = Buffer.from(
+      "if(typeof OffscreenCanvas!=='undefined')Object.defineProperty(OffscreenCanvas.prototype,'convertToBlob',{configurable:true,value:undefined});\n"
+    );
+    const modified = Buffer.concat([patch, original]);
+    workerPatches.push({ path, originalSha256: file.sha256, patchedSha256: digest(modified) });
+    await route.fulfill({ response, body: modified });
+  });
+  return context;
+}
+
+function ownedCounts(value: unknown) {
+  assert(value && typeof value === 'object', 'Owned VP8 counters are absent');
+  const record = value as Record<string, unknown>;
+  const counts: Record<string, number> = {};
+  for (const name of OWNED_FIELDS) {
+    const count = record[name];
+    assert(Number.isSafeInteger(count) && Number(count) >= 0, `${name} is absent or invalid`);
+    counts[name] = Number(count);
+  }
+  assert(
+    counts.ownedVp8Frames! > 0 && counts.ownedVp8Steps! > 0,
+    'Owned VP8 did not process frames'
+  );
+  assert(
+    counts.ownedVp8PeakReservedLinearCapacityBytes! >= counts.ownedVp8PeakActualLinearCapacityBytes!
+  );
+  return counts;
+}
+
+async function exerciseActiveStop(
+  context: BrowserContext,
+  server: Server,
+  fixturePath: string,
+  fixtureDigest: string,
+  stopFixturePath: string,
+  output: string,
+  loadApplication: (page: Page, url: string) => Promise<unknown>
+) {
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  try {
+    await loadApplication(page, server.url);
+    const documentIdentity = await page.evaluate(() => performance.timeOrigin);
+    await configurePage(
+      page,
+      stopFixturePath,
+      {
+        id: 'active-stop',
+        path: STOP_FIXTURE,
+        mime: 'video/mp4',
+        width: 320,
+        height: 180,
+        durationMs: 3_000,
+      },
+      'high'
+    );
+    await page.locator('[data-testid="convert-button"]').click();
+    const confirmation = page.locator('[data-testid="modal-confirm-button"]');
+    if (await confirmation.isVisible()) await confirmation.click();
+    await page.waitForFunction(
+      () => {
+        const abi = Reflect.get(globalThis, '__wmcVp8AbiProbe') as { stepCalls: number };
+        return abi.stepCalls > 0;
+      },
+      undefined,
+      { timeout: 30_000 }
+    );
+    await page.locator('[data-testid="stop-conversion-button"]').click({ timeout: 10_000 });
+    await page.waitForFunction(
+      () => {
+        const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
+          idleMs: number | null;
+        };
+        return observed.idleMs !== null;
+      },
+      undefined,
+      { timeout: 10_000 }
+    );
+    const stop = await page.evaluate(() => {
+      const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
+        stopMs: number | null;
+        idleMs: number | null;
+        publications: unknown[];
+      };
+      const abi = Reflect.get(globalThis, '__wmcVp8AbiProbe') as { stepCalls: number };
+      return {
+        stopMs: observed.stopMs,
+        idleMs: observed.idleMs,
+        publications: observed.publications.length,
+        stepCalls: abi.stepCalls,
+      };
+    });
+    assert(stop.stopMs !== null && stop.idleMs !== null);
+    assert(
+      stop.idleMs >= stop.stopMs && stop.idleMs - stop.stopMs <= 500,
+      'Owned active Stop-to-idle exceeded 500ms'
+    );
+    assert.equal(stop.publications, 0, 'Cancelled owned job published a WebP Blob');
+    assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), false);
+    assert.equal(await page.locator('[data-testid="error-display"]').isVisible(), false);
+    const fixture = FIXTURES[0]!;
+    await configurePage(page, fixturePath, fixture, 'medium');
+    const recovery = await measureJob(
+      page,
+      fixture,
+      fixtureDigest,
+      'medium',
+      'candidate',
+      'same-document-warm',
+      output,
+      'owned-vp8-functional-main-after-stop'
+    );
+    await page.waitForTimeout(150);
+    const after = await page.evaluate(() => {
+      const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
+        publications: unknown[];
+      };
+      return { publications: observed.publications.length, timeOrigin: performance.timeOrigin };
+    });
+    assert.equal(after.publications, 1, 'Stop recovery had stale or duplicate WebP publication');
+    assert.equal(after.timeOrigin, documentIdentity, 'Stop recovery changed document');
+    assert.deepEqual(errors, [], 'Active Stop page emitted errors');
+    return { stop, stopToIdleMs: stop.idleMs - stop.stopMs, recovery, after };
+  } finally {
+    await page.close();
+  }
+}
+
+async function candidateFunctional(
+  browser: Browser,
+  build: Build,
+  server: Server,
+  output: string,
+  fixturePath: string,
+  fixtureDigest: string,
+  stopFixturePath: string,
+  loadApplication: (page: Page, url: string) => Promise<unknown>
+) {
+  const checks: unknown[] = [];
+  for (const main of [false, true]) {
+    const route = main ? 'main' : 'worker';
+    const workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }> =
+      [];
+    const context = await createContext(browser, build, true, main, workerPatches);
+    const fetchedWasm: Array<Promise<{ path: string; bytes: number; sha256: string }>> = [];
+    context.on('response', (response) => {
+      const path = new URL(response.url()).pathname.slice(1);
+      if (/^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(path)) {
+        fetchedWasm.push(
+          response.body().then((bytes) => ({ path, bytes: bytes.length, sha256: digest(bytes) }))
+        );
+      }
+    });
+    try {
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on('pageerror', (error) => errors.push(error.message));
+      await loadApplication(page, server.url);
+      if (!main)
+        await page.evaluate(() => {
+          const observer = Reflect.get(globalThis, '__wmcMotionObserver') as {
+            onConversionWorkerMessage: ((message: unknown) => void) | null;
+          };
+          Reflect.set(globalThis, '__wmcVp8WorkerProgress', []);
+          observer.onConversionWorkerMessage = (message) => {
+            if (
+              !message ||
+              typeof message !== 'object' ||
+              Reflect.get(message, 'type') !== 'progress'
+            )
+              return;
+            const log = Reflect.get(globalThis, '__wmcVp8WorkerProgress') as unknown[];
+            if (log.length < 64 && Reflect.get(message, 'ownedVp8Steps') !== undefined)
+              log.push(message);
+          };
+        });
+      const fixture = FIXTURES[0]!;
+      await configurePage(page, fixturePath, fixture, 'medium');
+      const recovery: Record<string, unknown> = { route };
+      // An invalid selection must be recoverable in the same document before the valid job.
+      await page.locator('[data-testid="file-input"]').setInputFiles({
+        name: 'invalid.mp4',
+        mimeType: 'video/mp4',
+        buffer: Buffer.from('invalid media'),
+      });
+      await page
+        .locator('[data-testid="error-display"]')
+        .waitFor({ state: 'visible', timeout: 30_000 });
+      recovery.invalidError = (
+        await page.locator('[data-testid="error-display"]').textContent()
+      )?.trim();
+      await page
+        .locator(
+          '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
+        )
+        .click();
+      await configurePage(page, fixturePath, fixture, 'medium');
+      const sample = await measureJob(
+        page,
+        fixture,
+        fixtureDigest,
+        'medium',
+        'candidate',
+        'first-in-document',
+        output,
+        `owned-vp8-functional-${route}`
+      );
+      recovery.valid = sample;
+      const probe = await page.evaluate(() => ({
+        abi: Reflect.get(globalThis, '__wmcVp8AbiProbe'),
+        progress: Reflect.get(globalThis, '__wmcVp8WorkerProgress'),
+        workers: Reflect.get(globalThis, '__wmcMotionObserver'),
+      }));
+      if (main) {
+        const abi = probe.abi as { instances: number; stepCalls: number };
+        assert(
+          abi?.instances > 0 && abi.stepCalls > 0,
+          'Main route did not call compiled VP8 ABI step'
+        );
+        recovery.abi = abi;
+        recovery.activeStop = await exerciseActiveStop(
+          context,
+          server,
+          fixturePath,
+          fixtureDigest,
+          stopFixturePath,
+          output,
+          loadApplication
+        );
+      } else {
+        const progress = probe.progress as unknown[];
+        assert(progress?.length > 0, 'Worker route emitted no owned VP8 progress');
+        recovery.owned = ownedCounts(progress.at(-1));
+        const workers = probe.workers as {
+          workers: Array<{
+            starts: Array<{ requestId: string; options: Record<string, unknown> }>;
+            completes: Array<{ requestId: string; outputBytes: number }>;
+          }>;
+        };
+        const conversion = workers.workers.find((entry) =>
+          entry.starts.some((start) => start.options.format === 'webp')
+        );
+        assert(
+          conversion && conversion.starts.length === 1 && conversion.completes.length === 1,
+          'Worker route did not complete one conversion'
+        );
+        assert.equal(conversion.starts[0]!.requestId, conversion.completes[0]!.requestId);
+        recovery.worker = {
+          requestId: conversion.starts[0]!.requestId,
+          outputBytes: conversion.completes[0]!.outputBytes,
+        };
+      }
+      assert.deepEqual(errors, [], 'Functional page errors');
+      const wasm = await Promise.all(fetchedWasm);
+      const ownedAsset = build.state.files.find((entry) =>
+        /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
+      );
+      assert(ownedAsset, 'Candidate compiled owned WASM inventory entry is absent');
+      assert(
+        wasm.some(
+          (entry) =>
+            entry.path === ownedAsset.path &&
+            entry.bytes === ownedAsset.size &&
+            entry.sha256 === ownedAsset.sha256
+        ),
+        'Fetched owned WASM differs from candidate inventory'
+      );
+      recovery.fetchedWasm = wasm;
+      recovery.workerPatches = workerPatches;
+      checks.push(recovery);
+    } finally {
+      await context.close();
+    }
+  }
+  return checks;
+}
+
+export async function exerciseOwnedVp8Product({
+  browser,
+  bundleRoot,
+  output,
+  scenario,
+  prior,
+  candidate,
+  server,
+  validateBundleFile,
+  loadApplication,
+}: {
+  browser: Browser;
+  bundleRoot: string;
+  output: string;
+  scenario:
+    | 'owned-vp8-product'
+    | 'owned-vp8-product-ba'
+    | 'owned-vp8-product-v8'
+    | 'owned-vp8-product-v8-ba';
+  prior: Build;
+  candidate: Build;
+  server: Server;
+  validateBundleFile: (root: string, path: string) => Promise<string>;
+  loadApplication: (page: Page, url: string) => Promise<unknown>;
+}) {
+  await mkdir(output, { recursive: true });
+  const fullVideo = scenario.includes('-v8');
+  const order = scenario.endsWith('-ba')
+    ? (['candidate', 'prior'] as const)
+    : (['prior', 'candidate'] as const);
+  const report: Record<string, unknown> = {
+    schemaVersion: 1,
+    scenario,
+    status: 'running',
+    browserVersion: browser.version(),
+    order,
+    prior: {
+      sourceSha: prior.state.sourceSha,
+      treeSha: prior.state.treeSha,
+      coreSha: prior.state.coreSha,
+      manifestSha256: prior.manifestSha256,
+    },
+    candidate: {
+      sourceSha: candidate.state.sourceSha,
+      treeSha: candidate.state.treeSha,
+      coreSha: candidate.state.coreSha,
+      manifestSha256: candidate.manifestSha256,
+    },
+    timingScope:
+      'UI Convert click to matching published WebP Blob download control ready; save, parse and independent decode follow timing',
+    timingGate:
+      'After five balanced controller invocations, compare medians for matching workload and condition; candidate regression <= max(5%, 20ms); retain every sample and range/MAD',
+    cacheScope:
+      'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
+    softwareInjection:
+      'Page and conversion Worker OffscreenCanvas.convertToBlob disabled before their application code; Worker response prefix digest recorded',
+    samples: [] as Sample[],
+    functional: [] as unknown[],
+  };
+  const reportPath = join(output, `${scenario}.json`);
+  const persist = async () => writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  await persist();
+  try {
+    if (fullVideo) {
+      const manifestPath = await validateBundleFile(
+        bundleRoot,
+        'validation/windows/owned-vp8-v8.json'
+      );
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+        schemaVersion: number;
+        input: {
+          path: string;
+          sha256: string;
+          width: number;
+          height: number;
+          frames: number;
+          fps: number;
+          durationMs: number;
+        };
+        settings: {
+          format: string;
+          qualities: string[];
+          qualityPercent: number[];
+          targetCadenceFps: number[];
+          scale: number;
+          smartFrameSkip: string;
+        };
+        timingGate: {
+          balancedInvocations: number;
+          maximumMedianRegressionPercent: number;
+          minimumMedianAllowanceMs: number;
+        };
+      };
+      assert.equal(manifest.schemaVersion, 1);
+      assert.deepEqual(manifest.input, {
+        path: V8_FIXTURE.path,
+        sha256: V8_SHA256,
+        width: 1920,
+        height: 1080,
+        frames: 192,
+        fps: 30,
+        durationMs: 6400,
+      });
+      assert.deepEqual(manifest.settings, {
+        format: 'webp',
+        qualities: ['low', 'medium', 'high'],
+        qualityPercent: [60, 75, 85],
+        targetCadenceFps: [12, 18, 30],
+        scale: 1,
+        smartFrameSkip: 'off',
+      });
+      assert.deepEqual(manifest.timingGate, {
+        balancedInvocations: 5,
+        maximumMedianRegressionPercent: 5,
+        minimumMedianAllowanceMs: 20,
+      });
+      report.frozenInputManifestSha256 = digest(await readFile(manifestPath));
+    }
+    const inputs = await Promise.all(
+      (fullVideo ? [V8_FIXTURE] : FIXTURES).map(async (fixture) => {
+        const path = await validateBundleFile(bundleRoot, fixture.path);
+        const bytes = await readFile(path);
+        assert(
+          bytes.length > 0 && bytes.length <= MAX_INPUT_BYTES,
+          `${fixture.id} fixture outside bound`
+        );
+        const sha256 = digest(bytes);
+        if (fixture.id === 'v8-full') {
+          assert.equal(bytes.length, 3_145_371, 'V8 source size differs from M0');
+          assert.equal(sha256, V8_SHA256, 'V8 source digest differs from M0');
+        }
+        return { fixture, path, sha256, bytes: bytes.length };
+      })
+    );
+    report.inputs = inputs.map(({ fixture, sha256, bytes }) => ({
+      id: fixture.id,
+      path: fixture.path,
+      sha256,
+      bytes,
+    }));
+    const ownedAsset = candidate.state.files.filter((entry) =>
+      /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
+    );
+    assert.equal(ownedAsset.length, 1, 'Candidate has no unique compiled owned VP8 WASM asset');
+    report.ownedAsset = ownedAsset[0];
+    for (const name of order) {
+      const build = name === 'prior' ? prior : candidate;
+      await server.setDistribution(build.relativePath);
+      const workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }> =
+        [];
+      const context = await createContext(browser, build, false, false, workerPatches);
+      try {
+        for (const { fixture, path, sha256 } of inputs) {
+          for (const quality of ['low', 'medium', 'high'] as const) {
+            const page = await context.newPage();
+            const errors: string[] = [];
+            page.on('pageerror', (error) => errors.push(error.message));
+            try {
+              await loadApplication(page, server.url);
+              await configurePage(page, path, fixture, quality);
+              let firstDocumentTimeOrigin: unknown;
+              for (const condition of ['first-in-document', 'same-document-warm'] as const) {
+                const sample = await measureJob(
+                  page,
+                  fixture,
+                  sha256,
+                  quality,
+                  name,
+                  condition,
+                  output,
+                  `owned-vp8-${scenario}-${name}-${fixture.id}-${quality}-${condition}`
+                );
+                sample.contextIdentity = `${scenario}:${name}`;
+                sample.pageIdentity = `${fixture.id}:${quality}`;
+                if (condition === 'first-in-document') firstDocumentTimeOrigin = sample.timeOrigin;
+                else
+                  assert.equal(
+                    sample.timeOrigin,
+                    firstDocumentTimeOrigin,
+                    'Warm conversion changed document'
+                  );
+                assert.deepEqual(errors, [], `${name} ${fixture.id} ${quality} page errors`);
+                (report.samples as Sample[]).push(sample);
+                await persist();
+              }
+            } finally {
+              await page.close();
+            }
+          }
+        }
+        assert(
+          workerPatches.length > 0,
+          `${name} conversion Worker software injection was not observed`
+        );
+        report[`${name}WorkerPatches`] = workerPatches;
+      } finally {
+        await context.close();
+      }
+    }
+    const samples = report.samples as Sample[];
+    for (const selected of samples.filter((sample) => sample.build === 'candidate')) {
+      const priorSample = samples.find(
+        (sample) =>
+          sample.build === 'prior' &&
+          sample.fixture === selected.fixture &&
+          sample.quality === selected.quality &&
+          sample.condition === selected.condition
+      );
+      assert(priorSample, 'Candidate sample has no paired prior sample');
+      const candidateFrames = (selected.parsed as { frames: unknown[] }).frames.length;
+      const priorFrames = (priorSample.parsed as { frames: unknown[] }).frames.length;
+      assert(
+        candidateFrames >= priorFrames,
+        'Candidate selected fewer frames than prior for a matching job'
+      );
+    }
+    await server.setDistribution(candidate.relativePath);
+    if (!fullVideo) {
+      const stopFixturePath = await validateBundleFile(bundleRoot, STOP_FIXTURE);
+      report.functional = await candidateFunctional(
+        browser,
+        candidate,
+        server,
+        output,
+        inputs[0]!.path,
+        inputs[0]!.sha256,
+        stopFixturePath,
+        loadApplication
+      );
+    }
+    report.status = 'passed';
+    await persist();
+    return {
+      profile: scenario,
+      status: 'passed',
+      report: `${scenario}.json`,
+      samples: (report.samples as Sample[]).length,
+    };
+  } catch (error) {
+    report.status = 'failed';
+    report.error = failure(error);
+    await persist();
+    throw error;
+  }
+}

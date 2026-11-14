@@ -37,6 +37,7 @@ export default defineConfig(({ command }) => {
         },
         'build:ci': {
           command: [
+            'vp run check:owned-vp8-inputs',
             'vp run build:owned-wasm',
             'node --experimental-strip-types scripts/build/generate-licenses.ts',
             'vp build',

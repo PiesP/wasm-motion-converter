@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "source": "Wikimedia Commons V8.webm (CC0-1.0), frozen at M0 for issue 501",
+  "sourceUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/V8.webm",
+  "input": {
+    "path": "validation/windows/owned-vp8-inputs/v8.webm",
+    "sha256": "c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1",
+    "width": 1920,
+    "height": 1080,
+    "frames": 192,
+    "fps": 30,
+    "durationMs": 6400
+  },
+  "settings": {
+    "format": "webp",
+    "qualities": ["low", "medium", "high"],
+    "qualityPercent": [60, 75, 85],
+    "targetCadenceFps": [12, 18, 30],
+    "scale": 1,
+    "smartFrameSkip": "off"
+  },
+  "timingGate": {
+    "balancedInvocations": 5,
+    "maximumMedianRegressionPercent": 5,
+    "minimumMedianAllowanceMs": 20
+  }
+}

@@ -41,6 +41,7 @@ import { armGifNativeInitProbe } from './helpers/gif-native-init-probe.ts';
 import { exerciseOwnedDemuxServiceMeasurement } from './helpers/owned-demux-measurement.ts';
 import { exerciseOwnedDemuxProduct } from './helpers/owned-demux-product.ts';
 import { runOwnedVp8NativeProbe } from './helpers/owned-vp8-probe.ts';
+import { exerciseOwnedVp8Product } from './helpers/owned-vp8-product.ts';
 import {
   assertUsefulOutput,
   classifyWasmWarmCache,
@@ -3788,6 +3789,65 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const vp8ProductSelectors = [
+    {
+      scenario: 'owned-vp8-product',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product.json',
+    },
+    {
+      scenario: 'owned-vp8-product-ba',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-ba.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-ba',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-ba.json',
+    },
+  ] as const;
+  for (const { scenario, selectorPath } of vp8ProductSelectors) {
+    let selectorText: string;
+    try {
+      selectorText = await readFile(resolve(bundleRoot, selectorPath), 'utf8');
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      throw error;
+    }
+    assert.deepEqual(JSON.parse(selectorText), { scenario });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter((name) => name.endsWith('.json') && name !== `${scenario}.json`),
+      []
+    );
+    const [prior, candidate] = await Promise.all([
+      readBuild(bundleRoot, 'validation/windows/prior-dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+      readBuild(bundleRoot, 'dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+    ]);
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseOwnedVp8Product({
+        browser,
+        bundleRoot,
+        output,
+        scenario,
+        prior,
+        candidate,
+        server: started,
+        validateBundleFile,
+        loadApplication,
+      });
+    } finally {
+      await closeServer(started.server);
+    }
+  }
   const demuxMeasurementSelector = resolve(
     bundleRoot,
     'validation/windows/inputs/owned-demux-service-measurement.json'

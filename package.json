@@ -59,6 +59,7 @@
     "test:cov": "vp test run --project unit --project browser --coverage",
     "pretest:cov": "vp run build:owned-wasm",
     "check:i18n": "node --experimental-strip-types scripts/check/i18n.ts",
+    "check:owned-vp8-inputs": "node --experimental-strip-types scripts/check/owned-vp8-inputs.ts",
     "build:demux-wasm": "node --experimental-strip-types scripts/build/build-owned-demux-wasm.ts",
     "build:demux-wasm:check": "node --experimental-strip-types scripts/build/build-owned-demux-wasm.ts --check",
     "build:demux-wasm:generate": "node --experimental-strip-types scripts/build/build-owned-demux-wasm.ts --generate",
