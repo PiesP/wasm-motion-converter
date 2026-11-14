@@ -31,7 +31,6 @@ pub struct TsResult {
     pub packet_sources: Vec<TsPacketSource>,
     /// WebCodecs codec string. TS uses Annex-B payloads, so Track.description stays empty.
     pub codec_string: String,
-    pub video_info: VideoInfo,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1048,7 +1047,6 @@ impl TsParser {
             track,
             packet_sources: self.packet_sources,
             codec_string: self.codec_string.ok_or(Error::Unsupported)?,
-            video_info,
         })
     }
 }
@@ -1153,6 +1151,7 @@ impl PacketReassembler {
     }
 }
 
+#[cfg(test)]
 pub fn reconstruct_packet(
     source_bytes: &[u8],
     source: TsPacketSource,

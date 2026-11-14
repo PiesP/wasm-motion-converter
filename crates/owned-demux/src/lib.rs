@@ -677,6 +677,13 @@ impl Mp4Session {
                     }
                 }
             } else if id == ebml::SIMPLE_BLOCK || id == ebml::BLOCK {
+                if id == ebml::BLOCK
+                    && self.ebml.stack.last().is_some_and(|frame| {
+                        frame.id == ebml::BLOCK_GROUP && frame.packet.is_some()
+                    })
+                {
+                    return Err(Error::Invalid);
+                }
                 let n = usize::try_from(size.min(12)).map_err(|_| Error::ResourceLimit)?;
                 if size <= 4 || size > (PACKET_BUDGET as u64) * 256 + 1024 {
                     return Err(Error::ResourceLimit);

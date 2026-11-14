@@ -65,7 +65,7 @@ export type OwnedDemuxPacket = {
 export type OwnedDemuxTransferStats = {
   rangeReads: number;
   sourceReadBytes: number;
-  headerCopiedToWasmBytes: number;
+  inputCopiedToWasmBytes: number;
   packetReadBytes: number;
   stepCalls: number;
   wasmCapacityBytes: number;
@@ -210,7 +210,7 @@ export class OwnedDemuxSession {
   private readonly sessionId = nextSessionId++;
   private rangeReads = 0;
   private sourceReadBytes = 0;
-  private headerCopiedToWasmBytes = 0;
+  private inputCopiedToWasmBytes = 0;
   private packetReadBytes = 0;
   private stepCalls = 0;
 
@@ -218,7 +218,7 @@ export class OwnedDemuxSession {
     return {
       rangeReads: this.rangeReads,
       sourceReadBytes: this.sourceReadBytes,
-      headerCopiedToWasmBytes: this.headerCopiedToWasmBytes,
+      inputCopiedToWasmBytes: this.inputCopiedToWasmBytes,
       packetReadBytes: this.packetReadBytes,
       stepCalls: this.stepCalls,
       wasmCapacityBytes: this.wasm.memory.buffer.byteLength,
@@ -267,7 +267,7 @@ export class OwnedDemuxSession {
             throw new Error('Owned demux invalid input destination');
           // No WASM call or growth occurs while the host writes this leased destination.
           new Uint8Array(this.wasm.memory.buffer, destination, length).set(window);
-          this.headerCopiedToWasmBytes += window.byteLength;
+          this.inputCopiedToWasmBytes += window.byteLength;
           if (!this.wasm.demux_feed(length)) throw new Error('Owned demux input feed failed');
         } else if (status === 2) {
           await nextTask();
@@ -399,7 +399,7 @@ export class OwnedDemuxSession {
       if (destination <= 0 || destination + length > this.wasm.memory.buffer.byteLength)
         throw new Error('Owned demux packet destination invalid');
       new Uint8Array(this.wasm.memory.buffer, destination, length).set(chunk);
-      this.headerCopiedToWasmBytes += length;
+      this.inputCopiedToWasmBytes += length;
       if (!this.wasm.demux_packet_feed(length))
         throw new Error('Owned demux packet reconstruction failed');
       at += length;
