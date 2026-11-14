@@ -25,6 +25,61 @@ impl BoolSink for BoolWriter {
     }
 }
 
+pub(crate) const MAX_BUFFERED_OPS: usize = 8192;
+
+#[derive(Clone, Copy)]
+struct BoolOp {
+    probability: u8,
+    bit: bool,
+}
+
+const _: () = assert!(std::mem::size_of::<BoolOp>() == 2);
+const _: () = assert!(2 * MAX_BUFFERED_OPS * std::mem::size_of::<BoolOp>() <= 32 * 1024);
+
+/// One bounded header or coefficient work unit, never a frame-wide bit list.
+pub(crate) struct OpBuffer {
+    ops: Vec<BoolOp>,
+    cursor: usize,
+}
+
+impl OpBuffer {
+    pub(crate) fn new() -> Result<Self, EncodeError> {
+        let mut ops = Vec::new();
+        ops.try_reserve_exact(MAX_BUFFERED_OPS)
+            .map_err(|_| EncodeError::OutputLimit)?;
+        Ok(Self { ops, cursor: 0 })
+    }
+
+    pub(crate) fn pending(&self) -> bool {
+        self.cursor < self.ops.len()
+    }
+
+    pub(crate) fn next(&self) -> Option<(u8, bool)> {
+        self.ops.get(self.cursor).map(|op| (op.probability, op.bit))
+    }
+
+    pub(crate) fn advance(&mut self) {
+        self.cursor += 1;
+        if self.cursor == self.ops.len() {
+            self.ops.clear();
+            self.cursor = 0;
+        }
+    }
+}
+
+impl BoolSink for OpBuffer {
+    fn write(&mut self, probability_of_zero: u8, bit: bool) -> Result<(), EncodeError> {
+        if self.ops.len() == MAX_BUFFERED_OPS {
+            return Err(EncodeError::OutputLimit);
+        }
+        self.ops.push(BoolOp {
+            probability: probability_of_zero,
+            bit,
+        });
+        Ok(())
+    }
+}
+
 /// Cost is measured in 1/256 bit. No floating point or mutable statistics are
 /// involved in selection. The same token path is used by the real writer.
 #[derive(Default)]
@@ -132,6 +187,22 @@ fn bit_cost(probability: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operation_buffer_has_a_fixed_reusable_limit() {
+        let mut ops = OpBuffer::new().unwrap();
+        for _ in 0..MAX_BUFFERED_OPS {
+            ops.write(128, false).unwrap();
+        }
+        assert_eq!(ops.write(128, true), Err(EncodeError::OutputLimit));
+        for _ in 0..MAX_BUFFERED_OPS {
+            assert_eq!(ops.next(), Some((128, false)));
+            ops.advance();
+        }
+        assert!(!ops.pending());
+        ops.write(128, true).unwrap();
+        assert_eq!(ops.next(), Some((128, true)));
+    }
 
     #[test]
     fn fixed_point_cost_orders_probabilities() {

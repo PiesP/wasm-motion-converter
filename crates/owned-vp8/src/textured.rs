@@ -9,7 +9,7 @@ use crate::{
     bmode_probs::BMODE_PROBS,
     limits::{Request, ResourcePlan, Status},
     prediction::{self, LargeMode, SmallMode},
-    rate::{BoolSink, CountingBoolSink, RateCounter},
+    rate::{BoolSink, CountingBoolSink, OpBuffer, RateCounter},
     residual, transform,
 };
 
@@ -1150,6 +1150,8 @@ pub(crate) struct FrameEncoder {
     count_token: CountingBoolSink,
     header: Option<BoolWriter>,
     token: Option<BoolWriter>,
+    pending_header: OpBuffer,
+    pending_token: OpBuffer,
     first: Vec<u8>,
     second: Vec<u8>,
     output: Vec<u8>,
@@ -1215,6 +1217,8 @@ impl FrameEncoder {
             count_token: CountingBoolSink::default(),
             header: None,
             token: None,
+            pending_header: OpBuffer::new().map_err(|_| Status::MemoryAdmission)?,
+            pending_token: OpBuffer::new().map_err(|_| Status::MemoryAdmission)?,
             first: Vec::new(),
             second: Vec::new(),
             output: Vec::new(),
@@ -1435,8 +1439,8 @@ impl FrameEncoder {
             .map_err(encode_status)?;
         } else {
             write_macroblock(
-                self.header.as_mut().ok_or(Status::InvalidInput)?,
-                self.token.as_mut().ok_or(Status::InvalidInput)?,
+                &mut self.pending_header,
+                &mut self.pending_token,
                 &mut self.contexts,
                 &mut self.above_modes,
                 &mut self.left_modes,
@@ -1470,7 +1474,55 @@ impl FrameEncoder {
         Ok(())
     }
 
+    fn drain_one(
+        ops: &mut OpBuffer,
+        writer: &mut BoolWriter,
+        symbols: &mut usize,
+        carry_bytes: &mut usize,
+    ) -> Result<(), Status> {
+        while *symbols > 0 {
+            let Some((probability, bit)) = ops.next() else {
+                break;
+            };
+            if !writer
+                .write_step(probability, bit, carry_bytes)
+                .map_err(encode_status)?
+            {
+                break;
+            }
+            ops.advance();
+            *symbols -= 1;
+        }
+        Ok(())
+    }
+
+    fn drain_pending(&mut self) -> Result<bool, Status> {
+        let mut symbols = 1_024;
+        let mut carry_bytes = 65_536;
+        if self.pending_header.pending() {
+            Self::drain_one(
+                &mut self.pending_header,
+                self.header.as_mut().ok_or(Status::InvalidInput)?,
+                &mut symbols,
+                &mut carry_bytes,
+            )?;
+        }
+        if !self.pending_header.pending() && self.pending_token.pending() {
+            Self::drain_one(
+                &mut self.pending_token,
+                self.token.as_mut().ok_or(Status::InvalidInput)?,
+                &mut symbols,
+                &mut carry_bytes,
+            )?;
+        }
+        Ok(!self.pending_header.pending() && !self.pending_token.pending())
+    }
+
     pub(crate) fn step(&mut self) -> Result<bool, Status> {
+        if self.pending_header.pending() || self.pending_token.pending() {
+            self.drain_pending()?;
+            return Ok(false);
+        }
         match self.stage {
             Stage::Initialize => self.initialize_one_chunk()?,
             Stage::Color => self.color_one_pair()?,
@@ -1501,13 +1553,12 @@ impl FrameEncoder {
             Stage::CountBlocks => self.code_one_step(true)?,
             Stage::EmitPrefix => {
                 let qindex = self.qindex();
-                write_header_prefix(self.header.as_mut().ok_or(Status::InvalidInput)?, qindex)
-                    .map_err(encode_status)?;
+                write_header_prefix(&mut self.pending_header, qindex).map_err(encode_status)?;
                 self.stage = Stage::EmitUpdates;
             }
             Stage::EmitUpdates => {
                 let end = (self.cursor + 64).min(super::COEFF_UPDATE_PROBS.len());
-                let header = self.header.as_mut().ok_or(Status::InvalidInput)?;
+                let header = &mut self.pending_header;
                 for &probability in &super::COEFF_UPDATE_PROBS[self.cursor..end] {
                     header.write(probability, false).map_err(encode_status)?;
                 }
@@ -1518,31 +1569,30 @@ impl FrameEncoder {
                 }
             }
             Stage::EmitSuffix => {
-                write_header_suffix(self.header.as_mut().ok_or(Status::InvalidInput)?)
-                    .map_err(encode_status)?;
+                write_header_suffix(&mut self.pending_header).map_err(encode_status)?;
                 self.reset_coding_state();
                 self.stage = Stage::EmitBlocks;
             }
             Stage::EmitBlocks => self.code_one_step(false)?,
             Stage::FinalizeHeader => {
-                self.first = self
-                    .header
-                    .take()
-                    .ok_or(Status::InvalidInput)?
-                    .finish()
-                    .map_err(encode_status)?;
+                let header = self.header.as_mut().ok_or(Status::InvalidInput)?;
+                if !header.finish_step(&mut 65_536).map_err(encode_status)? {
+                    return Ok(false);
+                }
+                self.first = header.take_finished().ok_or(Status::InvalidInput)?;
+                self.header = None;
                 if self.first.len() != self.plan.first_partition_bytes as usize {
                     return Err(Status::PartitionLimit);
                 }
                 self.stage = Stage::FinalizeTokens;
             }
             Stage::FinalizeTokens => {
-                self.second = self
-                    .token
-                    .take()
-                    .ok_or(Status::InvalidInput)?
-                    .finish()
-                    .map_err(encode_status)?;
+                let token = self.token.as_mut().ok_or(Status::InvalidInput)?;
+                if !token.finish_step(&mut 65_536).map_err(encode_status)? {
+                    return Ok(false);
+                }
+                self.second = token.take_finished().ok_or(Status::InvalidInput)?;
+                self.token = None;
                 if self.second.len() != self.plan.coefficient_partition_bytes as usize {
                     return Err(Status::OutputLimit);
                 }
@@ -1589,6 +1639,71 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn engine_yields_inside_a_long_carry_and_a_symbol_batch() {
+        let input = vec![128, 128, 128, 255];
+        let request = engine_request(1, 1, 0, &input, 4);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+        let mut writer = BoolWriter::new();
+        writer.bytes = vec![255; 131_073];
+        writer.bytes[0] = 7;
+        writer.range = 1;
+        writer.bottom = 1 << 31;
+        engine.header = Some(writer);
+        engine.pending_header.write(128, false).unwrap();
+        assert!(!engine.step().unwrap());
+        assert_eq!(engine.stage(), Stage::Initialize as u32);
+        assert!(engine.pending_header.pending());
+        assert_eq!(engine.header.as_ref().unwrap().carry_cursor, Some(65_537));
+        assert!(engine.output().is_empty());
+        assert!(!engine.step().unwrap());
+        assert!(engine.pending_header.pending());
+        assert!(!engine.step().unwrap());
+        assert!(!engine.pending_header.pending());
+        assert_eq!(engine.header.as_ref().unwrap().bytes[0], 8);
+
+        engine.header = Some(BoolWriter::new());
+        for _ in 0..3_000 {
+            engine.pending_header.write(128, false).unwrap();
+        }
+        assert!(!engine.step().unwrap());
+        assert!(engine.pending_header.pending());
+        assert!(!engine.step().unwrap());
+        assert!(engine.pending_header.pending());
+        assert!(!engine.step().unwrap());
+        assert!(!engine.pending_header.pending());
+        assert_eq!(engine.stage(), Stage::Initialize as u32);
+    }
+
+    #[test]
+    fn one_macroblock_operation_buffers_cover_maximum_coefficient_categories() {
+        for i16 in [false, true] {
+            let block = Macroblock {
+                y: [[2114; 16]; 16],
+                y2: [2114; 16],
+                i16,
+                u: [[2114; 16]; 4],
+                v: [[2114; 16]; 4],
+                ..Macroblock::default()
+            };
+            let mut header = OpBuffer::new().unwrap();
+            let mut token = OpBuffer::new().unwrap();
+            write_macroblock(
+                &mut header,
+                &mut token,
+                &mut CoeffContexts::new(1),
+                &mut [0; 4],
+                &mut [0; 4],
+                0,
+                &block,
+            )
+            .unwrap();
+            assert!(header.pending());
+            assert!(token.pending());
+        }
+    }
 
     fn engine_request(
         width: usize,

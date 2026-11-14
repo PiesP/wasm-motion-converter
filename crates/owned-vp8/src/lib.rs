@@ -36,6 +36,11 @@ struct BoolWriter {
     bottom: u32,
     bit_count: u32,
     limit: usize,
+    symbol_pending: bool,
+    shift_pending: bool,
+    carry_cursor: Option<usize>,
+    finish_started: bool,
+    finished: bool,
 }
 
 impl BoolWriter {
@@ -46,6 +51,11 @@ impl BoolWriter {
             bottom: 0,
             bit_count: 24,
             limit: MAX_OUTPUT_BYTES,
+            symbol_pending: false,
+            shift_pending: false,
+            carry_cursor: None,
+            finish_started: false,
+            finished: false,
         }
     }
 
@@ -59,32 +69,57 @@ impl BoolWriter {
         Ok(writer)
     }
 
-    fn propagate_carry(&mut self) {
-        // RFC 6386 guarantees a carry never runs past the partition start.
-        for value in self.bytes.iter_mut().rev() {
-            if *value == 255 {
-                *value = 0;
+    fn resume_carry(&mut self, budget: &mut usize) -> bool {
+        while let Some(cursor) = self.carry_cursor {
+            if *budget == 0 {
+                return false;
+            }
+            // RFC 6386 guarantees a carry never runs past the partition start.
+            assert!(cursor > 0, "VP8 arithmetic carry before partition start");
+            let index = cursor - 1;
+            *budget -= 1;
+            if self.bytes[index] == 255 {
+                self.bytes[index] = 0;
+                self.carry_cursor = Some(index);
             } else {
-                *value += 1;
-                return;
+                self.bytes[index] += 1;
+                self.carry_cursor = None;
             }
         }
-        // If the guarantee is violated, do not silently publish a broken frame.
-        panic!("VP8 arithmetic carry before partition start");
+        true
     }
 
-    fn write(&mut self, probability_of_zero: u8, bit: bool) -> Result<(), EncodeError> {
-        let split = 1 + (((self.range - 1) * u32::from(probability_of_zero)) >> 8);
-        if bit {
-            self.bottom = self.bottom.wrapping_add(split);
-            self.range -= split;
-        } else {
-            self.range = split;
+    /// Returns false when a carry crosses the byte budget. The caller must
+    /// retry the same symbol: the split is applied exactly once.
+    fn write_step(
+        &mut self,
+        probability_of_zero: u8,
+        bit: bool,
+        carry_byte_budget: &mut usize,
+    ) -> Result<bool, EncodeError> {
+        if self.finish_started {
+            return Err(EncodeError::InvalidInput);
         }
-        while self.range < 128 {
-            self.range <<= 1;
-            if self.bottom & (1 << 31) != 0 {
-                self.propagate_carry();
+        if !self.symbol_pending {
+            let split = 1 + (((self.range - 1) * u32::from(probability_of_zero)) >> 8);
+            if bit {
+                self.bottom = self.bottom.wrapping_add(split);
+                self.range -= split;
+            } else {
+                self.range = split;
+            }
+            self.symbol_pending = true;
+        }
+        while self.range < 128 || self.shift_pending {
+            if !self.shift_pending {
+                self.range <<= 1;
+                self.shift_pending = true;
+                if self.bottom & (1 << 31) != 0 {
+                    self.carry_cursor = Some(self.bytes.len());
+                }
+            }
+            if !self.resume_carry(carry_byte_budget) {
+                return Ok(false);
             }
             self.bottom <<= 1;
             self.bit_count -= 1;
@@ -92,13 +127,25 @@ impl BoolWriter {
                 if self.bytes.len() >= self.limit {
                     return Err(EncodeError::OutputLimit);
                 }
-                self.bytes
-                    .try_reserve(1)
-                    .map_err(|_| EncodeError::OutputLimit)?;
+                if self.bytes.len() == self.bytes.capacity() {
+                    self.bytes
+                        .try_reserve(1)
+                        .map_err(|_| EncodeError::OutputLimit)?;
+                }
                 self.bytes.push((self.bottom >> 24) as u8);
                 self.bottom &= (1 << 24) - 1;
                 self.bit_count = 8;
             }
+            self.shift_pending = false;
+        }
+        self.symbol_pending = false;
+        Ok(true)
+    }
+
+    fn write(&mut self, probability_of_zero: u8, bit: bool) -> Result<(), EncodeError> {
+        let mut budget = usize::MAX;
+        while !self.write_step(probability_of_zero, bit, &mut budget)? {
+            budget = usize::MAX;
         }
         Ok(())
     }
@@ -114,12 +161,24 @@ impl BoolWriter {
         Ok(())
     }
 
-    fn finish(mut self) -> Result<Vec<u8>, EncodeError> {
+    fn finish_step(&mut self, carry_byte_budget: &mut usize) -> Result<bool, EncodeError> {
+        if self.finished {
+            return Ok(true);
+        }
+        if self.symbol_pending {
+            return Err(EncodeError::InvalidInput);
+        }
+        if !self.finish_started {
+            self.finish_started = true;
+            if self.bottom & (1 << (32 - self.bit_count)) != 0 {
+                self.carry_cursor = Some(self.bytes.len());
+            }
+        }
+        if !self.resume_carry(carry_byte_budget) {
+            return Ok(false);
+        }
         let mut count = self.bit_count;
         let mut value = self.bottom;
-        if value & (1 << (32 - count)) != 0 {
-            self.propagate_carry();
-        }
         value <<= count & 7;
         count >>= 3;
         while count > 0 {
@@ -135,14 +194,29 @@ impl BoolWriter {
         {
             return Err(EncodeError::OutputLimit);
         }
-        self.bytes
-            .try_reserve(4)
-            .map_err(|_| EncodeError::OutputLimit)?;
+        if self.bytes.capacity() - self.bytes.len() < 4 {
+            self.bytes
+                .try_reserve(4)
+                .map_err(|_| EncodeError::OutputLimit)?;
+        }
         for _ in 0..4 {
             self.bytes.push((value >> 24) as u8);
             value <<= 8;
         }
-        Ok(self.bytes)
+        self.finished = true;
+        Ok(true)
+    }
+
+    fn take_finished(&mut self) -> Option<Vec<u8>> {
+        self.finished.then(|| std::mem::take(&mut self.bytes))
+    }
+
+    fn finish(mut self) -> Result<Vec<u8>, EncodeError> {
+        let mut budget = usize::MAX;
+        while !self.finish_step(&mut budget)? {
+            budget = usize::MAX;
+        }
+        Ok(self.take_finished().expect("finished arithmetic writer"))
     }
 }
 
@@ -373,8 +447,104 @@ mod tests {
         }
         let mut writer = BoolWriter::new();
         writer.bytes = vec![4, 255, 255, 255, 255, 255, 255, 255, 255];
-        writer.propagate_carry();
+        writer.carry_cursor = Some(writer.bytes.len());
+        let mut budget = usize::MAX;
+        assert!(writer.resume_carry(&mut budget));
         assert_eq!(writer.bytes, [5, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn long_carry_pauses_and_resumes_during_write_and_finish() {
+        const TAIL: usize = 131_072;
+        let mut paused = BoolWriter::new();
+        paused.bytes = vec![255; TAIL + 1];
+        paused.bytes[0] = 7;
+        paused.limit = TAIL + 16;
+        paused.range = 1;
+        paused.bottom = 1 << 31;
+        let mut reference = BoolWriter::new();
+        reference.bytes = paused.bytes.clone();
+        reference.limit = paused.limit;
+        reference.range = paused.range;
+        reference.bottom = paused.bottom;
+        reference.write(128, false).unwrap();
+        let mut calls = 0;
+        loop {
+            let mut budget = 1_024;
+            calls += 1;
+            if paused.write_step(128, false, &mut budget).unwrap() {
+                break;
+            }
+            assert_eq!(budget, 0);
+            assert!(calls < 200);
+        }
+        assert!(calls > 100);
+        assert_eq!(paused.bytes, reference.bytes);
+        assert_eq!(paused.range, reference.range);
+        assert_eq!(paused.bottom, reference.bottom);
+        assert_eq!(paused.bit_count, reference.bit_count);
+
+        let mut paused = BoolWriter::new();
+        paused.bytes = vec![255; TAIL + 1];
+        paused.bytes[0] = 7;
+        paused.limit = TAIL + 16;
+        paused.bottom = 1 << 8;
+        let reference = BoolWriter {
+            bytes: paused.bytes.clone(),
+            ..BoolWriter::new()
+        };
+        let mut reference = reference;
+        reference.limit = paused.limit;
+        reference.bottom = paused.bottom;
+        let expected = reference.finish().unwrap();
+        let mut calls = 0;
+        loop {
+            let mut budget = 1_024;
+            calls += 1;
+            if paused.finish_step(&mut budget).unwrap() {
+                break;
+            }
+            assert_eq!(budget, 0);
+            assert!(calls < 200);
+        }
+        assert!(calls > 100);
+        assert_eq!(paused.take_finished().unwrap(), expected);
+    }
+
+    #[test]
+    fn incremental_writer_matches_extreme_probability_streams() {
+        for length in [1, 7, 8, 23, 24, 25, 255, 4096, 65_536] {
+            let mut seed = 0x501u32;
+            let mut reference = BoolWriter::new();
+            let mut incremental = BoolWriter::new();
+            for index in 0..length {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let probability = [0, 1, 64, 128, 254, 255, (seed >> 16) as u8][index % 7];
+                let bit = seed & 0x8000_0000 != 0;
+                reference.write(probability, bit).unwrap();
+                loop {
+                    let mut budget = 3;
+                    if incremental
+                        .write_step(probability, bit, &mut budget)
+                        .unwrap()
+                    {
+                        break;
+                    }
+                }
+            }
+            let expected = reference.finish().unwrap();
+            loop {
+                let mut budget = 3;
+                if incremental.finish_step(&mut budget).unwrap() {
+                    break;
+                }
+            }
+            assert_eq!(
+                incremental.take_finished().unwrap(),
+                expected,
+                "length={length}"
+            );
+        }
     }
     #[test]
     fn checked_input_and_repeated_keyframes() {
