@@ -662,7 +662,9 @@ async function exerciseBuildUpgrade(
       priorOnlyNeverFetchedChunk: neverFetched,
       missingChunkTriggeredBy: locale
         ? `language-selector=${locale}`
-        : 'uncached removed asset fetch',
+        : neverFetched
+          ? 'uncached removed asset fetch'
+          : 'uncached synthetic control fetch',
       cachedPriorAsset: new URL(cached.url).pathname,
       cachedPriorSha256: sha256(Buffer.from(cached.bytes)),
       retainedResultDownload: true,
