@@ -41,7 +41,7 @@ function codecString(track: OwnedDemuxTrack): string {
   const bytes = track.description;
   if (track.codec === 'avc1' || track.codec === 'avc3') {
     if (bytes.length < 7 || bytes[0] !== 1) throw new Error('Invalid owned AVC configuration');
-    return `avc1.${Array.from(bytes.subarray(1, 4), (v) => v.toString(16).padStart(2, '0')).join('')}`;
+    return `${track.codec}.${Array.from(bytes.subarray(1, 4), (v) => v.toString(16).padStart(2, '0')).join('')}`;
   }
   if (track.codec === 'hev1' || track.codec === 'hvc1') {
     if (bytes.length < 23 || bytes[0] !== 1) throw new Error('Invalid owned HEVC configuration');
@@ -105,7 +105,11 @@ export function ownedDecoderConfig(track: OwnedDemuxTrack): ContainerVideoDecode
       ...(p ? { primaries: p } : {}),
       ...(t ? { transfer: t } : {}),
       ...(m ? { matrix: m } : {}),
-      fullRange: track.colorFullRange === 1,
+      // Configured AVC/HEVC/VP9/AV1 default an absent bitstream full-range
+      // flag to false. VP8 with no container range keeps the field unspecified.
+      ...(track.colorFullRange !== -1 || !['VP80', 'vp08'].includes(track.codec)
+        ? { fullRange: track.colorFullRange === 1 }
+        : {}),
     } as VideoColorSpaceInit,
   };
 }
