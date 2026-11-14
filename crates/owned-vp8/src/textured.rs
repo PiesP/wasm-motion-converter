@@ -291,7 +291,7 @@ fn write_bmode(sink: &mut impl BoolSink, above: u8, left: u8, mode: u8) -> Resul
     Ok(())
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct CoeffContexts {
     y2: Vec<bool>,
     y: Vec<bool>,
@@ -302,6 +302,59 @@ struct CoeffContexts {
     left_u: [bool; 2],
     left_v: [bool; 2],
 }
+
+struct CoeffContextWindow<'a> {
+    y2: &'a mut [bool],
+    y: &'a mut [bool],
+    u: &'a mut [bool],
+    v: &'a mut [bool],
+    left_y2: &'a mut bool,
+    left_y: &'a mut [bool; 4],
+    left_u: &'a mut [bool; 2],
+    left_v: &'a mut [bool; 2],
+}
+
+impl CoeffContextWindow<'_> {
+    fn encode_coefficients(
+        &mut self,
+        sink: &mut impl BoolSink,
+        block: &Macroblock,
+        mx: usize,
+    ) -> Result<(), EncodeError> {
+        if block.skip() {
+            if block.i16 {
+                self.y2[mx] = false;
+                *self.left_y2 = false;
+            }
+            self.y[mx * 4..mx * 4 + 4].fill(false);
+            self.u[mx * 2..mx * 2 + 2].fill(false);
+            self.v[mx * 2..mx * 2 + 2].fill(false);
+            self.left_y.fill(false);
+            self.left_u.fill(false);
+            self.left_v.fill(false);
+            return Ok(());
+        }
+        if block.i16 {
+            let context = usize::from(self.y2[mx]) + usize::from(*self.left_y2);
+            let nonzero = residual::encode_block(sink, &block.y2, 1, context)?;
+            self.y2[mx] = nonzero;
+            *self.left_y2 = nonzero;
+        }
+        encode_macroblock_coeffs(
+            sink,
+            &block.y,
+            if block.i16 { 0 } else { 3 },
+            self.y,
+            self.left_y,
+            mx,
+            4,
+        )?;
+        encode_macroblock_coeffs(sink, &block.u, 2, self.u, self.left_u, mx, 2)?;
+        encode_macroblock_coeffs(sink, &block.v, 2, self.v, self.left_v, mx, 2)?;
+        Ok(())
+    }
+}
+
 impl CoeffContexts {
     fn new(blocks_x: usize) -> Self {
         Self {
@@ -349,9 +402,29 @@ impl CoeffContexts {
         self.left_v.fill(false);
     }
     fn measure(&self, block: &Macroblock, mx: usize) -> Result<u64, EncodeError> {
-        let mut copy = self.clone();
+        let mut y2 = [self.y2[mx]];
+        let mut y = [false; 4];
+        y.copy_from_slice(&self.y[mx * 4..mx * 4 + 4]);
+        let mut u = [false; 2];
+        u.copy_from_slice(&self.u[mx * 2..mx * 2 + 2]);
+        let mut v = [false; 2];
+        v.copy_from_slice(&self.v[mx * 2..mx * 2 + 2]);
+        let mut left_y2 = self.left_y2;
+        let mut left_y = self.left_y;
+        let mut left_u = self.left_u;
+        let mut left_v = self.left_v;
+        let mut window = CoeffContextWindow {
+            y2: &mut y2,
+            y: &mut y,
+            u: &mut u,
+            v: &mut v,
+            left_y2: &mut left_y2,
+            left_y: &mut left_y,
+            left_u: &mut left_u,
+            left_v: &mut left_v,
+        };
         let mut rate = RateCounter::default();
-        copy.encode_coefficients(&mut rate, block, mx)?;
+        window.encode_coefficients(&mut rate, block, 0)?;
         Ok(rate.cost)
     }
     fn encode_coefficients(
@@ -360,38 +433,17 @@ impl CoeffContexts {
         block: &Macroblock,
         mx: usize,
     ) -> Result<(), EncodeError> {
-        let skip = block.skip();
-        if skip {
-            if block.i16 {
-                self.y2[mx] = false;
-                self.left_y2 = false;
-            }
-            self.y[mx * 4..mx * 4 + 4].fill(false);
-            self.u[mx * 2..mx * 2 + 2].fill(false);
-            self.v[mx * 2..mx * 2 + 2].fill(false);
-            self.left_y.fill(false);
-            self.left_u.fill(false);
-            self.left_v.fill(false);
-            return Ok(());
+        CoeffContextWindow {
+            y2: &mut self.y2,
+            y: &mut self.y,
+            u: &mut self.u,
+            v: &mut self.v,
+            left_y2: &mut self.left_y2,
+            left_y: &mut self.left_y,
+            left_u: &mut self.left_u,
+            left_v: &mut self.left_v,
         }
-        if block.i16 {
-            let context = usize::from(self.y2[mx]) + usize::from(self.left_y2);
-            let nonzero = residual::encode_block(sink, &block.y2, 1, context)?;
-            self.y2[mx] = nonzero;
-            self.left_y2 = nonzero;
-        }
-        encode_macroblock_coeffs(
-            sink,
-            &block.y,
-            if block.i16 { 0 } else { 3 },
-            &mut self.y,
-            &mut self.left_y,
-            mx,
-            4,
-        )?;
-        encode_macroblock_coeffs(sink, &block.u, 2, &mut self.u, &mut self.left_u, mx, 2)?;
-        encode_macroblock_coeffs(sink, &block.v, 2, &mut self.v, &mut self.left_v, mx, 2)?;
-        Ok(())
+        .encode_coefficients(sink, block, mx)
     }
 }
 impl Macroblock {
@@ -2400,6 +2452,108 @@ mod tests {
             }
         }
         visible
+    }
+
+    #[test]
+    fn local_coefficient_trial_matches_full_context_and_preserves_state() {
+        for width in [1, 2, 17, 1024] {
+            for mx in [0, width / 2, width - 1] {
+                for pattern in 0..4 {
+                    let mut contexts = CoeffContexts::new(width);
+                    let flag = |i: usize| match pattern {
+                        0 => false,
+                        1 => true,
+                        2 => i.is_multiple_of(2),
+                        _ => i.is_multiple_of(3),
+                    };
+                    for (i, value) in contexts.y2.iter_mut().enumerate() {
+                        *value = flag(i);
+                    }
+                    for (i, value) in contexts.y.iter_mut().enumerate() {
+                        *value = flag(i + 1);
+                    }
+                    for (i, value) in contexts.u.iter_mut().enumerate() {
+                        *value = flag(i + 2);
+                    }
+                    for (i, value) in contexts.v.iter_mut().enumerate() {
+                        *value = flag(i + 3);
+                    }
+                    contexts.left_y2 = flag(5);
+                    contexts.left_y = std::array::from_fn(|i| flag(i + 6));
+                    contexts.left_u = std::array::from_fn(|i| flag(i + 10));
+                    contexts.left_v = std::array::from_fn(|i| flag(i + 12));
+                    for variant in 0..5 {
+                        let mut block = Macroblock {
+                            i16: matches!(variant, 1 | 3 | 4),
+                            ..Macroblock::default()
+                        };
+                        match variant {
+                            2 => {
+                                block.y[0][0] = 1;
+                                block.y[3][5] = -2;
+                                block.u[2][9] = 5;
+                                block.v[3][15] = -67;
+                            }
+                            3 => {
+                                block.y2[0] = -5;
+                                block.y2[15] = 67;
+                                for (i, coeffs) in block.y.iter_mut().enumerate() {
+                                    coeffs[(i * 3) % 16] = if i % 2 == 0 { 2114 } else { -2114 };
+                                }
+                                block.u[0][0] = -1;
+                                block.v[1][7] = 11;
+                            }
+                            4 => block.y2[4] = -2,
+                            _ => {}
+                        }
+                        let before = contexts.clone();
+                        let trial_rate = contexts.measure(&block, mx).unwrap();
+                        assert_eq!(contexts, before, "trial mutated width={width} mx={mx} pattern={pattern} variant={variant}");
+                        let mut committed = before.clone();
+                        let mut rate = RateCounter::default();
+                        committed
+                            .encode_coefficients(&mut rate, &block, mx)
+                            .unwrap();
+                        assert_eq!(
+                            trial_rate, rate.cost,
+                            "width={width} mx={mx} pattern={pattern} variant={variant}"
+                        );
+                        for other in 0..width {
+                            if other != mx {
+                                assert_eq!(committed.y2[other], before.y2[other]);
+                                assert_eq!(
+                                    &committed.y[other * 4..other * 4 + 4],
+                                    &before.y[other * 4..other * 4 + 4]
+                                );
+                                assert_eq!(
+                                    &committed.u[other * 2..other * 2 + 2],
+                                    &before.u[other * 2..other * 2 + 2]
+                                );
+                                assert_eq!(
+                                    &committed.v[other * 2..other * 2 + 2],
+                                    &before.v[other * 2..other * 2 + 2]
+                                );
+                            }
+                        }
+                        let mut invalid = Macroblock {
+                            i16: block.i16,
+                            ..Macroblock::default()
+                        };
+                        if invalid.i16 {
+                            invalid.y2[0] = 1;
+                        }
+                        invalid.y[0][0] = 1;
+                        invalid.u[0][0] = -1;
+                        invalid.v[3][15] = 2115;
+                        assert_eq!(
+                            contexts.measure(&invalid, mx),
+                            Err(EncodeError::InvalidInput)
+                        );
+                        assert_eq!(contexts, before, "failed trial mutated state");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
