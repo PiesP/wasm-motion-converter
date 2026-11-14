@@ -37,6 +37,10 @@ describe('owned demux through browser WebCodecs', () => {
       try {
         const track = await session.analyze();
         const config = ownedDecoderConfig(track);
+        if (typeof VideoDecoder === 'undefined') {
+          context.skip('Native browser VideoDecoder is unavailable');
+          return;
+        }
         const supported = await VideoDecoder.isConfigSupported(config);
         if (!supported.supported) {
           context.skip(`Native browser decoder rejected ${config.codec}`);
