@@ -100,6 +100,33 @@ job never automatically retries under another backend. Force the software route
 and attest actual compiled module execution. Independently decode complete
 animations, including timing/order/loops/holds/geometry/color and temporal output.
 
+## Correction cohort after the first held-out rejection
+
+Candidate `7e4bcb4c` / WASM `e48c2e1be8f2b20bdda9c9d18c755063f872db344681c9a776c191cb27cc4f15`
+passed all 27 tuning conditions, then passed only 31/45 initial-v1 held-out
+conditions. It is **REJECTED for adoption**. Preserve every result and threshold;
+initial-v1 is now exposed regression evidence, never fresh acceptance after tuning.
+`scripts/test/owned-vp8-v2-compare.ts` requires an explicit `--regression` purpose
+for that exposed set.
+
+Before measuring a corrected candidate, the source-only
+`501-owned-vp8-v2-correction-fixtures.json` freezes a new `corrected-v2` cohort:
+15 fresh held-out inputs / 45 conditions, with a distinct CC0 photo and previously
+unmeasured V8 video frames, new deterministic generated inputs, odd layouts and
+another admitted near-cap geometry. Three tuning additions cover broad gradients,
+diagonal strokes and higher-resolution detail from the existing tuning photo.
+Together with the original nine tuning inputs, that is 12 / 36 tuning conditions.
+All PSNR, SSIM, size, performance, resource and delivery thresholds stay unchanged.
+No candidate or comparator output participates in generating this manifest.
+
+The changed premise is that a nine-input small tuning set and four I4 modes did
+not establish the general size/quality frontier. Complete the remaining I4 modes
+and independently verified filter support before new calibration/acceptance;
+this is correctable implementation work, not a reinterpretation of the rejected
+candidate. New sources are pinned outside public assets; source/license metadata
+and input hashes are in the correction manifest. Select `--cohort corrected-v2`
+explicitly for new tuning or fresh acceptance. Do not replace earlier evidence.
+
 ## Resources and adoption
 
 Preserve 512 MiB conversion, 128 MiB demux reserve, 192 MiB frame reserve and
@@ -173,6 +200,15 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   and `src/services/decoder-service.ts` ordered/staged tails allow one staged RGB
   copy to overlap the active callback. The comment now describes both; runtime
   behavior and resource ceilings are unchanged.
+- External reference discrepancy, unchanged: RFC 6386 section 11.2's inline
+  `bmode_tree` comments give LD/VL/HD/HU code strings one bit longer than the tree
+  itself. The tree, pinned libwebp `tree_enc.c`, and both independent decoders use
+  LD=11110, VL=111110, HD=1111110 and HU=1111111. The complete I4 implementation
+  follows those verified paths; the external example remains outside scope.
+- Fixed in candidate `6c8b3217`: `src/services/conversion-pipeline.ts` and
+  `src/services/conversion-worker/pipeline-worker.ts` retained wasm-webp route
+  descriptions while calling `encodeWebpOwned`. Both comments now identify the
+  owned software path. Production adoption remains subject to the open gates.
 - External reference discrepancy, unchanged: RFC 6386 section 13.3's illustrative
   coefficient pseudocode swaps plane labels relative to its detailed probability
   table and sets `prevCoeffWasZero` unconditionally. The detailed table/narrative

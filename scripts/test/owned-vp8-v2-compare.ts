@@ -8,17 +8,42 @@ import { fileURLToPath } from 'node:url';
 
 import { compileVp8, Vp8TestJob } from './owned-vp8-v2-abi.ts';
 import {
+  CORRECTION_HELDOUT,
+  CORRECTION_TUNING,
+  generateCorrectionFixture,
+  type CorrectionSourcePaths,
+} from './owned-vp8-v2-correction-fixtures.ts';
+import {
   FIXTURES,
   generateFixture,
   QUALITIES,
   type FixtureSplit,
   type PixelFixture,
-  type SourcePaths,
 } from './owned-vp8-v2-fixtures.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ORACLE_HASH = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
+
+export type FixtureCohort = 'initial-v1' | 'corrected-v2';
+
+export function selectFixtureCohort(
+  split: FixtureSplit,
+  cohort: FixtureCohort,
+  regression = false
+) {
+  if (split === 'held-out' && cohort === 'initial-v1' && !regression)
+    throw new Error('Initial-v1 is exposed: use --regression or a fresh acceptance cohort');
+  const entries =
+    cohort === 'corrected-v2'
+      ? [
+          ...FIXTURES.filter((item) => item.split === 'tuning'),
+          ...CORRECTION_TUNING,
+          ...CORRECTION_HELDOUT,
+        ]
+      : FIXTURES;
+  return entries.filter((item) => item.split === split);
+}
 
 export function rgbPixels(fixture: PixelFixture): Uint8Array {
   const result = new Uint8Array(fixture.width * fixture.height * 3);
@@ -148,9 +173,13 @@ function decode(file: string, width: number, height: number): Uint8Array {
 export async function compare(options: {
   output: string;
   split: FixtureSplit;
-  sources: SourcePaths;
+  sources: CorrectionSourcePaths;
+  cohort?: FixtureCohort;
+  regression?: boolean;
   candidateRoot?: string;
 }): Promise<object> {
+  const cohort = options.cohort ?? 'initial-v1';
+  const selected = selectFixtureCohort(options.split, cohort, options.regression);
   const output = resolve(options.output);
   const candidateRoot = resolve(options.candidateRoot ?? ROOT);
   for (const forbidden of ['public', 'dist']) {
@@ -186,7 +215,19 @@ export async function compare(options: {
   ) as {
     fixtures: Array<{ id: string; sha256: string }>;
   };
+  const correctionManifestFile = join(
+    ROOT,
+    'docs/experiments/501-owned-vp8-v2-correction-fixtures.json'
+  );
+  if (cohort === 'corrected-v2') {
+    const correction = JSON.parse(readFileSync(correctionManifestFile, 'utf8')) as typeof frozen;
+    frozen.fixtures.push(...correction.fixtures);
+  }
   const identities = {
+    cohort,
+    purpose: options.regression ? 'EXPOSED_REGRESSION_NOT_FRESH_ACCEPTANCE' : options.split,
+    correctionManifestSha256:
+      cohort === 'corrected-v2' ? digest(readFileSync(correctionManifestFile)) : null,
     source: execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: candidateRoot,
       encoding: 'utf8',
@@ -232,7 +273,9 @@ export async function compare(options: {
     scope:
       options.split === 'tuning'
         ? 'TUNING_ONLY_NOT_ACCEPTANCE'
-        : 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+        : options.regression
+          ? 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE'
+          : 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
   };
   if (options.split === 'held-out' && (identities.dirty || identities.harnessDirty)) {
     throw new Error('Held-out acceptance requires committed candidate and harness identities');
@@ -241,8 +284,13 @@ export async function compare(options: {
     flag: 'wx',
   });
   const results: object[] = [];
-  for (const spec of FIXTURES.filter((fixture) => fixture.split === options.split)) {
-    const fixture = generateFixture(spec.id, options.sources);
+  for (const spec of selected) {
+    const correction =
+      CORRECTION_TUNING.some((entry) => entry.id === spec.id) ||
+      CORRECTION_HELDOUT.some((entry) => entry.id === spec.id);
+    const fixture = correction
+      ? generateCorrectionFixture(spec.id, options.sources)
+      : generateFixture(spec.id, options.sources);
     assert.equal(
       digest(fixture.pixels),
       frozen.fixtures.find((entry) => entry.id === spec.id)?.sha256
@@ -329,6 +377,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const photo = args.includes('--photo') ? args[args.indexOf('--photo') + 1] : undefined;
   const video = args.includes('--video') ? args[args.indexOf('--video') + 1] : undefined;
   const acceptance = args.includes('--acceptance');
+  const regression = args.includes('--regression');
+  const tuningPhoto = args.includes('--tuning-photo')
+    ? args[args.indexOf('--tuning-photo') + 1]
+    : undefined;
+  const cohort = args.includes('--cohort') ? args[args.indexOf('--cohort') + 1] : 'initial-v1';
+  if (cohort !== 'initial-v1' && cohort !== 'corrected-v2')
+    throw new Error('Unknown fixture cohort');
+  if (acceptance && regression) throw new Error('Choose acceptance or exposed regression');
   const candidateRoot = args.includes('--candidate-root')
     ? args[args.indexOf('--candidate-root') + 1]
     : undefined;
@@ -338,8 +394,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     );
   const report = await compare({
     output,
-    split: acceptance ? 'held-out' : 'tuning',
-    sources: { ...(photo ? { photo } : {}), ...(video ? { video } : {}) },
+    split: acceptance || regression ? 'held-out' : 'tuning',
+    cohort,
+    regression,
+    sources: {
+      ...(photo ? { photo } : {}),
+      ...(video ? { video } : {}),
+      ...(tuningPhoto ? { tuningPhoto } : {}),
+    },
     ...(candidateRoot ? { candidateRoot } : {}),
   });
   console.log(JSON.stringify(report, null, 2));
