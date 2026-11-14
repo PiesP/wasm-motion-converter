@@ -1,6 +1,6 @@
 # Owned VP8 product fixture admission
 
-The `owned-vp8-product-v8` Windows scenarios stage only `v8.webm` here. The
+The six quality-specific `owned-vp8-product-v8-*` Windows scenarios stage only `v8.webm` here. The
 source is the M0 V8.webm control recorded in `../owned-vp8-v8.json`.
 
 `vp run check:owned-vp8-inputs` allows this README alone for ordinary builds.

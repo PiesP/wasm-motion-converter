@@ -55,8 +55,12 @@ describe('owned VP8 Windows product contract', () => {
     for (const scenario of [
       'owned-vp8-product',
       'owned-vp8-product-ba',
-      'owned-vp8-product-v8',
-      'owned-vp8-product-v8-ba',
+      'owned-vp8-product-v8-low',
+      'owned-vp8-product-v8-low-ba',
+      'owned-vp8-product-v8-medium',
+      'owned-vp8-product-v8-medium-ba',
+      'owned-vp8-product-v8-high',
+      'owned-vp8-product-v8-high-ba',
     ]) {
       const selected = profile.preparation.scenarios[scenario];
       expect(selected?.selector).toBe(`${scenario}.json`);

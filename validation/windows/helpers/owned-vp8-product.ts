@@ -885,8 +885,12 @@ export async function exerciseOwnedVp8Product({
   scenario:
     | 'owned-vp8-product'
     | 'owned-vp8-product-ba'
-    | 'owned-vp8-product-v8'
-    | 'owned-vp8-product-v8-ba';
+    | 'owned-vp8-product-v8-low'
+    | 'owned-vp8-product-v8-low-ba'
+    | 'owned-vp8-product-v8-medium'
+    | 'owned-vp8-product-v8-medium-ba'
+    | 'owned-vp8-product-v8-high'
+    | 'owned-vp8-product-v8-high-ba';
   prior: Build;
   candidate: Build;
   server: Server;
@@ -895,12 +899,20 @@ export async function exerciseOwnedVp8Product({
 }) {
   await mkdir(output, { recursive: true });
   const fullVideo = scenario.includes('-v8');
+  const v8Quality = fullVideo
+    ? (/^owned-vp8-product-v8-(low|medium|high)(?:-ba)?$/.exec(scenario)?.[1] as
+        | Quality
+        | undefined)
+    : undefined;
+  if (fullVideo) assert(v8Quality, 'V8 scenario has no fixed quality');
+  const qualities: readonly Quality[] = v8Quality ? [v8Quality] : ['low', 'medium', 'high'];
   const order = scenario.endsWith('-ba')
     ? (['candidate', 'prior'] as const)
     : (['prior', 'candidate'] as const);
   const report: Record<string, unknown> = {
     schemaVersion: 1,
     scenario,
+    fixedQuality: v8Quality ?? null,
     status: 'running',
     browserVersion: browser.version(),
     order,
@@ -924,6 +936,9 @@ export async function exerciseOwnedVp8Product({
       'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
     softwareInjection:
       'Page and conversion Worker OffscreenCanvas.convertToBlob disabled before their application code; Worker response prefix digest recorded',
+    functionalScope: fullVideo
+      ? 'V8 selector measures and decodes only; active Stop and invalid-to-valid recovery are exercised in the small product selector, not repeated for each V8 quality'
+      : 'Candidate Worker and main software routes, invalid-to-valid recovery, and active main owned-work Stop/recovery',
     samples: [] as Sample[],
     functional: [] as unknown[],
   };
@@ -1021,7 +1036,7 @@ export async function exerciseOwnedVp8Product({
       const context = await createContext(browser, build, false, false, workerPatches);
       try {
         for (const { fixture, path, sha256 } of inputs) {
-          for (const quality of ['low', 'medium', 'high'] as const) {
+          for (const quality of qualities) {
             const page = await context.newPage();
             const errors: string[] = [];
             page.on('pageerror', (error) => errors.push(error.message));
@@ -1068,6 +1083,11 @@ export async function exerciseOwnedVp8Product({
       }
     }
     const samples = report.samples as Sample[];
+    assert.equal(
+      samples.length,
+      fullVideo ? 4 : 24,
+      'Scenario sample count differs from declared cohort'
+    );
     for (const selected of samples.filter((sample) => sample.build === 'candidate')) {
       const priorSample = samples.find(
         (sample) =>

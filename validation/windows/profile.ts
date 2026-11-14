@@ -3799,12 +3799,28 @@ export async function run({
       selectorPath: 'validation/windows/inputs/owned-vp8-product-ba.json',
     },
     {
-      scenario: 'owned-vp8-product-v8',
-      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8.json',
+      scenario: 'owned-vp8-product-v8-low',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-low.json',
     },
     {
-      scenario: 'owned-vp8-product-v8-ba',
-      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-ba.json',
+      scenario: 'owned-vp8-product-v8-low-ba',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-low-ba.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-medium',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-medium.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-medium-ba',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-medium-ba.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-high',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-high.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-high-ba',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-high-ba.json',
     },
   ] as const;
   for (const { scenario, selectorPath } of vp8ProductSelectors) {
