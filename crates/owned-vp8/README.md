@@ -1,13 +1,15 @@
-# Owned VP8 v2 engineering implementation
+# Owned VP8 v2 candidate implementation
 
 Execution and acceptance are governed by [issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
 and the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
-This crate remains experimental and absent from production delivery. The
-historical DC-only result and receipts remain in `497-owned-vp8-result.md`.
+The candidate main and conversion Worker software routes import this crate's
+WASM artifact. Master delivery and `wasm-webp` removal remain gated by product
+qualification. The historical DC-only result and receipts remain in
+`497-owned-vp8-result.md`.
 
 The residual path now codes all sixteen coefficients using B_PRED/B_DC prediction,
-plus a separately exercised I16/DC and Y2/WHT path. The default experimental
-entrypoint now selects bounded I16/I4/UV modes using distortion and estimated
+plus a separately exercised I16/DC and Y2/WHT path. The candidate encoder
+selects bounded I16/I4/UV modes using distortion and estimated
 mode/coefficient/skip bit costs. Trials isolate reconstruction and contexts.
 Per-frame coefficient statistics follow frozen mode/coefficient decisions. A
 bounded optimizer proposes updates, and exact whole-frame counting includes
@@ -34,7 +36,7 @@ counterpart of the published wrapper tag. Its native import oracle does not prov
 the shipped comparator WASM was built from that commit. The encoder implementation
 remains owned Rust; these adapted arithmetic/table portions retain attribution. Retain
 [LICENSE.libwebp](LICENSE.libwebp) and [PATENTS.libwebp](PATENTS.libwebp) with source
-and eventual binary distributions. Format tables and decoder reconstruction are
+and candidate binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
 
 ## ABI2 and resources
@@ -86,11 +88,11 @@ cargo build --locked --offline --release --target wasm32-unknown-unknown
 ```
 
 From the repository root, use the project-selected Node to generate or verify
-the development-only bounded artifact and its source provenance:
+the bounded candidate artifact and its source provenance:
 
 ```sh
-vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --generate
-vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --check
+vp run build:vp8-wasm:generate
+vp run build:vp8-wasm:check
 vp exec node --experimental-strip-types scripts/test/owned-vp8-compiled.ts
 ```
 
@@ -98,14 +100,16 @@ The provenance manifest includes this README and license files as well as Rust
 sources. Regenerate it after changing any listed input, then run `--check`; an
 unchanged WASM digest alone does not validate stale provenance.
 
-The artifact is `owned-vp8.wasm` in this crate, outside the production import
-and delivery graph. Its memory declaration has an exact 192-MiB maximum; raw
+The artifact is `owned-vp8.wasm` in this crate and participates in the candidate
+product import/build graph. It is not yet qualified for master delivery. Its
+memory declaration has an exact 192-MiB maximum; raw
 Cargo development output without that declaration does not qualify delivery.
 
 Ignored tests explicitly require FFmpeg's native `vp8` and separate `libvpx`
 decoders. They compare every visible YUV byte against encoder reconstruction
-with filtering disabled, including all modulo-16 remainders and synthetic signed
-coefficient categories, zero runs, skips and Y2/B_PRED contexts. They establish
+with explicit disabled and enabled filtering cases, including modulo-16
+remainders, synthetic signed coefficient categories, zero runs, skips and
+Y2/B_PRED contexts. They establish
 engineering correctness only. They do not measure preset fidelity, product
 performance, cancellation or animation/browser acceptance. Forward transform
 vectors also use separately executed pinned C arithmetic; that check alone is

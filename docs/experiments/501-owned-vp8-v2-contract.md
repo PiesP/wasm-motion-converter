@@ -36,12 +36,13 @@ gzip/raw and deferred/background gzip must not exceed this baseline. Owned VP8
 WASM is capped at the removed component's 482273 raw / 184377 gzip bytes. The
 linear-capacity ceiling is 192 MiB, additionally subject to aggregate admission.
 
-The UI WebP flow explicitly enters the main-thread pipeline, which selects
-parallel Canvas Worker, serial Canvas, then software. The separate conversion
-Worker also contains a software encoder path. `webp-encoder-service.ts` currently
-copies packed RGB into the Emscripten singleton, extracts VP8 from still RIFF,
-and feeds the owned animation mux. Both software call sites must be covered by
-integration/removal; native results cannot qualify the new software encoder.
+At the frozen baseline, the UI WebP flow entered the main-thread pipeline and
+both software call sites used the Emscripten `wasm-webp` singleton. The candidate
+main and conversion Worker routes now call `encodeWebpOwned`; the retained
+`encodeWebp` function is a comparator, not the candidate product selector.
+The main pipeline still selects parallel Canvas Worker, serial Canvas, then
+software. Both software call sites require qualification; native results cannot
+qualify the new software encoder.
 
 Core input contract: opaque 8-bit sRGB code values in checked packed RGB or
 RGBA/RGBX/BGRA/BGRX records with width, height, byte stride and explicit layout.
@@ -138,7 +139,8 @@ pending asynchronous write. Arithmetic output must be finalized before leasing.
 New production Cargo dependencies: zero. Dense bounded records and bounded
 host-task-yielding stages precede performance acceptance.
 
-The candidate remains absent from production routes/assets until M2/M3/M4 pass.
+The candidate branch imports owned VP8 into its product routes and build graph
+for qualification; master delivery remains held until the required gates pass.
 M5 then removes reachable wasm-webp runtime, loaders/chunks/declarations/copies,
 classification and runtime-only patch handling; a pinned dev oracle may remain.
 Verify main/Worker/service-worker execution, offline/update recovery, MIME/CSP,
@@ -209,6 +211,32 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   `src/services/conversion-worker/pipeline-worker.ts` retained wasm-webp route
   descriptions while calling `encodeWebpOwned`. Both comments now identify the
   owned software path. Production adoption remains subject to the open gates.
+- Fixed in candidate `d43d23d0`: `src/hooks/conversion-handlers/use-perform-conversion.ts`
+  attributed the UI's main WebP route to a wasm-webp Worker hang and described
+  only an OffscreenCanvas encoder. The candidate main route now selects internal
+  Canvas Workers or owned VP8 software; its comment identifies that routing.
+- Fixed in candidate `d43d23d0`: `.github/threat-model.md` listed bundled
+  wasm-webp as an active software encoding option. Its architecture row now
+  identifies Canvas and owned VP8 while retaining the comparison path and
+  bundled assets pending M5 package classification.
+- Fixed in the Windows fixture stage: `CONTRIBUTING.md` build task table omitted
+  the `build:ci` owned VP8 input preflight present in `vite.config.ts`. The row
+  now states the README-only, V8 digest and unexpected-entry checks.
+- Fixed in this build stage: `scripts/build/build-owned-vp8-wasm.ts` and
+  `crates/owned-vp8/README.md` described the artifact as development-only and
+  absent from product imports after the candidate main and Worker routes began
+  loading it. Builder role, crate guidance and aggregate build now describe the
+  candidate graph without claiming qualified master delivery. The README also
+  described independent decoder tests as filtering-disabled after enabled-filter
+  reconstruction tests were added; it now identifies both cases.
+- Fixed in this build stage: `scripts/build/generate-licenses.ts` had no owned
+  VP8 attribution section, leaving its adapted libwebp notices tied to the
+  separate wasm-webp package inventory. The generated notice now independently
+  includes owned MIT, libwebp BSD/patent and RFC format attribution.
+- Fixed in this contract: the product-route paragraph still used present tense
+  for the frozen Emscripten baseline, and the adoption paragraph said the
+  candidate remained absent from product routes. Both now separate the frozen
+  baseline, candidate imports and gated master delivery.
 - External reference discrepancy, unchanged: RFC 6386 section 13.3's illustrative
   coefficient pseudocode swaps plane labels relative to its detailed probability
   table and sets `prevCoeffWasZero` unconditionally. The detailed table/narrative

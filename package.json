@@ -35,6 +35,9 @@
     "build:gif-wasm": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts",
     "build:gif-wasm:check": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts --check",
     "build:gif-wasm:generate": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts --generate",
+    "build:vp8-wasm": "node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts",
+    "build:vp8-wasm:check": "node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --check",
+    "build:vp8-wasm:generate": "node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --generate",
     "build": "vp build",
     "postbuild": "node --experimental-strip-types scripts/build/postbuild.ts",
     "preview": "vp preview",
@@ -63,7 +66,7 @@
     "build:demux-wasm": "node --experimental-strip-types scripts/build/build-owned-demux-wasm.ts",
     "build:demux-wasm:check": "node --experimental-strip-types scripts/build/build-owned-demux-wasm.ts --check",
     "build:demux-wasm:generate": "node --experimental-strip-types scripts/build/build-owned-demux-wasm.ts --generate",
-    "build:owned-wasm": "vp run build:gif-wasm && vp run build:demux-wasm"
+    "build:owned-wasm": "vp run build:gif-wasm && vp run build:demux-wasm && vp run build:vp8-wasm"
   },
   "dependencies": {
     "@piesp/browser-core": "file:packages/core",

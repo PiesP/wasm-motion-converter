@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-/** Rebuild the development-only owned VP8 ABI2 module from a closed source set. */
+/** Rebuild the candidate product-owned VP8 ABI2 module from a closed source set. */
 import { deepStrictEqual } from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -250,7 +250,7 @@ export function inspectOwnedVp8Wasm(bytes: Buffer): object {
 function expected(bytes: Buffer): object {
   return {
     schemaVersion: 1,
-    role: 'development-only owned VP8 ABI2 candidate; no product build graph or production asset',
+    role: 'candidate product-owned VP8 ABI2 module; imported by candidate routes, not yet qualified for master delivery',
     compiler,
     compilerCommit,
     target,

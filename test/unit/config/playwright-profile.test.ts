@@ -59,8 +59,9 @@ describe('Playwright workflow profiles', () => {
       'vp run build:owned-wasm && vp run prepare:e2e:fixture'
     );
     expect(packageJson.scripts?.['build:owned-wasm']).toBe(
-      'vp run build:gif-wasm && vp run build:demux-wasm'
+      'vp run build:gif-wasm && vp run build:demux-wasm && vp run build:vp8-wasm'
     );
+    expect(packageJson.scripts?.['build:vp8-wasm:check']).toContain('--check');
     expect(workflow).toContain('vp run test:e2e:ci');
     expect(workflow).toContain('sudo apt-get install --yes ffmpeg');
     expect(e2eJob).toContain('timeout-minutes: 90');

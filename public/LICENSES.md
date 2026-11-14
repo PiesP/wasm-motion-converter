@@ -4,7 +4,7 @@
 > Do not edit manually — run `vp run build` to regenerate.
 
 Declared runtime dependencies and their installed license/notice texts follow.
-Owned GIF source attribution, the development-only MediaBunny oracle, and supplemental wasm-webp notices are classified separately from runtime package ownership.
+Owned GIF and owned VP8 source attribution, the development-only MediaBunny oracle, and supplemental wasm-webp notices are classified separately from runtime package ownership.
 
 ## @piesp/browser-core
 
@@ -795,6 +795,99 @@ Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/
 
       This Source Code Form is "Incompatible With Secondary Licenses", as
       defined by the Mozilla Public License, v. 2.0.
+
+## Owned VP8 source attribution
+
+- **Version:** 0.1.0
+- **License:** MIT AND BSD-3-Clause
+- **Repository:** https://github.com/PiesP/wasm-motion-converter/tree/master/crates/owned-vp8
+- **Purpose:** Conversion-owned Rust VP8 candidate: original MIT code, attributed libwebp arithmetic and color tables, and RFC 6386 format constants
+
+### LICENSE
+
+    MIT License
+
+    Copyright (c) 2025-2026 PiesP
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+### crates/owned-vp8/LICENSE.libwebp
+
+    Copyright (c) 2010, Google Inc. All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are
+    met:
+
+      * Redistributions of source code must retain the above copyright
+        notice, this list of conditions and the following disclaimer.
+
+      * Redistributions in binary form must reproduce the above copyright
+        notice, this list of conditions and the following disclaimer in
+        the documentation and/or other materials provided with the
+        distribution.
+
+      * Neither the name of Google nor the names of its contributors may
+        be used to endorse or promote products derived from this software
+        without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+    HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+### crates/owned-vp8/PATENTS.libwebp
+
+    Additional IP Rights Grant (Patents)
+    ------------------------------------
+
+    "These implementations" means the copyrightable works that implement the WebM
+    codecs distributed by Google as part of the WebM Project.
+
+    Google hereby grants to you a perpetual, worldwide, non-exclusive, no-charge,
+    royalty-free, irrevocable (except as stated in this section) patent license to
+    make, have made, use, offer to sell, sell, import, transfer, and otherwise
+    run, modify and propagate the contents of these implementations of WebM, where
+    such license applies only to those patent claims, both currently owned by
+    Google and acquired in the future, licensable by Google that are necessarily
+    infringed by these implementations of WebM. This grant does not include claims
+    that would be infringed only as a consequence of further modification of these
+    implementations. If you or your agent or exclusive licensee institute or order
+    or agree to the institution of patent litigation or any other patent
+    enforcement activity against any entity (including a cross-claim or
+    counterclaim in a lawsuit) alleging that any of these implementations of WebM
+    or any code incorporated within any of these implementations of WebM
+    constitute direct or contributory patent infringement, or inducement of
+    patent infringement, then any patent rights granted to you under this License
+    for these implementations of WebM shall terminate as of the date such
+    litigation is filed.
+
+### RFC 6386 format reference
+
+    RFC 6386 (VP8 Data Format and Decoding Guide), sections 7, 9, 11, 13 and 14, Copyright (c) 2011 IETF Trust and the identified contributors. Numeric format tables and bitstream semantics are referenced independently of libwebp source code. https://www.rfc-editor.org/rfc/rfc6386.html
 
 ## Build-generated browser helper owner
 

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "role": "development-only owned VP8 ABI2 candidate; no product build graph or production asset",
+  "role": "candidate product-owned VP8 ABI2 module; imported by candidate routes, not yet qualified for master delivery",
   "compiler": "1.99.1",
   "compilerCommit": "58cf8f9c35b355199727627d07ae34a4e2846d67",
   "target": "wasm32-unknown-unknown",
@@ -23,7 +23,7 @@
     "crates/owned-vp8/rust-toolchain.toml": "60c5407645e5d56f600e6ae713f0afc4aebbb858c5ceeef4a79c22b7dd2b51c9",
     "crates/owned-vp8/LICENSE.libwebp": "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf",
     "crates/owned-vp8/PATENTS.libwebp": "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c",
-    "crates/owned-vp8/README.md": "7445837ec28a99e11ebff8eb29d2b93499114be7e48a136539453801ba921291",
+    "crates/owned-vp8/README.md": "f6a3ad5911944c5042b72da69921dbac386ad7931d9c8400848bb763ca26cc4e",
     "crates/owned-vp8/src/abi.rs": "a2f3caa8747667299222978a632e9a7f8d4a6b539e1e7cc09fcbf0caeecccb16",
     "crates/owned-vp8/src/ac_quant.rs": "91b45d202601313765c48c42c36dcee29561e681e194db060703c4a5ccd0d575",
     "crates/owned-vp8/src/bmode_probs.rs": "abd7bd0e0e6d0e21d4711f4b8d65261357514a536c7f90213571b1725e5e1ef4",
@@ -42,7 +42,7 @@
     "crates/owned-vp8/src/segmentation.rs": "607b34b5cd152c335c9bbd7b6a27dfe3bfc069b7c308782b1f4efdedd1d25ae9",
     "crates/owned-vp8/src/textured.rs": "bc88917f89eb94cc2c6451df88d54c7a6c60cfd454ee95b23f4b8a89ddfe42d6",
     "crates/owned-vp8/src/transform.rs": "fa418d388542f0a8b08b968b7ff7d4b0b30c5c7a2402e0bcaa49e9b6ab2a77a2",
-    "scripts/build/build-owned-vp8-wasm.ts": "356193f25b171b27cb832f577c1dd0baf3dd6bd5a2a9b9c3b5e736cb54e20877",
+    "scripts/build/build-owned-vp8-wasm.ts": "b7f6a0062b8eed36a6b2a9f48ae17523da898084044d4c4fba4769d5a9d798db",
     "scripts/build/build-gif-scalar-wasm.ts": "18dba1528631fd1cd29c5cb8c3b1725dd8f9139a4b3ca93ddc42d5ae6cd59dfd"
   },
   "artifact": {
