@@ -283,6 +283,7 @@ type MotionObserver = {
   stopClickMs: number | null;
   idleAfterStopMs: number | null;
   workers: WorkerEvent[];
+  workerConstructionFailures: { url: string; name: string }[];
   reset: () => void;
   calibrate?: () => {
     iterations: number;
@@ -317,7 +318,8 @@ export function assertNoUnexpectedDiagnostics(diagnostic: MotionDiagnostic) {
 }
 
 /** Installed before the application; keeps all measurement events in one page clock. */
-export function installMotionObserver() {
+export function installMotionObserver(options?: { forceConversionWorkerFailure?: boolean }) {
+  const observerOptions = options;
   const observed: MotionObserver = {
     clickMs: null,
     outputUrls: [],
@@ -325,6 +327,7 @@ export function installMotionObserver() {
     stopClickMs: null,
     idleAfterStopMs: null,
     workers: [],
+    workerConstructionFailures: [],
     reset() {
       this.clickMs = null;
       this.outputUrls = [];
@@ -370,8 +373,18 @@ export function installMotionObserver() {
     private readonly entry: WorkerEvent | null;
 
     constructor(scriptURL: string | URL, options?: WorkerOptions) {
-      super(scriptURL, options);
       const url = new URL(String(scriptURL), location.href);
+      if (
+        /^\/assets\/worker-[\w-]+\.js$/.test(url.pathname) &&
+        observerOptions?.forceConversionWorkerFailure
+      ) {
+        observed.workerConstructionFailures.push({ url: url.href, name: 'NotSupportedError' });
+        throw new DOMException(
+          'Controlled conversion Worker construction failure',
+          'NotSupportedError'
+        );
+      }
+      super(scriptURL, options);
       this.entry = /^\/assets\/worker-[\w-]+\.js$/.test(url.pathname)
         ? { url: url.href, starts: [], completes: [], errors: [], terminationCalls: 0 }
         : null;
@@ -784,6 +797,69 @@ export async function measure(
       scope:
         'Renderer Runtime.getHeapUsage point samples; after-verification includes harness GIF decoding and cannot establish product retention or peak/native memory',
     },
+    saved: { ...saved, loopCount },
+    decoded,
+  };
+}
+
+/** Functional recovery check for an intentionally unavailable conversion Worker. */
+export async function measureFallback(page: Page, workload: MotionWorkload) {
+  const before = await page.evaluate(() => {
+    const observer = Reflect.get(globalThis, '__wmcMotionObserver') as MotionObserver;
+    observer.reset();
+    return {
+      workerCount: observer.workers.length,
+      rejectionCount: observer.workerConstructionFailures.length,
+      timeOrigin: performance.timeOrigin,
+    };
+  });
+  await page.locator('[data-testid="convert-button"]').click();
+  const prompt = page.locator('[data-testid="modal-confirm-button"]');
+  if (await prompt.isVisible()) await prompt.click();
+  await page.waitForFunction(
+    () => {
+      const observer = Reflect.get(globalThis, '__wmcMotionObserver') as MotionObserver;
+      return (
+        observer.readyMs !== null &&
+        document.querySelector('[data-testid="result-section"]')?.getClientRects().length
+      );
+    },
+    undefined,
+    { timeout: CONVERSION_TIMEOUT_MS }
+  );
+  assert.equal(await page.locator('[data-testid="error-display"]').isVisible(), false);
+  const observation = await page.evaluate(({ workerCount, rejectionCount }) => {
+    const observer = Reflect.get(globalThis, '__wmcMotionObserver') as MotionObserver;
+    return {
+      clickMs: observer.clickMs,
+      readyMs: observer.readyMs,
+      outputUrls: [...observer.outputUrls],
+      workers: observer.workers.slice(workerCount),
+      rejections: observer.workerConstructionFailures.slice(rejectionCount),
+      timeOrigin: performance.timeOrigin,
+    };
+  }, before);
+  assert.equal(observation.timeOrigin, before.timeOrigin, 'Document changed during recovery');
+  assert.equal(observation.workers.length, 0, 'Fallback unexpectedly created a conversion Worker');
+  assert.equal(observation.rejections.length, 1, 'Fallback did not reject one conversion Worker');
+  assert.equal(observation.rejections[0]?.name, 'NotSupportedError');
+  assert(observation.clickMs !== null && observation.readyMs !== null);
+  assert(observation.readyMs > observation.clickMs, 'Invalid recovery readiness interval');
+  const href = await page.locator('[data-testid="download-result-button"]').getAttribute('href');
+  assert(href?.startsWith('blob:'), 'Recovery GIF has no Blob URL');
+  const { data, ...saved } = await downloadIdentity(page);
+  const loopCount = gifLoopCount(data);
+  assert.equal(loopCount, 0, 'Recovery GIF is missing infinite-loop extension');
+  assert.equal(observation.outputUrls.length, 1, 'Unexpected GIF publication during recovery');
+  assert.equal(observation.outputUrls[0]?.url, href, 'Saved GIF differs from published Blob');
+  assert.equal(observation.outputUrls[0]?.size, saved.bytes);
+  const decoded = await inspectGif(page, data, workload);
+  return {
+    outputRoute: 'gif-main-thread-fallback' as const,
+    routeBasis: 'conversion-worker-constructor-rejected-and-no-worker-created',
+    timeOrigin: observation.timeOrigin,
+    workerConstructionFailures: observation.rejections,
+    requestToDownloadReadyMs: observation.readyMs - observation.clickMs,
     saved: { ...saved, loopCount },
     decoded,
   };
