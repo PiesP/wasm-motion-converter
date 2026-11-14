@@ -90,7 +90,9 @@ export async function exerciseOwnedDemuxServiceMeasurement({
     const file = pathname.slice(1);
     const body =
       pathname === '/'
-        ? Buffer.from('<!doctype html><title>Demux measurement</title>')
+        ? Buffer.from(
+            '<!doctype html><title>Demux measurement</title><input id="diagnostic-file" type="file">'
+          )
         : files.get(file);
     response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
     response.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
@@ -156,8 +158,10 @@ export async function exerciseOwnedDemuxServiceMeasurement({
       reads:
         'Blob.slice view extents, completed Blob.arrayBuffer bytes, native stream reader chunks and cumulative completed read wait; phase-attributed call and completion counts',
       wasmCapacity: 'separate untimed diagnostic session, not the timed instance',
+      filePreparation:
+        'owned selection and metadata extraction from the preloaded native file input after the four Blob latency samples; Playwright file staging excluded',
       fullDrain:
-        'separate trim-zero product stream after the four latency samples; setup and stream wall time exclude packet hashing',
+        'separate trim-zero product stream from native file input; setup and stream wall time exclude packet hashing',
     },
     requests,
     expectedEngine,
@@ -193,6 +197,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
       });
       try {
         await page.goto(origin, { waitUntil: 'load' });
+        await page.locator('#diagnostic-file').setInputFiles(path);
         const sample = await page.evaluate(
           async ({ base64, entry, trimStart }) => {
             const sourceBytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -203,6 +208,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               | 'firstSeek'
               | 'warmMetadata'
               | 'warmSeek'
+              | 'filePreparationDiagnostic'
               | 'fullDrainDiagnostic'
               | 'diagnostic'
               | 'unattributed';
@@ -235,6 +241,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               firstSeek: makeReads(),
               warmMetadata: makeReads(),
               warmSeek: makeReads(),
+              filePreparationDiagnostic: makeReads(),
               fullDrainDiagnostic: makeReads(),
               diagnostic: makeReads(),
               unattributed: makeReads(),
@@ -247,6 +254,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
             const nativeArrayBuffer = Blob.prototype.arrayBuffer;
             const nativeStream = Blob.prototype.stream;
             const nativeClone = globalThis.structuredClone;
+            let diagnosticFile: File | undefined;
             globalThis.structuredClone = ((
               value: unknown,
               options?: StructuredSerializeOptions
@@ -256,7 +264,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
                 value &&
                 typeof value === 'object' &&
                 'source' in value &&
-                value.source === source &&
+                (value.source === source || value.source === diagnosticFile) &&
                 result &&
                 typeof result === 'object' &&
                 'source' in result &&
@@ -539,8 +547,22 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               const warmSeek = warmSeekTimed.value;
               const warmPacket = await packet(warmSeek);
 
+              const file = document.querySelector<HTMLInputElement>('#diagnostic-file')?.files?.[0];
+              if (!(file instanceof File) || file.size !== sourceBytes.byteLength)
+                throw new Error('Native file input is missing or has an unexpected size');
+              diagnosticFile = file;
+              tracked.add(file);
+              const filePreparationTimed = await timedPhase('filePreparationDiagnostic', () => {
+                readyApi.select(file);
+                return readyApi.metadata(file);
+              });
+              const fileMetadata = filePreparationTimed.value;
+              const fileMetadataValue = await summarize(fileMetadata);
+              if (JSON.stringify(fileMetadataValue) !== JSON.stringify(warmMetadataValue))
+                throw new Error('Native File metadata differs from the memory Blob metadata');
+
               const fullDrainTimed = await timedPhase('fullDrainDiagnostic', () =>
-                readyApi.diagnosticFullDrain(source, warmMetadata)
+                readyApi.diagnosticFullDrain(file, fileMetadata)
               );
               const fullDrain = fullDrainTimed.value;
               const trace: Array<{
@@ -596,8 +618,15 @@ export async function exerciseOwnedDemuxServiceMeasurement({
                   reads: { ...readsByPhase.warmSeek },
                   firstPacket: warmPacket,
                 },
+                filePreparationDiagnostic: {
+                  ms: filePreparationTimed.ms,
+                  sourceBacking: 'native-file-input',
+                  reads: { ...readsByPhase.filePreparationDiagnostic },
+                  value: fileMetadataValue,
+                },
                 fullDrainDiagnostic: {
                   ms: fullDrainTimed.ms,
+                  sourceBacking: 'native-file-input',
                   setupMs: fullDrain.setupMs,
                   streamWallMs: fullDrain.streamWallMs,
                   packetCount: fullDrain.packetCount,
@@ -642,6 +671,8 @@ export async function exerciseOwnedDemuxServiceMeasurement({
           }
         );
         assert.deepEqual(sample.firstMetadata.value, sample.warmMetadata.value);
+        assert.deepEqual(sample.filePreparationDiagnostic.value, sample.warmMetadata.value);
+        assert.equal(sample.fullDrainDiagnostic.sourceBacking, 'native-file-input');
         assert.equal(sample.engine, expectedEngine);
         assert.deepEqual(sample.firstSeek.firstPacket.sha256, sample.warmSeek.firstPacket.sha256);
         assert.deepEqual(
