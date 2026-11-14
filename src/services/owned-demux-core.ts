@@ -97,11 +97,14 @@ function awaitAbortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
 
 /** Classify terminal failures without retrying a failed or cancelled conversion. */
 export function classifyOwnedDemuxError(error: unknown, signal?: AbortSignal): Error {
-  if (signal?.aborted)
+  if (signal?.aborted) {
+    if (signal.reason instanceof Error && signal.reason.name === 'TimeoutError')
+      return signal.reason;
     return error instanceof Error && error.name === 'AbortError'
       ? error
       : new DOMException('Owned demux cancelled', 'AbortError');
-  if (error instanceof Error && error.name === 'AbortError') return error;
+  }
+  if (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)) return error;
   if (
     error instanceof OwnedDemuxLoadError ||
     error instanceof OwnedDemuxAbiError ||

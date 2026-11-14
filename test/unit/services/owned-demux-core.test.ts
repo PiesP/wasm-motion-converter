@@ -81,4 +81,17 @@ describe('owned demux packet statistics and terminal errors', () => {
     expect(second).toBe(first);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('preserves deadline failures separately from explicit cancellation', () => {
+    const deadline = new DOMException('Deadline expired', 'TimeoutError');
+    expect(classifyOwnedDemuxError(deadline)).toBe(deadline);
+    const timedOut = new AbortController();
+    timedOut.abort(deadline);
+    expect(classifyOwnedDemuxError(new Error('Read stopped'), timedOut.signal)).toBe(deadline);
+    const stopped = new AbortController();
+    stopped.abort(new DOMException('Stop', 'AbortError'));
+    expect(classifyOwnedDemuxError(deadline, stopped.signal)).toMatchObject({
+      name: 'AbortError',
+    });
+  });
 });
