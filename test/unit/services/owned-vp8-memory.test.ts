@@ -60,6 +60,43 @@ describe('owned VP8 conversion-wide admission', () => {
     frames.dispose();
   });
 
+  it('admits the existing large RGB workload without charging retained RGBA scratch twice', async () => {
+    const width = 4096,
+      height = 2457;
+    const frames = new WebpFrameMemoryBudget({
+      codedWidth: width,
+      codedHeight: height,
+      displayWidth: width,
+      displayHeight: height,
+      targetWidth: width,
+      targetHeight: height,
+      workerCount: 1,
+      serialSoftware: true,
+      sourceHeadroomFrames: 1,
+    });
+    const target = await frames.acquireTarget();
+    const rgb = globalBufferPool.acquire(width * height * 3);
+    const rgba = globalBufferPool.acquire(width * height * 4);
+    globalBufferPool.release(rgba);
+    const muxer = new StreamingWebpMuxer(width, height);
+    const broker = new OwnedVp8MemoryBroker(
+      { inputBufferBytes: 0 } as DemuxResult,
+      frames,
+      muxer,
+      () => undefined
+    );
+    expect(globalBufferPool.totalPooledMemory).toBe(64 * MIB);
+    expect(globalBufferPool.totalActiveMemory).toBe(32 * MIB);
+    expect(broker.frameLiveBytes).toBe(frames.usage.totalBytes);
+    expect(() => broker.reserve(112 * MIB, 0)).not.toThrow();
+    target.release();
+    globalBufferPool.release(rgb);
+    // After the target reservation ends, both retained buffers remain charged.
+    expect(broker.frameLiveBytes).toBe(frames.usage.totalBytes + 96 * MIB);
+    broker.release();
+    frames.dispose();
+  });
+
   it('settles the stricter application guard before accepting a linear reservation', () => {
     const { broker, frames, appGuard } = fixture();
     appGuard.mockImplementationOnce(() => {

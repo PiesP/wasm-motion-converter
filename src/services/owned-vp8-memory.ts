@@ -36,13 +36,12 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
     private readonly maxOutputBytes = WEBP_MAX_OUTPUT_BYTES
   ) {}
 
-  /** Active pooled target buffers are already covered by target reservations.
-   * Idle pooled buffers and any active allocation above that credit are extra. */
+  /** Target reservations cover both output pixels and transient copy scratch.
+   * Credit pooled active/idle storage once against that shared reservation; an
+   * idle RGBA scratch buffer is still part of the reserved RGB copy footprint. */
   get frameLiveBytes(): number {
     const usage = this.frames.usage;
-    const poolExcess =
-      globalBufferPool.totalPooledMemory +
-      Math.max(0, globalBufferPool.totalActiveMemory - usage.targetBytes);
+    const poolExcess = Math.max(0, globalBufferPool.totalRetainedMemory - usage.targetBytes);
     return usage.totalBytes + poolExcess;
   }
 
