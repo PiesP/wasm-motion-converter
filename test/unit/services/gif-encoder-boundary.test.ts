@@ -38,36 +38,36 @@ vi.mock('@services/dynamic-decimation-controller', () => ({
   }),
 }));
 
-vi.mock('gifenc', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('gifenc')>();
-  return {
-    ...actual,
-    applyPalette: (...args: Parameters<typeof actual.applyPalette>) => {
-      mocks.applyInputs.push(args[0]);
-      const result = actual.applyPalette(...args);
-      mocks.applyResults.push(result);
-      return result;
-    },
-    GIFEncoder: (...args: Parameters<typeof actual.GIFEncoder>) => {
-      const encoder = actual.GIFEncoder(...args);
-      const writeFrame = encoder.writeFrame.bind(encoder);
-      encoder.writeFrame = ((indexed: Uint8Array, ...writeArgs: unknown[]) => {
-        mocks.writeInputs.push(indexed);
-        return writeFrame(indexed, ...(writeArgs as [number, number, object | undefined]));
-      }) as typeof encoder.writeFrame;
-      return encoder;
-    },
-    quantize: (...args: Parameters<typeof actual.quantize>) => {
-      mocks.quantizeInputs.push(args[0]);
-      return actual.quantize(...args);
-    },
-  };
-});
 vi.mock('@services/gif-scalar-wasm', async () => {
   const gifenc = await import('gifenc');
   return {
-    createGifScalarQuantizer: async () => (rgba: Uint8Array, colors: number) =>
-      gifenc.quantize(rgba, colors, { format: 'rgb565' }),
+    createGifScalarQuantizer: async () => {
+      const quantize = (rgba: Uint8Array, colors: number) => {
+        mocks.quantizeInputs.push(rgba);
+        return gifenc.quantize(rgba, colors, { format: 'rgb565' });
+      };
+      return Object.assign(quantize, {
+        mapPalette: (rgba: Uint8Array, palette: number[][]) => {
+          mocks.applyInputs.push(rgba);
+          const result = gifenc.applyPalette(rgba, palette, 'rgb565');
+          mocks.applyResults.push(result);
+          return result;
+        },
+        compress: (indices: Uint8Array, depth: number) => {
+          mocks.writeInputs.push(indices);
+          const palette = Array.from({ length: 1 << depth }, (_, index) => [index, index, index]);
+          const encoder = gifenc.GIFEncoder({ auto: true });
+          encoder.writeFrame(indices, indices.byteLength, 1, {
+            palette,
+            colorDepth: depth,
+            repeat: 0,
+            delay: 20,
+          });
+          encoder.finish();
+          return encoder.bytes().subarray(6 + 7 + palette.length * 3 + 19 + 8 + 10, -1);
+        },
+      });
+    },
   };
 });
 
@@ -105,7 +105,7 @@ afterEach(() => {
 });
 
 describe('GIF exact pixel boundaries', () => {
-  it('ignores poisoned pooled tail bytes and writes applyPalette indices directly', async () => {
+  it('ignores poisoned pooled tail bytes and writes exact mapped indices directly', async () => {
     mocks.frameFactory = () => validPixels.slice();
     const cleanOutput = await encodeGif(demux, {
       height,
