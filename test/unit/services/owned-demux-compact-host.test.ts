@@ -15,14 +15,32 @@ function fakeCompactWasm(
     seekWorkspaceBytes?: number;
     flags?: number;
     onWork?: () => void;
+    onQueryWork?: () => void;
+    queryWorkSteps?: number;
   } = {}
-): { module: WebAssembly.Module; calls: { packet: number; seekEnd: number; steps: number } } {
+): {
+  module: WebAssembly.Module;
+  calls: { packet: number; seekEnd: number; steps: number; queryEnd: number; querySteps: number };
+} {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 1024 });
   const view = new DataView(memory.buffer);
-  const calls = { packet: 0, seekEnd: 0, steps: 0 };
+  const calls = { packet: 0, seekEnd: 0, steps: 0, queryEnd: 0, querySteps: 0 };
+  let queriedIndex: number | null = null;
+  let cachedIndex: number | null = null;
   const event = (pointer: number, tag: number): number => {
     view.setUint32(pointer, tag, true);
     return pointer;
+  };
+  const writePacket = (index: number): number => {
+    event(256, 5);
+    view.setBigUint64(264, BigInt(index === PACKET_COUNT - 1 ? 0 : 5), true);
+    view.setUint32(272, 5, true);
+    view.setUint32(276, 1, true);
+    view.setBigInt64(280, BigInt(index === PACKET_COUNT - 1 ? 9 : 8), true);
+    view.setBigInt64(288, BigInt(index === PACKET_COUNT - 1 ? 9 : 8), true);
+    view.setBigUint64(296, 1n, true);
+    view.setBigUint64(304, 0n, true);
+    return 256;
   };
   const exports = {
     memory,
@@ -58,15 +76,30 @@ function fakeCompactWasm(
     },
     demux_packet: (index: number) => {
       calls.packet++;
-      event(256, 5);
-      view.setBigUint64(264, BigInt(index === PACKET_COUNT - 1 ? 0 : 5), true);
-      view.setUint32(272, 5, true);
-      view.setUint32(276, 1, true);
-      view.setBigInt64(280, BigInt(index === PACKET_COUNT - 1 ? 9 : 8), true);
-      view.setBigInt64(288, BigInt(index === PACKET_COUNT - 1 ? 9 : 8), true);
-      view.setBigUint64(296, 1n, true);
-      view.setBigUint64(304, 0n, true);
-      return 256;
+      return (options.flags ?? 0) & 2 && cachedIndex !== index ? 0 : writePacket(index);
+    },
+    demux_query_packet_begin: (index: number) => {
+      if (queriedIndex !== null) return 0;
+      queriedIndex = index;
+      calls.querySteps = 0;
+      return 1;
+    },
+    demux_query_packet_step: () => {
+      if (queriedIndex === null) return 0;
+      calls.querySteps++;
+      if (calls.querySteps <= (options.queryWorkSteps ?? 1)) {
+        event(384, 11);
+        view.setUint32(388, 1, true);
+        options.onQueryWork?.();
+        return 384;
+      }
+      cachedIndex = queriedIndex;
+      return writePacket(queriedIndex);
+    },
+    demux_query_packet_end: () => {
+      calls.queryEnd++;
+      queriedIndex = null;
+      return 1;
     },
     demux_seek_begin: () => {
       calls.steps = 0;
@@ -97,7 +130,9 @@ function fakeCompactWasm(
     demux_snapshot_import_step: () => 0,
     demux_release: () => undefined,
   };
-  vi.spyOn(WebAssembly, 'Instance').mockImplementation(() => ({ exports }) as WebAssembly.Instance);
+  vi.spyOn(WebAssembly, 'Instance').mockImplementation(function () {
+    return { exports } as WebAssembly.Instance;
+  });
   return { module: {} as WebAssembly.Module, calls };
 }
 
@@ -107,7 +142,8 @@ const invalidIndexInfo: Array<[Parameters<typeof fakeCompactWasm>[0], string]> =
   [{ count: 100_000_001 }, 'count'],
   [{ maxPacketBytes: 16 * 1024 * 1024 }, 'packet size'],
   [{ liveIndexBytes: 32 * 1024 * 1024 + 1 }, 'live index'],
-  [{ flags: 2 }, 'unknown flags'],
+  [{ flags: 4 }, 'unknown flags'],
+  [{ mode: 0, flags: 2 }, 'expanded asynchronous query'],
   [{ flags: 1 }, 'compact reconstruction'],
 ];
 
@@ -197,6 +233,74 @@ describe('ABI4 compact demux host', () => {
       await Promise.resolve();
       await expect(session.findVerifiedKey(9)).resolves.toBe(PACKET_COUNT - 2);
       expect(calls.seekEnd).toBe(2);
+    } finally {
+      session.release();
+    }
+  });
+
+  it('queries compact CTTS in bounded steps and revalidates a native descriptor before a read', async () => {
+    const { module, calls } = fakeCompactWasm({ flags: 2, queryWorkSteps: 3 });
+    const session = new OwnedDemuxSession(source.buffer, module);
+    try {
+      await session.analyze();
+      expect(() => session.packet(PACKET_COUNT - 1)).toThrow('asynchronous query');
+      const packet = await session.packetAsync(PACKET_COUNT - 1);
+      expect(calls.querySteps).toBe(4);
+      expect(calls.queryEnd).toBe(1);
+      expect(packet.ptsTicks).toBe(9n);
+      expect(new Uint8Array(await session.readPacket(packet))).toEqual(source.slice(0, 5));
+      expect(calls.querySteps).toBe(4);
+      const forged = { ...packet, offset: 5n };
+      await expect(session.readPacket(forged)).rejects.toThrow('descriptor invalid');
+      expect(new Uint8Array(await session.readPacket(packet))).toEqual(source.slice(0, 5));
+    } finally {
+      session.release();
+    }
+  });
+
+  it('ends an aborted compact CTTS query and allows a later packet and seek', async () => {
+    const controller = new AbortController();
+    const { module, calls } = fakeCompactWasm({
+      flags: 2,
+      onQueryWork: () => controller.abort(),
+    });
+    const session = new OwnedDemuxSession(source.buffer, module);
+    try {
+      await session.analyze();
+      await expect(session.packetAsync(PACKET_COUNT - 1, controller.signal)).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+      expect(calls.queryEnd).toBe(1);
+      const packet = await session.packetAsync(PACKET_COUNT - 1);
+      expect(packet.key).toBe(true);
+      await expect(session.findVerifiedKey(9)).resolves.toBe(PACKET_COUNT - 2);
+      expect(calls.queryEnd).toBeGreaterThan(2);
+      expect(calls.seekEnd).toBe(1);
+    } finally {
+      session.release();
+    }
+  });
+
+  it('reserves the read lease before an asynchronous source read and rejects concurrent lookup', async () => {
+    const { module } = fakeCompactWasm({ flags: 2, queryWorkSteps: 0 });
+    const blob = new Blob([source]);
+    const pending = Promise.withResolvers<ArrayBuffer>();
+    const pendingRange = new Blob();
+    vi.spyOn(pendingRange, 'arrayBuffer').mockReturnValue(pending.promise);
+    const originalSlice = blob.slice.bind(blob);
+    vi.spyOn(blob, 'slice').mockImplementation((start, end) =>
+      start === 0 && end === 5 ? pendingRange : originalSlice(start, end)
+    );
+    const session = new OwnedDemuxSession(blob, module);
+    try {
+      await session.analyze();
+      const packet = await session.packetAsync(PACKET_COUNT - 1);
+      const read = session.readPacket(packet);
+      await expect(session.packetAsync(PACKET_COUNT - 2)).rejects.toThrow('lease invalid');
+      await expect(session.exportIndex()).rejects.toThrow('lease invalid');
+      pending.resolve(source.slice(0, 5).buffer);
+      expect(new Uint8Array(await read)).toEqual(source.slice(0, 5));
+      expect((await session.packetAsync(PACKET_COUNT - 2)).index).toBe(PACKET_COUNT - 2);
     } finally {
       session.release();
     }

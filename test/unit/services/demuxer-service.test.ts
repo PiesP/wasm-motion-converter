@@ -17,7 +17,7 @@ vi.mock('@services/owned-demux-core', () => ({
   createOwnedDemuxSession: vi.fn(async () => ({
     analyze: mocks.analyze,
     findVerifiedKey: mocks.findVerifiedKey,
-    packet: mocks.packet,
+    packetAsync: mocks.packet,
     readPacket: mocks.readPacket,
     release: mocks.release,
     seekWorkspaceBytes: 0,

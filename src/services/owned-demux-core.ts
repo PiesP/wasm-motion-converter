@@ -121,7 +121,7 @@ export function classifyOwnedDemuxError(error: unknown, signal?: AbortSignal): E
     return new OwnedDemuxAbiError(message, { cause: error });
   if (
     /resource|memory|capacity|limit|admission|out of range/i.test(message) ||
-    /(?:parser|compact seek) error 3\b/.test(message)
+    /(?:parser|compact seek|packet query) error 3\b/.test(message)
   )
     return new OwnedDemuxResourceError(message, { cause: error });
   return new OwnedDemuxParseError(message, { cause: error });
@@ -233,7 +233,7 @@ export async function computeOwnedPacketStats(
       if (performance.now() >= deadline) return null;
       await schedulerYield();
     }
-    const packet = session.packet(index);
+    const packet = await session.packetAsync(index, signal);
     const pts = Number(packet.ptsTicks) / track.timescale;
     const duration = Number(packet.durationTicks) / track.timescale;
     if (count >= 50 && pts >= end) break;

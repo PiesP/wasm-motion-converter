@@ -94,12 +94,14 @@ describe('actual compiled owned demux versus pinned patched development oracle',
         for (let i = 0; i < track.packetCount; i++) {
           const { sequence, ...expected } = fixture.packets[i]!;
           expect(sequence).toBe(i);
-          expect(await normalizedPacket(session, session.packet(i))).toEqual(expected);
+          expect(await normalizedPacket(session, await session.packetAsync(i))).toEqual(expected);
         }
         for (const seek of fixture.seek) {
           const index = await session.findVerifiedKey(seek.seconds);
           expect(
-            index === null ? null : await normalizedPacket(session, session.packet(index))
+            index === null
+              ? null
+              : await normalizedPacket(session, await session.packetAsync(index))
           ).toEqual(seek.packet);
         }
         expect(session.transferStats.wasmCapacityBytes).toBe(capacity);
@@ -117,12 +119,16 @@ describe('actual compiled owned demux versus pinned patched development oracle',
           const importedCapacity = reused.transferStats.wasmCapacityBytes;
           for (let index = 0; index < importedTrack.packetCount; index++) {
             const { sequence: _sequence, ...expected } = fixture.packets[index]!;
-            expect(await normalizedPacket(reused, reused.packet(index))).toEqual(expected);
+            expect(await normalizedPacket(reused, await reused.packetAsync(index))).toEqual(
+              expected
+            );
           }
           for (const seek of fixture.seek) {
             const index = await reused.findVerifiedKey(seek.seconds);
             expect(
-              index === null ? null : await normalizedPacket(reused, reused.packet(index))
+              index === null
+                ? null
+                : await normalizedPacket(reused, await reused.packetAsync(index))
             ).toEqual(seek.packet);
           }
           expect(reused.transferStats.wasmCapacityBytes).toBe(importedCapacity);

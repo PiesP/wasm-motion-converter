@@ -172,7 +172,7 @@ describe('owned demux through browser WebCodecs', () => {
         expect(referenceChunks).toHaveLength(fixture.packets.length);
         const ownedChunks: EncodedVideoChunk[] = [];
         for (let index = 0; index < track.packetCount; index++) {
-          const packet = session.packet(index);
+          const packet = await session.packetAsync(index);
           const data = await session.readPacket(packet);
           ownedChunks.push(
             new EncodedVideoChunk({

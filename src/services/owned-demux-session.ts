@@ -31,6 +31,9 @@ type DemuxExports = {
   demux_codec_ptr(): number;
   demux_packet_count(): number;
   demux_packet(index: number): number;
+  demux_query_packet_begin(index: number): number;
+  demux_query_packet_step(credit: number): number;
+  demux_query_packet_end(): number;
   demux_index_info(): number;
   demux_seek_begin(ticksLow: number, ticksHigh: number, beforeIndex: number): number;
   demux_seek_step(credit: number): number;
@@ -60,6 +63,7 @@ type IndexInfo = Readonly<{
   liveIndexBytes: number;
   seekWorkspaceBytes: number;
   reconstructs: boolean;
+  resumablePacketQuery: boolean;
 }>;
 
 export type OwnedDemuxTrack = {
@@ -292,6 +296,7 @@ export class OwnedDemuxSession {
   private ready = false;
   private analyzing = false;
   private packetReadInProgress = false;
+  private packetQueryInProgress = false;
   private seeking = false;
   private snapshotOperation = false;
   private generation = 1;
@@ -307,6 +312,7 @@ export class OwnedDemuxSession {
   private indexInfo: IndexInfo | null = null;
   private preparedWasmCapacityBytes = 0;
   private analyzedTrack: OwnedDemuxTrack | null = null;
+  private lastNativePacket: Readonly<OwnedDemuxPacket> | null = null;
 
   /** Additional seek memory beyond the current WASM capacity, or the expanded JS heap. */
   get seekWorkspaceBytes(): number {
@@ -362,6 +368,9 @@ export class OwnedDemuxSession {
           'demux_codec_ptr',
           'demux_packet_count',
           'demux_packet',
+          'demux_query_packet_begin',
+          'demux_query_packet_step',
+          'demux_query_packet_end',
           'demux_index_info',
           'demux_seek_begin',
           'demux_seek_step',
@@ -429,6 +438,8 @@ export class OwnedDemuxSession {
           let track = this.readTrackRecord();
           const info = this.readIndexInfo(track.packetCount);
           await this.validateExpandedIndex(info, signal);
+          // The VP9 prefix probe can need presentation order from compact CTTS.
+          this.indexInfo = info;
           if (track.codec === 'VP90') {
             await this.probeVp9(signal);
             track = this.readTrackRecord();
@@ -468,6 +479,7 @@ export class OwnedDemuxSession {
       !this.ready ||
       this.analyzing ||
       this.packetReadInProgress ||
+      this.packetQueryInProgress ||
       this.seeking ||
       this.snapshotOperation
     )
@@ -516,6 +528,7 @@ export class OwnedDemuxSession {
       this.ready ||
       this.analyzing ||
       this.packetReadInProgress ||
+      this.packetQueryInProgress ||
       this.seeking ||
       this.snapshotOperation
     )
@@ -600,10 +613,10 @@ export class OwnedDemuxSession {
       liveIndexBytes < 1 ||
       liveIndexBytes > MAX_INDEX_BYTES ||
       seekWorkspaceBytes > MAX_INDEX_BYTES ||
-      (flags & ~1) !== 0 ||
-      (mode === 0 && seekWorkspaceBytes !== 0) ||
+      (flags & ~3) !== 0 ||
+      (mode === 0 && (seekWorkspaceBytes !== 0 || (flags & 2) !== 0)) ||
       (mode === 1 &&
-        (flags !== 0 ||
+        ((flags & 1) !== 0 ||
           seekWorkspaceBytes + this.wasm.memory.buffer.byteLength > MAX_WASM_CAPACITY_BYTES))
     )
       throw new Error('Owned demux index ABI record invalid');
@@ -614,6 +627,7 @@ export class OwnedDemuxSession {
       liveIndexBytes,
       seekWorkspaceBytes,
       reconstructs: (flags & 1) !== 0,
+      resumablePacketQuery: (flags & 2) !== 0,
     };
   }
 
@@ -703,16 +717,45 @@ export class OwnedDemuxSession {
       !this.active ||
       !this.ready ||
       this.snapshotOperation ||
+      this.packetQueryInProgress ||
       !Number.isSafeInteger(index) ||
       index < 0 ||
       index >= (this.indexInfo?.packetCount ?? 0)
     )
       throw new Error('Owned demux packet index invalid');
+    if (this.indexInfo?.resumablePacketQuery) {
+      if (this.lastNativePacket?.index !== index)
+        throw new Error('Owned demux packet requires asynchronous query');
+      return { ...this.readPacketRecord(index) };
+    }
     return this.readPacketRecord(index);
+  }
+
+  /** Compact CTTS can require bounded presentation-order work for one packet. */
+  async packetAsync(index: number, signal?: AbortSignal): Promise<OwnedDemuxPacket> {
+    if (
+      !this.active ||
+      !this.ready ||
+      this.analyzing ||
+      this.packetReadInProgress ||
+      this.packetQueryInProgress ||
+      this.seeking ||
+      this.snapshotOperation ||
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      index >= (this.indexInfo?.packetCount ?? 0)
+    )
+      throw new Error('Owned demux packet query lease invalid');
+    signal?.throwIfAborted();
+    return this.queryPacketRecord(index, signal);
   }
 
   private readPacketRecord(index: number): OwnedDemuxPacket {
     const view = eventView(this.wasm, this.wasm.demux_packet(index));
+    return this.packetFromEvent(index, view);
+  }
+
+  private packetFromEvent(index: number, view: DataView): OwnedDemuxPacket {
     if (view.getUint32(0, true) !== 5) throw new Error('Owned demux packet unavailable');
     const offset = view.getBigUint64(8, true);
     const byteLength = view.getUint32(16, true);
@@ -742,20 +785,81 @@ export class OwnedDemuxSession {
     };
   }
 
+  private async queryPacketRecord(index: number, signal?: AbortSignal): Promise<OwnedDemuxPacket> {
+    if (!this.active || this.packetQueryInProgress || !this.indexInfo)
+      throw new Error('Owned demux packet query lease invalid');
+    if (!Number.isSafeInteger(index) || index < 0 || index >= this.indexInfo.packetCount)
+      throw new Error('Owned demux packet index invalid');
+    if (!this.indexInfo.resumablePacketQuery) return this.readPacketRecord(index);
+    signal?.throwIfAborted();
+    if (this.lastNativePacket?.index === index) {
+      const current = this.readPacketRecord(index);
+      this.lastNativePacket = Object.freeze(current);
+      return { ...current };
+    }
+    this.packetQueryInProgress = true;
+    this.lastNativePacket = null;
+    let begun = false;
+    try {
+      if (this.wasm.demux_query_packet_begin(index) !== 1)
+        throw new Error('Owned demux packet query start state invalid');
+      begun = true;
+      for (let steps = 0; steps < MAX_STEPS; steps++) {
+        signal?.throwIfAborted();
+        if (!this.active) throw new Error('Owned demux session released');
+        const view = eventView(this.wasm, this.wasm.demux_query_packet_step(4096));
+        if (
+          this.preparedWasmCapacityBytes > 0 &&
+          this.wasm.memory.buffer.byteLength !== this.preparedWasmCapacityBytes
+        )
+          throw new Error('Owned demux packet query changed WASM capacity');
+        const tag = view.getUint32(0, true);
+        if (tag === 5) {
+          const current = this.packetFromEvent(index, view);
+          this.lastNativePacket = Object.freeze(current);
+          return { ...current };
+        }
+        if (tag !== 11) throw new Error('Owned demux packet query ABI event invalid');
+        const state = view.getUint32(4, true);
+        if (state === 4)
+          throw new Error(`Owned demux packet query error ${view.getUint32(8, true)}`);
+        if (state !== 1) throw new Error('Owned demux packet query ABI state invalid');
+        await nextTask();
+      }
+      throw new Error('Owned demux packet query logical work limit exceeded');
+    } finally {
+      this.packetQueryInProgress = false;
+      if (begun && this.active && this.wasm.demux_query_packet_end() !== 1)
+        throw new Error('Owned demux packet query cleanup failed');
+    }
+  }
+
   async readPacket(packet: OwnedDemuxPacket, signal?: AbortSignal): Promise<ArrayBuffer> {
+    return this.readPacketInternal(packet, signal, false);
+  }
+
+  private async readPacketInternal(
+    packet: OwnedDemuxPacket,
+    signal: AbortSignal | undefined,
+    fromSeek: boolean
+  ): Promise<ArrayBuffer> {
     if (
       !this.active ||
       !this.ready ||
       packet.sessionId !== this.sessionId ||
       packet.generation !== this.generation ||
       this.packetReadInProgress ||
+      this.packetQueryInProgress ||
+      (this.seeking && !fromSeek) ||
       this.snapshotOperation
     )
       throw new Error('Owned demux packet lease invalid');
     signal?.throwIfAborted();
     this.packetReadInProgress = true;
     try {
-      const current = this.packet(packet.index);
+      const current = await this.queryPacketRecord(packet.index, signal);
+      signal?.throwIfAborted();
+      if (!this.active) throw new Error('Owned demux session released');
       if (
         current.offset !== packet.offset ||
         current.byteLength !== packet.byteLength ||
@@ -835,7 +939,7 @@ export class OwnedDemuxSession {
         if (!this.active) throw new Error('Owned demux session released');
         await nextTask();
       }
-      const packet = this.readPacketRecord(index);
+      const packet = await this.queryPacketRecord(index, signal);
       if (!packet.key || packet.sourceEnd !== null) continue;
       const start = safeOffset(packet.offset);
       const length = Math.min(packet.byteLength, 4096);
@@ -870,6 +974,7 @@ export class OwnedDemuxSession {
       !this.ready ||
       this.seeking ||
       this.packetReadInProgress ||
+      this.packetQueryInProgress ||
       this.snapshotOperation ||
       !Number.isFinite(seconds) ||
       seconds < 0
@@ -945,7 +1050,7 @@ export class OwnedDemuxSession {
           }
         }
         const packet = this.packet(index);
-        const payload = new Uint8Array(await this.readPacket(packet, signal));
+        const payload = new Uint8Array(await this.readPacketInternal(packet, signal, true));
         if (await verifyOwnedVideoKey(track.codec, track.description, payload, signal)) {
           signal?.throwIfAborted();
           if (!this.active) throw new Error('Owned demux session released');
@@ -995,10 +1100,10 @@ export class OwnedDemuxSession {
         const index = event.getUint32(8, true);
         if (index >= track.packetCount)
           throw new Error('Owned demux compact seek candidate invalid');
-        const packet = this.packet(index);
+        const packet = await this.queryPacketRecord(index, signal);
         if (!packet.key || packet.ptsTicks > targetTicks)
           throw new Error('Owned demux compact seek candidate invalid');
-        const payload = new Uint8Array(await this.readPacket(packet, signal));
+        const payload = new Uint8Array(await this.readPacketInternal(packet, signal, true));
         if (await verifyOwnedVideoKey(track.codec, track.description, payload, signal)) {
           signal?.throwIfAborted();
           if (!this.active) throw new Error('Owned demux session released');
@@ -1019,6 +1124,7 @@ export class OwnedDemuxSession {
     this.ready = false;
     this.analyzedTrack = null;
     this.indexInfo = null;
+    this.lastNativePacket = null;
     this.generation++;
     this.wasm.demux_release();
   }

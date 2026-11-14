@@ -14,7 +14,7 @@ vi.mock('@services/owned-demux-core', () => ({
     signal?.throwIfAborted();
     return {
       analyze: mocks.analyze,
-      packet: () => ({
+      packetAsync: async () => ({
         index: 0,
         byteLength: 4,
         ptsTicks: 0n,

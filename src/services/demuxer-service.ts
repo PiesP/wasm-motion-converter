@@ -195,7 +195,7 @@ export async function demuxVideo(
         // frame may be needed for a visible B-frame before trimEnd.
         for (let index = startIndex; index < track.packetCount; index++) {
           signal?.throwIfAborted();
-          const packet = session.packet(index);
+          const packet = await session.packetAsync(index, signal);
           const packetRetainedBytes = packet.byteLength + ENCODED_CHUNK_OVERHEAD_BYTES;
           if (packetRetainedBytes > packetBudgetBytes || packetRetainedBytes > chunkBudgetBytes)
             throw new OwnedDemuxResourceError(

@@ -29,7 +29,7 @@ describe('owned demux packet statistics and terminal errors', () => {
       durationTicks: 1n,
       byteLength: 10,
     }));
-    const session = { packet } as unknown as OwnedDemuxSession;
+    const session = { packetAsync: packet } as unknown as OwnedDemuxSession;
     const track = { packetCount: timestamps.length, timescale: 1 } as OwnedDemuxTrack;
     await expect(computeOwnedPacketStats(session, track)).resolves.toEqual({
       averagePacketRate: 1.02,
@@ -41,7 +41,7 @@ describe('owned demux packet statistics and terminal errors', () => {
   it('uses the two-second statistics fallback without scanning the index', async () => {
     vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValue(2_001);
     const packet = vi.fn();
-    const session = { packet } as unknown as OwnedDemuxSession;
+    const session = { packetAsync: packet } as unknown as OwnedDemuxSession;
     const track = { packetCount: 1000, timescale: 1 } as OwnedDemuxTrack;
     await expect(computeOwnedPacketStats(session, track)).resolves.toBeNull();
     expect(packet).not.toHaveBeenCalled();
