@@ -10,6 +10,8 @@ mod coeff_update_probs;
 mod color;
 mod dc_quant;
 mod default_coeff_probs;
+#[cfg(test)]
+mod filter;
 mod limits;
 mod prediction;
 mod presets;
