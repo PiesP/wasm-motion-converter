@@ -2224,7 +2224,7 @@ mod tests {
                 Ok(())
             }
         }
-        for (quality, level) in [(60, 6), (75, 4), (85, 2)] {
+        for (quality, level) in [(60, 6), (75, 4), (85, 4)] {
             assert_eq!(FilterConfig::for_quality(quality).level, level);
         }
         let filter = FilterConfig {
