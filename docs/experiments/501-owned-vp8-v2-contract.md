@@ -163,6 +163,11 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   `test/fixtures/owned-vp8/tuning-photo-PROVENANCE.md` now add a distinct CC0
   photographic tuning source; all prior 23 entries and 15 held-out entries are
   unchanged. Thresholds and historical failures remain unchanged.
+- Fixed software-route overview: `src/services/webp-encoder-service.ts` claimed
+  only one RGB frame could exist during encoding. Its `stagedCopyLookahead: true`
+  and `src/services/decoder-service.ts` ordered/staged tails allow one staged RGB
+  copy to overlap the active callback. The comment now describes both; runtime
+  behavior and resource ceilings are unchanged.
 - External reference discrepancy, unchanged: RFC 6386 section 13.3's illustrative
   coefficient pseudocode swaps plane labels relative to its detailed probability
   table and sets `prevCoeffWasZero` unconditionally. The detailed table/narrative
