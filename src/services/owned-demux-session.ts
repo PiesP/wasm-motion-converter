@@ -284,8 +284,7 @@ export class OwnedDemuxSession {
         } else if (status === 2) {
           await nextTask();
         } else if (status === 3) {
-          this.ready = true;
-          const track = this.track();
+          const track = this.readTrackRecord();
           let reconstructs = false;
           for (let index = 0; index < track.packetCount; index++) {
             if (index % 256 === 0) {
@@ -293,7 +292,7 @@ export class OwnedDemuxSession {
               if (!this.active) throw new Error('Owned demux session released');
               await nextTask();
             }
-            const packet = this.packet(index);
+            const packet = this.readPacketRecord(index);
             this.maxPacketBytes = Math.max(this.maxPacketBytes, packet.byteLength);
             reconstructs ||= packet.sourceEnd !== null;
           }
@@ -301,6 +300,7 @@ export class OwnedDemuxSession {
             throw new Error('Owned demux packet workspace admission failed');
           this.preparedWasmCapacityBytes = this.wasm.memory.buffer.byteLength;
           track.maxPacketBytes = this.maxPacketBytes;
+          this.ready = true;
           return track;
         } else if (status === 4) {
           throw new Error(`Owned demux parser error ${event.getUint32(4, true)}`);
@@ -319,6 +319,10 @@ export class OwnedDemuxSession {
 
   track(): OwnedDemuxTrack {
     if (!this.active || !this.ready) throw new Error('Owned demux track unavailable');
+    return this.readTrackRecord();
+  }
+
+  private readTrackRecord(): OwnedDemuxTrack {
     const view = eventView(this.wasm, this.wasm.demux_track());
     if (view.getUint32(0, true) !== 6) throw new Error('Owned demux invalid track event');
     const codec = String.fromCharCode(...new Uint8Array(view.buffer, view.byteOffset + 8, 4));
@@ -361,6 +365,10 @@ export class OwnedDemuxSession {
   packet(index: number): OwnedDemuxPacket {
     if (!this.active || !this.ready || !Number.isSafeInteger(index) || index < 0)
       throw new Error('Owned demux packet index invalid');
+    return this.readPacketRecord(index);
+  }
+
+  private readPacketRecord(index: number): OwnedDemuxPacket {
     const view = eventView(this.wasm, this.wasm.demux_packet(index));
     if (view.getUint32(0, true) !== 5) throw new Error('Owned demux packet unavailable');
     const offset = view.getBigUint64(8, true);
