@@ -43,15 +43,6 @@ fn allocated(size: usize) -> Result<Vec<u8>, EncodeError> {
 fn clamp(value: i32) -> u8 {
     value.clamp(0, 255) as u8
 }
-fn yuv_from_rgb(r: i32, g: i32, b: i32) -> (u8, u8, u8) {
-    // Fixed-point limited-range BT.601-like transform. This is an experiment:
-    // the exact product Canvas color contract still requires qualification.
-    (
-        clamp(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16),
-        clamp(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128),
-        clamp(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128),
-    )
-}
 
 #[cfg(test)]
 fn predictor_y(reconstructed: &[u8], stride: usize, x: usize, y: usize) -> i32 {
@@ -774,8 +765,7 @@ fn encode_observed(
     let mut reconstructed_v = allocated(uv_size)?;
     for cy in 0..padded_h / 2 {
         for cx in 0..uv_w {
-            let mut sum_u = 0u32;
-            let mut sum_v = 0u32;
+            let mut rgb = [[0u8; 3]; 4];
             for dy in 0..2 {
                 for dx in 0..2 {
                     let x = (cx * 2 + dx).min(width - 1);
@@ -786,15 +776,17 @@ fn encode_observed(
                     } else {
                         (pixels[at + 2], pixels[at + 1], pixels[at])
                     };
-                    let (luma, chroma_u, chroma_v) =
-                        yuv_from_rgb(i32::from(r), i32::from(g), i32::from(b));
-                    source_y[(cy * 2 + dy) * padded_w + cx * 2 + dx] = luma;
-                    sum_u += u32::from(chroma_u);
-                    sum_v += u32::from(chroma_v);
+                    rgb[dy * 2 + dx] = [r, g, b];
                 }
             }
-            source_u[cy * uv_w + cx] = ((sum_u + 2) / 4) as u8;
-            source_v[cy * uv_w + cx] = ((sum_v + 2) / 4) as u8;
+            let (luma, u, v) = crate::color::convert_2x2(rgb);
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    source_y[(cy * 2 + dy) * padded_w + cx * 2 + dx] = luma[dy * 2 + dx];
+                }
+            }
+            source_u[cy * uv_w + cx] = u;
+            source_v[cy * uv_w + cx] = v;
         }
     }
     let blocks_x = padded_w / 16;
@@ -1551,8 +1543,7 @@ impl FrameEncoder {
         let uv_stride = y_stride / 2;
         let cy = self.cursor;
         for cx in 0..uv_stride {
-            let mut sum_u = 0u32;
-            let mut sum_v = 0u32;
+            let mut rgb = [[0u8; 3]; 4];
             for dy in 0..2 {
                 for dx in 0..2 {
                     let x = (cx * 2 + dx).min(width - 1);
@@ -1565,15 +1556,17 @@ impl FrameEncoder {
                         0 | 2 | 4 => (self.input[at], self.input[at + 1], self.input[at + 2]),
                         _ => (self.input[at + 2], self.input[at + 1], self.input[at]),
                     };
-                    let (luma, chroma_u, chroma_v) =
-                        yuv_from_rgb(i32::from(r), i32::from(g), i32::from(b));
-                    self.source_y[(cy * 2 + dy) * y_stride + cx * 2 + dx] = luma;
-                    sum_u += u32::from(chroma_u);
-                    sum_v += u32::from(chroma_v);
+                    rgb[dy * 2 + dx] = [r, g, b];
                 }
             }
-            self.source_u[cy * uv_stride + cx] = ((sum_u + 2) / 4) as u8;
-            self.source_v[cy * uv_stride + cx] = ((sum_v + 2) / 4) as u8;
+            let (luma, u, v) = crate::color::convert_2x2(rgb);
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    self.source_y[(cy * 2 + dy) * y_stride + cx * 2 + dx] = luma[dy * 2 + dx];
+                }
+            }
+            self.source_u[cy * uv_stride + cx] = u;
+            self.source_v[cy * uv_stride + cx] = v;
         }
         self.cursor += 1;
         if self.cursor == self.plan.padded_height as usize / 2 {

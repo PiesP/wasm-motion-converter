@@ -5,10 +5,6 @@
 // Diagnostic source counterpart: libwebp commit
 // 6c484cbf92e81a5673b24485ac02d211f69be5b7, src/enc/picture_csp_enc.c
 // and src/dsp/yuv.h. The shipped patched wasm-webp binary is separately pinned.
-#![allow(
-    dead_code,
-    reason = "color leaf is wired after the parallel encoder change"
-)]
 
 /// Gamma-compressed RGB-to-YUV420 import for exactly four visible RGB samples.
 ///

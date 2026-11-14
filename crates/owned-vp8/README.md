@@ -28,7 +28,11 @@ defines raw `EncodedVideoChunk` keyframe bytes; browser support must be probed.
 
 Forward DCT/WHT arithmetic is adapted from pinned libwebp v1.3.2
 `src/dsp/enc.c`; it is not represented as independently originated arithmetic.
-The rest of this experimental encoder is owned Rust. Retain
+The color import coefficients and gamma tables in `src/color.rs` derive from
+libwebp commit `6c484cbf92e81a5673b24485ac02d211f69be5b7`, a diagnostic source
+counterpart of the published wrapper tag. Its native import oracle does not prove
+the shipped comparator WASM was built from that commit. The encoder implementation
+remains owned Rust; these adapted arithmetic/table portions retain attribution. Retain
 [LICENSE.libwebp](LICENSE.libwebp) and [PATENTS.libwebp](PATENTS.libwebp) with source
 and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
