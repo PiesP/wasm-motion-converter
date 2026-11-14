@@ -2,6 +2,7 @@
 // Copyright (c) 2026 PiesP
 
 use crate::{Error, Packet, Track, MAX_SAMPLES, METADATA_BUDGET, PACKET_BUDGET};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy)]
 struct Atom<'a> {
@@ -64,6 +65,36 @@ fn atoms(data: &[u8]) -> Result<Vec<Atom<'_>>, Error> {
     Ok(result)
 }
 
+fn atom_at(data: &[u8], at: usize, limit: usize) -> Result<([u8; 4], usize, usize), Error> {
+    if at >= limit || limit > data.len() {
+        return Err(Error::Invalid);
+    }
+    let size32 = u32be(data, at)? as usize;
+    let kind: [u8; 4] = data
+        .get(at + 4..at + 8)
+        .ok_or(Error::Truncated)?
+        .try_into()
+        .unwrap();
+    let (size, header) = if size32 == 1 {
+        (
+            usize::try_from(u64be(data, at + 8)?).map_err(|_| Error::ResourceLimit)?,
+            16,
+        )
+    } else if size32 == 0 {
+        (limit - at, 8)
+    } else {
+        (size32, 8)
+    };
+    if size < header {
+        return Err(Error::Invalid);
+    }
+    let end = at.checked_add(size).ok_or(Error::Overflow)?;
+    if end > limit {
+        return Err(Error::Truncated);
+    }
+    Ok((kind, at + header, end))
+}
+
 fn child<'a>(data: &'a [u8], kind: [u8; 4]) -> Result<Option<&'a [u8]>, Error> {
     Ok(atoms(data)?
         .into_iter()
@@ -74,33 +105,19 @@ fn required<'a>(data: &'a [u8], kind: [u8; 4]) -> Result<&'a [u8], Error> {
     child(data, kind)?.ok_or(Error::Unsupported)
 }
 
-fn records(data: &[u8], width: usize) -> Result<usize, Error> {
-    let count = u32be(data, 4)? as usize;
-    if count > MAX_SAMPLES
-        || count.checked_mul(width).ok_or(Error::Overflow)? > METADATA_BUDGET
-        || data.len() < 8 + count * width
-    {
-        return Err(Error::ResourceLimit);
-    }
-    Ok(count)
+struct SampleDescription {
+    codec: [u8; 4],
+    width: u32,
+    height: u32,
+    display_width: u32,
+    display_height: u32,
+    color_primaries: u16,
+    color_transfer: u16,
+    color_matrix: u16,
+    color_full_range: i8,
+    description: Vec<u8>,
 }
-
-fn pairs(data: &[u8]) -> Result<Vec<(u32, u32)>, Error> {
-    let count = records(data, 8)?;
-    let mut result = Vec::with_capacity(count);
-    for i in 0..count {
-        let at = 8 + i * 8;
-        let n = u32be(data, at)?;
-        let v = u32be(data, at + 4)?;
-        if n == 0 {
-            return Err(Error::Invalid);
-        }
-        result.push((n, v));
-    }
-    Ok(result)
-}
-
-fn sample_description(data: &[u8]) -> Result<([u8; 4], u32, u32, Vec<u8>), Error> {
+fn sample_description(data: &[u8]) -> Result<SampleDescription, Error> {
     if u32be(data, 4)? == 0 {
         return Err(Error::Unsupported);
     }
@@ -127,7 +144,50 @@ fn sample_description(data: &[u8]) -> Result<([u8; 4], u32, u32, Vec<u8>), Error
     if description.is_empty() || description.len() > 1024 * 1024 {
         return Err(Error::ResourceLimit);
     }
-    Ok((codec, width, height, description.to_vec()))
+    let (display_width, display_height) = if let Some(pasp) = child(extra, *b"pasp")? {
+        let h = u32be(pasp, 0)?;
+        let v = u32be(pasp, 4)?;
+        if h == 0 || v == 0 {
+            return Err(Error::Invalid);
+        }
+        (
+            width.checked_mul(h).ok_or(Error::Overflow)?,
+            height.checked_mul(v).ok_or(Error::Overflow)?,
+        )
+    } else {
+        (width, height)
+    };
+    let (color_primaries, color_transfer, color_matrix, color_full_range) =
+        if let Some(colr) = child(extra, *b"colr")? {
+            if colr.get(..4) == Some(b"nclx") {
+                (
+                    u16be(colr, 4)?,
+                    u16be(colr, 6)?,
+                    u16be(colr, 8)?,
+                    if colr.get(10).ok_or(Error::Truncated)? & 0x80 != 0 {
+                        1
+                    } else {
+                        0
+                    },
+                )
+            } else {
+                (0, 0, 0, 0)
+            }
+        } else {
+            (0, 0, 0, 0)
+        };
+    Ok(SampleDescription {
+        codec,
+        width,
+        height,
+        display_width,
+        display_height,
+        color_primaries,
+        color_transfer,
+        color_matrix,
+        color_full_range,
+        description: description.to_vec(),
+    })
 }
 
 fn tkhd_rotation(data: &[u8]) -> Result<u16, Error> {
@@ -168,193 +228,7 @@ fn mdhd(data: &[u8]) -> Result<(u32, u64), Error> {
     }
 }
 
-struct Runs<'a> {
-    pairs: &'a [(u32, u32)],
-    index: usize,
-    remaining: u32,
-    value: u32,
-}
-impl<'a> Runs<'a> {
-    fn new(pairs: &'a [(u32, u32)]) -> Result<Self, Error> {
-        let (remaining, value) = *pairs.first().ok_or(Error::Invalid)?;
-        Ok(Self {
-            pairs,
-            index: 0,
-            remaining,
-            value,
-        })
-    }
-    fn next(&mut self) -> Result<u32, Error> {
-        if self.remaining == 0 {
-            self.index += 1;
-            let (count, value) = *self.pairs.get(self.index).ok_or(Error::Invalid)?;
-            self.remaining = count;
-            self.value = value;
-        }
-        self.remaining -= 1;
-        Ok(self.value)
-    }
-}
-
-fn sample_sizes(data: &[u8]) -> Result<Vec<u32>, Error> {
-    let default = u32be(data, 4)?;
-    let count = u32be(data, 8)? as usize;
-    if count > MAX_SAMPLES || count * 4 > METADATA_BUDGET {
-        return Err(Error::ResourceLimit);
-    }
-    if default != 0 {
-        return Ok(vec![default; count]);
-    }
-    if data.len() < 12 + count * 4 {
-        return Err(Error::Truncated);
-    }
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        out.push(u32be(data, 12 + i * 4)?);
-    }
-    Ok(out)
-}
-
-fn chunk_offsets(data: &[u8], wide: bool) -> Result<Vec<u64>, Error> {
-    let width = if wide { 8 } else { 4 };
-    let count = records(data, width)?;
-    let mut out = Vec::with_capacity(count);
-    for i in 0..count {
-        out.push(if wide {
-            u64be(data, 8 + i * width)?
-        } else {
-            u32be(data, 8 + i * width)? as u64
-        });
-    }
-    Ok(out)
-}
-
-fn key_samples(data: Option<&[u8]>, count: usize) -> Result<Vec<u32>, Error> {
-    let Some(data) = data else {
-        return Ok(Vec::new());
-    };
-    let total = records(data, 4)?;
-    let mut keys = Vec::with_capacity(total);
-    for i in 0..total {
-        let value = u32be(data, 8 + i * 4)?;
-        if value == 0 || value as usize > count || keys.last().is_some_and(|last| *last >= value) {
-            return Err(Error::Invalid);
-        }
-        keys.push(value);
-    }
-    Ok(keys)
-}
-
-fn sample_to_chunk(data: &[u8], chunks: usize) -> Result<Vec<(u32, u32)>, Error> {
-    let count = records(data, 12)?;
-    let mut entries = Vec::with_capacity(count);
-    for i in 0..count {
-        let at = 8 + i * 12;
-        let first = u32be(data, at)?;
-        let per_chunk = u32be(data, at + 4)?;
-        let description = u32be(data, at + 8)?;
-        if first == 0
-            || first as usize > chunks
-            || per_chunk == 0
-            || description != 1
-            || entries.last().is_some_and(|(prior, _)| *prior >= first)
-        {
-            return Err(Error::Invalid);
-        }
-        entries.push((first, per_chunk));
-    }
-    if entries.first().is_none_or(|(first, _)| *first != 1) {
-        return Err(Error::Invalid);
-    }
-    Ok(entries)
-}
-
-fn build_packets(stbl: &[u8], file_len: u64, moov_bytes: usize) -> Result<Vec<Packet>, Error> {
-    let sizes = sample_sizes(required(stbl, *b"stsz")?)?;
-    let count = sizes.len();
-    if count == 0 {
-        return Err(Error::Unsupported);
-    }
-    let offsets = if let Some(co64) = child(stbl, *b"co64")? {
-        chunk_offsets(co64, true)?
-    } else {
-        chunk_offsets(required(stbl, *b"stco")?, false)?
-    };
-    let chunks = sample_to_chunk(required(stbl, *b"stsc")?, offsets.len())?;
-    let timing = pairs(required(stbl, *b"stts")?)?;
-    let composition = child(stbl, *b"ctts")?.map(pairs).transpose()?;
-    let composition_signed = child(stbl, *b"ctts")?.is_some_and(|bytes| bytes.first() == Some(&1));
-    let keys = key_samples(child(stbl, *b"stss")?, count)?;
-    let reserve = count
-        .checked_mul(std::mem::size_of::<Packet>())
-        .ok_or(Error::Overflow)?;
-    if reserve > METADATA_BUDGET.saturating_sub(moov_bytes) {
-        return Err(Error::ResourceLimit);
-    }
-    let mut packets = Vec::with_capacity(count);
-    let mut dts = 0i64;
-    let mut clock = Runs::new(&timing)?;
-    let mut pts_offset = composition.as_deref().map(Runs::new).transpose()?;
-    let mut key_at = 0usize;
-    let mut chunk_run_at = 0usize;
-    let mut sample_at = 0usize;
-    for (chunk_number, base) in offsets.iter().enumerate() {
-        while chunk_run_at + 1 < chunks.len()
-            && chunks[chunk_run_at + 1].0 as usize <= chunk_number + 1
-        {
-            chunk_run_at += 1;
-        }
-        let per_chunk = chunks[chunk_run_at].1 as usize;
-        let mut offset = *base;
-        for _ in 0..per_chunk {
-            if sample_at == count {
-                return Err(Error::Invalid);
-            }
-            let size = sizes[sample_at];
-            if size == 0 || size > PACKET_BUDGET {
-                return Err(Error::ResourceLimit);
-            }
-            let end = offset.checked_add(size as u64).ok_or(Error::Overflow)?;
-            if end > file_len {
-                return Err(Error::Truncated);
-            }
-            let duration = clock.next()?;
-            let delta = if let Some(runs) = pts_offset.as_mut() {
-                let value = runs.next()?;
-                if composition_signed {
-                    value as i32 as i64
-                } else {
-                    value as i64
-                }
-            } else {
-                0
-            };
-            let pts = dts.checked_add(delta).ok_or(Error::Overflow)?;
-            let sample_number = sample_at as u32 + 1;
-            while key_at < keys.len() && keys[key_at] < sample_number {
-                key_at += 1;
-            }
-            let is_key = keys.is_empty() || keys.get(key_at) == Some(&sample_number);
-            packets.push(Packet {
-                offset,
-                size,
-                dts,
-                pts,
-                duration,
-                key: is_key,
-            });
-            dts = dts.checked_add(duration as i64).ok_or(Error::Overflow)?;
-            offset = end;
-            sample_at += 1;
-        }
-    }
-    if sample_at != count {
-        return Err(Error::Invalid);
-    }
-    Ok(packets)
-}
-
-pub fn parse_moov(data: &[u8], file_len: u64) -> Result<Track, Error> {
+pub fn parse_moov(data: &[u8]) -> Result<(Track, Option<(usize, usize)>), Error> {
     let mvhd = required(data, *b"mvhd")?;
     let movie_scale = u32be(mvhd, if mvhd.first() == Some(&1) { 20 } else { 12 })?;
     if movie_scale == 0 {
@@ -388,7 +262,7 @@ pub fn parse_moov(data: &[u8], file_len: u64) -> Result<Track, Error> {
         let rotation = tkhd_rotation(tkhd)?;
         let minf = required(mdia, *b"minf")?;
         let stbl = required(minf, *b"stbl")?;
-        let (codec, width, height, description) = sample_description(required(stbl, *b"stsd")?)?;
+        let sample = sample_description(required(stbl, *b"stsd")?)?;
         let defaults = trex
             .and_then(|mvex| child(mvex, *b"trex").ok().flatten())
             .filter(|entry| u32be(entry, 4).ok() == Some(track_id));
@@ -401,33 +275,44 @@ pub fn parse_moov(data: &[u8], file_len: u64) -> Result<Track, Error> {
             } else {
                 (0, 0, 0)
             };
-        let mut packets =
+        let (packets, table_range) =
             if child(stbl, *b"stsz")?.is_some_and(|table| u32be(table, 8).unwrap_or(0) > 0) {
-                build_packets(stbl, file_len, data.len())?
+                let start = (stbl.as_ptr() as usize)
+                    .checked_sub(data.as_ptr() as usize)
+                    .ok_or(Error::Invalid)?;
+                if start.checked_add(stbl.len()).ok_or(Error::Overflow)? > data.len() {
+                    return Err(Error::Invalid);
+                }
+                (Vec::new(), Some((start, stbl.len())))
             } else if defaults.is_some() {
-                Vec::new()
+                (Vec::new(), None)
             } else {
                 return Err(Error::Unsupported);
             };
-        for packet in &mut packets {
-            packet.dts = packet.dts.checked_add(edit_shift).ok_or(Error::Overflow)?;
-            packet.pts = packet.pts.checked_add(edit_shift).ok_or(Error::Overflow)?;
-        }
-        return Ok(Track {
-            track_id,
-            codec,
-            width,
-            height,
-            timescale,
-            duration,
-            rotation,
-            description,
-            packets,
-            fragment_default_duration,
-            fragment_default_size,
-            fragment_default_flags,
-            edit_shift,
-        });
+        return Ok((
+            Track {
+                track_id,
+                codec: sample.codec,
+                width: sample.width,
+                height: sample.height,
+                display_width: sample.display_width,
+                display_height: sample.display_height,
+                color_primaries: sample.color_primaries,
+                color_transfer: sample.color_transfer,
+                color_matrix: sample.color_matrix,
+                color_full_range: sample.color_full_range,
+                timescale,
+                duration,
+                rotation,
+                description: sample.description,
+                packets,
+                fragment_default_duration,
+                fragment_default_size,
+                fragment_default_flags,
+                edit_shift,
+            },
+            table_range,
+        ));
     }
     Err(Error::Unsupported)
 }
@@ -459,18 +344,56 @@ fn edit_offset(elst: &[u8], movie_scale: u32, media_scale: u32) -> Result<i64, E
     Ok(0)
 }
 
-pub fn append_moof(
-    data: &[u8],
+/// Retains one moof and advances at most the caller's atom/sample credit.
+pub struct FragmentBuilder {
+    raw: Vec<u8>,
     box_start: u64,
     file_len: u64,
-    track: &mut Track,
-) -> Result<(), Error> {
-    let mut implicit_base = box_start;
-    for traf in atoms(data)?
-        .into_iter()
-        .filter(|atom| atom.kind == *b"traf")
-    {
-        let tfhd = required(traf.data, *b"tfhd")?;
+    at: usize,
+    implicit_base: u64,
+    traf: Option<TrafCursor>,
+}
+struct TrafCursor {
+    at: usize,
+    end: usize,
+    id: u32,
+    base: u64,
+    default_duration: u32,
+    default_size: u32,
+    default_flags: u32,
+    dts: u64,
+    data_end: u64,
+    trun: Option<TrunCursor>,
+    presentation: BTreeMap<(i64, usize), usize>,
+}
+struct TrunCursor {
+    at: usize,
+    end: usize,
+    version: u8,
+    flags: u32,
+    count: usize,
+    index: usize,
+    offset: u64,
+    first_flags: Option<u32>,
+}
+impl FragmentBuilder {
+    pub fn new(raw: Vec<u8>, box_start: u64, file_len: u64) -> Result<Self, Error> {
+        if raw.len() > METADATA_BUDGET {
+            return Err(Error::ResourceLimit);
+        }
+        Ok(Self {
+            raw,
+            box_start,
+            file_len,
+            at: 0,
+            implicit_base: box_start,
+            traf: None,
+        })
+    }
+
+    fn start_traf(&mut self, start: usize, end: usize, track: &Track) -> Result<(), Error> {
+        let body = &self.raw[start..end];
+        let tfhd = required(body, *b"tfhd")?;
         let flags = u32be(tfhd, 0)? & 0x00ff_ffff;
         let id = u32be(tfhd, 4)?;
         let mut at = 8usize;
@@ -487,148 +410,276 @@ pub fn append_moof(
             }
             at += 4;
         }
-        let duration = if flags & 0x000008 != 0 {
-            let v = u32be(tfhd, at)?;
+        let default_duration = if flags & 0x000008 != 0 {
+            let value = u32be(tfhd, at)?;
             at += 4;
-            v
+            value
         } else {
             track.fragment_default_duration
         };
-        let size = if flags & 0x000010 != 0 {
-            let v = u32be(tfhd, at)?;
+        let default_size = if flags & 0x000010 != 0 {
+            let value = u32be(tfhd, at)?;
             at += 4;
-            v
+            value
         } else {
             track.fragment_default_size
         };
-        let sample_flags = if flags & 0x000020 != 0 {
+        let default_flags = if flags & 0x000020 != 0 {
             u32be(tfhd, at)?
         } else {
             track.fragment_default_flags
         };
         let base = explicit_base.unwrap_or(if flags & 0x020000 != 0 {
-            box_start
+            self.box_start
         } else {
-            implicit_base
+            self.implicit_base
         });
-        let tfdt = required(traf.data, *b"tfdt")?;
-        let mut dts = if tfdt.first() == Some(&1) {
+        let tfdt = required(body, *b"tfdt")?;
+        let dts = if tfdt.first() == Some(&1) {
             u64be(tfdt, 4)?
         } else {
             u32be(tfdt, 4)? as u64
         };
-        let fragment_start = track.packets.len();
-        let mut data_end = base;
-        for trun in atoms(traf.data)?
-            .into_iter()
-            .filter(|atom| atom.kind == *b"trun")
+        self.traf = Some(TrafCursor {
+            at: start,
+            end,
+            id,
+            base,
+            default_duration,
+            default_size,
+            default_flags,
+            dts,
+            data_end: base,
+            trun: None,
+            presentation: BTreeMap::new(),
+        });
+        Ok(())
+    }
+
+    fn start_trun(&mut self, start: usize, end: usize, track: &mut Track) -> Result<(), Error> {
+        let traf = self.traf.as_mut().ok_or(Error::Invalid)?;
+        let body = &self.raw[start..end];
+        let flags = u32be(body, 0)? & 0x00ff_ffff;
+        let count = u32be(body, 4)? as usize;
+        if count > MAX_SAMPLES || track.packets.len().saturating_add(count) > MAX_SAMPLES {
+            return Err(Error::ResourceLimit);
+        }
+        let mut at = 8usize;
+        let data_offset = if flags & 0x000001 != 0 {
+            let value = i32be(body, at)?;
+            at += 4;
+            Some(value)
+        } else {
+            None
+        };
+        let first_flags = if flags & 0x000004 != 0 {
+            let value = u32be(body, at)?;
+            at += 4;
+            Some(value)
+        } else {
+            None
+        };
+        let offset = if let Some(delta) = data_offset {
+            let absolute = (traf.base as i128) + (delta as i128);
+            if absolute < 0 || absolute > self.file_len as i128 {
+                return Err(Error::Invalid);
+            }
+            absolute as u64
+        } else {
+            traf.data_end
+        };
+        let words = (flags & 0x000100 != 0) as usize
+            + (flags & 0x000200 != 0) as usize
+            + (flags & 0x000400 != 0) as usize
+            + (flags & 0x000800 != 0) as usize;
+        if at
+            .checked_add(count.checked_mul(words * 4).ok_or(Error::Overflow)?)
+            .is_none_or(|required| required > body.len())
         {
-            let trun_flags = u32be(trun.data, 0)? & 0x00ff_ffff;
-            let count = u32be(trun.data, 4)? as usize;
-            if count > MAX_SAMPLES
-                || track.packets.len().saturating_add(count) > MAX_SAMPLES
-                || track.packets.len().saturating_add(count) * std::mem::size_of::<Packet>()
-                    > METADATA_BUDGET
-            {
+            return Err(Error::Truncated);
+        }
+        if traf.id == track.track_id {
+            let packet_total = track
+                .packets
+                .len()
+                .checked_add(count)
+                .ok_or(Error::Overflow)?;
+            let indexed = traf
+                .presentation
+                .len()
+                .checked_add(count)
+                .ok_or(Error::Overflow)?;
+            let old_capacity = track.packets.capacity();
+            let admitted_capacity = packet_total.max(old_capacity);
+            let overlapping_capacity = if packet_total > old_capacity {
+                admitted_capacity
+                    .checked_add(old_capacity)
+                    .ok_or(Error::Overflow)?
+            } else {
+                admitted_capacity
+            };
+            let estimated = self
+                .raw
+                .len()
+                .checked_add(track.description.capacity())
+                .and_then(|n| n.checked_add(crate::INPUT_CAPACITY))
+                .and_then(|n| {
+                    n.checked_add(overlapping_capacity.checked_mul(std::mem::size_of::<Packet>())?)
+                })
+                .and_then(|n| n.checked_add(indexed.checked_mul(96)?))
+                .ok_or(Error::Overflow)?;
+            if estimated > METADATA_BUDGET {
                 return Err(Error::ResourceLimit);
             }
-            let mut pos = 8usize;
-            let data_offset = if trun_flags & 0x000001 != 0 {
-                let v = i32be(trun.data, pos)?;
-                pos += 4;
-                Some(v)
-            } else {
-                None
-            };
-            let first_flags = if trun_flags & 0x000004 != 0 {
-                let v = u32be(trun.data, pos)?;
-                pos += 4;
-                Some(v)
-            } else {
-                None
-            };
-            let mut offset = if let Some(delta) = data_offset {
-                let absolute = (base as i128) + (delta as i128);
-                if absolute < 0 || absolute > file_len as i128 {
-                    return Err(Error::Invalid);
-                }
-                absolute as u64
-            } else {
-                data_end
-            };
-            for index in 0..count {
-                let duration = if trun_flags & 0x000100 != 0 {
-                    let v = u32be(trun.data, pos)?;
-                    pos += 4;
-                    v
-                } else {
-                    duration
-                };
-                let size = if trun_flags & 0x000200 != 0 {
-                    let v = u32be(trun.data, pos)?;
-                    pos += 4;
-                    v
-                } else {
-                    size
-                };
-                let flags = if trun_flags & 0x000400 != 0 {
-                    let v = u32be(trun.data, pos)?;
-                    pos += 4;
-                    v
-                } else if index == 0 {
-                    first_flags.unwrap_or(sample_flags)
-                } else {
-                    sample_flags
-                };
-                let composition = if trun_flags & 0x000800 != 0 {
-                    let v = u32be(trun.data, pos)?;
-                    pos += 4;
-                    if trun.data.first() == Some(&1) {
-                        v as i32 as i64
-                    } else {
-                        v as i64
-                    }
-                } else {
-                    0
-                };
-                let end = offset.checked_add(size as u64).ok_or(Error::Overflow)?;
-                if size == 0 || size > PACKET_BUDGET || end > file_len {
-                    return Err(Error::ResourceLimit);
-                }
-                let packet_dts = i64::try_from(dts)
-                    .map_err(|_| Error::Overflow)?
-                    .checked_add(track.edit_shift)
-                    .ok_or(Error::Overflow)?;
-                let pts = packet_dts.checked_add(composition).ok_or(Error::Overflow)?;
-                if id == track.track_id {
-                    track.packets.push(Packet {
-                        offset,
-                        size,
-                        dts: packet_dts,
-                        pts,
-                        duration,
-                        key: flags & 0x00010000 == 0,
-                    });
-                }
-                dts = dts.checked_add(duration as u64).ok_or(Error::Overflow)?;
-                offset = end;
+            track
+                .packets
+                .try_reserve_exact(count)
+                .map_err(|_| Error::ResourceLimit)?;
+            if track.packets.capacity() > admitted_capacity {
+                return Err(Error::ResourceLimit);
             }
-            data_end = offset;
         }
-        if id == track.track_id && track.packets.len() > fragment_start + 1 {
-            let mut presentation: Vec<usize> = (fragment_start..track.packets.len()).collect();
-            presentation.sort_unstable_by_key(|index| track.packets[*index].pts);
-            for pair in presentation.windows(2) {
-                let next = track.packets[pair[1]].pts;
-                let current = &mut track.packets[pair[0]];
-                current.duration =
-                    u32::try_from(next.checked_sub(current.pts).ok_or(Error::Overflow)?)
+        traf.trun = Some(TrunCursor {
+            at: start + at,
+            end,
+            version: *body.first().ok_or(Error::Truncated)?,
+            flags,
+            count,
+            index: 0,
+            offset,
+            first_flags,
+        });
+        Ok(())
+    }
+
+    fn one_sample(&mut self, track: &mut Track) -> Result<(), Error> {
+        let traf = self.traf.as_mut().ok_or(Error::Invalid)?;
+        let trun = traf.trun.as_mut().ok_or(Error::Invalid)?;
+        let body = &self.raw[..trun.end];
+        let flags = trun.flags;
+        let duration = if flags & 0x000100 != 0 {
+            let value = u32be(body, trun.at)?;
+            trun.at += 4;
+            value
+        } else {
+            traf.default_duration
+        };
+        let size = if flags & 0x000200 != 0 {
+            let value = u32be(body, trun.at)?;
+            trun.at += 4;
+            value
+        } else {
+            traf.default_size
+        };
+        let sample_flags = if flags & 0x000400 != 0 {
+            let value = u32be(body, trun.at)?;
+            trun.at += 4;
+            value
+        } else if trun.index == 0 {
+            trun.first_flags.unwrap_or(traf.default_flags)
+        } else {
+            traf.default_flags
+        };
+        let composition = if flags & 0x000800 != 0 {
+            let value = u32be(body, trun.at)?;
+            trun.at += 4;
+            if trun.version == 1 {
+                value as i32 as i64
+            } else {
+                value as i64
+            }
+        } else {
+            0
+        };
+        let end = trun
+            .offset
+            .checked_add(size as u64)
+            .ok_or(Error::Overflow)?;
+        if size == 0 || size > PACKET_BUDGET || end > self.file_len {
+            return Err(Error::ResourceLimit);
+        }
+        let packet_dts = i64::try_from(traf.dts)
+            .map_err(|_| Error::Overflow)?
+            .checked_add(track.edit_shift)
+            .ok_or(Error::Overflow)?;
+        let pts = packet_dts.checked_add(composition).ok_or(Error::Overflow)?;
+        if traf.id == track.track_id {
+            let decode_index = track.packets.len();
+            let key = (pts, decode_index);
+            let previous = traf
+                .presentation
+                .range(..key)
+                .next_back()
+                .map(|(position, index)| (position.0, *index));
+            let following = traf
+                .presentation
+                .range(key..)
+                .next()
+                .map(|(position, _)| position.0);
+            if let Some((previous_pts, previous_index)) = previous {
+                track.packets[previous_index].duration =
+                    u32::try_from(pts.checked_sub(previous_pts).ok_or(Error::Overflow)?)
                         .map_err(|_| Error::Overflow)?;
             }
+            let frame_duration = if let Some(following_pts) = following {
+                u32::try_from(following_pts.checked_sub(pts).ok_or(Error::Overflow)?)
+                    .map_err(|_| Error::Overflow)?
+            } else {
+                duration
+            };
+            track.packets.push(Packet {
+                offset: trun.offset,
+                size,
+                dts: packet_dts,
+                pts,
+                duration: frame_duration,
+                key: sample_flags & 0x00010000 == 0,
+            });
+            traf.presentation.insert(key, decode_index);
         }
-        implicit_base = data_end;
+        traf.dts = traf
+            .dts
+            .checked_add(duration as u64)
+            .ok_or(Error::Overflow)?;
+        trun.offset = end;
+        trun.index += 1;
+        if trun.index == trun.count {
+            traf.data_end = end;
+            traf.trun = None;
+        }
+        Ok(())
     }
-    Ok(())
+
+    pub fn advance(&mut self, track: &mut Track, credit: u32) -> Result<bool, Error> {
+        for _ in 0..credit.min(64).max(1) {
+            if self.traf.as_ref().is_some_and(|traf| traf.trun.is_some()) {
+                self.one_sample(track)?;
+                continue;
+            }
+            if let Some(traf) = &mut self.traf {
+                if traf.at == traf.end {
+                    self.implicit_base = traf.data_end;
+                    self.traf = None;
+                    continue;
+                }
+                let (kind, start, end) = atom_at(&self.raw, traf.at, traf.end)?;
+                traf.at = end;
+                if kind == *b"trun" {
+                    self.start_trun(start, end, track)?;
+                }
+                continue;
+            }
+            if self.at == self.raw.len() {
+                return Ok(true);
+            }
+            let (kind, start, end) = atom_at(&self.raw, self.at, self.raw.len())?;
+            self.at = end;
+            if kind == *b"traf" {
+                self.start_traf(start, end, track)?;
+            }
+        }
+        Ok(self.at == self.raw.len() && self.traf.is_none())
+    }
 }
 
 #[cfg(test)]
@@ -647,12 +698,379 @@ mod tests {
     }
     #[test]
     fn signed_composition_offsets_preserve_decode_order() {
-        let timing = [(2, 100)];
-        let mut run = Runs::new(&timing).unwrap();
-        assert_eq!(run.next(), Ok(100));
-        assert_eq!(run.next(), Ok(100));
-        assert_eq!(run.next(), Err(Error::Invalid));
-        let neg = 0xffff_ff9c_u32;
-        assert_eq!(neg as i32 as i64, -100);
+        assert_eq!(
+            edit_offset(
+                &[0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 3, 232, 0, 0, 0, 100, 0, 1, 0, 0],
+                1000,
+                1000
+            ),
+            Ok(-100)
+        );
+    }
+
+    #[test]
+    fn fragment_samples_yield_before_completing_large_trun() {
+        fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&((body.len() + 8) as u32).to_be_bytes());
+            bytes.extend_from_slice(kind);
+            bytes.extend_from_slice(body);
+            bytes
+        }
+        let tfhd = atom(b"tfhd", &[0, 2, 0, 24, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
+        let tfdt = atom(b"tfdt", &[0, 0, 0, 0, 0, 0, 0, 0]);
+        let trun = atom(b"trun", &[0, 0, 0, 1, 0, 0, 0, 128, 0, 0, 1, 244]);
+        let mut traf = Vec::new();
+        traf.extend_from_slice(&tfhd);
+        traf.extend_from_slice(&tfdt);
+        traf.extend_from_slice(&trun);
+        let raw = atom(b"traf", &traf);
+        let mut builder = FragmentBuilder::new(raw, 0, 1000).unwrap();
+        let mut track = Track {
+            track_id: 1,
+            codec: *b"avc1",
+            width: 16,
+            height: 16,
+            display_width: 16,
+            display_height: 16,
+            color_primaries: 0,
+            color_transfer: 0,
+            color_matrix: 0,
+            color_full_range: -1,
+            timescale: 1000,
+            duration: 0,
+            rotation: 0,
+            description: Vec::new(),
+            packets: Vec::new(),
+            fragment_default_duration: 0,
+            fragment_default_size: 0,
+            fragment_default_flags: 0,
+            edit_shift: 0,
+        };
+        assert!(!builder.advance(&mut track, 64).unwrap());
+        assert!(track.packets.len() < 64);
+        assert!(!builder.advance(&mut track, 64).unwrap());
+        assert!(track.packets.len() < 128);
+        while !builder.advance(&mut track, 64).unwrap() {}
+        assert_eq!(track.packets.len(), 128);
+        assert_eq!(track.packets[0].offset, 500);
+        assert_eq!(track.packets[127].offset, 627);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TableRef {
+    start: usize,
+    count: usize,
+    width: usize,
+}
+impl TableRef {
+    fn entry<'a>(&self, raw: &'a [u8], index: usize) -> Result<&'a [u8], Error> {
+        if index >= self.count {
+            return Err(Error::Invalid);
+        }
+        let start = self
+            .start
+            .checked_add(index.checked_mul(self.width).ok_or(Error::Overflow)?)
+            .ok_or(Error::Overflow)?;
+        raw.get(start..start + self.width).ok_or(Error::Truncated)
+    }
+}
+fn table_with_count(
+    raw: &[u8],
+    body: &[u8],
+    start: usize,
+    width: usize,
+    count_at: usize,
+) -> Result<TableRef, Error> {
+    let count = u32be(body, count_at)? as usize;
+    if count > MAX_SAMPLES {
+        return Err(Error::ResourceLimit);
+    }
+    let end = start
+        .checked_add(count.checked_mul(width).ok_or(Error::Overflow)?)
+        .ok_or(Error::Overflow)?;
+    if end > body.len() {
+        return Err(Error::Truncated);
+    }
+    let absolute = (body.as_ptr() as usize)
+        .checked_sub(raw.as_ptr() as usize)
+        .and_then(|offset| offset.checked_add(start))
+        .ok_or(Error::Invalid)?;
+    if absolute.checked_add(count * width).ok_or(Error::Overflow)? > raw.len() {
+        return Err(Error::Invalid);
+    }
+    Ok(TableRef {
+        start: absolute,
+        count,
+        width,
+    })
+}
+fn table(raw: &[u8], body: &[u8], start: usize, width: usize) -> Result<TableRef, Error> {
+    table_with_count(raw, body, start, width, 4)
+}
+
+/// Retains encoded box tables, expanding at most the caller's sample credit per step.
+/// Raw table bytes plus admitted packed packet storage share the metadata reserve.
+pub struct IndexBuilder {
+    raw: Vec<u8>,
+    file_len: u64,
+    sizes: TableRef,
+    fixed_size: u32,
+    offsets: TableRef,
+    stsc: TableRef,
+    stts: TableRef,
+    ctts: Option<TableRef>,
+    ctts_signed: bool,
+    stss: Option<TableRef>,
+    sample_at: usize,
+    chunk_at: usize,
+    chunk_run_at: usize,
+    sample_in_chunk: u32,
+    per_chunk: u32,
+    offset: u64,
+    dts: i64,
+    stts_at: usize,
+    stts_remaining: u32,
+    stts_value: u32,
+    ctts_at: usize,
+    ctts_remaining: u32,
+    ctts_value: u32,
+    stss_at: usize,
+}
+impl IndexBuilder {
+    pub fn new(
+        raw: Vec<u8>,
+        stbl_range: (usize, usize),
+        file_len: u64,
+        track: &mut Track,
+    ) -> Result<Self, Error> {
+        let stbl = raw
+            .get(stbl_range.0..stbl_range.0 + stbl_range.1)
+            .ok_or(Error::Invalid)?;
+        let sizes_body = required(stbl, *b"stsz")?;
+        let fixed_size = u32be(sizes_body, 4)?;
+        let sizes = table_with_count(&raw, sizes_body, 12, if fixed_size == 0 { 4 } else { 0 }, 8)?;
+        if sizes.count == 0 {
+            return Err(Error::Unsupported);
+        }
+        let (offsets_body, wide) = if let Some(body) = child(stbl, *b"co64")? {
+            (body, true)
+        } else {
+            (required(stbl, *b"stco")?, false)
+        };
+        let offsets = table(&raw, offsets_body, 8, if wide { 8 } else { 4 })?;
+        if offsets.count == 0 {
+            return Err(Error::Invalid);
+        }
+        let stsc = table(&raw, required(stbl, *b"stsc")?, 8, 12)?;
+        let stts = table(&raw, required(stbl, *b"stts")?, 8, 8)?;
+        if stsc.count == 0 || stts.count == 0 {
+            return Err(Error::Invalid);
+        }
+        let ctts_body = child(stbl, *b"ctts")?;
+        let ctts_signed = ctts_body.is_some_and(|body| body.first() == Some(&1));
+        let ctts = ctts_body.map(|body| table(&raw, body, 8, 8)).transpose()?;
+        let stss = child(stbl, *b"stss")?
+            .map(|body| table(&raw, body, 8, 4))
+            .transpose()?;
+        let packet_bytes = sizes
+            .count
+            .checked_mul(std::mem::size_of::<Packet>())
+            .ok_or(Error::Overflow)?;
+        if raw
+            .len()
+            .checked_add(packet_bytes)
+            .and_then(|n| n.checked_add(track.description.len()))
+            .and_then(|n| n.checked_add(crate::INPUT_CAPACITY))
+            .is_none_or(|n| n > METADATA_BUDGET)
+        {
+            return Err(Error::ResourceLimit);
+        }
+        track
+            .packets
+            .try_reserve_exact(sizes.count)
+            .map_err(|_| Error::ResourceLimit)?;
+        let first = stsc.entry(&raw, 0)?;
+        if u32be(first, 0)? != 1 || u32be(first, 4)? == 0 || u32be(first, 8)? != 1 {
+            return Err(Error::Invalid);
+        }
+        let per_chunk = u32be(first, 4)?;
+        let offset = if wide {
+            u64be(offsets.entry(&raw, 0)?, 0)?
+        } else {
+            u32be(offsets.entry(&raw, 0)?, 0)? as u64
+        };
+        Ok(Self {
+            raw,
+            file_len,
+            sizes,
+            fixed_size,
+            offsets,
+            stsc,
+            stts,
+            ctts,
+            ctts_signed,
+            stss,
+            sample_at: 0,
+            chunk_at: 0,
+            chunk_run_at: 0,
+            sample_in_chunk: 0,
+            per_chunk,
+            offset,
+            dts: 0,
+            stts_at: 0,
+            stts_remaining: 0,
+            stts_value: 0,
+            ctts_at: 0,
+            ctts_remaining: 0,
+            ctts_value: 0,
+            stss_at: 0,
+        })
+    }
+
+    fn next_run(
+        raw: &[u8],
+        table: TableRef,
+        at: &mut usize,
+        remaining: &mut u32,
+        value: &mut u32,
+    ) -> Result<u32, Error> {
+        if *remaining == 0 {
+            let entry = table.entry(raw, *at)?;
+            *remaining = u32be(entry, 0)?;
+            *value = u32be(entry, 4)?;
+            if *remaining == 0 {
+                return Err(Error::Invalid);
+            }
+            *at += 1;
+        }
+        *remaining -= 1;
+        Ok(*value)
+    }
+
+    pub fn advance(&mut self, track: &mut Track, credit: u32) -> Result<bool, Error> {
+        for _ in 0..credit.min(64).max(1) {
+            if self.sample_at == self.sizes.count {
+                if self.chunk_at + 1 != self.offsets.count || self.sample_in_chunk != self.per_chunk
+                {
+                    return Err(Error::Invalid);
+                }
+                return Ok(true);
+            }
+            if self.sample_in_chunk == self.per_chunk {
+                self.chunk_at += 1;
+                if self.chunk_at >= self.offsets.count {
+                    return Err(Error::Invalid);
+                }
+                self.sample_in_chunk = 0;
+                if self.chunk_run_at + 1 < self.stsc.count {
+                    let next = self.stsc.entry(&self.raw, self.chunk_run_at + 1)?;
+                    if u32be(next, 0)? as usize == self.chunk_at + 1 {
+                        self.chunk_run_at += 1;
+                        self.per_chunk = u32be(next, 4)?;
+                        if self.per_chunk == 0 || u32be(next, 8)? != 1 {
+                            return Err(Error::Invalid);
+                        }
+                    }
+                }
+                let entry = self.offsets.entry(&self.raw, self.chunk_at)?;
+                self.offset = if self.offsets.width == 8 {
+                    u64be(entry, 0)?
+                } else {
+                    u32be(entry, 0)? as u64
+                };
+            }
+            let size = if self.fixed_size != 0 {
+                self.fixed_size
+            } else {
+                u32be(self.sizes.entry(&self.raw, self.sample_at)?, 0)?
+            };
+            if size == 0 || size > PACKET_BUDGET {
+                return Err(Error::ResourceLimit);
+            }
+            let end = self
+                .offset
+                .checked_add(size as u64)
+                .ok_or(Error::Overflow)?;
+            if end > self.file_len {
+                return Err(Error::Truncated);
+            }
+            let duration = Self::next_run(
+                &self.raw,
+                self.stts,
+                &mut self.stts_at,
+                &mut self.stts_remaining,
+                &mut self.stts_value,
+            )?;
+            let delta = if let Some(ctts) = self.ctts {
+                let raw = Self::next_run(
+                    &self.raw,
+                    ctts,
+                    &mut self.ctts_at,
+                    &mut self.ctts_remaining,
+                    &mut self.ctts_value,
+                )?;
+                if self.ctts_signed {
+                    raw as i32 as i64
+                } else {
+                    raw as i64
+                }
+            } else {
+                0
+            };
+            let pts = self
+                .dts
+                .checked_add(delta)
+                .and_then(|n| n.checked_add(track.edit_shift))
+                .ok_or(Error::Overflow)?;
+            let dts = self
+                .dts
+                .checked_add(track.edit_shift)
+                .ok_or(Error::Overflow)?;
+            let sample_num = self.sample_at as u32 + 1;
+            let key = if let Some(stss) = self.stss {
+                if self.stss_at >= stss.count {
+                    false
+                } else {
+                    let entry = stss.entry(&self.raw, self.stss_at)?;
+                    let key_num = u32be(entry, 0)?;
+                    if key_num < sample_num || key_num == 0 {
+                        return Err(Error::Invalid);
+                    }
+                    if key_num == sample_num {
+                        self.stss_at += 1;
+                        true
+                    } else {
+                        false
+                    }
+                }
+            } else {
+                true
+            };
+            track.packets.push(Packet {
+                offset: self.offset,
+                size,
+                dts,
+                pts,
+                duration,
+                key,
+            });
+            self.dts = self
+                .dts
+                .checked_add(duration as i64)
+                .ok_or(Error::Overflow)?;
+            self.offset = end;
+            self.sample_at += 1;
+            self.sample_in_chunk += 1;
+        }
+        if self.sample_at == self.sizes.count {
+            if self.chunk_at + 1 != self.offsets.count || self.sample_in_chunk != self.per_chunk {
+                return Err(Error::Invalid);
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
