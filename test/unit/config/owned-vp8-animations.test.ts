@@ -1,0 +1,98 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { describe, expect, it } from 'vite-plus/test';
+
+import {
+  RgbaFrameCollector,
+  declaredOutputs,
+  extractVp8Frames,
+  writeIvf,
+} from '../../../scripts/test/owned-vp8-animations.ts';
+
+function chunk(tag: string, body: Buffer): Buffer {
+  const header = Buffer.alloc(8);
+  header.write(tag, 0, 'ascii');
+  header.writeUInt32LE(body.length, 4);
+  return Buffer.concat([header, body, Buffer.alloc(body.length & 1)]);
+}
+
+function frame(holdMs: number, width = 2, height = 1, firstByte = 0x10): Buffer {
+  const header = Buffer.alloc(16);
+  header.writeUIntLE(width - 1, 6, 3);
+  header.writeUIntLE(height - 1, 9, 3);
+  header.writeUIntLE(holdMs, 12, 3);
+  const vp8 = Buffer.from([firstByte, 0, 0, 0x9d, 0x01, 0x2a, width, 0, height, 0, 7]);
+  return chunk('ANMF', Buffer.concat([header, chunk('VP8 ', vp8)]));
+}
+
+function animation(...frames: Buffer[]): Buffer {
+  const vp8x = Buffer.alloc(10);
+  vp8x[0] = 0x02;
+  vp8x.writeUIntLE(1, 4, 3);
+  const body = Buffer.concat([chunk('VP8X', vp8x), chunk('ANIM', Buffer.alloc(6)), ...frames]);
+  const header = Buffer.alloc(12);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(body.length + 4, 4);
+  header.write('WEBP', 8);
+  return Buffer.concat([header, body]);
+}
+
+describe('saved animation verifier', () => {
+  it('extracts odd-padded VP8 payloads into exact millisecond IVF frame boundaries', async () => {
+    const bytes = animation(frame(83), frame(167));
+    const { parsed, frames } = extractVp8Frames(bytes);
+    expect(parsed.totalDurationMs).toBe(250);
+    expect(frames.map((entry) => [entry.timestampMs, entry.holdMs, entry.payload.length])).toEqual([
+      [0, 83, 11],
+      [83, 167, 11],
+    ]);
+    const directory = await mkdtemp(join(tmpdir(), 'wmc-animation-'));
+    try {
+      const path = join(directory, 'frames.ivf');
+      await writeIvf(path, 2, 1, frames);
+      const ivf = await readFile(path);
+      expect(ivf.toString('ascii', 0, 4)).toBe('DKIF');
+      expect(ivf.readUInt32LE(16)).toBe(1000);
+      expect(ivf.readUInt32LE(20)).toBe(1);
+      expect(ivf.readUInt32LE(24)).toBe(2);
+      expect(ivf.readUInt32LE(32)).toBe(11);
+      expect(ivf.readBigUInt64LE(36)).toBe(0n);
+      expect(ivf.readUInt32LE(55)).toBe(11);
+      expect(ivf.readBigUInt64LE(59)).toBe(83n);
+      expect(ivf.length).toBe(78);
+      await expect(writeIvf(path, 2, 1, frames)).rejects.toMatchObject({ code: 'EEXIST' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects truncated child boundaries, non-keyframe payloads, and partial or extra raw frames', () => {
+    const valid = animation(frame(83));
+    const truncated = Buffer.from(valid);
+    // The VP8 child length at offset 72 must remain inside its ANMF parent.
+    truncated.writeUInt32LE(1000, 72);
+    expect(() => extractVp8Frames(truncated)).toThrow(/child escapes frame/);
+    expect(() => extractVp8Frames(animation(frame(83, 2, 1, 0x11)))).toThrow(/keyframe/);
+    const collector = new RgbaFrameCollector(2, 1, 1);
+    collector.accept(Buffer.alloc(7));
+    expect(() => collector.finish()).toThrow(/partial RGBA frame/);
+    collector.accept(Buffer.alloc(1));
+    expect(collector.finish()).toHaveLength(1);
+    expect(() => collector.accept(Buffer.alloc(1))).toThrow(/extra RGBA bytes/);
+  });
+
+  it('takes only declared saved sites and deduplicates repeated identities', () => {
+    const saved = { file: 'one.webp', bytes: 10, sha256: 'a'.repeat(64) };
+    const report = {
+      samples: [{ saved, build: 'prior' }],
+      functional: [{ valid: { saved }, activeStop: { recovery: { saved: { ...saved } } } }],
+      unrelated: { saved: { file: 'ignored.webp', bytes: 1, sha256: 'b'.repeat(64) } },
+    };
+    expect(declaredOutputs(report)).toHaveLength(1);
+    expect(() =>
+      declaredOutputs({ ...report, samples: [{ saved: { ...saved, bytes: 11 } }] })
+    ).toThrow(/Repeated saved identity differs/);
+  });
+});
