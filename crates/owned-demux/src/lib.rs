@@ -227,7 +227,7 @@ impl Mp4Session {
             || self
                 .compact_index
                 .as_ref()
-                .is_some_and(mp4_compact::CompactIndex::seek_active)
+                .is_some_and(|index| index.seek_active() || index.query_active())
         {
             return Err(Error::Invalid);
         }
@@ -1279,7 +1279,16 @@ pub extern "C" fn demux_index_info() -> u32 {
     let Ok(live_bytes) = u32::try_from(live_bytes) else {
         return 0;
     };
-    let flags = u32::from(session.format == Format::Ts);
+    let flags = u32::from(session.format == Format::Ts)
+        | if session
+            .compact_index
+            .as_ref()
+            .is_some_and(mp4_compact::CompactIndex::requires_query)
+        {
+            2
+        } else {
+            0
+        };
     state.event.fill(0);
     state.event[0..4].copy_from_slice(&9u32.to_le_bytes());
     state.event[4..8].copy_from_slice(&mode.to_le_bytes());
@@ -1311,14 +1320,7 @@ pub extern "C" fn demux_packet(index: u32) -> u32 {
     }) {
         return 0;
     }
-    state.event.fill(0);
-    state.event[0..4].copy_from_slice(&5u32.to_le_bytes());
-    state.event[8..16].copy_from_slice(&packet.offset.to_le_bytes());
-    state.event[16..20].copy_from_slice(&packet.size.to_le_bytes());
-    state.event[20..24].copy_from_slice(&(packet.key as u32).to_le_bytes());
-    state.event[24..32].copy_from_slice(&packet.dts.to_le_bytes());
-    state.event[32..40].copy_from_slice(&packet.pts.to_le_bytes());
-    state.event[40..48].copy_from_slice(&packet.duration.to_le_bytes());
+    write_packet_event(&mut state.event, packet);
     if let Some(source) = state
         .session
         .as_ref()
@@ -1330,6 +1332,79 @@ pub extern "C" fn demux_packet(index: u32) -> u32 {
         state.event[60] = source.prefix;
     }
     state.event.as_ptr() as u32
+}
+
+fn write_packet_event(event: &mut [u8; 64], packet: Packet) {
+    event.fill(0);
+    event[0..4].copy_from_slice(&5u32.to_le_bytes());
+    event[8..16].copy_from_slice(&packet.offset.to_le_bytes());
+    event[16..20].copy_from_slice(&packet.size.to_le_bytes());
+    event[20..24].copy_from_slice(&(packet.key as u32).to_le_bytes());
+    event[24..32].copy_from_slice(&packet.dts.to_le_bytes());
+    event[32..40].copy_from_slice(&packet.pts.to_le_bytes());
+    event[40..48].copy_from_slice(&packet.duration.to_le_bytes());
+}
+
+#[no_mangle]
+pub extern "C" fn demux_query_packet_begin(index: u32) -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    let Some(session) = state.session.as_mut() else {
+        return 0;
+    };
+    if session.status != Status::Complete
+        || session.snapshot_export.is_some()
+        || session.snapshot_import.is_some()
+    {
+        return 0;
+    }
+    session
+        .compact_index
+        .as_mut()
+        .is_some_and(|compact| compact.query_begin(index).is_ok()) as u32
+}
+
+#[no_mangle]
+pub extern "C" fn demux_query_packet_step(credit: u32) -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    let Some(index) = state
+        .session
+        .as_mut()
+        .and_then(|session| session.compact_index.as_mut())
+    else {
+        return 0;
+    };
+    let result = index.query_step(credit);
+    match result {
+        Ok(Some(packet)) => write_packet_event(&mut state.event, packet),
+        other => {
+            let (kind, value) = match other {
+                Ok(None) => (1u32, 0u32),
+                Err(error) => (4u32, error as u32 + 1),
+                Ok(Some(_)) => unreachable!(),
+            };
+            state.event.fill(0);
+            state.event[0..4].copy_from_slice(&11u32.to_le_bytes());
+            state.event[4..8].copy_from_slice(&kind.to_le_bytes());
+            state.event[8..12].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+    state.event.as_ptr() as u32
+}
+
+#[no_mangle]
+pub extern "C" fn demux_query_packet_end() -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    state
+        .session
+        .as_mut()
+        .and_then(|session| session.compact_index.as_mut())
+        .is_some_and(mp4_compact::CompactIndex::query_end) as u32
 }
 
 #[no_mangle]

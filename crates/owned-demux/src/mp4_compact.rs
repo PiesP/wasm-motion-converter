@@ -22,6 +22,20 @@ struct OffsetRun {
     offset: i64,
 }
 #[derive(Clone, Copy)]
+struct RunOrder {
+    run: u32,
+    start_pts: i64,
+    last_pts: i64,
+    prefix_max_last: i64,
+}
+#[derive(Clone)]
+struct Query {
+    index: u32,
+    packet: Packet,
+    scan_at: usize,
+    next: Option<(i64, u32)>,
+}
+#[derive(Clone, Copy)]
 struct ChunkRun {
     first_sample: u32,
     first_chunk: u32,
@@ -54,7 +68,9 @@ pub struct CompactIndex {
     time_runs: Vec<TimeRun>,
     offset_runs: Vec<OffsetRun>,
     chunk_runs: Vec<ChunkRun>,
-    successors: Vec<u32>,
+    sorted_runs: Vec<RunOrder>,
+    query: Option<Query>,
+    cached_packet: Option<(u32, Packet)>,
     max_packet: u32,
     seek: Seek,
 }
@@ -68,6 +84,12 @@ impl CompactIndex {
     }
     pub fn seek_active(&self) -> bool {
         self.seek.active
+    }
+    pub fn query_active(&self) -> bool {
+        self.query.is_some()
+    }
+    pub fn requires_query(&self) -> bool {
+        !self.offset_runs.is_empty()
     }
     pub fn retained_bytes(&self, track: &Track) -> Result<usize, Error> {
         self.raw
@@ -104,9 +126,9 @@ impl CompactIndex {
             })
             .and_then(|n| {
                 n.checked_add(
-                    self.successors
+                    self.sorted_runs
                         .capacity()
-                        .checked_mul(std::mem::size_of::<u32>())?,
+                        .checked_mul(std::mem::size_of::<RunOrder>())?,
                 )
             })
             .and_then(|n| {
@@ -198,6 +220,17 @@ impl CompactIndex {
         Ok(low < stss.count && u32be(stss.entry(&self.raw, low)?, 0)? == sample)
     }
     pub fn packet(&self, index: u32) -> Result<Packet, Error> {
+        if self.requires_query() {
+            return self
+                .cached_packet
+                .as_ref()
+                .filter(|(cached_index, _)| *cached_index == index)
+                .map(|(_, packet)| packet.clone())
+                .ok_or(Error::Invalid);
+        }
+        self.packet_base(index)
+    }
+    fn packet_base(&self, index: u32) -> Result<Packet, Error> {
         if index >= self.count {
             return Err(Error::Invalid);
         }
@@ -236,31 +269,85 @@ impl CompactIndex {
             return Err(Error::ResourceLimit);
         }
         let (pts, stts_duration) = self.pts(index)?;
-        let duration = if self.offset_runs.is_empty() {
-            u64::from(stts_duration)
-        } else {
-            let next = if self.successors.is_empty() {
-                (index + 1 < self.count).then_some(index + 1)
-            } else {
-                let successor = *self.successors.get(index as usize).ok_or(Error::Invalid)?;
-                (successor != NO_SUCCESSOR).then_some(successor)
-            };
-            if let Some(next) = next {
-                u64::try_from(self.pts(next)?.0.checked_sub(pts).ok_or(Error::Overflow)?)
-                    .map_err(|_| Error::Overflow)?
-            } else {
-                u64::from(stts_duration)
-            }
-        };
         let (dts, _) = self.time(index)?;
         Ok(Packet {
             offset,
             size,
             dts: dts.checked_add(self.edit_shift).ok_or(Error::Overflow)?,
             pts,
-            duration,
+            duration: u64::from(stts_duration),
             key: self.key(index)?,
         })
+    }
+    pub fn query_begin(&mut self, index: u32) -> Result<(), Error> {
+        if !self.requires_query() || self.query.is_some() {
+            return Err(Error::Invalid);
+        }
+        let packet = self.packet_base(index)?;
+        let scan_at = self
+            .sorted_runs
+            .partition_point(|run| run.start_pts <= packet.pts);
+        let next = self
+            .sorted_runs
+            .get(scan_at)
+            .map(|run| (run.start_pts, self.offset_runs[run.run as usize].first));
+        self.query = Some(Query {
+            index,
+            packet,
+            scan_at,
+            next,
+        });
+        Ok(())
+    }
+    pub fn query_step(&mut self, credit: u32) -> Result<Option<Packet>, Error> {
+        let mut query = self.query.clone().ok_or(Error::Invalid)?;
+        for _ in 0..credit.clamp(1, 64) {
+            if query.scan_at == 0
+                || self.sorted_runs[query.scan_at - 1].prefix_max_last < query.packet.pts
+            {
+                if let Some((next_pts, _)) = query.next {
+                    query.packet.duration = u64::try_from(
+                        next_pts
+                            .checked_sub(query.packet.pts)
+                            .ok_or(Error::Overflow)?,
+                    )
+                    .map_err(|_| Error::Overflow)?;
+                }
+                self.cached_packet = Some((query.index, query.packet.clone()));
+                self.query = Some(query);
+                return Ok(self
+                    .cached_packet
+                    .as_ref()
+                    .map(|(_, packet)| packet.clone()));
+            }
+            query.scan_at -= 1;
+            let order = self.sorted_runs[query.scan_at];
+            if order.last_pts < query.packet.pts {
+                continue;
+            }
+            let (start, end) = self.run_bounds(order.run as usize);
+            let mut low = start;
+            let mut high = end;
+            while low < high {
+                let mid = low + (high - low) / 2;
+                if (self.pts(mid)?.0, mid) <= (query.packet.pts, query.index) {
+                    low = mid + 1;
+                } else {
+                    high = mid;
+                }
+            }
+            if low < end {
+                let candidate = (self.pts(low)?.0, low);
+                if query.next.is_none_or(|next| candidate < next) {
+                    query.next = Some(candidate);
+                }
+            }
+        }
+        self.query = Some(query);
+        Ok(None)
+    }
+    pub fn query_end(&mut self) -> bool {
+        self.query.take().is_some()
     }
     fn run_bounds(&self, run: usize) -> (u32, u32) {
         if self.offset_runs.is_empty() {
@@ -422,9 +509,10 @@ impl CompactIndex {
 
 enum Phase {
     Scan,
-    Fill,
-    Heapify,
-    Emit,
+    BuildRuns,
+    HeapifyRuns,
+    SortRuns,
+    PrefixRuns,
     Ready,
 }
 
@@ -449,15 +537,14 @@ pub struct CompactBuilder {
     ctts_offset: i64,
     stss_at: usize,
     size_total: u64,
-    previous_pts: Option<i64>,
     max_pts: i64,
     max_pts_duration: u32,
-    reordered: bool,
     phase: Phase,
-    sort_heap: Vec<u32>,
-    fill_at: u32,
+    run_at: usize,
     heapify_at: usize,
-    previous_sorted: Option<u32>,
+    sort_at: usize,
+    prefix_at: usize,
+    prefix_max: i64,
 }
 
 fn reserve<T>(count: usize) -> Result<Vec<T>, Error> {
@@ -543,6 +630,12 @@ impl CompactBuilder {
             })
             .and_then(|n| n.checked_add(stsc.count.checked_mul(std::mem::size_of::<ChunkRun>())?))
             .and_then(|n| n.checked_add(seek_count.checked_mul(std::mem::size_of::<Candidate>())?))
+            .and_then(|n| {
+                n.checked_add(
+                    ctts.map_or(0, |table| table.count)
+                        .checked_mul(std::mem::size_of::<RunOrder>())?,
+                )
+            })
             .ok_or(Error::Overflow)?;
         if estimated > METADATA_BUDGET {
             return Err(Error::ResourceLimit);
@@ -560,7 +653,9 @@ impl CompactBuilder {
             time_runs: reserve(stts.count)?,
             offset_runs: reserve(ctts.map_or(0, |table| table.count))?,
             chunk_runs: reserve(stsc.count)?,
-            successors: Vec::new(),
+            sorted_runs: reserve(ctts.map_or(0, |table| table.count))?,
+            query: None,
+            cached_packet: None,
             max_packet: 0,
             seek: Seek {
                 heap: reserve(seek_count)?,
@@ -599,49 +694,15 @@ impl CompactBuilder {
             ctts_offset: 0,
             stss_at: 0,
             size_total: 0,
-            previous_pts: None,
             max_pts: i64::MIN,
             max_pts_duration: 0,
-            reordered: false,
             phase: Phase::Scan,
-            sort_heap: Vec::new(),
-            fill_at: 0,
+            run_at: 0,
             heapify_at: 0,
-            previous_sorted: None,
+            sort_at: 0,
+            prefix_at: 0,
+            prefix_max: i64::MIN,
         })
-    }
-
-    fn admit_order(&mut self, track: &Track) -> Result<(), Error> {
-        let bytes = (self.index.count as usize)
-            .checked_mul(std::mem::size_of::<u32>() * 2)
-            .ok_or(Error::Overflow)?;
-        if self
-            .index
-            .retained_bytes(track)?
-            .checked_add(bytes)
-            .is_none_or(|total| total > METADATA_BUDGET)
-        {
-            return Err(Error::ResourceLimit);
-        }
-        self.index.successors = reserve(self.index.count as usize)?;
-        if self
-            .index
-            .retained_bytes(track)?
-            .checked_add(bytes / 2)
-            .is_none_or(|total| total > METADATA_BUDGET)
-        {
-            return Err(Error::ResourceLimit);
-        }
-        self.sort_heap = reserve(self.index.count as usize)?;
-        if self
-            .index
-            .retained_bytes(track)?
-            .checked_add(self.sort_heap.capacity() * std::mem::size_of::<u32>())
-            .is_none_or(|total| total > METADATA_BUDGET)
-        {
-            return Err(Error::ResourceLimit);
-        }
-        Ok(())
     }
 
     fn scan_one(&mut self, track: &Track) -> Result<(), Error> {
@@ -732,13 +793,6 @@ impl CompactBuilder {
             .checked_add(self.ctts_offset)
             .and_then(|n| n.checked_add(track.edit_shift))
             .ok_or(Error::Overflow)?;
-        if let Some(previous) = self.previous_pts {
-            if pts < previous && !self.reordered {
-                self.admit_order(track)?;
-                self.reordered = true;
-            }
-        }
-        self.previous_pts = Some(pts);
         if pts >= self.max_pts {
             self.max_pts = pts;
             self.max_pts_duration = self.stts_delta;
@@ -769,42 +823,33 @@ impl CompactBuilder {
         Ok(())
     }
 
-    fn lower(&self, left: u32, right: u32) -> Result<bool, Error> {
-        Ok((self.index.pts(left)?.0, left) < (self.index.pts(right)?.0, right))
+    fn order_higher(left: RunOrder, right: RunOrder) -> bool {
+        (left.start_pts, left.run) > (right.start_pts, right.run)
     }
-    fn sift_down(&mut self, mut at: usize) -> Result<(), Error> {
+    fn sift_down(&mut self, mut at: usize, limit: usize) -> Result<(), Error> {
         loop {
             let left = at
                 .checked_mul(2)
                 .and_then(|n| n.checked_add(1))
                 .ok_or(Error::Overflow)?;
-            if left >= self.sort_heap.len() {
+            if left >= limit {
                 break;
             }
             let right = left + 1;
-            let smallest = if right < self.sort_heap.len()
-                && self.lower(self.sort_heap[right], self.sort_heap[left])?
+            let greater = if right < limit
+                && Self::order_higher(self.index.sorted_runs[right], self.index.sorted_runs[left])
             {
                 right
             } else {
                 left
             };
-            if !self.lower(self.sort_heap[smallest], self.sort_heap[at])? {
+            if !Self::order_higher(self.index.sorted_runs[greater], self.index.sorted_runs[at]) {
                 break;
             }
-            self.sort_heap.swap(at, smallest);
-            at = smallest;
+            self.index.sorted_runs.swap(at, greater);
+            at = greater;
         }
         Ok(())
-    }
-    fn pop_sorted(&mut self) -> Result<u32, Error> {
-        let first = *self.sort_heap.first().ok_or(Error::Invalid)?;
-        let last = self.sort_heap.pop().ok_or(Error::Invalid)?;
-        if !self.sort_heap.is_empty() {
-            self.sort_heap[0] = last;
-            self.sift_down(0)?;
-        }
-        Ok(first)
     }
 
     pub fn advance(&mut self, track: &mut Track, credit: u32) -> Result<bool, Error> {
@@ -825,36 +870,52 @@ impl CompactBuilder {
                         .checked_add(i64::from(self.max_pts_duration))
                         .ok_or(Error::Overflow)?;
                     track.duration = u64::try_from(end.max(0)).map_err(|_| Error::Overflow)?;
-                    self.phase = if self.reordered {
-                        Phase::Fill
+                    self.phase = if self.ctts.is_some() {
+                        Phase::BuildRuns
                     } else {
                         Phase::Ready
                     };
                 }
-                Phase::Fill => {
-                    if self.fill_at < self.index.count {
-                        self.sort_heap.push(self.fill_at);
-                        self.index.successors.push(NO_SUCCESSOR);
-                        self.fill_at += 1;
+                Phase::BuildRuns => {
+                    if self.run_at < self.index.offset_runs.len() {
+                        let (first, end) = self.index.run_bounds(self.run_at);
+                        let start_pts = self.index.pts(first)?.0;
+                        let last_pts = self.index.pts(end - 1)?.0;
+                        self.index.sorted_runs.push(RunOrder {
+                            run: u32::try_from(self.run_at).map_err(|_| Error::ResourceLimit)?,
+                            start_pts,
+                            last_pts,
+                            prefix_max_last: i64::MIN,
+                        });
+                        self.run_at += 1;
                     } else {
-                        self.heapify_at = self.sort_heap.len() / 2;
-                        self.phase = Phase::Heapify;
+                        self.heapify_at = self.index.sorted_runs.len() / 2;
+                        self.phase = Phase::HeapifyRuns;
                     }
                 }
-                Phase::Heapify => {
+                Phase::HeapifyRuns => {
                     if self.heapify_at > 0 {
                         self.heapify_at -= 1;
-                        self.sift_down(self.heapify_at)?;
+                        self.sift_down(self.heapify_at, self.index.sorted_runs.len())?;
                     } else {
-                        self.phase = Phase::Emit;
+                        self.sort_at = self.index.sorted_runs.len();
+                        self.phase = Phase::SortRuns;
                     }
                 }
-                Phase::Emit => {
-                    if !self.sort_heap.is_empty() {
-                        let current = self.pop_sorted()?;
-                        if let Some(previous) = self.previous_sorted.replace(current) {
-                            self.index.successors[previous as usize] = current;
-                        }
+                Phase::SortRuns => {
+                    if self.sort_at > 1 {
+                        self.sort_at -= 1;
+                        self.index.sorted_runs.swap(0, self.sort_at);
+                        self.sift_down(0, self.sort_at)?;
+                    } else {
+                        self.phase = Phase::PrefixRuns;
+                    }
+                }
+                Phase::PrefixRuns => {
+                    if let Some(run) = self.index.sorted_runs.get_mut(self.prefix_at) {
+                        self.prefix_max = self.prefix_max.max(run.last_pts);
+                        run.prefix_max_last = self.prefix_max;
+                        self.prefix_at += 1;
                     } else {
                         self.phase = Phase::Ready;
                     }
@@ -941,9 +1002,21 @@ mod tests {
         let mut steps = 0usize;
         while !builder.advance(track, 64)? {
             steps += 1;
-            assert!(steps < 40_000);
+            assert!(steps < 100_000);
         }
         builder.into_index()
+    }
+    fn query_packet(index: &mut CompactIndex, sample: u32) -> Packet {
+        assert!(index.packet(sample).is_err());
+        index.query_begin(sample).unwrap();
+        let packet = loop {
+            if let Some(packet) = index.query_step(1).unwrap() {
+                break packet;
+            }
+        };
+        assert!(index.query_end());
+        assert_eq!(index.packet(sample).unwrap().duration, packet.duration);
+        packet
     }
 
     #[test]
@@ -973,6 +1046,57 @@ mod tests {
         }
         assert_eq!(candidate, Some(699_999));
         assert!(index.seek_end());
+    }
+
+    #[test]
+    fn four_million_reordered_samples_use_two_runs_without_sample_order_storage() {
+        let count = 4_200_000u32;
+        let mut raw = fixed_file(count, 24);
+        let stts_delta = raw.len() - 4;
+        raw[stts_delta..].copy_from_slice(&512u32.to_be_bytes());
+        let mut ctts = table_body(&[(count / 2, 0), (count / 2, (-1_075_200_000i32) as u32)]);
+        ctts[0] = 1;
+        raw.extend_from_slice(&atom(b"ctts", &ctts));
+        let mut track = track();
+        let mut index = complete(raw, 100_800_100, &mut track).unwrap();
+        assert!(index.requires_query());
+        assert!(index.retained_bytes(&track).unwrap() < 128 * 1024);
+        assert_eq!(track.duration, 1_075_200_000);
+        assert_eq!(query_packet(&mut index, 0).duration, 0);
+        assert_eq!(query_packet(&mut index, count / 2).duration, 512);
+        assert_eq!(query_packet(&mut index, count - 1).duration, 512);
+        index.seek_begin(0, NO_SUCCESSOR).unwrap();
+        let mut found = None;
+        for _ in 0..8 {
+            if let Some(Some(candidate)) = index.seek_step(1).unwrap() {
+                found = Some(candidate);
+                break;
+            }
+        }
+        assert_eq!(found, Some(count / 2));
+        assert!(index.seek_end());
+    }
+
+    #[test]
+    fn overlapping_ctts_runs_pause_and_preserve_equal_time_index_order() {
+        let count = 128u32;
+        let mut raw = fixed_file(count, 24);
+        let offsets = (0..count)
+            .map(|i| (1, (-(i as i32)) as u32))
+            .collect::<Vec<_>>();
+        let mut ctts = table_body(&offsets);
+        ctts[0] = 1;
+        raw.extend_from_slice(&atom(b"ctts", &ctts));
+        let mut track = track();
+        let mut index = complete(raw, 100 + u64::from(count) * 24, &mut track).unwrap();
+        assert_eq!(track.duration, 1);
+        index.query_begin(0).unwrap();
+        assert!(index.query_step(4096).unwrap().is_none());
+        assert!(index.query_step(4096).unwrap().is_none());
+        assert_eq!(index.query_step(4096).unwrap().unwrap().duration, 0);
+        assert!(index.query_end());
+        assert_eq!(index.packet(0).unwrap().duration, 0);
+        assert_eq!(query_packet(&mut index, count - 1).duration, 1);
     }
 
     #[test]
@@ -1026,25 +1150,25 @@ mod tests {
         assert_eq!(track.duration, 135);
         assert_eq!(
             (0..6)
-                .map(|i| index.packet(i).unwrap().offset)
+                .map(|i| query_packet(&mut index, i).offset)
                 .collect::<Vec<_>>(),
             [100, 103, 200, 300, 400, 407]
         );
         assert_eq!(
             (0..6)
-                .map(|i| index.packet(i).unwrap().pts)
+                .map(|i| query_packet(&mut index, i).pts)
                 .collect::<Vec<_>>(),
             [-20, 50, 30, 50, 50, 110]
         );
         assert_eq!(
             (0..6)
-                .map(|i| index.packet(i).unwrap().duration)
+                .map(|i| query_packet(&mut index, i).duration)
                 .collect::<Vec<_>>(),
             [50, 0, 20, 0, 60, 25]
         );
         assert_eq!(
             (0..6)
-                .map(|i| index.packet(i).unwrap().key)
+                .map(|i| query_packet(&mut index, i).key)
                 .collect::<Vec<_>>(),
             [true, true, false, true, true, true]
         );

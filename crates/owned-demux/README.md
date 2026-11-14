@@ -43,11 +43,12 @@ Native decoding/configuration capabilities remain browser-dependent.
 
 Large classic MP4 tracks retain checked STSZ, STCO/CO64, STSC, STTS, CTTS and
 STSS tables with sparse byte prefixes and run starts. Packet descriptors are
-computed from those records in decode order. A compact CTTS track with reordered
-presentation may retain a packed four-byte successor index per sample; a bounded
-heap builds it before Ready and is then released. CTTS tracks with monotonic
-presentation and tracks without CTTS need no per-sample successor index. The
-index builder and seek candidate heap advance under explicit work credits.
+computed from those records in decode order. CTTS tracks retain a presentation
+index proportional to the number of CTTS runs: sorted run starts and prefix
+maximum endpoints. Construction and packet-successor queries advance under
+explicit work credits, including when many runs overlap. Tracks without CTTS
+need no presentation index. No per-sample successor array or sort heap is
+allocated. The seek candidate heap is reserved before Ready.
 When a nonempty classic sample table is selected, its descriptors remain
 authoritative even if `mvex` is present; later `moof` boxes are skipped before
 body allocation. Empty classic tables continue through the fragmented route.
@@ -57,10 +58,18 @@ body allocation. Empty classic tables continue through the fragmented route.
 at 12, actual retained index/input/description capacity at 16, additional
 post-Ready seek workspace at 20 (zero because the native heap is preallocated
 inside already counted WASM capacity), and flags at
-24 (bit 0 means reconstructed payloads). `demux_packet_count()` returns the
-logical count; `demux_packet(index)` keeps the tag-5 wire layout and performs a
-checked bounded lookup for compact tracks. The host checks the index record and
-does not allocate a per-packet JavaScript descriptor list in compact mode.
+24 (bit 0 means reconstructed payloads; bit 1 means resumable CTTS packet
+lookup). `demux_packet_count()` returns the logical count. Without CTTS,
+`demux_packet(index)` returns the checked tag-5 descriptor synchronously.
+With CTTS, the host calls `demux_query_packet_begin(index)`, advances
+`demux_query_packet_step(credit)` until tag 5, then calls
+`demux_query_packet_end()`. A working or error step returns tag 11 with state
+1 or 4 at byte 4 and error code at byte 8. Each step visits at most 64
+overlapping runs, even for a larger requested credit. The last successful
+descriptor remains readable through `demux_packet(index)` for host lease
+revalidation after the query ends; a different index requires a new query.
+The host checks the index record and does not allocate a per-packet JavaScript
+descriptor list in compact mode.
 
 Compact seek uses `demux_seek_begin(targetLo, targetHi, beforeIndex)` with signed
 timebase ticks and an exclusive decode-index bound (`0xffffffff` means none).
