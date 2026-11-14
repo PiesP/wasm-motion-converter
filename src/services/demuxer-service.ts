@@ -202,7 +202,7 @@ export async function demuxVideo(
         }
         completed = true;
       } catch (error) {
-        throw classifyOwnedDemuxError(error);
+        throw classifyOwnedDemuxError(error, signal);
       } finally {
         result.totalFrames = totalFrames;
         result.sourceTotalMs = sourceDurationUs / 1000;
@@ -233,6 +233,6 @@ export async function demuxVideo(
     return result;
   } catch (error) {
     dispose();
-    throw classifyOwnedDemuxError(error);
+    throw classifyOwnedDemuxError(error, signal);
   }
 }

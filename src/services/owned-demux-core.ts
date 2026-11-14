@@ -96,7 +96,11 @@ function awaitAbortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
 }
 
 /** Classify terminal failures without retrying a failed or cancelled conversion. */
-export function classifyOwnedDemuxError(error: unknown): Error {
+export function classifyOwnedDemuxError(error: unknown, signal?: AbortSignal): Error {
+  if (signal?.aborted)
+    return error instanceof Error && error.name === 'AbortError'
+      ? error
+      : new DOMException('Owned demux cancelled', 'AbortError');
   if (error instanceof Error && error.name === 'AbortError') return error;
   if (
     error instanceof OwnedDemuxLoadError ||
@@ -199,12 +203,12 @@ export async function createOwnedDemuxSession(
   source: Blob | ArrayBuffer,
   signal?: AbortSignal
 ): Promise<OwnedDemuxSession> {
-  const module = await loadOwnedDemuxModule(signal);
-  signal?.throwIfAborted();
   try {
+    const module = await loadOwnedDemuxModule(signal);
+    signal?.throwIfAborted();
     return new OwnedDemuxSession(source, module);
   } catch (error) {
-    throw classifyOwnedDemuxError(error);
+    throw classifyOwnedDemuxError(error, signal);
   }
 }
 

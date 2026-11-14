@@ -73,7 +73,7 @@ export async function extractVideoMetadata(
       rotation,
     };
   } catch (error) {
-    throw classifyOwnedDemuxError(error);
+    throw classifyOwnedDemuxError(error, signal);
   } finally {
     signal?.removeEventListener('abort', release);
     release();

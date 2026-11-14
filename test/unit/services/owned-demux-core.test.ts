@@ -59,6 +59,11 @@ describe('owned demux packet statistics and terminal errors', () => {
     );
     const cancelled = new DOMException('Cancelled', 'AbortError');
     expect(classifyOwnedDemuxError(cancelled)).toBe(cancelled);
+    const controller = new AbortController();
+    controller.abort('stop');
+    expect(classifyOwnedDemuxError('stop', controller.signal)).toMatchObject({
+      name: 'AbortError',
+    });
   });
 
   it('does not cache a failed load and reuses only a successfully compiled module', async () => {
