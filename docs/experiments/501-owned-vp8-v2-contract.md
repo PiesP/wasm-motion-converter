@@ -229,14 +229,16 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   candidate graph without claiming qualified master delivery. The README also
   described independent decoder tests as filtering-disabled after enabled-filter
   reconstruction tests were added; it now identifies both cases.
-- Fixed in this build stage: `scripts/build/generate-licenses.ts` had no owned
-  VP8 attribution section, leaving its adapted libwebp notices tied to the
-  separate wasm-webp package inventory. The generated notice now independently
-  includes owned MIT, libwebp BSD/patent and RFC format attribution.
-- Fixed in this contract: the product-route paragraph still used present tense
-  for the frozen Emscripten baseline, and the adoption paragraph said the
-  candidate remained absent from product routes. Both now separate the frozen
-  baseline, candidate imports and gated master delivery.
+- Fixed in this contract: the adoption paragraph said the candidate remained
+  absent from product routes after the candidate branch began importing it.
+  It now distinguishes qualification imports from gated master delivery.
+
+Related maintenance, not additional confirmed contradictions: the frozen-baseline
+route paragraph is now explicitly dated to distinguish it from candidate behavior;
+its older revision remains valid baseline evidence. The notice generator now has
+independent owned VP8 attribution (MIT, libwebp BSD/patent and RFC references),
+closing a candidate-distribution notice gap without treating package-inventory
+omission as a conflicting implementation claim.
 - External reference discrepancy, unchanged: RFC 6386 section 13.3's illustrative
   coefficient pseudocode swaps plane labels relative to its detailed probability
   table and sets `prevCoeffWasZero` unconditionally. The detailed table/narrative
