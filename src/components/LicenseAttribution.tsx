@@ -5,7 +5,6 @@ import { useLocale } from '@hooks/use-locale';
 import type { Component } from 'solid-js';
 
 const LIBRARIES = [
-  { name: 'gifenc', url: 'https://github.com/mattdesl/gifenc', license: 'MIT' },
   { name: 'wasm-webp', url: 'https://github.com/nieyuyao/webp-wasm', license: 'MIT' },
   { name: 'mediabunny', url: 'https://github.com/Vanilagy/mediabunny', license: 'MPL-2.0' },
   { name: 'SolidJS', url: 'https://github.com/solidjs/solid', license: 'MIT' },

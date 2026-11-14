@@ -4,7 +4,7 @@
 > Do not edit manually — run `vp run build` to regenerate.
 
 Declared runtime dependencies and their installed license/notice texts follow.
-Supplemental source attributions for gifenc and wasm-webp follow their installed notices.
+Owned GIF source attribution and supplemental wasm-webp notices are included separately from runtime package ownership.
 
 ## @piesp/browser-core
 
@@ -36,51 +36,6 @@ Supplemental source attributions for gifenc and wasm-webp follow their installed
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
-
-## gifenc
-
-- **Version:** 1.0.3
-- **License:** MIT
-- **Repository:** https://github.com/mattdesl/gifenc
-- **Purpose:** GIF palette mapping and encoding; scalar WASM adapts its PNN quantizer
-
-Local RGB565 PNN adaptation: `crates/gif-scalar-quantizer/src/lib.rs` (MIT); original gifenc notice follows.
-
-### LICENSE.md
-
-    The MIT License (MIT)
-    Copyright (c) 2017 Matt DesLauriers
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-    DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-    OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
-    OR OTHER DEALINGS IN THE SOFTWARE.
-
-### PNN source attribution
-
-    PNN attribution recorded in the installed gifenc@1.0.3 source.
-    Source: src/pnnquant2.js in https://github.com/mattdesl/gifenc
-
-    // Modified from:
-    // https://github.com/mcychan/PnnQuant.js/blob/master/src/pnnquant.js
-
-    /* Fast pairwise nearest neighbor based algorithm for multilevel thresholding
-    Copyright (C) 2004-2019 Mark Tyler and Dmitry Groshev
-    Copyright (c) 2018-2021 Miller Cy Chan
-    * error measure; time used is proportional to number of bins squared - WJ */
 
 ## mediabunny
 
@@ -772,6 +727,74 @@ Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/
     The third_party/ subdirectory contains code with other licenses. None of it is
     used by default, but certain options use it (e.g., the optional closure compiler
     flag will run closure compiler from third_party/).
+
+## Owned GIF source attribution (gifenc)
+
+- **Version:** 1.0.3
+- **License:** MIT
+- **Repository:** https://github.com/mattdesl/gifenc
+- **Purpose:** Owned GIF source adaptation (PNN, RGB565 mapping, GIF blocks and LZW); development-only differential oracle
+
+Local GIF PNN, RGB565 mapping and LZW adaptation: `crates/gif-scalar-quantizer/src/lib.rs` (MIT); original gifenc notice follows.
+
+### LICENSE.md
+
+    The MIT License (MIT)
+    Copyright (c) 2017 Matt DesLauriers
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+    DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+    OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE
+    OR OTHER DEALINGS IN THE SOFTWARE.
+
+### PNN and LZW source attribution
+
+    PNN attribution recorded in the installed gifenc@1.0.3 source.
+    Source: src/pnnquant2.js in https://github.com/mattdesl/gifenc
+
+    // Modified from:
+    // https://github.com/mcychan/PnnQuant.js/blob/master/src/pnnquant.js
+
+    /* Fast pairwise nearest neighbor based algorithm for multilevel thresholding
+    Copyright (C) 2004-2019 Mark Tyler and Dmitry Groshev
+    Copyright (c) 2018-2021 Miller Cy Chan
+    * error measure; time used is proportional to number of bins squared - WJ */
+
+    LZW source attribution from gifenc@1.0.3 src/lzwEncode.js:
+    /*
+      LZWEncoder.js
+      Authors
+      Kevin Weiner (original Java version - kweiner@fmsware.com)
+      Thibault Imbert (AS3 version - bytearray.org)
+      Johan Nordberg (JS version - code@johan-nordberg.com)
+      Acknowledgements
+      GIFCOMPR.C - GIF Image compression routines
+      Lempel-Ziv compression based on 'compress'. GIF modifications by
+      David Rowley (mgardi@watdcsu.waterloo.edu)
+      GIF Image compression - modified 'compress'
+      Based on: compress.c - File compression ala IEEE Computer, June 1984.
+      By Authors: Spencer W. Thomas (decvax!harpo!utah-cs!utah-gr!thomas)
+      Jim McKie (decvax!mcvax!jim)
+      Steve Davies (decvax!vax135!petsd!peora!srd)
+      Ken Turkowski (decvax!decwrl!turtlevax!ken)
+      James A. Woods (decvax!ihnp4!ames!jaw)
+      Joe Orost (decvax!vax135!petsd!joe)
+      Matt DesLauriers (@mattdesl - V8/JS optimizations)
+      Mathieu Henri (@p01 - JS optimization)
+    */
 
 ## Build-generated browser helper owner
 

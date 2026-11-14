@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@services/gif-scalar-wasm', () => ({
   createGifScalarQuantizer: async () =>
-    Object.assign(() => [[0, 0, 0]], {
+    Object.assign((rgba: Uint8Array) => [[rgba[0]!, rgba[0]!, rgba[0]!]], {
       mapPalette: () => Uint8Array.of(0),
       compress: () => Uint8Array.of(2, 2, 0),
     }),

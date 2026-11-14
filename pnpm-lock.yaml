@@ -196,9 +196,6 @@ importers:
       '@piesp/browser-core':
         specifier: file:packages/core
         version: file:packages/core
-      gifenc:
-        specifier: ^1.0.3
-        version: 1.0.3
       mediabunny:
         specifier: 1.65.2
         version: 1.65.2(patch_hash=287dfa9c9b41da1ae087d34aa1d048571d147b7a7653f9d3830f22037621f4d9)
@@ -209,6 +206,9 @@ importers:
         specifier: ^0.1.0
         version: 0.1.0(patch_hash=bef378941329357206c2b92a9ed683d03a25ca0c9331dd09f664fe0392d0b6f5)
     devDependencies:
+      gifenc:
+        specifier: 1.0.3
+        version: 1.0.3
       '@axe-core/playwright':
         specifier: ^4.14.0
         version: 4.14.0(playwright-core@1.65.0)

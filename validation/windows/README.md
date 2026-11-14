@@ -134,8 +134,9 @@ its context and browser. The primary is full owner video, medium, scale 1,
 skip off; secondary is identical except low skip; small is the maintained
 synthetic control. Five balanced invocations per variant and workload are
 required for the timing comparison. `--scenario gif-quantization-default` runs
-the owner video at medium, scale 0.75, skip off once per variant for correctness
-and loading; it is excluded from timing medians. The source-owned
+the owner video at medium, scale 0.75, skip off with the same first-use/warm pair.
+Issue #492 repeats this default workload five times per variant; historical #490 single-correctness results
+remain separate. The source-owned
 [`gif-quantization-owner-video.json`](gif-quantization-owner-video.json) fixes
 input digests, settings and verification bounds. Keep the private MP4 outside
 `public/` and confirm the built `dist/` omits it.

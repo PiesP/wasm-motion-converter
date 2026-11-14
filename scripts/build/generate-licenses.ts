@@ -74,7 +74,8 @@ function extractUrl(pkgJson: Record<string, unknown>): string | null {
 
 function inferPurpose(name: string): string {
   const purposes: Record<string, string> = {
-    gifenc: 'GIF palette mapping and encoding; scalar WASM adapts its PNN quantizer',
+    gifenc:
+      'Owned GIF source adaptation (PNN, RGB565 mapping, GIF blocks and LZW); development-only differential oracle',
     'wasm-webp': 'WebP encoding via WebAssembly (encodeRGB)',
     mediabunny: 'Video demuxing (Input, BufferSource, EncodedPacketSink)',
     'solid-js': 'UI framework (reactive signals, components)',
@@ -147,7 +148,8 @@ function collectViteHelperOwner(pkg: Record<string, unknown>): LicenseEntry | nu
 
 function generateLicenseText(
   entries: LicenseEntry[],
-  viteHelperOwner: LicenseEntry | null
+  viteHelperOwner: LicenseEntry | null,
+  ownedGif: LicenseEntry | null
 ): string {
   let md = `# Third-Party Licenses
 
@@ -155,11 +157,12 @@ function generateLicenseText(
 > Do not edit manually — run \`vp run build\` to regenerate.
 
 Declared runtime dependencies and their installed license/notice texts follow.
-Supplemental source attributions for gifenc and wasm-webp follow their installed notices.
+Owned GIF source attribution and supplemental wasm-webp notices are included separately from runtime package ownership.
 
 `;
-  for (const entry of entries) {
-    md += `## ${entry.name}\n\n`;
+  for (const entry of [...entries, ...(ownedGif ? [ownedGif] : [])]) {
+    md +=
+      entry === ownedGif ? '## Owned GIF source attribution (gifenc)\n\n' : `## ${entry.name}\n\n`;
     md += `- **Version:** ${entry.version}\n`;
     md += `- **License:** ${entry.license}\n`;
     if (entry.url) md += `- **Repository:** ${entry.url}\n`;
@@ -182,10 +185,10 @@ Supplemental source attributions for gifenc and wasm-webp follow their installed
         throw new Error('Review changed gifenc PNN source header before generating licenses.');
       }
       md +=
-        'Local RGB565 PNN adaptation: `crates/gif-scalar-quantizer/src/lib.rs` (MIT); original gifenc notice follows.\n\n';
+        'Local GIF PNN, RGB565 mapping and LZW adaptation: `crates/gif-scalar-quantizer/src/lib.rs` (MIT); original gifenc notice follows.\n\n';
       const text = readFileSync(join(__dirname, 'gifenc-pnn-NOTICES.txt'), 'utf-8').trim();
       if (!text) throw new Error('Empty supplemental PNN attribution for gifenc.');
-      entry.notices.push({ file: 'PNN source attribution', text });
+      entry.notices.push({ file: 'PNN and LZW source attribution', text });
     }
     if (entry.name === 'wasm-webp') {
       if (entry.version !== '0.1.0') {
@@ -245,7 +248,15 @@ export function generateLicenses(): void {
       `  Build-generated helper owner: ${viteHelperOwner.name}@${viteHelperOwner.version}`
     );
 
-  const licenseMd = `${generateLicenseText(entries, viteHelperOwner).trimEnd()}\n`;
+  const dev = pkg.devDependencies;
+  const ownedGif =
+    dev &&
+    typeof dev === 'object' &&
+    'gifenc' in dev &&
+    !entries.some((entry) => entry.name === 'gifenc')
+      ? collectInstalledDependency('gifenc', inferPurpose('gifenc'))
+      : null;
+  const licenseMd = `${generateLicenseText(entries, viteHelperOwner, ownedGif).trimEnd()}\n`;
   const outputPath = join(ROOT, 'public', 'LICENSES.md');
   writeFileSync(outputPath, licenseMd, 'utf-8');
 

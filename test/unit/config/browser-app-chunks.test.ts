@@ -16,8 +16,8 @@ describe('browser app chunk boundary', () => {
     expect(browserAppManualChunk('/repo/src/services/webp-encoder-service.ts')).toBeUndefined();
   });
 
-  it('keeps the existing gifenc assignment', () => {
-    expect(browserAppManualChunk('/repo/node_modules/gifenc/dist/gifenc.js')).toBe('gifenc');
+  it('does not assign a production chunk to the development oracle', () => {
+    expect(browserAppManualChunk('/repo/node_modules/gifenc/dist/gifenc.js')).toBeUndefined();
   });
 
   it('keeps Vite preload support outside the lazy codec chunk', () => {

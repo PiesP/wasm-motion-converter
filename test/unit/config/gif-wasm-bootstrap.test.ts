@@ -210,13 +210,11 @@ describe('GIF WASM source bootstrap', () => {
     }
     const root = fixture();
     const manifest = join(root, 'crates/gif-scalar-quantizer/wasm-provenance.json');
-    writeFileSync(
-      manifest,
-      readFileSync(manifest, 'utf8').replace(
-        'fb6b33b702fb4aae6a0e9f2cc36a799c16ef6db46be942ac2fa409a9795264c3',
-        '0'.repeat(64)
-      )
-    );
+    const provenance = JSON.parse(readFileSync(manifest, 'utf8')) as {
+      artifact: { sha256: string };
+    };
+    provenance.artifact.sha256 = '0'.repeat(64);
+    writeFileSync(manifest, JSON.stringify(provenance));
     expect(verify(root)).not.toBe(0);
   });
 });
