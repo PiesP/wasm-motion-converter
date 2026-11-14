@@ -220,9 +220,11 @@ async function exerciseBuildUpgrade(
       }
       throw new Error('Prior build has no cached JS asset');
     });
-    const priorAssets = await readdir(join(bundleRoot, priorRelativePath, 'assets'));
     const nextAssets = new Set(await readdir(join(bundleRoot, 'dist/assets')));
-    const oldOnly = priorAssets.filter((name) => name.endsWith('.js') && !nextAssets.has(name));
+    const oldOnly = priorBuild.state.files
+      .filter((file) => /^assets\/[^/]+\.js$/.test(file.path))
+      .map((file) => file.path.slice('assets/'.length))
+      .filter((name) => !nextAssets.has(name));
     await page.locator('[data-testid="file-input"]').setInputFiles(smallFixture);
     await page.locator('[data-testid="convert-button"]').click();
     const proceed = page.locator('[data-testid="modal-confirm-button"]');
