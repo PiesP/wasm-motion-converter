@@ -2831,10 +2831,10 @@ mod tests {
                 Ok(())
             }
         }
-        for (quality, expected) in [(60, 0), (75, -8), (85, -4)] {
+        for (quality, expected_dc, expected_ac) in [(60, 2, 0), (75, 0, -8), (85, -4, -4)] {
             let deltas = crate::presets::deltas(quality);
-            assert_eq!(deltas.uv_dc, expected);
-            assert_eq!(deltas.uv_ac, expected);
+            assert_eq!(deltas.uv_dc, expected_dc);
+            assert_eq!(deltas.uv_ac, expected_ac);
             assert_eq!(deltas.y1_dc, 0);
             assert_eq!(deltas.y2_dc, 0);
             assert_eq!(deltas.y2_ac, 0);
