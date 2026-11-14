@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-/** Host-owned Blob range reads for the bounded, conversion-owned Rust demux parser. */
+/** Host-owned Blob or ArrayBuffer ranges for the bounded conversion-owned Rust parser. */
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 
