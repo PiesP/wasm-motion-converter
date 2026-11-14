@@ -23,6 +23,7 @@ beforeEach(() => {
   fixture = mkdtempSync(join(tmpdir(), 'maintenance-hooks-'));
   git('init', '--quiet', '--initial-branch=codex/fixture');
   git('config', 'user.name', 'Fixture');
+  git('config', 'commit.gpgSign', 'false');
   git('config', 'user.email', 'fixture@example.invalid');
   git('commit', '--quiet', '--allow-empty', '-m', 'fixture');
 });
