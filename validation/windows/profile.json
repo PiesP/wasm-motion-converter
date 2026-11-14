@@ -29,7 +29,8 @@
       "motion-signature-owner-recovery.json",
       "gif-owned-fallback-recovery.json",
       "owned-vp8-native.json",
-      "owned-demux-product.json"
+      "owned-demux-product.json",
+      "owned-demux-service-measurement.json"
     ],
     "scenarios": {
       "gif-owned-cancellation-matrix": {
@@ -298,6 +299,35 @@
           "validation/windows/prior-dist",
           "validation/windows/public-target.json"
         ]
+      },
+      "owned-demux-service-measurement": {
+        "selector": "owned-demux-service-measurement.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "temp/owned-demux-measurement",
+          "public/test-video-ci-h264.mp4",
+          "validation/windows/private-inputs",
+          "validation/windows/gif-quantization-owner-video.json",
+          "validation/windows/inputs/owned-demux-service-measurement.json"
+        ],
+        "generated_assets": ["dist", "temp/owned-demux-measurement"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [
+          ["vp", "run", "build:ci"],
+          [
+            "vp",
+            "exec",
+            "node",
+            "--experimental-strip-types",
+            "scripts/test/build-demux-measurement.ts"
+          ]
+        ],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
       }
     }
   },
@@ -344,6 +374,7 @@
     "validation/windows/motion-owner-video.json",
     "validation/windows/helpers/owned-vp8-probe.ts",
     "validation/windows/helpers/owned-demux-product.ts",
+    "validation/windows/helpers/owned-demux-measurement.ts",
     "test/fixtures/owned-demux"
   ]
 }
