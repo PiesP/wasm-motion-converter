@@ -348,7 +348,7 @@ async function runMeasuredConversion(
   expect(profile!.encoderRoute).toMatch(workload.format === 'gif' ? /^gif-/ : /^webp-/);
   if (workload.backend) {
     expect(profile!.encoderRoute).toBe(
-      workload.backend === 'wasm' ? 'webp-wasm' : 'webp-serial-canvas'
+      workload.backend === 'wasm' ? 'webp-owned-vp8' : 'webp-serial-canvas'
     );
   }
   expect(Object.values(profile!.copyPathCounts).reduce((sum, count) => sum + count, 0)).toBe(

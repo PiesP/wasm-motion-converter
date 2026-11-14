@@ -262,6 +262,18 @@ omission as a conflicting implementation claim.
   bit 1 for absolute quantizers and must pass independent decoding. This does not
   modify the external RFC or establish product qualification.
 
+- Fixed for candidate acceptance: `test/e2e/output-contract.spec.ts` and
+  `test/e2e/resource-profile.spec.ts` still expected `webp-wasm` while both
+  candidate pipeline selectors report `webp-owned-vp8`. Their route assertions
+  now use the candidate identity without changing frame/resource expectations.
+- Fixed for candidate acceptance: `validation/windows/output-finalization.ts`
+  and its unit test recognized only the old `streaming encodeRGB + mux`
+  software log. They now recognize `owned VP8 + mux`; the old mapping remains
+  explicitly scoped to the pinned prior comparator.
+- Fixed candidate diagnostic: `src/services/offscreen-webp-encoder.ts` told
+  callers to use wasm-webp when Canvas was unavailable, although the candidate
+  software selector uses owned VP8. It now names the software encoder.
+
 No other confirmed repository documentation/code conflict was found in the
 inspected VP8, runtime-route, resource-policy and build-convention scope.
 Historical version-bound statements and the stale prior dist are retained as
