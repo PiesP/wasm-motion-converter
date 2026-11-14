@@ -61,7 +61,7 @@ export async function runOwnedVp8NativeProbe({
     latencyMode: 'realtime',
   };
   const supported = await bounded(VideoEncoder.isConfigSupported(requested), 'VP8 support check');
-  if (!supported.supported) return { status: 'unsupported', stage: 'configuration' };
+  if (!supported.supported || !supported.config) return { status: 'unsupported', stage: 'configuration' };
   const copies: Uint8Array[] = [];
   const types: EncodedVideoChunkType[] = [];
   let encoderError: DOMException | undefined;
@@ -104,7 +104,7 @@ export async function runOwnedVp8NativeProbe({
       VideoDecoder.isConfigSupported({ codec: 'vp8', codedWidth: width, codedHeight: height }),
       'VP8 decode support check'
     );
-    if (!decoderSupport.supported) return { status: 'unsupported', stage: 'decoder' };
+    if (!decoderSupport.supported || !decoderSupport.config) return { status: 'unsupported', stage: 'decoder' };
     const decoded: Array<{ width: number; height: number }> = [];
     let decoderError: DOMException | undefined;
     const decoder = new VideoDecoder({
