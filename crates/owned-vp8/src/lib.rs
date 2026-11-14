@@ -7,6 +7,7 @@ mod abi;
 mod ac_quant;
 mod bmode_probs;
 mod coeff_update_probs;
+mod color;
 mod dc_quant;
 mod default_coeff_probs;
 mod limits;
