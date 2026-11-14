@@ -174,6 +174,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
       assert.equal(bytes.byteLength, input.size);
       assert.equal(sha256(bytes), input.sha256);
       const page = await context.newPage();
+      let pageFailure: unknown;
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(errorText(error)));
       page.on('console', (message) => {
@@ -391,8 +392,17 @@ export async function exerciseOwnedDemuxServiceMeasurement({
           trimStart: input.trimStart,
           ...sample,
         });
+      } catch (error) {
+        pageFailure = error;
+        throw error;
       } finally {
-        await page.close();
+        try {
+          await page.close();
+        } catch (error) {
+          if (pageFailure)
+            throw new AggregateError([pageFailure, error], 'Demux sample and page cleanup failed');
+          throw error;
+        }
       }
     }
     report.status = 'passed';
@@ -401,6 +411,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
     failure = error;
     report.status = 'failed';
     report.error = errorText(error);
+    if (error instanceof AggregateError) report.errorDetails = error.errors.map(errorText);
     throw error;
   } finally {
     let cleanupError: unknown;
