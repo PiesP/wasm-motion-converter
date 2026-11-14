@@ -222,6 +222,14 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
 - Fixed in the Windows fixture stage: `CONTRIBUTING.md` build task table omitted
   the `build:ci` owned VP8 input preflight present in `vite.config.ts`. The row
   now states the README-only, V8 digest and unexpected-entry checks.
+- Fixed in the Windows preparation stage: `validation/windows/README.md` said
+  `prior-dist/` and `public-target.json` were both required for packaging without
+  limiting the claim to the default full profile. The focused `owned-vp8-product`
+  entry in `validation/windows/profile.json` requires `prior-dist/` but lists
+  `public-target.json` as unused, and `windows-acceptance/vmctl.py` selects that
+  scenario's `required_inputs`. The README now identifies the full-profile
+  requirement and focused selection separately; the first product smoke stages
+  no public target.
 - Fixed in this build stage: `scripts/build/build-owned-vp8-wasm.ts` and
   `crates/owned-vp8/README.md` described the artifact as development-only and
   absent from product imports after the candidate main and Worker routes began
