@@ -11,24 +11,27 @@ const mocks = vi.hoisted(() => ({
   writeFrame: vi.fn(),
 }));
 
-vi.mock('gifenc', () => ({
-  applyPalette: () => new Uint8Array([0]),
-  GIFEncoder: () => ({
-    bytes: () => new Uint8Array(64),
-    bytesView: () => new Uint8Array(0),
-    finish: vi.fn(),
-    stream: {
-      buffer: new ArrayBuffer(4096),
-      writeByte: vi.fn(),
-      writeBytes: vi.fn(),
-      writeBytesView: vi.fn(),
-    },
-    writeFrame: mocks.writeFrame,
-  }),
-  quantize: mocks.quantize,
+vi.mock('@services/gif-owned-writer', () => ({
+  OwnedGifWriter: class {
+    readonly stream = { buffer: new ArrayBuffer(4096) };
+    bytes() {
+      return new Uint8Array(64);
+    }
+    bytesView() {
+      return new Uint8Array(0);
+    }
+    finish() {}
+    writeFrame(...args: unknown[]) {
+      mocks.writeFrame(...args);
+    }
+  },
 }));
 vi.mock('@services/gif-scalar-wasm', () => ({
-  createGifScalarQuantizer: async () => mocks.quantize,
+  createGifScalarQuantizer: async () =>
+    Object.assign(mocks.quantize, {
+      mapPalette: (rgba: Uint8Array) => new Uint8Array(rgba.byteLength / 4),
+      compress: () => new Uint8Array([2, 2, 0]),
+    }),
 }));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {

@@ -37,12 +37,24 @@ describe('Windows campaign preparation contract', () => {
     expect(readFileSync(resolve(root, stagingDirectory, 'README.md'), 'utf8')).toContain(
       'default full profile does not require'
     );
-    for (const name of ['motion-signature-owner-video', 'motion-signature-owner-recovery']) {
+    for (const name of [
+      'motion-signature-owner-video',
+      'motion-signature-owner-recovery',
+      'gif-owned-fallback-recovery',
+    ]) {
       const selected = profile.preparation.scenarios[name]!;
       expect(selected.required_inputs).toContain(stagingDirectory);
       expect(selected.required_inputs).not.toContain(privateFile);
     }
     expect(source).toContain(privateFile);
+  });
+
+  it('keeps the GIF main-thread fallback recovery focused on installed Chrome and Edge', () => {
+    const selected = profile.preparation.scenarios['gif-owned-fallback-recovery']!;
+    expect(selected.browsers).toEqual(['msedge', 'chrome']);
+    expect(selected.modes).toEqual(['desktop']);
+    expect(selected.required_inputs).toContain('validation/windows/motion-owner-video.json');
+    expect(selected.selector).toBe('gif-owned-fallback-recovery.json');
   });
 
   it('covers focused selector paths referenced by the executing profile', () => {

@@ -9,9 +9,6 @@ export function browserAppManualChunk(id: string): string | undefined {
   if (/(?:^|[/\\])node_modules[/\\]wasm-webp[/\\]/.test(id)) {
     return 'wasm-webp';
   }
-  if (id.includes('gifenc')) {
-    return 'gifenc';
-  }
   return undefined;
 }
 
@@ -38,7 +35,7 @@ const browserAppPreset: UserConfig = {
   },
 
   optimizeDeps: {
-    include: ['wasm-webp', 'gifenc', 'mediabunny'],
+    include: ['wasm-webp', 'mediabunny'],
   },
 
   build: {

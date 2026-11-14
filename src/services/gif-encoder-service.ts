@@ -15,7 +15,7 @@
  *
  * Pipeline:
  *   1. decodeFrames streams frames via callback (no array accumulation)
- *   2. Per frame: exact RGBA scratch → dither → quantize/applyPalette → pending index
+ *   2. Per frame: exact RGBA scratch → dither → quantize/mapPalette → pending index
  *   3. Encoder writes GIF incrementally
  */
 
@@ -27,13 +27,13 @@ import {
   GIF_MIN_FRAME_DELAY_MS,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
-import { applyPalette, GIFEncoder } from 'gifenc';
 
 import { globalBufferPool } from './buffer-pool';
 import { decodeFrames, type PresentationInterval } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
+import { OwnedGifWriter } from './gif-owned-writer';
 import { createGifScalarQuantizer } from './gif-scalar-wasm';
 import { OutputLimitError, resolveOutputLimits } from './output-limits';
 
@@ -269,12 +269,6 @@ export async function encodeGif(
   }
   const initialStreamCapacity = Math.min(outputLimits.maxOutputBytes, initialCapacity);
   opts.assertAdditionalMemoryBytes?.(initialStreamCapacity);
-  const encoder = GIFEncoder({
-    auto: true,
-    // A power-of-two starting capacity keeps gifenc's geometric growth from
-    // overshooting the power-of-two production byte ceiling.
-    initialCapacity: initialStreamCapacity,
-  });
   const pixelCount = w * h;
   const exactRgbaBytes = pixelCount * 4;
   let exactRgbaScratch: Uint8Array | null = null;
@@ -301,6 +295,12 @@ export async function encodeGif(
     opts.assertAdditionalMemoryBytes?.(additionalBytes);
   };
 
+  const encoder = new OwnedGifWriter(
+    initialStreamCapacity,
+    outputLimits.maxOutputBytes,
+    (peak) => assertGifWorkingMemory(peak),
+    (indices, depth) => quantizePalette.compress(indices, depth)
+  );
   const quantizePalette = await createGifScalarQuantizer(
     (oldBytes, newBytes) =>
       assertGifWorkingMemory(
@@ -314,72 +314,6 @@ export async function encodeGif(
     },
     signal
   );
-
-  // gifenc grows its stream automatically. Wrap every supported write method so
-  // each logical write and any geometric capacity growth are authorized before
-  // gifenc allocates or mutates its buffer. During growth, gifenc retains the old
-  // buffer while allocating and copying into the new one, so both capacities must
-  // fit inside the output memory budget simultaneously.
-  let streamBytes = encoder.bytesView().byteLength;
-  const originalWriteByte = encoder.stream.writeByte.bind(encoder.stream);
-  const originalWriteBytes = encoder.stream.writeBytes.bind(encoder.stream);
-  const originalWriteBytesView = encoder.stream.writeBytesView.bind(encoder.stream);
-
-  function predictStreamCapacity(currentCapacity: number, requiredCapacity: number): number {
-    if (currentCapacity >= requiredCapacity) return currentCapacity;
-    const geometricCapacity = Math.floor(
-      currentCapacity * (currentCapacity < 1024 * 1024 ? 2 : 1.125)
-    );
-    return Math.max(requiredCapacity, geometricCapacity, currentCapacity === 0 ? 0 : 256);
-  }
-
-  function assertCanWriteBytes(byteLength: number): void {
-    const requiredCapacity = streamBytes + byteLength;
-    if (!Number.isSafeInteger(requiredCapacity) || requiredCapacity > outputLimits.maxOutputBytes) {
-      throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
-    }
-
-    const currentCapacity = encoder.stream.buffer.byteLength;
-    if (requiredCapacity <= currentCapacity) {
-      assertGifWorkingMemory(currentCapacity);
-      return;
-    }
-    const nextCapacity = predictStreamCapacity(currentCapacity, requiredCapacity);
-    if (
-      !Number.isSafeInteger(nextCapacity) ||
-      nextCapacity > outputLimits.maxOutputBytes ||
-      currentCapacity + nextCapacity > outputLimits.maxOutputBytes
-    ) {
-      throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
-    }
-    assertGifWorkingMemory(currentCapacity + nextCapacity);
-  }
-
-  encoder.stream.writeByte = (byte: number): void => {
-    assertCanWriteBytes(1);
-    originalWriteByte(byte);
-    streamBytes++;
-  };
-  encoder.stream.writeBytes = (
-    bytes: Uint8Array | number[],
-    offset = 0,
-    length = bytes.length - offset
-  ): void => {
-    const safeLength = Math.max(0, Math.min(length, bytes.length - offset));
-    assertCanWriteBytes(safeLength);
-    originalWriteBytes(bytes, offset, safeLength);
-    streamBytes += safeLength;
-  };
-  encoder.stream.writeBytesView = (
-    bytes: Uint8Array,
-    offset = 0,
-    length = bytes.byteLength - offset
-  ): void => {
-    const safeLength = Math.max(0, Math.min(length, bytes.byteLength - offset));
-    assertCanWriteBytes(safeLength);
-    originalWriteBytesView(bytes, offset, safeLength);
-    streamBytes += safeLength;
-  };
 
   let lastPalette: number[][] | null = null;
   let globalPalette: number[][] | null = null;
@@ -457,7 +391,7 @@ export async function encodeGif(
       liveIndexedBytes + pixelCount + comparisonBytes
     );
     const paletteMapStart = opts.profileOperation ? performance.now() : null;
-    const indexed = applyPalette(rgbaData, palette, 'rgb565');
+    const indexed = quantizePalette.mapPalette(rgbaData, palette);
     if (paletteMapStart !== null) {
       opts.profileOperation?.(
         'gifPaletteMapping',
@@ -466,7 +400,7 @@ export async function encodeGif(
     }
     if (indexed.byteLength !== pixelCount) {
       throw new RangeError(
-        `gifenc returned ${indexed.byteLength} indices for ${pixelCount} pixels`
+        `GIF mapper returned ${indexed.byteLength} indices for ${pixelCount} pixels`
       );
     }
     const indexedBytes =
@@ -826,7 +760,7 @@ export async function encodeGif(
     if (finalizationStart !== null)
       opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
     const streamCapacity = encoder.stream.buffer.byteLength;
-    const finalCopyPeakBytes = streamCapacity + streamBytes;
+    const finalCopyPeakBytes = streamCapacity + encoder.bytesView().byteLength;
     if (
       !Number.isSafeInteger(finalCopyPeakBytes) ||
       finalCopyPeakBytes > outputLimits.maxOutputBytes

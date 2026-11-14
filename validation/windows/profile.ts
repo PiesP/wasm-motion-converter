@@ -43,6 +43,7 @@ import {
   exerciseMotionSignature,
   installMotionObserver,
   measure as measureMotion,
+  measureFallback,
   MOTION_PRIMARY_FIXTURE,
   MOTION_SIGNATURE_RECOVERY_SCENARIO,
   MOTION_SIGNATURE_SCENARIO,
@@ -2159,14 +2160,23 @@ async function exerciseCancellation(
   baseUrl: string,
   fixturePath: string,
   outputRoot: string,
-  artifacts: Artifact[]
+  artifacts: Artifact[],
+  settings: {
+    quality: 'high' | 'medium';
+    smartFrameSkip: 'adaptive' | 'off';
+    minimumProgress: number;
+  } = {
+    quality: 'high',
+    smartFrameSkip: 'adaptive',
+    minimumProgress: 1,
+  }
 ) {
   await loadApplication(page, baseUrl);
   await selectFixture(page, fixturePath);
   await chooseOption(page, 'format', 'gif');
-  await chooseOption(page, 'quality', 'high');
+  await chooseOption(page, 'quality', settings.quality);
   await chooseOption(page, 'scale', '1');
-  await chooseOption(page, 'smart-frame-skip', 'adaptive');
+  await chooseOption(page, 'smart-frame-skip', settings.smartFrameSkip);
   await page.locator('[data-testid="convert-button"]').click();
   await proceedIfPrompted(page);
 
@@ -2198,11 +2208,11 @@ async function exerciseCancellation(
   const progressOutcome = await Promise.race([
     page
       .waitForFunction(
-        () => {
+        (minimumProgress) => {
           const element = document.querySelector('[data-testid="dropzone"] [role="progressbar"]');
-          return Number(element?.getAttribute('data-progress')) > 0;
+          return Number(element?.getAttribute('data-progress')) >= minimumProgress;
         },
-        undefined,
+        settings.minimumProgress,
         { timeout: CANCELLATION_TIMEOUT_MS }
       )
       .then(() => 'progress'),
@@ -2215,7 +2225,7 @@ async function exerciseCancellation(
       status: 'observed',
       attempted: false,
       effective: false,
-      reason: 'conversion-completed-before-non-zero-progress-was-observable',
+      reason: `conversion-completed-before-progress-${settings.minimumProgress}-was-observable`,
     };
   }
   if (progressOutcome === 'error') {
@@ -3050,6 +3060,10 @@ export async function run({
       path: 'validation/windows/inputs/gif-quantization-small.json',
     },
     {
+      scenario: 'gif-owned-fallback-recovery',
+      path: 'validation/windows/inputs/gif-owned-fallback-recovery.json',
+    },
+    {
       scenario: 'motion-signature-owner-recovery',
       path: 'validation/windows/inputs/motion-signature-owner-recovery.json',
     },
@@ -3094,6 +3108,7 @@ export async function run({
         'gif-quantization-primary.json',
         'gif-quantization-secondary.json',
         'gif-quantization-small.json',
+        'gif-owned-fallback-recovery.json',
         'motion-signature-owner-recovery.json',
         'motion-signature-owner-video.json',
         'motion-signature.json',
@@ -3118,7 +3133,8 @@ export async function run({
     const ownerVideo =
       quantizationScenario ||
       scenario === 'motion-signature-owner-video' ||
-      scenario === 'motion-signature-owner-recovery';
+      scenario === 'motion-signature-owner-recovery' ||
+      scenario === 'gif-owned-fallback-recovery';
     const [smallPath, primaryPath, build, headersPath] = await Promise.all([
       validateBundleFile(bundleRoot, MOTION_SMALL_FIXTURE),
       validateBundleFile(
@@ -3341,7 +3357,8 @@ export async function run({
     };
     if (
       scenario === MOTION_SIGNATURE_RECOVERY_SCENARIO ||
-      scenario === 'motion-signature-owner-recovery'
+      scenario === 'motion-signature-owner-recovery' ||
+      scenario === 'gif-owned-fallback-recovery'
     ) {
       let context: BrowserContext | undefined;
       let failure: unknown;
@@ -3384,13 +3401,21 @@ export async function run({
             });
         });
         await mkdir(output, { recursive: true });
-        await page.addInitScript(installMotionObserver);
+        const fallbackRecovery = scenario === 'gif-owned-fallback-recovery';
+        await page.addInitScript(installMotionObserver, {
+          forceConversionWorkerFailure: fallbackRecovery,
+        });
         const cancellation = await exerciseCancellation(
           page,
           started.url,
           primaryPath,
           output,
-          artifacts
+          artifacts,
+          fallbackRecovery
+            ? { quality: 'medium', smartFrameSkip: 'off', minimumProgress: 74 }
+            : ownerVideo
+              ? { quality: 'high', smartFrameSkip: 'adaptive', minimumProgress: 74 }
+              : undefined
         );
         result.cancellation = ownerVideo
           ? { ...cancellation, id: 'cancel-owner-video', inputSha256: primarySha256 }
@@ -3409,12 +3434,18 @@ export async function run({
               completes: unknown[];
               terminationCalls: number;
             }[];
+            workerConstructionFailures: { url: string; name: string }[];
+            outputUrls: { url: string }[];
+            gifPublicationCount: number;
             timeOrigin: number;
           };
           return {
             stopClickMs: observed.stopClickMs,
             idleAfterStopMs: observed.idleAfterStopMs,
             workers: observed.workers,
+            workerConstructionFailures: observed.workerConstructionFailures,
+            outputUrls: observed.outputUrls,
+            gifPublicationCount: observed.gifPublicationCount,
             timeOrigin: performance.timeOrigin,
           };
         });
@@ -3426,42 +3457,76 @@ export async function run({
           stopToIdleMs >= 0 && stopToIdleMs <= 500,
           'Stop-to-idle exceeded the frozen 500 ms budget'
         );
+        if (fallbackRecovery) {
+          assert(wasmAsset, 'Built GIF WASM asset was absent');
+          result.gifWasmRequestsAtCancellation = wasmAssetRequests();
+          assert(
+            wasmAssetRequests().paths.includes(wasmAsset.path),
+            'The cancelled fallback did not load the source-bound GIF WASM asset'
+          );
+          assert.deepEqual(cancelled.workers, [], 'Fallback created a conversion Worker');
+          assert.equal(cancelled.workerConstructionFailures.length, 1);
+          assert.equal(cancelled.workerConstructionFailures[0]?.name, 'NotSupportedError');
+          assert.deepEqual(cancelled.outputUrls, [], 'Cancelled fallback published a GIF');
+          assert.equal(cancelled.gifPublicationCount, 0, 'Cancelled fallback published a GIF');
+        }
         const cancelledWorkers = cancelled.workers.filter((worker) =>
           worker.starts.some((start) => start.options.format === 'gif')
         );
-        assert.equal(cancelledWorkers.length, 1, 'Cancellation did not own one GIF Worker');
-        assert.equal(
-          cancelledWorkers[0]?.completes.length,
-          0,
-          'Cancelled Worker produced a result'
-        );
-        assert.equal(
-          cancelledWorkers[0]?.terminationCalls,
-          1,
-          'Cancelled Worker was not terminated once'
-        );
+        if (!fallbackRecovery) {
+          assert.equal(cancelledWorkers.length, 1, 'Cancellation did not own one GIF Worker');
+          assert.equal(
+            cancelledWorkers[0]?.completes.length,
+            0,
+            'Cancelled Worker produced a result'
+          );
+          assert.equal(
+            cancelledWorkers[0]?.terminationCalls,
+            1,
+            'Cancelled Worker was not terminated once'
+          );
+        }
         await selectFixture(page, smallPath);
         await chooseMotionOption(page, 'format', 'gif');
         await chooseMotionOption(page, 'quality', 'low');
         await chooseMotionOption(page, 'scale', '1');
         await chooseMotionOption(page, 'smart-frame-skip', 'low');
-        const recovered = attachDeliveryEvidence(
-          await measureMotion(page, workloads[1]!, 'warm', 0, wasmAsset)
-        );
+        const recovered = fallbackRecovery
+          ? await measureFallback(page, workloads[1]!)
+          : attachDeliveryEvidence(await measureMotion(page, workloads[1]!, 'warm', 0, wasmAsset));
         result.recovery = recovered;
         assert(
           Math.abs(recovered.decoded.durationUs - 1_000_000) <= 250_000,
           'Recovery GIF missed the source duration'
         );
         assert.equal(await page.evaluate(() => performance.timeOrigin), cancelled.timeOrigin);
-        const stale = await page.evaluate(() => {
-          const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
-            workers: { completes: unknown[]; terminationCalls: number }[];
-          };
-          return observed.workers[0];
-        });
-        assert.equal(stale?.completes.length, 0, 'Cancelled Worker completed after recovery');
-        assert.equal(stale?.terminationCalls, 1, 'Cancelled Worker termination changed');
+        if (fallbackRecovery) {
+          const after = await page.evaluate(() => {
+            const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+              workers: unknown[];
+              workerConstructionFailures: unknown[];
+              outputUrls: unknown[];
+              gifPublicationCount: number;
+            };
+            return {
+              workers: observed.workers.length,
+              rejections: observed.workerConstructionFailures.length,
+              publications: observed.gifPublicationCount,
+            };
+          });
+          assert.deepEqual(after, { workers: 0, rejections: 2, publications: 1 });
+          result.routeEvidence = after;
+          result.browserVersion = browser.version();
+        } else {
+          const stale = await page.evaluate(() => {
+            const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+              workers: { completes: unknown[]; terminationCalls: number }[];
+            };
+            return observed.workers[0];
+          });
+          assert.equal(stale?.completes.length, 0, 'Cancelled Worker completed after recovery');
+          assert.equal(stale?.terminationCalls, 1, 'Cancelled Worker termination changed');
+        }
         await assertMediaNetworkDiagnostics(output, network);
         result = { ...result, status: 'passed' };
         return { profile: scenario, ...result };
@@ -3508,11 +3573,7 @@ export async function run({
         },
         output,
         diagnostics,
-        scenario === 'gif-quantization-default'
-          ? 'single-correctness'
-          : quantizationScenario
-            ? 'single-pair'
-            : 'three-pair-cohort',
+        quantizationScenario ? 'single-pair' : 'three-pair-cohort',
         wasmAsset
       );
       result = { ...result, ...measured, scenario };

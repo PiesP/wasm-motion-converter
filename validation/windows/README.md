@@ -134,8 +134,9 @@ its context and browser. The primary is full owner video, medium, scale 1,
 skip off; secondary is identical except low skip; small is the maintained
 synthetic control. Five balanced invocations per variant and workload are
 required for the timing comparison. `--scenario gif-quantization-default` runs
-the owner video at medium, scale 0.75, skip off once per variant for correctness
-and loading; it is excluded from timing medians. The source-owned
+the owner video at medium, scale 0.75, skip off with the same first-use/warm pair.
+Issue #492 repeats this default workload five times per variant; historical #490 single-correctness results
+remain separate. The source-owned
 [`gif-quantization-owner-video.json`](gif-quantization-owner-video.json) fixes
 input digests, settings and verification bounds. Keep the private MP4 outside
 `public/` and confirm the built `dist/` omits it.
@@ -157,6 +158,22 @@ the existing high-quality adaptive-skip cancellation flow, requires effective
 Stop-to-idle within 500 ms and no stale Worker completion, then independently
 verifies a successful small GIF in the same document. This functional run is
 separate from the frozen medium-quality timing cohort.
+
+Use `--scenario gif-owned-fallback-recovery` for the Chrome/Edge desktop GIF
+main-thread route. The observer rejects only the built conversion Worker's
+constructor before application load. The owner input runs at medium quality,
+scale 1 and frame skip off. The scenario waits for at least 74% progress,
+which the current pipeline reports only after GIF frame encoding advances past
+the 73% decode ceiling. It also requires a request for the GIF WASM asset
+recorded in the exact build inventory. This is source-bound evidence of active
+GIF processing before Stop. The scenario then requires
+Stop-to-idle within 500 ms, no conversion Worker or cancelled GIF publication,
+then a small GIF saved and independently decoded in the same document. The
+receipt records the actual browser version and the injected rejection count;
+the controller receipt owns the guest OS version. This functional check does
+not qualify fallback timing or Safari/mobile behavior. Its controlled Worker
+failure is expected route evidence, while page errors, console errors and
+network failures remain failures.
 
 The verifier transfers saved GIF bytes to the independent browser decoder as
 base64 after the timing interval to keep the transport compact. The first
