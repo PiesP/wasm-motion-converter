@@ -10,7 +10,7 @@ pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [18, 18, 14];
 pub(crate) const TEXTURED_QINDEX: [usize; 3] = [30, 23, 14];
 pub(crate) const UV_DC_DELTA: [i8; 3] = [0, -4, -4];
 pub(crate) const UV_AC_DELTA: [i8; 3] = [0, -4, -4];
-pub(crate) const FILTER_LEVEL: [u8; 3] = [6, 4, 2];
+pub(crate) const FILTER_LEVEL: [u8; 3] = [6, 4, 4];
 pub(crate) const LAMBDA_NUMERATOR: u64 = 1;
 pub(crate) const LAMBDA_DENOMINATOR: u64 = 1;
 pub(crate) fn qindex(quality: u32) -> usize {
