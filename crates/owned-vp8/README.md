@@ -9,6 +9,10 @@ The residual path now codes all sixteen coefficients using B_PRED/B_DC predictio
 plus a separately exercised I16/DC and Y2/WHT path. The default experimental
 entrypoint now selects bounded I16/I4/UV modes using distortion and estimated
 mode/coefficient/skip bit costs. Trials isolate reconstruction and contexts.
+Per-frame coefficient statistics follow frozen mode/coefficient decisions. A
+bounded optimizer proposes updates, and exact whole-frame counting includes
+update flags and literals. The encoder adopts updates only when the complete
+frame is strictly smaller; count and emission use the same frozen model.
 The bounded resumable ABI2 core is implemented. Color/preset calibration,
 filter tuning, and browser/product qualification remain unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
 or removal of `wasm-webp`.
@@ -56,7 +60,8 @@ capacity can exceed logical input length and must be admitted explicitly.
 
 `FrameEncoder` in `src/textured.rs` stages initialization, color import,
 macroblock analysis, exact partition-length counting, frozen-decision emission,
-finalization and assembly. Finalized sizes are admitted before output allocation;
+finalization and assembly. Finalized sizes are published at a separate preparation barrier before output
+allocation, so the host can reserve the new plan before advancing;
 first-partition overflow is separate from total output overflow. Output remains
 hidden until arithmetic coding and final assembly finish. Carry scans and finalization resume in bounded units; emission retains at most
 8192 two-byte operations per partition for one macroblock, drains at most 1024

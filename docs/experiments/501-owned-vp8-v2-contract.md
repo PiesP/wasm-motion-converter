@@ -171,6 +171,13 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   follows those verified semantics; whole-frame native VP8/libvpx reconstruction
   tests check them. No modification to the external RFC is claimed.
 
+- External reference discrepancy, unchanged: RFC 6386 section 9.3 prose reverses
+  absolute/delta segment-feature-mode values relative to its Annex header table.
+  The table agrees with libvpx v1.13.1 `vp8/common/blockd.h`
+  (`SEGMENT_ABSDATA = 1`) and its decoder branch. Segment implementation follows
+  bit 1 for absolute quantizers and must pass independent decoding. This does not
+  modify the external RFC or establish product qualification.
+
 No other confirmed repository documentation/code conflict was found in the
 inspected VP8, runtime-route, resource-policy and build-convention scope.
 Historical version-bound statements and the stale prior dist are retained as
