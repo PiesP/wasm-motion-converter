@@ -720,9 +720,10 @@ fn write_macroblock_header(
     above: &[u8],
     left: &[u8; 4],
     segments: SegmentConfig,
+    skip_probability: u8,
 ) -> Result<(), EncodeError> {
     segments.write_id(sink, block.segment_id)?;
-    sink.write(128, block.skip())?;
+    sink.write(skip_probability, block.skip())?;
     write_modes(sink, block, mx, above, left)
 }
 
@@ -752,7 +753,9 @@ fn selected_cost(
     budget: &HeaderBudget,
 ) -> Result<Option<u64>, EncodeError> {
     let mut header = HeaderRateCounter::default();
-    write_macroblock_header(&mut header, block, mx, above, left, segments)?;
+    // Mode search precedes frozen frame statistics; its skip rate proposal is
+    // the current syntax default, while counting and emission share the final.
+    write_macroblock_header(&mut header, block, mx, above, left, segments, 128)?;
     if block.i16 && header.symbols.count > MAX_I16_HEADER_SYMBOLS {
         return Err(EncodeError::InvalidInput);
     }
@@ -1165,9 +1168,9 @@ fn write_quantizer_delta(sink: &mut impl BoolSink, delta: i8) -> Result<(), Enco
     Ok(())
 }
 
-fn write_header_suffix(sink: &mut impl BoolSink) -> Result<(), EncodeError> {
+fn write_header_suffix(sink: &mut impl BoolSink, skip_probability: u8) -> Result<(), EncodeError> {
     sink.bit(true)?; // Macroblock coefficient skip flags enabled.
-    sink.literal(128, 8)
+    sink.literal(u32::from(skip_probability), 8)
 }
 
 fn write_updates(
@@ -1188,6 +1191,46 @@ fn write_updates(
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, Default)]
+struct SkipStats {
+    not_skipped: u32,
+    skipped: u32,
+}
+
+impl SkipStats {
+    fn observe(&mut self, skipped: bool) -> Result<(), EncodeError> {
+        let count = if skipped {
+            &mut self.skipped
+        } else {
+            &mut self.not_skipped
+        };
+        *count = count.checked_add(1).ok_or(EncodeError::InvalidInput)?;
+        Ok(())
+    }
+
+    fn frozen_probability(self) -> u8 {
+        let total = u64::from(self.not_skipped) + u64::from(self.skipped);
+        if total == 0 {
+            return 128;
+        }
+        let proposed =
+            ((u64::from(self.not_skipped) * 256 + total / 2) / total).clamp(1, 255) as u8;
+        let cost = |probability| {
+            let flags = u64::from(self.not_skipped)
+                * u64::from(probability_cost(probability, false))
+                + u64::from(self.skipped) * u64::from(probability_cost(probability, true));
+            // The probability literal is always signaled as eight equiprobable
+            // bits, including when keeping 128. Keep it in both comparisons.
+            flags + 8 * u64::from(probability_cost(128, false))
+        };
+        if cost(proposed) < cost(128) {
+            proposed
+        } else {
+            128
+        }
+    }
 }
 
 // I16 signals at most two segment-map bits, skip, three Y-mode bits and
@@ -1214,7 +1257,7 @@ impl HeaderBudget {
     ) -> Result<Self, EncodeError> {
         let mut fixed = SymbolCounter::default();
         write_header_prefix(&mut fixed, segments, deltas, filter)?;
-        write_header_suffix(&mut fixed)?;
+        write_header_suffix(&mut fixed, 128)?;
         // Each of the 1056 update nodes emits one flag and at most eight
         // literal bits. The model is frozen only after mode analysis.
         let fixed_symbols_and_tail = fixed
@@ -1246,7 +1289,7 @@ impl HeaderBudget {
         segments: SegmentConfig,
     ) -> Result<usize, EncodeError> {
         let mut symbols = SymbolCounter::default();
-        write_macroblock_header(&mut symbols, block, mx, above, left, segments)?;
+        write_macroblock_header(&mut symbols, block, mx, above, left, segments, 128)?;
         if block.i16 && symbols.count > MAX_I16_HEADER_SYMBOLS {
             return Err(EncodeError::InvalidInput);
         }
@@ -1349,8 +1392,17 @@ fn write_macroblock(
     mx: usize,
     block: &Macroblock,
     segments: SegmentConfig,
+    skip_probability: u8,
 ) -> Result<(), EncodeError> {
-    write_macroblock_header(header, block, mx, above_modes, left_modes, segments)?;
+    write_macroblock_header(
+        header,
+        block,
+        mx,
+        above_modes,
+        left_modes,
+        segments,
+        skip_probability,
+    )?;
     contexts.encode_coefficients(token, block, mx)?;
     update_modes(block, mx, above_modes, left_modes);
     Ok(())
@@ -1384,9 +1436,17 @@ fn emit_segmented_frame(
     filter.validate()?;
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
-    let model = model_frozen(blocks, blocks_x, blocks_y)?;
-    let default_sizes =
-        count_partitions(blocks, blocks_x, blocks_y, segments, deltas, filter, None)?;
+    let (model, skip_probability) = model_frozen(blocks, blocks_x, blocks_y)?;
+    let default_sizes = count_partitions(
+        blocks,
+        blocks_x,
+        blocks_y,
+        segments,
+        deltas,
+        filter,
+        None,
+        skip_probability,
+    )?;
     let modeled_sizes = count_partitions(
         blocks,
         blocks_x,
@@ -1395,6 +1455,7 @@ fn emit_segmented_frame(
         deltas,
         filter,
         Some(&model),
+        skip_probability,
     )?;
     let use_model = modeled_sizes.0 <= 0x7ffff
         && modeled_sizes.0 + modeled_sizes.1 < default_sizes.0 + default_sizes.1;
@@ -1421,6 +1482,7 @@ fn emit_segmented_frame(
         deltas,
         filter,
         selected_model,
+        skip_probability,
         &mut header,
         &mut token,
     )?;
@@ -1447,13 +1509,15 @@ fn model_frozen(
     blocks: &[Macroblock],
     blocks_x: usize,
     blocks_y: usize,
-) -> Result<Model, EncodeError> {
+) -> Result<(Model, u8), EncodeError> {
     let mut stats = Statistics::new();
+    let mut skips = SkipStats::default();
     let mut contexts = CoeffContexts::new(blocks_x);
     for my in 0..blocks_y {
         contexts.row();
         for mx in 0..blocks_x {
             let block = &blocks[my * blocks_x + mx];
+            skips.observe(block.skip())?;
             contexts.encode_coefficients(&mut StatsSink(&mut stats), block, mx)?;
         }
     }
@@ -1466,7 +1530,7 @@ fn model_frozen(
             &probability_cost,
         )?;
     }
-    Ok(model)
+    Ok((model, skips.frozen_probability()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1478,12 +1542,13 @@ fn code_partitions(
     deltas: Deltas,
     filter: FilterConfig,
     model: Option<&Model>,
+    skip_probability: u8,
     header: &mut impl BoolSink,
     token: &mut impl BoolSink,
 ) -> Result<(), EncodeError> {
     write_header_prefix(header, segments, deltas, filter)?;
     write_updates(header, model, 0, NODE_COUNT)?;
-    write_header_suffix(header)?;
+    write_header_suffix(header, skip_probability)?;
     let mut contexts = CoeffContexts::new(blocks_x);
     let mut above_modes = vec![0u8; blocks_x * 4];
     let mut left_modes = [0u8; 4];
@@ -1504,12 +1569,14 @@ fn code_partitions(
                 mx,
                 block,
                 segments,
+                skip_probability,
             )?;
         }
     }
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn count_partitions(
     blocks: &[Macroblock],
     blocks_x: usize,
@@ -1518,6 +1585,7 @@ fn count_partitions(
     deltas: Deltas,
     filter: FilterConfig,
     model: Option<&Model>,
+    skip_probability: u8,
 ) -> Result<(usize, usize), EncodeError> {
     let mut first = CountingBoolSink::default();
     let mut second = CountingBoolSink::default();
@@ -1529,6 +1597,7 @@ fn count_partitions(
         deltas,
         filter,
         model,
+        skip_probability,
         &mut first,
         &mut second,
     )?;
@@ -1583,6 +1652,8 @@ pub(crate) struct FrameEncoder {
     count_header: CountingBoolSink,
     count_token: CountingBoolSink,
     stats: Statistics,
+    skip_stats: SkipStats,
+    skip_probability: u8,
     model: Model,
     model_count_pass: bool,
     use_model: bool,
@@ -1684,6 +1755,8 @@ impl FrameEncoder {
             count_header: CountingBoolSink::default(),
             count_token: CountingBoolSink::default(),
             stats: Statistics::new(),
+            skip_stats: SkipStats::default(),
+            skip_probability: 128,
             model: Model::new(),
             model_count_pass: false,
             use_model: false,
@@ -1969,6 +2042,7 @@ impl FrameEncoder {
                 mx,
                 block,
                 self.segments,
+                self.skip_probability,
             )
             .map_err(encode_status)?;
         } else {
@@ -1984,6 +2058,7 @@ impl FrameEncoder {
                 mx,
                 block,
                 self.segments,
+                self.skip_probability,
             )
             .map_err(encode_status)?;
         }
@@ -2100,6 +2175,9 @@ impl FrameEncoder {
                 if mx == 0 {
                     self.contexts.row();
                 }
+                self.skip_stats
+                    .observe(self.blocks[self.cursor].skip())
+                    .map_err(encode_status)?;
                 self.contexts
                     .encode_coefficients(
                         &mut StatsSink(&mut self.stats),
@@ -2109,6 +2187,7 @@ impl FrameEncoder {
                     .map_err(encode_status)?;
                 self.cursor += 1;
                 if self.cursor == self.blocks.len() {
+                    self.skip_probability = self.skip_stats.frozen_probability();
                     self.cursor = 0;
                     self.stage = Stage::Optimize;
                 }
@@ -2150,7 +2229,8 @@ impl FrameEncoder {
                 }
             }
             Stage::CountSuffix => {
-                write_header_suffix(&mut self.count_header).map_err(encode_status)?;
+                write_header_suffix(&mut self.count_header, self.skip_probability)
+                    .map_err(encode_status)?;
                 self.reset_coding_state();
                 self.stage = Stage::CountBlocks;
             }
@@ -2194,7 +2274,8 @@ impl FrameEncoder {
                 }
             }
             Stage::EmitSuffix => {
-                write_header_suffix(&mut self.pending_header).map_err(encode_status)?;
+                write_header_suffix(&mut self.pending_header, self.skip_probability)
+                    .map_err(encode_status)?;
                 self.reset_coding_state();
                 self.stage = Stage::EmitBlocks;
             }
@@ -2817,6 +2898,7 @@ mod tests {
             0,
             &block,
             segments,
+            128,
         )
         .unwrap();
         assert_eq!(&header.0[..3], &[(128, true), (128, true), (128, true)]);
@@ -2876,7 +2958,7 @@ mod tests {
     #[test]
     fn frozen_frame_adopts_only_a_smaller_complete_model() {
         let small = vec![Macroblock::default()];
-        let small_model = model_frozen(&small, 1, 1).unwrap();
+        let (small_model, small_skip_probability) = model_frozen(&small, 1, 1).unwrap();
         assert!((0..NODE_COUNT).all(|i| !small_model.updated(i).unwrap()));
         let small_default = count_partitions(
             &small,
@@ -2886,6 +2968,7 @@ mod tests {
             Deltas::default(),
             FilterConfig::DISABLED,
             None,
+            small_skip_probability,
         )
         .unwrap();
         assert_eq!(
@@ -2902,7 +2985,7 @@ mod tests {
                 block
             })
             .collect();
-        let model = model_frozen(&blocks, 16, 16).unwrap();
+        let (model, skip_probability) = model_frozen(&blocks, 16, 16).unwrap();
         assert!((0..NODE_COUNT).any(|i| model.updated(i).unwrap()));
         let default = count_partitions(
             &blocks,
@@ -2912,6 +2995,7 @@ mod tests {
             Deltas::default(),
             FilterConfig::DISABLED,
             None,
+            skip_probability,
         )
         .unwrap();
         let proposed = count_partitions(
@@ -2922,6 +3006,7 @@ mod tests {
             Deltas::default(),
             FilterConfig::DISABLED,
             Some(&model),
+            skip_probability,
         )
         .unwrap();
         assert!(proposed.0 <= 0x7ffff);
@@ -2934,6 +3019,162 @@ mod tests {
             proposed.0
         );
         assert_eq!(frame, emit_frame(&blocks, 256, 256, 22).unwrap());
+    }
+
+    #[test]
+    fn frozen_skip_probability_signals_extremes_and_pays_for_its_literal() {
+        let mut all_skip = SkipStats::default();
+        let mut none_skip = SkipStats::default();
+        let mut mixed = SkipStats::default();
+        for index in 0..256 {
+            all_skip.observe(true).unwrap();
+            none_skip.observe(false).unwrap();
+            mixed.observe(index < 16).unwrap();
+        }
+        assert_eq!(SkipStats::default().frozen_probability(), 128);
+        assert_eq!(all_skip.frozen_probability(), 1);
+        assert_eq!(none_skip.frozen_probability(), 255);
+        assert_eq!(mixed.frozen_probability(), 240);
+        let mut balanced = SkipStats::default();
+        balanced.observe(true).unwrap();
+        balanced.observe(false).unwrap();
+        assert_eq!(balanced.frozen_probability(), 128);
+
+        struct Operations(Vec<(u8, bool)>);
+        impl BoolSink for Operations {
+            fn write(&mut self, probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push((probability, bit));
+                Ok(())
+            }
+        }
+        for probability in [1, 128, 240, 255] {
+            let mut suffix = Operations(Vec::new());
+            write_header_suffix(&mut suffix, probability).unwrap();
+            assert_eq!(suffix.0[0], (128, true));
+            assert_eq!(suffix.0.len(), 9);
+            for shift in (0..8).rev() {
+                assert_eq!(suffix.0[8 - shift], (128, probability & (1 << shift) != 0));
+            }
+            let block = Macroblock::default();
+            let mut header = Operations(Vec::new());
+            write_macroblock_header(
+                &mut header,
+                &block,
+                0,
+                &[0; 4],
+                &[0; 4],
+                SegmentConfig::nonsegmented(22),
+                probability,
+            )
+            .unwrap();
+            assert_eq!(header.0[0], (probability, true));
+        }
+    }
+
+    #[test]
+    fn frozen_skip_probability_saves_actual_bytes_with_exact_counted_emission() {
+        let mut blocks: Vec<_> = (0..256)
+            .map(|index| {
+                let mut block = Macroblock::default();
+                if index % 16 != 0 {
+                    block.y[0][0] = 1; // I4 DC, so non-skip has real tokens.
+                }
+                block
+            })
+            .collect();
+        let segments = SegmentConfig::nonsegmented(22);
+        for expected_probability in [240, 255, 1] {
+            if expected_probability == 255 {
+                for block in &mut blocks {
+                    block.y[0][0] = 1;
+                }
+            } else if expected_probability == 1 {
+                for block in &mut blocks {
+                    block.y[0][0] = 0;
+                }
+            }
+            let (model, probability) = model_frozen(&blocks, 16, 16).unwrap();
+            assert_eq!(probability, expected_probability);
+            let baseline = count_partitions(
+                &blocks,
+                16,
+                16,
+                segments,
+                Deltas::default(),
+                FilterConfig::DISABLED,
+                None,
+                128,
+            )
+            .unwrap();
+            let mut sizes = [(0, 0); 2];
+            for (index, coefficient_model) in [None, Some(&model)].into_iter().enumerate() {
+                let counted = count_partitions(
+                    &blocks,
+                    16,
+                    16,
+                    segments,
+                    Deltas::default(),
+                    FilterConfig::DISABLED,
+                    coefficient_model,
+                    probability,
+                )
+                .unwrap();
+                let mut header = BoolWriter::new();
+                let mut token = BoolWriter::new();
+                code_partitions(
+                    &blocks,
+                    16,
+                    16,
+                    segments,
+                    Deltas::default(),
+                    FilterConfig::DISABLED,
+                    coefficient_model,
+                    probability,
+                    &mut header,
+                    &mut token,
+                )
+                .unwrap();
+                assert_eq!(
+                    counted,
+                    (
+                        header.finish().unwrap().len(),
+                        token.finish().unwrap().len()
+                    )
+                );
+                sizes[index] = counted;
+            }
+            assert!(sizes[0].0 < baseline.0);
+            let selected = if sizes[1].0 + sizes[1].1 < sizes[0].0 + sizes[0].1 {
+                sizes[1]
+            } else {
+                sizes[0]
+            };
+            let frame = emit_frame(&blocks, 256, 256, 22).unwrap();
+            assert_eq!(frame.len(), 10 + selected.0 + selected.1);
+            assert_eq!(frame, emit_frame(&blocks, 256, 256, 22).unwrap());
+        }
+    }
+
+    #[test]
+    fn resumable_and_sync_encoders_share_frozen_skip_probability() {
+        let width = 128;
+        let height = 128;
+        let input = [128, 128, 128, 255].repeat(width * height);
+        let expected = encode_textured(
+            &input,
+            width as u32,
+            height as u32,
+            (width * 4) as u32,
+            0,
+            75,
+        )
+        .unwrap();
+        let request = engine_request(width, height, 0, &input, width * 4);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert_ne!(engine.skip_probability, 128);
+        assert_eq!(engine.output(), expected);
+        assert_eq!(engine.plan().frame_bytes as usize, expected.len());
     }
 
     #[test]
@@ -2987,7 +3228,7 @@ mod tests {
         )
         .unwrap();
         write_updates(&mut header, Some(&model), 0, NODE_COUNT).unwrap();
-        write_header_suffix(&mut header).unwrap();
+        write_header_suffix(&mut header, 128).unwrap();
         let bytes = header.finish().unwrap();
         let mut value = (u32::from(bytes[0]) << 8) | u32::from(bytes[1]);
         let (mut offset, mut range, mut count) = (2, 255, 0);
@@ -3092,6 +3333,7 @@ mod tests {
                 0,
                 &block,
                 SegmentConfig::nonsegmented(22),
+                128,
             )
             .unwrap();
             assert!(header.pending());
