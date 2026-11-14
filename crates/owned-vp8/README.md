@@ -73,6 +73,13 @@ symbols and 64 KiB of carry per step, and then yields through its host. Browser
 cancellation/resource qualification is unfinished. These plans and Node/Rust tests do not establish
 browser/GPU peak, physical zero-copy or product adoption.
 
+Macroblock mode selection reserves the worst-case remaining I16 header syntax,
+all possible coefficient-update literals, and the arithmetic tail against VP8's
+first-partition limit. I4 remains eligible while its exact syntax fits that
+reserve; final byte counting still checks both partitions before allocation.
+This conservative bound may favor I16 on large, complex frames and does not
+establish their quality or timing acceptance.
+
 ## Engineering checks
 
 Run from this crate with the pinned Rust toolchain:
