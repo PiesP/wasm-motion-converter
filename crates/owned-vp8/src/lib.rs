@@ -11,6 +11,7 @@ mod dc_quant;
 mod default_coeff_probs;
 mod limits;
 mod prediction;
+mod presets;
 mod probability;
 mod rate;
 mod residual;

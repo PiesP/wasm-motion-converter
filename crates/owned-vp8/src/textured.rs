@@ -800,11 +800,7 @@ fn encode_observed(
     blocks
         .try_reserve_exact(count)
         .map_err(|_| EncodeError::OutputLimit)?;
-    let qindex = match quality {
-        60 => 40,
-        75 => 22,
-        _ => 8,
-    };
+    let qindex = crate::presets::qindex(quality);
     let y_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y1);
     let uv_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::UV);
     let y2_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y2);
@@ -813,7 +809,7 @@ fn encode_observed(
     let mut left_modes = [0u8; 4];
     // The provisional qindexes are still uncalibrated. This integer lambda is
     // a deterministic engineering search weight, not libwebp quality parity.
-    let lambda = ((qindex + 8) * (qindex + 8) / 4) as u64;
+    let lambda = crate::presets::lambda(quality);
     for my in 0..blocks_y {
         coeff_contexts.row();
         left_modes.fill(0);
@@ -1543,11 +1539,7 @@ impl FrameEncoder {
     }
 
     fn qindex(&self) -> usize {
-        match self.request.quality {
-            60 => 40,
-            75 => 22,
-            _ => 8,
-        }
+        crate::presets::qindex(self.request.quality)
     }
 
     fn analyze_one_step(&mut self) -> Result<(), Status> {
@@ -1562,7 +1554,7 @@ impl FrameEncoder {
         let y_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y2);
-        let lambda = ((qindex + 8) * (qindex + 8) / 4) as u64;
+        let lambda = crate::presets::lambda(self.request.quality);
         let block = analyze_one(
             &self.source_y,
             &self.source_u,
