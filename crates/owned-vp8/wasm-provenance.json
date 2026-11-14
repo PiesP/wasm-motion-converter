@@ -23,7 +23,7 @@
     "crates/owned-vp8/rust-toolchain.toml": "60c5407645e5d56f600e6ae713f0afc4aebbb858c5ceeef4a79c22b7dd2b51c9",
     "crates/owned-vp8/LICENSE.libwebp": "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf",
     "crates/owned-vp8/PATENTS.libwebp": "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c",
-    "crates/owned-vp8/README.md": "e4a369e1c4b7f9d91bccefb61b55c46992d3186bbf6df2482e7deec97cfc8779",
+    "crates/owned-vp8/README.md": "6682e8811f098a712b2114e8815feb2c940200f4a023b21517fa95b8b96b5a23",
     "crates/owned-vp8/src/abi.rs": "a2f3caa8747667299222978a632e9a7f8d4a6b539e1e7cc09fcbf0caeecccb16",
     "crates/owned-vp8/src/ac_quant.rs": "490562412dc5b3bb8076088141fe9e2829e5639e04e26db6bde3b8457ff8808b",
     "crates/owned-vp8/src/bmode_probs.rs": "abd7bd0e0e6d0e21d4711f4b8d65261357514a536c7f90213571b1725e5e1ef4",
