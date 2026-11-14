@@ -279,6 +279,8 @@ type WorkerEvent = {
 type MotionObserver = {
   clickMs: number | null;
   outputUrls: { url: string; size: number; type: string; atMs: number }[];
+  gifPublicationCount: number;
+  lastGifPublication: { url: string; size: number } | null;
   readyMs: number | null;
   stopClickMs: number | null;
   idleAfterStopMs: number | null;
@@ -323,6 +325,8 @@ export function installMotionObserver(options?: { forceConversionWorkerFailure?:
   const observed: MotionObserver = {
     clickMs: null,
     outputUrls: [],
+    gifPublicationCount: 0,
+    lastGifPublication: null,
     readyMs: null,
     stopClickMs: null,
     idleAfterStopMs: null,
@@ -443,6 +447,10 @@ export function installMotionObserver(options?: { forceConversionWorkerFailure?:
   URL.createObjectURL = function (object: Blob | MediaSource) {
     const url = createObjectURL.call(URL, object);
     if (object instanceof Blob && object.type === 'image/gif') {
+      // Lifetime counters deliberately survive per-measurement reset: a stale
+      // cancelled publication must not disappear during recovery preparation.
+      observed.gifPublicationCount++;
+      observed.lastGifPublication = { url, size: object.size };
       observed.outputUrls.push({
         url,
         size: object.size,
@@ -806,6 +814,8 @@ export async function measure(
 export async function measureFallback(page: Page, workload: MotionWorkload) {
   const before = await page.evaluate(() => {
     const observer = Reflect.get(globalThis, '__wmcMotionObserver') as MotionObserver;
+    if (observer.gifPublicationCount !== 0)
+      throw new Error('Cancelled conversion published before recovery');
     observer.reset();
     return {
       workerCount: observer.workers.length,
@@ -834,6 +844,8 @@ export async function measureFallback(page: Page, workload: MotionWorkload) {
       clickMs: observer.clickMs,
       readyMs: observer.readyMs,
       outputUrls: [...observer.outputUrls],
+      gifPublicationCount: observer.gifPublicationCount,
+      lastGifPublication: observer.lastGifPublication,
       workers: observer.workers.slice(workerCount),
       rejections: observer.workerConstructionFailures.slice(rejectionCount),
       timeOrigin: performance.timeOrigin,
@@ -853,6 +865,8 @@ export async function measureFallback(page: Page, workload: MotionWorkload) {
   assert.equal(observation.outputUrls.length, 1, 'Unexpected GIF publication during recovery');
   assert.equal(observation.outputUrls[0]?.url, href, 'Saved GIF differs from published Blob');
   assert.equal(observation.outputUrls[0]?.size, saved.bytes);
+  assert.equal(observation.gifPublicationCount, 1, 'Stale GIF publication survived cancellation');
+  assert.deepEqual(observation.lastGifPublication, { url: href, size: saved.bytes });
   const decoded = await inspectGif(page, data, workload);
   return {
     outputRoute: 'gif-main-thread-fallback' as const,

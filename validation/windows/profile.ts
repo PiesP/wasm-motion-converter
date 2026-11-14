@@ -3436,6 +3436,7 @@ export async function run({
             }[];
             workerConstructionFailures: { url: string; name: string }[];
             outputUrls: { url: string }[];
+            gifPublicationCount: number;
             timeOrigin: number;
           };
           return {
@@ -3444,6 +3445,7 @@ export async function run({
             workers: observed.workers,
             workerConstructionFailures: observed.workerConstructionFailures,
             outputUrls: observed.outputUrls,
+            gifPublicationCount: observed.gifPublicationCount,
             timeOrigin: performance.timeOrigin,
           };
         });
@@ -3466,6 +3468,7 @@ export async function run({
           assert.equal(cancelled.workerConstructionFailures.length, 1);
           assert.equal(cancelled.workerConstructionFailures[0]?.name, 'NotSupportedError');
           assert.deepEqual(cancelled.outputUrls, [], 'Cancelled fallback published a GIF');
+          assert.equal(cancelled.gifPublicationCount, 0, 'Cancelled fallback published a GIF');
         }
         const cancelledWorkers = cancelled.workers.filter((worker) =>
           worker.starts.some((start) => start.options.format === 'gif')
@@ -3503,11 +3506,12 @@ export async function run({
               workers: unknown[];
               workerConstructionFailures: unknown[];
               outputUrls: unknown[];
+              gifPublicationCount: number;
             };
             return {
               workers: observed.workers.length,
               rejections: observed.workerConstructionFailures.length,
-              publications: observed.outputUrls.length,
+              publications: observed.gifPublicationCount,
             };
           });
           assert.deepEqual(after, { workers: 0, rejections: 2, publications: 1 });
