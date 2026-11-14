@@ -7,13 +7,14 @@ import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 
 import { ownedReadCreditStats, readOwnedRange } from './owned-demux-source-reads';
 
-const ABI_VERSION = 3;
+const ABI_VERSION = 4;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const SNAPSHOT_STEP_BYTES = 8 * 1024;
 const MAX_INPUT_BYTES = 500 * 1024 * 1024;
 const MAX_PACKET_BYTES = 16 * 1024 * 1024 - 1024;
 const MAX_WASM_CAPACITY_BYTES = 64 * 1024 * 1024;
-const MAX_TRACK_PACKETS = Math.floor((32 * 1024 * 1024) / 48);
+const MAX_INDEX_BYTES = 32 * 1024 * 1024;
+const MAX_TRACK_PACKETS = 100_000_000;
 const EVENT_BYTES = 64;
 const MAX_STEPS = 2_000_000;
 let nextSessionId = 1;
@@ -30,6 +31,10 @@ type DemuxExports = {
   demux_codec_ptr(): number;
   demux_packet_count(): number;
   demux_packet(index: number): number;
+  demux_index_info(): number;
+  demux_seek_begin(ticksLow: number, ticksHigh: number, beforeIndex: number): number;
+  demux_seek_step(credit: number): number;
+  demux_seek_end(): number;
   demux_packet_begin(index: number): number;
   demux_prepare_packets(maxPacket: number): number;
   demux_probe_vp9(prefixLength: number): number;
@@ -47,6 +52,15 @@ type RangeSource = {
   size: number;
   slice(start: number, end: number): { arrayBuffer(): Promise<ArrayBuffer> };
 };
+
+type IndexInfo = Readonly<{
+  mode: 'expanded' | 'compact';
+  packetCount: number;
+  maxPacketBytes: number;
+  liveIndexBytes: number;
+  seekWorkspaceBytes: number;
+  reconstructs: boolean;
+}>;
 
 export type OwnedDemuxTrack = {
   codec: string;
@@ -90,6 +104,9 @@ export type OwnedDemuxTransferStats = {
   packetReadBytes: number;
   stepCalls: number;
   wasmCapacityBytes: number;
+  indexMode: 'expanded' | 'compact' | null;
+  /** Already included in wasmCapacityBytes, not an additional reservation. */
+  liveIndexBytes: number;
   maxPacketBytes: number;
   realmReadLiveBytes: number;
   realmReadRetiredBytes: number;
@@ -287,8 +304,18 @@ export class OwnedDemuxSession {
   private packetReadBytes = 0;
   private stepCalls = 0;
   private maxPacketBytes = 0;
+  private indexInfo: IndexInfo | null = null;
   private preparedWasmCapacityBytes = 0;
   private analyzedTrack: OwnedDemuxTrack | null = null;
+
+  /** Additional seek memory beyond the current WASM capacity, or the expanded JS heap. */
+  get seekWorkspaceBytes(): number {
+    if (!this.active || !this.ready || !this.indexInfo)
+      throw new Error('Owned demux index unavailable');
+    return this.indexInfo.mode === 'compact'
+      ? this.indexInfo.seekWorkspaceBytes
+      : this.indexInfo.packetCount * 12;
+  }
 
   get transferStats(): OwnedDemuxTransferStats {
     const readCredit = ownedReadCreditStats();
@@ -301,6 +328,8 @@ export class OwnedDemuxSession {
       packetReadBytes: this.packetReadBytes,
       stepCalls: this.stepCalls,
       wasmCapacityBytes: this.wasm.memory.buffer.byteLength,
+      indexMode: this.indexInfo?.mode ?? null,
+      liveIndexBytes: this.indexInfo?.liveIndexBytes ?? 0,
       maxPacketBytes: this.maxPacketBytes,
       realmReadLiveBytes: readCredit.liveBytes,
       realmReadRetiredBytes: readCredit.retiredBytes,
@@ -333,6 +362,10 @@ export class OwnedDemuxSession {
           'demux_codec_ptr',
           'demux_packet_count',
           'demux_packet',
+          'demux_index_info',
+          'demux_seek_begin',
+          'demux_seek_step',
+          'demux_seek_end',
           'demux_prepare_packets',
           'demux_probe_vp9',
           'demux_packet_begin',
@@ -394,25 +427,17 @@ export class OwnedDemuxSession {
           await nextTask();
         } else if (status === 3) {
           let track = this.readTrackRecord();
-          let reconstructs = false;
-          for (let index = 0; index < track.packetCount; index++) {
-            if (index % 256 === 0) {
-              signal?.throwIfAborted();
-              if (!this.active) throw new Error('Owned demux session released');
-              await nextTask();
-            }
-            const packet = this.readPacketRecord(index);
-            this.maxPacketBytes = Math.max(this.maxPacketBytes, packet.byteLength);
-            reconstructs ||= packet.sourceEnd !== null;
-          }
+          const info = this.readIndexInfo(track.packetCount);
+          await this.validateExpandedIndex(info, signal);
           if (track.codec === 'VP90') {
             await this.probeVp9(signal);
             track = this.readTrackRecord();
           }
-          if (reconstructs && !this.wasm.demux_prepare_packets(this.maxPacketBytes))
+          if (info.reconstructs && !this.wasm.demux_prepare_packets(this.maxPacketBytes))
             throw new Error('Owned demux packet workspace admission failed');
           this.preparedWasmCapacityBytes = this.wasm.memory.buffer.byteLength;
           track.maxPacketBytes = this.maxPacketBytes;
+          this.indexInfo = info;
           this.ready = true;
           this.analyzedTrack = track;
           return track;
@@ -536,23 +561,17 @@ export class OwnedDemuxSession {
           throw new Error('Owned demux snapshot logical work limit exceeded');
       }
       const track = this.readTrackRecord();
-      let reconstructs = false;
-      for (let index = 0; index < track.packetCount; index++) {
-        if (index % 256 === 0) {
-          signal?.throwIfAborted();
-          if (!this.active) throw new Error('Owned demux session released');
-          await nextTask();
-        }
-        const packet = this.readPacketRecord(index);
-        this.maxPacketBytes = Math.max(this.maxPacketBytes, packet.byteLength);
-        reconstructs ||= packet.sourceEnd !== null;
-      }
+      const info = this.readIndexInfo(track.packetCount);
+      if (info.mode !== 'expanded')
+        throw new Error('Owned demux compact snapshot import unsupported');
+      await this.validateExpandedIndex(info, signal);
       signal?.throwIfAborted();
       if (!this.active) throw new Error('Owned demux session released');
-      if (reconstructs && !this.wasm.demux_prepare_packets(this.maxPacketBytes))
+      if (info.reconstructs && !this.wasm.demux_prepare_packets(this.maxPacketBytes))
         throw new Error('Owned demux snapshot packet workspace admission failed');
       this.preparedWasmCapacityBytes = this.wasm.memory.buffer.byteLength;
       track.maxPacketBytes = this.maxPacketBytes;
+      this.indexInfo = info;
       this.ready = true;
       this.analyzedTrack = track;
       return track;
@@ -562,6 +581,59 @@ export class OwnedDemuxSession {
     } finally {
       this.snapshotOperation = false;
     }
+  }
+
+  private readIndexInfo(packetCount: number): IndexInfo {
+    const view = eventView(this.wasm, this.wasm.demux_index_info());
+    if (view.getUint32(0, true) !== 9) throw new Error('Owned demux invalid index ABI event');
+    const mode = view.getUint32(4, true);
+    const logicalCount = view.getUint32(8, true);
+    const maxPacketBytes = view.getUint32(12, true);
+    const liveIndexBytes = view.getUint32(16, true);
+    const seekWorkspaceBytes = view.getUint32(20, true);
+    const flags = view.getUint32(24, true);
+    if (
+      (mode !== 0 && mode !== 1) ||
+      logicalCount !== packetCount ||
+      maxPacketBytes < 1 ||
+      maxPacketBytes > MAX_PACKET_BYTES ||
+      liveIndexBytes < 1 ||
+      liveIndexBytes > MAX_INDEX_BYTES ||
+      seekWorkspaceBytes > MAX_INDEX_BYTES ||
+      (flags & ~1) !== 0 ||
+      (mode === 0 && seekWorkspaceBytes !== 0) ||
+      (mode === 1 &&
+        (flags !== 0 ||
+          seekWorkspaceBytes + this.wasm.memory.buffer.byteLength > MAX_WASM_CAPACITY_BYTES))
+    )
+      throw new Error('Owned demux index ABI record invalid');
+    return {
+      mode: mode === 1 ? 'compact' : 'expanded',
+      packetCount: logicalCount,
+      maxPacketBytes,
+      liveIndexBytes,
+      seekWorkspaceBytes,
+      reconstructs: (flags & 1) !== 0,
+    };
+  }
+
+  private async validateExpandedIndex(info: IndexInfo, signal?: AbortSignal): Promise<void> {
+    this.maxPacketBytes = info.maxPacketBytes;
+    if (info.mode === 'compact') return;
+    let observedMax = 0;
+    let observedReconstruction = false;
+    for (let index = 0; index < info.packetCount; index++) {
+      if (index % 256 === 0) {
+        signal?.throwIfAborted();
+        if (!this.active) throw new Error('Owned demux session released');
+        await nextTask();
+      }
+      const packet = this.readPacketRecord(index);
+      observedMax = Math.max(observedMax, packet.byteLength);
+      observedReconstruction ||= packet.sourceEnd !== null;
+    }
+    if (observedMax !== info.maxPacketBytes || observedReconstruction !== info.reconstructs)
+      throw new Error('Owned demux index ABI summary mismatch');
   }
 
   private readTrackRecord(): OwnedDemuxTrack {
@@ -632,7 +704,8 @@ export class OwnedDemuxSession {
       !this.ready ||
       this.snapshotOperation ||
       !Number.isSafeInteger(index) ||
-      index < 0
+      index < 0 ||
+      index >= (this.indexInfo?.packetCount ?? 0)
     )
       throw new Error('Owned demux packet index invalid');
     return this.readPacketRecord(index);
@@ -643,10 +716,14 @@ export class OwnedDemuxSession {
     if (view.getUint32(0, true) !== 5) throw new Error('Owned demux packet unavailable');
     const offset = view.getBigUint64(8, true);
     const byteLength = view.getUint32(16, true);
+    const key = view.getUint32(20, true);
     const sourceEnd = view.getBigUint64(48, true);
     if (
+      key > 1 ||
       byteLength < 1 ||
       byteLength > MAX_PACKET_BYTES ||
+      (this.maxPacketBytes > 0 && byteLength > this.maxPacketBytes) ||
+      (this.indexInfo?.mode === 'compact' && sourceEnd !== 0n) ||
       (sourceEnd === 0n && safeOffset(offset) + byteLength > this.source.size) ||
       (sourceEnd !== 0n && (sourceEnd <= offset || safeOffset(sourceEnd) > this.source.size))
     )
@@ -658,7 +735,7 @@ export class OwnedDemuxSession {
       offset,
       byteLength,
       sourceEnd: sourceEnd === 0n ? null : sourceEnd,
-      key: view.getUint32(20, true) === 1,
+      key: key === 1,
       dtsTicks: view.getBigInt64(24, true),
       ptsTicks: view.getBigInt64(32, true),
       durationTicks: view.getBigUint64(40, true),
@@ -792,6 +869,7 @@ export class OwnedDemuxSession {
       !this.active ||
       !this.ready ||
       this.seeking ||
+      this.packetReadInProgress ||
       this.snapshotOperation ||
       !Number.isFinite(seconds) ||
       seconds < 0
@@ -809,6 +887,8 @@ export class OwnedDemuxSession {
       // ticks remain fractional, so a request just before a key excludes it.
       const rounded = Math.round(scaled);
       const target = Math.abs(scaled / rounded - 1) < 10 * Number.EPSILON ? rounded : scaled;
+      if (this.indexInfo?.mode === 'compact')
+        return await this.findCompactVerifiedKey(track, BigInt(Math.floor(target)), signal);
       const safeTick = BigInt(Number.MAX_SAFE_INTEGER);
       // The two typed arrays use at most 12 bytes per admitted indexed packet.
       // Heap insertion and removal are logarithmic; no whole-index sort occurs.
@@ -866,8 +946,11 @@ export class OwnedDemuxSession {
         }
         const packet = this.packet(index);
         const payload = new Uint8Array(await this.readPacket(packet, signal));
-        if (await verifyOwnedVideoKey(track.codec, track.description, payload, signal))
+        if (await verifyOwnedVideoKey(track.codec, track.description, payload, signal)) {
+          signal?.throwIfAborted();
+          if (!this.active) throw new Error('Owned demux session released');
           return index;
+        }
         await nextTask();
       }
       return null;
@@ -876,11 +959,66 @@ export class OwnedDemuxSession {
     }
   }
 
+  private async findCompactVerifiedKey(
+    track: OwnedDemuxTrack,
+    targetTicks: bigint,
+    signal?: AbortSignal
+  ): Promise<number | null> {
+    signal?.throwIfAborted();
+    const ticks = BigInt.asUintN(64, targetTicks);
+    if (
+      this.wasm.demux_seek_begin(
+        Number(ticks & 0xffff_ffffn),
+        Number(ticks >> 32n),
+        0xffff_ffff
+      ) !== 1
+    )
+      throw new Error('Owned demux compact seek start state invalid');
+    try {
+      if (this.wasm.memory.buffer.byteLength > MAX_WASM_CAPACITY_BYTES)
+        throw new Error('Owned demux WASM capacity limit exceeded');
+      for (let steps = 0; steps < MAX_STEPS + track.packetCount; steps++) {
+        signal?.throwIfAborted();
+        if (!this.active) throw new Error('Owned demux session released');
+        const event = eventView(this.wasm, this.wasm.demux_seek_step(64));
+        if (event.getUint32(0, true) !== 10)
+          throw new Error('Owned demux compact seek ABI event invalid');
+        const state = event.getUint32(4, true);
+        if (state === 1) {
+          await nextTask();
+          continue;
+        }
+        if (state === 3) return null;
+        if (state === 4)
+          throw new Error(`Owned demux compact seek error ${event.getUint32(8, true)}`);
+        if (state !== 2) throw new Error('Owned demux compact seek ABI state invalid');
+        const index = event.getUint32(8, true);
+        if (index >= track.packetCount)
+          throw new Error('Owned demux compact seek candidate invalid');
+        const packet = this.packet(index);
+        if (!packet.key || packet.ptsTicks > targetTicks)
+          throw new Error('Owned demux compact seek candidate invalid');
+        const payload = new Uint8Array(await this.readPacket(packet, signal));
+        if (await verifyOwnedVideoKey(track.codec, track.description, payload, signal)) {
+          signal?.throwIfAborted();
+          if (!this.active) throw new Error('Owned demux session released');
+          return index;
+        }
+        await nextTask();
+      }
+      throw new Error('Owned demux compact seek logical work limit exceeded');
+    } finally {
+      if (this.active && this.wasm.demux_seek_end() !== 1)
+        throw new Error('Owned demux compact seek cleanup failed');
+    }
+  }
+
   release(): void {
     if (!this.active) return;
     this.active = false;
     this.ready = false;
     this.analyzedTrack = null;
+    this.indexInfo = null;
     this.generation++;
     this.wasm.demux_release();
   }

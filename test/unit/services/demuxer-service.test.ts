@@ -20,6 +20,7 @@ vi.mock('@services/owned-demux-core', () => ({
     packet: mocks.packet,
     readPacket: mocks.readPacket,
     release: mocks.release,
+    seekWorkspaceBytes: 0,
     transferStats: mocks.transferStats,
   })),
   computeOwnedPacketStats: vi.fn(async () => ({ averagePacketRate: 6, averageBitrate: 48_000 })),
@@ -130,6 +131,13 @@ describe('demuxVideo owned packet route', () => {
     expect(result.totalFrames).toBe(6);
     expect(result.sourceTotalMs).toBeCloseTo(999.996);
     expect(mocks.release).toHaveBeenCalledOnce();
+  });
+
+  it('uses admitted compact seek workspace instead of charging every logical packet', async () => {
+    mocks.analyze.mockResolvedValue({ ...track, packetCount: 100_000_000 });
+    const result = await demuxVideo(request(1), metadata);
+    expect(result.encodedChunkBudgetBytes).toBe(ENCODED_CHUNK_BUDGET_BYTES);
+    result.dispose?.();
   });
 
   it('rejects the aggregate reserve before reading any oversized packet', async () => {

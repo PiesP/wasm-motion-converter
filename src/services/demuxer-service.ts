@@ -136,7 +136,7 @@ export async function demuxVideo(
     // parser, range-read, packet, and WebCodecs queue allocations spend this reserve.
     const inputBufferBytes = inputSource instanceof Blob ? 0 : inputSource.byteLength;
     const { wasmCapacityBytes } = session.transferStats;
-    const seekWorkspaceBytes = request.trimStart > 0 ? track.packetCount * 12 : 0;
+    const seekWorkspaceBytes = request.trimStart > 0 ? session.seekWorkspaceBytes : 0;
     const descriptionReserveBytes = Math.max(
       2 * track.description.byteLength,
       track.description.byteLength + configDescriptionBytes

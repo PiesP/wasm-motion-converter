@@ -121,7 +121,7 @@ export function classifyOwnedDemuxError(error: unknown, signal?: AbortSignal): E
     return new OwnedDemuxAbiError(message, { cause: error });
   if (
     /resource|memory|capacity|limit|admission|out of range/i.test(message) ||
-    /parser error 3\b/.test(message)
+    /(?:parser|compact seek) error 3\b/.test(message)
   )
     return new OwnedDemuxResourceError(message, { cause: error });
   return new OwnedDemuxParseError(message, { cause: error });
