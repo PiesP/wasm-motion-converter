@@ -256,18 +256,21 @@ async function exerciseBuildUpgrade(
       }
       return paths;
     });
-    const neverFetched = oldOnly.find(
+    const neverFetchedLocale = oldOnly.find(
       (name) => /^(?:ar|es|ja|ko|zh-CN)\./.test(name) && !cachedPaths.includes(`/assets/${name}`)
     );
+    // A codec-only change need not rebuild locale chunks. Keep the same real,
+    // inventoried removed/uncached asset contract, using the retired codec when
+    // no locale changed. Never fabricate a removed asset for ordinary upgrades.
+    const neverFetched = neverFetchedLocale ?? selectRemovedUncachedAsset(oldOnly, cachedPaths);
     if (!requireChangedWorker)
       assert(
         neverFetched,
-        'Prior build has no removed, never-fetched locale chunk for upgrade acceptance'
+        'Prior build has no removed, never-fetched JS chunk for upgrade acceptance'
       );
     const missingAsset = neverFetched ?? 'handoff-control.abcdefgh.js';
     assert(!nextAssets.has(missingAsset) && !cachedPaths.includes(`/assets/${missingAsset}`));
-    const locale = neverFetched?.split('.')[0];
-    if (neverFetched) assert(locale);
+    const locale = neverFetchedLocale?.split('.')[0];
     assert.equal(
       await page.evaluate(
         (path) =>
@@ -519,7 +522,7 @@ async function exerciseBuildUpgrade(
         predicate: (request) => request.url() === missingUrl,
         timeout: 15_000,
       }),
-      neverFetched
+      locale
         ? page.locator('[data-testid="language-selector"]').selectOption(locale!)
         : page
             .evaluate(async (url) => {
@@ -655,7 +658,9 @@ async function exerciseBuildUpgrade(
       id: 'real-build-upgrade',
       status: 'passed',
       priorOnlyNeverFetchedChunk: neverFetched,
-      missingChunkTriggeredBy: neverFetched ? `language-selector=${locale}` : 'uncached fetch',
+      missingChunkTriggeredBy: locale
+        ? `language-selector=${locale}`
+        : 'uncached removed asset fetch',
       cachedPriorAsset: new URL(cached.url).pathname,
       cachedPriorSha256: sha256(Buffer.from(cached.bytes)),
       retainedResultDownload: true,
@@ -677,7 +682,7 @@ async function exerciseBuildUpgrade(
       missingChunkRequestFailure: requestFailure,
       missingChunkWorkerMessage: workerMessage,
       messageObservedByHarnessOnly: true,
-      oldLocaleFallback: neverFetched ? 'English' : null,
+      oldLocaleFallback: locale ? 'English' : null,
       pollutedAssetRejected: true,
       explicitReloadLoadedCurrentBuild: true,
       currentAppSettingsInteraction: true,
@@ -2630,4 +2635,12 @@ export async function runRecoveryBuilds({
     // Raise cleanup failure only when no check already failed.
     if (cleanupFailure && !diagnostics.failure) throw cleanupFailure;
   }
+}
+
+/** Select only a real prior-only JavaScript asset that no prior tab cached. */
+export function selectRemovedUncachedAsset(
+  oldOnly: string[],
+  cachedPaths: string[]
+): string | undefined {
+  return oldOnly.find((name) => name.endsWith('.js') && !cachedPaths.includes(`/assets/${name}`));
 }
