@@ -856,7 +856,7 @@ mod tests {
             bytes.extend_from_slice(body);
             bytes
         }
-        fn moov(with_edit: bool) -> Vec<u8> {
+        fn moov(with_edit: bool, with_classic_samples: bool) -> Vec<u8> {
             let mut mvhd = [0; 20];
             mvhd[12..16].copy_from_slice(&1000u32.to_be_bytes());
             let mut tkhd = [0; 60];
@@ -876,7 +876,33 @@ mod tests {
             let mut stsd = vec![0; 8];
             stsd[4..8].copy_from_slice(&1u32.to_be_bytes());
             stsd.extend_from_slice(&entry);
-            let stbl = box_bytes(b"stbl", &box_bytes(b"stsd", &stsd));
+            let mut stbl_body = box_bytes(b"stsd", &stsd);
+            if with_classic_samples {
+                let mut stsz = vec![0; 12];
+                stsz[4..8].copy_from_slice(&1u32.to_be_bytes());
+                stsz[8..12].copy_from_slice(&200_000u32.to_be_bytes());
+                let mut stco = vec![0; 12];
+                stco[4..8].copy_from_slice(&1u32.to_be_bytes());
+                stco[8..12].copy_from_slice(&100u32.to_be_bytes());
+                let mut stsc = vec![0; 20];
+                stsc[4..8].copy_from_slice(&1u32.to_be_bytes());
+                stsc[8..12].copy_from_slice(&1u32.to_be_bytes());
+                stsc[12..16].copy_from_slice(&200_000u32.to_be_bytes());
+                stsc[16..20].copy_from_slice(&1u32.to_be_bytes());
+                let mut stts = vec![0; 16];
+                stts[4..8].copy_from_slice(&1u32.to_be_bytes());
+                stts[8..12].copy_from_slice(&200_000u32.to_be_bytes());
+                stts[12..16].copy_from_slice(&1u32.to_be_bytes());
+                for (kind, body) in [
+                    (b"stsz", stsz.as_slice()),
+                    (b"stco", stco.as_slice()),
+                    (b"stsc", stsc.as_slice()),
+                    (b"stts", stts.as_slice()),
+                ] {
+                    stbl_body.extend_from_slice(&box_bytes(kind, body));
+                }
+            }
+            let stbl = box_bytes(b"stbl", &stbl_body);
             let minf = box_bytes(b"minf", &stbl);
             let mdia = box_bytes(
                 b"mdia",
@@ -905,11 +931,17 @@ mod tests {
             .concat()
         }
 
-        let (plain, _) = parse_moov(&moov(false)).unwrap();
+        let (plain, _) = parse_moov(&moov(false, false)).unwrap();
         assert_eq!(plain.duration, 0);
-        let (edited, _) = parse_moov(&moov(true)).unwrap();
+        let (edited, _) = parse_moov(&moov(true, false)).unwrap();
         assert_eq!(edited.edit_shift, 500);
         assert_eq!(edited.duration, 0);
+        let classic_with_mvex = moov(false, true);
+        assert!(child(&classic_with_mvex, *b"mvex").unwrap().is_some());
+        let (classic, table) = parse_moov(&classic_with_mvex).unwrap();
+        let table = table.expect("nonempty stsz selects classic samples with mvex");
+        assert_eq!(classic.duration, 0);
+        assert!(crate::mp4_compact::CompactBuilder::preferred(&classic_with_mvex, table).unwrap());
     }
 
     #[test]

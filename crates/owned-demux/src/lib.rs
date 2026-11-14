@@ -87,6 +87,7 @@ pub struct Mp4Session {
     index: Option<mp4::IndexBuilder>,
     compact_builder: Option<mp4_compact::CompactBuilder>,
     compact_index: Option<mp4_compact::CompactIndex>,
+    classic_selected: bool,
     fragment: Option<mp4::FragmentBuilder>,
     track: Option<Track>,
     status: Status,
@@ -169,6 +170,7 @@ impl Mp4Session {
             index: None,
             compact_builder: None,
             compact_index: None,
+            classic_selected: false,
             fragment: None,
             track: None,
             status: Status::Yield,
@@ -290,6 +292,7 @@ impl Mp4Session {
             self.snapshot_import.take().ok_or(Error::Invalid)?.take()?;
         self.track = Some(track);
         self.compact_index = None;
+        self.classic_selected = false;
         self.format = format;
         self.codec_string = codec;
         self.ts_sources = sources;
@@ -548,9 +551,8 @@ impl Mp4Session {
                     }
                     let (mut track, tables) = mp4::parse_moov(&pending.data)?;
                     if let Some(range) = tables {
-                        if mp4::child(&pending.data, *b"mvex")?.is_none()
-                            && mp4_compact::CompactBuilder::preferred(&pending.data, range)?
-                        {
+                        self.classic_selected = true;
+                        if mp4_compact::CompactBuilder::preferred(&pending.data, range)? {
                             self.compact_builder = Some(mp4_compact::CompactBuilder::new(
                                 pending.data,
                                 range,
@@ -568,7 +570,7 @@ impl Mp4Session {
                     }
                     self.track = Some(track);
                 } else if pending.kind == *b"moof" {
-                    if self.track.is_none() {
+                    if self.classic_selected || self.track.is_none() {
                         return Err(Error::Unsupported);
                     }
                     self.fragment = Some(mp4::FragmentBuilder::new(
@@ -633,6 +635,11 @@ impl Mp4Session {
                 return Err(Error::Truncated);
             }
             self.cursor = end;
+            // A populated classic sample table owns this track, even if mvex is
+            // present. Skip later fragments before admitting their box bodies.
+            if kind == *b"moof" && self.classic_selected {
+                continue;
+            }
             if kind == *b"moov" || kind == *b"moof" {
                 let total = usize::try_from(size - head).map_err(|_| Error::ResourceLimit)?;
                 // Reserve the simultaneous raw box, input lease, retained index and
@@ -1580,6 +1587,43 @@ mod tests {
         assert_eq!(session.step(1), Status::Error);
         assert_eq!(session.error(), Some(Error::ResourceLimit));
         assert!(session.pending.is_none());
+    }
+
+    #[test]
+    fn selected_classic_samples_skip_later_large_moof_before_body_allocation() {
+        let mut session = Mp4Session::new(40 * 1024 * 1024).unwrap();
+        session.format = Format::Mp4;
+        session.classic_selected = true;
+        session.track = Some(Track {
+            track_id: 1,
+            codec: *b"avc1",
+            width: 16,
+            height: 16,
+            display_width: 16,
+            display_height: 16,
+            color_primaries: 0,
+            color_transfer: 0,
+            color_matrix: 0,
+            color_full_range: -1,
+            timescale: 1000,
+            duration: 1,
+            rotation: 0,
+            description: Vec::new(),
+            packets: Vec::new(),
+            fragment_default_duration: 0,
+            fragment_default_size: 0,
+            fragment_default_flags: 0,
+            edit_shift: 0,
+        });
+        let box_size = 30 * 1024 * 1024u32 + 8;
+        session.window_len = 8;
+        session.input[..4].copy_from_slice(&box_size.to_be_bytes());
+        session.input[4..8].copy_from_slice(b"moof");
+        assert_eq!(session.step(1), Status::Yield);
+        assert_eq!(session.cursor, u64::from(box_size));
+        assert!(session.pending.is_none());
+        assert!(session.fragment.is_none());
+        assert_eq!(session.input.capacity(), INPUT_CAPACITY);
     }
 
     #[test]

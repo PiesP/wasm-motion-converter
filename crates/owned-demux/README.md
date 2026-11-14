@@ -48,11 +48,15 @@ presentation may retain a packed four-byte successor index per sample; a bounded
 heap builds it before Ready and is then released. CTTS tracks with monotonic
 presentation and tracks without CTTS need no per-sample successor index. The
 index builder and seek candidate heap advance under explicit work credits.
+When a nonempty classic sample table is selected, its descriptors remain
+authoritative even if `mvex` is present; later `moof` boxes are skipped before
+body allocation. Empty classic tables continue through the fragmented route.
 
 `demux_index_info()` returns a 64-byte tag-9 event: mode at byte 4 (0 expanded,
 1 compact classic), logical packet count at 8, maximum compressed packet bytes
-at 12, actual retained index/input/description capacity at 16, prospective
-post-Ready seek workspace at 20 (zero because it is preallocated), and flags at
+at 12, actual retained index/input/description capacity at 16, additional
+post-Ready seek workspace at 20 (zero because the native heap is preallocated
+inside already counted WASM capacity), and flags at
 24 (bit 0 means reconstructed payloads). `demux_packet_count()` returns the
 logical count; `demux_packet(index)` keeps the tag-5 wire layout and performs a
 checked bounded lookup for compact tracks. The host checks the index record and
