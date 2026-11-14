@@ -15,6 +15,7 @@ mod presets;
 mod probability;
 mod rate;
 mod residual;
+mod segmentation;
 mod textured;
 mod transform;
 

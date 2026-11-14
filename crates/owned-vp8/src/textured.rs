@@ -11,7 +11,9 @@ use crate::{
     prediction::{self, LargeMode, SmallMode},
     probability::{Model, Statistics, NODE_COUNT},
     rate::{probability_cost, BoolSink, CountingBoolSink, OpBuffer, RateCounter},
-    residual, transform,
+    residual,
+    segmentation::{self, Config as SegmentConfig},
+    transform,
 };
 
 #[derive(Default)]
@@ -22,6 +24,7 @@ struct Macroblock {
     y_mode: u8,
     b_modes: [u8; 16],
     uv_mode: u8,
+    segment_id: u8,
     u: [[i16; 16]; 4],
     v: [[i16; 16]; 4],
 }
@@ -652,6 +655,7 @@ fn mode_cost(
     write_uv_mode(&mut rate, block.uv_mode)?;
     Ok(rate.cost)
 }
+#[allow(clippy::too_many_arguments)]
 fn selected_cost(
     block: &Macroblock,
     mx: usize,
@@ -660,9 +664,11 @@ fn selected_cost(
     left: &[u8; 4],
     distortion: u64,
     lambda: u64,
+    segments: SegmentConfig,
 ) -> Result<u64, EncodeError> {
     let skip = block.skip();
     let mut rate = RateCounter::default();
+    segments.write_id(&mut rate, block.segment_id)?;
     rate.write(128, skip)?;
     let cost = rate.cost + mode_cost(block, mx, above, left)? + contexts.measure(block, mx)?;
     Ok(distortion * 256 + lambda * cost)
@@ -800,20 +806,32 @@ fn encode_observed(
     blocks
         .try_reserve_exact(count)
         .map_err(|_| EncodeError::OutputLimit)?;
-    let qindex = crate::presets::qindex(quality);
-    let y_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y1);
-    let uv_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::UV);
-    let y2_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y2);
+    let mut segment_ids = Vec::new();
+    segment_ids
+        .try_reserve_exact(count)
+        .map_err(|_| EncodeError::OutputLimit)?;
+    let mut smooth_count = 0;
+    for my in 0..blocks_y {
+        for mx in 0..blocks_x {
+            let id = segmentation::classify(&source_y, &source_u, &source_v, padded_w, mx, my);
+            smooth_count += usize::from(id == segmentation::SMOOTH);
+            segment_ids.push(id);
+        }
+    }
+    let segments = SegmentConfig::from_counts(quality, smooth_count, count);
     let mut coeff_contexts = CoeffContexts::new(blocks_x);
     let mut above_modes = vec![0u8; blocks_x * 4];
     let mut left_modes = [0u8; 4];
-    // The provisional qindexes are still uncalibrated. This integer lambda is
-    // a deterministic engineering search weight, not libwebp quality parity.
-    let lambda = crate::presets::lambda(quality);
     for my in 0..blocks_y {
         coeff_contexts.row();
         left_modes.fill(0);
         for mx in 0..blocks_x {
+            let segment_id = segment_ids[my * blocks_x + mx];
+            let qindex = segments.qindex_for(segment_id);
+            let y_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y1);
+            let uv_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::UV);
+            let y2_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y2);
+            let lambda = crate::presets::lambda_for_q(qindex);
             blocks.push(analyze_one(
                 &source_y,
                 &source_u,
@@ -833,10 +851,16 @@ fn encode_observed(
                 &mut left_modes,
                 lambda,
                 luma_policy,
+                segment_id,
+                segments,
             )?);
         }
     }
-    let result = emit_frame(&blocks, width, height, qindex)?;
+    let result = if segments.enabled {
+        emit_segmented_frame(&blocks, width, height, segments)?
+    } else {
+        emit_frame(&blocks, width, height, segments.base_qindex)?
+    };
     observe(
         &reconstructed_y,
         &reconstructed_u,
@@ -866,6 +890,8 @@ fn analyze_one(
     left_modes: &mut [u8; 4],
     lambda: u64,
     luma_policy: u8,
+    segment_id: u8,
+    segments: SegmentConfig,
 ) -> Result<Macroblock, EncodeError> {
     let x = mx * 16;
     let y = my * 16;
@@ -950,6 +976,7 @@ fn analyze_one(
                 y_mode: luma_candidate.block.y_mode,
                 b_modes: luma_candidate.block.b_modes,
                 uv_mode: ui as u8,
+                segment_id,
                 u: uv_candidate.u,
                 v: uv_candidate.v,
             };
@@ -962,6 +989,7 @@ fn analyze_one(
                 left_modes,
                 distortion,
                 lambda,
+                segments,
             )?;
             if best.is_none_or(|previous| score < previous.0) {
                 best = Some((score, li, ui));
@@ -980,6 +1008,7 @@ fn analyze_one(
         y_mode: selected_luma.block.y_mode,
         b_modes: selected_luma.block.b_modes,
         uv_mode: ui as u8,
+        segment_id,
         u: selected_uv.u,
         v: selected_uv.v,
     };
@@ -991,16 +1020,19 @@ fn analyze_one(
     Ok(block)
 }
 
-fn write_header_prefix(sink: &mut impl BoolSink, qindex: usize) -> Result<(), EncodeError> {
+fn write_header_prefix(
+    sink: &mut impl BoolSink,
+    segments: SegmentConfig,
+) -> Result<(), EncodeError> {
     sink.bit(false)?; // YUV color space.
     sink.bit(false)?; // Decoder clamps output pixels.
-    sink.bit(false)?; // Segmentation disabled.
+    segments.write_header(sink)?;
     sink.bit(false)?; // Normal loop filter.
     sink.literal(0, 6)?; // No loop filtering during this experiment.
     sink.literal(0, 3)?;
     sink.bit(false)?; // Macroblock filter deltas disabled.
     sink.literal(0, 2)?; // One coefficient partition.
-    sink.literal(qindex as u32, 7)?;
+    sink.literal(segments.base_qindex as u32, 7)?;
     for _ in 0..5 {
         sink.bit(false)?;
     }
@@ -1079,7 +1111,9 @@ fn write_macroblock(
     left_modes: &mut [u8; 4],
     mx: usize,
     block: &Macroblock,
+    segments: SegmentConfig,
 ) -> Result<(), EncodeError> {
+    segments.write_id(header, block.segment_id)?;
     header.write(128, block.skip())?;
     write_y_mode(header, block.i16, block.y_mode)?;
     if !block.i16 {
@@ -1112,11 +1146,20 @@ fn emit_frame(
     height: usize,
     qindex: usize,
 ) -> Result<Vec<u8>, EncodeError> {
+    emit_segmented_frame(blocks, width, height, SegmentConfig::nonsegmented(qindex))
+}
+
+fn emit_segmented_frame(
+    blocks: &[Macroblock],
+    width: usize,
+    height: usize,
+    segments: SegmentConfig,
+) -> Result<Vec<u8>, EncodeError> {
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
     let model = model_frozen(blocks, blocks_x, blocks_y)?;
-    let default_sizes = count_partitions(blocks, blocks_x, blocks_y, qindex, None)?;
-    let modeled_sizes = count_partitions(blocks, blocks_x, blocks_y, qindex, Some(&model))?;
+    let default_sizes = count_partitions(blocks, blocks_x, blocks_y, segments, None)?;
+    let modeled_sizes = count_partitions(blocks, blocks_x, blocks_y, segments, Some(&model))?;
     let use_model = modeled_sizes.0 <= 0x7ffff
         && modeled_sizes.0 + modeled_sizes.1 < default_sizes.0 + default_sizes.1;
     let selected = if use_model {
@@ -1138,7 +1181,7 @@ fn emit_frame(
         blocks,
         blocks_x,
         blocks_y,
-        qindex,
+        segments,
         selected_model,
         &mut header,
         &mut token,
@@ -1192,12 +1235,12 @@ fn code_partitions(
     blocks: &[Macroblock],
     blocks_x: usize,
     blocks_y: usize,
-    qindex: usize,
+    segments: SegmentConfig,
     model: Option<&Model>,
     header: &mut impl BoolSink,
     token: &mut impl BoolSink,
 ) -> Result<(), EncodeError> {
-    write_header_prefix(header, qindex)?;
+    write_header_prefix(header, segments)?;
     write_updates(header, model, 0, NODE_COUNT)?;
     write_header_suffix(header)?;
     let mut contexts = CoeffContexts::new(blocks_x);
@@ -1219,6 +1262,7 @@ fn code_partitions(
                 &mut left_modes,
                 mx,
                 block,
+                segments,
             )?;
         }
     }
@@ -1229,7 +1273,7 @@ fn count_partitions(
     blocks: &[Macroblock],
     blocks_x: usize,
     blocks_y: usize,
-    qindex: usize,
+    segments: SegmentConfig,
     model: Option<&Model>,
 ) -> Result<(usize, usize), EncodeError> {
     let mut first = CountingBoolSink::default();
@@ -1238,7 +1282,7 @@ fn count_partitions(
         blocks,
         blocks_x,
         blocks_y,
-        qindex,
+        segments,
         model,
         &mut first,
         &mut second,
@@ -1267,6 +1311,7 @@ enum Stage {
     CollectStats = 15,
     Optimize = 16,
     PrepareOutput = 17,
+    Classify = 18,
 }
 
 /// One step initializes at most 64 KiB, converts one YUV row pair, analyzes
@@ -1283,6 +1328,8 @@ pub(crate) struct FrameEncoder {
     reconstructed_u: Vec<u8>,
     reconstructed_v: Vec<u8>,
     blocks: Vec<Macroblock>,
+    smooth_count: usize,
+    segments: SegmentConfig,
     contexts: CoeffContexts,
     above_modes: Vec<u8>,
     left_modes: [u8; 4],
@@ -1358,6 +1405,8 @@ impl FrameEncoder {
             reconstructed_u: Vec::new(),
             reconstructed_v: Vec::new(),
             blocks,
+            smooth_count: 0,
+            segments: SegmentConfig::nonsegmented(crate::presets::qindex(request.quality)),
             contexts: CoeffContexts::try_new(blocks_x)?,
             above_modes,
             left_modes: [0; 4],
@@ -1406,9 +1455,11 @@ impl FrameEncoder {
                 (done as u32, self.plan.yuv_plane_set_bytes * 2)
             }
             Stage::Color => (self.cursor as u32, pairs),
-            Stage::Analyze | Stage::CollectStats | Stage::CountBlocks | Stage::EmitBlocks => {
-                (self.cursor as u32, blocks)
-            }
+            Stage::Classify
+            | Stage::Analyze
+            | Stage::CollectStats
+            | Stage::CountBlocks
+            | Stage::EmitBlocks => (self.cursor as u32, blocks),
             Stage::Optimize => (self.cursor as u32, NODE_COUNT as u32),
             Stage::CountUpdates | Stage::EmitUpdates => {
                 (self.cursor as u32, super::COEFF_UPDATE_PROBS.len() as u32)
@@ -1527,7 +1578,7 @@ impl FrameEncoder {
         self.cursor += 1;
         if self.cursor == self.plan.padded_height as usize / 2 {
             self.cursor = 0;
-            self.stage = Stage::Analyze;
+            self.stage = Stage::Classify;
         }
         Ok(())
     }
@@ -1539,8 +1590,33 @@ impl FrameEncoder {
         self.cursor = 0;
     }
 
-    fn qindex(&self) -> usize {
-        crate::presets::qindex(self.request.quality)
+    fn classify_one_step(&mut self) {
+        let blocks_x = self.plan.padded_width as usize / 16;
+        let mx = self.cursor % blocks_x;
+        let my = self.cursor / blocks_x;
+        let segment_id = segmentation::classify(
+            &self.source_y,
+            &self.source_u,
+            &self.source_v,
+            self.plan.padded_width as usize,
+            mx,
+            my,
+        );
+        self.smooth_count += usize::from(segment_id == segmentation::SMOOTH);
+        self.blocks.push(Macroblock {
+            segment_id,
+            ..Macroblock::default()
+        });
+        self.cursor += 1;
+        if self.cursor == self.plan.macroblock_count as usize {
+            self.segments = SegmentConfig::from_counts(
+                self.request.quality,
+                self.smooth_count,
+                self.blocks.len(),
+            );
+            self.cursor = 0;
+            self.stage = Stage::Analyze;
+        }
     }
 
     fn analyze_one_step(&mut self) -> Result<(), Status> {
@@ -1551,11 +1627,12 @@ impl FrameEncoder {
             self.contexts.row();
             self.left_modes.fill(0);
         }
-        let qindex = self.qindex();
+        let segment_id = self.blocks[self.cursor].segment_id;
+        let qindex = self.segments.qindex_for(segment_id);
         let y_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y2);
-        let lambda = crate::presets::lambda(self.request.quality);
+        let lambda = crate::presets::lambda_for_q(qindex);
         let block = analyze_one(
             &self.source_y,
             &self.source_u,
@@ -1575,9 +1652,11 @@ impl FrameEncoder {
             &mut self.left_modes,
             lambda,
             0,
+            segment_id,
+            self.segments,
         )
         .map_err(encode_status)?;
-        self.blocks.push(block);
+        self.blocks[self.cursor] = block;
         self.cursor += 1;
         if self.cursor == self.plan.macroblock_count as usize {
             self.reset_coding_state();
@@ -1606,6 +1685,7 @@ impl FrameEncoder {
                 &mut self.left_modes,
                 mx,
                 block,
+                self.segments,
             )
             .map_err(encode_status)?;
         } else {
@@ -1620,6 +1700,7 @@ impl FrameEncoder {
                 &mut self.left_modes,
                 mx,
                 block,
+                self.segments,
             )
             .map_err(encode_status)?;
         }
@@ -1728,6 +1809,7 @@ impl FrameEncoder {
         match self.stage {
             Stage::Initialize => self.initialize_one_chunk()?,
             Stage::Color => self.color_one_pair()?,
+            Stage::Classify => self.classify_one_step(),
             Stage::Analyze => self.analyze_one_step()?,
             Stage::CollectStats => {
                 let blocks_x = self.plan.padded_width as usize / 16;
@@ -1760,8 +1842,8 @@ impl FrameEncoder {
                 }
             }
             Stage::CountPrefix => {
-                let qindex = self.qindex();
-                write_header_prefix(&mut self.count_header, qindex).map_err(encode_status)?;
+                write_header_prefix(&mut self.count_header, self.segments)
+                    .map_err(encode_status)?;
                 self.stage = Stage::CountUpdates;
             }
             Stage::CountUpdates => {
@@ -1799,8 +1881,8 @@ impl FrameEncoder {
                 self.stage = Stage::EmitPrefix;
             }
             Stage::EmitPrefix => {
-                let qindex = self.qindex();
-                write_header_prefix(&mut self.pending_header, qindex).map_err(encode_status)?;
+                write_header_prefix(&mut self.pending_header, self.segments)
+                    .map_err(encode_status)?;
                 self.stage = Stage::EmitUpdates;
             }
             Stage::EmitUpdates => {
@@ -1887,12 +1969,114 @@ mod tests {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
+    fn mixed_segment_input() -> Vec<u8> {
+        let mut pixels = Vec::with_capacity(32 * 16 * 4);
+        let mut seed = 0x501u32;
+        for y in 0..16 {
+            for x in 0..32 {
+                let rgb = if x < 16 {
+                    [80 + x as u8 + y as u8; 3]
+                } else {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    [seed as u8, (seed >> 8) as u8, (seed >> 16) as u8]
+                };
+                pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn mixed_segment_map_and_fresh_frames_are_deterministic() {
+        let input = mixed_segment_input();
+        let request = engine_request(32, 16, 0, &input, 128);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let first = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+        assert!(first.segments.enabled);
+        assert_eq!(first.smooth_count, 1);
+        assert_eq!(first.segments.qindex, [8, 22]);
+        assert_eq!(first.segments.map_probability, 128);
+        assert_eq!(
+            first
+                .blocks
+                .iter()
+                .map(|b| b.segment_id)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert_eq!(
+            first.output(),
+            encode_textured(&input, 32, 16, 128, 0, 75).unwrap()
+        );
+        let repeated = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert_eq!(repeated.output(), first.output());
+
+        let smooth = [128, 128, 128, 255].repeat(16 * 16);
+        let smooth_request = engine_request(16, 16, 0, &smooth, 64);
+        let smooth_plan = ResourcePlan::checked(smooth_request).unwrap();
+        let after_mixed =
+            run_engine(FrameEncoder::new(smooth_request, smooth.clone(), smooth_plan).unwrap());
+        let fresh =
+            run_engine(FrameEncoder::new(smooth_request, smooth.clone(), smooth_plan).unwrap());
+        assert!(!after_mixed.segments.enabled);
+        assert_eq!(after_mixed.segments.base_qindex, 8);
+        assert_eq!(after_mixed.output(), fresh.output());
+        assert_eq!(
+            after_mixed.output(),
+            encode_textured(&smooth, 16, 16, 64, 0, 75).unwrap()
+        );
+    }
+
+    #[test]
+    fn segment_header_and_map_precede_skip_bits() {
+        struct Operations(Vec<(u8, bool)>);
+        impl BoolSink for Operations {
+            fn write(&mut self, probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push((probability, bit));
+                Ok(())
+            }
+        }
+        let segments = SegmentConfig::from_counts(75, 1, 2);
+        let mut header = Operations(Vec::new());
+        write_header_prefix(&mut header, segments).unwrap();
+        assert_eq!(
+            &header.0[..6],
+            &[
+                (128, false),
+                (128, false),
+                (128, true),
+                (128, true),
+                (128, true),
+                (128, true)
+            ]
+        );
+        let mut header = Operations(Vec::new());
+        let mut token = Operations(Vec::new());
+        let block = Macroblock {
+            segment_id: segmentation::TEXTURED,
+            ..Macroblock::default()
+        };
+        write_macroblock(
+            &mut header,
+            &mut token,
+            &mut CoeffContexts::new(1),
+            &mut [0; 4],
+            &mut [0; 4],
+            0,
+            &block,
+            segments,
+        )
+        .unwrap();
+        assert_eq!(&header.0[..3], &[(255, false), (128, true), (128, true)]);
+    }
+
     #[test]
     fn frozen_frame_adopts_only_a_smaller_complete_model() {
         let small = vec![Macroblock::default()];
         let small_model = model_frozen(&small, 1, 1).unwrap();
         assert!((0..NODE_COUNT).all(|i| !small_model.updated(i).unwrap()));
-        let small_default = count_partitions(&small, 1, 1, 22, None).unwrap();
+        let small_default =
+            count_partitions(&small, 1, 1, SegmentConfig::nonsegmented(22), None).unwrap();
         assert_eq!(
             emit_frame(&small, 16, 16, 22).unwrap().len(),
             10 + small_default.0 + small_default.1
@@ -1909,8 +2093,16 @@ mod tests {
             .collect();
         let model = model_frozen(&blocks, 16, 16).unwrap();
         assert!((0..NODE_COUNT).any(|i| model.updated(i).unwrap()));
-        let default = count_partitions(&blocks, 16, 16, 22, None).unwrap();
-        let proposed = count_partitions(&blocks, 16, 16, 22, Some(&model)).unwrap();
+        let default =
+            count_partitions(&blocks, 16, 16, SegmentConfig::nonsegmented(22), None).unwrap();
+        let proposed = count_partitions(
+            &blocks,
+            16,
+            16,
+            SegmentConfig::nonsegmented(22),
+            Some(&model),
+        )
+        .unwrap();
         assert!(proposed.0 <= 0x7ffff);
         assert!(proposed.0 + proposed.1 < default.0 + default.1);
         let frame = emit_frame(&blocks, 256, 256, 22).unwrap();
@@ -1966,7 +2158,7 @@ mod tests {
         model.optimize_one(&stats, 528, &probability_cost).unwrap();
         assert!(model.updated(528).unwrap());
         let mut header = BoolWriter::new();
-        write_header_prefix(&mut header, 8).unwrap();
+        write_header_prefix(&mut header, SegmentConfig::nonsegmented(8)).unwrap();
         write_updates(&mut header, Some(&model), 0, NODE_COUNT).unwrap();
         write_header_suffix(&mut header).unwrap();
         let bytes = header.finish().unwrap();
@@ -2072,6 +2264,7 @@ mod tests {
                 &mut [0; 4],
                 0,
                 &block,
+                SegmentConfig::nonsegmented(22),
             )
             .unwrap();
             assert!(header.pending());
@@ -2309,6 +2502,34 @@ mod tests {
         }
         assert_eq!(result, Err(Status::OutputLimit));
         assert!(job.output().is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_mixed_segment_reconstruction() {
+        let input = mixed_segment_input();
+        let request = engine_request(32, 16, 0, &input, 128);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert!(engine.segments.enabled);
+        let (y, u, v, padded_w) = engine.reconstruction();
+        let mut expected = Vec::new();
+        for (plane, stride, width, height) in [
+            (y, padded_w, 32, 16),
+            (u, padded_w / 2, 16, 8),
+            (v, padded_w / 2, 16, 8),
+        ] {
+            for row in 0..height {
+                expected.extend_from_slice(&plane[row * stride..row * stride + width]);
+            }
+        }
+        assert_decodes(
+            engine.output(),
+            32,
+            16,
+            &expected,
+            "mixed absolute quantizer segments",
+        );
     }
 
     #[test]
