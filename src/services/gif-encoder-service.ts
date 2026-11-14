@@ -198,7 +198,7 @@ export async function encodeGif(
   opts.assertAdditionalMemoryBytes?.(initialStreamCapacity);
   const pixelCount = w * h;
   const exactRgbaBytes = pixelCount * 4;
-  let lastIndexedData: Uint8Array | null = null;
+  let lastIndexedData: Uint8Array | number | null = null;
   let liveIndexedBytes = 0;
   let comparisonWorkingBytes = 0;
   let wasmCapacity = 0;
@@ -237,9 +237,13 @@ export async function encodeGif(
     },
     signal
   );
+  // A refused prospective reservation keeps the entire conversion on the
+  // existing JS-index route. A failed actual growth remains terminal.
+  const retained = quantizePalette.enableRetained?.(pixelCount) ?? false;
 
   let lastPalette: number[][] | null = null;
   let globalPalette: number[][] | null = null;
+  let retainedGlobalLength = 0;
   let lastColorHash = 0;
   let outputTotalDelay = 0;
   let encodeIdx = 0;
@@ -257,8 +261,8 @@ export async function encodeGif(
   let firstPendingStartUs: number | null = null;
   let lastIndexedBytes = 0;
   type PendingFrame = {
-    indexed: Uint8Array;
-    palette: number[][];
+    indexed: Uint8Array | number;
+    palette: number[][] | null;
     colorHash: number;
     indexedBytes: number;
     startUs: number;
@@ -276,9 +280,9 @@ export async function encodeGif(
   }
 
   function writeIndexedFrame(
-    indexed: Uint8Array,
+    indexed: Uint8Array | number,
     delay: number,
-    palette: number[][],
+    palette: number[][] | null,
     useGlobalPalette: boolean
   ): void {
     if (
@@ -290,13 +294,33 @@ export async function encodeGif(
     }
     assertCanWriteOutputFrame();
     const writeStart = opts.profileOperation ? performance.now() : null;
-    encoder.writeFrame(indexed, w, h, {
-      ...(useGlobalPalette ? {} : { palette }),
-      colorDepth: gifColorDepth(useGlobalPalette ? globalPalette!.length : palette.length),
-      repeat: 0,
-      delay,
-    });
-    if (!globalPalette) globalPalette = palette;
+    if (retained) {
+      if (typeof indexed !== 'number') throw new RangeError('Invalid retained GIF frame');
+      const paletteLength = quantizePalette.retainedPaletteLength(indexed);
+      const localPalette = useGlobalPalette ? undefined : quantizePalette.retainedPalette(indexed);
+      const depth = gifColorDepth(useGlobalPalette ? retainedGlobalLength : paletteLength);
+      const compressed = quantizePalette.compressRetained(indexed, depth);
+      encoder.writeCompressedFrame(compressed, pixelCount, w, h, {
+        ...(localPalette ? { palette: localPalette } : {}),
+        colorDepth: depth,
+        repeat: 0,
+        delay,
+      });
+      if (retainedGlobalLength === 0) {
+        quantizePalette.captureGlobalPalette(indexed);
+        retainedGlobalLength = paletteLength;
+      }
+    } else {
+      if (!(indexed instanceof Uint8Array) || !palette)
+        throw new RangeError('Invalid indexed GIF frame');
+      encoder.writeFrame(indexed, w, h, {
+        ...(useGlobalPalette ? {} : { palette }),
+        colorDepth: gifColorDepth(useGlobalPalette ? globalPalette!.length : palette.length),
+        repeat: 0,
+        delay,
+      });
+      if (!globalPalette) globalPalette = palette;
+    }
     if (writeStart !== null) {
       opts.profileOperation?.('gifFrameWrite', Math.max(0, performance.now() - writeStart));
     }
@@ -336,15 +360,16 @@ export async function encodeGif(
   }
 
   async function flushPending(endCs: number): Promise<void> {
-    if (!lastIndexedData || !lastPalette) return;
+    if (!lastIndexedData || (!retained && !lastPalette)) return;
     if (!Number.isSafeInteger(endCs) || endCs - pendingStartCs! < GIF_MIN_FRAME_DELAY_CS) {
       throw new RangeError('Invalid GIF presentation duration');
     }
     // This is a representable source interval, established before comparing
     // indexed colors. Duplicate/palette optimization must preserve its timing.
-    let useGlobalPalette =
-      globalPalette !== null &&
-      remapToGifGlobalPalette(lastIndexedData, lastPalette, globalPalette);
+    let useGlobalPalette = retained
+      ? retainedGlobalLength !== 0 && quantizePalette.remapRetainedGlobal(lastIndexedData as number)
+      : globalPalette !== null &&
+        remapToGifGlobalPalette(lastIndexedData as Uint8Array, lastPalette!, globalPalette);
     let remainingCs = endCs - pendingStartCs!;
     while (remainingCs > 0) {
       if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
@@ -354,12 +379,14 @@ export async function encodeGif(
       outputTotalDelay += chunkCs;
       // The first emitted frame established the global palette. Its own
       // continuation can omit a redundant local table.
-      if (globalPalette === lastPalette) useGlobalPalette = true;
+      if (retained ? retainedGlobalLength !== 0 : globalPalette === lastPalette)
+        useGlobalPalette = true;
       remainingCs -= chunkCs;
       if (remainingCs > 0) splitFrames++;
       if ((splitFrames & 63) === 0 && remainingCs > 0) await yieldToMain();
     }
     liveIndexedBytes -= lastIndexedBytes;
+    if (retained) quantizePalette.releaseRetained(lastIndexedData as number);
     lastIndexedBytes = 0;
     lastIndexedData = null;
     lastPalette = null;
@@ -372,7 +399,7 @@ export async function encodeGif(
     if (!deferredPredecessor) return;
     const successor: PendingFrame = {
       indexed: lastIndexedData!,
-      palette: lastPalette!,
+      palette: lastPalette,
       colorHash: lastColorHash,
       indexedBytes: lastIndexedBytes,
       startUs: pendingStartUs!,
@@ -504,7 +531,7 @@ export async function encodeGif(
               (outputTotalDelay + projectedEndCs - pendingStartCs!) * 10 -
                 (presentation.endUs - firstPendingStartUs) / 1000 >
                 20;
-            if (lastIndexedData) {
+            if (lastIndexedData && !retained) {
               // A second index is optional. If the aggregate guard cannot
               // admit it, flush first and take the original one-index path.
               try {
@@ -546,36 +573,52 @@ export async function encodeGif(
             // Quantize independently; only an exact post-quantization match may
             // extend the pending frame's source presentation interval.
             const quantizationStart = opts.profileOperation ? performance.now() : null;
-            const framePalette = quantizePalette.quantizePrepared(maxColors);
+            const framePalette = retained
+              ? quantizePalette.quantizePreparedRetained(maxColors)
+              : quantizePalette.quantizePrepared(maxColors);
             if (quantizationStart !== null) {
               opts.profileOperation?.(
                 'gifQuantization',
                 Math.max(0, performance.now() - quantizationStart)
               );
             }
-            const candidate = prepareIndexedFrame(exactRgba, framePalette);
+            const candidate = retained
+              ? {
+                  indexed: quantizePalette.mapRetained(exactRgba, framePalette as number),
+                  palette: null,
+                  colorHash: 0,
+                  indexedBytes: 0,
+                }
+              : prepareIndexedFrame(exactRgba, framePalette as number[][]);
             const precedingIndexedBytes = liveIndexedBytes;
             liveIndexedBytes += candidate.indexedBytes;
-            comparisonWorkingBytes = lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
+            comparisonWorkingBytes =
+              !retained && lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
             if (
               lastIndexedData &&
-              lastPalette &&
-              sameExpandedGifPixels(
-                lastIndexedData,
-                lastPalette,
-                lastColorHash,
-                candidate.indexed,
-                candidate.palette,
-                candidate.colorHash
-              )
+              (retained
+                ? quantizePalette.sameRetainedPixels(
+                    lastIndexedData as number,
+                    candidate.indexed as number
+                  )
+                : lastPalette &&
+                  sameExpandedGifPixels(
+                    lastIndexedData as Uint8Array,
+                    lastPalette,
+                    lastColorHash,
+                    candidate.indexed as Uint8Array,
+                    candidate.palette!,
+                    candidate.colorHash
+                  ))
             ) {
+              if (retained) quantizePalette.releaseRetained(candidate.indexed as number);
               liveIndexedBytes = precedingIndexedBytes;
               comparisonWorkingBytes = 0;
             } else {
               if (lastIndexedData && deferPredecessor) {
                 deferredPredecessor = {
                   indexed: lastIndexedData,
-                  palette: lastPalette!,
+                  palette: lastPalette,
                   colorHash: lastColorHash,
                   indexedBytes: lastIndexedBytes,
                   startUs: pendingStartUs!,
@@ -584,7 +627,9 @@ export async function encodeGif(
               } else if (lastIndexedData) {
                 await flushPending(frameStartCs);
               }
-              lastIndexedData = candidate.indexed;
+              lastIndexedData = retained
+                ? quantizePalette.promoteRetained(candidate.indexed as number)
+                : candidate.indexed;
               lastPalette = candidate.palette;
               lastColorHash = candidate.colorHash;
               lastIndexedBytes = candidate.indexedBytes;
@@ -641,6 +686,7 @@ export async function encodeGif(
           // endpoint allowance. Keep the prior image through the rounded end;
           // no source image is introduced before its presentation timestamp.
           liveIndexedBytes -= lastIndexedBytes;
+          if (retained) quantizePalette.releaseRetained(lastIndexedData as number);
           lastIndexedData = terminalPredecessor.indexed;
           lastPalette = terminalPredecessor.palette;
           lastColorHash = terminalPredecessor.colorHash;

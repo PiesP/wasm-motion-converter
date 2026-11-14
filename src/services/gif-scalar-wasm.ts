@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { ConversionMemoryLimitError } from './conversion-memory-limit-error';
+
 const PAGE_BYTES = 65_536;
 const PRIMARY_RGBA_BYTES = 720 * 720 * 4;
 const MAX_INITIAL_LINEAR_BYTES = 8 * 1024 * 1024;
@@ -19,6 +21,18 @@ interface QuantizerExports {
   lzw_bound(pixels: number): number;
   lzw_output_ptr(): number;
   lzw_encode(pixels: number, depth: number, capacity: number): number;
+  retained_layout_end(length: number): number;
+  enable_retained(length: number): number;
+  map_retained(length: number, colors: number): number;
+  promote_retained(handle: number): number;
+  release_retained(handle: number): number;
+  retained_palette_len(handle: number): number;
+  retained_palette_ptr(handle: number): number;
+  retained_hash(handle: number): number;
+  same_retained_pixels(first: number, second: number): number;
+  capture_global_palette(handle: number): number;
+  remap_retained_global(handle: number): number;
+  lzw_encode_retained(handle: number, depth: number, capacity: number): number;
 }
 
 export class GifScalarLoadError extends Error {}
@@ -44,6 +58,17 @@ export interface GifScalarQuantizer {
   (rgba: Uint8Array, colors: number): number[][];
   prepare(rgba: Uint8Array, width: number, height: number, strength: number): void;
   quantizePrepared(colors: number): number[][];
+  quantizePreparedRetained(colors: number): number;
+  enableRetained(pixelCount: number): boolean;
+  mapRetained(rgba: Uint8Array, colors: number): number;
+  promoteRetained(handle: number): number;
+  releaseRetained(handle: number): void;
+  retainedPalette(handle: number): Uint8Array;
+  retainedPaletteLength(handle: number): number;
+  sameRetainedPixels(first: number, second: number): boolean;
+  captureGlobalPalette(handle: number): void;
+  remapRetainedGlobal(handle: number): boolean;
+  compressRetained(handle: number, depth: number): Uint8Array;
   mapPalette(rgba: Uint8Array, palette: number[][]): Uint8Array;
   /** Borrowed view: consumed before the next module operation. */
   compress(indices: Uint8Array, depth: number): Uint8Array;
@@ -90,14 +115,30 @@ export async function createGifScalarQuantizer(
     typeof exports.prepare_rgba !== 'function' ||
     typeof exports.palette_ptr !== 'function' ||
     typeof exports.quantize !== 'function' ||
-    ['indices_ptr', 'map_palette', 'lzw_bound', 'lzw_output_ptr', 'lzw_encode'].some(
-      (name) => typeof instance.exports[name] !== 'function'
-    )
+    [
+      'indices_ptr',
+      'map_palette',
+      'lzw_bound',
+      'lzw_output_ptr',
+      'lzw_encode',
+      'retained_layout_end',
+      'enable_retained',
+      'map_retained',
+      'promote_retained',
+      'release_retained',
+      'retained_palette_len',
+      'retained_palette_ptr',
+      'retained_hash',
+      'same_retained_pixels',
+      'capture_global_palette',
+      'remap_retained_global',
+      'lzw_encode_retained',
+    ].some((name) => typeof instance.exports[name] !== 'function')
   ) {
     throw new GifScalarAbiError('GIF scalar WASM exports are invalid');
   }
   const wasm = exports as QuantizerExports;
-  if (wasm.abi_version() !== 2) {
+  if (wasm.abi_version() !== 3) {
     throw new GifScalarAbiError('GIF scalar WASM ABI version is unsupported');
   }
   let capacity = wasm.memory.buffer.byteLength;
@@ -109,6 +150,8 @@ export async function createGifScalarQuantizer(
   let lastInput: Uint8Array | null = null;
   let preparedInput: Uint8Array | null = null;
   let reservedLength = 0;
+  let retainedEnabled = false;
+  let retainedPixelCount = 0;
   const abort = (): void => {
     if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
   };
@@ -237,6 +280,165 @@ export async function createGifScalarQuantizer(
     lastInput = rgba;
     abort();
     return palette;
+  };
+  quantizer.enableRetained = (pixelCount) => {
+    abort();
+    if (
+      retainedEnabled ||
+      reservedLength !== 0 ||
+      !Number.isSafeInteger(pixelCount) ||
+      pixelCount < 1 ||
+      pixelCount > 0x3fff_ffff
+    ) {
+      throw new GifScalarAbiError('GIF scalar WASM retained geometry is invalid');
+    }
+    const length = pixelCount * 4;
+    const end = wasm.retained_layout_end(length);
+    const limit = roundPage(PRIMARY_LINEAR_LIMIT_BYTES + Math.max(0, length - PRIMARY_RGBA_BYTES));
+    if (!validOffset(end) || end <= wasm.input_ptr()) {
+      throw new GifScalarAbiError('GIF scalar WASM retained layout is invalid');
+    }
+    const needed = roundPage(end);
+    if (needed > limit) return false;
+    const before = wasm.memory.buffer.byteLength;
+    if (before !== capacity)
+      throw new GifScalarMemoryError('GIF scalar WASM memory grew outside its guard');
+    if (needed > before) {
+      try {
+        assertCapacity(before, needed);
+      } catch (error) {
+        if (error instanceof ConversionMemoryLimitError) return false;
+        throw error;
+      }
+      try {
+        wasm.memory.grow((needed - before) / PAGE_BYTES);
+      } catch (error) {
+        throw new GifScalarMemoryError('GIF scalar WASM retained memory growth failed', {
+          cause: error,
+        });
+      }
+      capacity = wasm.memory.buffer.byteLength;
+      if (capacity !== needed)
+        throw new GifScalarMemoryError('GIF scalar WASM grew beyond its admitted capacity');
+      setCapacity(capacity);
+    }
+    const status = wasm.enable_retained(length);
+    if (status !== 0) throwStatus(status, 'retained admission');
+    retainedEnabled = true;
+    retainedPixelCount = pixelCount;
+    return true;
+  };
+  quantizer.quantizePreparedRetained = (colors) => {
+    abort();
+    if (
+      !retainedEnabled ||
+      preparedInput === null ||
+      !Number.isInteger(colors) ||
+      colors < 1 ||
+      colors > 256
+    ) {
+      throw new GifScalarAbiError(
+        'GIF scalar WASM requires prepared retained RGBA and 1–256 colors'
+      );
+    }
+    const rgba = preparedInput;
+    preparedInput = null;
+    const count = wasm.quantize(reservedLength, colors);
+    if (count < 0) throwStatus(count, 'quantization');
+    if (
+      !Number.isInteger(count) ||
+      count < 1 ||
+      count > colors ||
+      wasm.memory.buffer.byteLength !== capacity
+    ) {
+      throw new GifScalarResultError('GIF scalar WASM retained palette count is invalid');
+    }
+    lastInput = rgba;
+    abort();
+    return count;
+  };
+  quantizer.mapRetained = (rgba, colors) => {
+    abort();
+    if (
+      !retainedEnabled ||
+      lastInput !== rgba ||
+      rgba.byteLength !== reservedLength ||
+      !Number.isInteger(colors) ||
+      colors < 1 ||
+      colors > 256
+    ) {
+      throw new GifScalarAbiError(
+        'GIF scalar WASM retained mapping requires its just-quantized RGBA'
+      );
+    }
+    lastInput = null;
+    const handle = wasm.map_retained(reservedLength, colors);
+    if (handle < 0) throwStatus(handle, 'retained mapping');
+    if (!Number.isInteger(handle) || handle === 0 || wasm.memory.buffer.byteLength !== capacity) {
+      throw new GifScalarResultError('GIF scalar WASM retained handle is invalid');
+    }
+    abort();
+    return handle;
+  };
+  quantizer.promoteRetained = (handle) => {
+    abort();
+    const promoted = wasm.promote_retained(handle);
+    if (promoted < 0) throwStatus(promoted, 'retained promotion');
+    if (!Number.isInteger(promoted) || promoted === 0)
+      throw new GifScalarResultError('GIF scalar WASM promoted handle is invalid');
+    return promoted;
+  };
+  quantizer.releaseRetained = (handle) => {
+    const status = wasm.release_retained(handle);
+    if (status !== 0) throwStatus(status, 'retained release');
+  };
+  quantizer.retainedPaletteLength = (handle) => {
+    const length = wasm.retained_palette_len(handle);
+    if (!Number.isInteger(length) || length < 1 || length > 256)
+      throw new GifScalarAbiError('GIF scalar WASM retained palette length is invalid');
+    return length;
+  };
+  quantizer.retainedPalette = (handle) => {
+    const length = quantizer.retainedPaletteLength(handle);
+    return checkedView(wasm.retained_palette_ptr(handle), length * 3).slice();
+  };
+  quantizer.sameRetainedPixels = (first, second) => {
+    abort();
+    const equal = wasm.same_retained_pixels(first, second);
+    if (equal !== 0 && equal !== 1) throwStatus(equal, 'retained comparison');
+    return equal === 1;
+  };
+  quantizer.captureGlobalPalette = (handle) => {
+    const status = wasm.capture_global_palette(handle);
+    if (status !== 0) throwStatus(status, 'global palette capture');
+  };
+  quantizer.remapRetainedGlobal = (handle) => {
+    const status = wasm.remap_retained_global(handle);
+    if (status !== 0 && status !== 1) throwStatus(status, 'global palette remap');
+    return status === 1;
+  };
+  quantizer.compressRetained = (handle, depth) => {
+    abort();
+    if (!retainedEnabled || !Number.isInteger(depth) || depth < 2 || depth > 8) {
+      throw new GifScalarAbiError('GIF scalar WASM retained compression input is invalid');
+    }
+    const bound = wasm.lzw_bound(retainedPixelCount);
+    const pointer = wasm.lzw_output_ptr();
+    if (
+      !validOffset(bound) ||
+      bound < 1 ||
+      !validOffset(pointer) ||
+      pointer !== wasm.input_ptr() + retainedPixelCount
+    ) {
+      throw new GifScalarAbiError('GIF scalar WASM retained compression extent is invalid');
+    }
+    admit(pointer + bound, reservedLength);
+    const length = wasm.lzw_encode_retained(handle, depth, bound);
+    if (length < 0) throwStatus(length, 'retained LZW compression');
+    if (length < 1 || length > bound)
+      throw new GifScalarResultError('GIF scalar WASM retained compression length is invalid');
+    abort();
+    return checkedView(pointer, length);
   };
   quantizer.mapPalette = (rgba, palette) => {
     abort();

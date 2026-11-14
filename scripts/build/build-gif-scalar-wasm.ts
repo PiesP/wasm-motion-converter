@@ -117,6 +117,18 @@ function inspectWasm(bytes: Buffer): { sha256: string; rawBytes: number; gzipByt
     ['lzw_bound', 'function'],
     ['lzw_output_ptr', 'function'],
     ['lzw_encode', 'function'],
+    ['retained_layout_end', 'function'],
+    ['enable_retained', 'function'],
+    ['map_retained', 'function'],
+    ['promote_retained', 'function'],
+    ['release_retained', 'function'],
+    ['retained_palette_len', 'function'],
+    ['retained_palette_ptr', 'function'],
+    ['retained_hash', 'function'],
+    ['same_retained_pixels', 'function'],
+    ['capture_global_palette', 'function'],
+    ['remap_retained_global', 'function'],
+    ['lzw_encode_retained', 'function'],
   ] as const) {
     if (exports.get(name) !== kind) throw new Error(`GIF scalar WASM missing ${kind} ${name}`);
   }

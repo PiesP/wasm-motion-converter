@@ -15,12 +15,12 @@
     "crates/gif-scalar-quantizer/Cargo.toml": "dc1417eb297a04391c841aec5635a97a074dc74885deb5b94c3b8b521485213f",
     "crates/gif-scalar-quantizer/Cargo.lock": "c51878d6042db126c8210ce237011bba55b7224d8db874eeab2b588caacafccc",
     "crates/gif-scalar-quantizer/rust-toolchain.toml": "60c5407645e5d56f600e6ae713f0afc4aebbb858c5ceeef4a79c22b7dd2b51c9",
-    "crates/gif-scalar-quantizer/src/lib.rs": "b59aadb5bb04f905aa4621e3cfd25fc04912a6517df9a3192a472c9093b4ff47",
-    "scripts/build/build-gif-scalar-wasm.ts": "083ef019ea7b74fb5053893694c0b42598c6af84d60e32e98d9b8ce0df411ea4"
+    "crates/gif-scalar-quantizer/src/lib.rs": "e058dd6ca1417c50099a6c0439f80ae29d455c5528649c1cde2a5b4a1fc1c187",
+    "scripts/build/build-gif-scalar-wasm.ts": "4079321b1c29202a6b99f50fe86368e6a72c0f0c968292535cac90a7087c5fa0"
   },
   "artifact": {
-    "sha256": "9d50a747c8f3301b06005e9f27f8f8087e5537a1db97475a5e31ad3e6e4474f2",
-    "rawBytes": 22643,
-    "gzipBytes": 9369
+    "sha256": "5f0a096cdc8bfacd54b41b3129c31c00bff318e21efe5439882da7896857df38",
+    "rawBytes": 26983,
+    "gzipBytes": 11174
   }
 }
