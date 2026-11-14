@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import type { MediabunnyVideoDecoderConfig } from '@t/conversion-types';
+import type { ContainerVideoDecoderConfig } from '@t/conversion-types';
 
 import { copyBoundedCodecDescription } from './codec-description';
 import type { OwnedDemuxTrack } from './owned-demux-session';
@@ -74,7 +74,7 @@ function codecString(track: OwnedDemuxTrack): string {
   throw new Error(`Unsupported owned video codec ${track.codec}`);
 }
 
-export function ownedDecoderConfig(track: OwnedDemuxTrack): MediabunnyVideoDecoderConfig {
+export function ownedDecoderConfig(track: OwnedDemuxTrack): ContainerVideoDecoderConfig {
   for (const value of [track.width, track.height, track.displayWidth, track.displayHeight]) {
     if (!Number.isSafeInteger(value) || value < 1 || value > 0xffff_ffff)
       throw new Error('Invalid owned video geometry');

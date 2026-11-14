@@ -71,11 +71,11 @@ export const GIF_MAX_OUTPUT_BYTES = 256 * BYTES_PER_MB;
 /** Aggregate frame-pipeline and WebP-finalization memory envelope. */
 export const CONVERSION_MEMORY_BUDGET_BYTES = 512 * BYTES_PER_MB;
 
-/** A quarter of the envelope is reserved for MediaBunny and WebCodecs demux data. */
+/** A quarter of the envelope is reserved for owned demux and WebCodecs data. */
 export const DEMUX_MEMORY_BUDGET_RATIO = 0.25;
 export const DEMUX_MEMORY_BUDGET_BYTES = CONVERSION_MEMORY_BUDGET_BYTES * DEMUX_MEMORY_BUDGET_RATIO;
 
-/** MediaBunny source reads and retained backing buffers share one eighth of the demux reserve. */
+/** Development-oracle contiguous reads and retained backing buffers share this limit. */
 export const MEDIA_BUNNY_BUFFER_BUDGET_BYTES = DEMUX_MEMORY_BUDGET_BYTES / 8;
 /** One encoded packet, including side data and copy headroom, is limited to one eighth of the demux reserve. */
 export const ENCODED_PACKET_BUDGET_BYTES = DEMUX_MEMORY_BUDGET_BYTES / 8;

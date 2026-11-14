@@ -24,14 +24,13 @@ export const isConversionFormat = (value: unknown): value is ConversionFormat =>
   typeof value === 'string' && CONVERSION_FORMATS.some((format) => format === value);
 
 /**
- * VideoDecoderConfig as extended by mediabunny at runtime.
+ * Decoder configuration with container presentation dimensions.
  *
- * The standard WebCodecs `VideoDecoderConfig` does not include
- * `displayAspectWidth`/`displayAspectHeight` or `displayWidth`/`displayHeight`,
- * but mediabunny patches these onto the config object when pixel aspect ratio
- * information is available in the container.
+ * displayAspectWidth/Height are standard WebCodecs fields supplied by the owned
+ * demuxer. displayWidth/Height are optional container-derived presentation hints
+ * accepted by the frame dimension resolver.
  */
-export interface MediabunnyVideoDecoderConfig extends VideoDecoderConfig {
+export interface ContainerVideoDecoderConfig extends VideoDecoderConfig {
   displayAspectWidth?: number;
   displayAspectHeight?: number;
   displayWidth?: number;

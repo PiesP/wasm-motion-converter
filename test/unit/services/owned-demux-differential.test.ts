@@ -8,6 +8,7 @@ import { resolve } from 'node:path';
 import { ownedDecoderConfig, ownedTimestampUs } from '@services/owned-demux-config';
 import {
   classifyOwnedDemuxError,
+  computeOwnedPacketStats,
   OwnedDemuxParseError,
   OwnedDemuxResourceError,
 } from '@services/owned-demux-core';
@@ -29,6 +30,7 @@ type Fixture = {
   input: { size: number; sha256: string };
   config: Record<string, unknown>;
   duration: number;
+  stats: { averagePacketRate: number; averageBitrate: number };
   rotation: number;
   packets: ExpectedPacket[];
   seek: Array<{ seconds: number; packet: ExpectedPacket | null }>;
@@ -84,6 +86,10 @@ describe('actual compiled owned demux versus pinned patched development oracle',
         expect(Number(track.durationTicks) / track.timescale).toBe(fixture.duration);
         expect(track.rotation).toBe(fixture.rotation);
         expect(track.packetCount).toBe(fixture.packets.length);
+        expect(await computeOwnedPacketStats(session, track)).toEqual({
+          averagePacketRate: fixture.stats.averagePacketRate,
+          averageBitrate: fixture.stats.averageBitrate,
+        });
         const capacity = session.transferStats.wasmCapacityBytes;
         for (let i = 0; i < track.packetCount; i++) {
           const { sequence, ...expected } = fixture.packets[i]!;

@@ -107,7 +107,7 @@ export async function handleFileSelected(
   setInputFile(file);
 
   try {
-    // BlobSource lets MediaBunny read only the ranges needed for metadata.
+    // The owned demux host reads bounded source ranges for metadata.
     const { extractVideoMetadata } = await awaitAdvisory(
       import('@services/video-metadata'),
       run.signal

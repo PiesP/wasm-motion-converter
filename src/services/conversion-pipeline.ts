@@ -16,7 +16,7 @@
 
 import type {
   ConversionRequest,
-  MediabunnyVideoDecoderConfig,
+  ContainerVideoDecoderConfig,
   ProgressCallback,
 } from '@t/conversion-types';
 import {
@@ -216,7 +216,7 @@ async function _runPipelineInner(
       throw new DOMException('Cancelled', 'AbortError');
     }
 
-    const cfg = demuxResult.config as MediabunnyVideoDecoderConfig;
+    const cfg = demuxResult.config as ContainerVideoDecoderConfig;
     const dims = resolveVideoDimensions({ ...cfg, rotation: demuxResult.rotation });
     if (!dims) throw new Error('Unable to determine video dimensions');
     const { width: codedWidth, height: codedHeight } = dims;
