@@ -303,6 +303,9 @@ export interface ConversionProgress {
   selectedFrames?: number | undefined;
   encodedFrames?: number | undefined;
   emittedFrames?: number | undefined;
+  gifRetainedMappedFrames?: number | undefined;
+  gifRetainedImageDataWrites?: number | undefined;
+  gifRetainedWasmCapacityBytes?: number | undefined;
   currentFrame?: number | undefined;
   totalFrames?: number | undefined;
   outputFrames?: number | undefined;

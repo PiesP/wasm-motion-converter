@@ -247,6 +247,7 @@ export async function encodeGif(
   let lastColorHash = 0;
   let outputTotalDelay = 0;
   let encodeIdx = 0;
+  let retainedMappedFrames = 0;
   let outputFrames = 0;
   let splitFrames = 0;
   let totalInputFrames = 0;
@@ -594,6 +595,7 @@ export async function encodeGif(
                   indexedBytes: 0,
                 }
               : prepareIndexedFrame(exactRgba, framePalette as number[][]);
+            if (retained) retainedMappedFrames++;
             if (retainedMappingStart !== null) {
               const elapsed = Math.max(0, performance.now() - retainedMappingStart);
               opts.profileOperation?.('gifPaletteMapping', elapsed);
@@ -744,6 +746,9 @@ export async function encodeGif(
       selectedFrames,
       encodedFrames: encodeIdx,
       emittedFrames: outputFrames,
+      gifRetainedMappedFrames: retainedMappedFrames,
+      gifRetainedImageDataWrites: retained ? outputFrames : 0,
+      gifRetainedWasmCapacityBytes: retained ? wasmCapacity : 0,
     });
 
     logger.info('encoders', 'GIF encoding complete', {

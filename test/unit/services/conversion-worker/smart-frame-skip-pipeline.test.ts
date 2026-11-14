@@ -56,6 +56,9 @@ beforeEach(() => {
           selectedFrames?: number;
           encodedFrames: number;
           emittedFrames?: number;
+          gifRetainedMappedFrames?: number;
+          gifRetainedImageDataWrites?: number;
+          gifRetainedWasmCapacityBytes?: number;
         }) => void;
       }
     ) => {
@@ -67,6 +70,9 @@ beforeEach(() => {
         selectedFrames: 12,
         encodedFrames: 10,
         emittedFrames: 10,
+        gifRetainedMappedFrames: 10,
+        gifRetainedImageDataWrites: 10,
+        gifRetainedWasmCapacityBytes: 65_536,
       });
       return new Uint8Array([1, 2, 3]);
     }
@@ -193,6 +199,9 @@ describe('worker pipeline smart frame skip forwarding', () => {
       encodedFrames: 10,
       emittedFrames: 10,
       outputFrames: 10,
+      gifRetainedMappedFrames: 10,
+      gifRetainedImageDataWrites: 10,
+      gifRetainedWasmCapacityBytes: 65_536,
       etaSeconds: 0,
     });
     expect(progress.map((entry) => entry.percent)).toEqual(

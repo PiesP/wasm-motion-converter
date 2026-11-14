@@ -51,6 +51,9 @@ export type WorkerResponse =
       selectedFrames?: number;
       encodedFrames?: number;
       emittedFrames?: number;
+      gifRetainedMappedFrames?: number;
+      gifRetainedImageDataWrites?: number;
+      gifRetainedWasmCapacityBytes?: number;
       currentFrame?: number;
       /** Source or output planning denominator; VFR media may differ. */
       totalFrames?: number;

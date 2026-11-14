@@ -310,6 +310,15 @@ export async function runWorkerPipeline(
         ...(counts.consumedChunks !== undefined ? { consumedChunks: counts.consumedChunks } : {}),
         ...(counts.selectedFrames !== undefined ? { selectedFrames: counts.selectedFrames } : {}),
         ...(counts.emittedFrames !== undefined ? { emittedFrames: counts.emittedFrames } : {}),
+        ...(counts.gifRetainedMappedFrames !== undefined
+          ? { gifRetainedMappedFrames: counts.gifRetainedMappedFrames }
+          : {}),
+        ...(counts.gifRetainedImageDataWrites !== undefined
+          ? { gifRetainedImageDataWrites: counts.gifRetainedImageDataWrites }
+          : {}),
+        ...(counts.gifRetainedWasmCapacityBytes !== undefined
+          ? { gifRetainedWasmCapacityBytes: counts.gifRetainedWasmCapacityBytes }
+          : {}),
       };
       transcodeSpan?.update(observedCounts);
     };

@@ -22,6 +22,10 @@ export interface EncoderFrameCounts {
   selectedFrames?: number;
   encodedFrames: number;
   emittedFrames?: number;
+  /** Zero on the JS-index route; capacity is reserved linear memory, not process usage. */
+  gifRetainedMappedFrames?: number;
+  gifRetainedImageDataWrites?: number;
+  gifRetainedWasmCapacityBytes?: number;
 }
 
 /** Base options shared by all format encoders */

@@ -160,6 +160,7 @@ async function encodeFixture(
   fixture.admitted = [];
   fixture.mapped = 0;
   const operations: string[] = [];
+  const completedCounts: import('@services/encoder-common').EncoderFrameCounts[] = [];
   const endUs = frames.at(-1)!.endUs;
   const output = await encodeGif(
     {
@@ -176,6 +177,9 @@ async function encodeFixture(
       quality,
       scale: 1,
       profileOperation: (name) => operations.push(name),
+      onEncodingComplete: (counts) => {
+        completedCounts.push(counts);
+      },
     }
   );
   expect(fixture.admitted).toEqual([!forceJsIndexes]);
@@ -188,6 +192,17 @@ async function encodeFixture(
   expect(operations.filter((name) => name === 'gifRetainedFrameWrite')).toHaveLength(
     forceJsIndexes ? 0 : parsed.length
   );
+  expect(completedCounts).toHaveLength(1);
+  expect(completedCounts[0]).toMatchObject({
+    gifRetainedMappedFrames: forceJsIndexes ? 0 : fixture.mapped,
+    gifRetainedImageDataWrites: forceJsIndexes ? 0 : parsed.length,
+    gifRetainedWasmCapacityBytes: forceJsIndexes ? 0 : expect.any(Number),
+  });
+  if (!forceJsIndexes) {
+    expect(completedCounts[0]?.gifRetainedWasmCapacityBytes).toBeGreaterThan(0);
+    expect(completedCounts[0]?.gifRetainedMappedFrames).toBe(completedCounts[0]?.encodedFrames);
+    expect(completedCounts[0]?.gifRetainedImageDataWrites).toBe(completedCounts[0]?.emittedFrames);
+  }
   return { output, parsed };
 }
 
