@@ -1,0 +1,32 @@
+# Bounded VP8 feasibility experiment
+
+This is an **experimental** keyframe-only writer, not a product encoder. It
+accepts bounded opaque RGBA/BGRA input and encodes 4:2:0 DC residuals. It
+omits AC coefficients, so edges, text, and chroma detail have poor quality.
+The q60/75/85 quantizers are exploratory and do not qualify preset fidelity
+or removal of `wasm-webp`.
+
+The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
+sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
+tables are format constants from sections 13.4, 13.5 and 14.1 respectively;
+their Rust files identify those sources separately. RFC 6386 is Copyright (c)
+2011 IETF Trust and the identified contributors. These numeric format tables
+are not an imported encoder implementation. The encoder is original Rust under MIT.
+The [W3C VP8 WebCodecs registration](https://www.w3.org/TR/webcodecs-vp8-codec-registration/)
+defines raw `EncodedVideoChunk` keyframe bytes; browser support must be probed.
+
+The v1 ABI accepts one copied input reservation and publishes a borrowed output
+until reset or the next reservation, including a failed reservation. A caller
+must refresh JS views after any WASM growth, copy the output before reuse, and
+keep one conversion per instance. Return codes are 0 success, 1 invalid input,
+2 unsupported pixels (nonopaque input), and 3 output limit. Input is bounded to
+2048 pixels on each axis, 4,194,304 pixels total, and 16 MiB. Output is bounded
+to 4 MiB. This crate has no external Cargo dependencies.
+
+At the maximum admitted geometry, live WASM payload can include 16 MiB of
+copied input, 12 MiB of source and reconstructed padded YUV420 planes,
+0.75 MiB of macroblock coefficients, up to 8 MiB across two arithmetic-coded
+partitions, and a further 4 MiB while assembling the final frame. These
+payload bounds do not include allocator capacity, linear-memory growth, a
+simultaneously live JavaScript input, or a caller's final output copy. The
+candidate has no product memory acceptance result.

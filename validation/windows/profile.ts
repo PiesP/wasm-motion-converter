@@ -38,6 +38,7 @@ import {
 } from './cancellation-inspector.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
 import { armGifNativeInitProbe } from './helpers/gif-native-init-probe.ts';
+import { runOwnedVp8NativeProbe } from './helpers/owned-vp8-probe.ts';
 import {
   assertUsefulOutput,
   classifyWasmWarmCache,
@@ -3785,6 +3786,123 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const vp8Selector = resolve(bundleRoot, 'validation/windows/inputs/owned-vp8-native.json');
+  let vp8SelectorText: string | undefined;
+  try {
+    vp8SelectorText = await readFile(vp8Selector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (vp8SelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(vp8SelectorText), { scenario: 'owned-vp8-native' });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter((name) => name.endsWith('.json') && name !== 'owned-vp8-native.json'),
+      []
+    );
+    const build = await readBuild(bundleRoot, 'dist', validateBundleFile, {
+      verifyInventory: true,
+      exactInventory: true,
+    });
+    const started = await startStaticServer(bundleRoot);
+    let context: BrowserContext | undefined;
+    const checks = [];
+    const errors: string[] = [];
+    const observation: Record<string, unknown> = {
+      scenario: 'owned-vp8-native',
+      status: 'running',
+      browserVersion: browser.version(),
+      build,
+      qualification:
+        'actual raw VP8 encode/decode probe; preset calibration and fallback removal remain unqualified',
+    };
+    try {
+      await mkdir(output, { recursive: true });
+      context = await browser.newContext({ locale: 'en-US' });
+      const page = await context.newPage();
+      page.on('pageerror', (error) => errors.push(error.message));
+      await loadApplication(page, started.url);
+      for (const [width, height] of [
+        [64, 48],
+        [17, 13],
+      ] as const) {
+        const rgba = Array.from({ length: width * height * 4 }, (_, i) => {
+          const pixel = Math.floor(i / 4),
+            x = pixel % width,
+            y = Math.floor(pixel / width);
+          return i % 4 === 3
+            ? 255
+            : i % 4 === 0
+              ? Math.round((x * 255) / Math.max(1, width - 1))
+              : i % 4 === 1
+                ? Math.round((y * 255) / Math.max(1, height - 1))
+                : ((x + y) % 2) * 255;
+        });
+        for (const bitrate of [200_000, 800_000, 2_000_000]) {
+          const result = await page.evaluate(runOwnedVp8NativeProbe, {
+            rgba,
+            width,
+            height,
+            bitrate,
+          });
+          if (result.status === 'encoded') {
+            const frame = Buffer.from(result.rawFrame);
+            const prefix = Buffer.alloc(20);
+            prefix.write('RIFF', 0);
+            prefix.writeUInt32LE(12 + frame.length + (frame.length & 1), 4);
+            prefix.write('WEBPVP8 ', 8);
+            prefix.writeUInt32LE(frame.length, 16);
+            const file = `native-vp8-${width}x${height}-${bitrate}.webp`;
+            const webp = Buffer.concat([prefix, frame, Buffer.alloc(frame.length & 1)]);
+            await writeFile(join(output, file), webp);
+            const { rawFrame: _rawFrame, ...metadata } = result;
+            checks.push({
+              width,
+              height,
+              bitrate,
+              inputSha256: sha256(Buffer.from(rgba)),
+              ...metadata,
+              file,
+              bytes: webp.length,
+              sha256: sha256(webp),
+            });
+          } else {
+            checks.push({ width, height, bitrate, ...result });
+          }
+        }
+      }
+      await page.screenshot({ path: join(output, 'owned-vp8-native.png'), fullPage: true });
+      assert.deepEqual(errors, []);
+      observation.checks = checks;
+      observation.status = 'passed';
+      return { profile: 'owned-vp8-native', status: 'passed', checks };
+    } catch (error) {
+      observation.status = 'failed';
+      observation.error = describeMediaFailure(error);
+      throw error;
+    } finally {
+      const cleanupErrors: unknown[] = [];
+      try {
+        await context?.close();
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        await closeServer(started.server);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      observation.errors = errors;
+      observation.cleanupErrors = cleanupErrors.map(describeMediaFailure);
+      if (cleanupErrors.length) observation.status = 'failed';
+      await writeFile(
+        join(output, 'owned-vp8-native.json'),
+        `${JSON.stringify(observation, null, 2)}\n`
+      );
+      if (cleanupErrors.length)
+        throw new AggregateError(cleanupErrors, 'Native VP8 probe cleanup failed');
+    }
+  }
   const motionSelectors = [
     {
       scenario: 'gif-owned-cancellation-matrix',
