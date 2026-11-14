@@ -8,6 +8,7 @@ mod bmode_probs;
 mod coeff_update_probs;
 mod dc_quant;
 mod default_coeff_probs;
+mod limits;
 mod prediction;
 mod rate;
 mod residual;
@@ -35,6 +36,7 @@ struct BoolWriter {
     range: u32,
     bottom: u32,
     bit_count: u32,
+    limit: usize,
 }
 
 impl BoolWriter {
@@ -44,7 +46,18 @@ impl BoolWriter {
             range: 255,
             bottom: 0,
             bit_count: 24,
+            limit: MAX_OUTPUT_BYTES,
         }
+    }
+
+    fn with_capacity(bytes: usize) -> Result<Self, EncodeError> {
+        let mut writer = Self::new();
+        writer
+            .bytes
+            .try_reserve_exact(bytes)
+            .map_err(|_| EncodeError::OutputLimit)?;
+        writer.limit = bytes;
+        Ok(writer)
     }
 
     fn propagate_carry(&mut self) {
@@ -77,7 +90,7 @@ impl BoolWriter {
             self.bottom <<= 1;
             self.bit_count -= 1;
             if self.bit_count == 0 {
-                if self.bytes.len() >= MAX_OUTPUT_BYTES {
+                if self.bytes.len() >= self.limit {
                     return Err(EncodeError::OutputLimit);
                 }
                 self.bytes
@@ -119,7 +132,7 @@ impl BoolWriter {
             .len()
             .checked_add(4)
             .ok_or(EncodeError::OutputLimit)?
-            > MAX_OUTPUT_BYTES
+            > self.limit
         {
             return Err(EncodeError::OutputLimit);
         }

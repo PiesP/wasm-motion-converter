@@ -7,8 +7,9 @@ use super::{BoolWriter, EncodeError, MAX_OUTPUT_BYTES};
 use crate::ac_quant::{self, Deltas, Plane, Steps};
 use crate::{
     bmode_probs::BMODE_PROBS,
+    limits::{Request, ResourcePlan, Status},
     prediction::{self, LargeMode, SmallMode},
-    rate::{BoolSink, RateCounter},
+    rate::{BoolSink, CountingBoolSink, RateCounter},
     residual, transform,
 };
 
@@ -23,6 +24,8 @@ struct Macroblock {
     u: [[i16; 16]; 4],
     v: [[i16; 16]; 4],
 }
+
+const _: () = assert!(std::mem::size_of::<Macroblock>() <= 832);
 
 fn allocated(size: usize) -> Result<Vec<u8>, EncodeError> {
     let mut bytes = Vec::new();
@@ -249,6 +252,33 @@ impl CoeffContexts {
             left_u: [false; 2],
             left_v: [false; 2],
         }
+    }
+    fn try_new(blocks_x: usize) -> Result<Self, Status> {
+        fn zeros(len: usize) -> Result<Vec<bool>, Status> {
+            let mut values = Vec::new();
+            values
+                .try_reserve_exact(len)
+                .map_err(|_| Status::MemoryAdmission)?;
+            values.resize(len, false);
+            Ok(values)
+        }
+        Ok(Self {
+            y2: zeros(blocks_x)?,
+            y: zeros(blocks_x * 4)?,
+            u: zeros(blocks_x * 2)?,
+            v: zeros(blocks_x * 2)?,
+            left_y2: false,
+            left_y: [false; 4],
+            left_u: [false; 2],
+            left_v: [false; 2],
+        })
+    }
+    fn reset(&mut self) {
+        self.y2.fill(false);
+        self.y.fill(false);
+        self.u.fill(false);
+        self.v.fill(false);
+        self.row();
     }
     fn row(&mut self) {
         self.left_y2 = false;
@@ -787,140 +817,26 @@ fn encode_observed(
         coeff_contexts.row();
         left_modes.fill(0);
         for mx in 0..blocks_x {
-            let x = mx * 16;
-            let y = my * 16;
-            let luma = if luma_policy == 0 {
-                let mut options = Vec::with_capacity(5);
-                for mode in 0..4 {
-                    options.push(make_i16(
-                        &source_y,
-                        &reconstructed_y,
-                        padded_w,
-                        x,
-                        y,
-                        mode,
-                        y_steps,
-                        y2_steps,
-                    ));
-                }
-                options.push(make_i4(
-                    &source_y,
-                    &reconstructed_y,
-                    padded_w,
-                    mx,
-                    my,
-                    y_steps,
-                    &above_modes,
-                    &left_modes,
-                    &coeff_contexts,
-                    lambda,
-                ));
-                options
-            } else if luma_policy == 1 {
-                (0..4)
-                    .map(|mode| {
-                        make_i16(
-                            &source_y,
-                            &reconstructed_y,
-                            padded_w,
-                            x,
-                            y,
-                            mode,
-                            y_steps,
-                            y2_steps,
-                        )
-                    })
-                    .collect()
-            } else {
-                vec![make_i4(
-                    &source_y,
-                    &reconstructed_y,
-                    padded_w,
-                    mx,
-                    my,
-                    y_steps,
-                    &above_modes,
-                    &left_modes,
-                    &coeff_contexts,
-                    lambda,
-                )]
-            };
-            let uv: Vec<_> = (0..4)
-                .map(|mode| {
-                    make_uv(
-                        &source_u,
-                        &source_v,
-                        &reconstructed_u,
-                        &reconstructed_v,
-                        uv_w,
-                        mx * 8,
-                        my * 8,
-                        mode,
-                        uv_steps,
-                    )
-                })
-                .collect();
-            let mut best: Option<(u64, usize, usize)> = None;
-            for (li, luma_candidate) in luma.iter().enumerate() {
-                for (ui, uv_candidate) in uv.iter().enumerate() {
-                    let candidate = Macroblock {
-                        y: luma_candidate.block.y,
-                        y2: luma_candidate.block.y2,
-                        i16: luma_candidate.block.i16,
-                        y_mode: luma_candidate.block.y_mode,
-                        b_modes: luma_candidate.block.b_modes,
-                        uv_mode: ui as u8,
-                        u: uv_candidate.u,
-                        v: uv_candidate.v,
-                    };
-                    let distortion = luma_candidate.distortion + uv_candidate.distortion;
-                    let score = selected_cost(
-                        &candidate,
-                        mx,
-                        &coeff_contexts,
-                        &above_modes,
-                        &left_modes,
-                        distortion,
-                        lambda,
-                    )?;
-                    if best.is_none_or(|previous| score < previous.0) {
-                        best = Some((score, li, ui));
-                    }
-                    // Trials own only stack/tile state. No committed neighbor,
-                    // context, mode or coefficient statistic changes here.
-                }
-            }
-            let (_, li, ui) = best.expect("at least one bounded mode candidate");
-            let selected_luma = &luma[li];
-            let selected_uv = &uv[ui];
-            let block = Macroblock {
-                y: selected_luma.block.y,
-                y2: selected_luma.block.y2,
-                i16: selected_luma.block.i16,
-                y_mode: selected_luma.block.y_mode,
-                b_modes: selected_luma.block.b_modes,
-                uv_mode: ui as u8,
-                u: selected_uv.u,
-                v: selected_uv.v,
-            };
-            commit_tile::<16, 256>(&mut reconstructed_y, padded_w, x, y, &selected_luma.tile);
-            commit_tile::<8, 64>(
+            blocks.push(analyze_one(
+                &source_y,
+                &source_u,
+                &source_v,
+                &mut reconstructed_y,
                 &mut reconstructed_u,
-                uv_w,
-                mx * 8,
-                my * 8,
-                &selected_uv.u_tile,
-            );
-            commit_tile::<8, 64>(
                 &mut reconstructed_v,
+                padded_w,
                 uv_w,
-                mx * 8,
-                my * 8,
-                &selected_uv.v_tile,
-            );
-            coeff_contexts.encode_coefficients(&mut RateCounter::default(), &block, mx)?;
-            update_modes(&block, mx, &mut above_modes, &mut left_modes);
-            blocks.push(block);
+                mx,
+                my,
+                y_steps,
+                uv_steps,
+                y2_steps,
+                &mut coeff_contexts,
+                &mut above_modes,
+                &mut left_modes,
+                lambda,
+                luma_policy,
+            )?);
         }
     }
     let result = emit_frame(&blocks, width, height, qindex)?;
@@ -933,6 +849,209 @@ fn encode_observed(
     Ok(result)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn analyze_one(
+    source_y: &[u8],
+    source_u: &[u8],
+    source_v: &[u8],
+    reconstructed_y: &mut [u8],
+    reconstructed_u: &mut [u8],
+    reconstructed_v: &mut [u8],
+    padded_w: usize,
+    uv_w: usize,
+    mx: usize,
+    my: usize,
+    y_steps: Steps,
+    uv_steps: Steps,
+    y2_steps: Steps,
+    coeff_contexts: &mut CoeffContexts,
+    above_modes: &mut [u8],
+    left_modes: &mut [u8; 4],
+    lambda: u64,
+    luma_policy: u8,
+) -> Result<Macroblock, EncodeError> {
+    let x = mx * 16;
+    let y = my * 16;
+    let luma = if luma_policy == 0 {
+        let mut options = Vec::with_capacity(5);
+        for mode in 0..4 {
+            options.push(make_i16(
+                source_y,
+                reconstructed_y,
+                padded_w,
+                x,
+                y,
+                mode,
+                y_steps,
+                y2_steps,
+            ));
+        }
+        options.push(make_i4(
+            source_y,
+            reconstructed_y,
+            padded_w,
+            mx,
+            my,
+            y_steps,
+            above_modes,
+            left_modes,
+            coeff_contexts,
+            lambda,
+        ));
+        options
+    } else if luma_policy == 1 {
+        (0..4)
+            .map(|mode| {
+                make_i16(
+                    source_y,
+                    reconstructed_y,
+                    padded_w,
+                    x,
+                    y,
+                    mode,
+                    y_steps,
+                    y2_steps,
+                )
+            })
+            .collect()
+    } else {
+        vec![make_i4(
+            source_y,
+            reconstructed_y,
+            padded_w,
+            mx,
+            my,
+            y_steps,
+            above_modes,
+            left_modes,
+            coeff_contexts,
+            lambda,
+        )]
+    };
+    let uv: Vec<_> = (0..4)
+        .map(|mode| {
+            make_uv(
+                source_u,
+                source_v,
+                reconstructed_u,
+                reconstructed_v,
+                uv_w,
+                mx * 8,
+                my * 8,
+                mode,
+                uv_steps,
+            )
+        })
+        .collect();
+    let mut best: Option<(u64, usize, usize)> = None;
+    for (li, luma_candidate) in luma.iter().enumerate() {
+        for (ui, uv_candidate) in uv.iter().enumerate() {
+            let candidate = Macroblock {
+                y: luma_candidate.block.y,
+                y2: luma_candidate.block.y2,
+                i16: luma_candidate.block.i16,
+                y_mode: luma_candidate.block.y_mode,
+                b_modes: luma_candidate.block.b_modes,
+                uv_mode: ui as u8,
+                u: uv_candidate.u,
+                v: uv_candidate.v,
+            };
+            let distortion = luma_candidate.distortion + uv_candidate.distortion;
+            let score = selected_cost(
+                &candidate,
+                mx,
+                coeff_contexts,
+                above_modes,
+                left_modes,
+                distortion,
+                lambda,
+            )?;
+            if best.is_none_or(|previous| score < previous.0) {
+                best = Some((score, li, ui));
+            }
+            // Trials own only stack/tile state. No committed neighbor,
+            // context, mode or coefficient statistic changes here.
+        }
+    }
+    let (_, li, ui) = best.expect("at least one bounded mode candidate");
+    let selected_luma = &luma[li];
+    let selected_uv = &uv[ui];
+    let block = Macroblock {
+        y: selected_luma.block.y,
+        y2: selected_luma.block.y2,
+        i16: selected_luma.block.i16,
+        y_mode: selected_luma.block.y_mode,
+        b_modes: selected_luma.block.b_modes,
+        uv_mode: ui as u8,
+        u: selected_uv.u,
+        v: selected_uv.v,
+    };
+    commit_tile::<16, 256>(reconstructed_y, padded_w, x, y, &selected_luma.tile);
+    commit_tile::<8, 64>(reconstructed_u, uv_w, mx * 8, my * 8, &selected_uv.u_tile);
+    commit_tile::<8, 64>(reconstructed_v, uv_w, mx * 8, my * 8, &selected_uv.v_tile);
+    coeff_contexts.encode_coefficients(&mut RateCounter::default(), &block, mx)?;
+    update_modes(&block, mx, above_modes, left_modes);
+    Ok(block)
+}
+
+fn write_header_prefix(sink: &mut impl BoolSink, qindex: usize) -> Result<(), EncodeError> {
+    sink.bit(false)?; // YUV color space.
+    sink.bit(false)?; // Decoder clamps output pixels.
+    sink.bit(false)?; // Segmentation disabled.
+    sink.bit(false)?; // Normal loop filter.
+    sink.literal(0, 6)?; // No loop filtering during this experiment.
+    sink.literal(0, 3)?;
+    sink.bit(false)?; // Macroblock filter deltas disabled.
+    sink.literal(0, 2)?; // One coefficient partition.
+    sink.literal(qindex as u32, 7)?;
+    for _ in 0..5 {
+        sink.bit(false)?;
+    }
+    sink.bit(false)?; // Entropy updates not retained.
+    Ok(())
+}
+
+fn write_header_suffix(sink: &mut impl BoolSink) -> Result<(), EncodeError> {
+    sink.bit(true)?; // Macroblock coefficient skip flags enabled.
+    sink.literal(128, 8)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_macroblock(
+    header: &mut impl BoolSink,
+    token: &mut impl BoolSink,
+    contexts: &mut CoeffContexts,
+    above_modes: &mut [u8],
+    left_modes: &mut [u8; 4],
+    mx: usize,
+    block: &Macroblock,
+) -> Result<(), EncodeError> {
+    header.write(128, block.skip())?;
+    write_y_mode(header, block.i16, block.y_mode)?;
+    if !block.i16 {
+        for (by, &left_mode) in left_modes.iter().enumerate() {
+            for bx in 0..4 {
+                let index = by * 4 + bx;
+                let a = if by > 0 {
+                    block.b_modes[index - 4]
+                } else {
+                    above_modes[mx * 4 + bx]
+                };
+                let l = if bx > 0 {
+                    block.b_modes[index - 1]
+                } else {
+                    left_mode
+                };
+                write_bmode(header, a, l, block.b_modes[index])?;
+            }
+        }
+    }
+    write_uv_mode(header, block.uv_mode)?;
+    contexts.encode_coefficients(token, block, mx)?;
+    update_modes(block, mx, above_modes, left_modes);
+    Ok(())
+}
+
 fn emit_frame(
     blocks: &[Macroblock],
     width: usize,
@@ -942,24 +1061,11 @@ fn emit_frame(
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
     let mut header = BoolWriter::new();
-    header.bit(false)?; // YUV color space.
-    header.bit(false)?; // Decoder clamps output pixels.
-    header.bit(false)?; // Segmentation disabled.
-    header.bit(false)?; // Normal loop filter.
-    header.literal(0, 6)?; // No loop filtering during this experiment.
-    header.literal(0, 3)?;
-    header.bit(false)?; // Macroblock filter deltas disabled.
-    header.literal(0, 2)?; // One coefficient partition.
-    header.literal(qindex as u32, 7)?;
-    for _ in 0..5 {
-        header.bit(false)?;
-    }
-    header.bit(false)?; // Entropy updates not retained.
+    write_header_prefix(&mut header, qindex)?;
     for probability in super::COEFF_UPDATE_PROBS {
         header.write(probability, false)?;
     }
-    header.bit(true)?; // Macroblock coefficient skip flags enabled.
-    header.literal(128, 8)?;
+    write_header_suffix(&mut header)?;
     let mut token = BoolWriter::new();
     let mut contexts = CoeffContexts::new(blocks_x);
     let mut above_modes = vec![0u8; blocks_x * 4];
@@ -969,29 +1075,15 @@ fn emit_frame(
         left_modes.fill(0);
         for mx in 0..blocks_x {
             let block = &blocks[my * blocks_x + mx];
-            header.write(128, block.skip())?;
-            write_y_mode(&mut header, block.i16, block.y_mode)?;
-            if !block.i16 {
-                for (by, &left_mode) in left_modes.iter().enumerate() {
-                    for bx in 0..4 {
-                        let index = by * 4 + bx;
-                        let a = if by > 0 {
-                            block.b_modes[index - 4]
-                        } else {
-                            above_modes[mx * 4 + bx]
-                        };
-                        let l = if bx > 0 {
-                            block.b_modes[index - 1]
-                        } else {
-                            left_mode
-                        };
-                        write_bmode(&mut header, a, l, block.b_modes[index])?;
-                    }
-                }
-            }
-            write_uv_mode(&mut header, block.uv_mode)?;
-            contexts.encode_coefficients(&mut token, block, mx)?;
-            update_modes(block, mx, &mut above_modes, &mut left_modes);
+            write_macroblock(
+                &mut header,
+                &mut token,
+                &mut contexts,
+                &mut above_modes,
+                &mut left_modes,
+                mx,
+                block,
+            )?;
         }
     }
     let first = header.finish()?;
@@ -1017,11 +1109,698 @@ fn emit_frame(
     Ok(result)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+enum Stage {
+    Initialize = 0,
+    Color = 1,
+    Analyze = 2,
+    CountPrefix = 3,
+    CountUpdates = 4,
+    CountSuffix = 5,
+    CountBlocks = 6,
+    EmitPrefix = 7,
+    EmitUpdates = 8,
+    EmitSuffix = 9,
+    EmitBlocks = 10,
+    FinalizeHeader = 11,
+    FinalizeTokens = 12,
+    Assemble = 13,
+    Done = 14,
+}
+
+/// One step initializes at most 64 KiB, converts one YUV row pair, analyzes
+/// one macroblock, codes one macroblock, or assembles at most 64 KiB. The host
+/// owns scheduling and cancellation between calls.
+pub(crate) struct FrameEncoder {
+    request: Request,
+    plan: ResourcePlan,
+    input: Vec<u8>,
+    source_y: Vec<u8>,
+    source_u: Vec<u8>,
+    source_v: Vec<u8>,
+    reconstructed_y: Vec<u8>,
+    reconstructed_u: Vec<u8>,
+    reconstructed_v: Vec<u8>,
+    blocks: Vec<Macroblock>,
+    contexts: CoeffContexts,
+    above_modes: Vec<u8>,
+    left_modes: [u8; 4],
+    count_header: CountingBoolSink,
+    count_token: CountingBoolSink,
+    header: Option<BoolWriter>,
+    token: Option<BoolWriter>,
+    first: Vec<u8>,
+    second: Vec<u8>,
+    output: Vec<u8>,
+    stage: Stage,
+    cursor: usize,
+    init_plane: usize,
+}
+
+fn encode_status(error: EncodeError) -> Status {
+    match error {
+        EncodeError::InvalidInput => Status::InvalidInput,
+        EncodeError::UnsupportedPixels => Status::UnsupportedPixels,
+        EncodeError::OutputLimit => Status::OutputLimit,
+    }
+}
+
+impl FrameEncoder {
+    pub(crate) fn new(
+        request: Request,
+        input: Vec<u8>,
+        plan: ResourcePlan,
+    ) -> Result<Self, Status> {
+        let fresh = ResourcePlan::checked(request)?;
+        if fresh.with_capacity_floor(plan.linear_capacity_bytes)? != plan {
+            return Err(Status::InvalidInput);
+        }
+        if input.len() != request.input_bytes as usize {
+            return Err(Status::InvalidInput);
+        }
+        if input.capacity() > request.input_bytes as usize {
+            return Err(Status::MemoryAdmission);
+        }
+        let blocks_x = plan.padded_width as usize / 16;
+        let mut blocks = Vec::new();
+        blocks
+            .try_reserve_exact(plan.macroblock_count as usize)
+            .map_err(|_| Status::MemoryAdmission)?;
+        if blocks.capacity() * std::mem::size_of::<Macroblock>() > plan.coefficient_bytes as usize {
+            return Err(Status::MemoryAdmission);
+        }
+        let mut above_modes = Vec::new();
+        above_modes
+            .try_reserve_exact(blocks_x * 4)
+            .map_err(|_| Status::MemoryAdmission)?;
+        above_modes.resize(blocks_x * 4, 0);
+        Ok(Self {
+            request,
+            plan,
+            input,
+            source_y: Vec::new(),
+            source_u: Vec::new(),
+            source_v: Vec::new(),
+            reconstructed_y: Vec::new(),
+            reconstructed_u: Vec::new(),
+            reconstructed_v: Vec::new(),
+            blocks,
+            contexts: CoeffContexts::try_new(blocks_x)?,
+            above_modes,
+            left_modes: [0; 4],
+            count_header: CountingBoolSink::default(),
+            count_token: CountingBoolSink::default(),
+            header: None,
+            token: None,
+            first: Vec::new(),
+            second: Vec::new(),
+            output: Vec::new(),
+            stage: Stage::Initialize,
+            cursor: 0,
+            init_plane: 0,
+        })
+    }
+
+    pub(crate) fn plan(&self) -> ResourcePlan {
+        self.plan
+    }
+
+    pub(crate) fn stage(&self) -> u32 {
+        self.stage as u32
+    }
+
+    pub(crate) fn progress(&self) -> (u32, u32) {
+        let blocks = self.plan.macroblock_count;
+        let pairs = self.plan.padded_height / 2;
+        match self.stage {
+            Stage::Initialize => {
+                let done = self.source_y.len()
+                    + self.source_u.len()
+                    + self.source_v.len()
+                    + self.reconstructed_y.len()
+                    + self.reconstructed_u.len()
+                    + self.reconstructed_v.len();
+                (done as u32, self.plan.yuv_plane_set_bytes * 2)
+            }
+            Stage::Color => (self.cursor as u32, pairs),
+            Stage::Analyze | Stage::CountBlocks | Stage::EmitBlocks => (self.cursor as u32, blocks),
+            Stage::CountUpdates | Stage::EmitUpdates => {
+                (self.cursor as u32, super::COEFF_UPDATE_PROBS.len() as u32)
+            }
+            Stage::Assemble => (self.output.len() as u32, self.plan.frame_bytes),
+            Stage::Done => (1, 1),
+            _ => (0, 1),
+        }
+    }
+
+    pub(crate) fn output(&self) -> &[u8] {
+        if self.stage == Stage::Done {
+            &self.output
+        } else {
+            &[]
+        }
+    }
+
+    pub(crate) fn take_input(&mut self) -> Vec<u8> {
+        if self.stage == Stage::Done {
+            std::mem::take(&mut self.input)
+        } else {
+            Vec::new()
+        }
+    }
+
+    #[cfg(test)]
+    fn reconstruction(&self) -> (&[u8], &[u8], &[u8], usize) {
+        (
+            &self.reconstructed_y,
+            &self.reconstructed_u,
+            &self.reconstructed_v,
+            self.plan.padded_width as usize,
+        )
+    }
+
+    fn initialize_one_chunk(&mut self) -> Result<(), Status> {
+        let y_size = self.plan.padded_width as usize * self.plan.padded_height as usize;
+        let target = if self.init_plane.is_multiple_of(3) {
+            y_size
+        } else {
+            y_size / 4
+        };
+        let plane = match self.init_plane {
+            0 => &mut self.source_y,
+            1 => &mut self.source_u,
+            2 => &mut self.source_v,
+            3 => &mut self.reconstructed_y,
+            4 => &mut self.reconstructed_u,
+            _ => &mut self.reconstructed_v,
+        };
+        if plane.capacity() == 0 {
+            plane
+                .try_reserve_exact(target)
+                .map_err(|_| Status::MemoryAdmission)?;
+        }
+        let end = plane.len().saturating_add(65_536).min(target);
+        plane.resize(end, 0);
+        if end == target {
+            self.init_plane += 1;
+            if self.init_plane == 6 {
+                self.cursor = 0;
+                self.stage = Stage::Color;
+            }
+        }
+        Ok(())
+    }
+
+    fn color_one_pair(&mut self) -> Result<(), Status> {
+        let width = self.request.width as usize;
+        let height = self.request.height as usize;
+        let stride = self.request.stride as usize;
+        let layout = self.request.layout;
+        let bpp = if layout == 4 { 3 } else { 4 };
+        let y_stride = self.plan.padded_width as usize;
+        let uv_stride = y_stride / 2;
+        let cy = self.cursor;
+        for cx in 0..uv_stride {
+            let mut sum_u = 0u32;
+            let mut sum_v = 0u32;
+            for dy in 0..2 {
+                for dx in 0..2 {
+                    let x = (cx * 2 + dx).min(width - 1);
+                    let y = (cy * 2 + dy).min(height - 1);
+                    let at = y * stride + x * bpp;
+                    if layout <= 1 && self.input[at + 3] != 255 {
+                        return Err(Status::UnsupportedPixels);
+                    }
+                    let (r, g, b) = match layout {
+                        0 | 2 | 4 => (self.input[at], self.input[at + 1], self.input[at + 2]),
+                        _ => (self.input[at + 2], self.input[at + 1], self.input[at]),
+                    };
+                    let (luma, chroma_u, chroma_v) =
+                        yuv_from_rgb(i32::from(r), i32::from(g), i32::from(b));
+                    self.source_y[(cy * 2 + dy) * y_stride + cx * 2 + dx] = luma;
+                    sum_u += u32::from(chroma_u);
+                    sum_v += u32::from(chroma_v);
+                }
+            }
+            self.source_u[cy * uv_stride + cx] = ((sum_u + 2) / 4) as u8;
+            self.source_v[cy * uv_stride + cx] = ((sum_v + 2) / 4) as u8;
+        }
+        self.cursor += 1;
+        if self.cursor == self.plan.padded_height as usize / 2 {
+            self.cursor = 0;
+            self.stage = Stage::Analyze;
+        }
+        Ok(())
+    }
+
+    fn reset_coding_state(&mut self) {
+        self.contexts.reset();
+        self.above_modes.fill(0);
+        self.left_modes.fill(0);
+        self.cursor = 0;
+    }
+
+    fn qindex(&self) -> usize {
+        match self.request.quality {
+            60 => 40,
+            75 => 22,
+            _ => 8,
+        }
+    }
+
+    fn analyze_one_step(&mut self) -> Result<(), Status> {
+        let blocks_x = self.plan.padded_width as usize / 16;
+        let mx = self.cursor % blocks_x;
+        let my = self.cursor / blocks_x;
+        if mx == 0 {
+            self.contexts.row();
+            self.left_modes.fill(0);
+        }
+        let qindex = self.qindex();
+        let y_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y1);
+        let uv_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::UV);
+        let y2_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y2);
+        let lambda = ((qindex + 8) * (qindex + 8) / 4) as u64;
+        let block = analyze_one(
+            &self.source_y,
+            &self.source_u,
+            &self.source_v,
+            &mut self.reconstructed_y,
+            &mut self.reconstructed_u,
+            &mut self.reconstructed_v,
+            self.plan.padded_width as usize,
+            self.plan.padded_width as usize / 2,
+            mx,
+            my,
+            y_steps,
+            uv_steps,
+            y2_steps,
+            &mut self.contexts,
+            &mut self.above_modes,
+            &mut self.left_modes,
+            lambda,
+            0,
+        )
+        .map_err(encode_status)?;
+        self.blocks.push(block);
+        self.cursor += 1;
+        if self.cursor == self.plan.macroblock_count as usize {
+            self.cursor = 0;
+            self.stage = Stage::CountPrefix;
+        }
+        Ok(())
+    }
+
+    fn code_one_step(&mut self, counting: bool) -> Result<(), Status> {
+        let blocks_x = self.plan.padded_width as usize / 16;
+        let mx = self.cursor % blocks_x;
+        if mx == 0 {
+            self.contexts.row();
+            self.left_modes.fill(0);
+        }
+        let block = &self.blocks[self.cursor];
+        if counting {
+            write_macroblock(
+                &mut self.count_header,
+                &mut self.count_token,
+                &mut self.contexts,
+                &mut self.above_modes,
+                &mut self.left_modes,
+                mx,
+                block,
+            )
+            .map_err(encode_status)?;
+        } else {
+            write_macroblock(
+                self.header.as_mut().ok_or(Status::InvalidInput)?,
+                self.token.as_mut().ok_or(Status::InvalidInput)?,
+                &mut self.contexts,
+                &mut self.above_modes,
+                &mut self.left_modes,
+                mx,
+                block,
+            )
+            .map_err(encode_status)?;
+        }
+        self.cursor += 1;
+        if self.cursor == self.blocks.len() {
+            self.cursor = 0;
+            if counting {
+                let first = self.count_header.finish_size().map_err(encode_status)?;
+                let second = self.count_token.finish_size().map_err(encode_status)?;
+                let first = u32::try_from(first).map_err(|_| Status::PartitionLimit)?;
+                let second = u32::try_from(second).map_err(|_| Status::OutputLimit)?;
+                self.plan = self.plan.with_output_sizes(first, second)?;
+                self.header = Some(
+                    BoolWriter::with_capacity(first as usize)
+                        .map_err(|_| Status::MemoryAdmission)?,
+                );
+                self.token = Some(
+                    BoolWriter::with_capacity(second as usize)
+                        .map_err(|_| Status::MemoryAdmission)?,
+                );
+                self.stage = Stage::EmitPrefix;
+            } else {
+                self.stage = Stage::FinalizeHeader;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn step(&mut self) -> Result<bool, Status> {
+        match self.stage {
+            Stage::Initialize => self.initialize_one_chunk()?,
+            Stage::Color => self.color_one_pair()?,
+            Stage::Analyze => self.analyze_one_step()?,
+            Stage::CountPrefix => {
+                let qindex = self.qindex();
+                write_header_prefix(&mut self.count_header, qindex).map_err(encode_status)?;
+                self.stage = Stage::CountUpdates;
+            }
+            Stage::CountUpdates => {
+                let end = (self.cursor + 64).min(super::COEFF_UPDATE_PROBS.len());
+                for &probability in &super::COEFF_UPDATE_PROBS[self.cursor..end] {
+                    self.count_header
+                        .write(probability, false)
+                        .map_err(encode_status)?;
+                }
+                self.cursor = end;
+                if end == super::COEFF_UPDATE_PROBS.len() {
+                    self.cursor = 0;
+                    self.stage = Stage::CountSuffix;
+                }
+            }
+            Stage::CountSuffix => {
+                write_header_suffix(&mut self.count_header).map_err(encode_status)?;
+                self.reset_coding_state();
+                self.stage = Stage::CountBlocks;
+            }
+            Stage::CountBlocks => self.code_one_step(true)?,
+            Stage::EmitPrefix => {
+                let qindex = self.qindex();
+                write_header_prefix(self.header.as_mut().ok_or(Status::InvalidInput)?, qindex)
+                    .map_err(encode_status)?;
+                self.stage = Stage::EmitUpdates;
+            }
+            Stage::EmitUpdates => {
+                let end = (self.cursor + 64).min(super::COEFF_UPDATE_PROBS.len());
+                let header = self.header.as_mut().ok_or(Status::InvalidInput)?;
+                for &probability in &super::COEFF_UPDATE_PROBS[self.cursor..end] {
+                    header.write(probability, false).map_err(encode_status)?;
+                }
+                self.cursor = end;
+                if end == super::COEFF_UPDATE_PROBS.len() {
+                    self.cursor = 0;
+                    self.stage = Stage::EmitSuffix;
+                }
+            }
+            Stage::EmitSuffix => {
+                write_header_suffix(self.header.as_mut().ok_or(Status::InvalidInput)?)
+                    .map_err(encode_status)?;
+                self.reset_coding_state();
+                self.stage = Stage::EmitBlocks;
+            }
+            Stage::EmitBlocks => self.code_one_step(false)?,
+            Stage::FinalizeHeader => {
+                self.first = self
+                    .header
+                    .take()
+                    .ok_or(Status::InvalidInput)?
+                    .finish()
+                    .map_err(encode_status)?;
+                if self.first.len() != self.plan.first_partition_bytes as usize {
+                    return Err(Status::PartitionLimit);
+                }
+                self.stage = Stage::FinalizeTokens;
+            }
+            Stage::FinalizeTokens => {
+                self.second = self
+                    .token
+                    .take()
+                    .ok_or(Status::InvalidInput)?
+                    .finish()
+                    .map_err(encode_status)?;
+                if self.second.len() != self.plan.coefficient_partition_bytes as usize {
+                    return Err(Status::OutputLimit);
+                }
+                self.output
+                    .try_reserve_exact(self.plan.frame_bytes as usize)
+                    .map_err(|_| Status::MemoryAdmission)?;
+                let tag = (self.plan.first_partition_bytes << 5) | 0x10;
+                self.output.extend_from_slice(&tag.to_le_bytes()[..3]);
+                self.output.extend_from_slice(&[0x9d, 0x01, 0x2a]);
+                self.output
+                    .extend_from_slice(&(self.request.width as u16).to_le_bytes());
+                self.output
+                    .extend_from_slice(&(self.request.height as u16).to_le_bytes());
+                self.stage = Stage::Assemble;
+            }
+            Stage::Assemble => {
+                let payload_at = self.output.len() - 10;
+                let end = (payload_at + 65_536).min(self.first.len() + self.second.len());
+                if payload_at < self.first.len() {
+                    let first_end = end.min(self.first.len());
+                    self.output
+                        .extend_from_slice(&self.first[payload_at..first_end]);
+                    if end > first_end {
+                        self.output
+                            .extend_from_slice(&self.second[..end - first_end]);
+                    }
+                } else {
+                    let token_at = payload_at - self.first.len();
+                    self.output
+                        .extend_from_slice(&self.second[token_at..end - self.first.len()]);
+                }
+                if self.output.len() == self.plan.frame_bytes as usize {
+                    self.stage = Stage::Done;
+                }
+            }
+            Stage::Done => return Ok(true),
+        }
+        Ok(self.stage == Stage::Done)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    fn engine_request(
+        width: usize,
+        height: usize,
+        layout: u32,
+        input: &[u8],
+        stride: usize,
+    ) -> Request {
+        Request {
+            version: 2,
+            width: width as u32,
+            height: height as u32,
+            stride: stride as u32,
+            layout,
+            quality: 75,
+            input_bytes: input.len() as u32,
+            output_limit: 96 * 1024 * 1024,
+            generation: 1,
+            frame: 1,
+            external_live_bytes: 0,
+            retained_output_bytes: 0,
+        }
+    }
+
+    fn run_engine(mut engine: FrameEncoder) -> FrameEncoder {
+        let mut steps = 0;
+        loop {
+            let stage = engine.stage();
+            let (before, _) = engine.progress();
+            let done = engine.step().unwrap();
+            steps += 1;
+            assert!(steps < 100_000);
+            if !done {
+                assert!(engine.output().is_empty());
+            }
+            if stage == engine.stage() {
+                let (after, _) = engine.progress();
+                let bound = match stage {
+                    0 | 13 => 65_536,
+                    4 | 8 => 64,
+                    _ => 1,
+                };
+                assert!(after >= before && after - before <= bound, "stage={stage}");
+            }
+            if done {
+                return engine;
+            }
+        }
+    }
+
+    #[test]
+    fn resumable_engine_matches_sync_for_layouts_edges_and_recovery() {
+        for (width, height) in [(1, 33), (33, 1), (31, 33)] {
+            let mut rgba = Vec::new();
+            for i in 0..width * height {
+                rgba.extend_from_slice(&[(i * 37) as u8, (i * 13) as u8, (i * 71) as u8, 255]);
+            }
+            let expected = encode_textured(
+                &rgba,
+                width as u32,
+                height as u32,
+                (width * 4) as u32,
+                0,
+                75,
+            )
+            .unwrap();
+            for layout in 0..=4 {
+                let bpp = if layout == 4 { 3 } else { 4 };
+                let stride = width * bpp + 3;
+                let mut input = Vec::with_capacity(height * stride);
+                for row in 0..height {
+                    for col in 0..width {
+                        let at = (row * width + col) * 4;
+                        let [r, g, b, _] = rgba[at..at + 4].try_into().unwrap();
+                        match layout {
+                            0 | 2 => input.extend_from_slice(&[
+                                r,
+                                g,
+                                b,
+                                if layout == 0 { 255 } else { 7 },
+                            ]),
+                            1 | 3 => input.extend_from_slice(&[
+                                b,
+                                g,
+                                r,
+                                if layout == 1 { 255 } else { 7 },
+                            ]),
+                            _ => input.extend_from_slice(&[r, g, b]),
+                        }
+                    }
+                    input.extend_from_slice(&[42; 3]);
+                }
+                let request = engine_request(width, height, layout, &input, stride);
+                let plan = ResourcePlan::checked(request).unwrap();
+                let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+                assert!(engine.take_input().is_empty());
+                for _ in 0..3 {
+                    engine.step().unwrap();
+                }
+                drop(engine);
+                let input = {
+                    let mut input = Vec::with_capacity(height * stride);
+                    for row in 0..height {
+                        for col in 0..width {
+                            let at = (row * width + col) * 4;
+                            let [r, g, b, _] = rgba[at..at + 4].try_into().unwrap();
+                            match layout {
+                                0 | 2 => input.extend_from_slice(&[
+                                    r,
+                                    g,
+                                    b,
+                                    if layout == 0 { 255 } else { 7 },
+                                ]),
+                                1 | 3 => input.extend_from_slice(&[
+                                    b,
+                                    g,
+                                    r,
+                                    if layout == 1 { 255 } else { 7 },
+                                ]),
+                                _ => input.extend_from_slice(&[r, g, b]),
+                            }
+                        }
+                        input.extend_from_slice(&[42; 3]);
+                    }
+                    input
+                };
+                let mut engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+                assert_eq!(
+                    engine.output(),
+                    expected,
+                    "{width}x{height} layout={layout}"
+                );
+                assert_eq!(engine.plan().frame_bytes as usize, expected.len());
+                assert!(engine.plan().first_partition_bytes > 0);
+                assert!(engine.plan().coefficient_partition_bytes > 0);
+                assert_eq!(engine.take_input().len(), request.input_bytes as usize);
+                assert!(engine.take_input().is_empty());
+                assert_eq!(engine.output(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn resumable_engine_rejects_plan_mismatch_transparency_and_output_limit() {
+        let input = vec![128, 128, 128, 255];
+        let request = engine_request(1, 1, 0, &input, 4);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let wrong = ResourcePlan::checked(Request {
+            width: 2,
+            stride: 8,
+            input_bytes: 8,
+            ..request
+        })
+        .unwrap();
+        assert!(matches!(
+            FrameEncoder::new(request, input.clone(), wrong),
+            Err(Status::InvalidInput)
+        ));
+        let mut transparent = input.clone();
+        transparent[3] = 254;
+        let mut job = FrameEncoder::new(request, transparent, plan).unwrap();
+        while job.stage() == 0 {
+            job.step().unwrap();
+        }
+        assert_eq!(job.step(), Err(Status::UnsupportedPixels));
+        assert!(job.output().is_empty());
+        let tight = Request {
+            output_limit: 1,
+            ..request
+        };
+        let mut job =
+            FrameEncoder::new(tight, input, ResourcePlan::checked(tight).unwrap()).unwrap();
+        let mut result = Ok(false);
+        for _ in 0..100 {
+            result = job.step();
+            if result.is_err() {
+                break;
+            }
+        }
+        assert_eq!(result, Err(Status::OutputLimit));
+        assert!(job.output().is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_resumable_engine_reconstruction() {
+        for (width, height) in [(1, 33), (33, 1), (31, 33), (64, 48)] {
+            let mut input = Vec::with_capacity(width * height * 4);
+            for i in 0..width * height {
+                input.extend_from_slice(&[(i * 37) as u8, (i * 13) as u8, (i * 71) as u8, 255]);
+            }
+            let request = engine_request(width, height, 0, &input, width * 4);
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+            let (y, u, v, padded_w) = engine.reconstruction();
+            let mut expected = Vec::new();
+            for (plane, stride, w, h) in [
+                (y, padded_w, width, height),
+                (u, padded_w / 2, width.div_ceil(2), height.div_ceil(2)),
+                (v, padded_w / 2, width.div_ceil(2), height.div_ceil(2)),
+            ] {
+                for row in 0..h {
+                    expected.extend_from_slice(&plane[row * stride..row * stride + w]);
+                }
+            }
+            assert_decodes(
+                engine.output(),
+                width,
+                height,
+                &expected,
+                "resumable ABI2 engine",
+            );
+        }
+    }
 
     #[test]
     fn mode_trials_leave_committed_neighbors_and_contexts_unchanged() {

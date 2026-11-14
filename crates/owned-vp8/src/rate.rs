@@ -10,6 +10,13 @@ pub(crate) trait BoolSink {
     fn bit(&mut self, bit: bool) -> Result<(), EncodeError> {
         self.write(128, bit)
     }
+
+    fn literal(&mut self, value: u32, bits: u32) -> Result<(), EncodeError> {
+        for shift in (0..bits).rev() {
+            self.bit(value & (1 << shift) != 0)?;
+        }
+        Ok(())
+    }
 }
 
 impl BoolSink for BoolWriter {
@@ -33,6 +40,55 @@ impl BoolSink for RateCounter {
             u32::from(probability_of_zero)
         };
         self.cost += u64::from(bit_cost(probability));
+        Ok(())
+    }
+}
+
+/// Mirrors byte emission and termination without storing encoded bytes. Carry
+/// changes earlier byte values but never the number of bytes emitted.
+pub(crate) struct CountingBoolSink {
+    range: u32,
+    bottom: u32,
+    bit_count: u32,
+    bytes: usize,
+}
+
+impl Default for CountingBoolSink {
+    fn default() -> Self {
+        Self {
+            range: 255,
+            bottom: 0,
+            bit_count: 24,
+            bytes: 0,
+        }
+    }
+}
+
+impl CountingBoolSink {
+    pub(crate) fn finish_size(&self) -> Result<usize, EncodeError> {
+        self.bytes.checked_add(4).ok_or(EncodeError::OutputLimit)
+    }
+}
+
+impl BoolSink for CountingBoolSink {
+    fn write(&mut self, probability_of_zero: u8, bit: bool) -> Result<(), EncodeError> {
+        let split = 1 + (((self.range - 1) * u32::from(probability_of_zero)) >> 8);
+        if bit {
+            self.bottom = self.bottom.wrapping_add(split);
+            self.range -= split;
+        } else {
+            self.range = split;
+        }
+        while self.range < 128 {
+            self.range <<= 1;
+            self.bottom <<= 1;
+            self.bit_count -= 1;
+            if self.bit_count == 0 {
+                self.bytes = self.bytes.checked_add(1).ok_or(EncodeError::OutputLimit)?;
+                self.bottom &= (1 << 24) - 1;
+                self.bit_count = 8;
+            }
+        }
         Ok(())
     }
 }
@@ -90,5 +146,23 @@ mod tests {
         counter.cost = 0;
         counter.write(192, true).unwrap();
         assert!(counter.cost > likely);
+    }
+
+    #[test]
+    fn counted_arithmetic_length_matches_finalized_writer() {
+        let mut counted = CountingBoolSink::default();
+        let mut actual = BoolWriter::new();
+        let mut seed = 0x501u32;
+        for i in 0..100_000 {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let probability = if i % 7 == 0 { 1 } else { (seed >> 16) as u8 };
+            let bit = seed & 1 != 0;
+            counted.write(probability, bit).unwrap();
+            actual.write(probability, bit).unwrap();
+        }
+        assert_eq!(
+            counted.finish_size().unwrap(),
+            actual.finish().unwrap().len()
+        );
     }
 }

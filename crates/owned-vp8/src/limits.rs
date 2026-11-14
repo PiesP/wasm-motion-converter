@@ -55,6 +55,7 @@ pub(crate) enum Status {
     StaleTicket = 7,
     BusyLease = 8,
     Cancelled = 9,
+    UnsupportedPixels = 12,
 }
 
 /// All byte fields fit ABI2 u32 records. Capacity includes the slots listed in
@@ -193,6 +194,31 @@ impl ResourcePlan {
         })
     }
 
+    /// A reused instance retains its prior linear-memory pages. Admit those
+    /// pages before accepting a new frame, even if this frame needs fewer slots.
+    pub(crate) fn with_capacity_floor(mut self, existing_actual: u32) -> Result<Self, Status> {
+        if existing_actual != 0 && u64::from(existing_actual) % PAGE != 0 {
+            return Err(Status::MemoryAdmission);
+        }
+        let capacity = u64::from(self.linear_capacity_bytes.max(existing_actual));
+        if capacity > MAX_LINEAR_BYTES {
+            return Err(Status::MemoryAdmission);
+        }
+        let aggregate = add(
+            add(
+                DEMUX_RESERVE_BYTES,
+                u64::from(self.request.external_live_bytes),
+            )?,
+            add(u64::from(self.request.retained_output_bytes), capacity)?,
+        )?;
+        if aggregate > CONVERSION_BUDGET_BYTES {
+            return Err(Status::MemoryAdmission);
+        }
+        self.linear_capacity_bytes = word(capacity)?;
+        self.aggregate_bytes = word(aggregate)?;
+        Ok(self)
+    }
+
     /// Finalized partition sizes are admitted before their storage is exposed.
     /// Both partition buffers and final frame remain live during assembly. This
     /// also reserves a separate host copy for the mux ownership handoff.
@@ -227,7 +253,7 @@ impl ResourcePlan {
                 output,
             )?,
         )?;
-        let capacity = page_capacity(linear_live)?;
+        let capacity = page_capacity(linear_live)?.max(u64::from(self.linear_capacity_bytes));
         if capacity > MAX_LINEAR_BYTES {
             return Err(Status::MemoryAdmission);
         }
@@ -454,6 +480,29 @@ mod tests {
                 input_bytes: MAX_FRAME_LIVE_BYTES as u32,
                 ..base
             }),
+            Err(Status::MemoryAdmission)
+        );
+    }
+
+    #[test]
+    fn warm_capacity_floor_is_charged_once_and_survives_output_admission() {
+        let base = ResourcePlan::checked(request(1, 1, 0)).unwrap();
+        let floor = base.linear_capacity_bytes + PAGE as u32 * 4;
+        let warm = base.with_capacity_floor(floor).unwrap();
+        assert_eq!(warm.linear_capacity_bytes, floor);
+        assert_eq!(warm.aggregate_bytes - base.aggregate_bytes, PAGE as u32 * 4);
+        assert_eq!(
+            warm.with_output_sizes(100, 100)
+                .unwrap()
+                .linear_capacity_bytes,
+            floor
+        );
+        assert_eq!(
+            base.with_capacity_floor(floor - 1),
+            Err(Status::MemoryAdmission)
+        );
+        assert_eq!(
+            base.with_capacity_floor(MAX_LINEAR_BYTES as u32 + PAGE as u32),
             Err(Status::MemoryAdmission)
         );
     }
