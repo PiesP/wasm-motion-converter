@@ -37,6 +37,7 @@ import {
   readCancellationInspector,
 } from './cancellation-inspector.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
+import { exerciseOwnedDemuxProduct } from './helpers/owned-demux-product.ts';
 import { runOwnedVp8NativeProbe } from './helpers/owned-vp8-probe.ts';
 import {
   classifyWasmWarmCache,
@@ -3043,6 +3044,39 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const demuxSelector = resolve(bundleRoot, 'validation/windows/inputs/owned-demux-product.json');
+  let demuxSelectorText: string | undefined;
+  try {
+    demuxSelectorText = await readFile(demuxSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (demuxSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(demuxSelectorText), { scenario: 'owned-demux-product' });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter((name) => name.endsWith('.json') && name !== 'owned-demux-product.json'),
+      []
+    );
+    const build = await readBuild(bundleRoot, 'dist', validateBundleFile, {
+      verifyInventory: true,
+      exactInventory: true,
+    });
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseOwnedDemuxProduct({
+        browser,
+        bundleRoot,
+        output,
+        build,
+        url: started.url,
+        validateBundleFile,
+        loadApplication,
+      });
+    } finally {
+      await closeServer(started.server);
+    }
+  }
   const vp8Selector = resolve(bundleRoot, 'validation/windows/inputs/owned-vp8-native.json');
   let vp8SelectorText: string | undefined;
   try {
