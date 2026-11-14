@@ -29,6 +29,46 @@ struct Macroblock {
     v: [[i16; 16]; 4],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FilterConfig {
+    simple: bool,
+    level: u8,
+    sharpness: u8,
+}
+
+impl FilterConfig {
+    #[cfg(test)]
+    const DISABLED: Self = Self {
+        simple: false,
+        level: 0,
+        sharpness: 0,
+    };
+
+    fn for_quality(quality: u32) -> Self {
+        Self {
+            simple: false,
+            level: crate::presets::filter_level(quality),
+            sharpness: 0,
+        }
+    }
+
+    fn validate(self) -> Result<(), EncodeError> {
+        if self.level > 63 || self.sharpness > 7 {
+            return Err(EncodeError::InvalidInput);
+        }
+        Ok(())
+    }
+
+    fn write(self, sink: &mut impl BoolSink) -> Result<(), EncodeError> {
+        self.validate()?;
+        sink.bit(self.simple)?;
+        sink.literal(u32::from(self.level), 6)?;
+        sink.literal(u32::from(self.sharpness), 3)?;
+        sink.bit(false)?; // Macroblock filter deltas disabled.
+        Ok(())
+    }
+}
+
 const _: () = assert!(std::mem::size_of::<Macroblock>() <= 832);
 
 fn allocated(size: usize) -> Result<Vec<u8>, EncodeError> {
@@ -746,9 +786,10 @@ pub fn encode_textured(
             stride,
             format,
             quality,
+            filter: FilterConfig::for_quality(quality),
         },
         0,
-        |_, _, _, _| {},
+        |_, _, _, _, _| {},
     )
 }
 
@@ -759,13 +800,14 @@ struct FrameSpec {
     stride: u32,
     format: u32,
     quality: u32,
+    filter: FilterConfig,
 }
 
 fn encode_observed(
     pixels: &[u8],
     spec: FrameSpec,
     luma_policy: u8,
-    observe: impl FnOnce(&[u8], &[u8], &[u8], usize),
+    observe: impl FnOnce(&[u8], &[u8], &[u8], usize, &[Macroblock]),
 ) -> Result<Vec<u8>, EncodeError> {
     let FrameSpec {
         width,
@@ -773,7 +815,9 @@ fn encode_observed(
         stride,
         format,
         quality,
+        filter,
     } = spec;
+    filter.validate()?;
     let width = width as usize;
     let height = height as usize;
     let stride = stride as usize;
@@ -876,12 +920,13 @@ fn encode_observed(
             )?);
         }
     }
-    let result = emit_segmented_frame(&blocks, width, height, segments, deltas)?;
+    let result = emit_segmented_frame(&blocks, width, height, segments, deltas, filter)?;
     observe(
         &reconstructed_y,
         &reconstructed_u,
         &reconstructed_v,
         padded_w,
+        &blocks,
     );
     Ok(result)
 }
@@ -1040,14 +1085,13 @@ fn write_header_prefix(
     sink: &mut impl BoolSink,
     segments: SegmentConfig,
     deltas: Deltas,
+    filter: FilterConfig,
 ) -> Result<(), EncodeError> {
+    filter.validate()?;
     sink.bit(false)?; // YUV color space.
     sink.bit(false)?; // Decoder clamps output pixels.
-    segments.write_header(sink)?;
-    sink.bit(false)?; // Normal loop filter.
-    sink.literal(0, 6)?; // No loop filtering during this experiment.
-    sink.literal(0, 3)?;
-    sink.bit(false)?; // Macroblock filter deltas disabled.
+    segments.write_header(sink, filter.level)?;
+    filter.write(sink)?;
     sink.literal(0, 2)?; // One coefficient partition.
     sink.literal(segments.base_qindex as u32, 7)?;
     for delta in [
@@ -1189,6 +1233,7 @@ fn emit_frame(
         height,
         SegmentConfig::nonsegmented(qindex),
         Deltas::default(),
+        FilterConfig::DISABLED,
     )
 }
 
@@ -1198,13 +1243,23 @@ fn emit_segmented_frame(
     height: usize,
     segments: SegmentConfig,
     deltas: Deltas,
+    filter: FilterConfig,
 ) -> Result<Vec<u8>, EncodeError> {
+    filter.validate()?;
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
     let model = model_frozen(blocks, blocks_x, blocks_y)?;
-    let default_sizes = count_partitions(blocks, blocks_x, blocks_y, segments, deltas, None)?;
-    let modeled_sizes =
-        count_partitions(blocks, blocks_x, blocks_y, segments, deltas, Some(&model))?;
+    let default_sizes =
+        count_partitions(blocks, blocks_x, blocks_y, segments, deltas, filter, None)?;
+    let modeled_sizes = count_partitions(
+        blocks,
+        blocks_x,
+        blocks_y,
+        segments,
+        deltas,
+        filter,
+        Some(&model),
+    )?;
     let use_model = modeled_sizes.0 <= 0x7ffff
         && modeled_sizes.0 + modeled_sizes.1 < default_sizes.0 + default_sizes.1;
     let selected = if use_model {
@@ -1228,6 +1283,7 @@ fn emit_segmented_frame(
         blocks_y,
         segments,
         deltas,
+        filter,
         selected_model,
         &mut header,
         &mut token,
@@ -1284,11 +1340,12 @@ fn code_partitions(
     blocks_y: usize,
     segments: SegmentConfig,
     deltas: Deltas,
+    filter: FilterConfig,
     model: Option<&Model>,
     header: &mut impl BoolSink,
     token: &mut impl BoolSink,
 ) -> Result<(), EncodeError> {
-    write_header_prefix(header, segments, deltas)?;
+    write_header_prefix(header, segments, deltas, filter)?;
     write_updates(header, model, 0, NODE_COUNT)?;
     write_header_suffix(header)?;
     let mut contexts = CoeffContexts::new(blocks_x);
@@ -1323,6 +1380,7 @@ fn count_partitions(
     blocks_y: usize,
     segments: SegmentConfig,
     deltas: Deltas,
+    filter: FilterConfig,
     model: Option<&Model>,
 ) -> Result<(usize, usize), EncodeError> {
     let mut first = CountingBoolSink::default();
@@ -1333,6 +1391,7 @@ fn count_partitions(
         blocks_y,
         segments,
         deltas,
+        filter,
         model,
         &mut first,
         &mut second,
@@ -1370,6 +1429,7 @@ enum Stage {
 pub(crate) struct FrameEncoder {
     request: Request,
     plan: ResourcePlan,
+    filter: FilterConfig,
     input: Vec<u8>,
     source_y: Vec<u8>,
     source_u: Vec<u8>,
@@ -1419,6 +1479,21 @@ impl FrameEncoder {
         input: Vec<u8>,
         plan: ResourcePlan,
     ) -> Result<Self, Status> {
+        Self::new_with_filter(
+            request,
+            input,
+            plan,
+            FilterConfig::for_quality(request.quality),
+        )
+    }
+
+    fn new_with_filter(
+        request: Request,
+        input: Vec<u8>,
+        plan: ResourcePlan,
+        filter: FilterConfig,
+    ) -> Result<Self, Status> {
+        filter.validate().map_err(encode_status)?;
         let input_capacity =
             u32::try_from(input.capacity()).map_err(|_| Status::MemoryAdmission)?;
         if input_capacity > plan.input_reservation_bytes {
@@ -1447,6 +1522,7 @@ impl FrameEncoder {
         Ok(Self {
             request,
             plan,
+            filter,
             input,
             source_y: Vec::new(),
             source_u: Vec::new(),
@@ -1898,6 +1974,7 @@ impl FrameEncoder {
                     &mut self.count_header,
                     self.segments,
                     crate::presets::deltas(self.request.quality),
+                    self.filter,
                 )
                 .map_err(encode_status)?;
                 self.stage = Stage::CountUpdates;
@@ -1941,6 +2018,7 @@ impl FrameEncoder {
                     &mut self.pending_header,
                     self.segments,
                     crate::presets::deltas(self.request.quality),
+                    self.filter,
                 )
                 .map_err(encode_status)?;
                 self.stage = Stage::EmitUpdates;
@@ -2029,6 +2107,65 @@ mod tests {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
+    #[allow(clippy::too_many_arguments)]
+    fn filtered_visible_yuv(
+        y: &[u8],
+        u: &[u8],
+        v: &[u8],
+        padded_w: usize,
+        width: usize,
+        height: usize,
+        blocks: &[Macroblock],
+        filter: FilterConfig,
+    ) -> Vec<u8> {
+        let padded_h = height.div_ceil(16) * 16;
+        let mut y = y.to_vec();
+        let mut u = u.to_vec();
+        let mut v = v.to_vec();
+        let mut planes = crate::filter::Planes {
+            y: crate::filter::Plane {
+                data: &mut y,
+                width: padded_w,
+                height: padded_h,
+                stride: padded_w,
+            },
+            u: crate::filter::Plane {
+                data: &mut u,
+                width: padded_w / 2,
+                height: padded_h / 2,
+                stride: padded_w / 2,
+            },
+            v: crate::filter::Plane {
+                data: &mut v,
+                width: padded_w / 2,
+                height: padded_h / 2,
+                stride: padded_w / 2,
+            },
+        };
+        let params: Vec<_> = blocks
+            .iter()
+            .map(|block| crate::filter::FilterParams {
+                level: filter.level,
+                sharpness: filter.sharpness,
+                simple: filter.simple,
+                i4: !block.i16,
+                has_coefficients: !block.skip(),
+            })
+            .collect();
+        crate::filter::filter_frame(&mut planes, padded_w / 16, padded_h / 16, &params).unwrap();
+        let mut visible = Vec::new();
+        for (plane, stride, w, h) in [
+            (&y, padded_w, width, height),
+            (&u, padded_w / 2, width.div_ceil(2), height.div_ceil(2)),
+            (&v, padded_w / 2, width.div_ceil(2), height.div_ceil(2)),
+        ] {
+            for row in 0..h {
+                visible.extend_from_slice(&plane[row * stride..row * stride + w]);
+            }
+        }
+        visible
+    }
+
     #[test]
     fn all_i4_modes_follow_the_normative_tree() {
         struct Operations(Vec<(u8, bool)>);
@@ -2076,6 +2213,59 @@ mod tests {
             write_bmode(&mut Operations(Vec::new()), 0, 0, 10),
             Err(EncodeError::InvalidInput)
         );
+    }
+
+    #[test]
+    fn filter_header_and_internal_controls_are_explicit() {
+        struct Bits(Vec<bool>);
+        impl BoolSink for Bits {
+            fn write(&mut self, _probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push(bit);
+                Ok(())
+            }
+        }
+        for (quality, level) in [(60, 6), (75, 4), (85, 2)] {
+            assert_eq!(FilterConfig::for_quality(quality).level, level);
+        }
+        let filter = FilterConfig {
+            simple: true,
+            level: 6,
+            sharpness: 3,
+        };
+        let mut bits = Bits(Vec::new());
+        write_header_prefix(
+            &mut bits,
+            SegmentConfig::nonsegmented(23),
+            Deltas::default(),
+            filter,
+        )
+        .unwrap();
+        assert_eq!(
+            &bits.0[3..14],
+            &[true, false, false, false, true, true, false, false, true, true, false]
+        );
+        for invalid in [
+            FilterConfig {
+                level: 64,
+                ..filter
+            },
+            FilterConfig {
+                sharpness: 8,
+                ..filter
+            },
+        ] {
+            assert_eq!(
+                invalid.write(&mut Bits(Vec::new())),
+                Err(EncodeError::InvalidInput)
+            );
+            let pixels = [128, 128, 128, 255];
+            let request = engine_request(1, 1, 0, &pixels, 4);
+            let plan = ResourcePlan::checked(request).unwrap();
+            assert!(matches!(
+                FrameEncoder::new_with_filter(request, pixels.to_vec(), plan, invalid),
+                Err(Status::InvalidInput)
+            ));
+        }
     }
 
     #[test]
@@ -2192,7 +2382,13 @@ mod tests {
         }
         let segments = SegmentConfig::from_counts(75, [1, 1, 1], 3);
         let mut header = Operations(Vec::new());
-        write_header_prefix(&mut header, segments, crate::presets::deltas(75)).unwrap();
+        write_header_prefix(
+            &mut header,
+            segments,
+            crate::presets::deltas(75),
+            FilterConfig::DISABLED,
+        )
+        .unwrap();
         assert_eq!(
             &header.0[..6],
             &[
@@ -2250,6 +2446,7 @@ mod tests {
                 uv_ac: -7,
                 ..Deltas::default()
             },
+            FilterConfig::DISABLED,
         )
         .unwrap();
         assert_eq!(
@@ -2285,6 +2482,7 @@ mod tests {
             1,
             SegmentConfig::nonsegmented(22),
             Deltas::default(),
+            FilterConfig::DISABLED,
             None,
         )
         .unwrap();
@@ -2310,6 +2508,7 @@ mod tests {
             16,
             SegmentConfig::nonsegmented(22),
             Deltas::default(),
+            FilterConfig::DISABLED,
             None,
         )
         .unwrap();
@@ -2319,6 +2518,7 @@ mod tests {
             16,
             SegmentConfig::nonsegmented(22),
             Deltas::default(),
+            FilterConfig::DISABLED,
             Some(&model),
         )
         .unwrap();
@@ -2381,6 +2581,7 @@ mod tests {
             &mut header,
             SegmentConfig::nonsegmented(8),
             Deltas::default(),
+            FilterConfig::DISABLED,
         )
         .unwrap();
         write_updates(&mut header, Some(&model), 0, NODE_COUNT).unwrap();
@@ -2736,7 +2937,9 @@ mod tests {
         let input = mixed_segment_input();
         let request = engine_request(48, 16, 0, &input, 192);
         let plan = ResourcePlan::checked(request).unwrap();
-        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        let engine = run_engine(
+            FrameEncoder::new_with_filter(request, input, plan, FilterConfig::DISABLED).unwrap(),
+        );
         assert!(engine.segments.enabled);
         assert_eq!(engine.class_counts, [1, 1, 1]);
         assert_eq!(
@@ -2781,7 +2984,10 @@ mod tests {
             }
             let request = engine_request(width, height, 0, &input, width * 4);
             let plan = ResourcePlan::checked(request).unwrap();
-            let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+            let engine = run_engine(
+                FrameEncoder::new_with_filter(request, input, plan, FilterConfig::DISABLED)
+                    .unwrap(),
+            );
             let (y, u, v, padded_w) = engine.reconstruction();
             let mut expected = Vec::new();
             for (plane, stride, w, h) in [
@@ -2892,6 +3098,191 @@ mod tests {
             expected.extend_from_slice(&[128; 64]);
             assert_decodes(&frame, 16, 16, &expected, &format!("forced I4 mode {mode}"));
         }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_enabled_filter_reconstruction_matrix() {
+        let filters = [
+            FilterConfig {
+                simple: false,
+                level: 0,
+                sharpness: 0,
+            },
+            FilterConfig {
+                simple: false,
+                level: 1,
+                sharpness: 0,
+            },
+            FilterConfig {
+                simple: false,
+                level: 6,
+                sharpness: 3,
+            },
+            FilterConfig {
+                simple: false,
+                level: 15,
+                sharpness: 7,
+            },
+            FilterConfig {
+                simple: false,
+                level: 40,
+                sharpness: 0,
+            },
+            FilterConfig {
+                simple: false,
+                level: 63,
+                sharpness: 3,
+            },
+            FilterConfig {
+                simple: true,
+                level: 6,
+                sharpness: 0,
+            },
+            FilterConfig {
+                simple: true,
+                level: 15,
+                sharpness: 3,
+            },
+            FilterConfig {
+                simple: true,
+                level: 40,
+                sharpness: 7,
+            },
+            FilterConfig {
+                simple: true,
+                level: 63,
+                sharpness: 0,
+            },
+        ];
+        let dimensions = [(1, 1), (1, 33), (33, 1), (31, 33), (48, 32)];
+        let mut seen = [[false; 2]; 2]; // I16/I4 by skipped/nonzero.
+        for filter in filters {
+            for (width, height) in dimensions {
+                let mut pixels = Vec::with_capacity(width * height * 4);
+                for y in 0..height {
+                    for x in 0..width {
+                        let rgb = if width == 1 && height == 1 {
+                            [128; 3]
+                        } else {
+                            [
+                                (x * 37 + y * 13) as u8,
+                                (x * 11 + y * 41) as u8,
+                                (x * 29 + y * 7) as u8,
+                            ]
+                        };
+                        pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+                    }
+                }
+                for policy in [1, 2] {
+                    let mut expected = Vec::new();
+                    let frame = encode_observed(
+                        &pixels,
+                        FrameSpec {
+                            width: width as u32,
+                            height: height as u32,
+                            stride: (width * 4) as u32,
+                            format: 0,
+                            quality: 75,
+                            filter,
+                        },
+                        policy,
+                        |y, u, v, padded_w, blocks| {
+                            for block in blocks {
+                                seen[usize::from(!block.i16)][usize::from(!block.skip())] = true;
+                            }
+                            expected = filtered_visible_yuv(
+                                y, u, v, padded_w, width, height, blocks, filter,
+                            );
+                            if filter.simple {
+                                let y_bytes = width * height;
+                                let uv_bytes = width.div_ceil(2) * height.div_ceil(2);
+                                let unfiltered_u = (0..height.div_ceil(2))
+                                    .flat_map(|row| {
+                                        u[row * padded_w / 2
+                                            ..row * padded_w / 2 + width.div_ceil(2)]
+                                            .iter()
+                                            .copied()
+                                    })
+                                    .collect::<Vec<_>>();
+                                assert_eq!(&expected[y_bytes..y_bytes + uv_bytes], unfiltered_u);
+                                let unfiltered_v = (0..height.div_ceil(2))
+                                    .flat_map(|row| {
+                                        v[row * padded_w / 2
+                                            ..row * padded_w / 2 + width.div_ceil(2)]
+                                            .iter()
+                                            .copied()
+                                    })
+                                    .collect::<Vec<_>>();
+                                assert_eq!(&expected[y_bytes + uv_bytes..], unfiltered_v);
+                            }
+                        },
+                    )
+                    .unwrap();
+                    assert_decodes(
+                        &frame,
+                        width,
+                        height,
+                        &expected,
+                        &format!("filter={filter:?} policy={policy}"),
+                    );
+                }
+            }
+            for i16 in [true, false] {
+                let block = Macroblock {
+                    i16,
+                    ..Macroblock::default()
+                };
+                assert!(block.skip());
+                let frame = emit_segmented_frame(
+                    std::slice::from_ref(&block),
+                    16,
+                    16,
+                    SegmentConfig::nonsegmented(23),
+                    Deltas::default(),
+                    filter,
+                )
+                .unwrap();
+                let y = if i16 {
+                    [128; 256]
+                } else {
+                    let global = [0u8; 256];
+                    let mut tile = [0u8; 256];
+                    for by in 0..4 {
+                        for bx in 0..4 {
+                            let (top, left, corner) = i4_edge(&global, &tile, 16, 0, 0, bx, by);
+                            let patch = prediction::predict_i4(&top, &left, corner, SmallMode::Dc);
+                            store_patch::<16, 256>(&mut tile, bx, by, &patch);
+                        }
+                    }
+                    tile
+                };
+                let uv = [128; 64];
+                let expected = filtered_visible_yuv(
+                    &y,
+                    &uv,
+                    &uv,
+                    16,
+                    16,
+                    16,
+                    std::slice::from_ref(&block),
+                    filter,
+                );
+                assert_decodes(
+                    &frame,
+                    16,
+                    16,
+                    &expected,
+                    &format!("filter={filter:?} skipped i16={i16}"),
+                );
+                seen[usize::from(!i16)][0] = true;
+            }
+        }
+        assert!(
+            seen.into_iter()
+                .all(|row| row.into_iter().all(|value| value)),
+            "I16/I4 skip/nonzero coverage: {seen:?}"
+        );
     }
 
     #[test]
@@ -3081,9 +3472,10 @@ mod tests {
                             stride: width as u32 * 4,
                             format: 0,
                             quality,
+                            filter: FilterConfig::DISABLED,
                         },
                         pattern,
-                        |y, u, v, padded_w| {
+                        |y, u, v, padded_w, _| {
                             for (plane, stride, w, h) in [
                                 (y, padded_w, width, height),
                                 (u, padded_w / 2, width.div_ceil(2), height.div_ceil(2)),
@@ -3106,10 +3498,11 @@ mod tests {
                                 height: height as u32,
                                 stride: width as u32 * 4,
                                 format: 0,
-                                quality
+                                quality,
+                                filter: FilterConfig::DISABLED,
                             },
                             pattern,
-                            |_, _, _, _| {}
+                            |_, _, _, _, _| {}
                         )
                         .unwrap()
                     );

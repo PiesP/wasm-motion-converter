@@ -9,6 +9,7 @@ pub(crate) const CHROMATIC_SMOOTH_QINDEX: [usize; 3] = [8, 8, 8];
 pub(crate) const TEXTURED_QINDEX: [usize; 3] = [30, 23, 14];
 pub(crate) const UV_DC_DELTA: [i8; 3] = [0, -4, -4];
 pub(crate) const UV_AC_DELTA: [i8; 3] = [0, -4, -4];
+pub(crate) const FILTER_LEVEL: [u8; 3] = [6, 4, 2];
 pub(crate) const LAMBDA_NUMERATOR: u64 = 1;
 pub(crate) const LAMBDA_DENOMINATOR: u64 = 1;
 pub(crate) fn qindex(quality: u32) -> usize {
@@ -43,6 +44,13 @@ pub(crate) fn deltas(quality: u32) -> Deltas {
         uv_ac: UV_AC_DELTA[preset],
         ..Deltas::default()
     }
+}
+pub(crate) fn filter_level(quality: u32) -> u8 {
+    FILTER_LEVEL[match quality {
+        60 => 0,
+        75 => 1,
+        _ => 2,
+    }]
 }
 pub(crate) fn lambda_for_q(qindex: usize) -> u64 {
     let q = qindex as u64 + 8;

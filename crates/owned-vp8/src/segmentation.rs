@@ -15,6 +15,7 @@ pub(crate) struct Config {
     pub base_qindex: usize,
     pub qindex: [usize; 3],
     pub map_probabilities: [u8; 2],
+    active: [bool; 3],
 }
 
 impl Config {
@@ -24,6 +25,7 @@ impl Config {
             base_qindex: qindex,
             qindex: [qindex; 3],
             map_probabilities: [255; 2],
+            active: [false; 3],
         }
     }
 
@@ -55,6 +57,7 @@ impl Config {
             base_qindex,
             qindex,
             map_probabilities,
+            active: counts.map(|count| count > 0),
         }
     }
 
@@ -62,7 +65,14 @@ impl Config {
         self.qindex[id as usize]
     }
 
-    pub(crate) fn write_header(self, sink: &mut impl BoolSink) -> Result<(), EncodeError> {
+    pub(crate) fn write_header(
+        self,
+        sink: &mut impl BoolSink,
+        filter_level: u8,
+    ) -> Result<(), EncodeError> {
+        if filter_level > 63 {
+            return Err(EncodeError::InvalidInput);
+        }
         sink.bit(self.enabled)?;
         if !self.enabled {
             return Ok(());
@@ -77,9 +87,16 @@ impl Config {
                 sink.bit(false)?; // Positive value.
             }
         }
-        for _ in 0..4 {
-            sink.bit(false)?;
-        } // No loop-filter overrides.
+        // Absolute segmentation replaces the frame's filter level. Signal
+        // the same level for each active ID, leaving unused IDs at zero.
+        for id in 0..4 {
+            let active = id < 3 && self.active[id] && filter_level > 0;
+            sink.bit(active)?;
+            if active {
+                sink.literal(u32::from(filter_level), 6)?;
+                sink.bit(false)?; // Positive absolute value.
+            }
+        }
         sink.bit(true)?;
         sink.literal(u32::from(self.map_probabilities[0]), 8)?; // IDs 0/1 versus 2/3.
         sink.bit(true)?;
@@ -216,6 +233,36 @@ mod tests {
         }
         assert_eq!(
             config.write_id(&mut Operations(Vec::new()), 3),
+            Err(EncodeError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn absolute_segments_signal_filter_level_for_active_ids() {
+        struct Bits(Vec<bool>);
+        impl BoolSink for Bits {
+            fn write(&mut self, _probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push(bit);
+                Ok(())
+            }
+        }
+        let config = Config::from_counts(75, [1, 0, 1], 2);
+        let mut bits = Bits(Vec::new());
+        config.write_header(&mut bits, 6).unwrap();
+        // Four control bits and four quantizer feature records precede the
+        // per-segment filter strengths.
+        assert_eq!(
+            &bits.0[32..50],
+            &[
+                true, false, false, false, true, true, false, false, false, true, false, false,
+                false, true, true, false, false, false,
+            ]
+        );
+        let mut disabled = Bits(Vec::new());
+        config.write_header(&mut disabled, 0).unwrap();
+        assert_eq!(&disabled.0[32..36], &[false; 4]);
+        assert_eq!(
+            config.write_header(&mut Bits(Vec::new()), 64),
             Err(EncodeError::InvalidInput)
         );
     }
