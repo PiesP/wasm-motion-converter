@@ -177,6 +177,8 @@ export function parseAnimatedWebp(bytes: Buffer) {
   let offset = 12;
   let canvas: { width: number; height: number } | null = null;
   let loopCount: number | null = null;
+  let iccFlag = false;
+  let iccPayload: { bytes: number; sha256: string } | null = null;
   const frames: Array<{
     index: number;
     x: number;
@@ -198,7 +200,12 @@ export function parseAnimatedWebp(bytes: Buffer) {
       assert.equal(canvas, null, 'Repeated VP8X chunk');
       assert.equal(size, 10);
       assert(bytes[start]! & 0x02, 'WebP animation flag is absent');
+      iccFlag = Boolean(bytes[start]! & 0x20);
       canvas = { width: u24(bytes, start + 4) + 1, height: u24(bytes, start + 7) + 1 };
+    } else if (tag === 'ICCP') {
+      assert(canvas && loopCount === null && iccPayload === null, 'ICCP is missing or repeated');
+      assert(size > 0, 'ICCP payload is empty');
+      iccPayload = { bytes: size, sha256: digest(bytes.subarray(start, end)) };
     } else if (tag === 'ANIM') {
       assert(canvas && loopCount === null, 'ANIM is missing or repeated');
       assert.equal(size, 6);
@@ -252,6 +259,7 @@ export function parseAnimatedWebp(bytes: Buffer) {
     offset = end + (size & 1);
   }
   assert.equal(offset, bytes.length, 'WebP trailing bytes differ');
+  assert.equal(iccFlag, iccPayload !== null, 'WebP ICC flag and ICCP chunk differ');
   assert(
     canvas && loopCount === 0 && frames.length > 0,
     'WebP animation or infinite loop is missing'
@@ -263,6 +271,7 @@ export function parseAnimatedWebp(bytes: Buffer) {
   return {
     canvas,
     loopCount,
+    icc: { flag: iccFlag, payload: iccPayload },
     frames,
     totalDurationMs: frames.reduce((sum, frame) => sum + frame.durationMs, 0),
   };
@@ -430,9 +439,15 @@ function disableCanvasWebp() {
     });
 }
 
-function instrumentOwnedInstance() {
+export function instrumentOwnedInstance() {
   const NativeInstance = WebAssembly.Instance;
-  const state = { instances: 0, stepCalls: 0, statusCounts: {} as Record<string, number> };
+  const state = {
+    instances: 0,
+    stepCalls: 0,
+    statusCounts: {} as Record<string, number>,
+    successfulBeginCalls: 0,
+    beginStatusCounts: {} as Record<string, number>,
+  };
   Reflect.set(globalThis, '__wmcVp8AbiProbe', state);
   WebAssembly.Instance = new Proxy(NativeInstance, {
     construct(target, args, newTarget) {
@@ -445,14 +460,23 @@ function instrumentOwnedInstance() {
       const wrapped = Object.fromEntries(
         Object.entries(exported).map(([key, value]) => [
           key,
-          key === 'vp8_v2_step' && typeof value === 'function'
+          key === 'vp8_v2_begin' && typeof value === 'function'
             ? (...parameters: unknown[]) => {
-                state.stepCalls++;
                 const status = Reflect.apply(value, exported, parameters) as number;
-                state.statusCounts[String(status)] = (state.statusCounts[String(status)] ?? 0) + 1;
+                state.beginStatusCounts[String(status)] =
+                  (state.beginStatusCounts[String(status)] ?? 0) + 1;
+                if (status === 10) state.successfulBeginCalls++;
                 return status;
               }
-            : value,
+            : key === 'vp8_v2_step' && typeof value === 'function'
+              ? (...parameters: unknown[]) => {
+                  state.stepCalls++;
+                  const status = Reflect.apply(value, exported, parameters) as number;
+                  state.statusCounts[String(status)] =
+                    (state.statusCounts[String(status)] ?? 0) + 1;
+                  return status;
+                }
+              : value,
         ])
       );
       return new Proxy(instance, {
@@ -502,7 +526,7 @@ async function measureJob(
   condition: 'first-in-document' | 'same-document-warm',
   output: string,
   caseId: string
-): Promise<Sample> {
+) {
   const before = await page.evaluate(() => {
     const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as { reset: () => void };
     observed.reset();
@@ -592,14 +616,6 @@ async function measureJob(
       `Decoded hold ${index} differs from RIFF`
     );
   }
-  if (fixture.id === 'v8-full') {
-    const expected = (fixture.durationMs * CADENCE[quality]) / 1_000;
-    assert(
-      decoded.frames.length >= Math.floor(expected) - 4 &&
-        decoded.frames.length <= Math.ceil(expected) + 4,
-      `Full V8 output omitted the selected ${CADENCE[quality]} fps cadence`
-    );
-  }
   if (fixture.id === 'clusters') {
     assertClusterSequence(decoded.frames);
   }
@@ -620,6 +636,7 @@ async function measureJob(
     requestToDownloadReadyMs: timing.readyMs - timing.clickMs,
     requestToBlobPublicationMs: timing.publications[0]!.atMs - timing.clickMs,
     wasmResources: timing.resourceEntries,
+    emittedAnmfCount: parsed.frames.length,
     saved: { file, bytes: bytes.length, sha256: digest(bytes) },
     parsed,
     decoded,
@@ -1162,7 +1179,7 @@ export async function exerciseOwnedVp8Product({
     softwareInjection:
       'Page OffscreenCanvas.convertToBlob disabled before application code; Worker JS is patched only if loaded, and a patch record alone is not encoding-route proof',
     functionalScope: fullVideo
-      ? 'V8 selector measures and decodes only; active Stop and invalid-to-valid recovery are exercised in the small product selector, not repeated for each V8 quality'
+      ? 'After uninstrumented first/warm samples, one additional candidate main-WASM conversion attests successful ABI2 begin calls; emitted ANMF counts are recorded separately. Active Stop and recovery remain in the small selector.'
       : 'Candidate UI main software recovery and active Stop; separate direct conversion Worker protocol and owned output',
     samples: [] as Sample[],
     functional: [] as unknown[],
@@ -1272,7 +1289,7 @@ export async function exerciseOwnedVp8Product({
               let firstDocumentTimeOrigin: unknown;
               for (const condition of ['first-in-document', 'same-document-warm'] as const) {
                 activeCase = `owned-vp8-${scenario}-${name}-${fixture.id}-${quality}-${condition}`;
-                const sample = await measureJob(
+                const sample: Sample = await measureJob(
                   page,
                   fixture,
                   sha256,
@@ -1293,6 +1310,53 @@ export async function exerciseOwnedVp8Product({
                   );
                 assert.deepEqual(errors, [], `${name} ${fixture.id} ${quality} page errors`);
                 (report.samples as Sample[]).push(sample);
+                await persist();
+              }
+              if (fullVideo && name === 'candidate') {
+                activeCase = `owned-vp8-${scenario}-${name}-${fixture.id}-${quality}-functional-cadence`;
+                await page.evaluate(instrumentOwnedInstance);
+                const checked = await measureJob(
+                  page,
+                  fixture,
+                  sha256,
+                  quality,
+                  name,
+                  'same-document-warm',
+                  output,
+                  activeCase
+                );
+                const probe = (await page.evaluate(() =>
+                  Reflect.get(globalThis, '__wmcVp8AbiProbe')
+                )) as {
+                  instances: number;
+                  successfulBeginCalls: number;
+                  beginStatusCounts: Record<string, number>;
+                };
+                assert(probe.instances > 0, 'V8 functional conversion did not create owned WASM');
+                const expected = (fixture.durationMs * CADENCE[quality]) / 1_000;
+                assert(
+                  probe.successfulBeginCalls >= Math.floor(expected) - 4 &&
+                    probe.successfulBeginCalls <= Math.ceil(expected) + 4,
+                  `Full V8 conversion omitted the selected ${CADENCE[quality]} fps encoded work`
+                );
+                assert(
+                  checked.parsed.frames.length <= probe.successfulBeginCalls,
+                  'V8 emitted more ANMF chunks than successful ABI2 begins'
+                );
+                (report.functional as unknown[]).push({
+                  route: 'ui-main-v8-cadence',
+                  fixture: fixture.id,
+                  quality,
+                  inputSha256: sha256,
+                  targetCadenceFps: CADENCE[quality],
+                  expectedBeginCalls: expected,
+                  toleranceFrames: 4,
+                  abi: probe,
+                  emittedAnmfCount: checked.parsed.frames.length,
+                  saved: checked.saved,
+                  parsed: checked.parsed,
+                  decoded: checked.decoded,
+                });
                 await persist();
               }
             } catch (error) {
@@ -1323,12 +1387,10 @@ export async function exerciseOwnedVp8Product({
           sample.condition === selected.condition
       );
       assert(priorSample, 'Candidate sample has no paired prior sample');
-      const candidateFrames = (selected.parsed as { frames: unknown[] }).frames.length;
-      const priorFrames = (priorSample.parsed as { frames: unknown[] }).frames.length;
-      assert(
-        candidateFrames >= priorFrames,
-        'Candidate selected fewer frames than prior for a matching job'
-      );
+      assert.equal(selected.inputSha256, priorSample.inputSha256, 'Paired inputs differ');
+      // The muxer may merge identical encoded frames and extend their hold.
+      // ANMF counts describe output representation, not selected-frame work.
+      selected.pairedEmittedAnmfCount = (priorSample.parsed as { frames: unknown[] }).frames.length;
     }
     await server.setDistribution(candidate.relativePath);
     if (!fullVideo) {

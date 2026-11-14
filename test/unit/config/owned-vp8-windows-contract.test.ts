@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 import type { Page } from '@playwright/test';
-import { describe, expect, it, vi } from 'vite-plus/test';
+import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import { checkOwnedVp8Inputs } from '../../../scripts/check/owned-vp8-inputs.ts';
 import { isWorkerRequest } from '../../../src/services/conversion-worker/guards.ts';
@@ -12,8 +13,11 @@ import {
   DIRECT_WORKER_CLUSTER_CONFIG,
   DIRECT_WORKER_OPTIONS,
   captureFailure,
+  instrumentOwnedInstance,
   parseAnimatedWebp,
 } from '../../../validation/windows/helpers/owned-vp8-product.ts';
+
+afterEach(() => vi.unstubAllGlobals());
 
 const root = resolve(import.meta.dirname, '../../..');
 
@@ -170,8 +174,56 @@ describe('owned VP8 Windows product contract', () => {
     expect(parsed.canvas).toEqual({ width: 2, height: 1 });
     expect(parsed.frames.map((entry) => entry.durationMs)).toEqual([83, 167]);
     expect(parsed.totalDurationMs).toBe(250);
+    expect(parsed.icc).toEqual({ flag: false, payload: null });
     expect(() => parseAnimatedWebp(animation(frame(83, 3, 1)))).toThrow(/geometry/);
     expect(() => parseAnimatedWebp(bytes.subarray(0, -1))).toThrow(/RIFF length/);
+  });
+
+  it('records the actual ICCP payload and requires it to agree with the VP8X flag', () => {
+    const plain = animation(frame(83));
+    const profile = Buffer.from('synthetic-test-profile');
+    const iccp = chunk('ICCP', profile);
+    const body = Buffer.concat([plain.subarray(12, 30), iccp, plain.subarray(30)]);
+    const withIcc = Buffer.concat([plain.subarray(0, 12), body]);
+    withIcc.writeUInt32LE(withIcc.length - 8, 4);
+    withIcc[20] = 0x22;
+    expect(parseAnimatedWebp(withIcc).icc).toEqual({
+      flag: true,
+      payload: {
+        bytes: profile.length,
+        sha256: createHash('sha256').update(profile).digest('hex'),
+      },
+    });
+    const missingChunk = Buffer.from(plain);
+    missingChunk[20] = 0x22;
+    expect(() => parseAnimatedWebp(missingChunk)).toThrow(/ICC flag/);
+    withIcc[20] = 0x02;
+    expect(() => parseAnimatedWebp(withIcc)).toThrow(/ICC flag/);
+  });
+
+  it('counts only successful ABI2 begin calls from fresh owned instances', () => {
+    const statuses = [10, 12, 10];
+    class FakeInstance {
+      exports = {
+        vp8_v2_begin: () => statuses.shift(),
+        vp8_v2_step: () => 11,
+      };
+    }
+    vi.stubGlobal('WebAssembly', { Instance: FakeInstance });
+    instrumentOwnedInstance();
+    const instance = new WebAssembly.Instance({} as WebAssembly.Module);
+    const exported = instance.exports as { vp8_v2_begin: () => number; vp8_v2_step: () => number };
+    expect([exported.vp8_v2_begin(), exported.vp8_v2_begin(), exported.vp8_v2_begin()]).toEqual([
+      10, 12, 10,
+    ]);
+    expect(exported.vp8_v2_step()).toBe(11);
+    expect(Reflect.get(globalThis, '__wmcVp8AbiProbe')).toMatchObject({
+      instances: 1,
+      successfulBeginCalls: 2,
+      beginStatusCounts: { '10': 2, '12': 1 },
+      stepCalls: 1,
+    });
+    Reflect.deleteProperty(globalThis, '__wmcVp8AbiProbe');
   });
 
   it('admits a README-only normal build and rejects extra, linked, or wrong V8 media', async () => {
