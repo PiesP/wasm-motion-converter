@@ -7,9 +7,11 @@ The q60/75/85 quantizers are exploratory and do not qualify preset fidelity
 or removal of `wasm-webp`.
 
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
-sections 7, 9, 11 and 13.4. RFC 6386 is Copyright (c) 2011 IETF Trust and the
-identified contributors; the static probability table is a format constant,
-not imported encoder source. The implementation is original Rust under MIT.
+sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
+tables are format constants from sections 13.4, 13.5 and 14.1 respectively;
+their Rust files identify those sources separately. RFC 6386 is Copyright (c)
+2011 IETF Trust and the identified contributors. These numeric format tables
+are not an imported encoder implementation. The encoder is original Rust under MIT.
 The [W3C VP8 WebCodecs registration](https://www.w3.org/TR/webcodecs-vp8-codec-registration/)
 defines raw `EncodedVideoChunk` keyframe bytes; browser support must be probed.
 
