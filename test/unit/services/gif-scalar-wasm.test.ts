@@ -46,6 +46,7 @@ function instantiate(): {
   enable_retained(length: number): number;
   map_retained(length: number, colors: number): number;
   promote_retained(handle: number): number;
+  retained_result_ptr(): number;
   release_retained(handle: number): number;
   retained_palette_len(handle: number): number;
   retained_palette_ptr(handle: number): number;
@@ -71,6 +72,18 @@ function runMapped(input: Uint8Array, palette: number[][], wasm = instantiate())
   paletteBytes.set(palette.flat());
   expect(wasm.map_palette(input.byteLength, palette.length)).toBe(input.byteLength / 4);
   return new Uint8Array(wasm.memory.buffer, wasm.indices_ptr(), input.byteLength / 4).slice();
+}
+
+function retainedHandle(wasm: ReturnType<typeof instantiate>, status: number): number {
+  const record = new DataView(wasm.memory.buffer, wasm.retained_result_ptr(), 8);
+  expect(record.getInt32(0, true)).toBe(status);
+  if (status !== 0) {
+    expect(record.getUint32(4, true)).toBe(0);
+    return 0;
+  }
+  const handle = record.getUint32(4, true);
+  expect(handle).toBeGreaterThan(0);
+  return handle;
 }
 
 function referenceImageData(indices: Uint8Array, depth: number): Uint8Array {
@@ -153,7 +166,7 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
       new Uint8Array(wasm.memory.buffer, wasm.palette_ptr(), palette.length * 3).set(
         palette.flat()
       );
-      return wasm.map_retained(length, palette.length);
+      return retainedHandle(wasm, wasm.map_retained(length, palette.length));
     };
     const transient = map(first, [
       [255, 0, 0],
@@ -168,8 +181,11 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
     expect(new Uint8Array(wasm.memory.buffer, wasm.input_ptr(), 4)).toEqual(
       Uint8Array.of(0, 1, 0, 1)
     );
-    const pending = wasm.promote_retained(transient);
+    const pending = retainedHandle(wasm, wasm.promote_retained(transient));
     expect(pending).toBeGreaterThan(0);
+    const staleStatus = wasm.promote_retained(transient);
+    expect(staleStatus).toBe(-1);
+    retainedHandle(wasm, staleStatus);
     expect(wasm.retained_palette_len(transient)).toBe(-1);
     expect(wasm.capture_global_palette(pending)).toBe(0);
     const next = map(second, [
@@ -192,7 +208,7 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
     expect(new Uint8Array(wasm.memory.buffer, wasm.input_ptr(), 4)).toEqual(
       candidateBeforeCompression
     );
-    const successor = wasm.promote_retained(next);
+    const successor = retainedHandle(wasm, wasm.promote_retained(next));
     expect(wasm.remap_retained_global(successor)).toBe(1);
     expect(wasm.release_retained(pending)).toBe(0);
     expect(wasm.lzw_encode_retained(pending, 2, bound)).toBe(-1);

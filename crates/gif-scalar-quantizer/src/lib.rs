@@ -75,6 +75,19 @@ impl RetainedSlot {
     };
 }
 
+#[repr(C)]
+struct RetainedResult {
+    status: i32,
+    handle: u32,
+}
+
+impl RetainedResult {
+    const EMPTY: Self = Self {
+        status: 0,
+        handle: 0,
+    };
+}
+
 struct State {
     bins: [Bin; BIN_COUNT],
     order: [u32; BIN_COUNT],
@@ -89,6 +102,7 @@ struct State {
     generation: u32,
     global_palette: [u8; 256 * 3],
     global_len: u16,
+    retained_result: RetainedResult,
 }
 
 struct ConversionState(UnsafeCell<State>);
@@ -112,6 +126,7 @@ static STATE: ConversionState = ConversionState(UnsafeCell::new(State {
     generation: 0,
     global_palette: [0; 256 * 3],
     global_len: 0,
+    retained_result: RetainedResult::EMPTY,
 }));
 
 #[no_mangle]
@@ -230,14 +245,28 @@ fn checked_slot(state: &State, handle: u32) -> Option<usize> {
     None
 }
 
-fn fresh_handle(state: &mut State, slot: usize) -> Option<i32> {
+fn fresh_handle(state: &mut State, slot: usize) -> Option<u32> {
     if state.generation >= MAX_RETAINED_GENERATION {
         return None;
     }
     state.generation += 1;
     state.retained[slot].generation = state.generation;
     state.retained[slot].live = true;
-    Some(((state.generation << 2) | slot as u32) as i32)
+    Some((state.generation << 2) | slot as u32)
+}
+
+#[inline]
+fn record_retained_result(state: &mut State, status: i32, handle: u32) -> i32 {
+    state.retained_result = RetainedResult {
+        status,
+        handle: if status == 0 { handle } else { 0 },
+    };
+    status
+}
+
+#[no_mangle]
+pub extern "C" fn retained_result_ptr() -> u32 {
+    unsafe { core::ptr::addr_of!((*STATE.0.get()).retained_result) as u32 }
 }
 
 // Apply the locked JS 8x8 Bayer threshold after the host has made its one
@@ -602,17 +631,18 @@ pub extern "C" fn map_palette(input_len: u32, colors: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn map_retained(input_len: u32, colors: u32) -> i32 {
     {
-        let state = unsafe { &*STATE.0.get() };
+        let state = unsafe { &mut *STATE.0.get() };
+        state.retained_result = RetainedResult::EMPTY;
         if !state.retained_enabled || state.retained_len != input_len || state.retained[0].live {
-            return -1;
+            return record_retained_result(state, -1, 0);
         }
         if state.generation >= MAX_RETAINED_GENERATION {
-            return -1;
+            return record_retained_result(state, -1, 0);
         }
     }
     let mapped = map_palette(input_len, colors);
     if mapped < 0 {
-        return mapped;
+        return record_retained_result(unsafe { &mut *STATE.0.get() }, mapped, 0);
     }
     let state = unsafe { &mut *STATE.0.get() };
     let count = mapped as usize;
@@ -624,7 +654,7 @@ pub extern "C" fn map_retained(input_len: u32, colors: u32) -> i32 {
         let pointer = input_start() + pixel;
         let old_index = unsafe { *(pointer as *const u8) } as usize;
         if old_index >= colors as usize {
-            return -3;
+            return record_retained_result(state, -3, 0);
         }
         let color = &state.palette[old_index * 3..old_index * 3 + 3];
         let packed = ((color[0] as u32) << 16) | ((color[1] as u32) << 8) | color[2] as u32;
@@ -647,27 +677,31 @@ pub extern "C" fn map_retained(input_len: u32, colors: u32) -> i32 {
     state.retained[0].palette = compact;
     state.retained[0].palette_len = compact_len as u16;
     state.retained[0].hash = hash as i32;
-    fresh_handle(state, 0).unwrap_or(-1)
+    match fresh_handle(state, 0) {
+        Some(handle) => record_retained_result(state, 0, handle),
+        None => record_retained_result(state, -1, 0),
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn promote_retained(handle: u32) -> i32 {
     let state = unsafe { &mut *STATE.0.get() };
+    state.retained_result = RetainedResult::EMPTY;
     if checked_slot(state, handle) != Some(0) || !state.retained_enabled {
-        return -1;
+        return record_retained_result(state, -1, 0);
     }
     let Some(slot) = (1..=2).find(|&slot| !state.retained[slot].live) else {
-        return -2;
+        return record_retained_result(state, -2, 0);
     };
     if state.generation >= MAX_RETAINED_GENERATION {
-        return -1;
+        return record_retained_result(state, -1, 0);
     }
     let pixels = (state.retained_len / 4) as usize;
     let Some(end) = retained_ptr(slot, pixels).and_then(|start| start.checked_add(pixels)) else {
-        return -1;
+        return record_retained_result(state, -1, 0);
     };
     if end > memory_size::<0>() * PAGE_BYTES {
-        return -2;
+        return record_retained_result(state, -2, 0);
     }
     unsafe {
         core::ptr::copy_nonoverlapping(
@@ -678,7 +712,10 @@ pub extern "C" fn promote_retained(handle: u32) -> i32 {
     }
     state.retained[slot] = state.retained[0];
     state.retained[0].live = false;
-    fresh_handle(state, slot).unwrap_or(-1)
+    match fresh_handle(state, slot) {
+        Some(handle) => record_retained_result(state, 0, handle),
+        None => record_retained_result(state, -1, 0),
+    }
 }
 
 #[no_mangle]

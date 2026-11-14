@@ -25,6 +25,7 @@ interface QuantizerExports {
   enable_retained(length: number): number;
   map_retained(length: number, colors: number): number;
   promote_retained(handle: number): number;
+  retained_result_ptr(): number;
   release_retained(handle: number): number;
   retained_palette_len(handle: number): number;
   retained_palette_ptr(handle: number): number;
@@ -125,6 +126,7 @@ export async function createGifScalarQuantizer(
       'enable_retained',
       'map_retained',
       'promote_retained',
+      'retained_result_ptr',
       'release_retained',
       'retained_palette_len',
       'retained_palette_ptr',
@@ -194,6 +196,19 @@ export async function createGifScalarQuantizer(
     if (wasm.memory.buffer.byteLength !== capacity)
       throw new GifScalarMemoryError('GIF scalar WASM memory grew during processing');
     return new Uint8Array(wasm.memory.buffer, pointer, length);
+  }
+  function retainedHandle(status: number, stage: string): number {
+    const record = checkedView(wasm.retained_result_ptr(), 8);
+    const view = new DataView(record.buffer, record.byteOffset, record.byteLength);
+    if (view.getInt32(0, true) !== status) {
+      throw new GifScalarResultError(`GIF scalar WASM ${stage} status record is inconsistent`);
+    }
+    if (status !== 0) throwStatus(status, stage);
+    const handle = view.getUint32(4, true);
+    if (handle === 0 || handle > 0x7fff_ffff) {
+      throw new GifScalarResultError(`GIF scalar WASM ${stage} handle is invalid`);
+    }
+    return handle;
   }
   const quantizer: GifScalarQuantizer = (rgba, colors) => {
     if (!(rgba instanceof Uint8Array)) {
@@ -372,21 +387,14 @@ export async function createGifScalarQuantizer(
       );
     }
     lastInput = null;
-    const handle = wasm.map_retained(reservedLength, colors);
-    if (handle < 0) throwStatus(handle, 'retained mapping');
-    if (!Number.isInteger(handle) || handle === 0 || wasm.memory.buffer.byteLength !== capacity) {
-      throw new GifScalarResultError('GIF scalar WASM retained handle is invalid');
-    }
+    const status = wasm.map_retained(reservedLength, colors);
+    const handle = retainedHandle(status, 'retained mapping');
     abort();
     return handle;
   };
   quantizer.promoteRetained = (handle) => {
     abort();
-    const promoted = wasm.promote_retained(handle);
-    if (promoted < 0) throwStatus(promoted, 'retained promotion');
-    if (!Number.isInteger(promoted) || promoted === 0)
-      throw new GifScalarResultError('GIF scalar WASM promoted handle is invalid');
-    return promoted;
+    return retainedHandle(wasm.promote_retained(handle), 'retained promotion');
   };
   quantizer.releaseRetained = (handle) => {
     const status = wasm.release_retained(handle);

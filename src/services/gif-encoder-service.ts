@@ -582,6 +582,8 @@ export async function encodeGif(
                 Math.max(0, performance.now() - quantizationStart)
               );
             }
+            const retainedMappingStart =
+              retained && opts.profileOperation ? performance.now() : null;
             const candidate = retained
               ? {
                   indexed: quantizePalette.mapRetained(exactRgba, framePalette as number),
@@ -590,6 +592,12 @@ export async function encodeGif(
                   indexedBytes: 0,
                 }
               : prepareIndexedFrame(exactRgba, framePalette as number[][]);
+            if (retainedMappingStart !== null) {
+              opts.profileOperation?.(
+                'gifPaletteMapping',
+                Math.max(0, performance.now() - retainedMappingStart)
+              );
+            }
             const precedingIndexedBytes = liveIndexedBytes;
             liveIndexedBytes += candidate.indexedBytes;
             comparisonWorkingBytes =
