@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 // Experimental keyframe-only VP8 writer. Format and coding rules: RFC 6386.
-// Includes a bounded DC-only residual experiment; preset fidelity is unqualified.
+// Complete residual engineering path; product/preset qualification is unfinished.
 
+mod ac_quant;
 mod coeff_update_probs;
 mod dc_quant;
 mod default_coeff_probs;
+mod residual;
 mod textured;
+mod transform;
 
 use coeff_update_probs::COEFF_UPDATE_PROBS;
 use std::sync::Mutex;
@@ -104,23 +107,23 @@ impl BoolWriter {
         }
         value <<= count & 7;
         count >>= 3;
-        while count > 1 {
+        while count > 0 {
             value <<= 8;
             count -= 1;
         }
         if self
             .bytes
             .len()
-            .checked_add(3)
+            .checked_add(4)
             .ok_or(EncodeError::OutputLimit)?
             > MAX_OUTPUT_BYTES
         {
             return Err(EncodeError::OutputLimit);
         }
         self.bytes
-            .try_reserve(3)
+            .try_reserve(4)
             .map_err(|_| EncodeError::OutputLimit)?;
-        for _ in 0..3 {
+        for _ in 0..4 {
             self.bytes.push((value >> 24) as u8);
             value <<= 8;
         }
@@ -181,8 +184,11 @@ fn validate_input(
     // Neutral grey is the only source color for which skipped DC-predicted
     // macroblocks preserve the input. Other pixels require a real residual coder.
     for row in 0..height {
-        for pixel in pixels[row * stride..row * stride + row_bytes].chunks_exact(4) {
-            if pixel != [128, 128, 128, 255] {
+        for pixel in pixels[row * stride..row * stride + row_bytes]
+            .as_chunks::<4>()
+            .0
+        {
+            if *pixel != [128, 128, 128, 255] {
                 return Err(EncodeError::UnsupportedPixels);
             }
         }
@@ -259,8 +265,8 @@ pub fn encode_neutral_keyframe(
     Ok(output)
 }
 
-/// Encode any checked opaque RGBA/BGRA input with the experimental DC-only
-/// texture path. This does not yet satisfy product quality or preset parity.
+/// Encode checked opaque RGBA/BGRA input with the experimental full-residual
+/// B_PRED path. This does not yet satisfy product quality or preset parity.
 pub fn encode_opaque_keyframe(
     pixels: &[u8],
     width: u32,
@@ -273,13 +279,14 @@ pub fn encode_opaque_keyframe(
     let row_bytes = width as usize * 4;
     let mut neutral = true;
     for row in 0..height as usize {
-        for pixel in
-            pixels[row * stride as usize..row * stride as usize + row_bytes].chunks_exact(4)
+        for pixel in pixels[row * stride as usize..row * stride as usize + row_bytes]
+            .as_chunks::<4>()
+            .0
         {
             if pixel[3] != 255 {
                 return Err(EncodeError::UnsupportedPixels);
             }
-            if pixel != [128, 128, 128, 255] {
+            if *pixel != [128, 128, 128, 255] {
                 neutral = false;
             }
         }
@@ -370,9 +377,64 @@ pub extern "C" fn vp8_reset() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arithmetic_finalization_known_answer() {
+        // RFC 6386 section 7.3: a single one at probability 64/256.
+        let mut writer = BoolWriter::new();
+        writer.write(64, true).unwrap();
+        assert_eq!(writer.finish().unwrap(), [64, 0, 0, 0]);
+    }
+
+    #[test]
+    fn arithmetic_extremes_and_carry_sequences() {
+        for length in [1, 7, 8, 23, 24, 25, 255, 4096, 65536] {
+            let mut seed = 0x501u32;
+            let mut symbols = Vec::new();
+            let mut writer = BoolWriter::new();
+            for index in 0..length {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                let probability = [0, 1, 64, 128, 254, 255, (seed >> 16) as u8][index % 7];
+                let bit = seed & 0x80000000 != 0;
+                symbols.push((probability, bit));
+                writer.write(probability, bit).unwrap();
+            }
+            let bytes = writer.finish().unwrap();
+            // Independent 16-bit-window decoder, following RFC 6386 section 7.3.
+            let mut value = (u32::from(bytes[0]) << 8) | u32::from(bytes[1]);
+            let mut offset = 2;
+            let mut range = 255;
+            let mut count = 0;
+            for (probability, expected) in symbols {
+                let split = 1 + (((range - 1) * u32::from(probability)) >> 8);
+                let actual = value >= split << 8;
+                assert_eq!(actual, expected, "length={length} offset={offset}");
+                if actual {
+                    value -= split << 8;
+                    range -= split;
+                } else {
+                    range = split;
+                }
+                while range < 128 {
+                    range <<= 1;
+                    value <<= 1;
+                    count += 1;
+                    if count == 8 {
+                        count = 0;
+                        value |= u32::from(bytes[offset]);
+                        offset += 1;
+                    }
+                }
+            }
+        }
+        let mut writer = BoolWriter::new();
+        writer.bytes = vec![4, 255, 255, 255, 255, 255, 255, 255, 255];
+        writer.propagate_carry();
+        assert_eq!(writer.bytes, [5, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
     #[test]
     fn checked_input_and_repeated_keyframes() {
-        let pixels = vec![128, 128, 128, 255].repeat(16 * 16);
+        let pixels = [128, 128, 128, 255].repeat(16 * 16);
         let output = encode_neutral_keyframe(&pixels, 16, 16, 64, 0, 75).unwrap();
         assert_eq!(&output[3..6], &[0x9d, 0x01, 0x2a]);
         assert_eq!(

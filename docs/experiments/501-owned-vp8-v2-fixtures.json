@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 1,
+  "baselineRevision": "be35f5fa89a60189475fe2ef7fd446e9fa18cef4",
+  "generator": "scripts/test/owned-vp8-v2-fixtures.ts",
+  "generatorSha256": "5f3d0ff5062ba9d40e584aa02e18e275378f62fbc2827c3c0ec0a9d4f291debd",
+  "colorContract": "Packed opaque 8-bit code values; no alpha compression, premultiplication or ICC transform",
+  "externalDecode": {
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "command": "ffmpeg -v error -noautorotate -i SOURCE -vf FILTER -frames:v 1 -f rawvideo -pix_fmt rgba pipe:1",
+    "photoFilter": "scale=512:384:flags=bicubic",
+    "videoFilter": "select=eq(n\\,FRAME),scale=512:288:flags=bicubic"
+  },
+  "sources": {
+    "photo": {
+      "name": "A lush verdant landscape.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:A_lush_verdant_landscape.jpg",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/2/24/A_lush_verdant_landscape.jpg",
+      "license": "CC0-1.0",
+      "author": "Ayyuha Sideeq",
+      "sha256": "026fe604c8f51d1c3fcc5c3699f800156daec4f47a6f0c5d304f8b1d95003b9e"
+    },
+    "video": {
+      "name": "V8.webm",
+      "page": "https://commons.wikimedia.org/wiki/File:V8.webm",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/a/a7/V8.webm",
+      "license": "CC0-1.0",
+      "author": "BMKME",
+      "sha256": "c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1"
+    }
+  },
+  "fixtures": [
+    {
+      "id": "legacy-flat",
+      "split": "tuning",
+      "class": "flat",
+      "width": 64,
+      "height": 48,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 256,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d0bcde2f342cbfc9b2f8100aa03483810bf1a5ee1224aed13bd7de0be93df625"
+    },
+    {
+      "id": "legacy-text",
+      "split": "tuning",
+      "class": "edge",
+      "width": 64,
+      "height": 48,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 256,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "9572cfb8b7c7d25d24a7891c60a2639e05e548c67b59e61f7868f66a37da58b4"
+    },
+    {
+      "id": "legacy-gradient",
+      "split": "tuning",
+      "class": "gradient",
+      "width": 64,
+      "height": 48,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 256,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "99461d25146d109a9dc9d09225e36835a9b6ef574a3a862a6e4ce3ccf496cca6"
+    },
+    {
+      "id": "legacy-chroma",
+      "split": "tuning",
+      "class": "chroma",
+      "width": 64,
+      "height": 48,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 256,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "bf4eb14a7285a9034ec499d84d0ce84556566669d6cc3e697ee9c244d71a38d8"
+    },
+    {
+      "id": "legacy-noise",
+      "split": "tuning",
+      "class": "noise",
+      "width": 64,
+      "height": 48,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 256,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "6fae8f4ac02e0e271f4ba7a43b521236292bc27c07d612d559bf00413b6f9276"
+    },
+    {
+      "id": "tune-gray-sweep",
+      "split": "tuning",
+      "class": "grayscale",
+      "width": 257,
+      "height": 33,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1028,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "b79b1d67af31ff4b3f313fd0d535553c8446203e0b1f958df1357145246a39b5"
+    },
+    {
+      "id": "tune-colored-text",
+      "split": "tuning",
+      "class": "text",
+      "width": 256,
+      "height": 128,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1024,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "7f43b0335d36f7354b6a20321327d51b156fcbf9ad72272ccb4e75601102ae69"
+    },
+    {
+      "id": "tune-chroma-edge",
+      "split": "tuning",
+      "class": "chroma",
+      "width": 128,
+      "height": 96,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 512,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "0f0dce50271ea75d370f65176c6db29c8e00db97ef26aecfa3a139af506bcd8f"
+    },
+    {
+      "id": "held-gray",
+      "split": "held-out",
+      "class": "grayscale",
+      "width": 511,
+      "height": 257,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2044,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "f69810437379cda9811a362bdd5bfe80bead932490bc21d55c45dd1c23486baf"
+    },
+    {
+      "id": "held-gradient",
+      "split": "held-out",
+      "class": "gradient",
+      "width": 321,
+      "height": 239,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1284,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "32766da2e2011354df8eb6b72bd0d01948a5e90171427fd78d8f22e6683aa210"
+    },
+    {
+      "id": "held-chroma",
+      "split": "held-out",
+      "class": "chroma",
+      "width": 320,
+      "height": 241,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1280,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "2539d308320a2b3c1b29b45c37c2940c1b1f937593fd8e4209307c91319b5c25"
+    },
+    {
+      "id": "held-colored-text",
+      "split": "held-out",
+      "class": "text",
+      "width": 448,
+      "height": 256,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1792,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "0bf2a212166bef29f83460fd30333e03f7e1594ca6945530726e261ecb0e8a9f"
+    },
+    {
+      "id": "held-noise",
+      "split": "held-out",
+      "class": "noise",
+      "width": 257,
+      "height": 193,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1028,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "bcd57211c7bb8bbd0a8e0c8f9bdeb8f0ff764c48fbd64ca125fde72c4809670f"
+    },
+    {
+      "id": "held-tiny",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 1,
+      "height": 1,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "46265e71bea0d97335afc100c739015b753232e8930dcdeb0094ec6c5e495799"
+    },
+    {
+      "id": "held-one-column",
+      "split": "held-out",
+      "class": "odd",
+      "width": 1,
+      "height": 257,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "e957b330cde6642969efc7cf2943a512257ce184460351c7a80d34a406f60113"
+    },
+    {
+      "id": "held-one-row",
+      "split": "held-out",
+      "class": "odd",
+      "width": 257,
+      "height": 1,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1028,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "4daa7161f1e6411e6d1fb98ecd9ac8b4127b70ca66b3102b8cae7c83925fa6f4"
+    },
+    {
+      "id": "held-large-admitted",
+      "split": "held-out",
+      "class": "large",
+      "width": 4096,
+      "height": 2457,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 16384,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "0905c6855dcd51d97f06620e279e155283fad99f74ab050d51f37b153f70ed3d"
+    },
+    {
+      "id": "held-bgra-opaque",
+      "split": "held-out",
+      "class": "layout",
+      "width": 253,
+      "height": 129,
+      "layout": "BGRA",
+      "source": "generated",
+      "stride": 1012,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "7095aaf8d25c28cca1625d7514adef454f9ea5ef47d025b39547d7db1dc4917d"
+    },
+    {
+      "id": "held-rgbx-ignored-x",
+      "split": "held-out",
+      "class": "layout",
+      "width": 253,
+      "height": 129,
+      "layout": "RGBX",
+      "source": "generated",
+      "stride": 1012,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d4b7520cc96857c0ca445c5de47a090de7b724825326dd3bfdebacbbc6961825"
+    },
+    {
+      "id": "held-photo",
+      "split": "held-out",
+      "class": "photograph",
+      "width": 512,
+      "height": 384,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 2048,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "7fd4317feb0597ff20153c3baa70a33b4cf058e13d64ac301a9aba1eb828e047"
+    },
+    {
+      "id": "held-video-frame-10",
+      "split": "held-out",
+      "class": "video",
+      "width": 512,
+      "height": 288,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 10,
+      "stride": 2048,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ea06e16b7e2859d64f30f225aad36ec0fb01fa6bd30859429f1a375285884a2f"
+    },
+    {
+      "id": "held-video-frame-60",
+      "split": "held-out",
+      "class": "video",
+      "width": 512,
+      "height": 288,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 60,
+      "stride": 2048,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "41aa89d854ab9c414d1ff48c0afaa857a970c16ea06b6101b91897798b2458be"
+    },
+    {
+      "id": "held-video-duplicate-hold",
+      "split": "held-out",
+      "class": "duplicate-hold",
+      "width": 512,
+      "height": 288,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 10,
+      "repeatOf": "held-video-frame-10",
+      "stride": 2048,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ea06e16b7e2859d64f30f225aad36ec0fb01fa6bd30859429f1a375285884a2f"
+    }
+  ]
+}

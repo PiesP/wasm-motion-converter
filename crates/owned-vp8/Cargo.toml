@@ -2,7 +2,7 @@
 name = "owned-vp8"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "MIT AND BSD-3-Clause"
 publish = false
 
 [lib]
