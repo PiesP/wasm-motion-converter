@@ -712,6 +712,141 @@ impl FragmentBuilder {
 mod tests {
     use super::*;
 
+    fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(body.len() + 8);
+        bytes.extend_from_slice(&((body.len() + 8) as u32).to_be_bytes());
+        bytes.extend_from_slice(kind);
+        bytes.extend_from_slice(body);
+        bytes
+    }
+
+    fn index_track() -> Track {
+        Track {
+            track_id: 1,
+            codec: *b"avc1",
+            width: 16,
+            height: 16,
+            display_width: 16,
+            display_height: 16,
+            color_primaries: 0,
+            color_transfer: 0,
+            color_matrix: 0,
+            color_full_range: -1,
+            timescale: 1000,
+            duration: 0,
+            rotation: 0,
+            description: Vec::new(),
+            packets: Vec::new(),
+            fragment_default_duration: 0,
+            fragment_default_size: 0,
+            fragment_default_flags: 0,
+            edit_shift: 0,
+        }
+    }
+
+    #[test]
+    fn classic_signed_ctts_uses_presentation_neighbors_and_decode_index_ties() {
+        let decode_durations = [10u32, 30, 20, 40, 15, 25];
+        let composition_offsets = [-20i32, 40, -10, -10, -50, -5];
+        let mut stsz = vec![0; 12];
+        stsz[8..12].copy_from_slice(&6u32.to_be_bytes());
+        for _ in 0..6 {
+            stsz.extend_from_slice(&1u32.to_be_bytes());
+        }
+        let mut stco = vec![0; 12];
+        stco[4..8].copy_from_slice(&1u32.to_be_bytes());
+        stco[8..12].copy_from_slice(&100u32.to_be_bytes());
+        let mut stsc = vec![0; 20];
+        stsc[4..8].copy_from_slice(&1u32.to_be_bytes());
+        stsc[8..12].copy_from_slice(&1u32.to_be_bytes());
+        stsc[12..16].copy_from_slice(&6u32.to_be_bytes());
+        stsc[16..20].copy_from_slice(&1u32.to_be_bytes());
+        let mut stts = vec![0; 8];
+        stts[4..8].copy_from_slice(&6u32.to_be_bytes());
+        for duration in decode_durations {
+            stts.extend_from_slice(&1u32.to_be_bytes());
+            stts.extend_from_slice(&duration.to_be_bytes());
+        }
+        let mut ctts = vec![0; 8];
+        ctts[0] = 1;
+        ctts[4..8].copy_from_slice(&6u32.to_be_bytes());
+        for offset in composition_offsets {
+            ctts.extend_from_slice(&1u32.to_be_bytes());
+            ctts.extend_from_slice(&offset.to_be_bytes());
+        }
+        let raw = [
+            atom(b"stsz", &stsz),
+            atom(b"stco", &stco),
+            atom(b"stsc", &stsc),
+            atom(b"stts", &stts),
+            atom(b"ctts", &ctts),
+        ]
+        .concat();
+        let mut track = index_track();
+        let mut builder = IndexBuilder::new(raw.clone(), (0, raw.len()), 200, &mut track).unwrap();
+        for _ in 0..6 {
+            assert!(!builder.advance(&mut track, 1).unwrap());
+        }
+        assert_eq!(track.packets.len(), 6);
+        assert_eq!(
+            track.packets.iter().map(|p| p.duration).collect::<Vec<_>>(),
+            [10, 30, 20, 40, 15, 25]
+        );
+        let mut operations = 0;
+        while !builder.advance(&mut track, 1).unwrap() {
+            operations += 1;
+            assert!(operations < 16);
+        }
+        assert_eq!(
+            track.packets.iter().map(|p| p.pts).collect::<Vec<_>>(),
+            [-20, 50, 30, 50, 50, 110]
+        );
+        assert_eq!(
+            track.packets.iter().map(|p| p.duration).collect::<Vec<_>>(),
+            [50, 0, 20, 0, 60, 25]
+        );
+        assert_eq!(
+            track.packets.iter().map(|p| p.offset).collect::<Vec<_>>(),
+            [100, 101, 102, 103, 104, 105]
+        );
+    }
+
+    #[test]
+    fn classic_ctts_scratch_is_admitted_before_packet_allocation() {
+        const COUNT: u32 = 800_000;
+        let mut stsz = vec![0; 12];
+        stsz[4..8].copy_from_slice(&1u32.to_be_bytes());
+        stsz[8..12].copy_from_slice(&COUNT.to_be_bytes());
+        let mut stco = vec![0; 12];
+        stco[4..8].copy_from_slice(&1u32.to_be_bytes());
+        stco[8..12].copy_from_slice(&100u32.to_be_bytes());
+        let mut stsc = vec![0; 20];
+        stsc[4..8].copy_from_slice(&1u32.to_be_bytes());
+        stsc[8..12].copy_from_slice(&1u32.to_be_bytes());
+        stsc[12..16].copy_from_slice(&COUNT.to_be_bytes());
+        stsc[16..20].copy_from_slice(&1u32.to_be_bytes());
+        let mut stts = vec![0; 16];
+        stts[4..8].copy_from_slice(&1u32.to_be_bytes());
+        stts[8..12].copy_from_slice(&COUNT.to_be_bytes());
+        stts[12..16].copy_from_slice(&1u32.to_be_bytes());
+        let mut ctts = stts.clone();
+        ctts[12..16].copy_from_slice(&0u32.to_be_bytes());
+        let raw = [
+            atom(b"stsz", &stsz),
+            atom(b"stco", &stco),
+            atom(b"stsc", &stsc),
+            atom(b"stts", &stts),
+            atom(b"ctts", &ctts),
+        ]
+        .concat();
+        let mut track = index_track();
+        assert_eq!(
+            IndexBuilder::new(raw.clone(), (0, raw.len()), COUNT as u64 + 100, &mut track).err(),
+            Some(Error::ResourceLimit)
+        );
+        assert_eq!(track.packets.capacity(), 0);
+    }
+
     #[test]
     fn mp4_duration_is_derived_from_indexed_packets() {
         fn box_bytes(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
@@ -1028,6 +1163,79 @@ pub struct IndexBuilder {
     ctts_remaining: u32,
     ctts_value: u32,
     stss_at: usize,
+    presentation: Option<PresentationOrder>,
+}
+
+/// Compact decode indexes ordered by (presentation timestamp, decode index).
+/// Heap construction and extraction are incremental so the host can yield.
+struct PresentationOrder {
+    samples: Vec<u32>,
+    heapify_at: usize,
+    previous: Option<u32>,
+}
+
+impl PresentationOrder {
+    fn before(packets: &[Packet], left: u32, right: u32) -> bool {
+        (packets[left as usize].pts, left) < (packets[right as usize].pts, right)
+    }
+
+    fn sift_down(samples: &mut [u32], mut at: usize, packets: &[Packet]) {
+        while let Some(left) = at.checked_mul(2).and_then(|index| index.checked_add(1)) {
+            if left >= samples.len() {
+                break;
+            }
+            let right = left + 1;
+            let smallest =
+                if right < samples.len() && Self::before(packets, samples[right], samples[left]) {
+                    right
+                } else {
+                    left
+                };
+            if !Self::before(packets, samples[smallest], samples[at]) {
+                break;
+            }
+            samples.swap(at, smallest);
+            at = smallest;
+        }
+    }
+
+    /// One bounded heap operation per credit; the last PTS sample keeps its STTS duration.
+    fn advance(&mut self, packets: &mut [Packet]) -> Result<bool, Error> {
+        if self.heapify_at > 0 {
+            self.heapify_at -= 1;
+            Self::sift_down(&mut self.samples, self.heapify_at, packets);
+            return Ok(false);
+        }
+        let first = *self.samples.first().ok_or(Error::Invalid)?;
+        let last = self.samples.pop().ok_or(Error::Invalid)?;
+        if !self.samples.is_empty() {
+            self.samples[0] = last;
+            Self::sift_down(&mut self.samples, 0, packets);
+        }
+        if let Some(previous) = self.previous.replace(first) {
+            let duration = packets[first as usize]
+                .pts
+                .checked_sub(packets[previous as usize].pts)
+                .and_then(|value| u64::try_from(value).ok())
+                .ok_or(Error::Overflow)?;
+            packets[previous as usize].duration = duration;
+        }
+        Ok(self.samples.is_empty())
+    }
+}
+
+fn index_memory_admitted(
+    raw_capacity: usize,
+    description_capacity: usize,
+    packet_capacity: usize,
+    presentation_capacity: usize,
+) -> bool {
+    raw_capacity
+        .checked_add(description_capacity)
+        .and_then(|n| n.checked_add(crate::INPUT_CAPACITY))
+        .and_then(|n| n.checked_add(packet_capacity.checked_mul(std::mem::size_of::<Packet>())?))
+        .and_then(|n| n.checked_add(presentation_capacity.checked_mul(std::mem::size_of::<u32>())?))
+        .is_some_and(|n| n <= METADATA_BUDGET)
 }
 impl IndexBuilder {
     pub fn new(
@@ -1065,23 +1273,62 @@ impl IndexBuilder {
         let stss = child(stbl, *b"stss")?
             .map(|body| table(&raw, body, 8, 4))
             .transpose()?;
-        let packet_bytes = sizes
-            .count
-            .checked_mul(std::mem::size_of::<Packet>())
-            .ok_or(Error::Overflow)?;
-        if raw
-            .len()
-            .checked_add(packet_bytes)
-            .and_then(|n| n.checked_add(track.description.len()))
-            .and_then(|n| n.checked_add(crate::INPUT_CAPACITY))
-            .is_none_or(|n| n > METADATA_BUDGET)
-        {
+        let presentation_count = if ctts.is_some() { sizes.count } else { 0 };
+        // Preserve the existing non-CTTS admission; count actual retained capacities
+        // when adding presentation scratch to the CTTS route.
+        let retained_raw = if ctts.is_some() {
+            raw.capacity()
+        } else {
+            raw.len()
+        };
+        let retained_description = if ctts.is_some() {
+            track.description.capacity()
+        } else {
+            track.description.len()
+        };
+        if !index_memory_admitted(
+            retained_raw,
+            retained_description,
+            sizes.count,
+            presentation_count,
+        ) {
             return Err(Error::ResourceLimit);
         }
         track
             .packets
             .try_reserve_exact(sizes.count)
             .map_err(|_| Error::ResourceLimit)?;
+        if ctts.is_some()
+            && !index_memory_admitted(
+                retained_raw,
+                retained_description,
+                track.packets.capacity(),
+                presentation_count,
+            )
+        {
+            return Err(Error::ResourceLimit);
+        }
+        let presentation = if ctts.is_some() {
+            let mut samples = Vec::new();
+            samples
+                .try_reserve_exact(sizes.count)
+                .map_err(|_| Error::ResourceLimit)?;
+            if !index_memory_admitted(
+                retained_raw,
+                retained_description,
+                track.packets.capacity(),
+                samples.capacity(),
+            ) {
+                return Err(Error::ResourceLimit);
+            }
+            Some(PresentationOrder {
+                samples,
+                heapify_at: sizes.count / 2,
+                previous: None,
+            })
+        } else {
+            None
+        };
         let first = stsc.entry(&raw, 0)?;
         if u32be(first, 0)? != 1 || u32be(first, 4)? == 0 || u32be(first, 8)? != 1 {
             return Err(Error::Invalid);
@@ -1117,6 +1364,7 @@ impl IndexBuilder {
             ctts_remaining: 0,
             ctts_value: 0,
             stss_at: 0,
+            presentation,
         })
     }
 
@@ -1146,6 +1394,11 @@ impl IndexBuilder {
                 if self.chunk_at + 1 != self.offsets.count || self.sample_in_chunk != self.per_chunk
                 {
                     return Err(Error::Invalid);
+                }
+                if let Some(order) = &mut self.presentation {
+                    if !order.advance(&mut track.packets)? {
+                        continue;
+                    }
                 }
                 return Ok(true);
             }
@@ -1247,6 +1500,11 @@ impl IndexBuilder {
                 duration: u64::from(duration),
                 key,
             });
+            if let Some(order) = &mut self.presentation {
+                order
+                    .samples
+                    .push(u32::try_from(self.sample_at).map_err(|_| Error::Overflow)?);
+            }
             self.dts = self
                 .dts
                 .checked_add(duration as i64)
@@ -1259,7 +1517,7 @@ impl IndexBuilder {
             if self.chunk_at + 1 != self.offsets.count || self.sample_in_chunk != self.per_chunk {
                 return Err(Error::Invalid);
             }
-            Ok(true)
+            Ok(self.presentation.is_none())
         } else {
             Ok(false)
         }
