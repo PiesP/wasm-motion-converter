@@ -133,16 +133,16 @@ mod tests {
 
     #[test]
     fn frame_class_counts_collapse_or_signal_two_absolute_qindices() {
-        for (quality, textured) in [(60, 30), (75, 22), (85, 14)] {
+        for (quality, textured) in [(60, 30), (75, 23), (85, 14)] {
             let smooth = Config::from_counts(quality, 4, 4);
             assert!(!smooth.enabled);
-            assert_eq!(smooth.base_qindex, 8);
+            assert_eq!(smooth.base_qindex, presets::SMOOTH_QINDEX);
             let texture = Config::from_counts(quality, 0, 4);
             assert!(!texture.enabled);
             assert_eq!(texture.base_qindex, textured);
             let mixed = Config::from_counts(quality, 2, 4);
             assert!(mixed.enabled);
-            assert_eq!(mixed.qindex, [8, textured]);
+            assert_eq!(mixed.qindex, [presets::SMOOTH_QINDEX, textured]);
             assert_eq!(mixed.map_probability, 128);
         }
     }

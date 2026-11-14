@@ -1987,7 +1987,13 @@ mod tests {
         let first = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
         assert!(first.segments.enabled);
         assert_eq!(first.smooth_count, 1);
-        assert_eq!(first.segments.qindex, [8, 22]);
+        assert_eq!(
+            first.segments.qindex,
+            [
+                crate::presets::SMOOTH_QINDEX,
+                crate::presets::textured_qindex(request.quality)
+            ]
+        );
         assert_eq!(first.segments.map_probability, 128);
         assert_eq!(
             first
@@ -2012,7 +2018,10 @@ mod tests {
         let fresh =
             run_engine(FrameEncoder::new(smooth_request, smooth.clone(), smooth_plan).unwrap());
         assert!(!after_mixed.segments.enabled);
-        assert_eq!(after_mixed.segments.base_qindex, 8);
+        assert_eq!(
+            after_mixed.segments.base_qindex,
+            crate::presets::SMOOTH_QINDEX
+        );
         assert_eq!(after_mixed.output(), fresh.output());
         assert_eq!(
             after_mixed.output(),

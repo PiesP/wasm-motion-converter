@@ -2,8 +2,8 @@
 // Copyright (c) 2026 PiesP
 // Exploratory encoder knobs, calibrated only against the frozen tuning split.
 pub(crate) const QINDEX: [usize; 3] = [40, 22, 8];
-pub(crate) const SMOOTH_QINDEX: usize = 8;
-pub(crate) const TEXTURED_QINDEX: [usize; 3] = [30, 22, 14];
+pub(crate) const SMOOTH_QINDEX: usize = 6;
+pub(crate) const TEXTURED_QINDEX: [usize; 3] = [30, 23, 14];
 pub(crate) const LAMBDA_NUMERATOR: u64 = 1;
 pub(crate) const LAMBDA_DENOMINATOR: u64 = 1;
 pub(crate) fn qindex(quality: u32) -> usize {
