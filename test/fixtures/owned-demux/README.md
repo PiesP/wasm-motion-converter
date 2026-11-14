@@ -38,3 +38,12 @@ also includes it. Its extension provenance and the unchanged prior39-entry
 array digest are recorded separately in `oracle.json`. The actual patched
 oracle, independent packet/decode trace and compiled comparison guard selection
 of video fragment defaults when audio precedes video.
+
+The later `avc-bframes-vfr-signed-ctts.mp4` fixture combines B-frame decode order,
+variable presentation intervals and signed composition offsets. Generate it
+alone with `generate-owned-demux-fixtures.ts OUTPUT --presentation`. Its pinned
+oracle and independent FFmpeg packet/frame trace use explicit
+`-fps_mode passthrough`; source/tool/manifest identities and the unchanged prior
+40-entry array digest remain in the new extension record. It guards duplicate
+presentation timestamps and presentation-derived packet durations, separately
+from the private owner input whose original failure receipts stay private.

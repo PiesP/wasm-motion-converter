@@ -42,6 +42,7 @@ const MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_DECODED_FRAMES = 400;
 const TRIM_IDS = new Set([
   'avc-bframes.mp4',
+  'avc-bframes-vfr-signed-ctts.mp4',
   'avc-fragmented.mp4',
   'vp9.webm',
   'avc.ts',
@@ -231,7 +232,7 @@ export async function exerciseOwnedDemuxProduct({
   const oracle = JSON.parse(oracleBytes.toString('utf8')) as Oracle;
   assert.equal(oracle.schema, 1);
   assert.equal(oracle.oracle.package, 'mediabunny');
-  assert.equal(oracle.fixtures.length, 40);
+  assert.equal(oracle.fixtures.length, 41);
   const context = await browser.newContext({
     acceptDownloads: true,
     locale: 'en-US',
