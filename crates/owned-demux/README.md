@@ -16,6 +16,15 @@ The builder records the closed Rust source set, manifest, zero-dependency lock,
 compiler/flags and import-free WASM digest. WASM is scalar, unshared wasm32 with
 64MiB declared maximum memory. Ordinary Node/Pages builds use the checked asset.
 
+The exact compiler commit and virtual checkout/Rust-library path mappings are
+recorded too. Optional installed `rust-src` must not change inlined standard
+library panic locations from `/rustc/<commit>` into machine-local sysroot paths.
+The builder normalizes those locations with encoded compiler arguments, keeps
+strict byte equality, and preserves isolated Cargo output plus both digests on
+a comparison failure. Minimal CI and a local toolchain with `rust-src` must
+reproduce the same artifact; changing checkout location alone is not sufficient
+to exercise this distinction.
+
 The pinned patched MediaBunny1.65.2 implementation is a development oracle.
 Frozen synthetic inputs and normalized configurations/packet/seek traces are in
 `test/fixtures/owned-demux`; the capture script also independently decodes them

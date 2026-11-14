@@ -32,11 +32,13 @@ const crate = join(root, 'crates/owned-demux');
 const output = join(root, 'src/services/owned-demux.wasm');
 const provenance = join(crate, 'wasm-provenance.json');
 const compiler = '1.99.1';
+const compilerCommit = '58cf8f9c35b355199727627d07ae34a4e2846d67';
 const target = 'wasm32-unknown-unknown';
 const cargoArgs = ['build', '--release', '--target', target, '--locked', '--offline'];
 const maxLinearBytes = 64 * 1024 * 1024;
 const rustflags =
   '-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd -C link-arg=--max-memory=67108864';
+const pathRemapping = { checkout: '/wmc', rustLibrary: `/rustc/${compilerCommit}` };
 const manifestSha = '934c8626a507d147f62a60053781000d1c2b080b9b2d475c0e5fb2e9ad72395d';
 const lockSha = '518bba5599a091a0cc79aaa04ea5b2843e0f408191a8e6bd287d005231b6f024';
 const wasm = (
@@ -207,9 +209,11 @@ function expected(bytes: Buffer): object {
   return {
     schemaVersion: 1,
     compiler,
+    compilerCommit,
     target,
     cargoArgs,
     rustflags,
+    pathRemapping,
     sourceSha256: Object.fromEntries(
       sourcePaths().map((path) => [path, digest(read(join(root, path)))])
     ),
@@ -217,7 +221,7 @@ function expected(bytes: Buffer): object {
   };
 }
 
-function compile(): Buffer {
+function compile(validate?: (bytes: Buffer) => void): Buffer {
   sourcePaths();
   for (let directory = crate; ; directory = dirname(directory)) {
     if (
@@ -231,7 +235,8 @@ function compile(): Buffer {
   const temporary = mkdtempSync(join(tmpdir(), 'wmc-owned-demux-'));
   let completed = false;
   try {
-    const env = { ...pinnedCargoEnvironment(temporary), RUSTFLAGS: rustflags };
+    const cargoEnv = pinnedCargoEnvironment(temporary);
+    const env: NodeJS.ProcessEnv = { ...cargoEnv };
     for (const executable of ['rustc', 'cargo'])
       if (
         !execFileSync(executable, ['--version'], { cwd: crate, env, encoding: 'utf8' }).startsWith(
@@ -239,14 +244,36 @@ function compile(): Buffer {
         )
       )
         throw new Error('Owned demux compiler pin differs');
+    const verbose = execFileSync('rustc', ['--version', '--verbose'], {
+      cwd: crate,
+      env,
+      encoding: 'utf8',
+    });
+    if (!verbose.split(/\r?\n/).includes(`commit-hash: ${compilerCommit}`))
+      throw new Error('Owned demux compiler commit differs');
+    const sysroot = execFileSync('rustc', ['--print', 'sysroot'], {
+      cwd: crate,
+      env,
+      encoding: 'utf8',
+    }).trim();
+    // Installed rust-src otherwise turns inlined std panic locations into local
+    // sysroot paths; minimal CI retains /rustc/<commit>. Normalize both sources
+    // to that compiler identity without requiring rust-src or a host path.
+    delete env.RUSTFLAGS;
+    env.CARGO_ENCODED_RUSTFLAGS = [
+      ...rustflags.split(' '),
+      `--remap-path-prefix=${root}=${pathRemapping.checkout}`,
+      `--remap-path-prefix=${join(sysroot, 'lib/rustlib/src/rust')}=${pathRemapping.rustLibrary}`,
+    ].join('\x1f');
     execFileSync('cargo', cargoArgs, { cwd: crate, env, stdio: 'inherit' });
-    const bytes = read(join(env.CARGO_TARGET_DIR, target, 'release/owned_demux.wasm'));
+    const bytes = read(join(cargoEnv.CARGO_TARGET_DIR, target, 'release/owned_demux.wasm'));
     inspect(bytes);
+    validate?.(bytes);
     completed = true;
     return bytes;
   } finally {
     if (completed) rmSync(temporary, { recursive: true, force: true });
-    else console.error(`[owned-demux] Preserved failed compilation at ${temporary}`);
+    else console.error(`[owned-demux] Preserved failed compilation or comparison at ${temporary}`);
   }
 }
 
@@ -258,8 +285,13 @@ export function buildOwnedDemuxWasm(mode: 'verify' | 'check' | 'generate' = 'ver
   } else {
     const bytes = read(output);
     deepStrictEqual(JSON.parse(read(provenance).toString()), expected(bytes));
-    if (mode === 'check' && !compile().equals(bytes))
-      throw new Error('Owned demux source does not reproduce the vendored core');
+    if (mode === 'check')
+      compile((rebuilt) => {
+        if (!rebuilt.equals(bytes))
+          throw new Error(
+            `Owned demux rebuild mismatch: vendored ${digest(bytes)} (${bytes.length} bytes), rebuilt ${digest(rebuilt)} (${rebuilt.length} bytes)`
+          );
+      });
   }
   console.log('[owned-demux]', inspect(read(output)), mode);
 }
