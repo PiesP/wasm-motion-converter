@@ -9899,6 +9899,409 @@
           }
         ]
       }
+    },
+    {
+      "status": "success",
+      "id": "avc-fragmented-audio-first.mp4",
+      "input": {
+        "size": 20593,
+        "sha256": "2590e7dd8e6afb905d309016957ba44e681516f519867e865cf0e06226f66a92"
+      },
+      "videoTracks": 1,
+      "config": {
+        "codec": "avc1.64000a",
+        "codedWidth": 96,
+        "codedHeight": 64,
+        "description": "0164000affe100186764000aacd94626c044000003000400000300303c48965801000668ebe3cb22c0fdf8f800",
+        "colorSpace": {
+          "fullRange": false
+        }
+      },
+      "rotation": 0,
+      "duration": 2.3333333333333335,
+      "stats": {
+        "packetCount": 12,
+        "averagePacketRate": 6.000000000000001,
+        "averageBitrate": 35136.00000000001
+      },
+      "packets": [
+        {
+          "sequence": 0,
+          "timestampUs": 333333,
+          "durationUs": 500000,
+          "type": "key",
+          "size": 2514,
+          "sha256": "cfb85df8884f9a50934c8f8b654ebe9849ab1c7048eb12590fb59ebf66a7615e"
+        },
+        {
+          "sequence": 1,
+          "timestampUs": 833333,
+          "durationUs": 166666,
+          "type": "delta",
+          "size": 1014,
+          "sha256": "e9f0d35a7d5149002ac58ef57b73b6d9002b77d1acb1cd6d064d335191b1417d"
+        },
+        {
+          "sequence": 2,
+          "timestampUs": 500000,
+          "durationUs": 166666,
+          "type": "delta",
+          "size": 462,
+          "sha256": "788c5e9ad5ac7a24cff1b7f1c2bd3c99f87f72b49508ce873f852b0700a7efb4"
+        },
+        {
+          "sequence": 3,
+          "timestampUs": 666666,
+          "durationUs": 166666,
+          "type": "delta",
+          "size": 406,
+          "sha256": "7ab8ba9acdc141baff64fbe54e3b11201360bb878995f95177c3ecdac79c3cba"
+        },
+        {
+          "sequence": 4,
+          "timestampUs": 1166666,
+          "durationUs": 166666,
+          "type": "delta",
+          "size": 894,
+          "sha256": "af80111474d31ed990c2ef36dcff795bec352a39a0c3c770b4197d836e52e593"
+        },
+        {
+          "sequence": 5,
+          "timestampUs": 1000000,
+          "durationUs": 166666,
+          "type": "delta",
+          "size": 360,
+          "sha256": "6cd7e70e8bfbb0aa912e8804253ee5465347f483fe2c2cbbc291101a6b17750d"
+        },
+        {
+          "sequence": 6,
+          "timestampUs": 1500000,
+          "durationUs": 166666,
+          "type": "delta",
+          "size": 726,
+          "sha256": "18fd75b010d7587ec9c332b1c289b70e199f841582f8230c21a4cd5ff0c0c27c"
+        },
+        {
+          "sequence": 7,
+          "timestampUs": 1333333,
+          "durationUs": 666666,
+          "type": "delta",
+          "size": 372,
+          "sha256": "6234d025a34983db0e048aa01bde0131e3d84e489feddd560996ee60ff59f3c7"
+        },
+        {
+          "sequence": 8,
+          "timestampUs": 2000000,
+          "durationUs": 166666,
+          "type": "delta",
+          "size": 830,
+          "sha256": "621c7105ce0043ab9a2480b7880ed5e569875e9bc36e7b729480d750b36cea8a"
+        },
+        {
+          "sequence": 9,
+          "timestampUs": 1666666,
+          "durationUs": 166666,
+          "type": "delta",
+          "size": 380,
+          "sha256": "31b6ee7d698e011c18ad6b1d7a14509d6935005b45e2e8b635a43b8d94233279"
+        },
+        {
+          "sequence": 10,
+          "timestampUs": 1833333,
+          "durationUs": 333333,
+          "type": "delta",
+          "size": 435,
+          "sha256": "4f71160154e5632e65279f15b5653f86a4d5a405f8042cb167e141781651b696"
+        },
+        {
+          "sequence": 11,
+          "timestampUs": 2166666,
+          "durationUs": 166666,
+          "type": "delta",
+          "size": 391,
+          "sha256": "24177337a111233ccf28b5e30fdcf30b476ee83709f8f7c21a1bf19bb27c2590"
+        }
+      ],
+      "seek": [
+        {
+          "seconds": 0,
+          "packet": null
+        },
+        {
+          "seconds": 0.125,
+          "packet": null
+        },
+        {
+          "seconds": 0.6,
+          "packet": {
+            "timestampUs": 333333,
+            "durationUs": 500000,
+            "type": "key",
+            "size": 2514,
+            "sha256": "cfb85df8884f9a50934c8f8b654ebe9849ab1c7048eb12590fb59ebf66a7615e"
+          }
+        },
+        {
+          "seconds": 1.1666666666666667,
+          "packet": {
+            "timestampUs": 333333,
+            "durationUs": 500000,
+            "type": "key",
+            "size": 2514,
+            "sha256": "cfb85df8884f9a50934c8f8b654ebe9849ab1c7048eb12590fb59ebf66a7615e"
+          }
+        },
+        {
+          "seconds": 2.3233333333333337,
+          "packet": {
+            "timestampUs": 333333,
+            "durationUs": 500000,
+            "type": "key",
+            "size": 2514,
+            "sha256": "cfb85df8884f9a50934c8f8b654ebe9849ab1c7048eb12590fb59ebf66a7615e"
+          }
+        }
+      ],
+      "decodedFrameHashes": "#format: frame checksums\n#version: 2\n#hash: SHA256\n#software: Lavf61.7.103\n#tb 0: 1/6\n#media_type 0: video\n#codec_id 0: rawvideo\n#dimensions 0: 96x64\n#sar 0: 1/1\n#stream#, dts,        pts, duration,     size, hash\n0,          2,          2,        1,    24576, 12e5c7444e05c67371f26ea271284aa4c1af7b886d0f9d022c72933eaebc29a7\n0,          3,          3,        1,    24576, 154f4332a27a8ee3565956d38f440e59f4068984d5c92ad7172aad5cb9030fa4\n0,          4,          4,        1,    24576, 0c5bc4afc61989aa88dcbf595af81dd77276e916eefa1e6a7d2b593a7e9f7e5a\n0,          5,          5,        1,    24576, 9358cac15cd96dc5d61fabad3f933d16e8f5cf14972ca58b1f4fa18957aa6a76\n0,          6,          6,        1,    24576, 79615356477bfafc2f6f97c08460e1848eccdd68198b9664f60c251d50863edb\n0,          7,          7,        1,    24576, 1cff228068119b28e565c8272733204bf3a67dba9a6270909705408b5a3fd615\n0,          8,          8,        1,    24576, 2f7d10666eaf92cb22aa112cb43aada7ebd31240d4555ad8ee0288e75091b47b\n0,          9,          9,        1,    24576, 36b108d90d145f1bf20fdbbb4ad0f724299a24cf7ce9c811c0a37afd7b95e78d\n0,         10,         10,        1,    24576, bdc79d53a6357b7d0102eb5acd41372769a27e9a2623e8430c0d71c8e6ee71b6\n0,         11,         11,        1,    24576, ac0efd7cd18dd9fb8c02069216416caff57cde21b8fc445223be233c2dfc339f\n0,         12,         12,        1,    24576, 9c1b218214bf10524001b0ae5630fdaa238fee68b3220004ca0967b65ba60597\n0,         13,         13,        1,    24576, 3500a2e469aea52f5b53a19e965573e2ab8ff0887bb4987b9e01314f6a80e8b5\n",
+      "independent": {
+        "packets": [
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 4096,
+            "pts_time": "0.333333",
+            "dts": 0,
+            "dts_time": "0.000000",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "2514",
+            "pos": "1602",
+            "flags": "K__",
+            "data_hash": "SHA256:cfb85df8884f9a50934c8f8b654ebe9849ab1c7048eb12590fb59ebf66a7615e"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 10240,
+            "pts_time": "0.833333",
+            "dts": 2048,
+            "dts_time": "0.166667",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "1014",
+            "pos": "4116",
+            "flags": "___",
+            "data_hash": "SHA256:e9f0d35a7d5149002ac58ef57b73b6d9002b77d1acb1cd6d064d335191b1417d"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 6144,
+            "pts_time": "0.500000",
+            "dts": 4096,
+            "dts_time": "0.333333",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "462",
+            "pos": "6365",
+            "flags": "___",
+            "data_hash": "SHA256:788c5e9ad5ac7a24cff1b7f1c2bd3c99f87f72b49508ce873f852b0700a7efb4"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 8192,
+            "pts_time": "0.666667",
+            "dts": 6144,
+            "dts_time": "0.500000",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "406",
+            "pos": "6827",
+            "flags": "___",
+            "data_hash": "SHA256:7ab8ba9acdc141baff64fbe54e3b11201360bb878995f95177c3ecdac79c3cba"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 14336,
+            "pts_time": "1.166667",
+            "dts": 8192,
+            "dts_time": "0.666667",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "894",
+            "pos": "8507",
+            "flags": "___",
+            "data_hash": "SHA256:af80111474d31ed990c2ef36dcff795bec352a39a0c3c770b4197d836e52e593"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 12288,
+            "pts_time": "1.000000",
+            "dts": 10240,
+            "dts_time": "0.833333",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "360",
+            "pos": "9401",
+            "flags": "___",
+            "data_hash": "SHA256:6cd7e70e8bfbb0aa912e8804253ee5465347f483fe2c2cbbc291101a6b17750d"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 18432,
+            "pts_time": "1.500000",
+            "dts": 12288,
+            "dts_time": "1.000000",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "726",
+            "pos": "11002",
+            "flags": "___",
+            "data_hash": "SHA256:18fd75b010d7587ec9c332b1c289b70e199f841582f8230c21a4cd5ff0c0c27c"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 16384,
+            "pts_time": "1.333333",
+            "dts": 14336,
+            "dts_time": "1.166667",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "372",
+            "pos": "13038",
+            "flags": "___",
+            "data_hash": "SHA256:6234d025a34983db0e048aa01bde0131e3d84e489feddd560996ee60ff59f3c7"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 24576,
+            "pts_time": "2.000000",
+            "dts": 16384,
+            "dts_time": "1.333333",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "830",
+            "pos": "13410",
+            "flags": "___",
+            "data_hash": "SHA256:621c7105ce0043ab9a2480b7880ed5e569875e9bc36e7b729480d750b36cea8a"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 20480,
+            "pts_time": "1.666667",
+            "dts": 18432,
+            "dts_time": "1.500000",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "380",
+            "pos": "15495",
+            "flags": "___",
+            "data_hash": "SHA256:31b6ee7d698e011c18ad6b1d7a14509d6935005b45e2e8b635a43b8d94233279"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 22528,
+            "pts_time": "1.833333",
+            "dts": 20480,
+            "dts_time": "1.666667",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "435",
+            "pos": "17156",
+            "flags": "___",
+            "data_hash": "SHA256:4f71160154e5632e65279f15b5653f86a4d5a405f8042cb167e141781651b696"
+          },
+          {
+            "codec_type": "video",
+            "stream_index": 1,
+            "pts": 26624,
+            "pts_time": "2.166667",
+            "dts": 22528,
+            "dts_time": "1.833333",
+            "duration": 2048,
+            "duration_time": "0.166667",
+            "size": "391",
+            "pos": "17591",
+            "flags": "___",
+            "data_hash": "SHA256:24177337a111233ccf28b5e30fdcf30b476ee83709f8f7c21a1bf19bb27c2590"
+          }
+        ],
+        "streams": [
+          {
+            "index": 1,
+            "codec_name": "h264",
+            "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+            "profile": "High",
+            "codec_type": "video",
+            "codec_tag_string": "avc1",
+            "codec_tag": "0x31637661",
+            "width": 96,
+            "height": 64,
+            "coded_width": 96,
+            "coded_height": 64,
+            "closed_captions": 0,
+            "film_grain": 0,
+            "has_b_frames": 2,
+            "sample_aspect_ratio": "1:1",
+            "display_aspect_ratio": "3:2",
+            "pix_fmt": "yuv420p",
+            "level": 10,
+            "chroma_location": "left",
+            "field_order": "progressive",
+            "refs": 1,
+            "is_avc": "true",
+            "nal_length_size": "4",
+            "id": "0x2",
+            "r_frame_rate": "6/1",
+            "avg_frame_rate": "6/1",
+            "time_base": "1/12288",
+            "start_pts": 4096,
+            "start_time": "0.333333",
+            "duration_ts": 24576,
+            "duration": "2.000000",
+            "bit_rate": "35136",
+            "bits_per_raw_sample": "8",
+            "nb_read_packets": "12",
+            "extradata_size": 45,
+            "extradata_hash": "SHA256:49fff60dcce8185111da80dc8ee17a095c4b0fd949c07267dccee6ca9523d411",
+            "disposition": {
+              "default": 1,
+              "dub": 0,
+              "original": 0,
+              "comment": 0,
+              "lyrics": 0,
+              "karaoke": 0,
+              "forced": 0,
+              "hearing_impaired": 0,
+              "visual_impaired": 0,
+              "clean_effects": 0,
+              "attached_pic": 0,
+              "timed_thumbnails": 0,
+              "non_diegetic": 0,
+              "captions": 0,
+              "descriptions": 0,
+              "metadata": 0,
+              "dependent": 0,
+              "still_image": 0,
+              "multilayer": 0
+            },
+            "tags": {
+              "language": "und",
+              "handler_name": "VideoHandler",
+              "vendor_id": "[0][0][0][0]",
+              "encoder": "Lavc61.19.101 libx264"
+            }
+          }
+        ]
+      }
     }
   ],
   "additionalOracleSources": [
@@ -9925,6 +10328,22 @@
         "avc-edit-prefix.mp4"
       ],
       "generatorManifestSha256": "7c4bfd7ae258d0bd28645d116b36cb39b491dfc1c330667995462e0f1ced60fd"
+    }
+  ],
+  "extensions": [
+    {
+      "source": "761e4ec2ddfb41f5d9510b6335f1981c2bb7ad36",
+      "generatorSource": "85d2d52372a7094e7c508ae47d9ebc8af308b2b2",
+      "oracle": {
+        "package": "mediabunny",
+        "version": "1.65.2",
+        "patchSha256": "287dfa9c9b41da1ae087d34aa1d048571d147b7a7653f9d3830f22037621f4d9"
+      },
+      "node": "v26.13.1",
+      "fixtures": [
+        "avc-fragmented-audio-first.mp4"
+      ],
+      "previousFixtureArraySha256": "25c4af0be621d9ad1298afc874ec1ea866e434123e3719063fb29d6279f8d893"
     }
   ]
 }

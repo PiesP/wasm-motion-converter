@@ -16,18 +16,18 @@
     "crates/owned-demux/Cargo.lock": "518bba5599a091a0cc79aaa04ea5b2843e0f408191a8e6bd287d005231b6f024",
     "crates/owned-demux/rust-toolchain.toml": "60c5407645e5d56f600e6ae713f0afc4aebbb858c5ceeef4a79c22b7dd2b51c9",
     "crates/owned-demux/src/codec_metadata.rs": "f1c65fd17a0792749614ae401c5ab5428c9322a55dbcc978862f75c541e4fb2a",
-    "crates/owned-demux/src/ebml.rs": "1289e31881cc9ed3cd87068039814cc2e7d552d094438a4431842504562324d0",
+    "crates/owned-demux/src/ebml.rs": "1da1eaa974d50980b49f1070b3d67f6adb0f799cf02a78fa2c1e6bca832cf8d8",
     "crates/owned-demux/src/lib.rs": "ef41797d73894497b313e695194d6766dc21ee679b2af38091914dde86a70a65",
-    "crates/owned-demux/src/mp4.rs": "528d32cfcc472761c8b4a2ad256f68975ddda091754b1bcf717f35979c5d4b85",
+    "crates/owned-demux/src/mp4.rs": "89ffab03ac3fd9cf3f8a843e4604064f67100f38bf3b2f2b40fc5f61a4bb2650",
     "crates/owned-demux/src/snapshot.rs": "accb586dd56c109bac30ee0b1897a119e597a163f4c728977ee387b327ad039e",
     "crates/owned-demux/src/ts.rs": "8d3b03b7bb59a2efdf47f24da454ccb0a382841a728821293913a2b2bb12aa1c",
     "scripts/build/build-owned-demux-wasm.ts": "9d03ad454ea65e0df4a444390a28a2d3f38e5b56ebe35a9d5e00a6a484587e57",
     "scripts/build/build-gif-scalar-wasm.ts": "18dba1528631fd1cd29c5cb8c3b1725dd8f9139a4b3ca93ddc42d5ae6cd59dfd"
   },
   "artifact": {
-    "sha256": "b989a97c09f08181d2698717dd616a74c7303a6b134fb03503520e2f9d1ca31d",
-    "rawBytes": 117450,
-    "gzipBytes": 46739,
+    "sha256": "f418b9075c816cf27b0a28aaa11e236f89626b333aea233e158e909b19070c13",
+    "rawBytes": 117567,
+    "gzipBytes": 46765,
     "maxLinearBytes": 67108864
   }
 }

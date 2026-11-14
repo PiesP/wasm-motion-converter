@@ -467,9 +467,21 @@ mod tests {
 
     #[test]
     fn track_duration_rounds_to_segment_timecode_without_shortening_packets() {
-        assert_eq!(round_duration_to_scale(1_999_666_666, 1_000_000), Ok(2_000_000_000));
-        assert_eq!(round_duration_to_scale(750_000_000, 1_000_000), Ok(750_000_000));
-        assert_eq!(round_duration_to_scale(5_000_000_000, 1_000_000), Ok(5_000_000_000));
-        assert_eq!(round_duration_to_scale(u64::MAX, 1_000_000), Err(Error::Overflow));
+        assert_eq!(
+            round_duration_to_scale(1_999_666_666, 1_000_000),
+            Ok(2_000_000_000)
+        );
+        assert_eq!(
+            round_duration_to_scale(750_000_000, 1_000_000),
+            Ok(750_000_000)
+        );
+        assert_eq!(
+            round_duration_to_scale(5_000_000_000, 1_000_000),
+            Ok(5_000_000_000)
+        );
+        assert_eq!(
+            round_duration_to_scale(u64::MAX, 1_000_000),
+            Err(Error::Overflow)
+        );
     }
 }

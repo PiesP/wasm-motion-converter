@@ -231,7 +231,7 @@ export async function exerciseOwnedDemuxProduct({
   const oracle = JSON.parse(oracleBytes.toString('utf8')) as Oracle;
   assert.equal(oracle.schema, 1);
   assert.equal(oracle.oracle.package, 'mediabunny');
-  assert.equal(oracle.fixtures.length, 39);
+  assert.equal(oracle.fixtures.length, 40);
   const context = await browser.newContext({
     acceptDownloads: true,
     locale: 'en-US',

@@ -30,3 +30,11 @@ Run focused actual compiled-WASM checks through the maintained Vitest unit
 project. A partial match does not establish product adoption or remove the
 production dependency. Additional malformed/codec-variant inputs must be frozen
 before their candidate comparisons; do not rewrite previous failed receipts.
+
+The later `avc-fragmented-audio-first.mp4` regression uses AAC track1 before
+AVC video track2 and ordered `trex` entries1,2. Generate it alone with
+`generate-owned-demux-fixtures.ts OUTPUT --audio-first-fragment`; `--variants`
+also includes it. Its extension provenance and the unchanged prior39-entry
+array digest are recorded separately in `oracle.json`. The actual patched
+oracle, independent packet/decode trace and compiled comparison guard selection
+of video fragment defaults when audio precedes video.
