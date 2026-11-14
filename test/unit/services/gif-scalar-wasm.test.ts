@@ -198,6 +198,77 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
     }
   });
 
+  it('matches complete quantize/map/compress cycles for all presets and structured inputs', () => {
+    const wasm = instantiate();
+    for (const [width, height] of [
+      [1, 1],
+      [3, 5],
+      [65, 33],
+      [1920, 1080],
+    ]) {
+      for (const kind of width === 1920 ? ['flat'] : ['flat', 'text', 'gradient', 'noise']) {
+        let seed = 0x12345678;
+        const input = new Uint8Array(width! * height! * 4);
+        for (let pixel = 0; pixel < input.length / 4; pixel++) {
+          seed ^= seed << 13;
+          seed ^= seed >>> 17;
+          seed ^= seed << 5;
+          const x = pixel % width!;
+          const value =
+            kind === 'flat'
+              ? 79
+              : kind === 'text'
+                ? x % 5 < 2
+                  ? 0
+                  : 255
+                : kind === 'gradient'
+                  ? Math.floor((x * 255) / width!)
+                  : seed & 255;
+          input.set(
+            [
+              value,
+              kind === 'noise' ? (seed >>> 8) & 255 : value,
+              kind === 'noise' ? (seed >>> 16) & 255 : value,
+              255,
+            ],
+            pixel * 4
+          );
+        }
+        for (const colors of [64, 128, 256]) {
+          const palette = runCompiled(input, colors, wasm);
+          expect(palette).toEqual(reference(input, colors));
+          expect(wasm.map_palette(input.length, palette.length)).toBe(input.length / 4);
+          const indices = new Uint8Array(
+            wasm.memory.buffer,
+            wasm.indices_ptr(),
+            input.length / 4
+          ).slice();
+          expect(indices).toEqual(referenceApplyPalette(input, palette, 'rgb565'));
+          expect(wasm.map_palette(input.length, palette.length)).toBe(-1);
+          expect(wasm.quantize(input.length, colors)).toBe(-1);
+          expect(runLzw(indices, 8, wasm)).toEqual(referenceImageData(indices, 8));
+        }
+      }
+    }
+  });
+
+  it('rejects invalid indices and insufficient output without crossing the admitted extent', () => {
+    const wasm = instantiate();
+    expect(wasm.reserve_input(16)).toBe(0);
+    const indices = new Uint8Array(wasm.memory.buffer, wasm.indices_ptr(), 4);
+    indices.set([0, 1, 2, 4]);
+    const pointer = wasm.lzw_output_ptr();
+    const output = new Uint8Array(wasm.memory.buffer, pointer, 64);
+    output.fill(0xa5);
+    expect(wasm.lzw_encode(4, 2, 64)).toBe(-1);
+    expect([...output]).toEqual(Array.from({ length: 64 }, () => 0xa5));
+    indices[3] = 3;
+    expect(wasm.lzw_encode(4, 2, 1)).toBe(-2);
+    expect([...output.subarray(1)]).toEqual(Array.from({ length: 63 }, () => 0xa5));
+    expect(wasm.lzw_encode(4, 2, wasm.memory.buffer.byteLength)).toBe(-2);
+    expect(wasm.lzw_bound(0xffff_ffff)).toBe(0);
+  });
+
   it('rejects malformed mapping and bounded LZW requests before writing output', () => {
     const wasm = instantiate();
     expect(wasm.map_palette(4, 1)).toBe(-1);
