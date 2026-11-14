@@ -138,4 +138,20 @@ describe('demuxVideo owned packet route', () => {
     expect(mocks.readPacket).not.toHaveBeenCalled();
     expect(mocks.release).toHaveBeenCalledOnce();
   });
+
+  it('bounds a reused decoder description before reserving the packet stream', async () => {
+    const oversized = {
+      duration: 2,
+      framerate: 6,
+      config: {
+        codec: 'avc1.4d400a',
+        codedWidth: 96,
+        codedHeight: 64,
+        description: new Uint8Array(1024 * 1024 + 1),
+      },
+    };
+    await expect(demuxVideo(request(), oversized)).rejects.toThrow('decoder configuration');
+    expect(mocks.readPacket).not.toHaveBeenCalled();
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
 });

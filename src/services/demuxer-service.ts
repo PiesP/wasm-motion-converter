@@ -86,6 +86,9 @@ export async function demuxVideo(
     signal?.throwIfAborted();
     const track = await session.analyze(signal);
     const config = preComputedMetadata?.config ?? ownedDecoderConfig(track);
+    const configDescriptionBytes = config.description?.byteLength ?? 0;
+    if (!Number.isSafeInteger(configDescriptionBytes) || configDescriptionBytes > 1024 * 1024)
+      throw new OwnedDemuxResourceError('Demux memory limit exceeded by decoder configuration');
     ownedTimestampUs(track.durationTicks, track.timescale);
     const duration = preComputedMetadata?.duration ?? Number(track.durationTicks) / track.timescale;
     const stats = preComputedMetadata
@@ -110,6 +113,10 @@ export async function demuxVideo(
     const inputBufferBytes = inputSource instanceof Blob ? 0 : inputSource.byteLength;
     const { wasmCapacityBytes } = session.transferStats;
     const seekWorkspaceBytes = request.trimStart > 0 ? track.packetCount * 12 : 0;
+    const descriptionReserveBytes = Math.max(
+      2 * track.description.byteLength,
+      track.description.byteLength + configDescriptionBytes
+    );
     const chunkBudgetBytes = Math.min(
       ENCODED_CHUNK_BUDGET_BYTES,
       DEMUX_MEMORY_BUDGET_BYTES -
@@ -117,7 +124,7 @@ export async function demuxVideo(
         track.maxPacketBytes -
         // A returned packet may remain live while another realm read is pending.
         ENCODED_PACKET_BUDGET_BYTES -
-        2 * track.description.byteLength -
+        descriptionReserveBytes -
         HEADER_WINDOW_OVERLAP_BYTES -
         seekWorkspaceBytes
     );
