@@ -26,7 +26,8 @@
       "webp-initialization.json",
       "motion-signature-owner-video.json",
       "motion-signature-owner-recovery.json",
-      "gif-owned-fallback-recovery.json"
+      "gif-owned-fallback-recovery.json",
+      "owned-vp8-native.json"
     ],
     "scenarios": {
       "gif-quantization-primary": {
@@ -246,6 +247,19 @@
           "validation/windows/prior-dist",
           "validation/windows/public-target.json"
         ]
+      },
+      "owned-vp8-native": {
+        "selector": "owned-vp8-native.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": ["dist", "validation/windows/inputs/owned-vp8-native.json"],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
       }
     }
   },
@@ -289,6 +303,7 @@
     "validation/windows/worker-option-contract.ts",
     "validation/windows/private-inputs",
     "validation/windows/gif-quantization-owner-video.json",
-    "validation/windows/motion-owner-video.json"
+    "validation/windows/motion-owner-video.json",
+    "validation/windows/helpers/owned-vp8-probe.ts"
   ]
 }
