@@ -7,12 +7,13 @@
 mod codec_metadata;
 mod ebml;
 mod mp4;
+mod snapshot;
 mod ts;
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 pub const INPUT_CAPACITY: usize = 64 * 1024;
 pub const METADATA_BUDGET: usize = 32 * 1024 * 1024;
 pub const PACKET_BUDGET: u32 = 16 * 1024 * 1024 - 1024;
@@ -101,9 +102,11 @@ pub struct Mp4Session {
     ts_prepared_max: u32,
     final_scan: usize,
     final_end: i64,
+    snapshot_export: Option<snapshot::Export>,
+    snapshot_import: Option<snapshot::Import>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Format {
     Unknown,
     Mp4,
@@ -179,6 +182,8 @@ impl Mp4Session {
             ts_prepared_max: 0,
             final_scan: 0,
             final_end: 0,
+            snapshot_export: None,
+            snapshot_import: None,
         })
     }
 
@@ -202,6 +207,81 @@ impl Mp4Session {
     }
     fn codec_string(&self) -> &str {
         &self.codec_string
+    }
+
+    fn snapshot_begin(&mut self) -> Result<u32, Error> {
+        if self.status != Status::Complete
+            || self
+                .snapshot_export
+                .as_ref()
+                .is_some_and(|export| !export.finished())
+            || self.snapshot_import.is_some()
+            || self.ts_reassembly.is_some()
+        {
+            return Err(Error::Invalid);
+        }
+        let track = self.track.as_ref().ok_or(Error::Invalid)?;
+        self.snapshot_export =
+            snapshot::Export::new(track, self.format, &self.codec_string, &self.ts_sources)?;
+        Ok(self
+            .snapshot_export
+            .as_ref()
+            .map_or(0, snapshot::Export::total))
+    }
+
+    fn snapshot_next(&mut self) -> Result<u32, Error> {
+        let mut export = self.snapshot_export.take().ok_or(Error::Invalid)?;
+        let result = export.next(
+            &mut self.input,
+            self.track.as_ref().ok_or(Error::Invalid)?,
+            self.format,
+            &self.codec_string,
+            &self.ts_sources,
+            self.len,
+        )?;
+        if result != 0 {
+            self.snapshot_export = Some(export);
+        }
+        Ok(result as u32)
+    }
+
+    fn snapshot_import_begin(&mut self, total: usize) -> Result<(), Error> {
+        if self.status != Status::Yield
+            || self.track.is_some()
+            || self.snapshot_import.is_some()
+            || self.snapshot_export.is_some()
+            || self.cursor != 0
+            || self.need.is_some()
+        {
+            return Err(Error::Invalid);
+        }
+        self.snapshot_import = Some(snapshot::Import::new(total, self.len)?);
+        Ok(())
+    }
+
+    fn snapshot_import_feed(&mut self, length: usize) -> Result<(), Error> {
+        if length == 0 || length > snapshot::STEP_BYTES {
+            return Err(Error::Invalid);
+        }
+        self.snapshot_import
+            .as_mut()
+            .ok_or(Error::Invalid)?
+            .feed(&self.input[..length])
+    }
+
+    fn snapshot_import_step(&mut self) -> Result<bool, Error> {
+        let import = self.snapshot_import.as_mut().ok_or(Error::Invalid)?;
+        if !import.step()? {
+            return Ok(false);
+        }
+        let (track, format, codec, sources) =
+            self.snapshot_import.take().ok_or(Error::Invalid)?.take()?;
+        self.track = Some(track);
+        self.format = format;
+        self.codec_string = codec;
+        self.ts_sources = sources;
+        self.status = Status::Complete;
+        Ok(true)
     }
 
     fn probe_vp9(&mut self, length: usize) -> Result<(), Error> {
@@ -1200,6 +1280,89 @@ pub extern "C" fn demux_packet_finish() -> u32 {
         .map_or(0, |ptr| ptr as u32)
 }
 
+// Snapshot lengths and progress codes fit below the high bit. Terminal errors
+// retain the same Error discriminants as the parser's fixed ABI event.
+fn snapshot_error_code(error: Error) -> u32 {
+    0x8000_0000 | (error as u32 + 1)
+}
+
+#[no_mangle]
+pub extern "C" fn demux_snapshot_begin() -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return snapshot_error_code(Error::Invalid);
+    };
+    match state
+        .session
+        .as_mut()
+        .map(Mp4Session::snapshot_begin)
+        .unwrap_or(Err(Error::Invalid))
+    {
+        Ok(total) => total,
+        Err(error) => snapshot_error_code(error),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn demux_snapshot_next() -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return snapshot_error_code(Error::Invalid);
+    };
+    match state
+        .session
+        .as_mut()
+        .map(Mp4Session::snapshot_next)
+        .unwrap_or(Err(Error::Invalid))
+    {
+        Ok(length) => length,
+        Err(error) => snapshot_error_code(error),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn demux_snapshot_import_begin(total: u32) -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return snapshot_error_code(Error::Invalid);
+    };
+    match state
+        .session
+        .as_mut()
+        .map(|session| session.snapshot_import_begin(total as usize))
+        .unwrap_or(Err(Error::Invalid))
+    {
+        Ok(()) => 1,
+        Err(error) => snapshot_error_code(error),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn demux_snapshot_import_feed(length: u32) -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return snapshot_error_code(Error::Invalid);
+    };
+    match state
+        .session
+        .as_mut()
+        .map(|session| session.snapshot_import_feed(length as usize))
+        .unwrap_or(Err(Error::Invalid))
+    {
+        Ok(()) => 1,
+        Err(error) => snapshot_error_code(error),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn demux_snapshot_import_step() -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return snapshot_error_code(Error::Invalid);
+    };
+    match state.session.as_mut().map(Mp4Session::snapshot_import_step) {
+        Some(Ok(false)) => 1,
+        Some(Ok(true)) => 2,
+        Some(Err(error)) => snapshot_error_code(error),
+        None => snapshot_error_code(Error::Invalid),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn demux_release() {
     if let Ok(mut state) = abi().lock() {
@@ -1211,6 +1374,15 @@ pub extern "C" fn demux_release() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_status_preserves_parser_error_kinds() {
+        assert_eq!(snapshot_error_code(Error::Invalid), 0x8000_0001);
+        assert_eq!(snapshot_error_code(Error::Truncated), 0x8000_0002);
+        assert_eq!(snapshot_error_code(Error::ResourceLimit), 0x8000_0003);
+        assert_eq!(snapshot_error_code(Error::Unsupported), 0x8000_0004);
+        assert_eq!(snapshot_error_code(Error::Overflow), 0x8000_0005);
+    }
 
     #[test]
     fn moof_admission_counts_retained_index_before_allocating_box() {

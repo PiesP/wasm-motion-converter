@@ -7,7 +7,9 @@ import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 
 import { ownedReadCreditStats, readOwnedRange } from './owned-demux-source-reads';
 
-const ABI_VERSION = 2;
+const ABI_VERSION = 3;
+const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+const SNAPSHOT_STEP_BYTES = 8 * 1024;
 const MAX_INPUT_BYTES = 500 * 1024 * 1024;
 const MAX_PACKET_BYTES = 16 * 1024 * 1024 - 1024;
 const MAX_WASM_CAPACITY_BYTES = 64 * 1024 * 1024;
@@ -33,6 +35,11 @@ type DemuxExports = {
   demux_probe_vp9(prefixLength: number): number;
   demux_packet_feed(length: number): number;
   demux_packet_finish(): number;
+  demux_snapshot_begin(): number;
+  demux_snapshot_next(): number;
+  demux_snapshot_import_begin(total: number): number;
+  demux_snapshot_import_feed(length: number): number;
+  demux_snapshot_import_step(): number;
   demux_release(): void;
 };
 
@@ -77,6 +84,9 @@ export type OwnedDemuxTransferStats = {
   rangeReads: number;
   sourceReadBytes: number;
   inputCopiedToWasmBytes: number;
+  snapshotCopiedFromWasmBytes: number;
+  /** A subset of inputCopiedToWasmBytes, not an additional allocation. */
+  snapshotCopiedToWasmBytes: number;
   packetReadBytes: number;
   stepCalls: number;
   wasmCapacityBytes: number;
@@ -235,6 +245,19 @@ function safeOffset(value: bigint): number {
   return Number(value);
 }
 
+function checkSnapshotStatus(status: number): number {
+  const word = status >>> 0;
+  if (word < 0x8000_0000) return word;
+  switch (word & 0x7fff_ffff) {
+    case 1: throw new Error('Owned demux snapshot invalid input');
+    case 2: throw new Error('Owned demux snapshot truncated input');
+    case 3: throw new Error('Owned demux snapshot resource limit exceeded');
+    case 4: throw new Error('Owned demux snapshot format unsupported');
+    case 5: throw new Error('Owned demux snapshot value overflow');
+    default: throw new Error('Owned demux snapshot ABI error code invalid');
+  }
+}
+
 async function nextTask(): Promise<void> {
   await yieldToMain();
 }
@@ -247,11 +270,14 @@ export class OwnedDemuxSession {
   private analyzing = false;
   private packetReadInProgress = false;
   private seeking = false;
+  private snapshotOperation = false;
   private generation = 1;
   private readonly sessionId = nextSessionId++;
   private rangeReads = 0;
   private sourceReadBytes = 0;
   private inputCopiedToWasmBytes = 0;
+  private snapshotCopiedFromWasmBytes = 0;
+  private snapshotCopiedToWasmBytes = 0;
   private packetReadBytes = 0;
   private stepCalls = 0;
   private maxPacketBytes = 0;
@@ -264,6 +290,8 @@ export class OwnedDemuxSession {
       rangeReads: this.rangeReads,
       sourceReadBytes: this.sourceReadBytes,
       inputCopiedToWasmBytes: this.inputCopiedToWasmBytes,
+      snapshotCopiedFromWasmBytes: this.snapshotCopiedFromWasmBytes,
+      snapshotCopiedToWasmBytes: this.snapshotCopiedToWasmBytes,
       packetReadBytes: this.packetReadBytes,
       stepCalls: this.stepCalls,
       wasmCapacityBytes: this.wasm.memory.buffer.byteLength,
@@ -305,6 +333,11 @@ export class OwnedDemuxSession {
           'demux_packet_feed',
           'demux_packet_finish',
           'demux_release',
+          'demux_snapshot_begin',
+          'demux_snapshot_next',
+          'demux_snapshot_import_begin',
+          'demux_snapshot_import_feed',
+          'demux_snapshot_import_step',
         ] as const
       ).some((name) => typeof exports[name] !== 'function')
     )
@@ -320,7 +353,7 @@ export class OwnedDemuxSession {
   }
 
   async analyze(signal?: AbortSignal): Promise<OwnedDemuxTrack> {
-    if (!this.active || this.ready || this.analyzing)
+    if (!this.active || this.ready || this.analyzing || this.snapshotOperation)
       throw new Error('Owned demux session state invalid');
     this.analyzing = true;
     try {
@@ -397,6 +430,114 @@ export class OwnedDemuxSession {
     return this.readTrackRecord();
   }
 
+  /** Export only a logical index; the selected-source generation stays with its host owner. */
+  async exportIndex(signal?: AbortSignal): Promise<ArrayBuffer | null> {
+    if (!this.active || !this.ready || this.analyzing || this.packetReadInProgress || this.seeking || this.snapshotOperation)
+      throw new Error('Owned demux snapshot lease invalid');
+    this.snapshotOperation = true;
+    try {
+      signal?.throwIfAborted();
+      const total = checkSnapshotStatus(this.wasm.demux_snapshot_begin());
+      if (total === 0) return null;
+      if (total < 64 + 64 + 40 + 4 || total > MAX_SNAPSHOT_BYTES)
+        throw new Error('Owned demux snapshot size invalid');
+      if (this.wasm.memory.buffer.byteLength + total + 16 * 1024 * 1024 > 128 * 1024 * 1024)
+        throw new Error('Owned demux snapshot resource limit exceeded');
+      const output = new Uint8Array(total);
+      for (let at = 0; at < total;) {
+        signal?.throwIfAborted();
+        if (!this.active) throw new Error('Owned demux session released');
+        const length = checkSnapshotStatus(this.wasm.demux_snapshot_next());
+        if (length < 1 || length > SNAPSHOT_STEP_BYTES || at + length > total)
+          throw new Error('Owned demux snapshot export failed');
+        const pointer = this.wasm.demux_input_ptr();
+        if (pointer <= 0 || pointer + length > this.wasm.memory.buffer.byteLength)
+          throw new Error('Owned demux snapshot source invalid');
+        output.set(new Uint8Array(this.wasm.memory.buffer, pointer, length), at);
+        this.snapshotCopiedFromWasmBytes += length;
+        at += length;
+        if (this.wasm.memory.buffer.byteLength !== this.preparedWasmCapacityBytes)
+          throw new Error('Owned demux snapshot changed WASM capacity');
+        await nextTask();
+      }
+      signal?.throwIfAborted();
+      if (!this.active) throw new Error('Owned demux session released');
+      return output.buffer;
+    } catch (error) {
+      this.release();
+      throw error;
+    } finally {
+      this.snapshotOperation = false;
+    }
+  }
+
+  /** Import into a fresh conversion-owned instance. A malformed import is terminal. */
+  async importIndex(snapshot: ArrayBuffer, signal?: AbortSignal): Promise<OwnedDemuxTrack> {
+    if (!this.active || this.ready || this.analyzing || this.packetReadInProgress || this.seeking || this.snapshotOperation)
+      throw new Error('Owned demux snapshot import state invalid');
+    this.snapshotOperation = true;
+    try {
+      signal?.throwIfAborted();
+      const bytes = new Uint8Array(snapshot);
+      if (bytes.byteLength < 64 + 64 + 40 + 4 || bytes.byteLength > MAX_SNAPSHOT_BYTES)
+        throw new Error('Owned demux snapshot size invalid');
+      if (this.wasm.memory.buffer.byteLength + bytes.byteLength + 16 * 1024 * 1024 > 128 * 1024 * 1024)
+        throw new Error('Owned demux snapshot resource limit exceeded');
+      if (checkSnapshotStatus(this.wasm.demux_snapshot_import_begin(bytes.byteLength)) !== 1)
+        throw new Error('Owned demux snapshot import admission failed');
+      for (let at = 0; at < bytes.length;) {
+        signal?.throwIfAborted();
+        if (!this.active) throw new Error('Owned demux session released');
+        const length = Math.min(SNAPSHOT_STEP_BYTES, bytes.length - at);
+        const pointer = this.wasm.demux_input_ptr();
+        if (pointer <= 0 || pointer + length > this.wasm.memory.buffer.byteLength)
+          throw new Error('Owned demux snapshot destination invalid');
+        new Uint8Array(this.wasm.memory.buffer, pointer, length).set(bytes.subarray(at, at + length));
+        this.inputCopiedToWasmBytes += length;
+        this.snapshotCopiedToWasmBytes += length;
+        if (checkSnapshotStatus(this.wasm.demux_snapshot_import_feed(length)) !== 1)
+          throw new Error('Owned demux snapshot import feed failed');
+        at += length;
+        await nextTask();
+      }
+      for (let steps = 0; steps < MAX_STEPS; steps++) {
+        signal?.throwIfAborted();
+        if (!this.active) throw new Error('Owned demux session released');
+        const status = checkSnapshotStatus(this.wasm.demux_snapshot_import_step());
+        if (status === 0) throw new Error('Owned demux snapshot import invalid');
+        if (status === 2) break;
+        await nextTask();
+        if (steps === MAX_STEPS - 1) throw new Error('Owned demux snapshot logical work limit exceeded');
+      }
+      const track = this.readTrackRecord();
+      let reconstructs = false;
+      for (let index = 0; index < track.packetCount; index++) {
+        if (index % 256 === 0) {
+          signal?.throwIfAborted();
+          if (!this.active) throw new Error('Owned demux session released');
+          await nextTask();
+        }
+        const packet = this.readPacketRecord(index);
+        this.maxPacketBytes = Math.max(this.maxPacketBytes, packet.byteLength);
+        reconstructs ||= packet.sourceEnd !== null;
+      }
+      signal?.throwIfAborted();
+      if (!this.active) throw new Error('Owned demux session released');
+      if (reconstructs && !this.wasm.demux_prepare_packets(this.maxPacketBytes))
+        throw new Error('Owned demux snapshot packet workspace admission failed');
+      this.preparedWasmCapacityBytes = this.wasm.memory.buffer.byteLength;
+      track.maxPacketBytes = this.maxPacketBytes;
+      this.ready = true;
+      this.analyzedTrack = track;
+      return track;
+    } catch (error) {
+      this.release();
+      throw error;
+    } finally {
+      this.snapshotOperation = false;
+    }
+  }
+
   private readTrackRecord(): OwnedDemuxTrack {
     const view = eventView(this.wasm, this.wasm.demux_track());
     if (view.getUint32(0, true) !== 6) throw new Error('Owned demux invalid track event');
@@ -460,7 +601,7 @@ export class OwnedDemuxSession {
   }
 
   packet(index: number): OwnedDemuxPacket {
-    if (!this.active || !this.ready || !Number.isSafeInteger(index) || index < 0)
+    if (!this.active || !this.ready || this.snapshotOperation || !Number.isSafeInteger(index) || index < 0)
       throw new Error('Owned demux packet index invalid');
     return this.readPacketRecord(index);
   }
@@ -498,7 +639,8 @@ export class OwnedDemuxSession {
       !this.ready ||
       packet.sessionId !== this.sessionId ||
       packet.generation !== this.generation ||
-      this.packetReadInProgress
+      this.packetReadInProgress ||
+      this.snapshotOperation
     )
       throw new Error('Owned demux packet lease invalid');
     signal?.throwIfAborted();
@@ -614,7 +756,7 @@ export class OwnedDemuxSession {
 
   /** Choose a verified random-access packet at or before the requested presentation time. */
   async findVerifiedKey(seconds: number, signal?: AbortSignal): Promise<number | null> {
-    if (!this.active || !this.ready || this.seeking || !Number.isFinite(seconds) || seconds < 0)
+    if (!this.active || !this.ready || this.seeking || this.snapshotOperation || !Number.isFinite(seconds) || seconds < 0)
       throw new Error('Owned demux seek request invalid');
     this.seeking = true;
     try {
