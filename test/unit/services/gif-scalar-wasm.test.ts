@@ -8,7 +8,11 @@ import {
   GifScalarLoadError,
   GifScalarMemoryError,
 } from '@services/gif-scalar-wasm';
-import { quantize as referenceQuantize } from 'gifenc';
+import {
+  applyPalette as referenceApplyPalette,
+  GIFEncoder as referenceGifEncoder,
+  quantize as referenceQuantize,
+} from 'gifenc';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const wasmPath = new URL('../../../src/services/gif-scalar-quantizer.wasm', import.meta.url);
@@ -28,10 +32,64 @@ function instantiate(): {
   reserve_input(length: number): number;
   palette_ptr(): number;
   quantize(length: number, colors: number): number;
+  indices_ptr(): number;
+  map_palette(length: number, colors: number): number;
+  lzw_bound(pixels: number): number;
+  lzw_output_ptr(): number;
+  lzw_encode(pixels: number, depth: number, capacity: number): number;
 } {
   const module = new WebAssembly.Module(wasmBytes);
   expect(WebAssembly.Module.imports(module)).toEqual([]);
   return new WebAssembly.Instance(module, {}).exports as ReturnType<typeof instantiate>;
+}
+
+function runMapped(input: Uint8Array, palette: number[][], wasm = instantiate()): Uint8Array {
+  const pointer = wasm.input_ptr();
+  const end = pointer + input.byteLength;
+  if (end > wasm.memory.buffer.byteLength) {
+    wasm.memory.grow(Math.ceil((end - wasm.memory.buffer.byteLength) / 65_536));
+  }
+  expect(wasm.reserve_input(input.byteLength)).toBe(0);
+  new Uint8Array(wasm.memory.buffer, pointer, input.byteLength).set(input);
+  const paletteBytes = new Uint8Array(wasm.memory.buffer, wasm.palette_ptr(), palette.length * 3);
+  paletteBytes.set(palette.flat());
+  expect(wasm.map_palette(input.byteLength, palette.length)).toBe(input.byteLength / 4);
+  return new Uint8Array(wasm.memory.buffer, wasm.indices_ptr(), input.byteLength / 4).slice();
+}
+
+function referenceImageData(indices: Uint8Array, depth: number): Uint8Array {
+  const palette = Array.from({ length: 1 << depth }, (_, index) => [index, index, index]);
+  const encoder = referenceGifEncoder({ auto: true });
+  encoder.writeFrame(indices, indices.length, 1, {
+    palette,
+    colorDepth: depth,
+    repeat: 0,
+    delay: 20,
+  });
+  encoder.finish();
+  // GIF89a + screen descriptor + global table + NETSCAPE + GCE + image descriptor.
+  const imageDataOffset = 6 + 7 + palette.length * 3 + 19 + 8 + 10;
+  return encoder.bytes().subarray(imageDataOffset, -1);
+}
+
+function runLzw(indices: Uint8Array, depth: number, wasm = instantiate()): Uint8Array {
+  const inputBytes = indices.byteLength * 4;
+  const minimum = wasm.input_ptr() + inputBytes;
+  if (minimum > wasm.memory.buffer.byteLength) {
+    wasm.memory.grow(Math.ceil((minimum - wasm.memory.buffer.byteLength) / 65_536));
+  }
+  expect(wasm.reserve_input(inputBytes)).toBe(0);
+  new Uint8Array(wasm.memory.buffer, wasm.indices_ptr(), indices.byteLength).set(indices);
+  const bound = wasm.lzw_bound(indices.byteLength);
+  expect(bound).toBeGreaterThan(0);
+  const end = wasm.lzw_output_ptr() + bound;
+  if (end > wasm.memory.buffer.byteLength) {
+    wasm.memory.grow(Math.ceil((end - wasm.memory.buffer.byteLength) / 65_536));
+  }
+  const length = wasm.lzw_encode(indices.byteLength, depth, bound);
+  expect(length).toBeGreaterThan(0);
+  expect(length).toBeLessThanOrEqual(bound);
+  return new Uint8Array(wasm.memory.buffer, wasm.lzw_output_ptr(), length).slice();
 }
 
 function runCompiled(input: Uint8Array, colors: number, wasm = instantiate()): number[][] {
@@ -54,6 +112,103 @@ function runCompiled(input: Uint8Array, colors: number, wasm = instantiate()): n
 afterEach(() => vi.unstubAllGlobals());
 
 describe('compiled scalar WASM and gifenc 1.0.3', () => {
+  it('maps RGB565 using the first pixel per key, the green mask, and last-index distance ties', () => {
+    const palette = [
+      [0, 0, 0],
+      [8, 0, 0],
+      [0, 8, 0],
+      [8, 8, 0],
+    ];
+    const cases = [
+      rgba([
+        [0, 0, 0, 0],
+        [7, 0, 0, 255],
+        [0, 3, 0, 255],
+        [0, 4, 0, 255],
+        [8, 8, 0, 255],
+      ]),
+      rgba([
+        [4, 4, 0, 255],
+        [0, 7, 0, 255],
+        [0, 0, 0, 255],
+        [8, 0, 0, 255],
+      ]),
+    ];
+    const wasm = instantiate();
+    for (const input of cases) {
+      expect(runMapped(input, palette, wasm)).toEqual(
+        referenceApplyPalette(input, palette, 'rgb565')
+      );
+    }
+    const firstSeven = rgba([
+      [7, 0, 0, 255],
+      [0, 0, 0, 255],
+    ]);
+    expect(runMapped(firstSeven, palette, wasm)).toEqual(
+      referenceApplyPalette(firstSeven, palette, 'rgb565')
+    );
+    expect([...runMapped(firstSeven, palette, wasm)]).toEqual([1, 1]);
+  });
+
+  it('matches indexed pixels after the compiled quantizer and resets between repeated frames', () => {
+    const wasm = instantiate();
+    for (const colors of [64, 128, 256]) {
+      const input = rgba(
+        Array.from({ length: 129 }, (_, index) => [
+          (index * 13) & 255,
+          (index * 31) & 255,
+          (index * 47) & 255,
+          index & 255,
+        ])
+      );
+      const palette = runCompiled(input, colors, wasm);
+      // runCompiled has copied the input into the same conversion-owned module.
+      const mapped = new Uint8Array(wasm.memory.buffer, wasm.indices_ptr(), input.length / 4);
+      expect(wasm.map_palette(input.length, palette.length)).toBe(input.length / 4);
+      expect(mapped.slice()).toEqual(referenceApplyPalette(input, palette, 'rgb565'));
+      expect(
+        runMapped(
+          rgba([[255, 0, 0, 255]]),
+          [
+            [0, 0, 0],
+            [255, 0, 0],
+          ],
+          wasm
+        )
+      ).toEqual(Uint8Array.of(1));
+    }
+  });
+
+  it('matches gifenc LZW image blocks at code-width, dictionary-reset and 254-byte boundaries', () => {
+    const sizes = [1, 2, 13, 254, 255, 256, 1023, 8192, 32768];
+    const wasm = instantiate();
+    for (const size of sizes) {
+      let seed = size ^ 0x6ac14239;
+      const indices = Uint8Array.from({ length: size }, () => {
+        seed ^= seed << 13;
+        seed ^= seed >>> 17;
+        seed ^= seed << 5;
+        return seed & 255;
+      });
+      expect(runLzw(indices, 8, wasm)).toEqual(referenceImageData(indices, 8));
+    }
+    for (const depth of [2, 3, 4, 6, 7]) {
+      const indices = Uint8Array.from({ length: 1025 }, (_, index) => index & ((1 << depth) - 1));
+      expect(runLzw(indices, depth, wasm)).toEqual(referenceImageData(indices, depth));
+    }
+  });
+
+  it('rejects malformed mapping and bounded LZW requests before writing output', () => {
+    const wasm = instantiate();
+    expect(wasm.map_palette(4, 1)).toBe(-1);
+    expect(wasm.lzw_encode(1, 2, 64)).toBe(-1);
+    expect(wasm.lzw_bound(0)).toBe(0);
+    const input = rgba([[255, 0, 0, 255]]);
+    expect(runMapped(input, [[255, 0, 0]], wasm)).toEqual(Uint8Array.of(0));
+    expect(wasm.map_palette(input.length, 257)).toBe(-1);
+    expect(wasm.lzw_encode(1, 1, 64)).toBe(-1);
+    expect(wasm.lzw_encode(1, 2, 0)).toBe(-1);
+  });
   it('rounds positive half ties as Math.round after both bin means and merges', () => {
     const withinBin = rgba([
       [4, 4, 4, 255],

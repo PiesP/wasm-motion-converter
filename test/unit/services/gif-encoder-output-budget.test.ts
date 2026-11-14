@@ -3,134 +3,60 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
-const mocks = vi.hoisted(() => {
-  const state = {
-    allocations: [] as number[],
-    bytesWrittenPerFrame: 16,
-    capacity: 0,
-    cursor: 0,
-    frameCount: 2,
-    inputPacketCount: 2,
-    simulateWasmGrowth: false,
-  };
-  let stream: {
-    readonly buffer: { byteLength: number };
-    writeByte: (byte: number) => void;
-    writeBytes: (bytes: Uint8Array, offset?: number, length?: number) => void;
-    writeBytesView: (bytes: Uint8Array, offset?: number, length?: number) => void;
-  };
-  const writeFrame = vi.fn(() => {
-    stream.writeBytesView(new Uint8Array(state.bytesWrittenPerFrame));
-  });
+const mocks = vi.hoisted(() => ({
+  frameCount: 2,
+  writeFrame: vi.fn(),
+}));
+
+vi.mock('@services/gif-scalar-wasm', () => ({
+  createGifScalarQuantizer: async () =>
+    Object.assign(() => [[0, 0, 0]], {
+      mapPalette: () => Uint8Array.of(0),
+      compress: () => Uint8Array.of(2, 2, 0),
+    }),
+}));
+vi.mock('@services/gif-owned-writer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@services/gif-owned-writer')>();
   return {
-    state,
-    get stream() {
-      return stream;
+    OwnedGifWriter: class extends actual.OwnedGifWriter {
+      override writeFrame(
+        ...args: Parameters<InstanceType<typeof actual.OwnedGifWriter>['writeFrame']>
+      ): void {
+        mocks.writeFrame(...args);
+        super.writeFrame(...args);
+      }
     },
-    set stream(value) {
-      stream = value;
-    },
-    writeFrame,
   };
 });
-
-vi.mock('gifenc', () => ({
-  applyPalette: () => new Uint8Array([0]),
-  GIFEncoder: ({ initialCapacity = 256 } = {}) => {
-    mocks.state.capacity = initialCapacity;
-    mocks.state.allocations.push(initialCapacity);
-    const write = (length: number) => {
-      const requiredCapacity = mocks.state.cursor + length;
-      if (requiredCapacity > mocks.state.capacity) {
-        const growth =
-          mocks.state.capacity < 1024 * 1024
-            ? mocks.state.capacity * 2
-            : Math.floor(mocks.state.capacity * 1.125);
-        mocks.state.capacity = Math.max(requiredCapacity, growth, 256);
-        mocks.state.allocations.push(mocks.state.capacity);
-      }
-      mocks.state.cursor = requiredCapacity;
-    };
-    mocks.stream = {
-      get buffer() {
-        return { byteLength: mocks.state.capacity };
-      },
-      writeByte: () => {
-        write(1);
-      },
-      writeBytes: (bytes: Uint8Array, _offset?: number, length?: number) => {
-        write(length ?? bytes.length);
-      },
-      writeBytesView: (bytes: Uint8Array, _offset?: number, length?: number) => {
-        write(length ?? bytes.byteLength);
-      },
-    };
-    return {
-      bytes: () => new Uint8Array(mocks.state.cursor),
-      bytesView: () => new Uint8Array(mocks.state.cursor),
-      finish: () => mocks.stream.writeByte(0x3b),
-      stream: mocks.stream,
-      writeFrame: mocks.writeFrame,
-    };
-  },
-  quantize: (rgba: Uint8Array) => [[rgba[0]!, rgba[0]!, rgba[0]!]],
-}));
-vi.mock('@services/gif-scalar-wasm', () => ({
-  createGifScalarQuantizer: async (
-    assertCapacity: (oldBytes: number, newBytes: number) => void,
-    setCapacity: (bytes: number) => void
-  ) => {
-    if (mocks.state.simulateWasmGrowth) {
-      assertCapacity(0, 8 * 1024 * 1024);
-      setCapacity(8 * 1024 * 1024);
-    }
-    return (rgba: Uint8Array) => {
-      if (mocks.state.simulateWasmGrowth) {
-        assertCapacity(8 * 1024 * 1024, 12 * 1024 * 1024);
-        setCapacity(12 * 1024 * 1024);
-      }
-      return [[rgba[0]!, rgba[0]!, rgba[0]!]];
-    };
-  },
-}));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
-    if (options.maxInputChunks && mocks.state.inputPacketCount > options.maxInputChunks) {
-      throw new Error(
-        `Decoder input packet limit exceeded (${options.maxInputChunks} packet limit)`
-      );
-    }
-    for (let frame = 0; frame < mocks.state.frameCount; frame++) {
+    for (let frame = 0; frame < mocks.frameCount; frame++) {
       await options.onFrameAvailable(
         new Uint8Array([frame, frame, frame, 255]),
         100,
         frame,
         undefined,
-        {
-          startUs: frame * 100_000,
-          endUs: (frame + 1) * 100_000,
-        }
+        { startUs: frame * 100_000, endUs: (frame + 1) * 100_000 }
       );
     }
     return {
-      outputTotalMs: 0,
+      totalInputFrames: mocks.frameCount,
       skippedByDecimation: 0,
       smartSkipped: 0,
-      sourceTotalMs: mocks.state.frameCount * 100,
-      tailAccumulatedMs: 0,
-      presentationEndUs: mocks.state.frameCount * 100_000,
-      totalInputFrames: mocks.state.frameCount,
+      sourceTotalMs: mocks.frameCount * 100,
+      presentationEndUs: mocks.frameCount * 100_000,
+      consumedChunks: mocks.frameCount,
+      decodedFrames: mocks.frameCount,
+      selectedFrames: mocks.frameCount,
     };
   }),
 }));
 vi.mock('@services/dynamic-decimation-controller', () => ({
-  createDynamicDecimationController: () => ({
-    getSkipCount: () => 0,
-    shouldSkip: () => false,
-  }),
+  createDynamicDecimationController: () => ({ getSkipCount: () => 0, shouldSkip: () => false }),
 }));
 
 import { encodeGif } from '@services/gif-encoder-service';
+import { OwnedGifWriter } from '@services/gif-owned-writer';
 
 const demux = {
   chunks: [],
@@ -140,20 +66,15 @@ const demux = {
   sourceTotalMs: 200,
   totalFrames: 2,
 };
+const frameOptions = { palette: [[0, 0, 0]], colorDepth: 2, repeat: 0, delay: 20 };
 
 beforeEach(() => {
-  mocks.state.allocations = [];
-  mocks.state.bytesWrittenPerFrame = 16;
-  mocks.state.capacity = 0;
-  mocks.state.cursor = 0;
-  mocks.state.frameCount = 2;
-  mocks.state.inputPacketCount = 2;
-  mocks.state.simulateWasmGrowth = false;
+  mocks.frameCount = 2;
   mocks.writeFrame.mockClear();
 });
 
-describe('encodeGif output budgets', () => {
-  it('rejects cumulative frame overflow before writing the frame', async () => {
+describe('owned GIF output admission', () => {
+  it('rejects the second output frame before writing it', async () => {
     await expect(
       encodeGif(demux, {
         width: 1,
@@ -164,98 +85,40 @@ describe('encodeGif output budgets', () => {
         maxOutputBytes: 1024,
       })
     ).rejects.toThrow('GIF output frame limit exceeded');
-
     expect(mocks.writeFrame).toHaveBeenCalledOnce();
   });
 
-  it('rejects cumulative byte overflow before the stream write', async () => {
-    mocks.state.frameCount = 1;
-    mocks.state.bytesWrittenPerFrame = 17;
-
-    await expect(
-      encodeGif(demux, {
-        width: 1,
-        height: 1,
-        quality: 'low',
-        scale: 1,
-        maxFrames: 1,
-        maxOutputBytes: 16,
-      })
-    ).rejects.toThrow('GIF output byte limit exceeded');
-
-    expect(mocks.state.cursor).toBe(0);
-  });
-
-  it('rejects geometric capacity growth before allocating old and new buffers over budget', async () => {
-    mocks.state.frameCount = 1;
-    mocks.state.bytesWrittenPerFrame = 5000;
-
-    await expect(
-      encodeGif(demux, {
-        width: 1,
-        height: 1,
-        quality: 'low',
-        scale: 1,
-        maxFrames: 1,
-        maxOutputBytes: 10_000,
-      })
-    ).rejects.toThrow('GIF output byte limit exceeded');
-
-    expect(mocks.state.allocations).toEqual([4096]);
-    expect(mocks.state.cursor).toBe(0);
-  });
-
-  it('reports the GIF growth peak to the aggregate worker memory guard', async () => {
-    mocks.state.frameCount = 1;
-    mocks.state.bytesWrittenPerFrame = 5000;
-    const assertAdditionalMemoryBytes = vi.fn((additionalBytes: number) => {
-      if (additionalBytes > 10_000) throw new Error('aggregate memory limit exceeded');
-    });
-
-    await expect(
-      encodeGif(demux, {
-        width: 1,
-        height: 1,
-        quality: 'low',
-        scale: 1,
-        maxFrames: 1,
-        maxOutputBytes: 20_000,
-        assertAdditionalMemoryBytes,
-      })
-    ).rejects.toThrow('aggregate memory limit exceeded');
-
-    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(12_293);
-    expect(mocks.state.cursor).toBe(0);
-  });
-
-  it('charges old and new WASM capacities with live scratch before growth', async () => {
-    mocks.state.frameCount = 1;
-    mocks.state.simulateWasmGrowth = true;
-    const assertAdditionalMemoryBytes = vi.fn((additionalBytes: number) => {
-      if (additionalBytes > 20 * 1024 * 1024) throw new Error('aggregate memory limit exceeded');
-    });
-
-    await expect(
-      encodeGif(demux, {
-        width: 1,
-        height: 1,
-        quality: 'low',
-        scale: 1,
-        maxFrames: 1,
-        maxOutputBytes: 8192,
-        assertAdditionalMemoryBytes,
-      })
-    ).rejects.toThrow('aggregate memory limit exceeded');
-
-    expect(assertAdditionalMemoryBytes).toHaveBeenLastCalledWith(
-      20 * 1024 * 1024 + 4096 + 4 + 32 * 1024
+  it('rejects cumulative output beyond the byte ceiling', () => {
+    const writer = new OwnedGifWriter(
+      64,
+      70,
+      () => {},
+      () => new Uint8Array(300)
     );
-    expect(mocks.state.cursor).toBe(0);
+    expect(() => writer.writeFrame(Uint8Array.of(0), 1, 1, frameOptions)).toThrow(
+      'GIF output byte limit exceeded'
+    );
+    expect(writer.stream.buffer.byteLength).toBe(64);
   });
 
-  it('allows ordinary output within both limits', async () => {
-    mocks.state.frameCount = 1;
+  it('charges old and new stream capacities before geometric growth', () => {
+    const admissions: number[] = [];
+    const writer = new OwnedGifWriter(
+      4096,
+      10_000,
+      (bytes: number) => admissions.push(bytes),
+      () => new Uint8Array(5000)
+    );
+    expect(() => writer.writeFrame(Uint8Array.of(0), 1, 1, frameOptions)).toThrow(
+      'GIF output byte limit exceeded'
+    );
+    expect(writer.stream.buffer.byteLength).toBe(4096);
+    expect(admissions.every((bytes) => bytes === 4096)).toBe(true);
+  });
 
+  it('allows a bounded frame and charges the final output copy', async () => {
+    mocks.frameCount = 1;
+    const admissions: number[] = [];
     const output = await encodeGif(demux, {
       width: 1,
       height: 1,
@@ -263,28 +126,25 @@ describe('encodeGif output budgets', () => {
       scale: 1,
       maxFrames: 1,
       maxOutputBytes: 8192,
+      assertAdditionalMemoryBytes: (bytes: number) => admissions.push(bytes),
     });
-
-    expect(output).toHaveLength(17);
-    expect(mocks.writeFrame).toHaveBeenCalledOnce();
+    expect(output.subarray(0, 6)).toEqual(new TextEncoder().encode('GIF89a'));
+    expect(output.at(-1)).toBe(0x3b);
+    expect(admissions.some((bytes) => bytes >= 4096 + output.byteLength)).toBe(true);
   });
 
-  it('allows skipped input packets beyond the output frame limit', async () => {
-    mocks.state.frameCount = 1;
-    mocks.state.inputPacketCount = 2;
-
-    await expect(
-      encodeGif(demux, {
-        width: 1,
-        height: 1,
-        quality: 'low',
-        scale: 1,
-        frameDecimation: 1,
-        maxFrames: 1,
-        maxOutputBytes: 8192,
-      })
-    ).resolves.toHaveLength(17);
-
-    expect(mocks.writeFrame).toHaveBeenCalledOnce();
+  it('rejects aggregate stream growth before allocation', () => {
+    const writer = new OwnedGifWriter(
+      4096,
+      20_000,
+      (bytes: number) => {
+        if (bytes > 10_000) throw new Error('aggregate memory limit exceeded');
+      },
+      () => new Uint8Array(5000)
+    );
+    expect(() => writer.writeFrame(Uint8Array.of(0), 1, 1, frameOptions)).toThrow(
+      'aggregate memory limit exceeded'
+    );
+    expect(writer.stream.buffer.byteLength).toBe(4096);
   });
 });

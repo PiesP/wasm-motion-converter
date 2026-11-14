@@ -47,16 +47,25 @@ vi.mock('@services/dynamic-decimation-controller', () => ({
   }),
 }));
 
-vi.mock('gifenc', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('gifenc')>();
-  return {
-    ...actual,
-    quantize: () => mocks.frames[mocks.currentFrame]!.palette,
-    applyPalette: () => mocks.frames[mocks.currentFrame]!.indices.slice(),
-  };
-});
 vi.mock('@services/gif-scalar-wasm', () => ({
-  createGifScalarQuantizer: async () => () => mocks.frames[mocks.currentFrame]!.palette,
+  createGifScalarQuantizer: async () => {
+    const quantize = () => mocks.frames[mocks.currentFrame]!.palette;
+    return Object.assign(quantize, {
+      mapPalette: () => mocks.frames[mocks.currentFrame]!.indices.slice(),
+      compress: (indices: Uint8Array, depth: number) => {
+        const palette = Array.from({ length: 1 << depth }, (_, index) => [index, index, index]);
+        const encoder = GIFEncoder({ auto: true });
+        encoder.writeFrame(indices, indices.byteLength, 1, {
+          palette,
+          colorDepth: depth,
+          repeat: 0,
+          delay: 20,
+        });
+        encoder.finish();
+        return encoder.bytes().subarray(6 + 7 + palette.length * 3 + 19 + 8 + 10, -1);
+      },
+    });
+  },
 }));
 
 import { encodeGif } from '@services/gif-encoder-service';
