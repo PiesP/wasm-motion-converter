@@ -3508,11 +3508,7 @@ export async function run({
         },
         output,
         diagnostics,
-        scenario === 'gif-quantization-default'
-          ? 'single-correctness'
-          : quantizationScenario
-            ? 'single-pair'
-            : 'three-pair-cohort',
+        quantizationScenario ? 'single-pair' : 'three-pair-cohort',
         wasmAsset
       );
       result = { ...result, ...measured, scenario };
