@@ -490,6 +490,171 @@ fn hevc_sps(nal: &[u8]) -> Result<Option<CodecMetadata>, Error> {
     Ok(Some(vui_front(&mut b)?))
 }
 
+/// VP9's uncompressed keyframe header supplies the profile and color config
+/// when a WebM track has no CodecPrivate. The host supplies a bounded prefix
+/// of the selected first keyframe; inter frames cannot supply this metadata.
+/// Syntax: WebM Project, VP9 Bitstream Specification v1.0, sections 4.1-4.5.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Vp9Metadata {
+    pub profile: u8,
+    pub bit_depth: u8,
+    pub color_space: u8,
+    pub subsampling_x: u8,
+    pub subsampling_y: u8,
+    pub color_primaries: u8,
+    pub color_transfer: u8,
+    pub color_matrix: u8,
+    pub full_range: bool,
+    pub width: u32,
+    pub height: u32,
+    pub render_width: u32,
+    pub render_height: u32,
+}
+
+impl Vp9Metadata {
+    /// WebM has no level field. Preserve the current level-1 default (10).
+    pub fn codec_string(&self) -> Result<String, Error> {
+        let chroma = match (self.subsampling_x, self.subsampling_y) {
+            (1, 1) => 1,
+            (1, 0) => 2,
+            (0, 0) => 3,
+            // The VP codec string cannot represent VP9's 4:4:0 layout.
+            _ => return Err(Error::Unsupported),
+        };
+        Ok(format!(
+            "vp09.{:02}.10.{:02}.{chroma:02}.{:02}.{:02}.{:02}.{:02}",
+            self.profile,
+            self.bit_depth,
+            self.color_primaries,
+            self.color_transfer,
+            self.color_matrix,
+            u8::from(self.full_range)
+        ))
+    }
+}
+
+struct RawBits<'a> {
+    bytes: &'a [u8],
+    at: usize,
+}
+impl RawBits<'_> {
+    fn bits(&mut self, count: usize) -> Result<u32, Error> {
+        if count > 32 || self.at.checked_add(count).ok_or(Error::Overflow)? > self.bytes.len() * 8 {
+            return Err(Error::Truncated);
+        }
+        let mut value = 0;
+        for _ in 0..count {
+            value = value << 1 | u32::from((self.bytes[self.at / 8] >> (7 - self.at % 8)) & 1);
+            self.at += 1;
+        }
+        Ok(value)
+    }
+}
+
+pub fn vp9_from_keyframe(prefix: &[u8]) -> Result<Vp9Metadata, Error> {
+    if prefix.len() > 4096 {
+        return Err(Error::ResourceLimit);
+    }
+    let mut bits = RawBits {
+        bytes: prefix,
+        at: 0,
+    };
+    if bits.bits(2)? != 2 {
+        return Err(Error::Invalid);
+    } // FRAME_MARKER
+    let profile = (bits.bits(1)? | bits.bits(1)? << 1) as u8;
+    if profile == 3 && bits.bits(1)? != 0 {
+        return Err(Error::Invalid);
+    }
+    if bits.bits(1)? != 0 {
+        return Err(Error::Unsupported);
+    } // show_existing_frame
+    if bits.bits(1)? != 0 {
+        return Err(Error::Unsupported);
+    } // inter frame
+    bits.bits(1)?; // show_frame
+    bits.bits(1)?; // error_resilient_mode
+    if bits.bits(24)? != 0x49_83_42 {
+        return Err(Error::Invalid);
+    }
+    let bit_depth = if profile >= 2 {
+        if bits.bits(1)? != 0 {
+            12
+        } else {
+            10
+        }
+    } else {
+        8
+    };
+    let color_space = bits.bits(3)? as u8;
+    if color_space == 6 {
+        return Err(Error::Invalid);
+    }
+    let (full_range, subsampling_x, subsampling_y) = if color_space == 7 {
+        if profile != 1 && profile != 3 {
+            return Err(Error::Invalid);
+        }
+        if bits.bits(1)? != 0 {
+            return Err(Error::Invalid);
+        }
+        (true, 0, 0)
+    } else {
+        let range = bits.bits(1)? != 0;
+        if profile == 1 || profile == 3 {
+            let x = bits.bits(1)? as u8;
+            let y = bits.bits(1)? as u8;
+            if bits.bits(1)? != 0 {
+                return Err(Error::Invalid);
+            }
+            if x == 1 && y == 1 {
+                return Err(Error::Invalid);
+            }
+            (range, x, y)
+        } else {
+            (range, 1, 1)
+        }
+    };
+    let (color_primaries, color_transfer, color_matrix) = match color_space {
+        0 => (2, 2, 2),     // Bitstream does not identify a color space.
+        1 | 3 => (6, 6, 6), // BT.601 / SMPTE 170M.
+        2 => (1, 1, 1),     // BT.709.
+        4 => (7, 7, 7),     // SMPTE 240M.
+        5 => (
+            9,
+            match bit_depth {
+                8 => 1,
+                10 => 14,
+                _ => 15,
+            },
+            9,
+        ), // BT.2020 nonconstant.
+        7 => (1, 13, 0),    // sRGB RGB matrix.
+        _ => return Err(Error::Invalid),
+    };
+    let width = bits.bits(16)? + 1;
+    let height = bits.bits(16)? + 1;
+    let (render_width, render_height) = if bits.bits(1)? != 0 {
+        (bits.bits(16)? + 1, bits.bits(16)? + 1)
+    } else {
+        (width, height)
+    };
+    Ok(Vp9Metadata {
+        profile,
+        bit_depth,
+        color_space,
+        subsampling_x,
+        subsampling_y,
+        color_primaries,
+        color_transfer,
+        color_matrix,
+        full_range,
+        width,
+        height,
+        render_width,
+        render_height,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,6 +772,99 @@ mod tests {
             color_matrix: 6,
             color_full_range: 1,
         }
+    }
+
+    fn vp9_key(profile: u8, depth: u8, color: u8, range: bool, x: u8, y: u8) -> Vec<u8> {
+        let mut w = Writer::new();
+        w.bits(2, 2); // Frame marker.
+        w.bits(u32::from(profile & 1), 1);
+        w.bits(u32::from(profile >> 1), 1);
+        if profile == 3 {
+            w.bits(0, 1);
+        }
+        w.bits(0, 1);
+        w.bits(0, 1); // Not show-existing; keyframe.
+        w.bits(1, 1);
+        w.bits(0, 1); // Show frame, no error resilience.
+        w.bits(0x49_83_42, 24);
+        if profile >= 2 {
+            w.bits(u32::from(depth == 12), 1);
+        }
+        w.bits(u32::from(color), 3);
+        if color == 7 {
+            w.bits(0, 1);
+        } else {
+            w.bits(u32::from(range), 1);
+            if profile == 1 || profile == 3 {
+                w.bits(u32::from(x), 1);
+                w.bits(u32::from(y), 1);
+                w.bits(0, 1);
+            }
+        }
+        w.bits(95, 16);
+        w.bits(63, 16); // 96x64 coded frame.
+        w.bits(1, 1);
+        w.bits(191, 16);
+        w.bits(63, 16); // 192x64 rendered.
+        w.finish(&[])
+    }
+
+    #[test]
+    fn vp9_keyframe_config_preserves_profile_depth_color_and_geometry() {
+        let unknown = vp9_from_keyframe(&vp9_key(0, 8, 0, false, 1, 1)).unwrap();
+        assert_eq!(
+            (
+                unknown.width,
+                unknown.height,
+                unknown.render_width,
+                unknown.render_height
+            ),
+            (96, 64, 192, 64)
+        );
+        assert_eq!(
+            unknown.codec_string().unwrap(),
+            "vp09.00.10.08.01.02.02.02.00"
+        );
+        let bt2020 = vp9_from_keyframe(&vp9_key(2, 10, 5, true, 1, 1)).unwrap();
+        assert_eq!(
+            bt2020.codec_string().unwrap(),
+            "vp09.02.10.10.01.09.14.09.01"
+        );
+        let rgb = vp9_from_keyframe(&vp9_key(3, 12, 7, true, 0, 0)).unwrap();
+        assert_eq!(rgb.codec_string().unwrap(), "vp09.03.10.12.03.01.13.00.01");
+        let yuv422 = vp9_from_keyframe(&vp9_key(1, 8, 2, false, 1, 0)).unwrap();
+        assert_eq!(
+            yuv422.codec_string().unwrap(),
+            "vp09.01.10.08.02.01.01.01.00"
+        );
+        let chroma_440 = vp9_from_keyframe(&vp9_key(1, 8, 2, false, 0, 1)).unwrap();
+        assert_eq!(chroma_440.codec_string(), Err(Error::Unsupported));
+    }
+
+    #[test]
+    fn vp9_keyframe_rejects_invalid_and_unbounded_prefixes() {
+        let key = vp9_key(0, 8, 0, false, 1, 1);
+        assert_eq!(vp9_from_keyframe(&key[..1]), Err(Error::Truncated));
+        assert_eq!(vp9_from_keyframe(&vec![0; 4097]), Err(Error::ResourceLimit));
+        let mut invalid = key.clone();
+        invalid[0] &= 0x3f;
+        assert_eq!(vp9_from_keyframe(&invalid), Err(Error::Invalid));
+        let mut inter = key.clone();
+        inter[0] |= 0x04;
+        assert_eq!(vp9_from_keyframe(&inter), Err(Error::Unsupported));
+        let mut existing = key.clone();
+        existing[0] |= 0x08;
+        assert_eq!(vp9_from_keyframe(&existing), Err(Error::Unsupported));
+        let mut sync = key.clone();
+        sync[1] ^= 1;
+        assert_eq!(vp9_from_keyframe(&sync), Err(Error::Invalid));
+        let mut reserved = vp9_key(3, 10, 2, false, 1, 1);
+        reserved[0] |= 0x08;
+        assert_eq!(vp9_from_keyframe(&reserved), Err(Error::Invalid));
+        assert_eq!(
+            vp9_from_keyframe(&vp9_key(1, 8, 2, false, 1, 1)),
+            Err(Error::Invalid)
+        );
     }
 
     #[test]
