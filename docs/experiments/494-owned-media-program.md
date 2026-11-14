@@ -108,3 +108,44 @@ Confirmed stale comments at initial f2d6bf67: decoder-service.ts:16 and
 constants.ts:68 still named gifenc after #492; streaming-webp-encoder.ts:5-18
 described the shared mux as wasm-webp-only. This branch corrects all three
 without changing runtime behavior. No other confirmed conflict is claimed.
+
+## #496 stage 2: prospective retained-state experiment
+
+Admitted after stage-1 source was frozen, while its independent schedule remains
+in progress. Stage-1 `f21c1cf0` and all samples stay immutable. Stage 2 evaluates
+retaining compact indices/palettes and fusing compaction/hash in Rust. The
+qualified predecessor remains f2d6bf67; the new data-flow premise is an explicit
+avoidable N-byte index copy out plus N-byte copy back for compression.
+
+Reserve two protected N-byte index slots after the 4N-byte RGBA arena. The
+current transient index uses the first N bytes; pending and deferred predecessor
+use protected slots. Promotion costs one internal N-byte copy. Direct LZW from
+a retained slot must never overwrite the current transient index; compression
+output remains disjoint within the existing admitted frame arena. Palettes and
+global mapping need bounded separate metadata and generation-checked handles.
+Hash remains only a prefilter before exact expanded-color equality. Preserve
+first-occurrence palette compaction, equal-RGB behavior, all tie/order/rounding,
+TS presentation timing, frame selection and writer byte layout.
+
+The materiality target is elimination of two N-byte host/WASM index crossings
+per selected frame on the retained route, while acknowledging the internal
+promotion copy. No physical-peak saving is presumed: linear capacity grows by
+roughly 2N while host retained indices disappear. With the current heap base,
+new rounded capacities at540-square/720-square/1080p are7,536,640/8,912,896/
+18,219,008 bytes, within existing dimension-adjusted limits. A4K retained layout
+would exceed its existing bound. Keep the stage-1 JS-index route for dimensions
+whose retained layout cannot be admitted; do not increase the existing linear
+or aggregate ceilings, narrow accepted inputs or change quality. Both routes
+require exact byte/output and lifecycle checks, including forced admission-edge
+coverage. A small palette snapshot (<=768 bytes) is allowed if it makes borrowed
+view ownership explicit. Acquire borrowed output only after any growth and
+consume synchronously before another module operation.
+
+Before candidate comparison freeze its exact source/build/fixtures/route and
+copy/lifetime accounting. Use the same owner-primary/default/small first/warm
+five balanced attempts and max(5%,20ms) median no-regression screen, independent
+output oracle and <=500ms active cancellation/recovery. Stage-1 samples are not
+stage-2 measurements. ADOPT only if exactness, resource fallback and material
+crossing reduction plus regression gates pass; otherwise retain qualified
+stage1 with the failed candidate and an explicit resume condition. Direct
+VideoFrame ingress remains a separate conditional experiment.
