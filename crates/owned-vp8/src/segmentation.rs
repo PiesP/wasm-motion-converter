@@ -34,7 +34,7 @@ impl Config {
         debug_assert_eq!(counts.iter().sum::<usize>(), total);
         let qindex = [
             presets::SMOOTH_QINDEX,
-            presets::CHROMATIC_FLAT_QINDEX,
+            presets::chromatic_flat_qindex(quality),
             presets::chromatic_ramp_qindex(quality),
             presets::textured_qindex(quality),
         ];
@@ -198,8 +198,9 @@ mod tests {
 
     #[test]
     fn frame_class_counts_collapse_or_signal_four_absolute_qindices() {
-        for (quality, ramp, textured) in [(60, 22, 34), (75, 26, 27), (85, 15, 14)] {
-            for (id, qindex) in [presets::SMOOTH_QINDEX, 8, ramp, textured]
+        for (quality, flat, ramp, textured) in [(60, 8, 22, 34), (75, 12, 26, 27), (85, 8, 15, 14)]
+        {
+            for (id, qindex) in [presets::SMOOTH_QINDEX, flat, ramp, textured]
                 .into_iter()
                 .enumerate()
             {
@@ -211,7 +212,7 @@ mod tests {
             }
             let mixed = Config::from_counts(quality, [1, 1, 1, 1], 4);
             assert!(mixed.enabled);
-            assert_eq!(mixed.qindex, [presets::SMOOTH_QINDEX, 8, ramp, textured]);
+            assert_eq!(mixed.qindex, [presets::SMOOTH_QINDEX, flat, ramp, textured]);
             assert_eq!(mixed.map_probabilities, [128, 128, 128]);
         }
     }

@@ -2716,7 +2716,7 @@ mod tests {
             first.segments.qindex,
             [
                 crate::presets::SMOOTH_QINDEX,
-                crate::presets::CHROMATIC_FLAT_QINDEX,
+                crate::presets::chromatic_flat_qindex(request.quality),
                 crate::presets::chromatic_ramp_qindex(request.quality),
                 crate::presets::textured_qindex(request.quality)
             ]
@@ -2765,7 +2765,7 @@ mod tests {
         assert!(!chromatic_engine.segments.enabled);
         assert_eq!(
             chromatic_engine.segments.base_qindex,
-            crate::presets::CHROMATIC_FLAT_QINDEX
+            crate::presets::chromatic_flat_qindex(chromatic_request.quality)
         );
         assert_eq!(
             chromatic_engine.output(),
@@ -2831,7 +2831,7 @@ mod tests {
                 Ok(())
             }
         }
-        for (quality, expected_dc, expected_ac) in [(60, 2, 0), (75, 0, -8), (85, -4, -4)] {
+        for (quality, expected_dc, expected_ac) in [(60, 2, 0), (75, -8, -8), (85, -4, -4)] {
             let deltas = crate::presets::deltas(quality);
             assert_eq!(deltas.uv_dc, expected_dc);
             assert_eq!(deltas.uv_ac, expected_ac);
