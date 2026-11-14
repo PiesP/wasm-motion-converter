@@ -130,7 +130,7 @@ async function readWasmCache(
             const { done, value } = await reader.read();
             if (done) break;
             length += value.byteLength;
-            if (length > 128 * 1024) {
+            if (length > 256 * 1024) {
               await reader.cancel();
               return { ...found, status: 'oversize' as const, bytes: length };
             }
@@ -708,7 +708,8 @@ export async function measure(
   workload: MotionWorkload,
   condition: 'cold-first-use' | 'fresh-context' | 'warm',
   index: number,
-  wasmAsset: MotionWasmAsset | null = null
+  wasmAsset: MotionWasmAsset | null = null,
+  additionalWasmAssets: readonly MotionWasmAsset[] = []
 ) {
   const rendererHeapBefore = await heapPoint(page);
   const before = await page.evaluate(() => {
@@ -811,6 +812,12 @@ export async function measure(
     wasmAsset,
     condition === 'warm' ? 'after-warm' : 'after-first-before-warm'
   );
+  assert(additionalWasmAssets.length <= 4, 'Additional WASM diagnostic asset count exceeded');
+  const additionalWasmAssetCaches = await Promise.all(
+    additionalWasmAssets.map((asset) =>
+      readWasmCache(page, asset, condition === 'warm' ? 'after-warm' : 'after-first-before-warm')
+    )
+  );
   assert(
     ready.atMs <= observation.readyMs,
     'Button was ready before its matching Blob URL existed'
@@ -841,7 +848,7 @@ export async function measure(
       retainedRoute: worker.retainedRoute,
       terminationCalls: worker.terminationCalls,
     },
-    cacheObservation: { ...cacheObservation, wasmAssetCache },
+    cacheObservation: { ...cacheObservation, wasmAssetCache, additionalWasmAssetCaches },
     memory: {
       rendererHeapBefore,
       rendererHeapAfterReady,
@@ -984,7 +991,8 @@ export async function exerciseMotionSignature(
   output: string,
   diagnostics: MotionDiagnostic[],
   mode: 'three-pair-cohort' | 'single-pair' | 'single-correctness' = 'three-pair-cohort',
-  wasmAsset: MotionWasmAsset | null = null
+  wasmAsset: MotionWasmAsset | null = null,
+  additionalWasmAssets: readonly MotionWasmAsset[] = []
 ) {
   assert.equal(workloads.length, mode === 'three-pair-cohort' ? 3 : 1);
   const samples: Awaited<ReturnType<typeof measure>>[] = [];
@@ -1077,13 +1085,13 @@ export async function exerciseMotionSignature(
         mode !== 'three-pair-cohort' || workload.id === 'primary-enabled'
           ? 'cold-first-use'
           : 'fresh-context';
-      const sample = await measure(page, workload, condition, 0, wasmAsset);
+      const sample = await measure(page, workload, condition, 0, wasmAsset, additionalWasmAssets);
       samples.push(sample);
       await onSample(sample);
       assertUsefulOutput(sample, workload);
       assertNoUnexpectedDiagnostics(diagnostic);
       if (mode !== 'single-correctness') {
-        const warm = await measure(page, workload, 'warm', 0, wasmAsset);
+        const warm = await measure(page, workload, 'warm', 0, wasmAsset, additionalWasmAssets);
         samples.push(warm);
         await onSample(warm);
         assertUsefulOutput(warm, workload);
