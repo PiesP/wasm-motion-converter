@@ -9,15 +9,26 @@ import { join, resolve } from 'node:path';
 const wasmPath = resolve('crates/owned-vp8/target/wasm32-unknown-unknown/release/owned_vp8.wasm');
 const wasm = readFileSync(wasmPath);
 const wasmSha256 = createHash('sha256').update(wasm).digest('hex');
-const wasmApi = (globalThis as unknown as { WebAssembly: {
-  instantiate(bytes: Uint8Array): Promise<{ instance: { exports: Record<string, unknown> } }>;
-} }).WebAssembly;
+const wasmApi = (
+  globalThis as unknown as {
+    WebAssembly: {
+      instantiate(bytes: Uint8Array): Promise<{ instance: { exports: Record<string, unknown> } }>;
+    };
+  }
+).WebAssembly;
 const { instance } = await wasmApi.instantiate(wasm);
 const exports = instance.exports as unknown as {
   memory: { buffer: ArrayBuffer };
   vp8_abi_version(): number;
   vp8_reserve_input(length: number): number;
-  vp8_encode(width: number, height: number, stride: number, format: number, quality: number, length: number): number;
+  vp8_encode(
+    width: number,
+    height: number,
+    stride: number,
+    format: number,
+    quality: number,
+    length: number
+  ): number;
   vp8_output_ptr(): number;
   vp8_output_len(): number;
   vp8_reset(): void;
@@ -27,7 +38,13 @@ const ffmpeg = execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split(
 const root = mkdtempSync(join(tmpdir(), 'owned-vp8-'));
 const results: unknown[] = [];
 
-function keyframe(width: number, height: number, stride: number, format: number, quality: number): Uint8Array {
+function keyframe(
+  width: number,
+  height: number,
+  stride: number,
+  format: number,
+  quality: number
+): Uint8Array {
   const input = new Uint8Array(stride * height);
   for (let row = 0; row < height; row++) {
     for (let column = 0; column < width; column++) {
@@ -67,14 +84,30 @@ function asIvf(frame: Uint8Array, width: number, height: number): Buffer {
 }
 
 try {
-  for (const [width, height, format] of [[16, 16, 0], [17, 13, 1]] as const) {
+  for (const [width, height, format] of [
+    [16, 16, 0],
+    [17, 13, 1],
+  ] as const) {
     for (const quality of [60, 75, 85]) {
       const frame = keyframe(width, height, width * 4 + 8, format, quality);
       const stem = `${width}x${height}-q${quality}-f${format}`;
       const ivf = join(root, `${stem}.ivf`);
       const rgba = join(root, `${stem}.rgba`);
       writeFileSync(ivf, asIvf(frame, width, height));
-      execFileSync('ffmpeg', ['-v', 'error', '-i', ivf, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-y', rgba]);
+      execFileSync('ffmpeg', [
+        '-v',
+        'error',
+        '-i',
+        ivf,
+        '-frames:v',
+        '1',
+        '-f',
+        'rawvideo',
+        '-pix_fmt',
+        'rgba',
+        '-y',
+        rgba,
+      ]);
       const decoded = readFileSync(rgba);
       assert.equal(decoded.length, width * height * 4);
       for (let index = 0; index < decoded.length; index += 4) {
@@ -83,9 +116,15 @@ try {
         assert.ok(Math.abs(decoded[index + 2]! - 128) <= 6);
         assert.equal(decoded[index + 3], 255);
       }
-      results.push({ width, height, format, quality, rawBytes: frame.length,
+      results.push({
+        width,
+        height,
+        format,
+        quality,
+        rawBytes: frame.length,
         sha256: createHash('sha256').update(frame).digest('hex'),
-        decodedSha256: createHash('sha256').update(decoded).digest('hex') });
+        decodedSha256: createHash('sha256').update(decoded).digest('hex'),
+      });
     }
   }
   for (const pattern of ['flat', 'text', 'gradient', 'chroma', 'noise'] as const) {
@@ -97,11 +136,20 @@ try {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-        const color = pattern === 'flat' ? [160, 64, 32]
-          : pattern === 'text' ? ((x % 9 < 2 || y % 11 < 2) ? [250, 250, 250] : [8, 8, 8])
-            : pattern === 'gradient' ? [(x * 4) & 255, (y * 5) & 255, ((x + y) * 2) & 255]
-              : pattern === 'chroma' ? (x % 8 < 4 ? [255, 0, 0] : [0, 0, 255])
-                : [seed & 255, (seed >>> 8) & 255, (seed >>> 16) & 255];
+        const color =
+          pattern === 'flat'
+            ? [160, 64, 32]
+            : pattern === 'text'
+              ? x % 9 < 2 || y % 11 < 2
+                ? [250, 250, 250]
+                : [8, 8, 8]
+              : pattern === 'gradient'
+                ? [(x * 4) & 255, (y * 5) & 255, ((x + y) * 2) & 255]
+                : pattern === 'chroma'
+                  ? x % 8 < 4
+                    ? [255, 0, 0]
+                    : [0, 0, 255]
+                  : [seed & 255, (seed >>> 8) & 255, (seed >>> 16) & 255];
         input.set([...color, 255], y * stride + x * 4);
       }
     }
@@ -111,12 +159,29 @@ try {
       assert.ok(inputPtr > 0);
       new Uint8Array(exports.memory.buffer, inputPtr, input.length).set(input);
       assert.equal(exports.vp8_encode(width, height, stride, 0, quality, input.length), 0);
-      const frame = new Uint8Array(exports.memory.buffer, exports.vp8_output_ptr(), exports.vp8_output_len()).slice();
+      const frame = new Uint8Array(
+        exports.memory.buffer,
+        exports.vp8_output_ptr(),
+        exports.vp8_output_len()
+      ).slice();
       const stem = `${pattern}-q${quality}`;
       const ivf = join(root, `${stem}.ivf`);
       const rgba = join(root, `${stem}.rgba`);
       writeFileSync(ivf, asIvf(frame, width, height));
-      execFileSync('ffmpeg', ['-v', 'error', '-i', ivf, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-y', rgba]);
+      execFileSync('ffmpeg', [
+        '-v',
+        'error',
+        '-i',
+        ivf,
+        '-frames:v',
+        '1',
+        '-f',
+        'rawvideo',
+        '-pix_fmt',
+        'rgba',
+        '-y',
+        rgba,
+      ]);
       const decoded = readFileSync(rgba);
       assert.equal(decoded.length, input.length);
       let squared = 0;
@@ -128,10 +193,18 @@ try {
         assert.equal(decoded[index + 3], 255);
       }
       const mse = squared / (width * height * 3);
-      const psnr = 10 * Math.log10(255 * 255 / mse);
-      results.push({ pattern, width, height, quality, inputSha256,
-        rawBytes: frame.length, sha256: createHash('sha256').update(frame).digest('hex'),
-        decodedSha256: createHash('sha256').update(decoded).digest('hex'), psnr });
+      const psnr = 10 * Math.log10((255 * 255) / mse);
+      results.push({
+        pattern,
+        width,
+        height,
+        quality,
+        inputSha256,
+        rawBytes: frame.length,
+        sha256: createHash('sha256').update(frame).digest('hex'),
+        decodedSha256: createHash('sha256').update(decoded).digest('hex'),
+        psnr,
+      });
     }
   }
   assert.equal(exports.vp8_encode(16, 16, 64, 0, 75, 1), 1); // Length mismatch.
@@ -154,7 +227,13 @@ try {
   exports.vp8_reset();
   assert.equal(exports.vp8_output_len(), 0);
   assert.deepEqual(keyframe(16, 16, 64, 0, 75), one); // Same instance recovery.
-  console.log(JSON.stringify({ status: 'compiled-textured-slice-passed', wasmSha256, ffmpeg, results }, null, 2));
+  console.log(
+    JSON.stringify(
+      { status: 'compiled-textured-slice-passed', wasmSha256, ffmpeg, results },
+      null,
+      2
+    )
+  );
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
