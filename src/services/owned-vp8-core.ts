@@ -484,6 +484,7 @@ export class OwnedVp8Encoder {
     if (!this.busy) this.dispose();
   }
 
+  /** Keep source bytes immutable and its backing buffer attached until this settles. */
   async encode(
     pixels: Uint8Array,
     settings: OwnedVp8Settings,
@@ -500,19 +501,37 @@ export class OwnedVp8Encoder {
     const taskStats = { yields: 0 };
     const deadline = { at: performance.now() + TASK_BUDGET_MS };
     try {
+      const frozen = { ...settings };
+      const sourceBuffer = pixels.buffer;
+      const sourceLength = pixels.byteLength;
+      const sourceOffset = pixels.byteOffset;
+      const sourceCapacity = sourceBuffer.byteLength;
+      if (!(sourceBuffer instanceof ArrayBuffer) || sourceLength === 0)
+        throw new OwnedVp8InvalidInputError('Owned VP8 source must be a nonempty unshared buffer');
+      if (frozen.externalLiveBytes < sourceCapacity)
+        throw new OwnedVp8MemoryAdmissionError('Owned VP8 source backing capacity is unaccounted');
+      const checkSource = (): void => {
+        if (
+          pixels.buffer !== sourceBuffer ||
+          pixels.byteLength !== sourceLength ||
+          pixels.byteOffset !== sourceOffset ||
+          sourceBuffer.byteLength !== sourceCapacity
+        )
+          throw new OwnedVp8InvalidInputError('Owned VP8 source backing changed during input copy');
+      };
       const values = [
         ABI_VERSION,
-        settings.width,
-        settings.height,
-        settings.stride,
-        settings.layout,
-        settings.quality,
-        pixels.byteLength,
-        settings.outputLimit,
+        frozen.width,
+        frozen.height,
+        frozen.stride,
+        frozen.layout,
+        frozen.quality,
+        sourceLength,
+        frozen.outputLimit,
         this.generation,
         frame,
-        settings.externalLiveBytes,
-        settings.retainedOutputBytes,
+        frozen.externalLiveBytes,
+        frozen.retainedOutputBytes,
       ];
       values.forEach((value, index) => fixedWord(value, `request word ${index}`));
       const request = this.view(api.vp8_v2_request_ptr(), REQUEST_BYTES);
@@ -529,18 +548,21 @@ export class OwnedVp8Encoder {
         if (record.status === 0) break;
         await this.yieldIfDue(deadline, taskStats);
       }
-      if (record.inputLength !== pixels.byteLength || record.inputPointer === 0)
+      checkSource();
+      if (record.inputLength !== sourceLength || record.inputPointer === 0)
         throw new OwnedVp8AbiError('Owned VP8 input lease does not match the request');
       const destination = this.view(record.inputPointer, record.inputLength);
       const inputBuffer = destination.buffer;
-      for (let at = 0; at < pixels.byteLength; at += COPY_CHUNK_BYTES) {
+      for (let at = 0; at < sourceLength; at += COPY_CHUNK_BYTES) {
         this.active();
+        checkSource();
         destination.set(pixels.subarray(at, at + COPY_CHUNK_BYTES), at);
         if (api.memory.buffer !== inputBuffer)
           throw new OwnedVp8AbiError('Owned VP8 memory grew during an input write');
         await this.yieldIfDue(deadline, taskStats);
       }
       this.active();
+      checkSource();
       record = this.status(api.vp8_v2_begin(this.generation, frame), [WORKING]);
       lease = 'none';
       await this.admit(record);
@@ -572,8 +594,8 @@ export class OwnedVp8Encoder {
         rawVp8[3] !== 0x9d ||
         rawVp8[4] !== 0x01 ||
         rawVp8[5] !== 0x2a ||
-        width !== settings.width ||
-        height !== settings.height
+        width !== frozen.width ||
+        height !== frozen.height
       )
         throw new OwnedVp8AbiError('Owned VP8 raw keyframe header or geometry is invalid');
       this.active();
@@ -588,7 +610,7 @@ export class OwnedVp8Encoder {
       this.observePhysicalCapacity(api);
       const stats: OwnedVp8Stats = {
         frame,
-        sourceCopyBytes: pixels.byteLength,
+        sourceCopyBytes: sourceLength,
         finalizedVp8Bytes: record.outputLength,
         hostOutputCopyReservedBytes: this.reservedHostCopy,
         actualLinearCapacityBytes: api.memory.buffer.byteLength,

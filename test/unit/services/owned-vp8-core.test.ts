@@ -162,6 +162,46 @@ describe('owned VP8 conversion-owned host adapter', () => {
     expect(ledger.release).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a source detached after a partial copy and retires without publication', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(wasmResponse()));
+    const source = pixels(256, 256);
+    const backing = source.buffer;
+    const originalSubarray = source.subarray.bind(source);
+    vi.spyOn(source, 'subarray').mockImplementationOnce((start, end) => {
+      const chunk = originalSubarray(start, end);
+      queueMicrotask(() => structuredClone(backing, { transfer: [backing] }));
+      return chunk;
+    });
+    const ledger = accounting();
+    const encoder = await core.createOwnedVp8Encoder({ accounting: ledger });
+    const consume = vi.fn();
+    await expect(
+      encoder.encode(source, { ...settings(256, 256), layout: 2 }, consume)
+    ).rejects.toBeInstanceOf(core.OwnedVp8InvalidInputError);
+    expect(consume).not.toHaveBeenCalled();
+    expect(ledger.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('snapshots settings and charges the whole retained source backing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(wasmResponse()));
+    const source = pixels();
+    const request = settings();
+    const encoder = await core.createOwnedVp8Encoder({ accounting: accounting() });
+    const task = encoder.encode(source, request, () => undefined);
+    request.width = 1;
+    request.height = 1;
+    await expect(task).resolves.toMatchObject({ sourceCopyBytes: source.byteLength });
+    encoder.retire();
+    const pooled = new Uint8Array(source.byteLength * 2);
+    pooled.set(source);
+    const ledger = accounting();
+    const undercharged = await core.createOwnedVp8Encoder({ accounting: ledger });
+    await expect(
+      undercharged.encode(pooled.subarray(0, source.byteLength), settings(), () => undefined)
+    ).rejects.toBeInstanceOf(core.OwnedVp8MemoryAdmissionError);
+    expect(ledger.release).toHaveBeenCalledTimes(1);
+  });
+
   it('admits a published output plan before the next core step', async () => {
     const memory = new WebAssembly.Memory({ initial: 1, maximum: 3_072 });
     const response = new DataView(memory.buffer, 128, 96);
