@@ -19,7 +19,15 @@ import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 
 import type { BufferPool } from './buffer-pool';
 import { getPooledBufferSize, globalBufferPool } from './buffer-pool';
+import { ConversionMemoryLimitError } from './conversion-memory-limit-error';
 import type { CpuPixelFormat } from './frame-memory';
+import { OwnedVp8MemoryAdmissionError } from './owned-vp8-core';
+
+function isMemoryAdmissionError(error: unknown): boolean {
+  return (
+    error instanceof OwnedVp8MemoryAdmissionError || error instanceof ConversionMemoryLimitError
+  );
+}
 
 // ─── Video Dimension Resolution ────────────────────────────────────
 
@@ -111,7 +119,8 @@ export async function copyFrameToPixels(
   if (cachedStrategy) {
     try {
       return await copyFrameNative(frame, width, height, cachedStrategy, pixelFormat);
-    } catch {
+    } catch (error) {
+      if (isMemoryAdmissionError(error)) throw error;
       ctx.copyPath = null;
     }
   }
@@ -122,7 +131,8 @@ export async function copyFrameToPixels(
       const result = await copyFrameNative(frame, width, height, strategy, pixelFormat);
       ctx.copyPath = strategy;
       return result;
-    } catch {
+    } catch (error) {
+      if (isMemoryAdmissionError(error)) throw error;
       // Probe the next native layout only during first-frame strategy discovery.
     }
   }
@@ -258,7 +268,8 @@ async function copyFrameCanvas(
       } finally {
         bitmap.close();
       }
-    } catch {
+    } catch (error) {
+      if (isMemoryAdmissionError(error)) throw error;
       // Fallback: canvas drawImage with source→dest rect scaling
     }
   }

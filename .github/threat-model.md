@@ -4,10 +4,11 @@
 
 dropconvert is a static, client-side Vite and SolidJS application. It accepts one
 local video `File`, parses it with owned demux Rust/WASM, decodes with WebCodecs,
-and encodes GIF or animated WebP with owned GIF Rust/WASM, Canvas, WebCodecs,
-or bundled wasm-webp. Patched MediaBunny and gifenc are development-only oracles. Conversion must remain
-local: there is no backend, account,
-application session, upload API, or runtime CDN dependency.
+and encodes GIF with owned GIF Rust/WASM or animated WebP with Canvas or owned
+VP8 Rust/WASM. A retained wasm-webp comparison path and its bundled assets
+remain pending package classification or removal. Patched MediaBunny and gifenc
+are development-only oracles. Conversion must remain local: there is no backend,
+account, application session, upload API, or runtime CDN dependency.
 
 Protect these assets:
 

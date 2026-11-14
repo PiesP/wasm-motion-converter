@@ -11,7 +11,7 @@ import {
 
 import { globalBufferPool } from './buffer-pool';
 import type { DemuxResult } from './demuxer-service';
-import type { WebpFrameMemoryBudget } from './frame-memory';
+import type { FrameMemoryUsage, WebpFrameMemoryBudget } from './frame-memory';
 import {
   OwnedVp8MemoryAdmissionError,
   OwnedVp8OutputLimitError,
@@ -27,6 +27,8 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
   private linearCapacityBytes = 0;
   private hostCopyBytes = 0;
   private released = false;
+  private readonly removeFrameGuard: () => void;
+  private readonly removePoolGuard: () => void;
 
   constructor(
     private readonly demux: DemuxResult,
@@ -34,26 +36,62 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
     private readonly muxer: StreamingWebpMuxer,
     private readonly assertAdditionalMemoryBytes: (bytes: number) => void,
     private readonly maxOutputBytes = WEBP_MAX_OUTPUT_BYTES
-  ) {}
+  ) {
+    this.removeFrameGuard = frames.installAdmissionGuard((nextUsage) => {
+      this.assertTotal(
+        this.muxer.retainedBytes,
+        this.linearCapacityBytes,
+        this.hostCopyBytes,
+        nextUsage
+      );
+    });
+    try {
+      this.removePoolGuard = globalBufferPool.installGrowthGuard((nextPooledBytes) => {
+        this.assertTotal(
+          this.muxer.retainedBytes,
+          this.linearCapacityBytes,
+          this.hostCopyBytes,
+          this.frames.usage,
+          nextPooledBytes
+        );
+      });
+    } catch (error) {
+      this.removeFrameGuard();
+      throw error;
+    }
+  }
 
   /** Target reservations cover both output pixels and transient copy scratch.
    * Credit pooled active/idle storage once against that shared reservation; an
    * idle RGBA scratch buffer is still part of the reserved RGB copy footprint. */
   get frameLiveBytes(): number {
-    const usage = this.frames.usage;
-    const poolExcess = Math.max(0, globalBufferPool.totalRetainedMemory - usage.targetBytes);
+    return this.frameLiveFor(this.frames.usage, globalBufferPool.totalRetainedMemory);
+  }
+
+  private frameLiveFor(usage: FrameMemoryUsage, pooledBytes: number): number {
+    const poolExcess = Math.max(0, pooledBytes - usage.targetBytes);
     return usage.totalBytes + poolExcess;
   }
 
-  private assertTotal(muxBytes: number, linearBytes: number, copyBytes: number): void {
+  private assertTotal(
+    muxBytes: number,
+    linearBytes: number,
+    copyBytes: number,
+    frameUsage = this.frames.usage,
+    pooledBytes = globalBufferPool.totalRetainedMemory
+  ): void {
+    const frameLiveBytes = this.frameLiveFor(frameUsage, pooledBytes);
     if (
       !Number.isSafeInteger(muxBytes) ||
       !Number.isSafeInteger(linearBytes) ||
       !Number.isSafeInteger(copyBytes) ||
+      !Number.isSafeInteger(frameLiveBytes) ||
+      !Number.isSafeInteger(pooledBytes) ||
       muxBytes < 0 ||
       linearBytes < 0 ||
       copyBytes < 0 ||
-      this.frameLiveBytes > FRAME_PIPELINE_MEMORY_BUDGET_BYTES ||
+      pooledBytes < 0 ||
+      frameLiveBytes > FRAME_PIPELINE_MEMORY_BUDGET_BYTES ||
       muxBytes > this.maxOutputBytes ||
       copyBytes > WEBP_MAX_OUTPUT_BYTES
     )
@@ -61,7 +99,7 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
     const total =
       DEMUX_MEMORY_BUDGET_BYTES +
       (this.demux.inputBufferBytes ?? 0) +
-      this.frameLiveBytes +
+      frameLiveBytes +
       muxBytes +
       linearBytes +
       copyBytes;
@@ -84,8 +122,10 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
   }
 
   observe(actualCapacityBytes: number): void {
+    if (this.released) return;
     if (actualCapacityBytes > this.linearCapacityBytes)
       throw new OwnedVp8MemoryAdmissionError('Owned VP8 grew beyond reserved linear memory');
+    this.assertTotal(this.muxer.retainedBytes, this.linearCapacityBytes, this.hostCopyBytes);
   }
 
   /** The old pending frame may coexist with emitted chunks and the new copy. */
@@ -111,8 +151,11 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
   }
 
   release(): void {
+    if (this.released) return;
     this.released = true;
     this.linearCapacityBytes = 0;
     this.hostCopyBytes = 0;
+    this.removePoolGuard();
+    this.removeFrameGuard();
   }
 }

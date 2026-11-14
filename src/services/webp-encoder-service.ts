@@ -68,13 +68,19 @@ export async function encodeWebpOwned(
     sourceHeadroomFrames: 1,
     serialSoftware: true,
   });
-  const broker = new OwnedVp8MemoryBroker(
-    demux,
-    frameMemoryBudget,
-    muxer,
-    opts.assertOwnedVp8AdditionalMemoryBytes ?? (() => undefined),
-    outputLimits.maxOutputBytes
-  );
+  let broker: OwnedVp8MemoryBroker;
+  try {
+    broker = new OwnedVp8MemoryBroker(
+      demux,
+      frameMemoryBudget,
+      muxer,
+      opts.assertOwnedVp8AdditionalMemoryBytes ?? (() => undefined),
+      outputLimits.maxOutputBytes
+    );
+  } catch (error) {
+    frameMemoryBudget.dispose();
+    throw error;
+  }
   let encoder: Awaited<ReturnType<typeof createOwnedVp8Encoder>> | undefined;
   let totalInputFrames = 0;
   let skippedByDecimation = 0;
@@ -266,8 +272,12 @@ export async function encodeWebpOwned(
 
     return result;
   } finally {
-    encoder?.retire();
-    frameMemoryBudget.dispose();
+    try {
+      encoder?.retire();
+    } finally {
+      broker.release();
+      frameMemoryBudget.dispose();
+    }
   }
 }
 

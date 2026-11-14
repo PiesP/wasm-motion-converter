@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { globalBufferPool } from '@services/buffer-pool';
 import { OwnedVp8CancelledError, OwnedVp8TrapError } from '@services/owned-vp8-core';
 import { encodeWebpOwned } from '@services/webp-encoder-service';
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
@@ -55,6 +56,14 @@ beforeEach(() => {
 });
 
 describe('owned VP8 product failures', () => {
+  it('removes the pool guard when initialization fails before an encoder exists', async () => {
+    mocks.create.mockRejectedValueOnce(new OwnedVp8CancelledError('cancelled during load'));
+    await expect(encodeWebpOwned(demux, options)).rejects.toBeInstanceOf(OwnedVp8CancelledError);
+    expect(mocks.retire).not.toHaveBeenCalled();
+    const removeGuard = globalBufferPool.installGrowthGuard(() => undefined);
+    removeGuard();
+  });
+
   it.each([OwnedVp8TrapError, OwnedVp8CancelledError])(
     'propagates %s after retiring without a legacy retry',
     async (ErrorType) => {
@@ -65,6 +74,8 @@ describe('owned VP8 product failures', () => {
       expect(mocks.retire).toHaveBeenCalledTimes(1);
       expect(mocks.targetReleased).toBe(true);
       expect(mocks.legacy).not.toHaveBeenCalled();
+      const removeGuard = globalBufferPool.installGrowthGuard(() => undefined);
+      removeGuard();
     }
   );
 });
