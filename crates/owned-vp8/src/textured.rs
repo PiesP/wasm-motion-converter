@@ -811,6 +811,7 @@ fn encode_observed(
         }
     }
     let segments = SegmentConfig::from_counts(quality, smooth_count, count);
+    let deltas = crate::presets::deltas(quality);
     let mut coeff_contexts = CoeffContexts::new(blocks_x);
     let mut above_modes = vec![0u8; blocks_x * 4];
     let mut left_modes = [0u8; 4];
@@ -820,9 +821,9 @@ fn encode_observed(
         for mx in 0..blocks_x {
             let segment_id = segment_ids[my * blocks_x + mx];
             let qindex = segments.qindex_for(segment_id);
-            let y_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y1);
-            let uv_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::UV);
-            let y2_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y2);
+            let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
+            let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
+            let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
             let lambda = crate::presets::lambda_for_q(qindex);
             blocks.push(analyze_one(
                 &source_y,
@@ -848,11 +849,7 @@ fn encode_observed(
             )?);
         }
     }
-    let result = if segments.enabled {
-        emit_segmented_frame(&blocks, width, height, segments)?
-    } else {
-        emit_frame(&blocks, width, height, segments.base_qindex)?
-    };
+    let result = emit_segmented_frame(&blocks, width, height, segments, deltas)?;
     observe(
         &reconstructed_y,
         &reconstructed_u,
@@ -1015,6 +1012,7 @@ fn analyze_one(
 fn write_header_prefix(
     sink: &mut impl BoolSink,
     segments: SegmentConfig,
+    deltas: Deltas,
 ) -> Result<(), EncodeError> {
     sink.bit(false)?; // YUV color space.
     sink.bit(false)?; // Decoder clamps output pixels.
@@ -1025,10 +1023,29 @@ fn write_header_prefix(
     sink.bit(false)?; // Macroblock filter deltas disabled.
     sink.literal(0, 2)?; // One coefficient partition.
     sink.literal(segments.base_qindex as u32, 7)?;
-    for _ in 0..5 {
-        sink.bit(false)?;
+    for delta in [
+        deltas.y1_dc,
+        deltas.y2_dc,
+        deltas.y2_ac,
+        deltas.uv_dc,
+        deltas.uv_ac,
+    ] {
+        write_quantizer_delta(sink, delta)?;
     }
     sink.bit(false)?; // Entropy updates not retained.
+    Ok(())
+}
+
+fn write_quantizer_delta(sink: &mut impl BoolSink, delta: i8) -> Result<(), EncodeError> {
+    let magnitude = delta.unsigned_abs();
+    if magnitude > 15 {
+        return Err(EncodeError::InvalidInput);
+    }
+    sink.bit(delta != 0)?;
+    if delta != 0 {
+        sink.literal(u32::from(magnitude), 4)?;
+        sink.bit(delta < 0)?;
+    }
     Ok(())
 }
 
@@ -1132,13 +1149,20 @@ fn write_macroblock(
     Ok(())
 }
 
+#[cfg(test)]
 fn emit_frame(
     blocks: &[Macroblock],
     width: usize,
     height: usize,
     qindex: usize,
 ) -> Result<Vec<u8>, EncodeError> {
-    emit_segmented_frame(blocks, width, height, SegmentConfig::nonsegmented(qindex))
+    emit_segmented_frame(
+        blocks,
+        width,
+        height,
+        SegmentConfig::nonsegmented(qindex),
+        Deltas::default(),
+    )
 }
 
 fn emit_segmented_frame(
@@ -1146,12 +1170,14 @@ fn emit_segmented_frame(
     width: usize,
     height: usize,
     segments: SegmentConfig,
+    deltas: Deltas,
 ) -> Result<Vec<u8>, EncodeError> {
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
     let model = model_frozen(blocks, blocks_x, blocks_y)?;
-    let default_sizes = count_partitions(blocks, blocks_x, blocks_y, segments, None)?;
-    let modeled_sizes = count_partitions(blocks, blocks_x, blocks_y, segments, Some(&model))?;
+    let default_sizes = count_partitions(blocks, blocks_x, blocks_y, segments, deltas, None)?;
+    let modeled_sizes =
+        count_partitions(blocks, blocks_x, blocks_y, segments, deltas, Some(&model))?;
     let use_model = modeled_sizes.0 <= 0x7ffff
         && modeled_sizes.0 + modeled_sizes.1 < default_sizes.0 + default_sizes.1;
     let selected = if use_model {
@@ -1174,6 +1200,7 @@ fn emit_segmented_frame(
         blocks_x,
         blocks_y,
         segments,
+        deltas,
         selected_model,
         &mut header,
         &mut token,
@@ -1223,16 +1250,18 @@ fn model_frozen(
     Ok(model)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn code_partitions(
     blocks: &[Macroblock],
     blocks_x: usize,
     blocks_y: usize,
     segments: SegmentConfig,
+    deltas: Deltas,
     model: Option<&Model>,
     header: &mut impl BoolSink,
     token: &mut impl BoolSink,
 ) -> Result<(), EncodeError> {
-    write_header_prefix(header, segments)?;
+    write_header_prefix(header, segments, deltas)?;
     write_updates(header, model, 0, NODE_COUNT)?;
     write_header_suffix(header)?;
     let mut contexts = CoeffContexts::new(blocks_x);
@@ -1266,6 +1295,7 @@ fn count_partitions(
     blocks_x: usize,
     blocks_y: usize,
     segments: SegmentConfig,
+    deltas: Deltas,
     model: Option<&Model>,
 ) -> Result<(usize, usize), EncodeError> {
     let mut first = CountingBoolSink::default();
@@ -1275,6 +1305,7 @@ fn count_partitions(
         blocks_x,
         blocks_y,
         segments,
+        deltas,
         model,
         &mut first,
         &mut second,
@@ -1622,9 +1653,10 @@ impl FrameEncoder {
         }
         let segment_id = self.blocks[self.cursor].segment_id;
         let qindex = self.segments.qindex_for(segment_id);
-        let y_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y1);
-        let uv_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::UV);
-        let y2_steps = ac_quant::steps(qindex as u8, Deltas::default(), Plane::Y2);
+        let deltas = crate::presets::deltas(self.request.quality);
+        let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
+        let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
+        let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
         let lambda = crate::presets::lambda_for_q(qindex);
         let block = analyze_one(
             &self.source_y,
@@ -1835,8 +1867,12 @@ impl FrameEncoder {
                 }
             }
             Stage::CountPrefix => {
-                write_header_prefix(&mut self.count_header, self.segments)
-                    .map_err(encode_status)?;
+                write_header_prefix(
+                    &mut self.count_header,
+                    self.segments,
+                    crate::presets::deltas(self.request.quality),
+                )
+                .map_err(encode_status)?;
                 self.stage = Stage::CountUpdates;
             }
             Stage::CountUpdates => {
@@ -1874,8 +1910,12 @@ impl FrameEncoder {
                 self.stage = Stage::EmitPrefix;
             }
             Stage::EmitPrefix => {
-                write_header_prefix(&mut self.pending_header, self.segments)
-                    .map_err(encode_status)?;
+                write_header_prefix(
+                    &mut self.pending_header,
+                    self.segments,
+                    crate::presets::deltas(self.request.quality),
+                )
+                .map_err(encode_status)?;
                 self.stage = Stage::EmitUpdates;
             }
             Stage::EmitUpdates => {
@@ -2040,7 +2080,7 @@ mod tests {
         }
         let segments = SegmentConfig::from_counts(75, 1, 2);
         let mut header = Operations(Vec::new());
-        write_header_prefix(&mut header, segments).unwrap();
+        write_header_prefix(&mut header, segments, crate::presets::deltas(75)).unwrap();
         assert_eq!(
             &header.0[..6],
             &[
@@ -2073,12 +2113,65 @@ mod tests {
     }
 
     #[test]
+    fn quantizer_header_signals_signed_uv_deltas() {
+        struct Operations(Vec<bool>);
+        impl BoolSink for Operations {
+            fn write(&mut self, _probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push(bit);
+                Ok(())
+            }
+        }
+        for (quality, expected) in [(60, 0), (75, -7), (85, 0)] {
+            let deltas = crate::presets::deltas(quality);
+            assert_eq!(deltas.uv_dc, expected);
+            assert_eq!(deltas.uv_ac, expected);
+            assert_eq!(deltas.y1_dc, 0);
+            assert_eq!(deltas.y2_dc, 0);
+            assert_eq!(deltas.y2_ac, 0);
+        }
+        let mut header = Operations(Vec::new());
+        write_header_prefix(
+            &mut header,
+            SegmentConfig::nonsegmented(23),
+            crate::presets::deltas(75),
+        )
+        .unwrap();
+        assert_eq!(
+            &header.0[header.0.len() - 16..],
+            &[
+                false, false, false, // Y1 DC, Y2 DC and Y2 AC absent.
+                true, false, true, true, true, true, // UV DC: magnitude 7, negative.
+                true, false, true, true, true, true,  // UV AC: magnitude 7, negative.
+                false, // Entropy updates not retained.
+            ]
+        );
+        let mut positive = Operations(Vec::new());
+        write_quantizer_delta(&mut positive, 7).unwrap();
+        assert_eq!(positive.0, [true, false, true, true, true, false]);
+        assert_eq!(
+            write_quantizer_delta(&mut positive, 16),
+            Err(EncodeError::InvalidInput)
+        );
+        assert_eq!(
+            write_quantizer_delta(&mut positive, -16),
+            Err(EncodeError::InvalidInput)
+        );
+    }
+
+    #[test]
     fn frozen_frame_adopts_only_a_smaller_complete_model() {
         let small = vec![Macroblock::default()];
         let small_model = model_frozen(&small, 1, 1).unwrap();
         assert!((0..NODE_COUNT).all(|i| !small_model.updated(i).unwrap()));
-        let small_default =
-            count_partitions(&small, 1, 1, SegmentConfig::nonsegmented(22), None).unwrap();
+        let small_default = count_partitions(
+            &small,
+            1,
+            1,
+            SegmentConfig::nonsegmented(22),
+            Deltas::default(),
+            None,
+        )
+        .unwrap();
         assert_eq!(
             emit_frame(&small, 16, 16, 22).unwrap().len(),
             10 + small_default.0 + small_default.1
@@ -2095,13 +2188,21 @@ mod tests {
             .collect();
         let model = model_frozen(&blocks, 16, 16).unwrap();
         assert!((0..NODE_COUNT).any(|i| model.updated(i).unwrap()));
-        let default =
-            count_partitions(&blocks, 16, 16, SegmentConfig::nonsegmented(22), None).unwrap();
+        let default = count_partitions(
+            &blocks,
+            16,
+            16,
+            SegmentConfig::nonsegmented(22),
+            Deltas::default(),
+            None,
+        )
+        .unwrap();
         let proposed = count_partitions(
             &blocks,
             16,
             16,
             SegmentConfig::nonsegmented(22),
+            Deltas::default(),
             Some(&model),
         )
         .unwrap();
@@ -2160,7 +2261,12 @@ mod tests {
         model.optimize_one(&stats, 528, &probability_cost).unwrap();
         assert!(model.updated(528).unwrap());
         let mut header = BoolWriter::new();
-        write_header_prefix(&mut header, SegmentConfig::nonsegmented(8)).unwrap();
+        write_header_prefix(
+            &mut header,
+            SegmentConfig::nonsegmented(8),
+            Deltas::default(),
+        )
+        .unwrap();
         write_updates(&mut header, Some(&model), 0, NODE_COUNT).unwrap();
         write_header_suffix(&mut header).unwrap();
         let bytes = header.finish().unwrap();
@@ -2509,6 +2615,8 @@ mod tests {
     #[test]
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
     fn independent_mixed_segment_reconstruction() {
+        assert_eq!(crate::presets::deltas(75).uv_dc, -7);
+        assert_eq!(crate::presets::deltas(75).uv_ac, -7);
         let input = mixed_segment_input();
         let request = engine_request(32, 16, 0, &input, 128);
         let plan = ResourcePlan::checked(request).unwrap();
@@ -2530,7 +2638,7 @@ mod tests {
             32,
             16,
             &expected,
-            "mixed absolute quantizer segments",
+            "mixed absolute quantizer segments with negative UV deltas",
         );
     }
 
