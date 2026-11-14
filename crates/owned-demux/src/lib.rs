@@ -648,8 +648,14 @@ impl Mp4Session {
                 if track.packets.is_empty() {
                     return Err(Error::Unsupported);
                 }
-                if track.duration == 0 {
-                    track.duration = self.ebml.observed_duration;
+                if self.ebml.observed_duration != 0 {
+                    // InputTrack.computeDuration rounds the presentation-last packet
+                    // end to the Matroska TimecodeScale, independently of its
+                    // unrounded per-packet duration or Segment Info duration.
+                    track.duration = ebml::round_duration_to_scale(
+                        self.ebml.observed_duration,
+                        self.ebml.scale,
+                    )?;
                 }
                 self.status = Status::Complete;
                 return Ok(());

@@ -107,6 +107,20 @@ pub fn parse_info(data: &[u8]) -> Result<(u64, u64), Error> {
     Ok((scale, ns as u64))
 }
 
+/** Round a presentation end to the Segment TimecodeScale without changing packet timing. */
+pub fn round_duration_to_scale(duration_ns: u64, scale_ns: u64) -> Result<u64, Error> {
+    if scale_ns == 0 {
+        return Err(Error::Invalid);
+    }
+    duration_ns
+        .checked_add(scale_ns / 2)
+        .ok_or(Error::Overflow)?
+        .checked_div(scale_ns)
+        .ok_or(Error::Invalid)?
+        .checked_mul(scale_ns)
+        .ok_or(Error::Overflow)
+}
+
 fn find(data: &[u8], id: u64) -> Result<Option<&[u8]>, Error> {
     Ok(children(data, 1024)?
         .into_iter()
@@ -449,5 +463,13 @@ mod tests {
                 .fragment_default_duration,
             5_000_000_000
         );
+    }
+
+    #[test]
+    fn track_duration_rounds_to_segment_timecode_without_shortening_packets() {
+        assert_eq!(round_duration_to_scale(1_999_666_666, 1_000_000), Ok(2_000_000_000));
+        assert_eq!(round_duration_to_scale(750_000_000, 1_000_000), Ok(750_000_000));
+        assert_eq!(round_duration_to_scale(5_000_000_000, 1_000_000), Ok(5_000_000_000));
+        assert_eq!(round_duration_to_scale(u64::MAX, 1_000_000), Err(Error::Overflow));
     }
 }
