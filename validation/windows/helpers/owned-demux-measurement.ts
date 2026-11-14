@@ -485,35 +485,37 @@ export async function exerciseOwnedDemuxServiceMeasurement({
                 api.select(source);
                 return api.metadata(source);
               });
+              if (!api) throw new Error('Demux measurement entry did not initialize');
+              const readyApi = api;
               const firstMetadata = firstMetadataTimed.value;
               const firstMetadataValue = await summarize(firstMetadata);
 
               const firstSeekTimed = await timedPhase('firstSeek', () =>
-                api!.seek(source, firstMetadata, trimStart)
+                readyApi.seek(source, firstMetadata, trimStart)
               );
               const firstSeek = firstSeekTimed.value;
               const firstPacket = await packet(firstSeek);
 
               const warmMetadataTimed = await timedPhase('warmMetadata', () =>
-                api!.metadata(source)
+                readyApi.metadata(source)
               );
               const warmMetadata = warmMetadataTimed.value;
               const warmMetadataValue = await summarize(warmMetadata);
 
               const warmSeekTimed = await timedPhase('warmSeek', () =>
-                api!.seek(source, warmMetadata, trimStart)
+                readyApi.seek(source, warmMetadata, trimStart)
               );
               const warmSeek = warmSeekTimed.value;
               const warmPacket = await packet(warmSeek);
 
               const ownedDiagnostic = (
-                await timedPhase('diagnostic', () => api!.diagnosticOwnedCapacity(source))
+                await timedPhase('diagnostic', () => readyApi.diagnosticOwnedCapacity(source))
               ).value;
               // Reader settlement is outside all measured latency intervals.
               const readSettlement = await settleReads();
               readsSettled = true;
               return {
-                engine: api.engine,
+                engine: readyApi.engine,
                 timeOrigin: performance.timeOrigin,
                 firstMetadata: {
                   ms: firstMetadataTimed.ms,
