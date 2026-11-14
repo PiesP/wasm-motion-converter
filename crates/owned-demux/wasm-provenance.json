@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "compiler": "1.99.1",
+  "target": "wasm32-unknown-unknown",
+  "cargoArgs": [
+    "build",
+    "--release",
+    "--target",
+    "wasm32-unknown-unknown",
+    "--locked",
+    "--offline"
+  ],
+  "rustflags": "-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd -C link-arg=--max-memory=67108864",
+  "sourceSha256": {
+    "crates/owned-demux/Cargo.toml": "934c8626a507d147f62a60053781000d1c2b080b9b2d475c0e5fb2e9ad72395d",
+    "crates/owned-demux/Cargo.lock": "518bba5599a091a0cc79aaa04ea5b2843e0f408191a8e6bd287d005231b6f024",
+    "crates/owned-demux/rust-toolchain.toml": "60c5407645e5d56f600e6ae713f0afc4aebbb858c5ceeef4a79c22b7dd2b51c9",
+    "crates/owned-demux/src/codec_metadata.rs": "0d2d41f5e984c237ab9c2658fe62a8c81ea0e47276a07c3b8b16e92bdbebcd3a",
+    "crates/owned-demux/src/ebml.rs": "a3892e58b8e34880eab9251ff17e2281b8877eca03e10a0bb24b1dcd4c9b1a36",
+    "crates/owned-demux/src/lib.rs": "66f6c69242e1c9bdf8559bf39e754b0df1e7d004cdfadd3c1f5e1ab1283b2f3b",
+    "crates/owned-demux/src/mp4.rs": "85e1f23cb25df0ffe7a477b1579720106267f3e57545877b51280eeb77ad73f4",
+    "crates/owned-demux/src/ts.rs": "43d5ee61afd51b6c5c5364a08f6d4666e57d6f7196520e8e14aa561490bcb7d3",
+    "scripts/build/build-owned-demux-wasm.ts": "515dda4a483385ed4d525c64e464afbed5eadc2c740b53a997bff0e280500506",
+    "scripts/build/build-gif-scalar-wasm.ts": "083ef019ea7b74fb5053893694c0b42598c6af84d60e32e98d9b8ce0df411ea4"
+  },
+  "artifact": {
+    "sha256": "4373868a6af5759fdc98824ae4ce93d5347402c5d93c75a95a81209629658224",
+    "rawBytes": 107401,
+    "gzipBytes": 42387,
+    "maxLinearBytes": 67108864
+  }
+}
