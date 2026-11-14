@@ -176,7 +176,7 @@ fn sample_description(data: &[u8]) -> Result<SampleDescription, Error> {
                     },
                 )
             } else {
-                signal.map_or((0, 0, 0, -1), |metadata| {
+                signal.map_or((u16::MAX, u16::MAX, u16::MAX, -1), |metadata| {
                     (
                         metadata.color_primaries,
                         metadata.color_transfer,
@@ -186,7 +186,7 @@ fn sample_description(data: &[u8]) -> Result<SampleDescription, Error> {
                 })
             }
         } else {
-            signal.map_or((0, 0, 0, -1), |metadata| {
+            signal.map_or((u16::MAX, u16::MAX, u16::MAX, -1), |metadata| {
                 (
                     metadata.color_primaries,
                     metadata.color_transfer,

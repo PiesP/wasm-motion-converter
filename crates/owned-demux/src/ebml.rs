@@ -142,12 +142,20 @@ fn video_size(data: &[u8]) -> Result<VideoSize, Error> {
     let color = find(data, 0x55b0)?;
     let field = |id: u64| -> Result<u16, Error> {
         let value = match color {
-            Some(body) => find(body, id)?.map(unsigned).transpose()?.unwrap_or(0),
-            None => 0,
+            Some(body) => find(body, id)?.map(unsigned).transpose()?,
+            None => None,
         };
-        u16::try_from(value).map_err(|_| Error::ResourceLimit)
+        value.map_or(Ok(u16::MAX), |n| {
+            u16::try_from(n).map_err(|_| Error::ResourceLimit)
+        })
     };
-    let range = field(0x55b9)?;
+    let range = color
+        .map(|body| find(body, 0x55b9))
+        .transpose()?
+        .flatten()
+        .map(unsigned)
+        .transpose()?
+        .unwrap_or(0);
     let full_range = match range {
         1 => 0,
         2 => 1,
@@ -212,13 +220,13 @@ pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u6
                 display_width = width.checked_mul(signal.sar_num).ok_or(Error::Overflow)?;
                 display_height = height.checked_mul(signal.sar_den).ok_or(Error::Overflow)?;
             }
-            if color_primaries == 0 {
+            if color_primaries == u16::MAX {
                 color_primaries = signal.color_primaries;
             }
-            if color_transfer == 0 {
+            if color_transfer == u16::MAX {
                 color_transfer = signal.color_transfer;
             }
-            if color_matrix == 0 {
+            if color_matrix == u16::MAX {
                 color_matrix = signal.color_matrix;
             }
             if color_full_range == -1 {
@@ -399,6 +407,20 @@ mod tests {
         video.extend(element(&[0x54, 0xba], &[8]));
         video.extend(element(&[0x55, 0xb0], &color));
         assert_eq!(video_size(&video), Ok((16, 8, 32, 8, 1, 13, 6, 1)));
+    }
+
+    #[test]
+    fn absent_color_is_distinct_from_explicit_rgb_matrix() {
+        let dimensions = [0xb0, 0x81, 16, 0xba, 0x81, 16];
+        let absent = video_size(&dimensions).unwrap();
+        assert_eq!(
+            (absent.4, absent.5, absent.6),
+            (u16::MAX, u16::MAX, u16::MAX)
+        );
+        let mut explicit = dimensions.to_vec();
+        explicit.extend([0x55, 0xb0, 0x84, 0x55, 0xb1, 0x81, 0]);
+        let parsed = video_size(&explicit).unwrap();
+        assert_eq!((parsed.4, parsed.5, parsed.6), (u16::MAX, u16::MAX, 0));
     }
 
     #[test]

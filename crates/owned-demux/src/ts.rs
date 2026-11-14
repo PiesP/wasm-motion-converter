@@ -342,9 +342,9 @@ impl NalScanner {
                     height,
                     display_width: width,
                     display_height: height,
-                    color_primaries: 0,
-                    color_transfer: 0,
-                    color_matrix: 0,
+                    color_primaries: u16::MAX,
+                    color_transfer: u16::MAX,
+                    color_matrix: u16::MAX,
                     color_full_range: -1,
                 });
                 self.codec_string = Some(hevc_codec_string(&self.sps)?);
@@ -561,9 +561,9 @@ fn avc_video_info(nal: &[u8]) -> Result<VideoInfo, Error> {
         height,
         display_width: width,
         display_height: height,
-        color_primaries: 0,
-        color_transfer: 0,
-        color_matrix: 0,
+        color_primaries: u16::MAX,
+        color_transfer: u16::MAX,
+        color_matrix: u16::MAX,
         color_full_range: 0,
     };
     if b.bits(1)? == 0 {

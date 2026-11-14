@@ -226,13 +226,13 @@ impl Mp4Session {
             track.display_width = metadata.render_width;
             track.display_height = metadata.render_height;
         }
-        if track.color_primaries == 0 {
+        if track.color_primaries == u16::MAX {
             track.color_primaries = metadata.color_primaries as u16;
         }
-        if track.color_transfer == 0 {
+        if track.color_transfer == u16::MAX {
             track.color_transfer = metadata.color_transfer as u16;
         }
-        if track.color_matrix == 0 {
+        if track.color_matrix == u16::MAX {
             track.color_matrix = metadata.color_matrix as u16;
         }
         if track.color_full_range == -1 {

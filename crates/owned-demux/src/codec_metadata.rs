@@ -24,9 +24,9 @@ impl Default for CodecMetadata {
         Self {
             sar_num: 1,
             sar_den: 1,
-            color_primaries: 0,
-            color_transfer: 0,
-            color_matrix: 0,
+            color_primaries: u16::MAX,
+            color_transfer: u16::MAX,
+            color_matrix: u16::MAX,
             color_full_range: -1,
         }
     }
