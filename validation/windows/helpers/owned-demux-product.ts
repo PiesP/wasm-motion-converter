@@ -517,14 +517,14 @@ export async function exerciseOwnedDemuxProduct({
           } catch (error) {
             failures.push(`${fixture.id}/${variant.id}: page cleanup: ${errorText(error)}`);
           }
-        }
-        if (
-          diagnostics.pageErrors.length > 0 ||
-          diagnostics.failedRequests.length > 0 ||
-          diagnostics.httpErrors.length > 0 ||
-          (entry.status !== 'native-decoder-unsupported' && diagnostics.consoleErrors.length > 0)
-        ) {
-          failures.push(`${fixture.id}/${variant.id}: browser diagnostics`);
+          if (
+            diagnostics.pageErrors.length > 0 ||
+            diagnostics.failedRequests.length > 0 ||
+            diagnostics.httpErrors.length > 0 ||
+            (entry.status !== 'native-decoder-unsupported' && diagnostics.consoleErrors.length > 0)
+          ) {
+            failures.push(`${fixture.id}/${variant.id}: browser diagnostics`);
+          }
         }
       }
     }
