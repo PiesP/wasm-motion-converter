@@ -18,6 +18,12 @@ pub(crate) enum SmallMode {
     TrueMotion = 1,
     VerticalEdge = 2,
     HorizontalEdge = 3,
+    LeftDown = 4,
+    RightDown = 5,
+    VerticalRight = 6,
+    VerticalLeft = 7,
+    HorizontalDown = 8,
+    HorizontalUp = 9,
 }
 
 fn predict_square<const N: usize, const LEN: usize>(
@@ -91,9 +97,114 @@ fn avg3(a: u8, b: u8, c: u8) -> u8 {
     ((u16::from(a) + 2 * u16::from(b) + u16::from(c) + 2) >> 2) as u8
 }
 
+#[inline]
+fn avg2(a: u8, b: u8) -> u8 {
+    ((u16::from(a) + u16::from(b) + 1) >> 1) as u8
+}
+
 /// The caller supplies the eight reconstructed top samples, four left samples
 /// and corner after applying macroblock-edge replication/virtual pixel rules.
 pub(crate) fn predict_i4(top: &[u8; 8], left: &[u8; 4], top_left: u8, mode: SmallMode) -> [u8; 16] {
+    // RFC 6386 section 12.3 constructs E from bottom-left through the
+    // corner to top-right. The caller has already supplied virtual edges.
+    let e = [
+        left[3], left[2], left[1], left[0], top_left, top[0], top[1], top[2], top[3],
+    ];
+    let ef = |i: usize| avg3(e[i - 1], e[i], e[i + 1]);
+    let eh = |i: usize| avg2(e[i], e[i + 1]);
+    let tf = |i: usize| avg3(top[i - 1], top[i], top[(i + 1).min(7)]);
+    let th = |i: usize| avg2(top[i], top[i + 1]);
+    match mode {
+        SmallMode::LeftDown => {
+            return std::array::from_fn(|index| tf(index / 4 + index % 4 + 1));
+        }
+        SmallMode::RightDown => {
+            return std::array::from_fn(|index| ef(4 + index % 4 - index / 4));
+        }
+        SmallMode::VerticalRight => {
+            return [
+                eh(4),
+                eh(5),
+                eh(6),
+                eh(7),
+                ef(4),
+                ef(5),
+                ef(6),
+                ef(7),
+                ef(3),
+                eh(4),
+                eh(5),
+                eh(6),
+                ef(2),
+                ef(4),
+                ef(5),
+                ef(6),
+            ];
+        }
+        SmallMode::VerticalLeft => {
+            return [
+                th(0),
+                th(1),
+                th(2),
+                th(3),
+                tf(1),
+                tf(2),
+                tf(3),
+                tf(4),
+                th(1),
+                th(2),
+                th(3),
+                tf(5),
+                tf(2),
+                tf(3),
+                tf(4),
+                tf(6),
+            ];
+        }
+        SmallMode::HorizontalDown => {
+            return [
+                eh(3),
+                ef(4),
+                ef(5),
+                ef(6),
+                eh(2),
+                ef(3),
+                eh(3),
+                ef(4),
+                eh(1),
+                ef(2),
+                eh(2),
+                ef(3),
+                eh(0),
+                ef(1),
+                eh(1),
+                ef(2),
+            ];
+        }
+        SmallMode::HorizontalUp => {
+            let lf = |i: usize| avg3(left[i - 1], left[i], left[(i + 1).min(3)]);
+            let lh = |i: usize| avg2(left[i], left[i + 1]);
+            return [
+                lh(0),
+                lf(1),
+                lh(1),
+                lf(2),
+                lh(1),
+                lf(2),
+                lh(2),
+                lf(3),
+                lh(2),
+                lf(3),
+                left[3],
+                left[3],
+                left[3],
+                left[3],
+                left[3],
+                left[3],
+            ];
+        }
+        _ => {}
+    }
     let mut result = [0u8; 16];
     let dc = ((4u16
         + top[..4]
@@ -117,6 +228,7 @@ pub(crate) fn predict_i4(top: &[u8; 8], left: &[u8; 4], top_left: u8, mode: Smal
                     top[x + 1],
                 ),
                 SmallMode::HorizontalEdge => avg3(previous_left, left[y], next_left),
+                _ => unreachable!("diagonal modes returned above"),
             };
         }
     }
