@@ -10340,9 +10340,7 @@
         "patchSha256": "287dfa9c9b41da1ae087d34aa1d048571d147b7a7653f9d3830f22037621f4d9"
       },
       "node": "v26.13.1",
-      "fixtures": [
-        "avc-fragmented-audio-first.mp4"
-      ],
+      "fixtures": ["avc-fragmented-audio-first.mp4"],
       "previousFixtureArraySha256": "25c4af0be621d9ad1298afc874ec1ea866e434123e3719063fb29d6279f8d893"
     }
   ]
