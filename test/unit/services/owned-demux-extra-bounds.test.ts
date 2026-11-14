@@ -90,8 +90,19 @@ describe('compiled demux malformed input bounds', () => {
   it('rejects an oversized TS PAT section and a truncated program', async () => {
     await rejectsWithinBounds(
       corruptedFixture('avc.ts', (bytes) => {
-        bytes[6] = 0xff;
-        bytes[7] = 0xff;
+        let changed = 0;
+        for (let start = 0; start + 188 <= bytes.length; start += 188) {
+          const pid = ((bytes[start + 1]! & 31) << 8) | bytes[start + 2]!;
+          if (pid !== 0 || !(bytes[start + 1]! & 0x40)) continue;
+          let payload = start + 4;
+          if (bytes[start + 3]! & 0x20) payload += 1 + bytes[payload]!;
+          const table = payload + 1 + bytes[payload]!;
+          expect(table + 3).toBeLessThanOrEqual(start + 188);
+          bytes[table + 1] = bytes[table + 1]! | 15;
+          bytes[table + 2] = 255;
+          changed++;
+        }
+        expect(changed).toBeGreaterThan(0);
       }),
       4
     );
