@@ -444,12 +444,13 @@ async function measureJob(
     undefined,
     { timeout: CONVERSION_TIMEOUT_MS }
   );
-  const error = page.locator('[data-testid="error-display"]');
-  assert.equal(
-    await error.isVisible(),
-    false,
-    `WebP conversion failed: ${(await error.textContent())?.trim()}`
-  );
+  const visibleError = await page.evaluate(() => {
+    const error = document.querySelector<HTMLElement>('[data-testid="error-display"]');
+    return error?.getClientRects().length && getComputedStyle(error).visibility === 'visible'
+      ? (error.textContent?.trim() ?? '')
+      : null;
+  });
+  assert.equal(visibleError, null, `WebP conversion failed: ${visibleError}`);
   const timing = await page.evaluate(() => {
     const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
       clickMs: number | null;
