@@ -3891,6 +3891,111 @@ mod tests {
 
     #[test]
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_i4_above_right_across_macroblocks_and_image_edge() {
+        const STRIDE: usize = 48;
+        const HEIGHT: usize = 29;
+        const WIDTH: usize = 45;
+        let steps = ac_quant::steps(23, Deltas::default(), Plane::Y1);
+        for mode in 0..10u8 {
+            let mut blocks = Vec::with_capacity(6);
+            for my in 0..2 {
+                for mx in 0..3 {
+                    let mut block = Macroblock {
+                        b_modes: if my == 0 {
+                            std::array::from_fn(|i| ((i + mx * 3) % 10) as u8)
+                        } else {
+                            [mode; 16]
+                        },
+                        ..Macroblock::default()
+                    };
+                    if my == 0 {
+                        for (i, coefficients) in block.y.iter_mut().enumerate() {
+                            coefficients[0] = ((i * 7 + mx * 13) % 17) as i16 - 8;
+                            coefficients[1] = ((i * 3 + mx * 5) % 5) as i16 - 2;
+                            coefficients[4] = ((i * 5 + mx * 3) % 5) as i16 - 2;
+                        }
+                    }
+                    blocks.push(block);
+                }
+            }
+
+            let mut y = vec![0u8; STRIDE * 32];
+            for my in 0..2 {
+                for mx in 0..3 {
+                    let block = &blocks[my * 3 + mx];
+                    let mut tile = [0u8; 256];
+                    for by in 0..4 {
+                        for bx in 0..4 {
+                            let index = by * 4 + bx;
+                            let (top, left, corner) = i4_edge(&y, &tile, STRIDE, mx, my, bx, by);
+                            if mode == 4 && my == 1 && mx == 1 && bx == 3 && by > 0 {
+                                assert_eq!(&top[4..], &y[15 * STRIDE + 32..15 * STRIDE + 36]);
+                                let mut wrong_top = top;
+                                wrong_top[4..].fill(tile[(by * 4 - 1) * 16 + 15]);
+                                assert_ne!(
+                                    prediction::predict_i4(
+                                        &top,
+                                        &left,
+                                        corner,
+                                        SmallMode::LeftDown
+                                    ),
+                                    prediction::predict_i4(
+                                        &wrong_top,
+                                        &left,
+                                        corner,
+                                        SmallMode::LeftDown
+                                    ),
+                                    "fixture must detect local-row above-right substitution"
+                                );
+                            }
+                            if mode == 4 && my == 1 && mx == 2 && bx == 3 && by > 0 {
+                                assert_eq!(top[4..], [y[15 * STRIDE + 47]; 4]);
+                            }
+                            let predicted = prediction::predict_i4(
+                                &top,
+                                &left,
+                                corner,
+                                bmode_from_u8(block.b_modes[index]),
+                            );
+                            let residual = transform::inverse(&ac_quant::dequantize_block(
+                                &block.y[index],
+                                steps,
+                            ));
+                            let patch = std::array::from_fn(|i| {
+                                clamp(i32::from(predicted[i]) + i32::from(residual[i]))
+                            });
+                            store_patch::<16, 256>(&mut tile, bx, by, &patch);
+                        }
+                    }
+                    for row in 0..16 {
+                        y[(my * 16 + row) * STRIDE + mx * 16
+                            ..(my * 16 + row) * STRIDE + mx * 16 + 16]
+                            .copy_from_slice(&tile[row * 16..row * 16 + 16]);
+                    }
+                }
+            }
+            let mut expected =
+                Vec::with_capacity(WIDTH * HEIGHT + WIDTH.div_ceil(2) * HEIGHT.div_ceil(2) * 2);
+            for row in 0..HEIGHT {
+                expected.extend_from_slice(&y[row * STRIDE..row * STRIDE + WIDTH]);
+            }
+            expected.extend(std::iter::repeat_n(
+                128u8,
+                WIDTH.div_ceil(2) * HEIGHT.div_ceil(2) * 2,
+            ));
+            let frame = emit_frame(&blocks, WIDTH, HEIGHT, 23).unwrap();
+            assert_decodes(
+                &frame,
+                WIDTH,
+                HEIGHT,
+                &expected,
+                &format!("multi-macroblock forced I4 mode {mode}"),
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
     fn independent_mixed_skip_probability_matches_sync_abi2_and_visible_yuv() {
         let (width, height) = (128, 64);
         let mut pixels = [128, 128, 128, 255].repeat(width * height);
