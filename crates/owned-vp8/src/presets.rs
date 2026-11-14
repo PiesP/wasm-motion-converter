@@ -5,11 +5,11 @@ use crate::ac_quant::Deltas;
 
 pub(crate) const QINDEX: [usize; 3] = [40, 22, 8];
 pub(crate) const SMOOTH_QINDEX: usize = 6;
-pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [8, 13, 8];
-pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [28, 25, 15];
-pub(crate) const TEXTURED_QINDEX: [usize; 3] = [34, 26, 14];
-pub(crate) const UV_DC_DELTA: [i8; 3] = [0, -7, -4];
-pub(crate) const UV_AC_DELTA: [i8; 3] = [0, -7, -4];
+pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [8, 15, 8];
+pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [28, 27, 15];
+pub(crate) const TEXTURED_QINDEX: [usize; 3] = [34, 28, 14];
+pub(crate) const UV_DC_DELTA: [i8; 3] = [0, -9, -4];
+pub(crate) const UV_AC_DELTA: [i8; 3] = [0, -9, -4];
 pub(crate) const FILTER_LEVEL: [u8; 3] = [6, 4, 4];
 pub(crate) const LAMBDA_NUMERATOR: u64 = 1;
 pub(crate) const LAMBDA_DENOMINATOR: u64 = 1;
