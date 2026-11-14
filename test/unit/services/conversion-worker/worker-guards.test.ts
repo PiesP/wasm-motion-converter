@@ -393,7 +393,9 @@ describe('isWorkerResponse', () => {
       gifPixelPreparation: { wallMs: 0, samples: 0 },
       gifQuantization: { wallMs: 0, samples: 0 },
       gifPaletteMapping: { wallMs: 0, samples: 0 },
+      gifRetainedIndexMapping: { wallMs: 0, samples: 0 },
       gifFrameWrite: { wallMs: 0, samples: 0 },
+      gifRetainedFrameWrite: { wallMs: 0, samples: 0 },
       webpEncoding: { wallMs: 0, samples: 0 },
       encoderQueueWait: { wallMs: 0, samples: 0 },
       webpMuxing: { wallMs: 0, samples: 0 },
@@ -433,6 +435,14 @@ describe('isWorkerResponse', () => {
   it('accepts valid progress message', () => {
     expect(isWorkerResponse(validProgress)).toBe(true);
     expect(isWorkerResponse({ ...validProgress, etaSeconds: null })).toBe(true);
+    expect(
+      isWorkerResponse({
+        ...validProgress,
+        gifRetainedMappedFrames: 9,
+        gifRetainedImageDataWrites: 12,
+        gifRetainedWasmCapacityBytes: 65_536,
+      })
+    ).toBe(true);
   });
 
   it('rejects invalid progress phases, bounds, and optional counts', () => {
@@ -444,6 +454,18 @@ describe('isWorkerResponse', () => {
     expect(isWorkerResponse({ ...validProgress, decodedFrames: 2.5 })).toBe(false);
     expect(isWorkerResponse({ ...validProgress, emittedFrames: -1 })).toBe(false);
     expect(isWorkerResponse({ ...validProgress, elapsedMs: Number.POSITIVE_INFINITY })).toBe(false);
+    for (const key of [
+      'gifRetainedMappedFrames',
+      'gifRetainedImageDataWrites',
+      'gifRetainedWasmCapacityBytes',
+    ]) {
+      for (const invalid of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53]) {
+        expect(isWorkerResponse({ ...validProgress, [key]: invalid })).toBe(false);
+      }
+    }
+    expect(
+      isWorkerResponse({ ...validProgress, gifRetainedWasmCapacityBytes: 512 * 1024 * 1024 + 1 })
+    ).toBe(false);
   });
 
   it('accepts valid complete message', () => {

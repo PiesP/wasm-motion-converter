@@ -6,8 +6,8 @@
  *
  * Interleaves decoding and encoding: each selected frame is indexed immediately,
  * then written when the next selected source timestamp fixes its display hold.
- * One RGBA scratch and at most two indexed frames are retained while an exact
- * duplicate is checked; the second index is charged to the existing budget.
+ * The conversion owns one admitted RGBA arena and at most two protected indexed
+ * frames. When that layout cannot fit, the admitted JS-index route is used.
  *
  * Previous architecture held ALL decoded frames in an array, causing:
  *   - 1080p @ 30fps × 5s = 146 frames × 6MB = ~900MB peak
@@ -15,7 +15,7 @@
  *
  * Pipeline:
  *   1. decodeFrames streams frames via callback (no array accumulation)
- *   2. Per frame: exact RGBA scratch → dither → quantize/mapPalette → pending index
+ *   2. Per frame: admitted WASM RGBA → exact dither → quantize/mapPalette → pending index
  *   3. Encoder writes GIF incrementally
  */
 
@@ -62,79 +62,6 @@ const GIF_SCALAR_PALETTE_BYTES = 32 * 1024;
 interface GifEncoderOptions extends BaseEncoderOptions {
   /** Assert the aggregate Worker budget using the GIF stream's live peak bytes. */
   assertAdditionalMemoryBytes?: ((additionalBytes: number) => void) | undefined;
-}
-
-// ─── Bayer Ordered Dithering ────────────────────────────────────────
-
-// Bayer ordered dithering 8x8 pattern (pre-normalized to 0-63 range)
-const BAYER_8X8 = [
-  [0, 32, 8, 40, 2, 34, 10, 42],
-  [48, 16, 56, 24, 50, 18, 58, 26],
-  [12, 44, 4, 36, 14, 46, 6, 38],
-  [60, 28, 52, 20, 62, 30, 54, 22],
-  [3, 35, 11, 43, 1, 33, 9, 41],
-  [51, 19, 59, 27, 49, 17, 57, 25],
-  [15, 47, 7, 39, 13, 45, 5, 37],
-  [63, 31, 55, 23, 61, 29, 53, 21],
-];
-
-/**
- * Pre-computed scaled threshold LUT cache.
- * Key = dither strength (0-255), Value = flattened 64-element Int8Array.
- *
- * Bounded to at most 3 entries (one per quality level: 0, 8, 12).
- * Each entry is a 64-element Int8Array (~64 bytes).
- *
- * Instead of computing (BAYER[y][x] - 32) * scale per-pixel per-frame,
- * we pre-compute the threshold for each quality's strength once.
- */
-const DITHER_LUT_CACHE: Map<number, Int8Array> = new Map();
-
-function getDitherLUT(strength: number): Int8Array {
-  let lut = DITHER_LUT_CACHE.get(strength);
-  if (lut) return lut;
-
-  const scale = strength / 64;
-  lut = new Int8Array(64);
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 8; x++) {
-      lut[y * 8 + x] = ((BAYER_8X8[y]![x]! - 32) * scale) | 0;
-    }
-  }
-  DITHER_LUT_CACHE.set(strength, lut);
-  return lut;
-}
-
-/**
- * Apply Bayer ordered dithering to the RGB channels of an RGBA buffer in-place.
- * Uses pre-computed LUT for thresholds — avoids per-pixel multiply.
- * Skips pixels where threshold === 0 (1/64 of pixels at strength=8).
- */
-function bayerDitherRgba(rgba: Uint8Array, width: number, height: number, strength: number): void {
-  if (strength <= 0) return;
-
-  const lut = getDitherLUT(strength);
-
-  for (let y = 0; y < height; y++) {
-    const rowOffset = y * width * 4;
-    const lutRow = y & 7;
-    for (let x = 0; x < width; x++) {
-      const threshold = lut[lutRow * 8 + (x & 7)]!;
-      if (threshold === 0) continue;
-
-      const idx = rowOffset + x * 4;
-      const r = rgba[idx]!;
-      const g = rgba[idx + 1]!;
-      const b = rgba[idx + 2]!;
-
-      const rt = r + threshold;
-      const gt = g + threshold;
-      const bt = b + threshold;
-      rgba[idx] = rt < 0 ? 0 : rt > 255 ? 255 : rt;
-      rgba[idx + 1] = gt < 0 ? 0 : gt > 255 ? 255 : gt;
-      rgba[idx + 2] = bt < 0 ? 0 : bt > 255 ? 255 : bt;
-    }
-  }
 }
 
 const GIF_MIN_FRAME_DELAY_CS = GIF_MIN_FRAME_DELAY_MS / 10;
@@ -271,21 +198,18 @@ export async function encodeGif(
   opts.assertAdditionalMemoryBytes?.(initialStreamCapacity);
   const pixelCount = w * h;
   const exactRgbaBytes = pixelCount * 4;
-  let exactRgbaScratch: Uint8Array | null = null;
-  let lastIndexedData: Uint8Array | null = null;
+  let lastIndexedData: Uint8Array | number | null = null;
   let liveIndexedBytes = 0;
   let comparisonWorkingBytes = 0;
   let wasmCapacity = 0;
 
   const assertGifWorkingMemory = (
     streamPeakBytes: number,
-    scratchBytes = exactRgbaScratch?.byteLength ?? 0,
     indexedBytes = liveIndexedBytes + comparisonWorkingBytes,
     wasmPeakBytes = wasmCapacity
   ): void => {
     const additionalBytes =
       streamPeakBytes +
-      scratchBytes +
       indexedBytes +
       wasmPeakBytes +
       (wasmPeakBytes > 0 ? GIF_SCALAR_PALETTE_BYTES : 0);
@@ -305,7 +229,6 @@ export async function encodeGif(
     (oldBytes, newBytes) =>
       assertGifWorkingMemory(
         encoder.stream.buffer.byteLength,
-        exactRgbaScratch?.byteLength ?? 0,
         liveIndexedBytes + comparisonWorkingBytes,
         oldBytes + newBytes
       ),
@@ -314,12 +237,17 @@ export async function encodeGif(
     },
     signal
   );
+  // A refused prospective reservation keeps the entire conversion on the
+  // existing JS-index route. A failed actual growth remains terminal.
+  const retained = quantizePalette.enableRetained?.(pixelCount) ?? false;
 
   let lastPalette: number[][] | null = null;
   let globalPalette: number[][] | null = null;
+  let retainedGlobalLength = 0;
   let lastColorHash = 0;
   let outputTotalDelay = 0;
   let encodeIdx = 0;
+  let retainedMappedFrames = 0;
   let outputFrames = 0;
   let splitFrames = 0;
   let totalInputFrames = 0;
@@ -334,8 +262,8 @@ export async function encodeGif(
   let firstPendingStartUs: number | null = null;
   let lastIndexedBytes = 0;
   type PendingFrame = {
-    indexed: Uint8Array;
-    palette: number[][];
+    indexed: Uint8Array | number;
+    palette: number[][] | null;
     colorHash: number;
     indexedBytes: number;
     startUs: number;
@@ -353,9 +281,9 @@ export async function encodeGif(
   }
 
   function writeIndexedFrame(
-    indexed: Uint8Array,
+    indexed: Uint8Array | number,
     delay: number,
-    palette: number[][],
+    palette: number[][] | null,
     useGlobalPalette: boolean
   ): void {
     if (
@@ -367,15 +295,37 @@ export async function encodeGif(
     }
     assertCanWriteOutputFrame();
     const writeStart = opts.profileOperation ? performance.now() : null;
-    encoder.writeFrame(indexed, w, h, {
-      ...(useGlobalPalette ? {} : { palette }),
-      colorDepth: gifColorDepth(useGlobalPalette ? globalPalette!.length : palette.length),
-      repeat: 0,
-      delay,
-    });
-    if (!globalPalette) globalPalette = palette;
+    if (retained) {
+      if (typeof indexed !== 'number') throw new RangeError('Invalid retained GIF frame');
+      const paletteLength = quantizePalette.retainedPaletteLength(indexed);
+      const localPalette = useGlobalPalette ? undefined : quantizePalette.retainedPalette(indexed);
+      const depth = gifColorDepth(useGlobalPalette ? retainedGlobalLength : paletteLength);
+      const compressed = quantizePalette.compressRetained(indexed, depth);
+      encoder.writeCompressedFrame(compressed, pixelCount, w, h, {
+        ...(localPalette ? { palette: localPalette } : {}),
+        colorDepth: depth,
+        repeat: 0,
+        delay,
+      });
+      if (retainedGlobalLength === 0) {
+        quantizePalette.captureGlobalPalette(indexed);
+        retainedGlobalLength = paletteLength;
+      }
+    } else {
+      if (!(indexed instanceof Uint8Array) || !palette)
+        throw new RangeError('Invalid indexed GIF frame');
+      encoder.writeFrame(indexed, w, h, {
+        ...(useGlobalPalette ? {} : { palette }),
+        colorDepth: gifColorDepth(useGlobalPalette ? globalPalette!.length : palette.length),
+        repeat: 0,
+        delay,
+      });
+      if (!globalPalette) globalPalette = palette;
+    }
     if (writeStart !== null) {
-      opts.profileOperation?.('gifFrameWrite', Math.max(0, performance.now() - writeStart));
+      const elapsed = Math.max(0, performance.now() - writeStart);
+      opts.profileOperation?.('gifFrameWrite', elapsed);
+      if (retained) opts.profileOperation?.('gifRetainedFrameWrite', elapsed);
     }
     outputFrames++;
   }
@@ -387,7 +337,6 @@ export async function encodeGif(
     const comparisonBytes = lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
     assertGifWorkingMemory(
       encoder.stream.buffer.byteLength,
-      exactRgbaBytes,
       liveIndexedBytes + pixelCount + comparisonBytes
     );
     const paletteMapStart = opts.profileOperation ? performance.now() : null;
@@ -407,7 +356,6 @@ export async function encodeGif(
       indexed.buffer instanceof ArrayBuffer ? indexed.buffer.byteLength : indexed.byteLength;
     assertGifWorkingMemory(
       encoder.stream.buffer.byteLength,
-      exactRgbaBytes,
       liveIndexedBytes + indexedBytes + comparisonBytes
     );
     const compact = compactIndexedPalette(indexed, palette);
@@ -415,15 +363,16 @@ export async function encodeGif(
   }
 
   async function flushPending(endCs: number): Promise<void> {
-    if (!lastIndexedData || !lastPalette) return;
+    if (!lastIndexedData || (!retained && !lastPalette)) return;
     if (!Number.isSafeInteger(endCs) || endCs - pendingStartCs! < GIF_MIN_FRAME_DELAY_CS) {
       throw new RangeError('Invalid GIF presentation duration');
     }
     // This is a representable source interval, established before comparing
     // indexed colors. Duplicate/palette optimization must preserve its timing.
-    let useGlobalPalette =
-      globalPalette !== null &&
-      remapToGifGlobalPalette(lastIndexedData, lastPalette, globalPalette);
+    let useGlobalPalette = retained
+      ? retainedGlobalLength !== 0 && quantizePalette.remapRetainedGlobal(lastIndexedData as number)
+      : globalPalette !== null &&
+        remapToGifGlobalPalette(lastIndexedData as Uint8Array, lastPalette!, globalPalette);
     let remainingCs = endCs - pendingStartCs!;
     while (remainingCs > 0) {
       if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
@@ -433,12 +382,14 @@ export async function encodeGif(
       outputTotalDelay += chunkCs;
       // The first emitted frame established the global palette. Its own
       // continuation can omit a redundant local table.
-      if (globalPalette === lastPalette) useGlobalPalette = true;
+      if (retained ? retainedGlobalLength !== 0 : globalPalette === lastPalette)
+        useGlobalPalette = true;
       remainingCs -= chunkCs;
       if (remainingCs > 0) splitFrames++;
       if ((splitFrames & 63) === 0 && remainingCs > 0) await yieldToMain();
     }
     liveIndexedBytes -= lastIndexedBytes;
+    if (retained) quantizePalette.releaseRetained(lastIndexedData as number);
     lastIndexedBytes = 0;
     lastIndexedData = null;
     lastPalette = null;
@@ -451,7 +402,7 @@ export async function encodeGif(
     if (!deferredPredecessor) return;
     const successor: PendingFrame = {
       indexed: lastIndexedData!,
-      palette: lastPalette!,
+      palette: lastPalette,
       colorHash: lastColorHash,
       indexedBytes: lastIndexedBytes,
       startUs: pendingStartUs!,
@@ -583,13 +534,12 @@ export async function encodeGif(
               (outputTotalDelay + projectedEndCs - pendingStartCs!) * 10 -
                 (presentation.endUs - firstPendingStartUs) / 1000 >
                 20;
-            if (lastIndexedData) {
+            if (lastIndexedData && !retained) {
               // A second index is optional. If the aggregate guard cannot
               // admit it, flush first and take the original one-index path.
               try {
                 assertGifWorkingMemory(
                   encoder.stream.buffer.byteLength,
-                  exactRgbaBytes,
                   liveIndexedBytes + pixelCount + GIF_PALETTE_COMPARISON_BYTES
                 );
               } catch (error) {
@@ -610,22 +560,12 @@ export async function encodeGif(
                 `Decoded RGBA buffer is too small: expected ${exactRgbaBytes} bytes, got ${rgbaData.byteLength}`
               );
             }
-            assertGifWorkingMemory(
-              encoder.stream.buffer.byteLength,
-              exactRgbaBytes,
-              liveIndexedBytes
-            );
-            if (!exactRgbaScratch) {
-              exactRgbaScratch = new Uint8Array(exactRgbaBytes);
-            }
+            assertGifWorkingMemory(encoder.stream.buffer.byteLength, liveIndexedBytes);
             const pixelPreparationStart = opts.profileOperation ? performance.now() : null;
-            exactRgbaScratch.set(rgbaData.subarray(0, exactRgbaBytes));
+            const exactRgba = rgbaData.subarray(0, exactRgbaBytes);
+            quantizePalette.prepare(exactRgba, w, h, ditherStrength);
             globalBufferPool.release(rgbaData);
             rgbaReleased = true;
-
-            if (ditherStrength > 0) {
-              bayerDitherRgba(exactRgbaScratch, w, h, ditherStrength);
-            }
             if (pixelPreparationStart !== null) {
               opts.profileOperation?.(
                 'gifPixelPreparation',
@@ -636,36 +576,60 @@ export async function encodeGif(
             // Quantize independently; only an exact post-quantization match may
             // extend the pending frame's source presentation interval.
             const quantizationStart = opts.profileOperation ? performance.now() : null;
-            const framePalette = quantizePalette(exactRgbaScratch, maxColors);
+            const framePalette = retained
+              ? quantizePalette.quantizePreparedRetained(maxColors)
+              : quantizePalette.quantizePrepared(maxColors);
             if (quantizationStart !== null) {
               opts.profileOperation?.(
                 'gifQuantization',
                 Math.max(0, performance.now() - quantizationStart)
               );
             }
-            const candidate = prepareIndexedFrame(exactRgbaScratch, framePalette);
+            const retainedMappingStart =
+              retained && opts.profileOperation ? performance.now() : null;
+            const candidate = retained
+              ? {
+                  indexed: quantizePalette.mapRetained(exactRgba, framePalette as number),
+                  palette: null,
+                  colorHash: 0,
+                  indexedBytes: 0,
+                }
+              : prepareIndexedFrame(exactRgba, framePalette as number[][]);
+            if (retained) retainedMappedFrames++;
+            if (retainedMappingStart !== null) {
+              const elapsed = Math.max(0, performance.now() - retainedMappingStart);
+              opts.profileOperation?.('gifPaletteMapping', elapsed);
+              opts.profileOperation?.('gifRetainedIndexMapping', elapsed);
+            }
             const precedingIndexedBytes = liveIndexedBytes;
             liveIndexedBytes += candidate.indexedBytes;
-            comparisonWorkingBytes = lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
+            comparisonWorkingBytes =
+              !retained && lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
             if (
               lastIndexedData &&
-              lastPalette &&
-              sameExpandedGifPixels(
-                lastIndexedData,
-                lastPalette,
-                lastColorHash,
-                candidate.indexed,
-                candidate.palette,
-                candidate.colorHash
-              )
+              (retained
+                ? quantizePalette.sameRetainedPixels(
+                    lastIndexedData as number,
+                    candidate.indexed as number
+                  )
+                : lastPalette &&
+                  sameExpandedGifPixels(
+                    lastIndexedData as Uint8Array,
+                    lastPalette,
+                    lastColorHash,
+                    candidate.indexed as Uint8Array,
+                    candidate.palette!,
+                    candidate.colorHash
+                  ))
             ) {
+              if (retained) quantizePalette.releaseRetained(candidate.indexed as number);
               liveIndexedBytes = precedingIndexedBytes;
               comparisonWorkingBytes = 0;
             } else {
               if (lastIndexedData && deferPredecessor) {
                 deferredPredecessor = {
                   indexed: lastIndexedData,
-                  palette: lastPalette!,
+                  palette: lastPalette,
                   colorHash: lastColorHash,
                   indexedBytes: lastIndexedBytes,
                   startUs: pendingStartUs!,
@@ -674,7 +638,9 @@ export async function encodeGif(
               } else if (lastIndexedData) {
                 await flushPending(frameStartCs);
               }
-              lastIndexedData = candidate.indexed;
+              lastIndexedData = retained
+                ? quantizePalette.promoteRetained(candidate.indexed as number)
+                : candidate.indexed;
               lastPalette = candidate.palette;
               lastColorHash = candidate.colorHash;
               lastIndexedBytes = candidate.indexedBytes;
@@ -731,6 +697,7 @@ export async function encodeGif(
           // endpoint allowance. Keep the prior image through the rounded end;
           // no source image is introduced before its presentation timestamp.
           liveIndexedBytes -= lastIndexedBytes;
+          if (retained) quantizePalette.releaseRetained(lastIndexedData as number);
           lastIndexedData = terminalPredecessor.indexed;
           lastPalette = terminalPredecessor.palette;
           lastColorHash = terminalPredecessor.colorHash;
@@ -749,9 +716,8 @@ export async function encodeGif(
       }
     }
 
-    // Pixel scratch and the tail index are no longer needed during GIF stream
-    // finalization, which may allocate a second output-sized buffer.
-    exactRgbaScratch = null;
+    // The tail index is no longer needed during GIF stream finalization,
+    // which may allocate a second output-sized buffer.
     lastIndexedData = null;
     liveIndexedBytes = 0;
     comparisonWorkingBytes = 0;
@@ -780,6 +746,9 @@ export async function encodeGif(
       selectedFrames,
       encodedFrames: encodeIdx,
       emittedFrames: outputFrames,
+      gifRetainedMappedFrames: retainedMappedFrames,
+      gifRetainedImageDataWrites: retained ? outputFrames : 0,
+      gifRetainedWasmCapacityBytes: retained ? wasmCapacity : 0,
     });
 
     logger.info('encoders', 'GIF encoding complete', {
@@ -811,7 +780,6 @@ export async function encodeGif(
 
     return rawBytes;
   } finally {
-    exactRgbaScratch = null;
     lastIndexedData = null;
     liveIndexedBytes = 0;
     comparisonWorkingBytes = 0;

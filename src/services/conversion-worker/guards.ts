@@ -19,6 +19,7 @@ import {
   type StageMetrics,
 } from '@services/conversion-profiler';
 import { isConversionFormat, isConversionQuality, isSmartFrameSkipMode } from '@t/conversion-types';
+import { CONVERSION_MEMORY_BUDGET_BYTES } from '@utils/constants';
 
 import type { WorkerRequest, WorkerResponse } from './types';
 import { WORKER_LOG_MAX_MESSAGE_CHARS, WORKER_LOG_MAX_REQUEST_ID_CHARS } from './types';
@@ -292,10 +293,19 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
           'selectedFrames',
           'encodedFrames',
           'emittedFrames',
+          'gifRetainedMappedFrames',
+          'gifRetainedImageDataWrites',
           'currentFrame',
           'totalFrames',
           'outputFrames',
         ].every((key) => value[key] === undefined || isCount(value[key]))
+      )
+        return false;
+      if (
+        value.gifRetainedWasmCapacityBytes !== undefined &&
+        (typeof value.gifRetainedWasmCapacityBytes !== 'number' ||
+          !isCount(value.gifRetainedWasmCapacityBytes) ||
+          value.gifRetainedWasmCapacityBytes > CONVERSION_MEMORY_BUDGET_BYTES)
       )
         return false;
       return true;

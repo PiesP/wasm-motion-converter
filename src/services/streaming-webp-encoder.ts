@@ -2,20 +2,12 @@
 // Copyright (c) 2025-2026 PiesP
 
 /**
- * Streaming WebP Animation Encoder
+ * Bounded animated WebP writer shared by native Canvas, Worker and WASM encoders.
  *
- * Encodes animated WebP by processing frames one at a time using wasm-webp's
- * single-frame encodeRGB API, then muxing the results into an animated WebP
- * container in JavaScript.
- *
- * Memory usage: O(1) per frame during encoding (only 1 RGB frame in memory
- * at a time), O(N) for the final muxed output. Compare to batch
- * encodeAnimation: O(N) RGB frames + O(N) WASM internal buffers.
- *
- * Pipeline:
- *   1. For each decoded frame: encodeRGB() → extract VP8 bitstream
- *   2. Collect all encoded bitstreams
- *   3. Mux into RIFF/WEBP container with VP8X + ANIM + ANMF chunks
+ * Accept opaque full-canvas VP8 keyframes from the selected encoder and append
+ * owned ANMF records to a bounded RIFF/WEBP output. Presentation timing and
+ * duplicate coalescing remain independent of the keyframe encoder. Borrowed
+ * encoder bytes are copied before their source storage may be reused.
  */
 
 import { VP8_FOURCC as SHARED_VP8_FOURCC, VP8X_FOURCC } from '@utils/constants';

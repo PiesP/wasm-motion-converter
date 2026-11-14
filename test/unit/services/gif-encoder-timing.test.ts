@@ -27,11 +27,17 @@ vi.mock('@services/gif-owned-writer', () => ({
   },
 }));
 vi.mock('@services/gif-scalar-wasm', () => ({
-  createGifScalarQuantizer: async () =>
-    Object.assign(mocks.quantize, {
+  createGifScalarQuantizer: async () => {
+    let prepared: Uint8Array = new Uint8Array();
+    return Object.assign(mocks.quantize, {
+      prepare: (rgba: Uint8Array) => {
+        prepared = rgba;
+      },
+      quantizePrepared: () => mocks.quantize(prepared),
       mapPalette: (rgba: Uint8Array) => new Uint8Array(rgba.byteLength / 4),
       compress: () => new Uint8Array([2, 2, 0]),
-    }),
+    });
+  },
 }));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
@@ -138,6 +144,9 @@ describe('encodeGif timing', () => {
       selectedFrames: 2,
       encodedFrames: 1,
       emittedFrames: 1,
+      gifRetainedMappedFrames: 0,
+      gifRetainedImageDataWrites: 0,
+      gifRetainedWasmCapacityBytes: 0,
     });
   });
 

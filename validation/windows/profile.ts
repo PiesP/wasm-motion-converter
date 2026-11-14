@@ -37,8 +37,10 @@ import {
   readCancellationInspector,
 } from './cancellation-inspector.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
+import { armGifNativeInitProbe } from './helpers/gif-native-init-probe.ts';
 import { runOwnedVp8NativeProbe } from './helpers/owned-vp8-probe.ts';
 import {
+  assertUsefulOutput,
   classifyWasmWarmCache,
   choose as chooseMotionOption,
   exerciseMotionSignature,
@@ -50,6 +52,7 @@ import {
   MOTION_SIGNATURE_SCENARIO,
   MOTION_SMALL_FIXTURE,
   type MotionDiagnostic,
+  type MotionWorkload,
   type MotionWasmAsset,
 } from './motion-signature.ts';
 import { makeMp4BudgetFixture } from './mp4-budget-fixture.ts';
@@ -3026,6 +3029,746 @@ async function finishMotionProfile({
   if (failed) throw failure;
 }
 
+type OwnedCancellationSetting = {
+  id: 'primary' | 'default' | 'small';
+  workload: MotionWorkload;
+  quality: 'low' | 'medium';
+  scale: 1 | 0.75;
+  smartFrameSkip: 'low' | 'off';
+};
+
+async function exerciseOwnedCancellationCase(
+  page: Page,
+  baseUrl: string,
+  setting: OwnedCancellationSetting,
+  fallback: boolean,
+  wasmAsset: MotionWasmAsset | null
+) {
+  await loadApplication(page, baseUrl);
+  await selectFixture(page, setting.workload.fixture);
+  await chooseMotionOption(page, 'format', 'gif');
+  await chooseMotionOption(page, 'quality', setting.quality);
+  await chooseMotionOption(page, 'scale', String(setting.scale));
+  await chooseMotionOption(page, 'smart-frame-skip', setting.smartFrameSkip);
+  await page.evaluate(
+    ({ fallback, wasmPath, wasmSha256, smallGeometry, nativeGeometry }) => {
+      const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+        workers: {
+          starts: { requestId: string; options: { format?: string } }[];
+          completes: unknown[];
+          errors: unknown[];
+          url: string;
+        }[];
+        workerConstructionFailures: unknown[];
+        onConversionWorkerMessage: ((message: unknown) => void) | null;
+      };
+      const state: {
+        clicked: boolean;
+        progress: number | null;
+        route: 'worker' | 'main-thread-fallback' | null;
+        atMs: number | null;
+        completedBeforeClick: boolean;
+        completesBeforeClick: number;
+        method:
+          | 'dom-progress'
+          | 'worker-progress'
+          | 'native-readback'
+          | 'native-retained-init'
+          | null;
+        nativeRetainedInit: {
+          length: number;
+          status: number;
+          abi: number;
+          memoryBytes: number;
+          workerClockMs: number;
+          workerUrl: string;
+          sourceAssetSha256: string;
+        } | null;
+        rawProgress: {
+          requestId: string;
+          phase: string;
+          percent: number;
+          currentFrame: number;
+          encodedFrames: number | null;
+        } | null;
+        rawProgressLog: {
+          phase: string;
+          percent: number;
+          currentFrame: number;
+          encodedFrames: number | null;
+        }[];
+        rawProgressOverflow: number;
+        qualifiedReadbacks: number;
+        copyToReadbacks: number;
+        canvasReadbacks: number;
+        copyToFormats: Record<string, number>;
+        stopTaskScheduled: boolean;
+        stopTaskRan: boolean;
+        wasmResourceSeenAtClick: boolean;
+        priorCompletedFramesLowerBound: number;
+        copyToHookInstalled: boolean;
+        canvasHookInstalled: boolean;
+        canvasDrawHookInstalled: boolean;
+      } = {
+        clicked: false,
+        progress: null,
+        route: null,
+        atMs: null,
+        completedBeforeClick: false,
+        completesBeforeClick: 0,
+        method: null,
+        nativeRetainedInit: null,
+        rawProgress: null,
+        rawProgressLog: [],
+        rawProgressOverflow: 0,
+        qualifiedReadbacks: 0,
+        copyToReadbacks: 0,
+        canvasReadbacks: 0,
+        copyToFormats: {},
+        stopTaskScheduled: false,
+        stopTaskRan: false,
+        wasmResourceSeenAtClick: false,
+        priorCompletedFramesLowerBound: 0,
+        copyToHookInstalled: false,
+        canvasHookInstalled: false,
+        canvasDrawHookInstalled: false,
+      };
+      const resourceSeen = () =>
+        wasmPath !== null &&
+        performance
+          .getEntriesByType('resource')
+          .some((entry) => new URL(entry.name).pathname === wasmPath);
+      const visible = (element: Element | null) =>
+        element instanceof HTMLElement && element.getClientRects().length > 0;
+      const routeReady = () =>
+        fallback
+          ? observed.workerConstructionFailures.length === 1 && resourceSeen()
+          : observed.workers.some((worker) =>
+              worker.starts.some((start) => start.options.format === 'gif')
+            );
+      const stopControl = () => {
+        const stop = document.querySelector<HTMLButtonElement>(
+          '[data-testid="stop-conversion-button"]'
+        );
+        return stop && !stop.disabled && visible(stop) ? stop : null;
+      };
+      const markCompleted = () => {
+        if (state.clicked || state.completedBeforeClick) return;
+        state.completedBeforeClick = true;
+        mutation.disconnect();
+        resource.disconnect();
+        observed.onConversionWorkerMessage = null;
+      };
+      const clickStop = (method: NonNullable<typeof state.method>, progress: number | null) => {
+        if (state.clicked || state.completedBeforeClick || !routeReady()) return false;
+        const stop = stopControl();
+        if (!stop) return false;
+        state.clicked = true;
+        state.progress = progress;
+        state.route = fallback ? 'main-thread-fallback' : 'worker';
+        state.method = method;
+        state.atMs = performance.now();
+        state.wasmResourceSeenAtClick = resourceSeen();
+        mutation.disconnect();
+        resource.disconnect();
+        observed.onConversionWorkerMessage = null;
+        stop.click();
+        return true;
+      };
+      const check = () => {
+        if (state.clicked || state.completedBeforeClick) return;
+        if (
+          visible(document.querySelector('[data-testid="result-section"]')) ||
+          visible(document.querySelector('[data-testid="error-display"]'))
+        ) {
+          markCompleted();
+          return;
+        }
+        const progress = Number(
+          document
+            .querySelector('[data-testid="dropzone"] [role="progressbar"]')
+            ?.getAttribute('data-progress')
+        );
+        if (progress >= 74 && progress < 100 && clickStop('dom-progress', progress)) return;
+        if (smallGeometry && state.qualifiedReadbacks >= 3 && routeReady() && stopControl())
+          scheduleNativeStop();
+      };
+      function scheduleNativeStop() {
+        if (state.stopTaskScheduled || state.clicked || state.completedBeforeClick) return;
+        state.stopTaskScheduled = true;
+        const run = () => {
+          state.stopTaskRan = true;
+          if (
+            visible(document.querySelector('[data-testid="result-section"]')) ||
+            visible(document.querySelector('[data-testid="error-display"]'))
+          ) {
+            markCompleted();
+            return;
+          }
+          clickStop('native-readback', null);
+        };
+        const scheduler = Reflect.get(globalThis, 'scheduler') as
+          | {
+              postTask?: (
+                task: () => void,
+                options: { priority: 'user-blocking' }
+              ) => Promise<unknown>;
+            }
+          | undefined;
+        if (typeof scheduler?.postTask === 'function') {
+          try {
+            void scheduler.postTask(run, { priority: 'user-blocking' }).catch(() => {
+              setTimeout(run, 0);
+            });
+            return;
+          } catch {
+            // A native task failure uses the ordinary next-task fallback.
+          }
+        }
+        setTimeout(run, 0);
+      }
+      observed.onConversionWorkerMessage = (message: unknown) => {
+        if (
+          fallback ||
+          state.clicked ||
+          state.completedBeforeClick ||
+          !message ||
+          typeof message !== 'object' ||
+          !('type' in message)
+        )
+          return;
+        const requestId = 'requestId' in message ? String(message.requestId) : '';
+        const activeRequest = observed.workers
+          .flatMap((worker) => worker.starts)
+          .find((start) => start.options.format === 'gif')?.requestId;
+        if (!activeRequest || requestId !== activeRequest) return;
+        if (message.type === 'complete' || message.type === 'error') {
+          if (message.type === 'complete') state.completesBeforeClick++;
+          markCompleted();
+          return;
+        }
+        if (message.type !== 'progress') return;
+        const raw = message as Record<string, unknown>;
+        const percent = raw.percent;
+        const currentFrame = raw.currentFrame;
+        const encoded = raw.encodedFrames;
+        const phase = raw.phase;
+        if (
+          !Number.isFinite(percent) ||
+          !Number.isFinite(currentFrame) ||
+          typeof phase !== 'string'
+        )
+          return;
+        const entry = {
+          phase,
+          percent: Number(percent),
+          currentFrame: Number(currentFrame),
+          encodedFrames: typeof encoded === 'number' && Number.isFinite(encoded) ? encoded : null,
+        };
+        if (state.rawProgressLog.length < 24) state.rawProgressLog.push(entry);
+        else state.rawProgressOverflow++;
+        // The worker's decode-only range ends at 73. A clamped 74+ message
+        // therefore follows actual encoding even if the phase reads decoding.
+        if (
+          (phase === 'decoding' || phase === 'encoding') &&
+          entry.percent >= 74 &&
+          entry.percent < 100 &&
+          entry.currentFrame > 0 &&
+          (entry.encodedFrames === null || entry.encodedFrames > 0)
+        ) {
+          state.rawProgress = { requestId, ...entry };
+          clickStop('worker-progress', entry.percent);
+        }
+      };
+      const seenFrames = new WeakSet<VideoFrame>();
+      const onReadback = (kind: 'copyTo' | 'canvas', format?: string) => {
+        if (
+          !smallGeometry ||
+          state.clicked ||
+          state.completedBeforeClick ||
+          !routeReady() ||
+          !stopControl()
+        )
+          return;
+        state.qualifiedReadbacks++;
+        if (kind === 'copyTo') {
+          state.copyToReadbacks++;
+          if (format) state.copyToFormats[format] = (state.copyToFormats[format] ?? 0) + 1;
+        } else state.canvasReadbacks++;
+        state.priorCompletedFramesLowerBound = Math.max(0, state.qualifiedReadbacks - 2);
+        if (state.qualifiedReadbacks >= 3) scheduleNativeStop();
+      };
+      const nativeCopyTo = typeof VideoFrame === 'function' ? VideoFrame.prototype.copyTo : null;
+      const canvasPrototype =
+        typeof OffscreenCanvasRenderingContext2D === 'function'
+          ? OffscreenCanvasRenderingContext2D.prototype
+          : null;
+      const nativeCanvasRead = canvasPrototype?.getImageData;
+      const nativeCanvasDraw = canvasPrototype?.drawImage;
+      const drawnSources = new WeakMap<OffscreenCanvasRenderingContext2D, object>();
+      const seenCanvasSources = new WeakSet<object>();
+      if (smallGeometry && nativeCopyTo) {
+        const observedCopyTo = function (
+          this: VideoFrame,
+          ...args: Parameters<VideoFrame['copyTo']>
+        ) {
+          const options = args[1];
+          const rect = options?.rect;
+          const layout = options?.layout;
+          const format = options?.format;
+          const exact =
+            rect?.x === 0 &&
+            rect.y === 0 &&
+            rect.width === smallGeometry.width &&
+            rect.height === smallGeometry.height &&
+            layout?.length === 1 &&
+            layout[0]?.offset === 0 &&
+            layout[0]?.stride === smallGeometry.width * 4 &&
+            (format === 'RGBX' || format === 'RGBA' || format === 'BGRA' || format === 'BGRX');
+          const result = nativeCopyTo.apply(this, args);
+          if (exact) {
+            void result.then(
+              () => {
+                if (seenFrames.has(this)) return;
+                seenFrames.add(this);
+                onReadback('copyTo', format);
+              },
+              () => {
+                /* A failed native layout can fall back to Canvas. */
+              }
+            );
+          }
+          return result;
+        };
+        try {
+          VideoFrame.prototype.copyTo = observedCopyTo;
+          state.copyToHookInstalled = VideoFrame.prototype.copyTo === observedCopyTo;
+        } catch {
+          // An immutable native prototype leaves this path unobserved.
+        }
+      }
+      if (smallGeometry) {
+        if (canvasPrototype && nativeCanvasDraw)
+          try {
+            const observedCanvasDraw = function (
+              this: OffscreenCanvasRenderingContext2D,
+              ...args: unknown[]
+            ) {
+              const result = (nativeCanvasDraw as (...values: unknown[]) => void).apply(this, args);
+              if (
+                this.canvas.width === smallGeometry.width &&
+                this.canvas.height === smallGeometry.height &&
+                args[0] &&
+                typeof args[0] === 'object'
+              )
+                drawnSources.set(this, args[0]);
+              return result;
+            };
+            canvasPrototype.drawImage = observedCanvasDraw as typeof nativeCanvasDraw;
+            state.canvasDrawHookInstalled = canvasPrototype.drawImage === observedCanvasDraw;
+          } catch {
+            // Leave native drawing untouched when the prototype is immutable.
+          }
+        if (canvasPrototype && nativeCanvasRead)
+          try {
+            const observedCanvasRead = function (
+              this: OffscreenCanvasRenderingContext2D,
+              ...args: Parameters<OffscreenCanvasRenderingContext2D['getImageData']>
+            ) {
+              const image = nativeCanvasRead.apply(this, args);
+              const source = drawnSources.get(this);
+              if (
+                this.canvas.width === smallGeometry.width &&
+                this.canvas.height === smallGeometry.height &&
+                args[0] === 0 &&
+                args[1] === 0 &&
+                args[2] === smallGeometry.width &&
+                args[3] === smallGeometry.height &&
+                source &&
+                !seenCanvasSources.has(source) &&
+                !(
+                  typeof VideoFrame === 'function' &&
+                  source instanceof VideoFrame &&
+                  seenFrames.has(source)
+                )
+              ) {
+                seenCanvasSources.add(source);
+                onReadback('canvas');
+              }
+              return image;
+            };
+            canvasPrototype.getImageData = observedCanvasRead;
+            state.canvasHookInstalled = canvasPrototype.getImageData === observedCanvasRead;
+          } catch {
+            // An immutable native prototype leaves this path unobserved.
+          }
+      }
+      const mutation = new MutationObserver(check);
+      const resource = new PerformanceObserver(check);
+      mutation.observe(document, { subtree: true, childList: true, attributes: true });
+      resource.observe({ type: 'resource', buffered: true });
+      Reflect.set(globalThis, '__wmcOwnedCancellation', state);
+      Reflect.set(globalThis, '__wmcOwnedCancellationNativeStop', (evidence: unknown) => {
+        if (fallback || !nativeGeometry || !evidence || typeof evidence !== 'object')
+          return { clicked: false, reason: 'native-evidence-unavailable' };
+        const native = evidence as Record<string, unknown>;
+        const workers = observed.workers.filter((worker) =>
+          worker.starts.some((start) => start.options.format === 'gif')
+        );
+        if (
+          workers.length !== 1 ||
+          workers[0]!.starts.length !== 1 ||
+          workers[0]!.completes.length !== 0 ||
+          workers[0]!.errors.length !== 0 ||
+          typeof wasmSha256 !== 'string' ||
+          native.length !== nativeGeometry.width * nativeGeometry.height * 4 ||
+          native.status !== 0 ||
+          native.abi !== 3 ||
+          typeof native.memoryBytes !== 'number' ||
+          native.memoryBytes < nativeGeometry.width * nativeGeometry.height * 4 ||
+          typeof native.workerClockMs !== 'number' ||
+          !Number.isFinite(native.workerClockMs) ||
+          native.workerUrl !== workers[0]!.url ||
+          native.sourceAssetSha256 !== wasmSha256 ||
+          visible(document.querySelector('[data-testid="result-section"]')) ||
+          visible(document.querySelector('[data-testid="error-display"]'))
+        )
+          return { clicked: false, reason: 'native-evidence-or-active-worker-mismatch' };
+        state.nativeRetainedInit = {
+          length: nativeGeometry.width * nativeGeometry.height * 4,
+          status: 0,
+          abi: 3,
+          memoryBytes: native.memoryBytes,
+          workerClockMs: native.workerClockMs,
+          workerUrl: workers[0]!.url,
+          sourceAssetSha256: wasmSha256,
+        };
+        const clicked = clickStop('native-retained-init', null);
+        return { clicked, reason: clicked ? 'native-retained-init-observed' : 'stop-unavailable' };
+      });
+      Reflect.set(globalThis, '__wmcOwnedCancellationDisarm', () => {
+        mutation.disconnect();
+        resource.disconnect();
+        observed.onConversionWorkerMessage = null;
+        Reflect.deleteProperty(globalThis, '__wmcOwnedCancellationNativeStop');
+        if (smallGeometry) {
+          if (state.copyToHookInstalled && nativeCopyTo) VideoFrame.prototype.copyTo = nativeCopyTo;
+          if (state.canvasHookInstalled && canvasPrototype && nativeCanvasRead)
+            canvasPrototype.getImageData = nativeCanvasRead;
+          if (state.canvasDrawHookInstalled && canvasPrototype && nativeCanvasDraw)
+            canvasPrototype.drawImage = nativeCanvasDraw;
+        }
+      });
+      check();
+    },
+    {
+      fallback,
+      wasmPath: wasmAsset?.path ?? null,
+      wasmSha256: wasmAsset?.sha256 ?? null,
+      smallGeometry:
+        fallback && setting.id === 'small'
+          ? { width: setting.workload.width, height: setting.workload.height }
+          : null,
+      nativeGeometry:
+        !fallback && setting.id === 'small'
+          ? { width: setting.workload.width, height: setting.workload.height }
+          : null,
+    }
+  );
+  const nativeProbe =
+    !fallback && setting.id === 'small' && wasmAsset
+      ? await armGifNativeInitProbe(page, wasmAsset.sha256, (evidence) =>
+          page.evaluate((nativeEvidence) => {
+            const stop = Reflect.get(globalThis, '__wmcOwnedCancellationNativeStop') as
+              | ((value: unknown) => { clicked: boolean; reason: string })
+              | undefined;
+            return stop?.(nativeEvidence) ?? { clicked: false, reason: 'native-stop-disarmed' };
+          }, evidence)
+        )
+      : null;
+  const observeTrigger = async () => {
+    await page.locator('[data-testid="convert-button"]').click();
+    await proceedIfPrompted(page);
+    const observedOutcome = await page
+      .waitForFunction(
+        () => {
+          const state = Reflect.get(globalThis, '__wmcOwnedCancellation') as {
+            clicked: boolean;
+            completedBeforeClick: boolean;
+          };
+          return state.clicked || state.completedBeforeClick;
+        },
+        undefined,
+        { timeout: CANCELLATION_TIMEOUT_MS }
+      )
+      .then(
+        () => true,
+        (error: unknown) => {
+          if (error instanceof Error && error.name === 'TimeoutError') return false;
+          throw error;
+        }
+      );
+    const trigger = await page.evaluate(
+      () =>
+        Reflect.get(globalThis, '__wmcOwnedCancellation') as {
+          clicked: boolean;
+          progress: number | null;
+          route: 'worker' | 'main-thread-fallback' | null;
+          atMs: number | null;
+          completedBeforeClick: boolean;
+          completesBeforeClick: number;
+          method:
+            | 'dom-progress'
+            | 'worker-progress'
+            | 'native-readback'
+            | 'native-retained-init'
+            | null;
+          nativeRetainedInit: {
+            length: number;
+            status: number;
+            abi: number;
+            memoryBytes: number;
+            workerClockMs: number;
+            workerUrl: string;
+            sourceAssetSha256: string;
+          } | null;
+          rawProgress: {
+            phase: string;
+            percent: number;
+            currentFrame: number;
+            encodedFrames: number | null;
+          } | null;
+          rawProgressLog: unknown[];
+          rawProgressOverflow: number;
+          qualifiedReadbacks: number;
+          copyToReadbacks: number;
+          canvasReadbacks: number;
+          copyToFormats: Record<string, number>;
+          stopTaskScheduled: boolean;
+          stopTaskRan: boolean;
+          wasmResourceSeenAtClick: boolean;
+          priorCompletedFramesLowerBound: number;
+          copyToHookInstalled: boolean;
+          canvasHookInstalled: boolean;
+          canvasDrawHookInstalled: boolean;
+        }
+    );
+    return { observedOutcome, trigger };
+  };
+  let observed: Awaited<ReturnType<typeof observeTrigger>> | null = null;
+  let observationError: unknown;
+  let observationFailed = false;
+  try {
+    observed = await observeTrigger();
+  } catch (error) {
+    observationFailed = true;
+    observationError = error;
+  }
+  const cleanupErrors: unknown[] = [];
+  try {
+    await nativeProbe?.settle();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  try {
+    await page.evaluate(() => {
+      const disarm = Reflect.get(globalThis, '__wmcOwnedCancellationDisarm') as
+        | (() => void)
+        | undefined;
+      disarm?.();
+    });
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  try {
+    await nativeProbe?.dispose();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  if (observationFailed) {
+    if (cleanupErrors.length > 0)
+      throw new AggregateError(
+        [observationError, ...cleanupErrors],
+        'GIF Stop observation and cleanup failed'
+      );
+    throw observationError;
+  }
+  if (cleanupErrors.length > 0)
+    throw new AggregateError(cleanupErrors, 'GIF Stop probe cleanup failed');
+  assert(observed);
+  const { observedOutcome, trigger } = observed;
+  const nativeProbeSnapshot = nativeProbe?.snapshot() ?? null;
+  if (!trigger.clicked)
+    return {
+      id: setting.id,
+      route: fallback ? 'main-thread-fallback' : 'worker',
+      status: 'unverified' as const,
+      reason: observedOutcome
+        ? 'conversion-completed-before-active-stop'
+        : 'no-eligible-active-stop-observation-before-timeout',
+      trigger,
+      nativeProbe: nativeProbeSnapshot,
+    };
+  assert.equal(trigger.completesBeforeClick, 0, 'Worker completed before Stop click');
+  assert.equal(trigger.route, fallback ? 'main-thread-fallback' : 'worker');
+  if (trigger.method === 'worker-progress') {
+    assert.equal(fallback, false);
+    assert(trigger.rawProgress);
+    assert(['decoding', 'encoding'].includes(trigger.rawProgress.phase));
+    assert(trigger.rawProgress.percent >= 74 && trigger.rawProgress.percent < 100);
+    assert(trigger.rawProgress.currentFrame > 0);
+    assert(trigger.rawProgress.encodedFrames === null || trigger.rawProgress.encodedFrames > 0);
+  } else if (trigger.method === 'native-readback') {
+    assert.equal(fallback && setting.id === 'small', true);
+    assert.equal(trigger.progress, null, 'Native readback was reported as DOM progress');
+    assert(trigger.qualifiedReadbacks >= 3 && trigger.priorCompletedFramesLowerBound >= 1);
+    assert.equal(trigger.wasmResourceSeenAtClick, true);
+    assert.equal(trigger.stopTaskScheduled && trigger.stopTaskRan, true);
+  } else if (trigger.method === 'native-retained-init') {
+    assert.equal(fallback, false);
+    assert.equal(setting.id, 'small');
+    assert.equal(trigger.progress, null, 'Native initialization was reported as DOM progress');
+    assert(trigger.nativeRetainedInit);
+    assert.equal(trigger.nativeRetainedInit.length, 160 * 90 * 4);
+    assert.equal(trigger.nativeRetainedInit.status, 0);
+    assert.equal(trigger.nativeRetainedInit.abi, 3);
+    assert.equal(trigger.nativeRetainedInit.sourceAssetSha256, wasmAsset?.sha256);
+    assert.equal(nativeProbeSnapshot?.status, 'clicked');
+  } else {
+    assert.equal(trigger.method, 'dom-progress');
+    assert(trigger.progress !== null && trigger.progress >= 74 && trigger.progress < 100);
+  }
+  await page.waitForFunction(
+    () => {
+      const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+        idleAfterStopMs: number | null;
+      };
+      return observed.idleAfterStopMs !== null;
+    },
+    undefined,
+    { timeout: CANCELLATION_TIMEOUT_MS }
+  );
+  const cancelled = await page.evaluate(() => {
+    const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+      stopClickMs: number | null;
+      idleAfterStopMs: number | null;
+      gifPublicationCount: number;
+      outputUrls: unknown[];
+      workers: {
+        starts: { options: Record<string, unknown> }[];
+        completes: unknown[];
+        terminationCalls: number;
+      }[];
+      workerConstructionFailures: { name: string }[];
+    };
+    return {
+      stopClickMs: observed.stopClickMs,
+      idleAfterStopMs: observed.idleAfterStopMs,
+      gifPublicationCount: observed.gifPublicationCount,
+      outputUrls: observed.outputUrls,
+      workers: observed.workers,
+      workerConstructionFailures: observed.workerConstructionFailures,
+      timeOrigin: performance.timeOrigin,
+    };
+  });
+  assert(cancelled.stopClickMs !== null && cancelled.idleAfterStopMs !== null);
+  const stopToIdleMs = cancelled.idleAfterStopMs - cancelled.stopClickMs;
+  assert(stopToIdleMs >= 0 && stopToIdleMs <= 500, 'Active Stop-to-idle exceeded 500 ms');
+  assert(trigger.atMs !== null && cancelled.stopClickMs >= trigger.atMs);
+  assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), false);
+  assert.equal(await page.locator('[data-testid="error-display"]').isVisible(), false);
+  assert.equal(cancelled.gifPublicationCount, 0, 'Cancelled GIF published a Blob');
+  assert.deepEqual(cancelled.outputUrls, [], 'Cancelled GIF retained an output URL');
+  for (const [group, value] of [
+    ['format', 'gif'],
+    ['quality', setting.quality],
+    ['scale', String(setting.scale)],
+    ['smart-frame-skip', setting.smartFrameSkip],
+  ]) {
+    assert.equal(
+      await page.locator(`[data-testid="option-${group}-${value}"] input`).isChecked(),
+      true,
+      `Cancelled conversion changed ${group}=${value}`
+    );
+  }
+  if (fallback) {
+    assert(wasmAsset, 'Owned GIF WASM asset is absent');
+    assert.deepEqual(cancelled.workers, [], 'Fallback created a conversion Worker');
+    assert.equal(cancelled.workerConstructionFailures.length, 1);
+    assert.equal(cancelled.workerConstructionFailures[0]?.name, 'NotSupportedError');
+  } else {
+    const workers = cancelled.workers.filter((worker) =>
+      worker.starts.some((start) => start.options.format === 'gif')
+    );
+    assert.equal(workers.length, 1, 'Cancelled GIF did not own one Worker');
+    const options = workers[0]?.starts[0]?.options;
+    assert.deepEqual(
+      {
+        format: options?.format,
+        quality: options?.quality,
+        scale: options?.scale,
+        smartFrameSkip: options?.smartFrameSkip,
+      },
+      {
+        format: 'gif',
+        quality: setting.quality,
+        scale: setting.scale,
+        smartFrameSkip: setting.smartFrameSkip,
+      }
+    );
+    assert.equal(workers[0]?.completes.length, 0, 'Cancelled Worker completed');
+    assert.equal(workers[0]?.terminationCalls, 1, 'Cancelled Worker was not terminated once');
+  }
+  const recovery = fallback
+    ? await measureFallback(page, setting.workload)
+    : await measureMotion(page, setting.workload, 'warm', 0, wasmAsset);
+  assertUsefulOutput(
+    { workload: setting.workload.id, decoded: recovery.decoded },
+    setting.workload
+  );
+  assert.equal(await page.evaluate(() => performance.timeOrigin), cancelled.timeOrigin);
+  const after = await page.evaluate(() => {
+    const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
+      gifPublicationCount: number;
+      workers: { completes: unknown[]; terminationCalls: number }[];
+      workerConstructionFailures: unknown[];
+    };
+    return {
+      gifPublicationCount: observed.gifPublicationCount,
+      workers: observed.workers,
+      workerConstructionFailures: observed.workerConstructionFailures,
+    };
+  });
+  assert.equal(after.gifPublicationCount, 1, 'Recovery had stale or duplicate GIF publication');
+  if (fallback) {
+    assert.equal(after.workers.length, 0);
+    assert.equal(after.workerConstructionFailures.length, 2);
+  } else {
+    assert.equal(
+      after.workers[0]?.completes.length,
+      0,
+      'Cancelled Worker completed after recovery'
+    );
+    assert.equal(after.workers[0]?.terminationCalls, 1);
+  }
+  return {
+    id: setting.id,
+    route: fallback ? 'main-thread-fallback' : 'worker',
+    status: 'passed' as const,
+    inputSha256: setting.workload.inputSha256,
+    settings: {
+      quality: setting.quality,
+      scale: setting.scale,
+      smartFrameSkip: setting.smartFrameSkip,
+    },
+    trigger,
+    nativeProbe: nativeProbeSnapshot,
+    stopToIdleMs,
+    cancelled,
+    recovery,
+  };
+}
+
 export async function run({
   browser,
   root,
@@ -3162,6 +3905,10 @@ export async function run({
   }
   const motionSelectors = [
     {
+      scenario: 'gif-owned-cancellation-matrix',
+      path: 'validation/windows/inputs/gif-owned-cancellation-matrix.json',
+    },
+    {
       scenario: 'gif-quantization-default',
       path: 'validation/windows/inputs/gif-quantization-default.json',
     },
@@ -3226,6 +3973,7 @@ export async function run({
         'gif-quantization-primary.json',
         'gif-quantization-secondary.json',
         'gif-quantization-small.json',
+        'gif-owned-cancellation-matrix.json',
         'gif-owned-fallback-recovery.json',
         'motion-signature-owner-recovery.json',
         'motion-signature-owner-video.json',
@@ -3247,7 +3995,8 @@ export async function run({
       [],
       'GIF measurement requires one focused selector'
     );
-    const quantizationScenario = scenario.startsWith('gif-quantization-');
+    const cancellationMatrix = scenario === 'gif-owned-cancellation-matrix';
+    const quantizationScenario = scenario.startsWith('gif-quantization-') || cancellationMatrix;
     const ownerVideo =
       quantizationScenario ||
       scenario === 'motion-signature-owner-video' ||
@@ -3473,6 +4222,219 @@ export async function run({
       samples,
       diagnostics,
     };
+    if (cancellationMatrix) {
+      let context: BrowserContext | undefined;
+      let failure: unknown;
+      let failed = false;
+      const cases: unknown[] = [];
+      const caseFailures: unknown[] = [];
+      const caseErrors: { id: string; route: string; stage: string; error: string }[] = [];
+      const network: MediaNetworkDiagnostics = {
+        pageErrors: [],
+        consoleErrors: [],
+        failedRequests: [],
+        failedResponses: [],
+      };
+      const expectedBlobAborts: { resourceType: string; protocol: 'blob:' }[] = [];
+      result = { ...result, cases, caseErrors, network, expectedBlobAborts };
+      try {
+        assert(ownerManifest, 'Frozen owner input manifest is absent');
+        assert(wasmAsset, 'Built owned GIF WASM asset is absent');
+        const defaultSetting = ownerManifest.defaultQualification;
+        assert(defaultSetting, 'Frozen owner default settings are absent');
+        assert.deepEqual(defaultSetting, {
+          quality: 'medium',
+          scale: 0.75,
+          smartFrameSkip: 'off',
+          width: 540,
+          height: 540,
+        });
+        const settings: OwnedCancellationSetting[] = [
+          {
+            id: 'primary',
+            workload: { ...workloads[2]!, quality: 'medium', scale: 1 },
+            quality: 'medium',
+            scale: 1,
+            smartFrameSkip: 'off',
+          },
+          {
+            id: 'default',
+            workload: {
+              ...workloads[2]!,
+              quality: 'medium',
+              scale: 0.75,
+              width: defaultSetting.width,
+              height: defaultSetting.height,
+            },
+            quality: 'medium',
+            scale: 0.75,
+            smartFrameSkip: 'off',
+          },
+          {
+            id: 'small',
+            workload: { ...workloads[1]!, quality: 'low', scale: 1 },
+            quality: 'low',
+            scale: 1,
+            smartFrameSkip: 'low',
+          },
+        ];
+        context = await browser.newContext({ acceptDownloads: true, locale: 'en-US' });
+        await mkdir(output, { recursive: true });
+        for (const fallback of [false, true]) {
+          for (const setting of settings) {
+            result.activeCase = {
+              id: setting.id,
+              route: fallback ? 'main-thread-fallback' : 'worker',
+            };
+            const page = await context.newPage();
+            page.on('pageerror', (error) => network.pageErrors.push(error.message.slice(0, 400)));
+            page.on('console', (message) => {
+              if (message.type() === 'error')
+                network.consoleErrors.push(message.text().slice(0, 400));
+            });
+            page.on('requestfailed', (request) => {
+              const failedUrl = new URL(request.url());
+              const error = request.failure()?.errorText ?? 'unknown';
+              if (failedUrl.protocol === 'blob:' && error === 'net::ERR_ABORTED') {
+                if (expectedBlobAborts.length < 128)
+                  expectedBlobAborts.push({
+                    resourceType: request.resourceType(),
+                    protocol: 'blob:',
+                  });
+                else network.failedRequests.push({ url: 'blob-overflow', error });
+                return;
+              }
+              network.failedRequests.push({
+                url: failedUrl.pathname.slice(0, 160),
+                error: error.slice(0, 200),
+              });
+            });
+            page.on('response', (response) => {
+              if (response.status() >= 400)
+                network.failedResponses.push({
+                  status: response.status(),
+                  url: new URL(response.url()).pathname.slice(0, 160),
+                });
+            });
+            let caseRecorded = false;
+            try {
+              await page.addInitScript(installMotionObserver, {
+                forceConversionWorkerFailure: fallback,
+              });
+              const one = await exerciseOwnedCancellationCase(
+                page,
+                started.url,
+                setting,
+                fallback,
+                wasmAsset
+              );
+              cases.push(one);
+              caseRecorded = true;
+              assert.equal(
+                one.status,
+                'passed',
+                `Active cancellation ${setting.id}/${one.route} was unverified: ${one.status === 'unverified' ? one.reason : 'unknown'}`
+              );
+            } catch (error) {
+              caseFailures.push(error);
+              caseErrors.push({
+                id: setting.id,
+                route: fallback ? 'main-thread-fallback' : 'worker',
+                stage: 'active-cancellation',
+                error: describeMediaFailure(error),
+              });
+              if (!caseRecorded) {
+                const observation = await page
+                  .evaluate(() => {
+                    const motion = Reflect.get(globalThis, '__wmcMotionObserver') as
+                      | {
+                          stopClickMs: number | null;
+                          idleAfterStopMs: number | null;
+                          gifPublicationCount: number;
+                          workers: unknown[];
+                          workerConstructionFailures: unknown[];
+                        }
+                      | undefined;
+                    return {
+                      trigger: Reflect.get(globalThis, '__wmcOwnedCancellation') ?? null,
+                      motion: motion
+                        ? {
+                            stopClickMs: motion.stopClickMs,
+                            idleAfterStopMs: motion.idleAfterStopMs,
+                            gifPublicationCount: motion.gifPublicationCount,
+                            workers: motion.workers,
+                            workerConstructionFailures: motion.workerConstructionFailures,
+                          }
+                        : null,
+                    };
+                  })
+                  .catch(() => null);
+                cases.push({
+                  id: setting.id,
+                  route: fallback ? 'main-thread-fallback' : 'worker',
+                  status: 'failed',
+                  error: describeMediaFailure(error),
+                  observation,
+                });
+              }
+            } finally {
+              try {
+                await page.close();
+              } catch (closeError) {
+                caseFailures.push(closeError);
+                caseErrors.push({
+                  id: setting.id,
+                  route: fallback ? 'main-thread-fallback' : 'worker',
+                  stage: 'page-close',
+                  error: describeMediaFailure(closeError),
+                });
+              }
+            }
+            await writeFile(
+              evidencePath,
+              `${JSON.stringify({ ...result, status: 'running', activeCase: null }, null, 2)}\n`
+            );
+          }
+        }
+        result.activeCase = null;
+        try {
+          await assertMediaNetworkDiagnostics(output, network);
+        } catch (error) {
+          caseFailures.push(error);
+          caseErrors.push({
+            id: 'matrix',
+            route: 'all',
+            stage: 'network-diagnostics',
+            error: describeMediaFailure(error),
+          });
+        }
+        if (caseFailures.length)
+          throw new AggregateError(
+            caseFailures,
+            'Active cancellation matrix has failed or unverified cases'
+          );
+        result = { ...result, browserVersion: browser.version(), status: 'passed' };
+        return { profile: scenario, ...result };
+      } catch (error) {
+        result = { ...result, status: 'failed', error: describeMediaFailure(error) };
+        if (error instanceof AggregateError)
+          result.errorDetails = error.errors.map((entry) => describeMediaFailure(entry));
+        failure = error;
+        failed = true;
+      } finally {
+        await finishMotionProfile({
+          context,
+          server: started.server,
+          output,
+          evidencePath,
+          result,
+          assetRequests,
+          wasmAssetRequests,
+          failed,
+          failure,
+        });
+      }
+    }
     if (
       scenario === MOTION_SIGNATURE_RECOVERY_SCENARIO ||
       scenario === 'motion-signature-owner-recovery' ||

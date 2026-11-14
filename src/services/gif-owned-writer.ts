@@ -5,10 +5,14 @@
 import { OutputLimitError } from './output-limits';
 
 interface FrameOptions {
-  palette?: number[][];
+  palette?: number[][] | Uint8Array;
   colorDepth: number;
   repeat: number;
   delay: number;
+}
+
+function paletteLength(palette: number[][] | Uint8Array): number {
+  return palette instanceof Uint8Array ? palette.length / 3 : palette.length;
 }
 
 /** Opaque full-frame GIF89a records only; timing and palette policy belong to the service. */
@@ -75,10 +79,10 @@ export class OwnedGifWriter {
     for (let i = 0; i < value.length; i++) this.byte(value.charCodeAt(i));
   }
 
-  private table(palette: number[][]): void {
-    const count = 1 << Math.max(1, Math.ceil(Math.log2(palette.length)));
+  private table(palette: number[][] | Uint8Array): void {
+    const count = 1 << Math.max(1, Math.ceil(Math.log2(paletteLength(palette))));
     for (let i = 0; i < count; i++) {
-      const color = palette[i];
+      const color = palette instanceof Uint8Array ? palette.subarray(i * 3, i * 3 + 3) : palette[i];
       this.byte(color?.[0] ?? 0);
       this.byte(color?.[1] ?? 0);
       this.byte(color?.[2] ?? 0);
@@ -86,6 +90,28 @@ export class OwnedGifWriter {
   }
 
   writeFrame(index: Uint8Array, width: number, height: number, options: FrameOptions): void {
+    this.validateFrame(index.length, width, height, options);
+    // The view is consumed synchronously, before another WASM operation.
+    this.writeValidatedFrame(this.compress(index, options.colorDepth), width, height, options);
+  }
+
+  writeCompressedFrame(
+    compressed: Uint8Array,
+    pixelCount: number,
+    width: number,
+    height: number,
+    options: FrameOptions
+  ): void {
+    this.validateFrame(pixelCount, width, height, options);
+    this.writeValidatedFrame(compressed, width, height, options);
+  }
+
+  private validateFrame(
+    indexLength: number,
+    width: number,
+    height: number,
+    options: FrameOptions
+  ): void {
     const { palette, colorDepth, repeat, delay } = options;
     if (
       this.finished ||
@@ -95,7 +121,7 @@ export class OwnedGifWriter {
       height < 1 ||
       width > 65535 ||
       height > 65535 ||
-      index.length !== width * height ||
+      indexLength !== width * height ||
       !Number.isInteger(colorDepth) ||
       colorDepth < 2 ||
       colorDepth > 8 ||
@@ -109,26 +135,38 @@ export class OwnedGifWriter {
     if (
       (!this.initialized && !palette) ||
       (palette &&
-        (palette.length < 1 ||
-          palette.length > 256 ||
-          palette.some(
-            (color) =>
-              color.length !== 3 ||
-              color.some((channel) => !Number.isInteger(channel) || channel < 0 || channel > 255)
-          )))
+        (paletteLength(palette) < 1 ||
+          paletteLength(palette) > 256 ||
+          (palette instanceof Uint8Array
+            ? palette.length % 3 !== 0
+            : palette.some(
+                (color) =>
+                  color.length !== 3 ||
+                  color.some(
+                    (channel) => !Number.isInteger(channel) || channel < 0 || channel > 255
+                  )
+              ))))
     ) {
       throw new RangeError('Invalid owned GIF palette');
     }
+  }
+
+  private writeValidatedFrame(
+    compressed: Uint8Array,
+    width: number,
+    height: number,
+    options: FrameOptions
+  ): void {
+    const { palette, colorDepth, repeat, delay } = options;
     const first = !this.initialized;
-    // Compression owns only a bounded frame buffer in WASM. Append its borrowed
-    // view directly, before any subsequent WASM operation can overwrite it.
-    const compressed = this.compress(index, colorDepth);
     if (first) {
       this.text('GIF89a');
       this.short(width);
       this.short(height);
       this.byte(
-        0x80 | ((colorDepth - 1) << 4) | (Math.max(1, Math.ceil(Math.log2(palette!.length))) - 1)
+        0x80 |
+          ((colorDepth - 1) << 4) |
+          (Math.max(1, Math.ceil(Math.log2(paletteLength(palette!)))) - 1)
       );
       this.byte(0);
       this.byte(0);
@@ -156,7 +194,7 @@ export class OwnedGifWriter {
     this.short(width);
     this.short(height);
     const local = !first && palette;
-    this.byte(local ? 0x80 | (Math.max(1, Math.ceil(Math.log2(local.length))) - 1) : 0);
+    this.byte(local ? 0x80 | (Math.max(1, Math.ceil(Math.log2(paletteLength(local)))) - 1) : 0);
     if (local) this.table(local);
     this.reserve(compressed.byteLength);
     this.buffer.set(compressed, this.cursor);

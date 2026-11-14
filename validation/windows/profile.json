@@ -7,6 +7,7 @@
       "gif-quantization-primary.json",
       "gif-quantization-secondary.json",
       "gif-quantization-small.json",
+      "gif-owned-cancellation-matrix.json",
       "analysis-worker-recovery.json",
       "app-update.json",
       "conversion-option-contract.json",
@@ -30,6 +31,25 @@
       "owned-vp8-native.json"
     ],
     "scenarios": {
+      "gif-owned-cancellation-matrix": {
+        "selector": "gif-owned-cancellation-matrix.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "validation/windows/private-inputs",
+          "validation/windows/gif-quantization-owner-video.json",
+          "validation/windows/inputs/gif-owned-cancellation-matrix.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
       "gif-quantization-primary": {
         "selector": "gif-quantization-primary.json",
         "browsers": ["msedge", "chrome"],
@@ -281,6 +301,7 @@
     "validation/windows/output-contract.ts",
     "validation/windows/output-finalization.ts",
     "validation/windows/motion-signature.ts",
+    "validation/windows/helpers/gif-native-init-probe.ts",
     "validation/windows/output-finalization-observer.ts",
     "validation/windows/mp4-budget-fixture.ts",
     "public/test-video-contract-bframes.mp4",
