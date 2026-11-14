@@ -3737,6 +3737,63 @@ mod tests {
 
     #[test]
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_mixed_skip_probability_matches_sync_abi2_and_visible_yuv() {
+        let (width, height) = (128, 64);
+        let mut pixels = [128, 128, 128, 255].repeat(width * height);
+        for y in 0..16 {
+            for x in 0..16 {
+                let at = (y * width + x) * 4;
+                pixels[at] = (x * 37 + y * 13) as u8;
+                pixels[at + 1] = (x * 11 + y * 41) as u8;
+                pixels[at + 2] = (x * 29 + y * 7) as u8;
+            }
+        }
+        for filter in [FilterConfig::DISABLED, FilterConfig::for_quality(75)] {
+            let mut expected = Vec::new();
+            let mut selected_probability = 128;
+            let frame = encode_observed(
+                &pixels,
+                FrameSpec {
+                    width: width as u32,
+                    height: height as u32,
+                    stride: (width * 4) as u32,
+                    format: 0,
+                    quality: 75,
+                    filter,
+                },
+                0,
+                |y, u, v, padded_w, blocks| {
+                    let mut counts = SkipStats::default();
+                    for block in blocks {
+                        counts.observe(block.skip()).unwrap();
+                    }
+                    assert!(counts.skipped > 0 && counts.not_skipped > 0);
+                    selected_probability = counts.frozen_probability();
+                    expected =
+                        filtered_visible_yuv(y, u, v, padded_w, width, height, blocks, filter);
+                },
+            )
+            .unwrap();
+            assert_ne!(selected_probability, 128);
+            let request = engine_request(width, height, 0, &pixels, width * 4);
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(
+                FrameEncoder::new_with_filter(request, pixels.clone(), plan, filter).unwrap(),
+            );
+            assert_eq!(engine.skip_probability, selected_probability);
+            assert_eq!(engine.output(), frame);
+            assert_decodes(
+                &frame,
+                width,
+                height,
+                &expected,
+                &format!("mixed skip probability={selected_probability} filter={filter:?}"),
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
     fn independent_enabled_filter_reconstruction_matrix() {
         let filters = [
             FilterConfig {
