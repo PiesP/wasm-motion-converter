@@ -24,7 +24,7 @@ type OwnedIndexModule = {
 type OwnedCoreModule = {
   createOwnedDemuxSession: (source: Blob) => Promise<{
     analyze: () => Promise<unknown>;
-    transferStats: Record<string, number>;
+    transferStats: Record<string, number | string>;
     release: () => void;
   }>;
 };

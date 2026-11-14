@@ -150,7 +150,7 @@ image, browser set, Playwright installation contract, or cache behavior changes.
 `vp run check` checks the full validation implementation through `validation/windows/tsconfig.json` without widening the Node-only script project. The Node boundary suite runs `node --check` over every `validation/windows/**/*.ts` module; the E2E output-contract and resource-profile specs cover related behavior. These local checks do not establish desktop, physical codec, GPU or media performance acceptance.
 
 Production metadata and conversion packets use the owned bounded demux core.
-See `crates/owned-demux/README.md` for ABI3, source regeneration, packet ranges,
+See `crates/owned-demux/README.md` for ABI4, source regeneration, packet ranges,
 TS reconstruction and logical index snapshots. The32MiB live index/metadata,
 64MiB linear capacity and128MiB demux envelopes include growth overlap, source
 reads and queued native chunks; source accounting is not measured browser/GPU
