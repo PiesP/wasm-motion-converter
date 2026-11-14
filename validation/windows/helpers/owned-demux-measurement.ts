@@ -105,6 +105,11 @@ export async function exerciseOwnedDemuxServiceMeasurement({
       response.end();
       return;
     }
+    if (pathname === '/favicon.ico') {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
     if (
       !body ||
       (pathname !== '/' && !/^(?:\/entry\.js|\/assets\/[\w.-]+\.(?:js|wasm))$/.test(pathname))
