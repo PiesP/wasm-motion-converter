@@ -20,3 +20,11 @@ keep one conversion per instance. Return codes are 0 success, 1 invalid input,
 2 unsupported pixels (nonopaque input), and 3 output limit. Input is bounded to
 2048 pixels on each axis, 4,194,304 pixels total, and 16 MiB. Output is bounded
 to 4 MiB. This crate has no external Cargo dependencies.
+
+At the maximum admitted geometry, live WASM payload can include 16 MiB of
+copied input, 12 MiB of source and reconstructed padded YUV420 planes,
+0.75 MiB of macroblock coefficients, up to 8 MiB across two arithmetic-coded
+partitions, and a further 4 MiB while assembling the final frame. These
+payload bounds do not include allocator capacity, linear-memory growth, a
+simultaneously live JavaScript input, or a caller's final output copy. The
+candidate has no product memory acceptance result.
