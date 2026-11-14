@@ -287,6 +287,7 @@
     "validation/windows/output-contract.ts",
     "validation/windows/output-finalization.ts",
     "validation/windows/motion-signature.ts",
+    "validation/windows/helpers/gif-native-init-probe.ts",
     "validation/windows/output-finalization-observer.ts",
     "validation/windows/mp4-budget-fixture.ts",
     "public/test-video-contract-bframes.mp4",

@@ -37,6 +37,7 @@ import {
   readCancellationInspector,
 } from './cancellation-inspector.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
+import { armGifNativeInitProbe } from './helpers/gif-native-init-probe.ts';
 import {
   assertUsefulOutput,
   classifyWasmWarmCache,
@@ -3049,11 +3050,13 @@ async function exerciseOwnedCancellationCase(
   await chooseMotionOption(page, 'scale', String(setting.scale));
   await chooseMotionOption(page, 'smart-frame-skip', setting.smartFrameSkip);
   await page.evaluate(
-    ({ fallback, wasmPath, smallGeometry }) => {
+    ({ fallback, wasmPath, wasmSha256, smallGeometry, nativeGeometry }) => {
       const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
         workers: {
           starts: { requestId: string; options: { format?: string } }[];
           completes: unknown[];
+          errors: unknown[];
+          url: string;
         }[];
         workerConstructionFailures: unknown[];
         onConversionWorkerMessage: ((message: unknown) => void) | null;
@@ -3065,7 +3068,21 @@ async function exerciseOwnedCancellationCase(
         atMs: number | null;
         completedBeforeClick: boolean;
         completesBeforeClick: number;
-        method: 'dom-progress' | 'worker-progress' | 'native-readback' | null;
+        method:
+          | 'dom-progress'
+          | 'worker-progress'
+          | 'native-readback'
+          | 'native-retained-init'
+          | null;
+        nativeRetainedInit: {
+          length: number;
+          status: number;
+          abi: number;
+          memoryBytes: number;
+          workerClockMs: number;
+          workerUrl: string;
+          sourceAssetSha256: string;
+        } | null;
         rawProgress: {
           requestId: string;
           phase: string;
@@ -3099,6 +3116,7 @@ async function exerciseOwnedCancellationCase(
         completedBeforeClick: false,
         completesBeforeClick: 0,
         method: null,
+        nativeRetainedInit: null,
         rawProgress: null,
         rawProgressLog: [],
         rawProgressOverflow: 0,
@@ -3389,10 +3407,49 @@ async function exerciseOwnedCancellationCase(
       mutation.observe(document, { subtree: true, childList: true, attributes: true });
       resource.observe({ type: 'resource', buffered: true });
       Reflect.set(globalThis, '__wmcOwnedCancellation', state);
+      Reflect.set(globalThis, '__wmcOwnedCancellationNativeStop', (evidence: unknown) => {
+        if (fallback || !nativeGeometry || !evidence || typeof evidence !== 'object')
+          return { clicked: false, reason: 'native-evidence-unavailable' };
+        const native = evidence as Record<string, unknown>;
+        const workers = observed.workers.filter((worker) =>
+          worker.starts.some((start) => start.options.format === 'gif')
+        );
+        if (
+          workers.length !== 1 ||
+          workers[0]!.starts.length !== 1 ||
+          workers[0]!.completes.length !== 0 ||
+          workers[0]!.errors.length !== 0 ||
+          typeof wasmSha256 !== 'string' ||
+          native.length !== nativeGeometry.width * nativeGeometry.height * 4 ||
+          native.status !== 0 ||
+          native.abi !== 3 ||
+          typeof native.memoryBytes !== 'number' ||
+          native.memoryBytes < nativeGeometry.width * nativeGeometry.height * 4 ||
+          typeof native.workerClockMs !== 'number' ||
+          !Number.isFinite(native.workerClockMs) ||
+          native.workerUrl !== workers[0]!.url ||
+          native.sourceAssetSha256 !== wasmSha256 ||
+          visible(document.querySelector('[data-testid="result-section"]')) ||
+          visible(document.querySelector('[data-testid="error-display"]'))
+        )
+          return { clicked: false, reason: 'native-evidence-or-active-worker-mismatch' };
+        state.nativeRetainedInit = {
+          length: nativeGeometry.width * nativeGeometry.height * 4,
+          status: 0,
+          abi: 3,
+          memoryBytes: native.memoryBytes,
+          workerClockMs: native.workerClockMs,
+          workerUrl: workers[0]!.url,
+          sourceAssetSha256: wasmSha256,
+        };
+        const clicked = clickStop('native-retained-init', null);
+        return { clicked, reason: clicked ? 'native-retained-init-observed' : 'stop-unavailable' };
+      });
       Reflect.set(globalThis, '__wmcOwnedCancellationDisarm', () => {
         mutation.disconnect();
         resource.disconnect();
         observed.onConversionWorkerMessage = null;
+        Reflect.deleteProperty(globalThis, '__wmcOwnedCancellationNativeStop');
         if (smallGeometry) {
           if (state.copyToHookInstalled && nativeCopyTo) VideoFrame.prototype.copyTo = nativeCopyTo;
           if (state.canvasHookInstalled && canvasPrototype && nativeCanvasRead)
@@ -3406,70 +3463,140 @@ async function exerciseOwnedCancellationCase(
     {
       fallback,
       wasmPath: wasmAsset?.path ?? null,
+      wasmSha256: wasmAsset?.sha256 ?? null,
       smallGeometry:
         fallback && setting.id === 'small'
           ? { width: setting.workload.width, height: setting.workload.height }
           : null,
+      nativeGeometry:
+        !fallback && setting.id === 'small'
+          ? { width: setting.workload.width, height: setting.workload.height }
+          : null,
     }
   );
-  await page.locator('[data-testid="convert-button"]').click();
-  await proceedIfPrompted(page);
-  const observedOutcome = await page
-    .waitForFunction(
-      () => {
-        const state = Reflect.get(globalThis, '__wmcOwnedCancellation') as {
+  const nativeProbe =
+    !fallback && setting.id === 'small' && wasmAsset
+      ? await armGifNativeInitProbe(page, wasmAsset.sha256, (evidence) =>
+          page.evaluate((nativeEvidence) => {
+            const stop = Reflect.get(globalThis, '__wmcOwnedCancellationNativeStop') as
+              | ((value: unknown) => { clicked: boolean; reason: string })
+              | undefined;
+            return stop?.(nativeEvidence) ?? { clicked: false, reason: 'native-stop-disarmed' };
+          }, evidence)
+        )
+      : null;
+  const observeTrigger = async () => {
+    await page.locator('[data-testid="convert-button"]').click();
+    await proceedIfPrompted(page);
+    const observedOutcome = await page
+      .waitForFunction(
+        () => {
+          const state = Reflect.get(globalThis, '__wmcOwnedCancellation') as {
+            clicked: boolean;
+            completedBeforeClick: boolean;
+          };
+          return state.clicked || state.completedBeforeClick;
+        },
+        undefined,
+        { timeout: CANCELLATION_TIMEOUT_MS }
+      )
+      .then(
+        () => true,
+        (error: unknown) => {
+          if (error instanceof Error && error.name === 'TimeoutError') return false;
+          throw error;
+        }
+      );
+    const trigger = await page.evaluate(
+      () =>
+        Reflect.get(globalThis, '__wmcOwnedCancellation') as {
           clicked: boolean;
+          progress: number | null;
+          route: 'worker' | 'main-thread-fallback' | null;
+          atMs: number | null;
           completedBeforeClick: boolean;
-        };
-        return state.clicked || state.completedBeforeClick;
-      },
-      undefined,
-      { timeout: CANCELLATION_TIMEOUT_MS }
-    )
-    .then(
-      () => true,
-      (error: unknown) => {
-        if (error instanceof Error && error.name === 'TimeoutError') return false;
-        throw error;
-      }
+          completesBeforeClick: number;
+          method:
+            | 'dom-progress'
+            | 'worker-progress'
+            | 'native-readback'
+            | 'native-retained-init'
+            | null;
+          nativeRetainedInit: {
+            length: number;
+            status: number;
+            abi: number;
+            memoryBytes: number;
+            workerClockMs: number;
+            workerUrl: string;
+            sourceAssetSha256: string;
+          } | null;
+          rawProgress: {
+            phase: string;
+            percent: number;
+            currentFrame: number;
+            encodedFrames: number | null;
+          } | null;
+          rawProgressLog: unknown[];
+          rawProgressOverflow: number;
+          qualifiedReadbacks: number;
+          copyToReadbacks: number;
+          canvasReadbacks: number;
+          copyToFormats: Record<string, number>;
+          stopTaskScheduled: boolean;
+          stopTaskRan: boolean;
+          wasmResourceSeenAtClick: boolean;
+          priorCompletedFramesLowerBound: number;
+          copyToHookInstalled: boolean;
+          canvasHookInstalled: boolean;
+          canvasDrawHookInstalled: boolean;
+        }
     );
-  const trigger = await page.evaluate(
-    () =>
-      Reflect.get(globalThis, '__wmcOwnedCancellation') as {
-        clicked: boolean;
-        progress: number | null;
-        route: 'worker' | 'main-thread-fallback' | null;
-        atMs: number | null;
-        completedBeforeClick: boolean;
-        completesBeforeClick: number;
-        method: 'dom-progress' | 'worker-progress' | 'native-readback' | null;
-        rawProgress: {
-          phase: string;
-          percent: number;
-          currentFrame: number;
-          encodedFrames: number | null;
-        } | null;
-        rawProgressLog: unknown[];
-        rawProgressOverflow: number;
-        qualifiedReadbacks: number;
-        copyToReadbacks: number;
-        canvasReadbacks: number;
-        copyToFormats: Record<string, number>;
-        stopTaskScheduled: boolean;
-        stopTaskRan: boolean;
-        wasmResourceSeenAtClick: boolean;
-        priorCompletedFramesLowerBound: number;
-        copyToHookInstalled: boolean;
-        canvasHookInstalled: boolean;
-        canvasDrawHookInstalled: boolean;
-      }
-  );
-  await page.evaluate(() => {
-    const disarm = Reflect.get(globalThis, '__wmcOwnedCancellationDisarm') as
-      | (() => void)
-      | undefined;
-    disarm?.();
-  });
+    return { observedOutcome, trigger };
+  };
+  let observed: Awaited<ReturnType<typeof observeTrigger>> | null = null;
+  let observationError: unknown;
+  let observationFailed = false;
+  try {
+    observed = await observeTrigger();
+  } catch (error) {
+    observationFailed = true;
+    observationError = error;
+  }
+  const cleanupErrors: unknown[] = [];
+  try {
+    await nativeProbe?.settle();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  try {
+    await page.evaluate(() => {
+      const disarm = Reflect.get(globalThis, '__wmcOwnedCancellationDisarm') as
+        | (() => void)
+        | undefined;
+      disarm?.();
+    });
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  try {
+    await nativeProbe?.dispose();
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  if (observationFailed) {
+    if (cleanupErrors.length > 0)
+      throw new AggregateError(
+        [observationError, ...cleanupErrors],
+        'GIF Stop observation and cleanup failed'
+      );
+    throw observationError;
+  }
+  if (cleanupErrors.length > 0)
+    throw new AggregateError(cleanupErrors, 'GIF Stop probe cleanup failed');
+  assert(observed);
+  const { observedOutcome, trigger } = observed;
+  const nativeProbeSnapshot = nativeProbe?.snapshot() ?? null;
   if (!trigger.clicked)
     return {
       id: setting.id,
@@ -3479,6 +3606,7 @@ async function exerciseOwnedCancellationCase(
         ? 'conversion-completed-before-active-stop'
         : 'no-eligible-active-stop-observation-before-timeout',
       trigger,
+      nativeProbe: nativeProbeSnapshot,
     };
   assert.equal(trigger.completesBeforeClick, 0, 'Worker completed before Stop click');
   assert.equal(trigger.route, fallback ? 'main-thread-fallback' : 'worker');
@@ -3495,6 +3623,16 @@ async function exerciseOwnedCancellationCase(
     assert(trigger.qualifiedReadbacks >= 3 && trigger.priorCompletedFramesLowerBound >= 1);
     assert.equal(trigger.wasmResourceSeenAtClick, true);
     assert.equal(trigger.stopTaskScheduled && trigger.stopTaskRan, true);
+  } else if (trigger.method === 'native-retained-init') {
+    assert.equal(fallback, false);
+    assert.equal(setting.id, 'small');
+    assert.equal(trigger.progress, null, 'Native initialization was reported as DOM progress');
+    assert(trigger.nativeRetainedInit);
+    assert.equal(trigger.nativeRetainedInit.length, 160 * 90 * 4);
+    assert.equal(trigger.nativeRetainedInit.status, 0);
+    assert.equal(trigger.nativeRetainedInit.abi, 3);
+    assert.equal(trigger.nativeRetainedInit.sourceAssetSha256, wasmAsset?.sha256);
+    assert.equal(nativeProbeSnapshot?.status, 'clicked');
   } else {
     assert.equal(trigger.method, 'dom-progress');
     assert(trigger.progress !== null && trigger.progress >= 74 && trigger.progress < 100);
@@ -3623,6 +3761,7 @@ async function exerciseOwnedCancellationCase(
       smartFrameSkip: setting.smartFrameSkip,
     },
     trigger,
+    nativeProbe: nativeProbeSnapshot,
     stopToIdleMs,
     cancelled,
     recovery,
