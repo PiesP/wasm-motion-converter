@@ -75,11 +75,13 @@ export interface WebpFrameMemoryBudgetOptions {
   targetHeight: number;
   workerCount: number;
   sourceHeadroomFrames?: number;
+  /** Serial software VP8 retains one decoder canvas and one RGB target task. */
+  serialSoftware?: boolean;
 }
 
 export interface WebpWorkerBudgetOptions extends Omit<
   WebpFrameMemoryBudgetOptions,
-  'sourceHeadroomFrames' | 'workerCount'
+  'serialSoftware' | 'sourceHeadroomFrames' | 'workerCount'
 > {
   requestedWorkers: number;
   analysisBytes?: number;
@@ -159,7 +161,7 @@ export class WebpFrameMemoryBudget {
     this.targetTaskBytes = estimateFrameTaskBytes(
       options.targetWidth,
       options.targetHeight,
-      'rgba'
+      options.serialSoftware ? 'rgb' : 'rgba'
     );
     const sourceFrameBytes = estimateRuntimeDecodedSourceFrameBytes(
       options.codedWidth,
@@ -176,7 +178,7 @@ export class WebpFrameMemoryBudget {
 
     // Every pool Worker may retain its lazily initialized Canvas while idle.
     // The decoder-side scaling/fallback Canvas remains alive for the conversion.
-    const persistentCanvasBytes = canvasBytes * (requestedWorkers + 1);
+    const persistentCanvasBytes = canvasBytes * (options.serialSoftware ? 1 : requestedWorkers + 1);
     const canvasReservation = this.reserveImmediate('canvas', persistentCanvasBytes);
     if (!canvasReservation) {
       throw new Error('WebP frame memory limit exceeded by persistent canvases');
@@ -193,9 +195,11 @@ export class WebpFrameMemoryBudget {
           this.targetTaskBytes
       )
     );
-    // One worker can encode while the decoder prepares its next frame, provided
-    // both tasks fit alongside the same conservative source headroom.
-    this.maxOutstandingTasks = Math.max(1, Math.min(requestedWorkers * 2, headroomTaskCapacity));
+    // Native Workers may keep two target tasks in flight when source headroom
+    // permits it. The conversion-owned software path keeps one target lease.
+    this.maxOutstandingTasks = options.serialSoftware
+      ? 1
+      : Math.max(1, Math.min(requestedWorkers * 2, headroomTaskCapacity));
     this.useSourceHeadroom = this.maxOutstandingTasks >= 2;
     this.allowsTargetLookahead = this.maxOutstandingTasks >= 2;
   }

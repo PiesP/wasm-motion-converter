@@ -18,7 +18,7 @@ import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
-import { encodeWebp } from '@services/webp-encoder-service';
+import { encodeWebpOwned } from '@services/webp-encoder-service';
 import {
   BYTES_PER_MB,
   DEFAULT_FPS,
@@ -325,6 +325,20 @@ export async function runWorkerPipeline(
         ...(counts.gifRetainedWasmCapacityBytes !== undefined
           ? { gifRetainedWasmCapacityBytes: counts.gifRetainedWasmCapacityBytes }
           : {}),
+        ...(counts.ownedVp8Frames !== undefined ? { ownedVp8Frames: counts.ownedVp8Frames } : {}),
+        ...(counts.ownedVp8Steps !== undefined ? { ownedVp8Steps: counts.ownedVp8Steps } : {}),
+        ...(counts.ownedVp8HostTaskYields !== undefined
+          ? { ownedVp8HostTaskYields: counts.ownedVp8HostTaskYields }
+          : {}),
+        ...(counts.ownedVp8PeakActualLinearCapacityBytes !== undefined
+          ? { ownedVp8PeakActualLinearCapacityBytes: counts.ownedVp8PeakActualLinearCapacityBytes }
+          : {}),
+        ...(counts.ownedVp8PeakReservedLinearCapacityBytes !== undefined
+          ? {
+              ownedVp8PeakReservedLinearCapacityBytes:
+                counts.ownedVp8PeakReservedLinearCapacityBytes,
+            }
+          : {}),
       };
       transcodeSpan?.update(observedCounts);
     };
@@ -392,12 +406,12 @@ export async function runWorkerPipeline(
           demuxResult.totalFrames / Math.max(webpDecimation, webpCadence.pressureCadenceRatio ?? 1)
         )
       );
-      profiler?.setEncoderRoute('webp-wasm');
+      profiler?.setEncoderRoute('webp-owned-vp8');
 
-      // This Worker helper retains its WASM route. The UI WebP request uses
-      // the main pipeline's probed parallel/serial Canvas and WASM selection.
+      // This Worker helper uses conversion-owned WASM VP8. The UI WebP request
+      // uses the main pipeline's probed parallel/serial Canvas selection first.
       if (!output) {
-        relayLog('info', 'encoders', '├─ WebP encoder (wasm-webp encodeRGB + mux)', {
+        relayLog('info', 'encoders', '├─ WebP encoder (owned VP8 + mux)', {
           codec: demuxResult.config.codec,
           codedWidth,
           codedHeight,
@@ -406,7 +420,7 @@ export async function runWorkerPipeline(
           webpDecimation,
         });
 
-        const webpResult = await encodeWebp(
+        const webpResult = await encodeWebpOwned(
           demuxResult,
           {
             width: codedWidth,
@@ -418,6 +432,7 @@ export async function runWorkerPipeline(
             pressureCadenceRatio: webpCadence.pressureCadenceRatio,
             smartFrameSkip: options.smartFrameSkip,
             decimationMemoryCheck,
+            assertOwnedVp8AdditionalMemoryBytes: assertMemoryBudget,
             onEncodingComplete: recordCompletedFrameCounts,
             profileOperation,
             profileCopyPath,

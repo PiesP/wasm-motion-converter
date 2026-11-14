@@ -98,6 +98,7 @@ describe('actual compiled selected-input index route', () => {
       const result = await demuxVideo({ ...requestFor(source), indexSnapshot }, metadata);
       expect(result.indexRoute).toBe('imported');
       expect(result.indexSnapshotBytes).toBe(indexSnapshot.bytes.byteLength);
+      expect(result.inputBufferBytes).toBe(0);
       expect(await packetTrace(result)).toEqual(expected);
     }
   });
