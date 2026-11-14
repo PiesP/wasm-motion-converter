@@ -802,15 +802,15 @@ fn encode_observed(
     segment_ids
         .try_reserve_exact(count)
         .map_err(|_| EncodeError::OutputLimit)?;
-    let mut smooth_count = 0;
+    let mut class_counts = [0; 3];
     for my in 0..blocks_y {
         for mx in 0..blocks_x {
             let id = segmentation::classify(&source_y, &source_u, &source_v, padded_w, mx, my);
-            smooth_count += usize::from(id == segmentation::SMOOTH);
+            class_counts[id as usize] += 1;
             segment_ids.push(id);
         }
     }
-    let segments = SegmentConfig::from_counts(quality, smooth_count, count);
+    let segments = SegmentConfig::from_counts(quality, class_counts, count);
     let deltas = crate::presets::deltas(quality);
     let mut coeff_contexts = CoeffContexts::new(blocks_x);
     let mut above_modes = vec![0u8; blocks_x * 4];
@@ -1351,7 +1351,7 @@ pub(crate) struct FrameEncoder {
     reconstructed_u: Vec<u8>,
     reconstructed_v: Vec<u8>,
     blocks: Vec<Macroblock>,
-    smooth_count: usize,
+    class_counts: [usize; 3],
     segments: SegmentConfig,
     contexts: CoeffContexts,
     above_modes: Vec<u8>,
@@ -1428,7 +1428,7 @@ impl FrameEncoder {
             reconstructed_u: Vec::new(),
             reconstructed_v: Vec::new(),
             blocks,
-            smooth_count: 0,
+            class_counts: [0; 3],
             segments: SegmentConfig::nonsegmented(crate::presets::qindex(request.quality)),
             contexts: CoeffContexts::try_new(blocks_x)?,
             above_modes,
@@ -1626,7 +1626,7 @@ impl FrameEncoder {
             mx,
             my,
         );
-        self.smooth_count += usize::from(segment_id == segmentation::SMOOTH);
+        self.class_counts[segment_id as usize] += 1;
         self.blocks.push(Macroblock {
             segment_id,
             ..Macroblock::default()
@@ -1635,7 +1635,7 @@ impl FrameEncoder {
         if self.cursor == self.plan.macroblock_count as usize {
             self.segments = SegmentConfig::from_counts(
                 self.request.quality,
-                self.smooth_count,
+                self.class_counts,
                 self.blocks.len(),
             );
             self.cursor = 0;
@@ -2003,12 +2003,15 @@ mod tests {
     use std::process::{Command, Stdio};
 
     fn mixed_segment_input() -> Vec<u8> {
-        let mut pixels = Vec::with_capacity(32 * 16 * 4);
+        let mut pixels = Vec::with_capacity(48 * 16 * 4);
         let mut seed = 0x501u32;
         for y in 0..16 {
-            for x in 0..32 {
+            for x in 0..48 {
                 let rgb = if x < 16 {
                     [80 + x as u8 + y as u8; 3]
+                } else if x < 32 {
+                    let ramp = (x - 16 + y) as u8;
+                    [40 + ramp, 80 + ramp, 120 + ramp]
                 } else {
                     seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                     [seed as u8, (seed >> 8) as u8, (seed >> 16) as u8]
@@ -2022,30 +2025,31 @@ mod tests {
     #[test]
     fn mixed_segment_map_and_fresh_frames_are_deterministic() {
         let input = mixed_segment_input();
-        let request = engine_request(32, 16, 0, &input, 128);
+        let request = engine_request(48, 16, 0, &input, 192);
         let plan = ResourcePlan::checked(request).unwrap();
         let first = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
         assert!(first.segments.enabled);
-        assert_eq!(first.smooth_count, 1);
+        assert_eq!(first.class_counts, [1, 1, 1]);
         assert_eq!(
             first.segments.qindex,
             [
                 crate::presets::SMOOTH_QINDEX,
+                crate::presets::chromatic_smooth_qindex(request.quality),
                 crate::presets::textured_qindex(request.quality)
             ]
         );
-        assert_eq!(first.segments.map_probability, 128);
+        assert_eq!(first.segments.map_probabilities, [171, 128]);
         assert_eq!(
             first
                 .blocks
                 .iter()
                 .map(|b| b.segment_id)
                 .collect::<Vec<_>>(),
-            [0, 1]
+            [0, 1, 2]
         );
         assert_eq!(
             first.output(),
-            encode_textured(&input, 32, 16, 128, 0, 75).unwrap()
+            encode_textured(&input, 48, 16, 192, 0, 75).unwrap()
         );
         let repeated = run_engine(FrameEncoder::new(request, input, plan).unwrap());
         assert_eq!(repeated.output(), first.output());
@@ -2067,6 +2071,23 @@ mod tests {
             after_mixed.output(),
             encode_textured(&smooth, 16, 16, 64, 0, 75).unwrap()
         );
+
+        let chromatic = [40, 80, 120, 255].repeat(16 * 16);
+        let chromatic_request = engine_request(16, 16, 0, &chromatic, 64);
+        let chromatic_plan = ResourcePlan::checked(chromatic_request).unwrap();
+        let chromatic_engine = run_engine(
+            FrameEncoder::new(chromatic_request, chromatic.clone(), chromatic_plan).unwrap(),
+        );
+        assert_eq!(chromatic_engine.class_counts, [0, 1, 0]);
+        assert!(!chromatic_engine.segments.enabled);
+        assert_eq!(
+            chromatic_engine.segments.base_qindex,
+            crate::presets::chromatic_smooth_qindex(75)
+        );
+        assert_eq!(
+            chromatic_engine.output(),
+            encode_textured(&chromatic, 16, 16, 64, 0, 75).unwrap()
+        );
     }
 
     #[test]
@@ -2078,7 +2099,7 @@ mod tests {
                 Ok(())
             }
         }
-        let segments = SegmentConfig::from_counts(75, 1, 2);
+        let segments = SegmentConfig::from_counts(75, [1, 1, 1], 3);
         let mut header = Operations(Vec::new());
         write_header_prefix(&mut header, segments, crate::presets::deltas(75)).unwrap();
         assert_eq!(
@@ -2109,7 +2130,7 @@ mod tests {
             segments,
         )
         .unwrap();
-        assert_eq!(&header.0[..3], &[(255, false), (128, true), (128, true)]);
+        assert_eq!(&header.0[..3], &[(171, true), (255, false), (128, true)]);
     }
 
     #[test]
@@ -2622,16 +2643,29 @@ mod tests {
         assert_ne!(crate::presets::deltas(75).uv_dc, 0);
         assert_ne!(crate::presets::deltas(75).uv_ac, 0);
         let input = mixed_segment_input();
-        let request = engine_request(32, 16, 0, &input, 128);
+        let request = engine_request(48, 16, 0, &input, 192);
         let plan = ResourcePlan::checked(request).unwrap();
         let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
         assert!(engine.segments.enabled);
+        assert_eq!(engine.class_counts, [1, 1, 1]);
+        assert_eq!(
+            engine
+                .blocks
+                .iter()
+                .map(|block| block.segment_id)
+                .collect::<Vec<_>>(),
+            [
+                segmentation::NEUTRAL_SMOOTH,
+                segmentation::CHROMATIC_SMOOTH,
+                segmentation::TEXTURED
+            ]
+        );
         let (y, u, v, padded_w) = engine.reconstruction();
         let mut expected = Vec::new();
         for (plane, stride, width, height) in [
-            (y, padded_w, 32, 16),
-            (u, padded_w / 2, 16, 8),
-            (v, padded_w / 2, 16, 8),
+            (y, padded_w, 48, 16),
+            (u, padded_w / 2, 24, 8),
+            (v, padded_w / 2, 24, 8),
         ] {
             for row in 0..height {
                 expected.extend_from_slice(&plane[row * stride..row * stride + width]);
@@ -2639,7 +2673,7 @@ mod tests {
         }
         assert_decodes(
             engine.output(),
-            32,
+            48,
             16,
             &expected,
             "mixed absolute quantizer segments with negative UV deltas",

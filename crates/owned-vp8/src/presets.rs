@@ -5,6 +5,7 @@ use crate::ac_quant::Deltas;
 
 pub(crate) const QINDEX: [usize; 3] = [40, 22, 8];
 pub(crate) const SMOOTH_QINDEX: usize = 6;
+pub(crate) const CHROMATIC_SMOOTH_QINDEX: [usize; 3] = [12, 12, 8];
 pub(crate) const TEXTURED_QINDEX: [usize; 3] = [30, 23, 14];
 pub(crate) const UV_DC_DELTA: [i8; 3] = [0, -4, 0];
 pub(crate) const UV_AC_DELTA: [i8; 3] = [0, -4, 0];
@@ -19,6 +20,13 @@ pub(crate) fn qindex(quality: u32) -> usize {
 }
 pub(crate) fn textured_qindex(quality: u32) -> usize {
     TEXTURED_QINDEX[match quality {
+        60 => 0,
+        75 => 1,
+        _ => 2,
+    }]
+}
+pub(crate) fn chromatic_smooth_qindex(quality: u32) -> usize {
+    CHROMATIC_SMOOTH_QINDEX[match quality {
         60 => 0,
         75 => 1,
         _ => 2,
