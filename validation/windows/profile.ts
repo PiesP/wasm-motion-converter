@@ -4147,6 +4147,15 @@ export async function run({
           size: gifWasmFiles[0].size,
         }
       : null;
+    const demuxWasmFiles = build.state.files.filter((file) =>
+      /^assets\/owned-demux[-.][\w-]{8}\.wasm$/.test(file.path)
+    );
+    assert(demuxWasmFiles.length <= 1, 'Build contains multiple owned demux WASM assets');
+    const additionalWasmAssets: MotionWasmAsset[] = demuxWasmFiles.map((file) => ({
+      path: `/${file.path}`,
+      sha256: file.sha256,
+      size: file.size,
+    }));
     const smallSha256 = sha256(await readFile(smallPath));
     const primarySha256 = sha256(await readFile(primaryPath));
     const ownerManifest = ownerVideo
@@ -4314,12 +4323,36 @@ export async function run({
               warmController: sample.cacheObservation.serviceWorkerController,
             })
           : null;
+      const additionalWasmWarmCaches = additionalWasmAssets.map((asset) => {
+        if (sample.condition !== 'warm' || firstSample?.sample.workload !== sample.workload)
+          return { path: asset.path, evidence: null };
+        const first = firstSample.sample.cacheObservation.additionalWasmAssetCaches.find(
+          (entry) => entry.path === asset.path
+        );
+        const warm = sample.cacheObservation.additionalWasmAssetCaches.find(
+          (entry) => entry.path === asset.path
+        );
+        assert(first && warm, 'Additional WASM cache observations missing');
+        return {
+          path: asset.path,
+          evidence: classifyWasmWarmCache({
+            asset,
+            first,
+            warm,
+            firstHost: firstSample.wasmRequests,
+            warmHost: wasmRequests,
+            firstController: firstSample.sample.cacheObservation.serviceWorkerController,
+            warmController: sample.cacheObservation.serviceWorkerController,
+          }),
+        };
+      });
       if (sample.condition !== 'warm') firstSample = { sample, wasmRequests };
       return Object.assign(sample, {
         deliveryEvidence: {
           staticServerJsAssetRequests: assetRequests(),
           staticServerWasmAssetRequests: wasmRequests,
           wasmWarmCache,
+          additionalWasmWarmCaches,
           workerCacheControlFromDistHeaders:
             matchedHeaders(headerRules, workerPath).get('cache-control') ?? null,
           workerCacheHeaderSource: 'dist/_headers',
@@ -4336,6 +4369,7 @@ export async function run({
       fixtureSha256: { small: smallSha256, primary: primarySha256 },
       inputManifest: ownerManifest,
       gifWasmAsset: wasmAsset,
+      additionalWasmAssets,
       staticServerJsAssetRequests: assetRequests(),
       staticServerWasmAssetRequests: wasmAssetRequests(),
       samples,
@@ -4692,7 +4726,9 @@ export async function run({
         await chooseMotionOption(page, 'smart-frame-skip', 'low');
         const recovered = fallbackRecovery
           ? await measureFallback(page, workloads[1]!)
-          : attachDeliveryEvidence(await measureMotion(page, workloads[1]!, 'warm', 0, wasmAsset));
+          : attachDeliveryEvidence(
+              await measureMotion(page, workloads[1]!, 'warm', 0, wasmAsset, additionalWasmAssets)
+            );
         result.recovery = recovered;
         assert(
           Math.abs(recovered.decoded.durationUs - 1_000_000) <= 250_000,
@@ -4773,7 +4809,8 @@ export async function run({
         output,
         diagnostics,
         quantizationScenario ? 'single-pair' : 'three-pair-cohort',
-        wasmAsset
+        wasmAsset,
+        additionalWasmAssets
       );
       result = { ...result, ...measured, scenario };
       return { profile: scenario, ...result };
