@@ -34,6 +34,11 @@ type DemuxExports = {
   demux_release(): void;
 };
 
+type RangeSource = {
+  size: number;
+  slice(start: number, end: number): { arrayBuffer(): Promise<ArrayBuffer> };
+};
+
 export type OwnedDemuxTrack = {
   codec: string;
   codecString: string | null;
@@ -232,7 +237,7 @@ async function nextTask(): Promise<void> {
 
 export class OwnedDemuxSession {
   private readonly wasm: DemuxExports;
-  private readonly source: Blob;
+  private readonly source: RangeSource;
   private active = true;
   private ready = false;
   private analyzing = false;
@@ -260,8 +265,15 @@ export class OwnedDemuxSession {
     };
   }
 
-  constructor(source: Blob, module: WebAssembly.Module) {
-    if (source.size < 8 || source.size > MAX_INPUT_BYTES)
+  constructor(source: Blob | ArrayBuffer, module: WebAssembly.Module) {
+    const rangeSource: RangeSource =
+      source instanceof Blob
+        ? source
+        : {
+            size: source.byteLength,
+            slice: (start, end) => ({ arrayBuffer: async () => source.slice(start, end) }),
+          };
+    if (rangeSource.size < 8 || rangeSource.size > MAX_INPUT_BYTES)
       throw new Error('Owned demux input size limit exceeded');
     const instance = new WebAssembly.Instance(module, {});
     const exports = instance.exports as unknown as Record<string, unknown>;
@@ -292,8 +304,8 @@ export class OwnedDemuxSession {
     this.wasm = instance.exports as unknown as DemuxExports;
     if (this.wasm.demux_abi_version() !== ABI_VERSION)
       throw new Error('Owned demux ABI version mismatch');
-    this.source = source;
-    const size = BigInt(source.size);
+    this.source = rangeSource;
+    const size = BigInt(rangeSource.size);
     const pointer = this.wasm.demux_init(Number(size & 0xffff_ffffn), Number(size >> 32n));
     if (!pointer) throw new Error('Owned demux initialization failed');
     eventView(this.wasm, pointer);
