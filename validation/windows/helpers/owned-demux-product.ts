@@ -27,6 +27,7 @@ type OracleFixture = {
   rotation: number;
   duration: number;
   stats: { averagePacketRate: number };
+  packets: Array<{ timestampUs: number }>;
 };
 type Oracle = {
   schema: number;
@@ -78,6 +79,14 @@ function displayedDurationSeconds(text: string): number {
   const minutes = /^(\d+)m (\d+)s$/.exec(text);
   if (minutes) return Number(minutes[1]) * 60 + Number(minutes[2]);
   throw new Error(`Unrecognized displayed duration: ${text}`);
+}
+
+function snapTrimSeconds(seconds: number): number {
+  return Number((Math.round(seconds / 0.1) * 0.1).toFixed(2));
+}
+
+function displayedTrimSeconds(text: string): number {
+  return text.split(':').reduce((seconds, part) => seconds * 60 + Number(part), 0);
 }
 
 async function nativeDecoderProbe(page: Page, fixture: OracleFixture): Promise<Probe> {
@@ -249,6 +258,11 @@ export async function exerciseOwnedDemuxProduct({
   };
   try {
     for (const fixture of oracle.fixtures) {
+      assert(fixture.packets.length > 0, `${fixture.id}: oracle has no packets`);
+      const firstPresentationUs = Math.min(...fixture.packets.map((packet) => packet.timestampUs));
+      assert(Number.isSafeInteger(firstPresentationUs), `${fixture.id}: invalid first PTS`);
+      const normalizedDurationUs = fixture.duration * 1_000_000 - Math.max(0, firstPresentationUs);
+      assert(normalizedDurationUs > 0, `${fixture.id}: invalid presentation interval`);
       const path = await validateBundleFile(
         bundleRoot,
         `test/fixtures/owned-demux/${fixture.id}.base64`
@@ -259,12 +273,23 @@ export async function exerciseOwnedDemuxProduct({
       assert(input.length > 0 && input.length <= MAX_INPUT_BYTES, `${fixture.id}: input bound`);
       assert.equal(input.length, fixture.input.size, `${fixture.id}: input size`);
       assert.equal(sha256(input), fixture.input.sha256, `${fixture.id}: input digest`);
-      const variants = [{ id: 'full', trim: null }] as Array<{
+      const variants = [{ id: 'full', trim: null, trimIntent: null }] as Array<{
         id: string;
         trim: { start: number; end: number } | null;
+        trimIntent: { start: number; end: number } | null;
       }>;
-      if (TRIM_IDS.has(fixture.id) && fixture.duration >= 1.5)
-        variants.push({ id: 'trim', trim: { start: 0.25, end: 1.5 } });
+      if (TRIM_IDS.has(fixture.id) && normalizedDurationUs >= 1_500_000) {
+        const originSeconds = Math.max(0, firstPresentationUs) / 1_000_000;
+        const trimIntent = { start: originSeconds + 0.25, end: originSeconds + 1.5 };
+        variants.push({
+          id: 'trim',
+          trimIntent,
+          trim: {
+            start: snapTrimSeconds(trimIntent.start),
+            end: snapTrimSeconds(trimIntent.end),
+          },
+        });
+      }
       for (const variant of variants) {
         const page = await context.newPage();
         const diagnostics = {
@@ -301,7 +326,11 @@ export async function exerciseOwnedDemuxProduct({
             geometry: expectedGeometry(fixture),
             codec: fixture.config.codec,
             averagePacketRate: fixture.stats.averagePacketRate,
+            firstPresentationUs,
+            normalizedDurationUs,
           },
+          trim: variant.trim,
+          trimIntent: variant.trimIntent,
           diagnostics,
         };
         cases.push(entry);
@@ -331,6 +360,17 @@ export async function exerciseOwnedDemuxProduct({
           entry.metadataAdmissionMs = afterMetadataMs - beforeMetadataMs;
           if (await metadataError.isVisible()) {
             entry.metadataError = (await metadataError.textContent())?.trim();
+            if ((entry.nativeDecoder as Probe).status === 'unsupported') {
+              assert.match(String(entry.metadataError), /codec|decod|support/i);
+              assert.equal(
+                await page.locator('[data-testid^="error-select-different"]').isVisible(),
+                true,
+                `${fixture.id}: unsupported decoder did not show selection recovery`
+              );
+              assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), false);
+              entry.status = 'native-decoder-unsupported-at-selection';
+              continue;
+            }
             throw new Error(`${fixture.id}: metadata admission failed`);
           }
           const fields = await metadata
@@ -373,6 +413,16 @@ export async function exerciseOwnedDemuxProduct({
             await page.locator('#trim-start-input').blur();
             await page.locator('#trim-end-input').fill(String(variant.trim.end));
             await page.locator('#trim-end-input').blur();
+            assert.equal(
+              displayedTrimSeconds(await page.locator('#trim-start-input').inputValue()),
+              variant.trim.start,
+              `${fixture.id}: applied trim start`
+            );
+            assert.equal(
+              displayedTrimSeconds(await page.locator('#trim-end-input').inputValue()),
+              variant.trim.end,
+              `${fixture.id}: applied trim end`
+            );
           }
           for (const [group, value] of [
             ['format', 'gif'],
@@ -438,9 +488,7 @@ export async function exerciseOwnedDemuxProduct({
             if ((entry.nativeDecoder as Probe).status === 'unsupported') {
               assert.match(String(entry.conversionError), /codec|decod|support/i);
               assert.equal(
-                await page
-                  .locator('[data-testid="error-select-different-fallback-button"]')
-                  .isVisible(),
+                await page.locator('[data-testid^="error-select-different"]').isVisible(),
                 true,
                 `${fixture.id}: unsupported decoder did not show the codec recovery route`
               );
@@ -485,7 +533,7 @@ export async function exerciseOwnedDemuxProduct({
           const durationUs = decoded.frames.reduce((total, frame) => total + frame.durationUs, 0);
           const expectedDurationUs = variant.trim
             ? (variant.trim.end - variant.trim.start) * 1_000_000
-            : fixture.duration * 1_000_000;
+            : normalizedDurationUs;
           assert(
             Math.abs(durationUs - expectedDurationUs) <= 250_000,
             `${fixture.id}: output timeline differs by more than 250ms`
@@ -521,7 +569,9 @@ export async function exerciseOwnedDemuxProduct({
             diagnostics.pageErrors.length > 0 ||
             diagnostics.failedRequests.length > 0 ||
             diagnostics.httpErrors.length > 0 ||
-            (entry.status !== 'native-decoder-unsupported' && diagnostics.consoleErrors.length > 0)
+            (entry.status !== 'native-decoder-unsupported' &&
+              entry.status !== 'native-decoder-unsupported-at-selection' &&
+              diagnostics.consoleErrors.length > 0)
           ) {
             failures.push(`${fixture.id}/${variant.id}: browser diagnostics`);
           }
