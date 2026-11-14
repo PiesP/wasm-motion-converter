@@ -7,13 +7,14 @@
 mod codec_metadata;
 mod ebml;
 mod mp4;
+mod mp4_compact;
 mod snapshot;
 mod ts;
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 pub const INPUT_CAPACITY: usize = 64 * 1024;
 pub const METADATA_BUDGET: usize = 32 * 1024 * 1024;
 pub const PACKET_BUDGET: u32 = 16 * 1024 * 1024 - 1024;
@@ -84,6 +85,8 @@ pub struct Mp4Session {
     input: Vec<u8>,
     pending: Option<PendingBox>,
     index: Option<mp4::IndexBuilder>,
+    compact_builder: Option<mp4_compact::CompactBuilder>,
+    compact_index: Option<mp4_compact::CompactIndex>,
     fragment: Option<mp4::FragmentBuilder>,
     track: Option<Track>,
     status: Status,
@@ -164,6 +167,8 @@ impl Mp4Session {
             input: vec![0; INPUT_CAPACITY],
             pending: None,
             index: None,
+            compact_builder: None,
+            compact_index: None,
             fragment: None,
             track: None,
             status: Status::Yield,
@@ -217,8 +222,15 @@ impl Mp4Session {
                 .is_some_and(|export| !export.finished())
             || self.snapshot_import.is_some()
             || self.ts_reassembly.is_some()
+            || self
+                .compact_index
+                .as_ref()
+                .is_some_and(mp4_compact::CompactIndex::seek_active)
         {
             return Err(Error::Invalid);
+        }
+        if self.compact_index.is_some() {
+            return Ok(0);
         }
         let track = self.track.as_ref().ok_or(Error::Invalid)?;
         self.snapshot_export =
@@ -277,6 +289,7 @@ impl Mp4Session {
         let (track, format, codec, sources) =
             self.snapshot_import.take().ok_or(Error::Invalid)?.take()?;
         self.track = Some(track);
+        self.compact_index = None;
         self.format = format;
         self.codec_string = codec;
         self.ts_sources = sources;
@@ -485,6 +498,19 @@ impl Mp4Session {
             return self.step_ebml(work_credit);
         }
         for _ in 0..work_credit {
+            if let Some(builder) = &mut self.compact_builder {
+                let track = self.track.as_mut().ok_or(Error::Invalid)?;
+                if builder.advance(track, 64)? {
+                    self.compact_index = Some(
+                        self.compact_builder
+                            .take()
+                            .ok_or(Error::Invalid)?
+                            .into_index()?,
+                    );
+                }
+                self.status = Status::Yield;
+                return Ok(());
+            }
             if let Some(index) = &mut self.index {
                 let track = self.track.as_mut().ok_or(Error::Invalid)?;
                 if index.advance(track, 64)? {
@@ -522,12 +548,23 @@ impl Mp4Session {
                     }
                     let (mut track, tables) = mp4::parse_moov(&pending.data)?;
                     if let Some(range) = tables {
-                        self.index = Some(mp4::IndexBuilder::new(
-                            pending.data,
-                            range,
-                            self.len,
-                            &mut track,
-                        )?);
+                        if mp4::child(&pending.data, *b"mvex")?.is_none()
+                            && mp4_compact::CompactBuilder::preferred(&pending.data, range)?
+                        {
+                            self.compact_builder = Some(mp4_compact::CompactBuilder::new(
+                                pending.data,
+                                range,
+                                self.len,
+                                &track,
+                            )?);
+                        } else {
+                            self.index = Some(mp4::IndexBuilder::new(
+                                pending.data,
+                                range,
+                                self.len,
+                                &mut track,
+                            )?);
+                        }
                     }
                     self.track = Some(track);
                 } else if pending.kind == *b"moof" {
@@ -544,8 +581,12 @@ impl Mp4Session {
             }
             if self.cursor == self.len {
                 let track = self.track.as_mut().ok_or(Error::Unsupported)?;
-                if track.packets.is_empty() {
+                if track.packets.is_empty() && self.compact_index.is_none() {
                     return Err(Error::Unsupported);
+                }
+                if self.compact_index.is_some() {
+                    self.status = Status::Complete;
+                    return Ok(());
                 }
                 if track.duration == 0 {
                     let end_at = (self.final_scan + 64).min(track.packets.len());
@@ -1171,11 +1212,77 @@ pub extern "C" fn demux_packet_count() -> u32 {
     let Ok(state) = abi().lock() else {
         return 0;
     };
-    state
-        .session
-        .as_ref()
-        .and_then(Mp4Session::track)
-        .map_or(0, |track| track.packets.len() as u32)
+    state.session.as_ref().map_or(0, |session| {
+        session.compact_index.as_ref().map_or_else(
+            || {
+                session
+                    .track
+                    .as_ref()
+                    .map_or(0, |track| track.packets.len() as u32)
+            },
+            mp4_compact::CompactIndex::count,
+        )
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn demux_index_info() -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    let Some(session) = state.session.as_ref() else {
+        return 0;
+    };
+    if session.status != Status::Complete {
+        return 0;
+    }
+    let Some(track) = session.track.as_ref() else {
+        return 0;
+    };
+    let (mode, count, max_packet, live_bytes) = if let Some(index) = &session.compact_index {
+        let Ok(bytes) = index.retained_bytes(track) else {
+            return 0;
+        };
+        (1u32, index.count(), index.max_packet(), bytes)
+    } else {
+        let Some(bytes) = track
+            .packets
+            .capacity()
+            .checked_mul(std::mem::size_of::<Packet>())
+            .and_then(|n| n.checked_add(track.description.capacity()))
+            .and_then(|n| n.checked_add(session.input.capacity()))
+        else {
+            return 0;
+        };
+        (
+            0u32,
+            track.packets.len() as u32,
+            track
+                .packets
+                .iter()
+                .map(|packet| packet.size)
+                .max()
+                .unwrap_or(0),
+            bytes,
+        )
+    };
+    if live_bytes > METADATA_BUDGET || count == 0 || max_packet == 0 {
+        return 0;
+    }
+    let Ok(live_bytes) = u32::try_from(live_bytes) else {
+        return 0;
+    };
+    let flags = u32::from(session.format == Format::Ts);
+    state.event.fill(0);
+    state.event[0..4].copy_from_slice(&9u32.to_le_bytes());
+    state.event[4..8].copy_from_slice(&mode.to_le_bytes());
+    state.event[8..12].copy_from_slice(&count.to_le_bytes());
+    state.event[12..16].copy_from_slice(&max_packet.to_le_bytes());
+    state.event[16..20].copy_from_slice(&live_bytes.to_le_bytes());
+    // The compact key-candidate heap is reserved before Ready and reused.
+    state.event[20..24].copy_from_slice(&0u32.to_le_bytes());
+    state.event[24..28].copy_from_slice(&flags.to_le_bytes());
+    state.event.as_ptr() as u32
 }
 
 #[no_mangle]
@@ -1183,13 +1290,13 @@ pub extern "C" fn demux_packet(index: u32) -> u32 {
     let Ok(mut state) = abi().lock() else {
         return 0;
     };
-    let Some(packet) = state
-        .session
-        .as_ref()
-        .and_then(Mp4Session::track)
-        .and_then(|track| track.packets.get(index as usize))
-        .cloned()
-    else {
+    let Some(packet) = state.session.as_ref().and_then(|session| {
+        if let Some(compact) = &session.compact_index {
+            compact.packet(index).ok()
+        } else {
+            session.track.as_ref()?.packets.get(index as usize).cloned()
+        }
+    }) else {
         return 0;
     };
     if state.session.as_ref().is_some_and(|session| {
@@ -1216,6 +1323,64 @@ pub extern "C" fn demux_packet(index: u32) -> u32 {
         state.event[60] = source.prefix;
     }
     state.event.as_ptr() as u32
+}
+
+#[no_mangle]
+pub extern "C" fn demux_seek_begin(lo: u32, hi: u32, before: u32) -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    let Some(session) = state.session.as_mut() else {
+        return 0;
+    };
+    if session.status != Status::Complete
+        || session.snapshot_export.is_some()
+        || session.snapshot_import.is_some()
+    {
+        return 0;
+    }
+    let target = ((u64::from(hi) << 32) | u64::from(lo)) as i64;
+    session
+        .compact_index
+        .as_mut()
+        .is_some_and(|index| index.seek_begin(target, before).is_ok()) as u32
+}
+
+#[no_mangle]
+pub extern "C" fn demux_seek_step(credit: u32) -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    let Some(index) = state
+        .session
+        .as_mut()
+        .and_then(|session| session.compact_index.as_mut())
+    else {
+        return 0;
+    };
+    let (kind, value) = match index.seek_step(credit) {
+        Ok(None) => (1u32, 0u32),
+        Ok(Some(Some(candidate))) => (2u32, candidate),
+        Ok(Some(None)) => (3u32, 0u32),
+        Err(error) => (4u32, error as u32 + 1),
+    };
+    state.event.fill(0);
+    state.event[0..4].copy_from_slice(&10u32.to_le_bytes());
+    state.event[4..8].copy_from_slice(&kind.to_le_bytes());
+    state.event[8..12].copy_from_slice(&value.to_le_bytes());
+    state.event.as_ptr() as u32
+}
+
+#[no_mangle]
+pub extern "C" fn demux_seek_end() -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    state
+        .session
+        .as_mut()
+        .and_then(|session| session.compact_index.as_mut())
+        .is_some_and(mp4_compact::CompactIndex::seek_end) as u32
 }
 
 #[no_mangle]

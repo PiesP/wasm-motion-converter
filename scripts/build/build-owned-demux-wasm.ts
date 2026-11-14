@@ -167,6 +167,10 @@ function inspect(bytes: Buffer): object {
     'demux_codec_ptr',
     'demux_packet_count',
     'demux_packet',
+    'demux_index_info',
+    'demux_seek_begin',
+    'demux_seek_step',
+    'demux_seek_end',
     'demux_prepare_packets',
     'demux_probe_vp9',
     'demux_packet_begin',
@@ -185,7 +189,7 @@ function inspect(bytes: Buffer): object {
   const instance = new wasm.Instance(module, {});
   if (
     typeof instance.exports.demux_abi_version !== 'function' ||
-    instance.exports.demux_abi_version() !== 3
+    instance.exports.demux_abi_version() !== 4
   )
     throw new Error('Owned demux ABI version differs');
   return {

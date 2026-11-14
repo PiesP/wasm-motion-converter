@@ -25,7 +25,7 @@ does not replace independent decoding, browser execution or malformed testing.
 
 ## ABI and ownership
 
-ABI3 exposes fixed-width little-endian track, packet and event records. Host
+ABI4 exposes fixed-width little-endian track, packet and event records. Host
 `OwnedDemuxSession` owns exactly one instance, validates record extents and time
 bounds, and refreshes JavaScript views after growth. Metadata parsing advances
 through bounded work steps and NeedInput ranges. The host returns to real tasks,
@@ -40,6 +40,35 @@ actually bitstream-verified key and retains required preroll/B-frame references.
 Packet presentation times need not increase in decode order. Metadata duration
 uses the final indexed presentation end, not an untrusted MP4 mdhd duration.
 Native decoding/configuration capabilities remain browser-dependent.
+
+Large classic MP4 tracks retain checked STSZ, STCO/CO64, STSC, STTS, CTTS and
+STSS tables with sparse byte prefixes and run starts. Packet descriptors are
+computed from those records in decode order. A compact CTTS track with reordered
+presentation may retain a packed four-byte successor index per sample; a bounded
+heap builds it before Ready and is then released. CTTS tracks with monotonic
+presentation and tracks without CTTS need no per-sample successor index. The
+index builder and seek candidate heap advance under explicit work credits.
+
+`demux_index_info()` returns a 64-byte tag-9 event: mode at byte 4 (0 expanded,
+1 compact classic), logical packet count at 8, maximum compressed packet bytes
+at 12, actual retained index/input/description capacity at 16, prospective
+post-Ready seek workspace at 20 (zero because it is preallocated), and flags at
+24 (bit 0 means reconstructed payloads). `demux_packet_count()` returns the
+logical count; `demux_packet(index)` keeps the tag-5 wire layout and performs a
+checked bounded lookup for compact tracks. The host checks the index record and
+does not allocate a per-packet JavaScript descriptor list in compact mode.
+
+Compact seek uses `demux_seek_begin(targetLo, targetHi, beforeIndex)` with signed
+timebase ticks and an exclusive decode-index bound (`0xffffffff` means none).
+It returns one when a new lease is accepted. `demux_seek_step(credit)` returns a
+tag-10 event: state at byte 4 (1 work remains, 2 candidate index, 3 exhausted,
+4 error) and candidate index or error code at byte 8. The iterator orders key
+container hints by descending presentation time then decode index; the host
+must still verify compressed bitstream keys. The next step advances to the next
+candidate without rebuilding after a false hint. Packet descriptors remain
+readable during the seek lease. `demux_seek_end()` returns one when it clears an
+active lease. Compact index snapshot export returns zero as a prospective cache
+miss; expanded and imported snapshots retain their existing wire format.
 
 Snapshot exports are bounded logical records, never raw Rust heap dumps. A
 versioned header, track/configuration, packet descriptors and optional TS source

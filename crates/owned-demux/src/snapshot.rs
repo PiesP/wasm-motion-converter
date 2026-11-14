@@ -60,7 +60,7 @@ fn header(track: &Track, format: Format, codec: &str, file_len: u64, total: usiz
     let mut out = [0; HEADER];
     out[..8].copy_from_slice(MAGIC);
     out[8..10].copy_from_slice(&1u16.to_le_bytes());
-    out[10..12].copy_from_slice(&3u16.to_le_bytes());
+    out[10..12].copy_from_slice(&(crate::ABI_VERSION as u16).to_le_bytes());
     out[12] = format_byte(format).expect("complete session has a format");
     out[16..24].copy_from_slice(&file_len.to_le_bytes());
     out[24..28].copy_from_slice(&(track.packets.len() as u32).to_le_bytes());
@@ -286,7 +286,7 @@ impl Import {
         let b = &self.bytes;
         if &b[..8] != MAGIC
             || u16::from_le_bytes(b[8..10].try_into().unwrap()) != 1
-            || u16::from_le_bytes(b[10..12].try_into().unwrap()) != 3
+            || u16::from_le_bytes(b[10..12].try_into().unwrap()) != crate::ABI_VERSION as u16
             || b[13..16].iter().any(|&n| n != 0)
             || b[44..64].iter().any(|&n| n != 0)
             || u64::from_le_bytes(b[16..24].try_into().unwrap()) != self.file_len

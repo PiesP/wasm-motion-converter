@@ -14,14 +14,14 @@ fn u16be(data: &[u8], at: usize) -> Result<u16, Error> {
     let bytes = data.get(at..at + 2).ok_or(Error::Truncated)?;
     Ok(u16::from_be_bytes(bytes.try_into().unwrap()))
 }
-fn u32be(data: &[u8], at: usize) -> Result<u32, Error> {
+pub(crate) fn u32be(data: &[u8], at: usize) -> Result<u32, Error> {
     let bytes = data.get(at..at + 4).ok_or(Error::Truncated)?;
     Ok(u32::from_be_bytes(bytes.try_into().unwrap()))
 }
 fn i32be(data: &[u8], at: usize) -> Result<i32, Error> {
     Ok(u32be(data, at)? as i32)
 }
-fn u64be(data: &[u8], at: usize) -> Result<u64, Error> {
+pub(crate) fn u64be(data: &[u8], at: usize) -> Result<u64, Error> {
     let bytes = data.get(at..at + 8).ok_or(Error::Truncated)?;
     Ok(u64::from_be_bytes(bytes.try_into().unwrap()))
 }
@@ -95,13 +95,13 @@ fn atom_at(data: &[u8], at: usize, limit: usize) -> Result<([u8; 4], usize, usiz
     Ok((kind, at + header, end))
 }
 
-fn child(data: &[u8], kind: [u8; 4]) -> Result<Option<&[u8]>, Error> {
+pub(crate) fn child(data: &[u8], kind: [u8; 4]) -> Result<Option<&[u8]>, Error> {
     Ok(atoms(data)?
         .into_iter()
         .find(|atom| atom.kind == kind)
         .map(|atom| atom.data))
 }
-fn required(data: &[u8], kind: [u8; 4]) -> Result<&[u8], Error> {
+pub(crate) fn required(data: &[u8], kind: [u8; 4]) -> Result<&[u8], Error> {
     child(data, kind)?.ok_or(Error::Unsupported)
 }
 
@@ -1085,13 +1085,13 @@ mod tests {
 }
 
 #[derive(Clone, Copy)]
-struct TableRef {
-    start: usize,
-    count: usize,
-    width: usize,
+pub(crate) struct TableRef {
+    pub(crate) start: usize,
+    pub(crate) count: usize,
+    pub(crate) width: usize,
 }
 impl TableRef {
-    fn entry<'a>(&self, raw: &'a [u8], index: usize) -> Result<&'a [u8], Error> {
+    pub(crate) fn entry<'a>(&self, raw: &'a [u8], index: usize) -> Result<&'a [u8], Error> {
         if index >= self.count {
             return Err(Error::Invalid);
         }
@@ -1102,7 +1102,7 @@ impl TableRef {
         raw.get(start..start + self.width).ok_or(Error::Truncated)
     }
 }
-fn table_with_count(
+pub(crate) fn table_with_count(
     raw: &[u8],
     body: &[u8],
     start: usize,
@@ -1132,7 +1132,12 @@ fn table_with_count(
         width,
     })
 }
-fn table(raw: &[u8], body: &[u8], start: usize, width: usize) -> Result<TableRef, Error> {
+pub(crate) fn table(
+    raw: &[u8],
+    body: &[u8],
+    start: usize,
+    width: usize,
+) -> Result<TableRef, Error> {
     table_with_count(raw, body, start, width, 4)
 }
 
