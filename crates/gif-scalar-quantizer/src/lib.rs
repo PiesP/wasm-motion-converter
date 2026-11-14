@@ -3,6 +3,8 @@
 // Adapted from gifenc 1.0.3 src/pnnquant2.js (MIT), Copyright (c) 2017
 // Matt DesLauriers; PNN origin Copyright (C) 2004-2019 Mark Tyler and
 // Dmitry Groshev, and Copyright (c) 2018-2021 Miller Cy Chan.
+// The image-data encoder is adapted from gifenc 1.0.3 src/lzwEncode.js (MIT),
+// Kevin Weiner, Thibault Imbert, Johan Nordberg and its credited contributors.
 
 use core::arch::wasm32::memory_size;
 use core::cell::UnsafeCell;
@@ -11,6 +13,8 @@ use core::ptr::addr_of;
 const BIN_COUNT: usize = 65_536;
 const DELETED: u32 = (BIN_COUNT - 1) as u32;
 const PAGE_BYTES: usize = 65_536;
+const LZW_HASH_SIZE: usize = 5003;
+const LZW_MAX_CODE: u32 = 4096;
 
 // The field order keeps each bin at 64 bytes. All arithmetic stays f64 and in
 // the same expression order as the locked gifenc RGB565 path.
@@ -52,6 +56,7 @@ struct State {
     heap: [u32; BIN_COUNT + 1],
     palette: [u8; 256 * 3],
     reserved_input_len: u32,
+    input_was_mapped: bool,
 }
 
 struct ConversionState(UnsafeCell<State>);
@@ -67,6 +72,7 @@ static STATE: ConversionState = ConversionState(UnsafeCell::new(State {
     heap: [0; BIN_COUNT + 1],
     palette: [0; 256 * 3],
     reserved_input_len: 0,
+    input_was_mapped: false,
 }));
 
 extern "C" {
@@ -102,7 +108,10 @@ pub extern "C" fn reserve_input(input_len: u32) -> i32 {
     if end > memory_size::<0>() * PAGE_BYTES {
         return -2;
     }
-    unsafe { (*STATE.0.get()).reserved_input_len = input_len };
+    unsafe {
+        (*STATE.0.get()).reserved_input_len = input_len;
+        (*STATE.0.get()).input_was_mapped = false;
+    };
     0
 }
 
@@ -174,7 +183,7 @@ pub extern "C" fn quantize(input_len: u32, colors: u32) -> i32 {
         return -1;
     }
     let state = unsafe { &mut *STATE.0.get() };
-    if state.reserved_input_len != input_len {
+    if state.reserved_input_len != input_len || state.input_was_mapped {
         return -1;
     }
     let Some(end) = input_start().checked_add(input_len as usize) else {
@@ -328,4 +337,314 @@ pub extern "C" fn quantize(input_len: u32, colors: u32) -> i32 {
         }
     }
     palette_len as i32
+}
+
+#[inline]
+fn indexed_start() -> usize {
+    input_start()
+}
+
+#[no_mangle]
+pub extern "C" fn indices_ptr() -> u32 {
+    indexed_start() as u32
+}
+
+// The cache is deliberately keyed by the original first pixel in each RGB565
+// bucket, not by a synthetic bucket center. A new frame clears every entry.
+#[no_mangle]
+pub extern "C" fn map_palette(input_len: u32, colors: u32) -> i32 {
+    if input_len == 0 || (input_len & 3) != 0 || !(1..=256).contains(&colors) {
+        return -1;
+    }
+    let state = unsafe { &mut *STATE.0.get() };
+    if state.reserved_input_len != input_len || state.input_was_mapped {
+        return -1;
+    }
+    let count = (input_len / 4) as usize;
+    let start = indexed_start();
+    let Some(end) = input_start().checked_add(input_len as usize) else {
+        return -1;
+    };
+    if end > u32::MAX as usize {
+        return -1;
+    }
+    if end > memory_size::<0>() * PAGE_BYTES {
+        return -2;
+    }
+
+    // The output reuses the start of the RGBA region. For pixel i, the four
+    // input bytes at 4*i..4*i+4 are read before byte i is overwritten; all
+    // later pixels are untouched. Raw accesses avoid overlapping Rust slices.
+    // State is disjoint from __heap_base and no quantizer borrow survives ABI.
+    state.order.fill(u32::MAX);
+    for pixel in 0..count {
+        let offset = pixel * 4;
+        let r = unsafe { *((start + offset) as *const u8) } as i32;
+        let g = unsafe { *((start + offset + 1) as *const u8) } as i32;
+        let b = unsafe { *((start + offset + 2) as *const u8) } as i32;
+        let key = (((r << 8) & 0xf800) | ((g << 2) & 0x03e0) | (b >> 3)) as usize;
+        let cached = state.order[key];
+        if cached != u32::MAX {
+            unsafe { *((start + pixel) as *mut u8) = cached as u8 };
+            continue;
+        }
+        let mut best = 0;
+        let mut minimum = i32::MAX;
+        for candidate in 0..colors as usize {
+            let offset = candidate * 3;
+            let dr = state.palette[offset] as i32 - r;
+            let mut distance = dr * dr;
+            if distance > minimum {
+                continue;
+            }
+            let dg = state.palette[offset + 1] as i32 - g;
+            distance += dg * dg;
+            if distance > minimum {
+                continue;
+            }
+            let db = state.palette[offset + 2] as i32 - b;
+            distance += db * db;
+            if distance > minimum {
+                continue;
+            }
+            // gifenc's internal RGB mapper accepts equality, so the last
+            // palette entry at an equal distance wins.
+            minimum = distance;
+            best = candidate;
+        }
+        state.order[key] = best as u32;
+        unsafe { *((start + pixel) as *mut u8) = best as u8 };
+    }
+    state.input_was_mapped = true;
+    count as i32
+}
+
+fn image_data_bound(pixel_count: u32) -> Option<usize> {
+    if pixel_count == 0 {
+        return None;
+    }
+    let pixels = pixel_count as usize;
+    // Every input pixel produces at most one ordinary code. A full table can
+    // cause one extra clear only after at least 3838 misses (depth 8 is the
+    // worst case). All codes fit in 12 bits. Count packet sizes separately.
+    let clears = pixels.checked_add(3837)?.checked_div(3838)?;
+    let codes = pixels.checked_add(clears)?.checked_add(3)?;
+    let packed = codes.checked_mul(12)?.checked_add(7)?.checked_div(8)?;
+    let blocks = packed.checked_add(253)?.checked_div(254)?;
+    packed.checked_add(blocks)?.checked_add(2)
+}
+
+#[no_mangle]
+pub extern "C" fn lzw_bound(pixel_count: u32) -> u32 {
+    image_data_bound(pixel_count)
+        .and_then(|bound| u32::try_from(bound).ok())
+        .unwrap_or(0)
+}
+
+fn image_data_start(input_len: usize) -> Option<usize> {
+    input_start().checked_add(input_len / 4)
+}
+
+#[no_mangle]
+pub extern "C" fn lzw_output_ptr() -> u32 {
+    let input_len = unsafe { (*STATE.0.get()).reserved_input_len as usize };
+    image_data_start(input_len)
+        .and_then(|start| u32::try_from(start).ok())
+        .unwrap_or(0)
+}
+
+struct ImageDataWriter<'a> {
+    bytes: &'a mut [u8],
+    written: usize,
+    packet: [u8; 254],
+    packet_len: usize,
+    accumulator: u32,
+    bits: u32,
+    code_bits: u32,
+    max_code: u32,
+    clear_pending: bool,
+    initial_bits: u32,
+    free_entry: u32,
+}
+
+impl ImageDataWriter<'_> {
+    fn byte(&mut self, byte: u8) -> Result<(), ()> {
+        let Some(slot) = self.bytes.get_mut(self.written) else {
+            return Err(());
+        };
+        *slot = byte;
+        self.written += 1;
+        Ok(())
+    }
+
+    fn packet_byte(&mut self, byte: u8) -> Result<(), ()> {
+        self.packet[self.packet_len] = byte;
+        self.packet_len += 1;
+        if self.packet_len == 254 {
+            self.flush_packet()?;
+        }
+        Ok(())
+    }
+
+    fn flush_packet(&mut self) -> Result<(), ()> {
+        if self.packet_len != 0 {
+            self.byte(self.packet_len as u8)?;
+            let end = self.written.checked_add(self.packet_len).ok_or(())?;
+            let target = self.bytes.get_mut(self.written..end).ok_or(())?;
+            target.copy_from_slice(&self.packet[..self.packet_len]);
+            self.written = end;
+            self.packet_len = 0;
+        }
+        Ok(())
+    }
+
+    fn code(&mut self, code: u32, end_code: u32) -> Result<(), ()> {
+        self.accumulator &= (1 << self.bits) - 1;
+        self.accumulator |= code << self.bits;
+        self.bits += self.code_bits;
+        while self.bits >= 8 {
+            self.packet_byte(self.accumulator as u8)?;
+            self.accumulator >>= 8;
+            self.bits -= 8;
+        }
+        if self.free_entry > self.max_code || self.clear_pending {
+            if self.clear_pending {
+                self.code_bits = self.initial_bits;
+                self.max_code = (1 << self.code_bits) - 1;
+                self.clear_pending = false;
+            } else {
+                self.code_bits += 1;
+                self.max_code = if self.code_bits == 12 {
+                    LZW_MAX_CODE
+                } else {
+                    (1 << self.code_bits) - 1
+                };
+            }
+        }
+        if code == end_code {
+            while self.bits > 0 {
+                self.packet_byte(self.accumulator as u8)?;
+                self.accumulator >>= 8;
+                self.bits = self.bits.saturating_sub(8);
+            }
+            self.flush_packet()?;
+        }
+        Ok(())
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lzw_encode(pixel_count: u32, depth: u32, output_capacity: u32) -> i32 {
+    if pixel_count == 0 || !(2..=8).contains(&depth) || output_capacity == 0 {
+        return -1;
+    }
+    let state = unsafe { &mut *STATE.0.get() };
+    let input_len = state.reserved_input_len as usize;
+    if input_len == 0 || (input_len & 3) != 0 || pixel_count as usize != input_len / 4 {
+        return -1;
+    }
+    let index_start = indexed_start();
+    let Some(index_end) = index_start.checked_add(pixel_count as usize) else {
+        return -1;
+    };
+    let Some(output_start) = image_data_start(input_len) else {
+        return -1;
+    };
+    let Some(output_end) = output_start.checked_add(output_capacity as usize) else {
+        return -1;
+    };
+    if output_end > u32::MAX as usize || (output_start < index_end && output_end > index_start) {
+        return -1;
+    }
+    if index_end > memory_size::<0>() * PAGE_BYTES || output_end > memory_size::<0>() * PAGE_BYTES {
+        return -2;
+    }
+    // No reference to these disjoint ABI ranges escapes this synchronous call.
+    // The static hash/code arrays are reused only after quantize/map_palette.
+    let indices =
+        unsafe { core::slice::from_raw_parts(index_start as *const u8, pixel_count as usize) };
+    if indices.iter().any(|&index| index as u32 >= (1 << depth)) {
+        return -1;
+    }
+    let output = unsafe {
+        core::slice::from_raw_parts_mut(output_start as *mut u8, output_capacity as usize)
+    };
+    state.order[..LZW_HASH_SIZE].fill(u32::MAX);
+    state.heap[..LZW_HASH_SIZE].fill(0);
+    let initial_bits = depth + 1;
+    let clear_code = 1 << depth;
+    let end_code = clear_code + 1;
+    let mut writer = ImageDataWriter {
+        bytes: output,
+        written: 0,
+        packet: [0; 254],
+        packet_len: 0,
+        accumulator: 0,
+        bits: 0,
+        code_bits: initial_bits,
+        max_code: (1 << initial_bits) - 1,
+        clear_pending: false,
+        initial_bits,
+        free_entry: clear_code + 2,
+    };
+    if writer.byte(depth as u8).is_err() || writer.code(clear_code, end_code).is_err() {
+        return -2;
+    }
+    let mut entry = indices[0] as u32;
+    let mut hash_shift = 0;
+    let mut hash_size = LZW_HASH_SIZE;
+    while hash_size < 65_536 {
+        hash_shift += 1;
+        hash_size *= 2;
+    }
+    hash_shift = 8 - hash_shift;
+    for &character in &indices[1..] {
+        let character = character as u32;
+        let key = (character << 12) + entry;
+        let mut slot = ((character << hash_shift) ^ entry) as usize;
+        if state.order[slot] == key {
+            entry = state.heap[slot];
+            continue;
+        }
+        let displacement = if slot == 0 { 1 } else { LZW_HASH_SIZE - slot };
+        let mut found = false;
+        while state.order[slot] != u32::MAX {
+            slot = if slot < displacement {
+                slot + LZW_HASH_SIZE - displacement
+            } else {
+                slot - displacement
+            };
+            if state.order[slot] == key {
+                entry = state.heap[slot];
+                found = true;
+                break;
+            }
+        }
+        if found {
+            continue;
+        }
+        if writer.code(entry, end_code).is_err() {
+            return -2;
+        }
+        entry = character;
+        if writer.free_entry < LZW_MAX_CODE {
+            state.heap[slot] = writer.free_entry;
+            writer.free_entry += 1;
+            state.order[slot] = key;
+        } else {
+            state.order[..LZW_HASH_SIZE].fill(u32::MAX);
+            writer.free_entry = clear_code + 2;
+            writer.clear_pending = true;
+            if writer.code(clear_code, end_code).is_err() {
+                return -2;
+            }
+        }
+    }
+    if writer.code(entry, end_code).is_err()
+        || writer.code(end_code, end_code).is_err()
+        || writer.byte(0).is_err()
+    {
+        return -2;
+    }
+    writer.written as i32
 }
