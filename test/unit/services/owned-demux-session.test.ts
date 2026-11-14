@@ -194,6 +194,7 @@ describe('conversion owned packet source window', () => {
   it('rejects a late window read after release without publishing stale bytes', async () => {
     const { session, source } = await fixtureSession();
     const delayed = Promise.withResolvers<ArrayBuffer>();
+    let read: Promise<ArrayBuffer> | undefined;
     try {
       await session.analyze();
       session.enablePacketReadWindow();
@@ -201,7 +202,7 @@ describe('conversion owned packet source window', () => {
       const range = new Blob();
       vi.spyOn(range, 'arrayBuffer').mockReturnValue(delayed.promise);
       const slice = vi.spyOn(source, 'slice').mockReturnValue(range);
-      const read = session.readPacket(packet);
+      read = session.readPacket(packet);
       await vi.waitFor(() => expect(slice).toHaveBeenCalledOnce());
       session.release();
       expect(ownedReadCreditStats().liveBytes).toBe(source.size - Number(packet.offset));
@@ -211,6 +212,9 @@ describe('conversion owned packet source window', () => {
       expect(ownedReadCreditStats()).toEqual({ liveBytes: 0, retiredBytes: 0, waiters: 0 });
     } finally {
       session.release();
+      // A failed assertion must not strand realm read credit for later tests.
+      delayed.resolve(new ArrayBuffer(0));
+      await read?.catch(() => undefined);
       vi.restoreAllMocks();
     }
   });
