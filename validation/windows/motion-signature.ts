@@ -292,6 +292,7 @@ type MotionObserver = {
   idleAfterStopMs: number | null;
   workers: WorkerEvent[];
   workerConstructionFailures: { url: string; name: string }[];
+  onConversionWorkerMessage: ((message: unknown) => void) | null;
   reset: () => void;
   calibrate?: () => {
     iterations: number;
@@ -338,6 +339,7 @@ export function installMotionObserver(options?: { forceConversionWorkerFailure?:
     idleAfterStopMs: null,
     workers: [],
     workerConstructionFailures: [],
+    onConversionWorkerMessage: null,
     reset() {
       this.clickMs = null;
       this.outputUrls = [];
@@ -446,6 +448,10 @@ export function installMotionObserver(options?: { forceConversionWorkerFailure?:
             code: 'code' in data ? String(data.code) : '',
           });
         }
+        // This listener was registered in the constructor, before the product
+        // installs its onmessage handler. The active-stop observer can see the
+        // raw progress boundary even when the throttled DOM never renders it.
+        observed.onConversionWorkerMessage?.(data);
       });
     }
 

@@ -3049,10 +3049,14 @@ async function exerciseOwnedCancellationCase(
   await chooseMotionOption(page, 'scale', String(setting.scale));
   await chooseMotionOption(page, 'smart-frame-skip', setting.smartFrameSkip);
   await page.evaluate(
-    ({ fallback, wasmPath }) => {
+    ({ fallback, wasmPath, smallGeometry }) => {
       const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
-        workers: { starts: { options: { format?: string } }[] }[];
+        workers: {
+          starts: { requestId: string; options: { format?: string } }[];
+          completes: unknown[];
+        }[];
         workerConstructionFailures: unknown[];
+        onConversionWorkerMessage: ((message: unknown) => void) | null;
       };
       const state: {
         clicked: boolean;
@@ -3060,12 +3064,55 @@ async function exerciseOwnedCancellationCase(
         route: 'worker' | 'main-thread-fallback' | null;
         atMs: number | null;
         completedBeforeClick: boolean;
+        completesBeforeClick: number;
+        method: 'dom-progress' | 'worker-progress' | 'native-readback' | null;
+        rawProgress: {
+          requestId: string;
+          phase: string;
+          percent: number;
+          currentFrame: number;
+          encodedFrames: number | null;
+        } | null;
+        rawProgressLog: {
+          phase: string;
+          percent: number;
+          currentFrame: number;
+          encodedFrames: number | null;
+        }[];
+        rawProgressOverflow: number;
+        qualifiedReadbacks: number;
+        copyToReadbacks: number;
+        canvasReadbacks: number;
+        copyToFormats: Record<string, number>;
+        stopTaskScheduled: boolean;
+        stopTaskRan: boolean;
+        wasmResourceSeenAtClick: boolean;
+        priorCompletedFramesLowerBound: number;
+        copyToHookInstalled: boolean;
+        canvasHookInstalled: boolean;
+        canvasDrawHookInstalled: boolean;
       } = {
         clicked: false,
         progress: null,
         route: null,
         atMs: null,
         completedBeforeClick: false,
+        completesBeforeClick: 0,
+        method: null,
+        rawProgress: null,
+        rawProgressLog: [],
+        rawProgressOverflow: 0,
+        qualifiedReadbacks: 0,
+        copyToReadbacks: 0,
+        canvasReadbacks: 0,
+        copyToFormats: {},
+        stopTaskScheduled: false,
+        stopTaskRan: false,
+        wasmResourceSeenAtClick: false,
+        priorCompletedFramesLowerBound: 0,
+        copyToHookInstalled: false,
+        canvasHookInstalled: false,
+        canvasDrawHookInstalled: false,
       };
       const resourceSeen = () =>
         wasmPath !== null &&
@@ -3074,15 +3121,48 @@ async function exerciseOwnedCancellationCase(
           .some((entry) => new URL(entry.name).pathname === wasmPath);
       const visible = (element: Element | null) =>
         element instanceof HTMLElement && element.getClientRects().length > 0;
+      const routeReady = () =>
+        fallback
+          ? observed.workerConstructionFailures.length === 1 && resourceSeen()
+          : observed.workers.some((worker) =>
+              worker.starts.some((start) => start.options.format === 'gif')
+            );
+      const stopControl = () => {
+        const stop = document.querySelector<HTMLButtonElement>(
+          '[data-testid="stop-conversion-button"]'
+        );
+        return stop && !stop.disabled && visible(stop) ? stop : null;
+      };
+      const markCompleted = () => {
+        if (state.clicked || state.completedBeforeClick) return;
+        state.completedBeforeClick = true;
+        mutation.disconnect();
+        resource.disconnect();
+        observed.onConversionWorkerMessage = null;
+      };
+      const clickStop = (method: NonNullable<typeof state.method>, progress: number | null) => {
+        if (state.clicked || state.completedBeforeClick || !routeReady()) return false;
+        const stop = stopControl();
+        if (!stop) return false;
+        state.clicked = true;
+        state.progress = progress;
+        state.route = fallback ? 'main-thread-fallback' : 'worker';
+        state.method = method;
+        state.atMs = performance.now();
+        state.wasmResourceSeenAtClick = resourceSeen();
+        mutation.disconnect();
+        resource.disconnect();
+        observed.onConversionWorkerMessage = null;
+        stop.click();
+        return true;
+      };
       const check = () => {
         if (state.clicked || state.completedBeforeClick) return;
         if (
           visible(document.querySelector('[data-testid="result-section"]')) ||
           visible(document.querySelector('[data-testid="error-display"]'))
         ) {
-          state.completedBeforeClick = true;
-          mutation.disconnect();
-          resource.disconnect();
+          markCompleted();
           return;
         }
         const progress = Number(
@@ -3090,53 +3170,269 @@ async function exerciseOwnedCancellationCase(
             .querySelector('[data-testid="dropzone"] [role="progressbar"]')
             ?.getAttribute('data-progress')
         );
-        const stop = document.querySelector<HTMLButtonElement>(
-          '[data-testid="stop-conversion-button"]'
-        );
-        const routeReady = fallback
-          ? observed.workerConstructionFailures.length === 1 && resourceSeen()
-          : observed.workers.some((worker) =>
-              worker.starts.some((start) => start.options.format === 'gif')
-            );
+        if (progress >= 74 && progress < 100 && clickStop('dom-progress', progress)) return;
+        if (smallGeometry && state.qualifiedReadbacks >= 3 && routeReady() && stopControl())
+          scheduleNativeStop();
+      };
+      function scheduleNativeStop() {
+        if (state.stopTaskScheduled || state.clicked || state.completedBeforeClick) return;
+        state.stopTaskScheduled = true;
+        const run = () => {
+          state.stopTaskRan = true;
+          if (
+            visible(document.querySelector('[data-testid="result-section"]')) ||
+            visible(document.querySelector('[data-testid="error-display"]'))
+          ) {
+            markCompleted();
+            return;
+          }
+          clickStop('native-readback', null);
+        };
+        const scheduler = Reflect.get(globalThis, 'scheduler') as
+          | {
+              postTask?: (
+                task: () => void,
+                options: { priority: 'user-blocking' }
+              ) => Promise<unknown>;
+            }
+          | undefined;
+        if (typeof scheduler?.postTask === 'function') {
+          try {
+            void scheduler.postTask(run, { priority: 'user-blocking' }).catch(() => {
+              setTimeout(run, 0);
+            });
+            return;
+          } catch {
+            // A native task failure uses the ordinary next-task fallback.
+          }
+        }
+        setTimeout(run, 0);
+      }
+      observed.onConversionWorkerMessage = (message: unknown) => {
         if (
-          !routeReady ||
-          !stop ||
-          stop.disabled ||
-          !visible(stop) ||
-          progress < 74 ||
-          progress >= 100
+          fallback ||
+          state.clicked ||
+          state.completedBeforeClick ||
+          !message ||
+          typeof message !== 'object' ||
+          !('type' in message)
         )
           return;
-        state.clicked = true;
-        state.progress = progress;
-        state.route = fallback ? 'main-thread-fallback' : 'worker';
-        state.atMs = performance.now();
-        mutation.disconnect();
-        resource.disconnect();
-        stop.click();
+        const requestId = 'requestId' in message ? String(message.requestId) : '';
+        const activeRequest = observed.workers
+          .flatMap((worker) => worker.starts)
+          .find((start) => start.options.format === 'gif')?.requestId;
+        if (!activeRequest || requestId !== activeRequest) return;
+        if (message.type === 'complete' || message.type === 'error') {
+          if (message.type === 'complete') state.completesBeforeClick++;
+          markCompleted();
+          return;
+        }
+        if (message.type !== 'progress') return;
+        const raw = message as Record<string, unknown>;
+        const percent = raw.percent;
+        const currentFrame = raw.currentFrame;
+        const encoded = raw.encodedFrames;
+        const phase = raw.phase;
+        if (
+          !Number.isFinite(percent) ||
+          !Number.isFinite(currentFrame) ||
+          typeof phase !== 'string'
+        )
+          return;
+        const entry = {
+          phase,
+          percent: Number(percent),
+          currentFrame: Number(currentFrame),
+          encodedFrames: typeof encoded === 'number' && Number.isFinite(encoded) ? encoded : null,
+        };
+        if (state.rawProgressLog.length < 24) state.rawProgressLog.push(entry);
+        else state.rawProgressOverflow++;
+        // The worker's decode-only range ends at 73. A clamped 74+ message
+        // therefore follows actual encoding even if the phase reads decoding.
+        if (
+          (phase === 'decoding' || phase === 'encoding') &&
+          entry.percent >= 74 &&
+          entry.percent < 100 &&
+          entry.currentFrame > 0 &&
+          (entry.encodedFrames === null || entry.encodedFrames > 0)
+        ) {
+          state.rawProgress = { requestId, ...entry };
+          clickStop('worker-progress', entry.percent);
+        }
       };
+      const seenFrames = new WeakSet<VideoFrame>();
+      const onReadback = (kind: 'copyTo' | 'canvas', format?: string) => {
+        if (
+          !smallGeometry ||
+          state.clicked ||
+          state.completedBeforeClick ||
+          !routeReady() ||
+          !stopControl()
+        )
+          return;
+        state.qualifiedReadbacks++;
+        if (kind === 'copyTo') {
+          state.copyToReadbacks++;
+          if (format) state.copyToFormats[format] = (state.copyToFormats[format] ?? 0) + 1;
+        } else state.canvasReadbacks++;
+        state.priorCompletedFramesLowerBound = Math.max(0, state.qualifiedReadbacks - 2);
+        if (state.qualifiedReadbacks >= 3) scheduleNativeStop();
+      };
+      const nativeCopyTo = typeof VideoFrame === 'function' ? VideoFrame.prototype.copyTo : null;
+      const canvasPrototype =
+        typeof OffscreenCanvasRenderingContext2D === 'function'
+          ? OffscreenCanvasRenderingContext2D.prototype
+          : null;
+      const nativeCanvasRead = canvasPrototype?.getImageData;
+      const nativeCanvasDraw = canvasPrototype?.drawImage;
+      const drawnSources = new WeakMap<OffscreenCanvasRenderingContext2D, object>();
+      const seenCanvasSources = new WeakSet<object>();
+      if (smallGeometry && nativeCopyTo) {
+        const observedCopyTo = function (
+          this: VideoFrame,
+          ...args: Parameters<VideoFrame['copyTo']>
+        ) {
+          const options = args[1];
+          const rect = options?.rect;
+          const layout = options?.layout;
+          const format = options?.format;
+          const exact =
+            rect?.x === 0 &&
+            rect.y === 0 &&
+            rect.width === smallGeometry.width &&
+            rect.height === smallGeometry.height &&
+            layout?.length === 1 &&
+            layout[0]?.offset === 0 &&
+            layout[0]?.stride === smallGeometry.width * 4 &&
+            (format === 'RGBX' || format === 'RGBA' || format === 'BGRA' || format === 'BGRX');
+          const result = nativeCopyTo.apply(this, args);
+          if (exact) {
+            void result.then(
+              () => {
+                if (seenFrames.has(this)) return;
+                seenFrames.add(this);
+                onReadback('copyTo', format);
+              },
+              () => {
+                /* A failed native layout can fall back to Canvas. */
+              }
+            );
+          }
+          return result;
+        };
+        try {
+          VideoFrame.prototype.copyTo = observedCopyTo;
+          state.copyToHookInstalled = VideoFrame.prototype.copyTo === observedCopyTo;
+        } catch {
+          // An immutable native prototype leaves this path unobserved.
+        }
+      }
+      if (smallGeometry) {
+        if (canvasPrototype && nativeCanvasDraw)
+          try {
+            const observedCanvasDraw = function (
+              this: OffscreenCanvasRenderingContext2D,
+              ...args: unknown[]
+            ) {
+              const result = (nativeCanvasDraw as (...values: unknown[]) => void).apply(this, args);
+              if (
+                this.canvas.width === smallGeometry.width &&
+                this.canvas.height === smallGeometry.height &&
+                args[0] &&
+                typeof args[0] === 'object'
+              )
+                drawnSources.set(this, args[0]);
+              return result;
+            };
+            canvasPrototype.drawImage = observedCanvasDraw as typeof nativeCanvasDraw;
+            state.canvasDrawHookInstalled = canvasPrototype.drawImage === observedCanvasDraw;
+          } catch {
+            // Leave native drawing untouched when the prototype is immutable.
+          }
+        if (canvasPrototype && nativeCanvasRead)
+          try {
+            const observedCanvasRead = function (
+              this: OffscreenCanvasRenderingContext2D,
+              ...args: Parameters<OffscreenCanvasRenderingContext2D['getImageData']>
+            ) {
+              const image = nativeCanvasRead.apply(this, args);
+              const source = drawnSources.get(this);
+              if (
+                this.canvas.width === smallGeometry.width &&
+                this.canvas.height === smallGeometry.height &&
+                args[0] === 0 &&
+                args[1] === 0 &&
+                args[2] === smallGeometry.width &&
+                args[3] === smallGeometry.height &&
+                source &&
+                !seenCanvasSources.has(source) &&
+                !(
+                  typeof VideoFrame === 'function' &&
+                  source instanceof VideoFrame &&
+                  seenFrames.has(source)
+                )
+              ) {
+                seenCanvasSources.add(source);
+                onReadback('canvas');
+              }
+              return image;
+            };
+            canvasPrototype.getImageData = observedCanvasRead;
+            state.canvasHookInstalled = canvasPrototype.getImageData === observedCanvasRead;
+          } catch {
+            // An immutable native prototype leaves this path unobserved.
+          }
+      }
       const mutation = new MutationObserver(check);
       const resource = new PerformanceObserver(check);
       mutation.observe(document, { subtree: true, childList: true, attributes: true });
       resource.observe({ type: 'resource', buffered: true });
       Reflect.set(globalThis, '__wmcOwnedCancellation', state);
+      Reflect.set(globalThis, '__wmcOwnedCancellationDisarm', () => {
+        mutation.disconnect();
+        resource.disconnect();
+        observed.onConversionWorkerMessage = null;
+        if (smallGeometry) {
+          if (state.copyToHookInstalled && nativeCopyTo) VideoFrame.prototype.copyTo = nativeCopyTo;
+          if (state.canvasHookInstalled && canvasPrototype && nativeCanvasRead)
+            canvasPrototype.getImageData = nativeCanvasRead;
+          if (state.canvasDrawHookInstalled && canvasPrototype && nativeCanvasDraw)
+            canvasPrototype.drawImage = nativeCanvasDraw;
+        }
+      });
       check();
     },
-    { fallback, wasmPath: wasmAsset?.path ?? null }
+    {
+      fallback,
+      wasmPath: wasmAsset?.path ?? null,
+      smallGeometry:
+        fallback && setting.id === 'small'
+          ? { width: setting.workload.width, height: setting.workload.height }
+          : null,
+    }
   );
   await page.locator('[data-testid="convert-button"]').click();
   await proceedIfPrompted(page);
-  await page.waitForFunction(
-    () => {
-      const state = Reflect.get(globalThis, '__wmcOwnedCancellation') as {
-        clicked: boolean;
-        completedBeforeClick: boolean;
-      };
-      return state.clicked || state.completedBeforeClick;
-    },
-    undefined,
-    { timeout: CANCELLATION_TIMEOUT_MS }
-  );
+  const observedOutcome = await page
+    .waitForFunction(
+      () => {
+        const state = Reflect.get(globalThis, '__wmcOwnedCancellation') as {
+          clicked: boolean;
+          completedBeforeClick: boolean;
+        };
+        return state.clicked || state.completedBeforeClick;
+      },
+      undefined,
+      { timeout: CANCELLATION_TIMEOUT_MS }
+    )
+    .then(
+      () => true,
+      (error: unknown) => {
+        if (error instanceof Error && error.name === 'TimeoutError') return false;
+        throw error;
+      }
+    );
   const trigger = await page.evaluate(
     () =>
       Reflect.get(globalThis, '__wmcOwnedCancellation') as {
@@ -3145,16 +3441,64 @@ async function exerciseOwnedCancellationCase(
         route: 'worker' | 'main-thread-fallback' | null;
         atMs: number | null;
         completedBeforeClick: boolean;
+        completesBeforeClick: number;
+        method: 'dom-progress' | 'worker-progress' | 'native-readback' | null;
+        rawProgress: {
+          phase: string;
+          percent: number;
+          currentFrame: number;
+          encodedFrames: number | null;
+        } | null;
+        rawProgressLog: unknown[];
+        rawProgressOverflow: number;
+        qualifiedReadbacks: number;
+        copyToReadbacks: number;
+        canvasReadbacks: number;
+        copyToFormats: Record<string, number>;
+        stopTaskScheduled: boolean;
+        stopTaskRan: boolean;
+        wasmResourceSeenAtClick: boolean;
+        priorCompletedFramesLowerBound: number;
+        copyToHookInstalled: boolean;
+        canvasHookInstalled: boolean;
+        canvasDrawHookInstalled: boolean;
       }
   );
+  await page.evaluate(() => {
+    const disarm = Reflect.get(globalThis, '__wmcOwnedCancellationDisarm') as
+      | (() => void)
+      | undefined;
+    disarm?.();
+  });
   if (!trigger.clicked)
     return {
       id: setting.id,
       route: fallback ? 'main-thread-fallback' : 'worker',
       status: 'unverified' as const,
-      reason: 'conversion-completed-before-active-stop',
+      reason: observedOutcome
+        ? 'conversion-completed-before-active-stop'
+        : 'no-eligible-active-stop-observation-before-timeout',
       trigger,
     };
+  assert.equal(trigger.completesBeforeClick, 0, 'Worker completed before Stop click');
+  assert.equal(trigger.route, fallback ? 'main-thread-fallback' : 'worker');
+  if (trigger.method === 'worker-progress') {
+    assert.equal(fallback, false);
+    assert(trigger.rawProgress);
+    assert(['decoding', 'encoding'].includes(trigger.rawProgress.phase));
+    assert(trigger.rawProgress.percent >= 74 && trigger.rawProgress.percent < 100);
+    assert(trigger.rawProgress.currentFrame > 0);
+    assert(trigger.rawProgress.encodedFrames === null || trigger.rawProgress.encodedFrames > 0);
+  } else if (trigger.method === 'native-readback') {
+    assert.equal(fallback && setting.id === 'small', true);
+    assert.equal(trigger.progress, null, 'Native readback was reported as DOM progress');
+    assert(trigger.qualifiedReadbacks >= 3 && trigger.priorCompletedFramesLowerBound >= 1);
+    assert.equal(trigger.wasmResourceSeenAtClick, true);
+    assert.equal(trigger.stopTaskScheduled && trigger.stopTaskRan, true);
+  } else {
+    assert.equal(trigger.method, 'dom-progress');
+    assert(trigger.progress !== null && trigger.progress >= 74 && trigger.progress < 100);
+  }
   await page.waitForFunction(
     () => {
       const observed = Reflect.get(globalThis, '__wmcMotionObserver') as {
@@ -3626,6 +3970,8 @@ export async function run({
       let failure: unknown;
       let failed = false;
       const cases: unknown[] = [];
+      const caseFailures: unknown[] = [];
+      const caseErrors: { id: string; route: string; stage: string; error: string }[] = [];
       const network: MediaNetworkDiagnostics = {
         pageErrors: [],
         consoleErrors: [],
@@ -3633,7 +3979,7 @@ export async function run({
         failedResponses: [],
       };
       const expectedBlobAborts: { resourceType: string; protocol: 'blob:' }[] = [];
-      result = { ...result, cases, network, expectedBlobAborts };
+      result = { ...result, cases, caseErrors, network, expectedBlobAborts };
       try {
         assert(ownerManifest, 'Frozen owner input manifest is absent');
         assert(wasmAsset, 'Built owned GIF WASM asset is absent');
@@ -3713,7 +4059,6 @@ export async function run({
                   url: new URL(response.url()).pathname.slice(0, 160),
                 });
             });
-            let caseFailure: unknown;
             let caseRecorded = false;
             try {
               await page.addInitScript(installMotionObserver, {
@@ -3734,7 +4079,13 @@ export async function run({
                 `Active cancellation ${setting.id}/${one.route} was unverified: ${one.status === 'unverified' ? one.reason : 'unknown'}`
               );
             } catch (error) {
-              caseFailure = error;
+              caseFailures.push(error);
+              caseErrors.push({
+                id: setting.id,
+                route: fallback ? 'main-thread-fallback' : 'worker',
+                stage: 'active-cancellation',
+                error: describeMediaFailure(error),
+              });
               if (!caseRecorded) {
                 const observation = await page
                   .evaluate(() => {
@@ -3769,17 +4120,17 @@ export async function run({
                   observation,
                 });
               }
-              throw error;
             } finally {
               try {
                 await page.close();
               } catch (closeError) {
-                if (caseFailure)
-                  throw new AggregateError(
-                    [caseFailure, closeError],
-                    'Cancellation case and page cleanup both failed'
-                  );
-                throw closeError;
+                caseFailures.push(closeError);
+                caseErrors.push({
+                  id: setting.id,
+                  route: fallback ? 'main-thread-fallback' : 'worker',
+                  stage: 'page-close',
+                  error: describeMediaFailure(closeError),
+                });
               }
             }
             await writeFile(
@@ -3789,7 +4140,22 @@ export async function run({
           }
         }
         result.activeCase = null;
-        await assertMediaNetworkDiagnostics(output, network);
+        try {
+          await assertMediaNetworkDiagnostics(output, network);
+        } catch (error) {
+          caseFailures.push(error);
+          caseErrors.push({
+            id: 'matrix',
+            route: 'all',
+            stage: 'network-diagnostics',
+            error: describeMediaFailure(error),
+          });
+        }
+        if (caseFailures.length)
+          throw new AggregateError(
+            caseFailures,
+            'Active cancellation matrix has failed or unverified cases'
+          );
         result = { ...result, browserVersion: browser.version(), status: 'passed' };
         return { profile: scenario, ...result };
       } catch (error) {
