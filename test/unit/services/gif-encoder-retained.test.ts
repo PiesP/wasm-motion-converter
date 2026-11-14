@@ -181,7 +181,14 @@ async function encodeFixture(
   expect(fixture.admitted).toEqual([!forceJsIndexes]);
   expect(fixture.mapped).toBe(forceJsIndexes ? 0 : frames.length);
   expect(operations.filter((name) => name === 'gifPaletteMapping')).toHaveLength(frames.length);
-  return { output, parsed: gifFrames(output) };
+  expect(operations.filter((name) => name === 'gifRetainedIndexMapping')).toHaveLength(
+    forceJsIndexes ? 0 : frames.length
+  );
+  const parsed = gifFrames(output);
+  expect(operations.filter((name) => name === 'gifRetainedFrameWrite')).toHaveLength(
+    forceJsIndexes ? 0 : parsed.length
+  );
+  return { output, parsed };
 }
 
 afterEach(() => {
