@@ -3,6 +3,7 @@
 
 import { readFileSync } from 'node:fs';
 
+import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
 import { OwnedGifWriter } from '@services/gif-owned-writer';
 import {
   createGifScalarQuantizer,
@@ -41,6 +42,17 @@ function instantiate(): {
   lzw_bound(pixels: number): number;
   lzw_output_ptr(): number;
   lzw_encode(pixels: number, depth: number, capacity: number): number;
+  retained_layout_end(length: number): number;
+  enable_retained(length: number): number;
+  map_retained(length: number, colors: number): number;
+  promote_retained(handle: number): number;
+  release_retained(handle: number): number;
+  retained_palette_len(handle: number): number;
+  retained_palette_ptr(handle: number): number;
+  same_retained_pixels(first: number, second: number): number;
+  capture_global_palette(handle: number): number;
+  remap_retained_global(handle: number): number;
+  lzw_encode_retained(handle: number, depth: number, capacity: number): number;
 } {
   const module = new WebAssembly.Module(wasmBytes);
   expect(WebAssembly.Module.imports(module)).toEqual([]);
@@ -116,9 +128,86 @@ function runCompiled(input: Uint8Array, colors: number, wasm = instantiate()): n
 afterEach(() => vi.unstubAllGlobals());
 
 describe('compiled scalar WASM and gifenc 1.0.3', () => {
+  it('compacts first-occurrence RGB, protects pending indexes, and rejects stale handles', () => {
+    const wasm = instantiate();
+    const first = rgba([
+      [255, 0, 0, 255],
+      [0, 0, 255, 255],
+      [255, 0, 0, 255],
+      [0, 0, 255, 255],
+    ]);
+    const second = rgba([
+      [0, 0, 255, 255],
+      [255, 0, 0, 255],
+      [0, 0, 255, 255],
+      [255, 0, 0, 255],
+    ]);
+    const length = first.length;
+    expect(wasm.retained_layout_end(length)).toBe(
+      wasm.input_ptr() + Math.max(length, length / 4 + wasm.lzw_bound(length / 4)) + length / 2
+    );
+    expect(wasm.enable_retained(length)).toBe(0);
+    const map = (input: Uint8Array, palette: number[][]) => {
+      expect(wasm.reserve_input(length)).toBe(0);
+      new Uint8Array(wasm.memory.buffer, wasm.input_ptr(), length).set(input);
+      new Uint8Array(wasm.memory.buffer, wasm.palette_ptr(), palette.length * 3).set(
+        palette.flat()
+      );
+      return wasm.map_retained(length, palette.length);
+    };
+    const transient = map(first, [
+      [255, 0, 0],
+      [0, 0, 255],
+      [255, 0, 0],
+    ]);
+    expect(transient).toBeGreaterThan(0);
+    expect(wasm.retained_palette_len(transient)).toBe(2);
+    expect(new Uint8Array(wasm.memory.buffer, wasm.retained_palette_ptr(transient), 6)).toEqual(
+      Uint8Array.of(255, 0, 0, 0, 0, 255)
+    );
+    expect(new Uint8Array(wasm.memory.buffer, wasm.input_ptr(), 4)).toEqual(
+      Uint8Array.of(0, 1, 0, 1)
+    );
+    const pending = wasm.promote_retained(transient);
+    expect(pending).toBeGreaterThan(0);
+    expect(wasm.retained_palette_len(transient)).toBe(-1);
+    expect(wasm.capture_global_palette(pending)).toBe(0);
+    const next = map(second, [
+      [0, 0, 255],
+      [255, 0, 0],
+    ]);
+    const candidateBeforeCompression = new Uint8Array(
+      wasm.memory.buffer,
+      wasm.input_ptr(),
+      4
+    ).slice();
+    expect(wasm.same_retained_pixels(pending, next)).toBe(0);
+    const bound = wasm.lzw_bound(4);
+    expect(wasm.lzw_encode_retained(pending, 2, bound + 1)).toBe(-1);
+    const encodedLength = wasm.lzw_encode_retained(pending, 2, bound);
+    expect(encodedLength).toBeGreaterThan(0);
+    expect(new Uint8Array(wasm.memory.buffer, wasm.lzw_output_ptr(), encodedLength)).toEqual(
+      referenceImageData(Uint8Array.of(0, 1, 0, 1), 2)
+    );
+    expect(new Uint8Array(wasm.memory.buffer, wasm.input_ptr(), 4)).toEqual(
+      candidateBeforeCompression
+    );
+    const successor = wasm.promote_retained(next);
+    expect(wasm.remap_retained_global(successor)).toBe(1);
+    expect(wasm.release_retained(pending)).toBe(0);
+    expect(wasm.lzw_encode_retained(pending, 2, bound)).toBe(-1);
+    const duplicate = map(second, [
+      [0, 0, 255],
+      [255, 0, 0],
+    ]);
+    expect(wasm.same_retained_pixels(successor, duplicate)).toBe(1);
+    expect(wasm.release_retained(duplicate)).toBe(0);
+    expect(wasm.release_retained(successor)).toBe(0);
+  });
+
   it('prepares exact Bayer RGBA in its admitted arena across strengths, geometry and reuse', () => {
     const wasm = instantiate();
-    expect(wasm.abi_version()).toBe(2);
+    expect(wasm.abi_version()).toBe(3);
     const bayer = [
       0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60,
       28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15,
@@ -425,6 +514,190 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
 });
 
 describe('conversion-owned WASM glue', () => {
+  it('emits the same complete GIF bytes as the JS-index path with deferred compression', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(wasmBytes, {
+          status: 200,
+          headers: { 'content-type': 'application/wasm' },
+        })
+    );
+    const legacy = await createGifScalarQuantizer(
+      () => {},
+      () => {}
+    );
+    const retained = await createGifScalarQuantizer(
+      () => {},
+      () => {}
+    );
+    const width = 17;
+    const height = 13;
+    const pixels = width * height;
+    expect(retained.enableRetained(pixels)).toBe(true);
+    const legacyWriter = new OwnedGifWriter(4096, 1 << 20, () => {}, legacy.compress);
+    const retainedWriter = new OwnedGifWriter(
+      4096,
+      1 << 20,
+      () => {},
+      () => {
+        throw new Error('Retained writer must consume precompressed data');
+      }
+    );
+    const inputs = [1, 9].map((seed) => {
+      const input = new Uint8Array(pixels * 4);
+      for (let pixel = 0; pixel < pixels; pixel++) {
+        input.set(
+          [
+            (pixel * 17 + seed) & 255,
+            (pixel * 31 + seed * 3) & 255,
+            (pixel * 7 + seed * 5) & 255,
+            255,
+          ],
+          pixel * 4
+        );
+      }
+      return input;
+    });
+    const legacyFrames = inputs.map((input) => {
+      legacy.prepare(input, width, height, 8);
+      const palette = legacy.quantizePrepared(128);
+      const index = legacy.mapPalette(input, palette);
+      const compact: number[][] = [];
+      const byColor = new Map<string, number>();
+      for (let pixel = 0; pixel < index.length; pixel++) {
+        const color = palette[index[pixel]!]!;
+        const key = color.join(',');
+        let mapped = byColor.get(key);
+        if (mapped === undefined) {
+          mapped = compact.length;
+          compact.push(color);
+          byColor.set(key, mapped);
+        }
+        index[pixel] = mapped;
+      }
+      return { index, palette: compact };
+    });
+    const encode = (frame: number, handle: number) => {
+      const legacyFrame = legacyFrames[frame]!;
+      const local = retained.retainedPalette(handle);
+      expect(local).toEqual(Uint8Array.from(legacyFrame.palette.flat()));
+      const depth = Math.max(2, Math.ceil(Math.log2(local.length / 3)));
+      const options = { palette: legacyFrame.palette, colorDepth: depth, repeat: 0, delay: 20 };
+      legacyWriter.writeFrame(legacyFrame.index, width, height, options);
+      const compressed = retained.compressRetained(handle, depth);
+      retainedWriter.writeCompressedFrame(compressed, pixels, width, height, {
+        palette: local,
+        colorDepth: depth,
+        repeat: 0,
+        delay: 20,
+      });
+      if (frame === 0) retained.captureGlobalPalette(handle);
+    };
+    retained.prepare(inputs[0]!, width, height, 8);
+    const firstCount = retained.quantizePreparedRetained(128);
+    const first = retained.promoteRetained(retained.mapRetained(inputs[0]!, firstCount));
+    retained.prepare(inputs[1]!, width, height, 8);
+    const nextCount = retained.quantizePreparedRetained(128);
+    const transientNext = retained.mapRetained(inputs[1]!, nextCount);
+    encode(0, first);
+    retained.releaseRetained(first);
+    const second = retained.promoteRetained(transientNext);
+    encode(1, second);
+    retained.releaseRetained(second);
+    legacyWriter.finish();
+    retainedWriter.finish();
+    expect(retainedWriter.bytes()).toEqual(legacyWriter.bytes());
+  });
+
+  it('chooses whole-conversion fallback only for prospective retained capacity refusal', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(wasmBytes, {
+          status: 200,
+          headers: { 'content-type': 'application/wasm' },
+        })
+    );
+    const quantize = await createGifScalarQuantizer(
+      (oldBytes) => {
+        if (oldBytes > 0) throw new ConversionMemoryLimitError('aggregate guard refused');
+      },
+      () => {}
+    );
+    expect(quantize.enableRetained(1920 * 1080)).toBe(false);
+    expect(quantize.enableRetained(3840 * 2160)).toBe(false);
+    const input = rgba([[10, 20, 30, 255]]);
+    expect(quantize(input, 2)).toEqual(reference(input, 2));
+
+    const terminal = await createGifScalarQuantizer(
+      (oldBytes) => {
+        if (oldBytes > 0) throw new GifScalarMemoryError('actual growth failed');
+      },
+      () => {}
+    );
+    expect(() => terminal.enableRetained(1920 * 1080)).toThrow(GifScalarMemoryError);
+  });
+
+  it('retains two protected indexes while compressing a predecessor after mapping a successor', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(wasmBytes, {
+          status: 200,
+          headers: { 'content-type': 'application/wasm' },
+        })
+    );
+    const quantize = await createGifScalarQuantizer(
+      () => {},
+      () => {}
+    );
+    const width = 17;
+    const height = 13;
+    const pixels = width * height;
+    expect(quantize.enableRetained(pixels)).toBe(true);
+    const makeFrame = (seed: number) => {
+      const input = new Uint8Array(pixels * 4);
+      for (let pixel = 0; pixel < pixels; pixel++) {
+        input.set(
+          [
+            (pixel * 17 + seed) & 255,
+            (pixel * 31 + seed * 3) & 255,
+            (pixel * 7 + seed * 5) & 255,
+            255,
+          ],
+          pixel * 4
+        );
+      }
+      return input;
+    };
+    const map = (input: Uint8Array) => {
+      quantize.prepare(input, width, height, 8);
+      const count = quantize.quantizePreparedRetained(128);
+      return quantize.mapRetained(input, count);
+    };
+    const first = map(makeFrame(1));
+    const firstPalette = quantize.retainedPalette(first);
+    expect(firstPalette.length).toBeGreaterThan(0);
+    const pending = quantize.promoteRetained(first);
+    expect(() => quantize.retainedPaletteLength(first)).toThrow(GifScalarAbiError);
+    const second = map(makeFrame(9));
+    expect(quantize.sameRetainedPixels(pending, second)).toBe(false);
+    const depth = Math.max(2, Math.ceil(Math.log2(firstPalette.length / 3)));
+    const predecessorData = quantize.compressRetained(pending, depth).slice();
+    expect(predecessorData.length).toBeGreaterThan(2);
+    const successor = quantize.promoteRetained(second);
+    expect(quantize.retainedPalette(successor).length).toBeGreaterThan(0);
+    quantize.captureGlobalPalette(pending);
+    quantize.remapRetainedGlobal(successor);
+    quantize.releaseRetained(pending);
+    expect(() => quantize.compressRetained(pending, depth)).toThrow(GifScalarAbiError);
+    const repeated = map(makeFrame(9));
+    expect(quantize.sameRetainedPixels(successor, repeated)).toBe(true);
+    quantize.releaseRetained(repeated);
+    quantize.releaseRetained(successor);
+  });
+
   it('matches complete gifenc bytes after native Bayer preparation from oversized pooled RGBA', async () => {
     vi.stubGlobal(
       'fetch',

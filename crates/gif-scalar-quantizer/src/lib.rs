@@ -15,6 +15,7 @@ const DELETED: u32 = (BIN_COUNT - 1) as u32;
 const PAGE_BYTES: usize = 65_536;
 const LZW_HASH_SIZE: usize = 5003;
 const LZW_MAX_CODE: u32 = 4096;
+const MAX_RETAINED_GENERATION: u32 = (i32::MAX as u32) >> 2;
 const BAYER_8X8: [i16; 64] = [
     0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60,
     28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15,
@@ -55,6 +56,25 @@ impl Bin {
     };
 }
 
+#[derive(Clone, Copy)]
+struct RetainedSlot {
+    palette: [u8; 256 * 3],
+    palette_len: u16,
+    hash: i32,
+    generation: u32,
+    live: bool,
+}
+
+impl RetainedSlot {
+    const EMPTY: Self = Self {
+        palette: [0; 256 * 3],
+        palette_len: 0,
+        hash: 0,
+        generation: 0,
+        live: false,
+    };
+}
+
 struct State {
     bins: [Bin; BIN_COUNT],
     order: [u32; BIN_COUNT],
@@ -63,6 +83,12 @@ struct State {
     reserved_input_len: u32,
     input_was_mapped: bool,
     input_prepared: bool,
+    retained: [RetainedSlot; 3],
+    retained_len: u32,
+    retained_enabled: bool,
+    generation: u32,
+    global_palette: [u8; 256 * 3],
+    global_len: u16,
 }
 
 struct ConversionState(UnsafeCell<State>);
@@ -80,11 +106,17 @@ static STATE: ConversionState = ConversionState(UnsafeCell::new(State {
     reserved_input_len: 0,
     input_was_mapped: false,
     input_prepared: false,
+    retained: [RetainedSlot::EMPTY; 3],
+    retained_len: 0,
+    retained_enabled: false,
+    generation: 0,
+    global_palette: [0; 256 * 3],
+    global_len: 0,
 }));
 
 #[no_mangle]
 pub extern "C" fn abi_version() -> u32 {
-    2
+    3
 }
 
 extern "C" {
@@ -120,12 +152,92 @@ pub extern "C" fn reserve_input(input_len: u32) -> i32 {
     if end > memory_size::<0>() * PAGE_BYTES {
         return -2;
     }
-    unsafe {
-        (*STATE.0.get()).reserved_input_len = input_len;
-        (*STATE.0.get()).input_was_mapped = false;
-        (*STATE.0.get()).input_prepared = false;
-    };
+    let state = unsafe { &mut *STATE.0.get() };
+    if state.retained_enabled && (state.retained_len != input_len || state.retained[0].live) {
+        return -1;
+    }
+    state.reserved_input_len = input_len;
+    state.input_was_mapped = false;
+    state.input_prepared = false;
     0
+}
+
+fn retained_end(input_len: u32) -> Option<usize> {
+    if input_len == 0 || (input_len & 3) != 0 {
+        return None;
+    }
+    let pixels = (input_len / 4) as usize;
+    retained_ptr(2, pixels)?.checked_add(pixels)
+}
+
+#[no_mangle]
+pub extern "C" fn retained_layout_end(input_len: u32) -> u32 {
+    retained_end(input_len)
+        .and_then(|end| u32::try_from(end).ok())
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn enable_retained(input_len: u32) -> i32 {
+    let Some(end) = retained_end(input_len) else {
+        return -1;
+    };
+    if end > u32::MAX as usize {
+        return -1;
+    }
+    if end > memory_size::<0>() * PAGE_BYTES {
+        return -2;
+    }
+    let state = unsafe { &mut *STATE.0.get() };
+    if state.retained_enabled
+        || state.reserved_input_len != 0
+        || state.retained.iter().any(|slot| slot.live)
+    {
+        return -1;
+    }
+    state.retained_len = input_len;
+    state.retained_enabled = true;
+    0
+}
+
+#[inline]
+fn retained_ptr(slot: usize, pixels: usize) -> Option<usize> {
+    match slot {
+        0 => Some(input_start()),
+        1 | 2 => {
+            // For tiny frames the conservative LZW bound can extend past the
+            // 4N RGBA arena. Keep both protected slots beyond that bound.
+            let rgba_end = pixels.checked_mul(4)?;
+            let image_end = pixels.checked_add(image_data_bound(u32::try_from(pixels).ok()?)?)?;
+            input_start()
+                .checked_add(rgba_end.max(image_end))?
+                .checked_add(pixels.checked_mul(slot - 1)?)
+        }
+        _ => None,
+    }
+}
+
+#[inline]
+fn checked_slot(state: &State, handle: u32) -> Option<usize> {
+    let slot = (handle & 3) as usize;
+    let generation = handle >> 2;
+    if slot < 3 && generation != 0 {
+        let entry = &state.retained[slot];
+        if entry.live && entry.generation == generation {
+            return Some(slot);
+        }
+    }
+    None
+}
+
+fn fresh_handle(state: &mut State, slot: usize) -> Option<i32> {
+    if state.generation >= MAX_RETAINED_GENERATION {
+        return None;
+    }
+    state.generation += 1;
+    state.retained[slot].generation = state.generation;
+    state.retained[slot].live = true;
+    Some(((state.generation << 2) | slot as u32) as i32)
 }
 
 // Apply the locked JS 8x8 Bayer threshold after the host has made its one
@@ -484,6 +596,212 @@ pub extern "C" fn map_palette(input_len: u32, colors: u32) -> i32 {
     count as i32
 }
 
+// The mapped indexes still occupy the first N bytes of the RGBA arena. Keep
+// this transient candidate until the host either discards it or promotes it
+// into one of two protected slots before admitting the next input frame.
+#[no_mangle]
+pub extern "C" fn map_retained(input_len: u32, colors: u32) -> i32 {
+    {
+        let state = unsafe { &*STATE.0.get() };
+        if !state.retained_enabled || state.retained_len != input_len || state.retained[0].live {
+            return -1;
+        }
+        if state.generation >= MAX_RETAINED_GENERATION {
+            return -1;
+        }
+    }
+    let mapped = map_palette(input_len, colors);
+    if mapped < 0 {
+        return mapped;
+    }
+    let state = unsafe { &mut *STATE.0.get() };
+    let count = mapped as usize;
+    let mut compact = [0u8; 256 * 3];
+    let mut compact_len = 0usize;
+    let mut old_to_new = [u16::MAX; 256];
+    let mut hash = 0x811c9dc5u32;
+    for pixel in 0..count {
+        let pointer = input_start() + pixel;
+        let old_index = unsafe { *(pointer as *const u8) } as usize;
+        if old_index >= colors as usize {
+            return -3;
+        }
+        let color = &state.palette[old_index * 3..old_index * 3 + 3];
+        let packed = ((color[0] as u32) << 16) | ((color[1] as u32) << 8) | color[2] as u32;
+        let mut new_index = old_to_new[old_index];
+        if new_index == u16::MAX {
+            new_index = (0..compact_len)
+                .find(|&index| compact[index * 3..index * 3 + 3] == *color)
+                .map(|index| index as u16)
+                .unwrap_or_else(|| {
+                    let index = compact_len;
+                    compact[index * 3..index * 3 + 3].copy_from_slice(color);
+                    compact_len += 1;
+                    index as u16
+                });
+            old_to_new[old_index] = new_index;
+        }
+        unsafe { *(pointer as *mut u8) = new_index as u8 };
+        hash = (hash ^ packed).wrapping_mul(0x0100_0193);
+    }
+    state.retained[0].palette = compact;
+    state.retained[0].palette_len = compact_len as u16;
+    state.retained[0].hash = hash as i32;
+    fresh_handle(state, 0).unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "C" fn promote_retained(handle: u32) -> i32 {
+    let state = unsafe { &mut *STATE.0.get() };
+    if checked_slot(state, handle) != Some(0) || !state.retained_enabled {
+        return -1;
+    }
+    let Some(slot) = (1..=2).find(|&slot| !state.retained[slot].live) else {
+        return -2;
+    };
+    if state.generation >= MAX_RETAINED_GENERATION {
+        return -1;
+    }
+    let pixels = (state.retained_len / 4) as usize;
+    let Some(end) = retained_ptr(slot, pixels).and_then(|start| start.checked_add(pixels)) else {
+        return -1;
+    };
+    if end > memory_size::<0>() * PAGE_BYTES {
+        return -2;
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            input_start() as *const u8,
+            retained_ptr(slot, pixels).unwrap() as *mut u8,
+            pixels,
+        );
+    }
+    state.retained[slot] = state.retained[0];
+    state.retained[0].live = false;
+    fresh_handle(state, slot).unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "C" fn release_retained(handle: u32) -> i32 {
+    let state = unsafe { &mut *STATE.0.get() };
+    let Some(slot) = checked_slot(state, handle) else {
+        return -1;
+    };
+    state.retained[slot].live = false;
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn retained_palette_len(handle: u32) -> i32 {
+    let state = unsafe { &*STATE.0.get() };
+    checked_slot(state, handle)
+        .map(|slot| state.retained[slot].palette_len as i32)
+        .unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "C" fn retained_palette_ptr(handle: u32) -> u32 {
+    let state = unsafe { &*STATE.0.get() };
+    checked_slot(state, handle)
+        .map(|slot| state.retained[slot].palette.as_ptr() as u32)
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn retained_hash(handle: u32) -> i32 {
+    let state = unsafe { &*STATE.0.get() };
+    checked_slot(state, handle)
+        .map(|slot| state.retained[slot].hash)
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "C" fn same_retained_pixels(first: u32, second: u32) -> i32 {
+    let state = unsafe { &*STATE.0.get() };
+    let (Some(a), Some(b)) = (checked_slot(state, first), checked_slot(state, second)) else {
+        return -1;
+    };
+    if state.retained[a].hash != state.retained[b].hash {
+        return 0;
+    }
+    let pixels = (state.retained_len / 4) as usize;
+    let (Some(a_ptr), Some(b_ptr)) = (retained_ptr(a, pixels), retained_ptr(b, pixels)) else {
+        return -1;
+    };
+    for pixel in 0..pixels {
+        let a_index = unsafe { *((a_ptr + pixel) as *const u8) } as usize;
+        let b_index = unsafe { *((b_ptr + pixel) as *const u8) } as usize;
+        if a_index >= state.retained[a].palette_len as usize
+            || b_index >= state.retained[b].palette_len as usize
+        {
+            return -1;
+        }
+        if state.retained[a].palette[a_index * 3..a_index * 3 + 3]
+            != state.retained[b].palette[b_index * 3..b_index * 3 + 3]
+        {
+            return 0;
+        }
+    }
+    1
+}
+
+fn palette_depth(len: usize) -> u32 {
+    (usize::BITS - (len.max(2) - 1).leading_zeros()).max(2)
+}
+
+#[no_mangle]
+pub extern "C" fn capture_global_palette(handle: u32) -> i32 {
+    let state = unsafe { &mut *STATE.0.get() };
+    let Some(slot) = checked_slot(state, handle) else {
+        return -1;
+    };
+    if state.global_len != 0 {
+        return -1;
+    }
+    state.global_len = state.retained[slot].palette_len;
+    state.global_palette = state.retained[slot].palette;
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn remap_retained_global(handle: u32) -> i32 {
+    let state = unsafe { &mut *STATE.0.get() };
+    let Some(slot) = checked_slot(state, handle) else {
+        return -1;
+    };
+    let local_len = state.retained[slot].palette_len as usize;
+    let global_len = state.global_len as usize;
+    if slot == 0 || global_len == 0 || palette_depth(local_len) != palette_depth(global_len) {
+        return 0;
+    }
+    let mut remap = [0u8; 256];
+    for (local, target) in remap.iter_mut().enumerate().take(local_len) {
+        let color = &state.retained[slot].palette[local * 3..local * 3 + 3];
+        let Some(global) =
+            (0..global_len).find(|&index| state.global_palette[index * 3..index * 3 + 3] == *color)
+        else {
+            return 0;
+        };
+        *target = global as u8;
+    }
+    let pixels = (state.retained_len / 4) as usize;
+    let Some(pointer) = retained_ptr(slot, pixels) else {
+        return -1;
+    };
+    for pixel in 0..pixels {
+        let old = unsafe { *((pointer + pixel) as *const u8) } as usize;
+        if old >= local_len {
+            return -1;
+        }
+        unsafe { *((pointer + pixel) as *mut u8) = remap[old] };
+    }
+    // The frame now references the global palette. Its expanded colors and
+    // pre-remap FNV hash remain identical.
+    state.retained[slot].palette = state.global_palette;
+    state.retained[slot].palette_len = state.global_len;
+    1
+}
+
 fn image_data_bound(pixel_count: u32) -> Option<usize> {
     if pixel_count == 0 {
         return None;
@@ -600,15 +918,40 @@ impl ImageDataWriter<'_> {
 
 #[no_mangle]
 pub extern "C" fn lzw_encode(pixel_count: u32, depth: u32, output_capacity: u32) -> i32 {
+    let state = unsafe { &*STATE.0.get() };
+    let input_len = state.reserved_input_len as usize;
+    if input_len == 0 || (input_len & 3) != 0 || pixel_count as usize != input_len / 4 {
+        return -1;
+    }
+    lzw_encode_from(indexed_start(), pixel_count, depth, output_capacity)
+}
+
+#[no_mangle]
+pub extern "C" fn lzw_encode_retained(handle: u32, depth: u32, output_capacity: u32) -> i32 {
+    let state = unsafe { &*STATE.0.get() };
+    let Some(slot) = checked_slot(state, handle) else {
+        return -1;
+    };
+    if !state.retained_enabled || slot == 0 || state.reserved_input_len != state.retained_len {
+        return -1;
+    }
+    let pixels = state.retained_len / 4;
+    let bound = lzw_bound(pixels);
+    if bound == 0 || output_capacity > bound {
+        return -1;
+    }
+    let Some(pointer) = retained_ptr(slot, pixels as usize) else {
+        return -1;
+    };
+    lzw_encode_from(pointer, pixels, depth, output_capacity)
+}
+
+fn lzw_encode_from(index_start: usize, pixel_count: u32, depth: u32, output_capacity: u32) -> i32 {
     if pixel_count == 0 || !(2..=8).contains(&depth) || output_capacity == 0 {
         return -1;
     }
     let state = unsafe { &mut *STATE.0.get() };
     let input_len = state.reserved_input_len as usize;
-    if input_len == 0 || (input_len & 3) != 0 || pixel_count as usize != input_len / 4 {
-        return -1;
-    }
-    let index_start = indexed_start();
     let Some(index_end) = index_start.checked_add(pixel_count as usize) else {
         return -1;
     };
