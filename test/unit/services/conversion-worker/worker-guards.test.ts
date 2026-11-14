@@ -508,6 +508,39 @@ describe('isWorkerResponse', () => {
     expect(isWorkerResponse(validError)).toBe(true);
   });
 
+  it.each(['load', 'abi', 'parse', 'conversion'] as const)(
+    'accepts a checked owned demux %s failure with its decoder code',
+    (demuxFailureKind) => {
+      expect(isWorkerResponse({ ...validError, code: 'DECODER_ERROR', demuxFailureKind })).toBe(
+        true
+      );
+    }
+  );
+
+  it('accepts a checked owned demux resource failure with its memory code', () => {
+    expect(
+      isWorkerResponse({ ...validError, code: 'OUT_OF_MEMORY', demuxFailureKind: 'resource' })
+    ).toBe(true);
+  });
+
+  it.each([null, 1, [], 'unknown', 'RESOURCE'])(
+    'rejects a malformed owned demux failure kind: %s',
+    (demuxFailureKind) => {
+      expect(isWorkerResponse({ ...validError, code: 'DECODER_ERROR', demuxFailureKind })).toBe(
+        false
+      );
+    }
+  );
+
+  it('rejects a failure kind paired with another terminal category', () => {
+    expect(isWorkerResponse({ ...validError, code: 'CANCELLED', demuxFailureKind: 'parse' })).toBe(
+      false
+    );
+    expect(
+      isWorkerResponse({ ...validError, code: 'DECODER_ERROR', demuxFailureKind: 'resource' })
+    ).toBe(false);
+  });
+
   it('accepts valid log message', () => {
     expect(isWorkerResponse(validLog)).toBe(true);
   });

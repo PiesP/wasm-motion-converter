@@ -61,6 +61,7 @@ import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
 } from '@services/conversion-worker/types';
+import { OwnedDemuxParseError } from '@services/owned-demux-core';
 import {
   beginOwnedInputSelection,
   clearOwnedInputSelection,
@@ -182,6 +183,55 @@ describe('runPipelineViaWorker lifecycle', () => {
     ThrowingWorker.workerError = null;
     runConversionPipeline.mockReset();
     for (const method of Object.values(logger)) method.mockReset();
+  });
+
+  it.each([
+    ['load', 'DECODER_ERROR', 'WorkerPipelineError'],
+    ['abi', 'DECODER_ERROR', 'WorkerPipelineError'],
+    ['resource', 'OUT_OF_MEMORY', 'WorkerMemoryLimitError'],
+    ['parse', 'DECODER_ERROR', 'WorkerPipelineError'],
+    ['conversion', 'DECODER_ERROR', 'WorkerPipelineError'],
+  ] as const)(
+    'retains owned demux %s failure identity after Worker delivery',
+    async (demuxFailureKind, code, name) => {
+      ThrowingWorker.response = {
+        type: 'error',
+        requestId: 'request-1',
+        message: 'Opaque diagnostic wording',
+        code,
+        demuxFailureKind,
+      };
+
+      await expect(
+        runPipelineWithFallback(new Blob(['video']), validDecoderConfig, validOptions, vi.fn())
+      ).rejects.toMatchObject({ name, code, demuxFailureKind });
+      expect(runConversionPipeline).not.toHaveBeenCalled();
+      expect(ThrowingWorker.instance?.terminate).toHaveBeenCalledOnce();
+    }
+  );
+
+  it('keeps ordinary Worker memory failures in the existing memory class', async () => {
+    ThrowingWorker.response = {
+      type: 'error',
+      requestId: 'request-1',
+      message: 'Ordinary budget',
+      code: 'OUT_OF_MEMORY',
+    };
+    await expect(
+      runPipelineViaWorker(new Blob(['video']), validDecoderConfig, validOptions, vi.fn())
+    ).rejects.toMatchObject({ name: 'WorkerMemoryLimitError', code: 'OUT_OF_MEMORY' });
+    expect(runConversionPipeline).not.toHaveBeenCalled();
+  });
+
+  it('preserves the original typed demux failure in the bootstrap-only main fallback', async () => {
+    const failure = new OwnedDemuxParseError('Malformed local input');
+    ThrowingWorker.constructionError = new Error('Worker constructor unavailable');
+    runConversionPipeline.mockRejectedValueOnce(failure);
+
+    await expect(
+      runPipelineWithFallback(new Blob(['video']), validDecoderConfig, validOptions, vi.fn())
+    ).rejects.toBe(failure);
+    expect(runConversionPipeline).toHaveBeenCalledOnce();
   });
 
   it('rejects a pre-aborted request without starting or transferring to the Worker', async () => {

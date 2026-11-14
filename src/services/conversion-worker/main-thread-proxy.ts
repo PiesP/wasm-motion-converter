@@ -31,7 +31,12 @@ import { logger } from '@utils/logger';
 
 import { buildConversionRequest } from './build-conversion-request';
 import { isWorkerResponse } from './guards';
-import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerRequest } from './types';
+import type {
+  OwnedDemuxFailureKind,
+  SerializedConversionOptions,
+  SerializedDecoderConfig,
+  WorkerRequest,
+} from './types';
 
 /**
  * Error thrown when a worker operation exceeds the timeout.
@@ -47,7 +52,10 @@ export class WorkerTimeoutError extends Error {
 /** A worker reached its conservative memory budget and must not be retried. */
 export class WorkerMemoryLimitError extends Error {
   readonly code = 'OUT_OF_MEMORY' as const;
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly demuxFailureKind?: 'resource'
+  ) {
     super(`Worker ran out of memory: ${message}`);
     this.name = 'WorkerMemoryLimitError';
   }
@@ -65,7 +73,8 @@ export class WorkerUnavailableError extends Error {
 export class WorkerPipelineError extends Error {
   constructor(
     readonly code: string,
-    message: string
+    message: string,
+    readonly demuxFailureKind?: OwnedDemuxFailureKind
   ) {
     super(`Worker error: ${message}`);
     this.name = 'WorkerPipelineError';
@@ -262,9 +271,16 @@ export async function runPipelineViaWorker(
           if (response.code === 'CANCELLED') {
             reject(new DOMException('Cancelled', 'AbortError'));
           } else if (response.code === 'OUT_OF_MEMORY') {
-            reject(new WorkerMemoryLimitError(response.message));
+            reject(
+              new WorkerMemoryLimitError(
+                response.message,
+                response.demuxFailureKind === 'resource' ? 'resource' : undefined
+              )
+            );
           } else {
-            reject(new WorkerPipelineError(response.code, response.message));
+            reject(
+              new WorkerPipelineError(response.code, response.message, response.demuxFailureKind)
+            );
           }
           break;
         }

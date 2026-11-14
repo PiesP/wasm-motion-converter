@@ -23,7 +23,11 @@ import { isConversionFormat, isConversionQuality, isSmartFrameSkipMode } from '@
 import { CONVERSION_MEMORY_BUDGET_BYTES } from '@utils/constants';
 
 import type { WorkerRequest, WorkerResponse } from './types';
-import { WORKER_LOG_MAX_MESSAGE_CHARS, WORKER_LOG_MAX_REQUEST_ID_CHARS } from './types';
+import {
+  OWNED_DEMUX_FAILURE_KINDS,
+  WORKER_LOG_MAX_MESSAGE_CHARS,
+  WORKER_LOG_MAX_REQUEST_ID_CHARS,
+} from './types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -329,6 +333,17 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
       if (!isNonEmptyString(value.requestId)) return false;
       if (!isNonEmptyString(value.message)) return false;
       if (!isNonEmptyString(value.code)) return false;
+      if (value.demuxFailureKind !== undefined) {
+        if (
+          typeof value.demuxFailureKind !== 'string' ||
+          !OWNED_DEMUX_FAILURE_KINDS.some((kind) => kind === value.demuxFailureKind)
+        )
+          return false;
+        if (
+          value.code !== (value.demuxFailureKind === 'resource' ? 'OUT_OF_MEMORY' : 'DECODER_ERROR')
+        )
+          return false;
+      }
       return true;
     }
     case 'log': {

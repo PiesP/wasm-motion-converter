@@ -17,6 +17,14 @@ export const WORKER_LOG_MAX_MESSAGE_CHARS = 512;
 export const WORKER_LOG_MAX_REQUEST_ID_CHARS = 64;
 export type WorkerLogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type WorkerLogCategory = 'conversion' | 'general' | 'demuxer' | 'encoders' | 'decoders';
+export const OWNED_DEMUX_FAILURE_KINDS = [
+  'load',
+  'abi',
+  'resource',
+  'parse',
+  'conversion',
+] as const;
+export type OwnedDemuxFailureKind = (typeof OWNED_DEMUX_FAILURE_KINDS)[number];
 
 type WorkerInput =
   | { inputBuffer: ArrayBuffer; inputBlob?: never }
@@ -73,7 +81,14 @@ export type WorkerResponse =
       /** Development-only profile captured inside the Worker realm. */
       profile?: ConversionProfileReport;
     }
-  | { type: 'error'; requestId: string; message: string; code: string }
+  | {
+      type: 'error';
+      requestId: string;
+      message: string;
+      code: string;
+      /** Checked diagnostic for a typed owned-demux failure across the Worker boundary. */
+      demuxFailureKind?: OwnedDemuxFailureKind;
+    }
   | {
       type: 'log';
       requestId: string;
