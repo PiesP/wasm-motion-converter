@@ -177,7 +177,14 @@ fn bmode_from_u8(mode: u8) -> SmallMode {
         0 => SmallMode::Dc,
         1 => SmallMode::TrueMotion,
         2 => SmallMode::VerticalEdge,
-        _ => SmallMode::HorizontalEdge,
+        3 => SmallMode::HorizontalEdge,
+        4 => SmallMode::LeftDown,
+        5 => SmallMode::RightDown,
+        6 => SmallMode::VerticalRight,
+        7 => SmallMode::VerticalLeft,
+        8 => SmallMode::HorizontalDown,
+        9 => SmallMode::HorizontalUp,
+        _ => unreachable!("I4 trial modes are in 0..10"),
     }
 }
 fn derived_bmode(mode: u8) -> u8 {
@@ -209,15 +216,35 @@ fn write_uv_mode(sink: &mut impl BoolSink, mode: u8) -> Result<(), EncodeError> 
     Ok(())
 }
 fn write_bmode(sink: &mut impl BoolSink, above: u8, left: u8, mode: u8) -> Result<(), EncodeError> {
-    let probs = BMODE_PROBS[above as usize][left as usize];
+    let probs = BMODE_PROBS
+        .get(above as usize)
+        .and_then(|row| row.get(left as usize))
+        .ok_or(EncodeError::InvalidInput)?;
+    if mode > 9 {
+        return Err(EncodeError::InvalidInput);
+    }
     sink.write(probs[0], mode != 0)?;
     if mode != 0 {
         sink.write(probs[1], mode != 1)?;
         if mode != 1 {
             sink.write(probs[2], mode != 2)?;
             if mode != 2 {
-                sink.write(probs[3], false)?; // B_HE = 11100.
-                sink.write(probs[4], false)?;
+                let left_down_branch = matches!(mode, 4 | 7 | 8 | 9);
+                sink.write(probs[3], left_down_branch)?;
+                if left_down_branch {
+                    sink.write(probs[6], mode != 4)?;
+                    if mode != 4 {
+                        sink.write(probs[7], mode != 7)?;
+                        if mode != 7 {
+                            sink.write(probs[8], mode == 9)?;
+                        }
+                    }
+                } else {
+                    sink.write(probs[4], mode != 3)?;
+                    if mode != 3 {
+                        sink.write(probs[5], mode == 6)?;
+                    }
+                }
             }
         }
     }
@@ -534,7 +561,7 @@ fn make_i4(
                 left_modes[by]
             };
             let mut best: Option<([i16; 16], [u8; 16], u8, u64)> = None;
-            for mode in 0..4u8 {
+            for mode in 0..10u8 {
                 let predicted = prediction::predict_i4(&top, &left, corner, bmode_from_u8(mode));
                 let (coeff, patch) =
                     code_predicted_block(source, stride, x, y, &predicted, y_steps);
@@ -2002,6 +2029,70 @@ mod tests {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
+    #[test]
+    fn all_i4_modes_follow_the_normative_tree() {
+        struct Operations(Vec<(u8, bool)>);
+        impl BoolSink for Operations {
+            fn write(&mut self, probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push((probability, bit));
+                Ok(())
+            }
+        }
+        let paths = [
+            "0", "10", "110", "11100", "11110", "111010", "111011", "111110", "1111110", "1111111",
+        ];
+        let nodes: [&[usize]; 10] = [
+            &[0],
+            &[0, 1],
+            &[0, 1, 2],
+            &[0, 1, 2, 3, 4],
+            &[0, 1, 2, 3, 6],
+            &[0, 1, 2, 3, 4, 5],
+            &[0, 1, 2, 3, 4, 5],
+            &[0, 1, 2, 3, 6, 7],
+            &[0, 1, 2, 3, 6, 7, 8],
+            &[0, 1, 2, 3, 6, 7, 8],
+        ];
+        for (above, left) in [(0, 0), (9, 9)] {
+            for mode in 0..10u8 {
+                let mut operations = Operations(Vec::new());
+                write_bmode(&mut operations, above, left, mode).unwrap();
+                let actual: String = operations
+                    .0
+                    .iter()
+                    .map(|(_, bit)| if *bit { '1' } else { '0' })
+                    .collect();
+                assert_eq!(actual, paths[mode as usize]);
+                assert_eq!(
+                    operations.0.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
+                    nodes[mode as usize]
+                        .iter()
+                        .map(|&node| BMODE_PROBS[above as usize][left as usize][node])
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+        assert_eq!(
+            write_bmode(&mut Operations(Vec::new()), 0, 0, 10),
+            Err(EncodeError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn i4_top_right_uses_reconstructed_above_row_or_frame_edge() {
+        let mut global = vec![0u8; 32 * 32];
+        global[15 * 32 + 16..15 * 32 + 20].copy_from_slice(&[11, 22, 33, 44]);
+        global[15 * 32 + 31] = 99;
+        let mut tile = [0u8; 256];
+        tile[3 * 16 + 12..3 * 16 + 16].copy_from_slice(&[1, 2, 3, 4]);
+        tile[3 * 16 + 11] = 88;
+        let (top, _, corner) = i4_edge(&global, &tile, 32, 0, 1, 3, 1);
+        assert_eq!(top, [1, 2, 3, 4, 11, 22, 33, 44]);
+        assert_eq!(corner, tile[3 * 16 + 11]);
+        let (right_top, _, _) = i4_edge(&global, &tile, 32, 1, 1, 3, 1);
+        assert_eq!(right_top, [1, 2, 3, 4, 99, 99, 99, 99]);
+    }
+
     fn mixed_segment_input() -> Vec<u8> {
         let mut pixels = Vec::with_capacity(48 * 16 * 4);
         let mut seed = 0x501u32;
@@ -2776,6 +2867,31 @@ mod tests {
         assert!(contexts.y2.iter().all(|&context| !context));
         assert_eq!(above, [0; 8]);
         assert_eq!(left, [0; 4]);
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoder_reconstructs_every_forced_i4_mode() {
+        for mode in 0..10u8 {
+            let block = Macroblock {
+                b_modes: [mode; 16],
+                ..Macroblock::default()
+            };
+            let frame = emit_frame(&[block], 16, 16, 23).unwrap();
+            let global = [0u8; 256];
+            let mut tile = [0u8; 256];
+            for by in 0..4 {
+                for bx in 0..4 {
+                    let (top, left, corner) = i4_edge(&global, &tile, 16, 0, 0, bx, by);
+                    let patch = prediction::predict_i4(&top, &left, corner, bmode_from_u8(mode));
+                    store_patch::<16, 256>(&mut tile, bx, by, &patch);
+                }
+            }
+            let mut expected = tile.to_vec();
+            expected.extend_from_slice(&[128; 64]);
+            expected.extend_from_slice(&[128; 64]);
+            assert_decodes(&frame, 16, 16, &expected, &format!("forced I4 mode {mode}"));
+        }
     }
 
     #[test]
