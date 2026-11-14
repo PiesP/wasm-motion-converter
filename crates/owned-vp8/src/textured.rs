@@ -1266,6 +1266,7 @@ enum Stage {
     Done = 14,
     CollectStats = 15,
     Optimize = 16,
+    PrepareOutput = 17,
 }
 
 /// One step initializes at most 64 KiB, converts one YUV row pair, analyzes
@@ -1665,15 +1666,9 @@ impl FrameEncoder {
                     0
                 };
                 self.plan = self.plan.with_output_sizes(first, second)?;
-                self.header = Some(
-                    BoolWriter::with_capacity(first as usize)
-                        .map_err(|_| Status::MemoryAdmission)?,
-                );
-                self.token = Some(
-                    BoolWriter::with_capacity(second as usize)
-                        .map_err(|_| Status::MemoryAdmission)?,
-                );
-                self.stage = Stage::EmitPrefix;
+                // Publish the final plan before any partition or frame reserve.
+                // The host can reserve its concurrent budget at this step boundary.
+                self.stage = Stage::PrepareOutput;
             } else {
                 self.stage = Stage::FinalizeHeader;
             }
@@ -1790,6 +1785,19 @@ impl FrameEncoder {
                 self.stage = Stage::CountBlocks;
             }
             Stage::CountBlocks => self.code_one_step(true)?,
+            Stage::PrepareOutput => {
+                let header = BoolWriter::with_capacity(self.plan.first_partition_bytes as usize)
+                    .map_err(|_| Status::MemoryAdmission)?;
+                let token =
+                    BoolWriter::with_capacity(self.plan.coefficient_partition_bytes as usize)
+                        .map_err(|_| Status::MemoryAdmission)?;
+                self.output
+                    .try_reserve_exact(self.plan.frame_bytes as usize)
+                    .map_err(|_| Status::MemoryAdmission)?;
+                self.header = Some(header);
+                self.token = Some(token);
+                self.stage = Stage::EmitPrefix;
+            }
             Stage::EmitPrefix => {
                 let qindex = self.qindex();
                 write_header_prefix(&mut self.pending_header, qindex).map_err(encode_status)?;
@@ -1838,9 +1846,6 @@ impl FrameEncoder {
                 if self.second.len() != self.plan.coefficient_partition_bytes as usize {
                     return Err(Status::OutputLimit);
                 }
-                self.output
-                    .try_reserve_exact(self.plan.frame_bytes as usize)
-                    .map_err(|_| Status::MemoryAdmission)?;
                 let tag = (self.plan.first_partition_bytes << 5) | 0x10;
                 self.output.extend_from_slice(&tag.to_le_bytes()[..3]);
                 self.output.extend_from_slice(&[0x9d, 0x01, 0x2a]);
@@ -2121,6 +2126,50 @@ mod tests {
                 return engine;
             }
         }
+    }
+
+    #[test]
+    fn final_plan_is_visible_before_output_reservations() {
+        let input = vec![37, 119, 203, 255];
+        let expected = encode_textured(&input, 1, 1, 4, 0, 75).unwrap();
+        let request = engine_request(1, 1, 0, &input, 4);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+        for _ in 0..100 {
+            if engine.stage == Stage::PrepareOutput {
+                break;
+            }
+            assert!(!engine.step().unwrap());
+        }
+        assert!(engine.stage == Stage::PrepareOutput);
+        assert!(engine.plan.frame_bytes > 0);
+        assert!(engine.plan.first_partition_bytes > 0);
+        assert!(engine.plan.coefficient_partition_bytes > 0);
+        assert_eq!(engine.plan.frame_bytes, engine.selected_frame_bytes());
+        assert!(engine.header.is_none());
+        assert!(engine.token.is_none());
+        assert_eq!(engine.output.capacity(), 0);
+        assert_eq!(engine.first.capacity(), 0);
+        assert_eq!(engine.second.capacity(), 0);
+        assert!(engine.output().is_empty());
+
+        let admitted = engine.plan;
+        assert!(!engine.step().unwrap());
+        assert!(engine.stage == Stage::EmitPrefix);
+        assert_eq!(engine.plan, admitted);
+        assert!(
+            engine.header.as_ref().unwrap().bytes.capacity()
+                >= admitted.first_partition_bytes as usize
+        );
+        assert!(
+            engine.token.as_ref().unwrap().bytes.capacity()
+                >= admitted.coefficient_partition_bytes as usize
+        );
+        assert!(engine.output.capacity() >= admitted.frame_bytes as usize);
+        assert!(engine.output().is_empty());
+        let complete = run_engine(engine);
+        assert_eq!(complete.output().len(), admitted.frame_bytes as usize);
+        assert_eq!(complete.output(), expected);
     }
 
     #[test]
