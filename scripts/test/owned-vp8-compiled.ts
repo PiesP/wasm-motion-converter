@@ -1,72 +1,21 @@
-/** Execute the actual owned VP8 WASM and independently decode its narrow output. */
+/** Execute ABI2 WASM, independently decode keyframes, and exercise physical leases. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
+
+import { compileVp8, Vp8TestJob } from './owned-vp8-v2-abi.ts';
+import { FIXTURES, generateFixture, QUALITIES } from './owned-vp8-v2-fixtures.ts';
 
 const wasmPath = resolve('crates/owned-vp8/target/wasm32-unknown-unknown/release/owned_vp8.wasm');
-const wasm = readFileSync(wasmPath);
-const wasmSha256 = createHash('sha256').update(wasm).digest('hex');
-const wasmApi = (
-  globalThis as unknown as {
-    WebAssembly: {
-      instantiate(bytes: Uint8Array): Promise<{ instance: { exports: Record<string, unknown> } }>;
-    };
-  }
-).WebAssembly;
-const { instance } = await wasmApi.instantiate(wasm);
-const exports = instance.exports as unknown as {
-  memory: { buffer: ArrayBuffer };
-  vp8_abi_version(): number;
-  vp8_reserve_input(length: number): number;
-  vp8_encode(
-    width: number,
-    height: number,
-    stride: number,
-    format: number,
-    quality: number,
-    length: number
-  ): number;
-  vp8_output_ptr(): number;
-  vp8_output_len(): number;
-  vp8_reset(): void;
-};
-assert.equal(exports.vp8_abi_version(), 1);
-const ffmpeg = execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0];
-const root = mkdtempSync(join(tmpdir(), 'owned-vp8-'));
-const results: unknown[] = [];
-
-function keyframe(
-  width: number,
-  height: number,
-  stride: number,
-  format: number,
-  quality: number
-): Uint8Array {
-  const input = new Uint8Array(stride * height);
-  for (let row = 0; row < height; row++) {
-    for (let column = 0; column < width; column++) {
-      input.set([128, 128, 128, 255], row * stride + column * 4);
-    }
-  }
-  const inputPtr = exports.vp8_reserve_input(input.length);
-  assert.ok(inputPtr > 0);
-  // The reservation may grow linear memory. Construct the view after it returns.
-  new Uint8Array(exports.memory.buffer, inputPtr, input.length).set(input);
-  assert.equal(exports.vp8_encode(width, height, stride, format, quality, input.length), 0);
-  const outputLength = exports.vp8_output_len();
-  assert.ok(outputLength > 10 && outputLength < 4 * 1024 * 1024);
-  const outputPtr = exports.vp8_output_ptr();
-  const output = new Uint8Array(exports.memory.buffer, outputPtr, outputLength).slice();
-  assert.equal(output[0]! & 1, 0);
-  assert.deepEqual([...output.subarray(3, 6)], [0x9d, 0x01, 0x2a]);
-  const view = new DataView(output.buffer);
-  assert.equal(view.getUint16(6, true) & 0x3fff, width);
-  assert.equal(view.getUint16(8, true) & 0x3fff, height);
-  return output;
-}
+const compiled = compileVp8(readFileSync(wasmPath));
+const root = mkdtempSync(join(tmpdir(), 'owned-vp8-abi2-'));
+const results: object[] = [];
+let succeeded = false;
+const sha = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
 function asIvf(frame: Uint8Array, width: number, height: number): Buffer {
   const ivf = Buffer.alloc(44 + frame.length);
@@ -83,157 +32,279 @@ function asIvf(frame: Uint8Array, width: number, height: number): Buffer {
   return ivf;
 }
 
+async function check(
+  pixels: Uint8Array,
+  width: number,
+  height: number,
+  stride: number,
+  layout: number,
+  quality: number,
+  id: string
+): Promise<void> {
+  const job = new Vp8TestJob(compiled);
+  try {
+    const request = { width, height, stride, layout, quality };
+    const result = await job.encode(pixels, request);
+    assert.deepEqual(
+      (await job.encode(pixels, request)).bytes,
+      result.bytes,
+      'Within-conversion determinism'
+    );
+    const other = new Vp8TestJob(compiled, 2);
+    try {
+      assert.deepEqual(
+        (await other.encode(pixels, request)).bytes,
+        result.bytes,
+        'Fresh-job determinism'
+      );
+    } finally {
+      other.retire();
+    }
+    const frame = result.bytes;
+    assert.equal(frame[0]! & 1, 0);
+    assert.equal(frame[0]! & 0x10, 0x10);
+    assert.deepEqual([...frame.subarray(3, 6)], [0x9d, 0x01, 0x2a]);
+    const header = new DataView(frame.buffer, frame.byteOffset, frame.byteLength);
+    assert.equal(header.getUint16(6, true), width);
+    assert.equal(header.getUint16(8, true), height);
+    const ivf = join(root, `${id}-q${quality}.ivf`);
+    writeFileSync(ivf, asIvf(frame, width, height));
+    const decodedHashes: string[] = [];
+    for (const decoder of ['vp8', 'libvpx']) {
+      const decoded = execFileSync(
+        'ffmpeg',
+        [
+          '-v',
+          'error',
+          '-c:v',
+          decoder,
+          '-i',
+          ivf,
+          '-frames:v',
+          '1',
+          '-f',
+          'rawvideo',
+          '-pix_fmt',
+          'rgba',
+          'pipe:1',
+        ],
+        { maxBuffer: width * height * 4 + 4096 }
+      );
+      assert.equal(decoded.length, width * height * 4);
+      for (let offset = 3; offset < decoded.length; offset += 4) assert.equal(decoded[offset], 255);
+      decodedHashes.push(sha(decoded));
+    }
+    assert.equal(decodedHashes[0], decodedHashes[1], 'Distinct decoders must agree');
+    results.push({
+      id,
+      width,
+      height,
+      stride,
+      layout,
+      quality,
+      inputSha256: sha(pixels),
+      rawBytes: frame.length,
+      sha256: sha(frame),
+      decodedSha256: decodedHashes[0],
+      capacity: result.capacity,
+      steps: result.steps,
+      nodeEngineeringMaxStepMs: result.maxStepMs,
+    });
+  } finally {
+    job.retire();
+  }
+}
+
+function rawPlan(job: Vp8TestJob, frame = 1): void {
+  const pointer = job.api.vp8_v2_request_ptr();
+  const request = new DataView(job.api.memory.buffer, pointer, 48);
+  [2, 16, 16, 64, 0, 75, 1024, 1_048_576, job.generation, frame, 1024, 0].forEach((value, index) =>
+    request.setUint32(index * 4, value, true)
+  );
+  assert.equal(job.api.vp8_v2_plan(), 0);
+}
+
+async function leases(): Promise<void> {
+  const job = new Vp8TestJob(compiled, 7);
+  rawPlan(job);
+  assert.equal(job.api.vp8_v2_reserve_step(7, 1), 0);
+  const input = job.record();
+  const view = new Uint8Array(job.api.memory.buffer, input.inputPointer, input.inputLength);
+  const buffer = view.buffer;
+  const copy = (async () => {
+    await setImmediate();
+    view.fill(37);
+  })();
+  assert.equal(job.api.vp8_v2_abort(7, 1), 9);
+  job.retire();
+  assert.equal(job.api.vp8_v2_plan(), 8);
+  assert.equal(job.api.memory.buffer, buffer);
+  await copy;
+  assert.ok(
+    view.every((value) => value === 37),
+    'Pending input destination remained stable'
+  );
+  assert.equal(job.api.vp8_v2_release_input(7, 1), 0);
+  assert.equal(job.record().phase, 6);
+
+  const outputJob = new Vp8TestJob(compiled, 8);
+  rawPlan(outputJob);
+  assert.equal(outputJob.api.vp8_v2_reserve_step(8, 1), 0);
+  const destination = outputJob.record();
+  const rgba = new Uint8Array(
+    outputJob.api.memory.buffer,
+    destination.inputPointer,
+    destination.inputLength
+  );
+  for (let index = 0; index < rgba.length; index += 4) rgba.set([128, 128, 128, 255], index);
+  assert.equal(outputJob.api.vp8_v2_begin(8, 1), 10);
+  let status = 10;
+  while (status === 10) {
+    status = outputJob.api.vp8_v2_step(8, 1);
+    await setImmediate();
+  }
+  assert.equal(status, 11);
+  const output = outputJob.record();
+  const leased = new Uint8Array(
+    outputJob.api.memory.buffer,
+    output.outputPointer,
+    output.outputLength
+  );
+  const saved = leased.slice();
+  const oldBuffer = leased.buffer;
+  assert.equal(outputJob.api.vp8_v2_release_output(8, 0), 7);
+  assert.equal(
+    outputJob.record().outputPointer,
+    0,
+    'Stale call must not publish the current lease'
+  );
+  assert.equal(outputJob.api.vp8_v2_abort(8, 1), 9);
+  outputJob.retire();
+  await setImmediate();
+  assert.equal(outputJob.api.memory.buffer, oldBuffer);
+  assert.deepEqual(leased, saved, 'Pending output stays finalized and stable');
+  assert.equal(outputJob.api.vp8_v2_release_output(8, 1), 0);
+  assert.equal(outputJob.record().phase, 6);
+}
+
+async function cancellation(): Promise<object> {
+  const job = new Vp8TestJob(compiled, 9);
+  const controller = new AbortController();
+  const width = 256;
+  const height = 128;
+  const pixels = new Uint8Array(width * height * 4);
+  let seed = 0x501;
+  for (let at = 0; at < pixels.length; at += 4) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    pixels.set([seed & 255, (seed >>> 8) & 255, (seed >>> 16) & 255, 255], at);
+  }
+  let observed = false;
+  let stoppedAt = 0;
+  const timer = setInterval(() => {
+    const record = job.record();
+    if (record.phase === 4 && record.stage === 2 && record.done > 0) {
+      observed = true;
+      stoppedAt = performance.now();
+      controller.abort();
+    }
+  }, 1);
+  try {
+    await assert.rejects(
+      job.encode(
+        pixels,
+        { width, height, stride: width * 4, layout: 0, quality: 75 },
+        controller.signal
+      ),
+      { name: 'AbortError' }
+    );
+  } finally {
+    clearInterval(timer);
+  }
+  assert.ok(observed, 'Cancellation must observe actual owned macroblock analysis');
+  assert.equal(job.record().outputLength, 0);
+  const idleMs = performance.now() - stoppedAt;
+  const recovered = new Vp8TestJob(compiled, 10);
+  try {
+    assert.ok(
+      (
+        await recovered.encode(pixels.subarray(0, 1024), {
+          width: 16,
+          height: 16,
+          stride: 64,
+          layout: 0,
+          quality: 75,
+        })
+      ).bytes.length > 10
+    );
+  } finally {
+    recovered.retire();
+  }
+  return {
+    activeAnalysisObserved: observed,
+    nodeEngineeringStopToIdleMs: idleMs,
+    newInstanceRecovery: true,
+  };
+}
+
 try {
-  for (const [width, height, format] of [
+  for (const [width, height, layout] of [
     [16, 16, 0],
     [17, 13, 1],
   ] as const) {
-    for (const quality of [60, 75, 85]) {
-      const frame = keyframe(width, height, width * 4 + 8, format, quality);
-      const stem = `${width}x${height}-q${quality}-f${format}`;
-      const ivf = join(root, `${stem}.ivf`);
-      const rgba = join(root, `${stem}.rgba`);
-      writeFileSync(ivf, asIvf(frame, width, height));
-      execFileSync('ffmpeg', [
-        '-v',
-        'error',
-        '-i',
-        ivf,
-        '-frames:v',
-        '1',
-        '-f',
-        'rawvideo',
-        '-pix_fmt',
-        'rgba',
-        '-y',
-        rgba,
-      ]);
-      const decoded = readFileSync(rgba);
-      assert.equal(decoded.length, width * height * 4);
-      for (let index = 0; index < decoded.length; index += 4) {
-        assert.ok(Math.abs(decoded[index]! - 128) <= 6);
-        assert.ok(Math.abs(decoded[index + 1]! - 128) <= 6);
-        assert.ok(Math.abs(decoded[index + 2]! - 128) <= 6);
-        assert.equal(decoded[index + 3], 255);
-      }
-      results.push({
-        width,
-        height,
-        format,
-        quality,
-        rawBytes: frame.length,
-        sha256: createHash('sha256').update(frame).digest('hex'),
-        decodedSha256: createHash('sha256').update(decoded).digest('hex'),
-      });
-    }
+    const stride = width * 4 + 8;
+    const pixels = new Uint8Array(stride * height);
+    for (let y = 0; y < height; y++)
+      for (let x = 0; x < width; x++) pixels.set([128, 128, 128, 255], y * stride + x * 4);
+    for (const quality of QUALITIES)
+      await check(pixels, width, height, stride, layout, quality, `neutral-${width}x${height}`);
   }
-  for (const pattern of ['flat', 'text', 'gradient', 'chroma', 'noise'] as const) {
-    const width = 64;
-    const height = 48;
-    const stride = width * 4;
-    const input = new Uint8Array(stride * height);
-    let seed = 0x497;
-    for (let y = 0; y < height; y++) {
+  for (const fixture of FIXTURES.filter((entry) => entry.split === 'tuning')) {
+    const pixels = generateFixture(fixture.id);
+    for (const quality of QUALITIES)
+      await check(
+        pixels.pixels,
+        pixels.width,
+        pixels.height,
+        pixels.stride,
+        0,
+        quality,
+        fixture.id
+      );
+  }
+  for (const layout of [0, 1, 2, 3, 4]) {
+    const width = 17;
+    const height = 13;
+    const bpp = layout === 4 ? 3 : 4;
+    const stride = width * bpp + 8;
+    const pixels = new Uint8Array(stride * height);
+    for (let y = 0; y < height; y++)
       for (let x = 0; x < width; x++) {
-        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-        const color =
-          pattern === 'flat'
-            ? [160, 64, 32]
-            : pattern === 'text'
-              ? x % 9 < 2 || y % 11 < 2
-                ? [250, 250, 250]
-                : [8, 8, 8]
-              : pattern === 'gradient'
-                ? [(x * 4) & 255, (y * 5) & 255, ((x + y) * 2) & 255]
-                : pattern === 'chroma'
-                  ? x % 8 < 4
-                    ? [255, 0, 0]
-                    : [0, 0, 255]
-                  : [seed & 255, (seed >>> 8) & 255, (seed >>> 16) & 255];
-        input.set([...color, 255], y * stride + x * 4);
+        const rgb = [x * 11, y * 15, (x + y) * 7];
+        if (layout === 1 || layout === 3) rgb.reverse();
+        pixels.set(bpp === 3 ? rgb : [...rgb, layout < 2 ? 255 : 13], y * stride + x * bpp);
       }
-    }
-    const inputSha256 = createHash('sha256').update(input).digest('hex');
-    for (const quality of [60, 75, 85]) {
-      const inputPtr = exports.vp8_reserve_input(input.length);
-      assert.ok(inputPtr > 0);
-      new Uint8Array(exports.memory.buffer, inputPtr, input.length).set(input);
-      assert.equal(exports.vp8_encode(width, height, stride, 0, quality, input.length), 0);
-      const frame = new Uint8Array(
-        exports.memory.buffer,
-        exports.vp8_output_ptr(),
-        exports.vp8_output_len()
-      ).slice();
-      const stem = `${pattern}-q${quality}`;
-      const ivf = join(root, `${stem}.ivf`);
-      const rgba = join(root, `${stem}.rgba`);
-      writeFileSync(ivf, asIvf(frame, width, height));
-      execFileSync('ffmpeg', [
-        '-v',
-        'error',
-        '-i',
-        ivf,
-        '-frames:v',
-        '1',
-        '-f',
-        'rawvideo',
-        '-pix_fmt',
-        'rgba',
-        '-y',
-        rgba,
-      ]);
-      const decoded = readFileSync(rgba);
-      assert.equal(decoded.length, input.length);
-      let squared = 0;
-      for (let index = 0; index < input.length; index += 4) {
-        for (let channel = 0; channel < 3; channel++) {
-          const difference = input[index + channel]! - decoded[index + channel]!;
-          squared += difference * difference;
-        }
-        assert.equal(decoded[index + 3], 255);
-      }
-      const mse = squared / (width * height * 3);
-      const psnr = 10 * Math.log10((255 * 255) / mse);
-      results.push({
-        pattern,
-        width,
-        height,
-        quality,
-        inputSha256,
-        rawBytes: frame.length,
-        sha256: createHash('sha256').update(frame).digest('hex'),
-        decodedSha256: createHash('sha256').update(decoded).digest('hex'),
-        psnr,
-      });
-    }
+    await check(pixels, width, height, stride, layout, 75, `layout-${layout}`);
   }
-  assert.equal(exports.vp8_encode(16, 16, 64, 0, 75, 1), 1); // Length mismatch.
-  assert.equal(exports.vp8_output_len(), 0);
-  assert.equal(exports.vp8_reserve_input(0), 0);
-  assert.equal(exports.vp8_output_len(), 0);
-  assert.equal(exports.vp8_reserve_input(16 * 1024 * 1024 + 1), 0);
-  const one = keyframe(16, 16, 64, 0, 75);
-  assert.equal(exports.vp8_encode(0, 16, 64, 0, 75, 1024), 1);
-  assert.equal(exports.vp8_encode(16, 16, 63, 0, 75, 1024), 1);
-  assert.equal(exports.vp8_encode(16, 16, 64, 0, 55, 1024), 1);
-  assert.equal(exports.vp8_encode(16, 16, 64, 3, 75, 1024), 1);
-  const changed = new Uint8Array(exports.memory.buffer, exports.vp8_reserve_input(1024), 1024);
-  for (let index = 0; index < changed.length; index += 4) changed.set([127, 127, 127, 255], index);
-  assert.equal(exports.vp8_encode(16, 16, 64, 0, 75, 1024), 0); // Generic opaque path.
-  assert.ok(exports.vp8_output_len() > 10);
-  changed[3] = 127;
-  assert.equal(exports.vp8_encode(16, 16, 64, 0, 75, 1024), 2);
-  assert.equal(exports.vp8_output_len(), 0);
-  exports.vp8_reset();
-  assert.equal(exports.vp8_output_len(), 0);
-  assert.deepEqual(keyframe(16, 16, 64, 0, 75), one); // Same instance recovery.
+  await leases();
+  const cancel = await cancellation();
   console.log(
     JSON.stringify(
-      { status: 'compiled-textured-slice-passed', wasmSha256, ffmpeg, results },
+      {
+        status: 'compiled-abi2-engineering-passed',
+        scope: 'NOT_BROWSER_OR_PRODUCT_ACCEPTANCE',
+        wasmSha256: compiled.sha256,
+        node: process.version,
+        ffmpeg: execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0],
+        leases: 'pending-input/output-stability-and-stale-publication-passed',
+        cancellation: cancel,
+        results,
+      },
       null,
       2
     )
   );
+  succeeded = true;
 } finally {
-  rmSync(root, { recursive: true, force: true });
+  if (succeeded) rmSync(root, { recursive: true, force: true });
+  else console.error(`Failed VP8 compiled evidence retained: ${root}`);
 }

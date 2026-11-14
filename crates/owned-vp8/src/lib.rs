@@ -3,6 +3,7 @@
 // Experimental keyframe-only VP8 writer. Format and coding rules: RFC 6386.
 // Complete residual engineering path; product/preset qualification is unfinished.
 
+mod abi;
 mod ac_quant;
 mod bmode_probs;
 mod coeff_update_probs;
@@ -16,9 +17,7 @@ mod textured;
 mod transform;
 
 use coeff_update_probs::COEFF_UPDATE_PROBS;
-use std::sync::Mutex;
 
-pub const ABI_VERSION: u32 = 1;
 pub const MAX_DIMENSION: u32 = 2048;
 pub const MAX_PIXELS: u32 = 4_194_304;
 const MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
@@ -304,82 +303,6 @@ pub fn encode_opaque_keyframe(
         }
     }
     textured::encode_textured(&pixels[..input_end], width, height, stride, format, quality)
-}
-
-#[derive(Default)]
-struct State {
-    input: Vec<u8>,
-    output: Vec<u8>,
-}
-static STATE: Mutex<State> = Mutex::new(State {
-    input: Vec::new(),
-    output: Vec::new(),
-});
-
-#[no_mangle]
-pub extern "C" fn vp8_abi_version() -> u32 {
-    ABI_VERSION
-}
-
-#[no_mangle]
-pub extern "C" fn vp8_reserve_input(length: u32) -> u32 {
-    let Ok(mut state) = STATE.lock() else {
-        return 0;
-    };
-    state.output.clear();
-    if length == 0 || length as usize > MAX_INPUT_BYTES {
-        return 0;
-    }
-    let length = length as usize;
-    let extra = length.saturating_sub(state.input.len());
-    if state.input.try_reserve_exact(extra).is_err() {
-        return 0;
-    }
-    state.input.resize(length, 0);
-    state.input.as_mut_ptr() as u32
-}
-
-#[no_mangle]
-pub extern "C" fn vp8_encode(
-    width: u32,
-    height: u32,
-    stride: u32,
-    format: u32,
-    quality: u32,
-    length: u32,
-) -> u32 {
-    let Ok(mut state) = STATE.lock() else {
-        return 1;
-    };
-    state.output.clear();
-    if state.input.len() != length as usize {
-        return 1;
-    }
-    match encode_opaque_keyframe(&state.input, width, height, stride, format, quality) {
-        Ok(output) => {
-            state.output = output;
-            0
-        }
-        Err(EncodeError::InvalidInput) => 1,
-        Err(EncodeError::UnsupportedPixels) => 2,
-        Err(EncodeError::OutputLimit) => 3,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn vp8_output_ptr() -> u32 {
-    STATE.lock().map_or(0, |state| state.output.as_ptr() as u32)
-}
-#[no_mangle]
-pub extern "C" fn vp8_output_len() -> u32 {
-    STATE.lock().map_or(0, |state| state.output.len() as u32)
-}
-#[no_mangle]
-pub extern "C" fn vp8_reset() {
-    if let Ok(mut state) = STATE.lock() {
-        state.input.clear();
-        state.output.clear();
-    }
 }
 
 #[cfg(test)]

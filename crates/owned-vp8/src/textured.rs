@@ -1172,15 +1172,17 @@ impl FrameEncoder {
         input: Vec<u8>,
         plan: ResourcePlan,
     ) -> Result<Self, Status> {
-        let fresh = ResourcePlan::checked(request)?;
+        let input_capacity =
+            u32::try_from(input.capacity()).map_err(|_| Status::MemoryAdmission)?;
+        if input_capacity > plan.input_reservation_bytes {
+            return Err(Status::MemoryAdmission);
+        }
+        let fresh = ResourcePlan::checked(request)?.with_input_capacity(input_capacity)?;
         if fresh.with_capacity_floor(plan.linear_capacity_bytes)? != plan {
             return Err(Status::InvalidInput);
         }
         if input.len() != request.input_bytes as usize {
             return Err(Status::InvalidInput);
-        }
-        if input.capacity() > request.input_bytes as usize {
-            return Err(Status::MemoryAdmission);
         }
         let blocks_x = plan.padded_width as usize / 16;
         let mut blocks = Vec::new();

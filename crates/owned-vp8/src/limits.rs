@@ -209,7 +209,10 @@ impl ResourcePlan {
                 DEMUX_RESERVE_BYTES,
                 u64::from(self.request.external_live_bytes),
             )?,
-            add(u64::from(self.request.retained_output_bytes), capacity)?,
+            add(
+                add(u64::from(self.request.retained_output_bytes), capacity)?,
+                u64::from(self.host_output_copy_bytes),
+            )?,
         )?;
         if aggregate > CONVERSION_BUDGET_BYTES {
             return Err(Status::MemoryAdmission);
@@ -217,6 +220,23 @@ impl ResourcePlan {
         self.linear_capacity_bytes = word(capacity)?;
         self.aggregate_bytes = word(aggregate)?;
         Ok(self)
+    }
+
+    /// Charge a reported allocator reservation without mistaking logical input
+    /// length for retained capacity. The reservation may exceed the copied bytes.
+    pub(crate) fn with_input_capacity(mut self, input_capacity: u32) -> Result<Self, Status> {
+        if input_capacity < self.request.input_bytes
+            || u64::from(input_capacity) > MAX_FRAME_LIVE_BYTES
+        {
+            return Err(Status::MemoryAdmission);
+        }
+        let base = u64::from(self.linear_live_bytes)
+            .checked_sub(u64::from(self.input_reservation_bytes))
+            .ok_or(Status::MemoryAdmission)?;
+        let live = add(base, u64::from(input_capacity))?;
+        self.input_reservation_bytes = input_capacity;
+        self.linear_live_bytes = word(live)?;
+        self.with_capacity_floor(word(page_capacity(live)?)?)
     }
 
     /// Finalized partition sizes are admitted before their storage is exposed.
@@ -313,6 +333,21 @@ impl ResourcePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reported_input_capacity_and_warm_output_copy_remain_charged() {
+        let base = ResourcePlan::checked(request(16, 16, 0)).unwrap();
+        let expanded = base.with_input_capacity(2048).unwrap();
+        assert_eq!(expanded.input_reservation_bytes, 2048);
+        assert_eq!(expanded.linear_live_bytes, base.linear_live_bytes + 1024);
+        let output = expanded.with_output_sizes(100, 100).unwrap();
+        let warmed = output
+            .with_capacity_floor(output.linear_capacity_bytes)
+            .unwrap();
+        assert_eq!(warmed.aggregate_bytes, output.aggregate_bytes);
+        assert_eq!(warmed.host_output_copy_bytes, 210);
+        assert_eq!(base.with_input_capacity(1023), Err(Status::MemoryAdmission));
+    }
 
     fn request(width: u32, height: u32, layout: u32) -> Request {
         let bpp = if layout == 4 { 3 } else { 4 };

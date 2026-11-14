@@ -144,6 +144,11 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   `encode_observed` began selecting I16/I4/UV modes. `src/lib.rs`
   `encode_opaque_keyframe` also retained its B_PRED-only API comment. Both now
   describe the implemented search while keeping calibration/qualification open.
+- Fixed during M3 integration: `crates/owned-vp8/README.md` still described
+  ABI1 exports and prototype-only geometry/output limits after `src/abi.rs`
+  introduced ABI2 and `src/lib.rs` removed the ABI1 FFI. It now separates the
+  ABI2 route from historical synchronous Rust reference helpers and records the
+  remaining carry/browser qualification limits.
 - External reference discrepancy, unchanged: RFC 6386 section 13.3's illustrative
   coefficient pseudocode swaps plane labels relative to its detailed probability
   table and sets `prevCoeffWasZero` unconditionally. The detailed table/narrative

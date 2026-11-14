@@ -6,6 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { compileVp8, Vp8TestJob } from './owned-vp8-v2-abi.ts';
 import {
   FIXTURES,
   generateFixture,
@@ -171,34 +172,7 @@ export async function compare(options: {
     }>;
   };
   const oracle = await createOracle();
-  const api = (
-    globalThis as unknown as {
-      WebAssembly: {
-        instantiate(bytes: Uint8Array): Promise<{ instance: { exports: Record<string, unknown> } }>;
-      };
-    }
-  ).WebAssembly;
-  const { instance } = await api.instantiate(candidateBytes);
-  const candidate = instance.exports as unknown as {
-    memory: { buffer: ArrayBuffer };
-    vp8_abi_version(): number;
-    vp8_reserve_input(bytes: number): number;
-    vp8_encode(
-      w: number,
-      h: number,
-      stride: number,
-      format: number,
-      quality: number,
-      length: number
-    ): number;
-    vp8_output_ptr(): number;
-    vp8_output_len(): number;
-  };
-  assert.equal(
-    candidate.vp8_abi_version(),
-    1,
-    'This engineering adapter supports ABI1; use ABI2 adapter once integrated'
-  );
+  const compiled = compileVp8(candidateBytes);
   const frozen = JSON.parse(
     readFileSync(join(ROOT, 'docs/experiments/501-owned-vp8-v2-fixtures.json'), 'utf8')
   ) as {
@@ -217,6 +191,7 @@ export async function compare(options: {
       readFileSync(join(ROOT, 'docs/experiments/501-owned-vp8-v2-fixtures.json'))
     ),
     harnessSha256: digest(readFileSync(fileURLToPath(import.meta.url))),
+    abiDriverSha256: digest(readFileSync(new URL('./owned-vp8-v2-abi.ts', import.meta.url))),
     metrics:
       'PSNR on all RGB bytes; FFmpeg ssim on gbrp, nearest replication to minimum8x8 for tiny metrics only',
     scope:
@@ -242,25 +217,17 @@ export async function compare(options: {
       const reference = oracle.encodeRGB(rgb, spec.width, spec.height, quality)?.slice();
       assert.ok(reference?.length);
       const referenceFrame = extract(reference);
-      const pointer = candidate.vp8_reserve_input(fixture.pixels.length);
-      assert.ok(pointer > 0, 'Candidate input admission failed');
-      new Uint8Array(candidate.memory.buffer, pointer, fixture.pixels.length).set(fixture.pixels);
-      const format = spec.layout === 'RGBA' ? 0 : spec.layout === 'BGRA' ? 1 : -1;
-      assert.ok(format >= 0, 'ABI1 does not qualify X layouts');
-      const status = candidate.vp8_encode(
-        spec.width,
-        spec.height,
-        fixture.stride,
-        format,
+      const job = new Vp8TestJob(compiled);
+      const encoded = await job.encode(fixture.pixels, {
+        width: spec.width,
+        height: spec.height,
+        stride: fixture.stride,
+        layout: { RGBA: 0, BGRA: 1, RGBX: 2, BGRX: 3 }[spec.layout],
         quality,
-        fixture.pixels.length
-      );
-      assert.equal(status, 0, `Candidate failed ${stem}: status ${status}`);
-      const frame = new Uint8Array(
-        candidate.memory.buffer,
-        candidate.vp8_output_ptr(),
-        candidate.vp8_output_len()
-      ).slice();
+        externalLiveBytes: fixture.pixels.byteLength + rgb.byteLength,
+      });
+      job.retire();
+      const frame = encoded.bytes;
       const first = join(output, `${stem}-baseline.webp`);
       const second = join(output, `${stem}-candidate.webp`);
       writeFileSync(first, reference, { flag: 'wx' });
@@ -293,7 +260,9 @@ export async function compare(options: {
         inputSha256: digest(fixture.pixels),
         baselineSha256: digest(referenceFrame),
         candidateSha256: digest(frame),
-        retainedLinearCapacity: candidate.memory.buffer.byteLength,
+        retainedLinearCapacity: encoded.capacity,
+        boundedStepCount: encoded.steps,
+        nodeEngineeringMaxStepMs: encoded.maxStepMs,
         inputCopiedToWasmBytes: fixture.pixels.length,
         outputCopiedFromWasmBytes: frame.length,
         metrics,

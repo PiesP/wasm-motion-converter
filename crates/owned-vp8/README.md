@@ -29,22 +29,39 @@ The rest of this experimental encoder is owned Rust. Retain
 and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
 
-The v1 ABI accepts one copied input reservation and publishes a borrowed output
-until reset or the next reservation, including a failed reservation. A caller
-must refresh JS views after any WASM growth, copy the output before reuse, and
-keep one conversion per instance. Return codes are 0 success, 1 invalid input,
-2 unsupported pixels (nonopaque input), and 3 output limit. Input is bounded to
-2048 pixels on each axis, 4,194,304 pixels total, and 16 MiB. Output is bounded
-to 4 MiB. This crate has no external Cargo dependencies.
+## ABI2 and resources
 
-At the experimental maximum, copied input and six padded YUV planes account
-for 16 MiB and 12 MiB. Dense macroblock records now retain 24 full 16-coefficient
-blocks plus Y2 and mode state per macroblock; this is larger than the historical
-DC-only record. Two partitions may retain up to 8 MiB and final assembly up to
-4 MiB concurrently. These are payload bounds, not allocator/linear capacity or
-browser/GPU peak. ABI2 must prospectively plan all simultaneous capacities and
-host copies under the unchanged product ceilings before production admission.
-The prototype geometry/output caps are not the product supported-input contract.
+The module exports only `vp8_v2_*`; ABI1 FFI exports are retired. The synchronous
+Rust helpers remain engineering references with their historical prototype bounds
+and are not the ABI2 execution route. `src/abi.rs` defines the twelve-word request,
+twenty-four-word response and ticket/lease state machine. `src/limits.rs` defines
+status values, geometry, checked byte plans and aggregate admission.
+
+Use plan -> bounded reserve steps -> input lease -> begin -> bounded encode steps
+-> output lease -> release. `begin` acknowledges that the physical input write
+settled. Abort/retire invalidates publication but retains pending leased storage
+until explicit release. A stale or unsuccessful operation publishes no pointer.
+Each conversion owns one instance, reused for its frames; compiled code may be
+cached separately. Retired/trapped instances are never reused.
+
+ABI2 accepts checked RGBA/BGRA/RGBX/BGRX and packed RGB, including padded stride.
+Only visible alpha bytes in alpha-bearing layouts must be opaque. It supports
+VP8's 16383-axis and current 10066329-pixel product bounds subject to prospective
+memory admission. The prototype's 2048-axis and 4-MiB output limits are not ABI2
+limits. Keep 512 MiB aggregate, 128 MiB demux reserve, 192 MiB external frame and
+owned-linear ceilings, and 96 MiB output policy. Plans charge linear capacity
+once, including inner slots, plus external host bytes and final output copy.
+Retained instance pages remain charged between frames. Allocator reservation
+capacity can exceed logical input length and must be admitted explicitly.
+
+`FrameEncoder` in `src/textured.rs` stages initialization, color import,
+macroblock analysis, exact partition-length counting, frozen-decision emission,
+finalization and assembly. Finalized sizes are admitted before output allocation;
+first-partition overflow is separate from total output overflow. Output remains
+hidden until arithmetic coding and final assembly finish. The current long-0xff
+carry scan still needs bounded continuation, and browser cancellation/resource
+qualification is unfinished. These plans and Node/Rust tests do not establish
+browser/GPU peak, physical zero-copy or product adoption.
 
 ## Engineering checks
 
