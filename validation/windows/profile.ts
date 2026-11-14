@@ -3196,6 +3196,18 @@ async function exerciseOwnedCancellationCase(
   assert.equal(await page.locator('[data-testid="error-display"]').isVisible(), false);
   assert.equal(cancelled.gifPublicationCount, 0, 'Cancelled GIF published a Blob');
   assert.deepEqual(cancelled.outputUrls, [], 'Cancelled GIF retained an output URL');
+  for (const [group, value] of [
+    ['format', 'gif'],
+    ['quality', setting.quality],
+    ['scale', String(setting.scale)],
+    ['smart-frame-skip', setting.smartFrameSkip],
+  ]) {
+    assert.equal(
+      await page.locator(`[data-testid="option-${group}-${value}"] input`).isChecked(),
+      true,
+      `Cancelled conversion changed ${group}=${value}`
+    );
+  }
   if (fallback) {
     assert(wasmAsset, 'Owned GIF WASM asset is absent');
     assert.deepEqual(cancelled.workers, [], 'Fallback created a conversion Worker');
