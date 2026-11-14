@@ -78,7 +78,14 @@ export async function handleFileSelected(
   if (previousPreviewUrl) URL.revokeObjectURL(previousPreviewUrl);
   setVideoPreviewUrl(null);
 
-  const validation = await validateVideoFile(file, t);
+  let validation: Awaited<ReturnType<typeof validateVideoFile>>;
+  try {
+    validation = await validateVideoFile(file, t);
+  } catch (error) {
+    clearOwnedInputSelection(selectionGeneration);
+    runtime.finishAnalysisRun(run);
+    throw error;
+  }
   if (isStale()) {
     runtime.finishAnalysisRun(run);
     return;
