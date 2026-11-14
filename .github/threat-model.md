@@ -3,9 +3,9 @@
 ## Architecture and assets
 
 dropconvert is a static, client-side Vite and SolidJS application. It accepts one
-local video `File`, parses and decodes it with MediaBunny and WebCodecs, and
-encodes GIF or animated WebP output with gifenc, the local GIF scalar Rust/WASM
-module, Canvas, WebCodecs, or bundled wasm-webp code. Conversion must remain
+local video `File`, parses it with owned demux Rust/WASM, decodes with WebCodecs,
+and encodes GIF or animated WebP with owned GIF Rust/WASM, Canvas, WebCodecs,
+or bundled wasm-webp. Patched MediaBunny and gifenc are development-only oracles. Conversion must remain
 local: there is no backend, account,
 application session, upload API, or runtime CDN dependency.
 
@@ -25,11 +25,16 @@ Protect these assets:
 - Data crossing Worker boundaries is untrusted at runtime despite TypeScript
   types. Request and response discriminants, numeric fields, buffers,
   transferables, cancellation, and lifecycle state require validation.
-- Browser APIs, codec implementations, Canvas, WebCodecs, WebAssembly, and
-  MediaBunny cross from JavaScript into native or third-party code.
-- The GIF scalar module crosses a JavaScript/WASM boundary. Rust uses raw
-  pointers into linear memory; the JavaScript loader and Rust entrypoints must
-  keep offsets, lengths, palette order, and allocations bounded.
+- Browser APIs, codec implementations, Canvas, WebCodecs, WebAssembly and
+  wasm-webp cross from JavaScript into native or third-party code.
+- Owned GIF and demux modules cross JavaScript/WASM boundaries. Their loaders
+  and Rust entrypoints must keep offsets, lengths, palette order, index records,
+  source ranges and allocations bounded. Refresh views after growth; protect
+  borrowed output, asynchronous source reads and generation-checked leases.
+- Selected-input index snapshots are bounded logical records, not raw heap state.
+  Validate source identity/generation, version, CRC, extents and time conversion;
+  a head/tail fingerprint is not a full source hash. Pre-use cache misses may
+  parse once; malformed imports and post-bootstrap errors remain terminal.
 - The service worker and browser cache form a persistent boundary across
   deployments. Network responses and request URLs must not weaken same-origin
   behavior or persist attacker-selected content.
@@ -45,7 +50,7 @@ Protect these assets:
 - File size, dimensions, pixels, frames, buffers, queues, workers, retries, and
   conversion time remain bounded. Cancellation and every success or failure
   path release VideoFrames, buffers, decoder/encoder instances, Workers, blob
-  URLs, MediaBunny inputs, and other native resources.
+  URLs, owned parser instances/index leases, and other native resources.
 - Worker messages are shape-checked, numerically finite and bounded before
   allocation, correlated with the active request, and ignored after settlement.
 - Production CSP, COOP, COEP, MIME, framing, permissions, and cache headers stay
@@ -53,9 +58,9 @@ Protect these assets:
   permits WebAssembly compilation, not JavaScript `eval` or `Function`.
 - Runtime code is bundled and same-origin. Dependency build scripts, recent
   releases, and trust downgrades remain subject to the pnpm policy.
-- The GIF scalar WASM must have no host imports. Its exports, initial memory,
-  source inputs, toolchain, and byte budget must match the reviewed build
-  contract before the app consumes it.
+- Owned GIF/demux WASM must have no host imports. Their exports, initial memory,
+  source inputs, toolchain, declared memory maximum and byte budgets must match
+  the reviewed build contract before the app consumes them.
 - Release and CI workflows use least privilege, immutable action pins, trusted
   inputs, and do not expose credentials to code from untrusted pull requests.
 
@@ -69,6 +74,9 @@ Protect these assets:
 - `crates/gif-scalar-quantizer/src/lib.rs` unsafe state and pointer handling,
   `src/services/gif-scalar-wasm.ts` ABI and memory checks, and
   `scripts/build/build-gif-scalar-wasm.ts` source/binary provenance.
+- `crates/owned-demux/src/`, checked records/source ranges/snapshot protocol,
+  `src/services/owned-demux-*.ts`, selected-input cache and
+  `scripts/build/build-owned-demux-wasm.ts` source/binary provenance.
 - `worker/service-worker.ts`, emitted `dist/service-worker.js`,
   `src/sw-register.ts`, `public/_headers`, `vite.config.ts`, and generated build
   integrity checks.

@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 import { extractVideoMetadata } from '@services/video-metadata';
 import { MP4_MAX_LOGICAL_SAMPLES, MP4_METADATA_BUDGET_BYTES } from '@utils/constants';
-import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import {
   BufferTarget,
   EncodedPacket,
@@ -17,6 +17,8 @@ import {
   Output,
 } from 'mediabunny';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+
+import { createMediaBunnyInput } from '../../helpers/mediabunny-oracle';
 
 type Table = {
   sampleSizes: number[];
@@ -146,7 +148,10 @@ async function normalMp4(): Promise<ArrayBuffer> {
   return target.buffer;
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('installed MP4 sample metadata allocation policy', () => {
   it('reads bounded packets on demand from a valid MP4', async () => {
@@ -384,8 +389,26 @@ describe('installed MP4 sample metadata allocation policy', () => {
     }
   });
 
-  it('propagates production metadata rejection, disposes the input, then accepts a normal selection', async () => {
-    const normal = await normalMp4();
+  it('rejects excessive owned metadata work, then accepts a real normal selection', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(
+          Uint8Array.from(
+            readFileSync(new URL('../../../src/services/owned-demux.wasm', import.meta.url))
+          ),
+          { headers: { 'content-type': 'application/wasm' } }
+        )
+    );
+    const normal = Uint8Array.from(
+      Buffer.from(
+        readFileSync(
+          new URL('../../fixtures/owned-demux/avc-baseline.mp4.base64', import.meta.url),
+          'utf8'
+        ),
+        'base64'
+      )
+    ).buffer;
     const bad = normal.slice(0);
     const bytes = new Uint8Array(bad);
     const marker = new TextEncoder().encode('stsz');
@@ -396,14 +419,11 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const view = new DataView(bad);
     view.setUint32(offset + 8, 1);
     view.setUint32(offset + 12, MP4_MAX_LOGICAL_SAMPLES + 1);
-    const dispose = vi.spyOn(Input.prototype, 'dispose');
-    await expect(extractVideoMetadata(bad)).rejects.toThrow('sample count');
-    expect(dispose).toHaveBeenCalledOnce();
+    await expect(extractVideoMetadata(bad)).rejects.toThrow(/resource|parser error 3/i);
     await expect(extractVideoMetadata(normal)).resolves.toMatchObject({
-      width: 16,
-      height: 16,
-      framerate: 30,
+      width: 96,
+      height: 64,
+      framerate: 6,
     });
-    expect(dispose).toHaveBeenCalledTimes(2);
   });
 });

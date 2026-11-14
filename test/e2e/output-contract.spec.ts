@@ -98,7 +98,7 @@ test.describe('deterministic output contracts', () => {
         const rotation = await page.evaluate(async (fixture) => {
           const response = await fetch(`/${fixture.replace(/^public\//, '')}`);
           if (!response.ok) throw new Error(`Unable to load rotation fixture: ${response.status}`);
-          const modulePath = '/src/utils/mediabunny-utils.ts';
+          const modulePath = '/test/helpers/mediabunny-oracle.ts';
           const { createMediaBunnyInput } = await import(modulePath);
           const input = createMediaBunnyInput(await response.blob());
           try {

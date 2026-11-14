@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { readFileSync } from 'node:fs';
+
 import { extractVideoMetadata } from '@services/video-metadata';
-import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { ALL_FORMATS, AttachedFile, BufferSource, EncodedPacketSink, Input } from 'mediabunny';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
+
+import { createMediaBunnyInput } from '../../helpers/mediabunny-oracle';
 
 const ID = {
   ebml: 0x1a45dfa3,
@@ -218,7 +221,10 @@ async function payloadReads(input: Input): Promise<SliceRequest[]> {
   return reads;
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('installed Matroska descriptive metadata policy', () => {
   it('does not decode or retain descriptive children reached through shared traversal', async () => {
@@ -386,17 +392,33 @@ describe('installed Matroska descriptive metadata policy', () => {
     }
   });
 
-  it('disposes failed and cancelled analyses, then accepts a normal Matroska selection', async () => {
-    const valid = matroska(segment(1, 'leading'));
+  it('rejects failed and cancelled owned analyses, then accepts a real Matroska selection', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(
+          Uint8Array.from(
+            readFileSync(new URL('../../../src/services/owned-demux.wasm', import.meta.url))
+          ),
+          { headers: { 'content-type': 'application/wasm' } }
+        )
+    );
+    const valid = Uint8Array.from(
+      Buffer.from(
+        readFileSync(
+          new URL('../../fixtures/owned-demux/owned-lacing-xiph.webm.base64', import.meta.url),
+          'utf8'
+        ),
+        'base64'
+      )
+    ).buffer;
     const invalid = matroska(
       element(ID.segment, element(ID.info, element(ID.duration, Uint8Array.of(0))))
     );
-    const dispose = vi.spyOn(Input.prototype, 'dispose');
     await expect(extractVideoMetadata(invalid)).rejects.toThrow();
     const controller = new AbortController();
     controller.abort();
     await expect(extractVideoMetadata(valid, undefined, controller.signal)).rejects.toThrow();
     await expect(extractVideoMetadata(valid)).resolves.toMatchObject({ width: 16, height: 16 });
-    expect(dispose).toHaveBeenCalledTimes(3);
   });
 });

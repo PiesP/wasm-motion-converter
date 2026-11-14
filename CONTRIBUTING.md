@@ -149,27 +149,26 @@ image, browser set, Playwright installation contract, or cache behavior changes.
 
 `vp run check` checks the full validation implementation through `validation/windows/tsconfig.json` without widening the Node-only script project. The Node boundary suite runs `node --check` over every `validation/windows/**/*.ts` module; the E2E output-contract and resource-profile specs cover related behavior. These local checks do not establish desktop, physical codec, GPU or media performance acceptance.
 
-MP4 sample metadata uses the maintained MediaBunny patch and the limits in
-`src/utils/constants.ts`. Its 32 MiB policy reserve completes the 128 MiB demux
-envelope alongside source/packet and decoder-queue reserves. Scalar array entries
-cost 16 policy bytes, timing/chunk records 96, presentation objects plus sorting
-and inverse indices 128, and fragment samples plus presentation/sort data 304.
-These conservative accounting units cover retained objects, spare array capacity
-and overlapping index construction; they are not a measured browser heap bound.
-Tables share a per-Input allocation budget. Unique fragment offsets also share a
-cumulative work budget, while reparsing still reserves space alongside the prior
-fragment. Repeated visits do not spend the unique-fragment quota again.
+Production metadata and conversion packets use the owned bounded demux core.
+See `crates/owned-demux/README.md` for ABI3, source regeneration, packet ranges,
+TS reconstruction and logical index snapshots. The32MiB live index/metadata,
+64MiB linear capacity and128MiB demux envelopes include growth overlap, source
+reads and queued native chunks; source accounting is not measured browser/GPU
+peak. A selected input retains at most8MiB of logical index, no codec instance.
+Each job uses an independent checked snapshot copy where prospective admission
+allows it; otherwise it evicts the cache before copying and parses once.
 
-The separate 100,000,000 logical-sample ceiling bounds compact runs across tracks
-without treating every implicit PCM audio frame as an allocated JavaScript
-object. For comparison, 15 minutes at 48 kHz contains 43,200,000 PCM samples,
-whereas 15 minutes at the supported 120 fps conversion clamp contains 108,000
-video packets. Actual expanded tables remain constrained by the allocation
-reserve. Malformed, inconsistent or over-budget metadata fails before expansion;
-the caller disposes the input and the user can select another file. The focused
-installed-parser tests use reduced budgets. The Windows profile checks bounded
-production rejection and a subsequent GIF download in the same application
-document; it does not run a destructive out-of-memory test.
+Patched MediaBunny1.65.2 remains a development-only metadata/demux oracle in
+`test/helpers/mediabunny-oracle.ts`; its patch and notices remain intentional.
+Historical scalar/timing/presentation/fragment accounting units in that patch
+(16/96/128/304 policy bytes) describe oracle JavaScript objects, not the owned
+Rust record layout. Its100,000,000 logical-sample ceiling remains an oracle
+work limit; actual owned index expansion is separately byte/work bounded.
+Frozen synthetic inputs, normalized packet/configuration traces, independent
+FFmpeg decoding and actual compiled snapshot round trips preserve comparison
+strength. Focused malformed tests do not replace installed-browser resource,
+output, cancellation and same-document recovery acceptance. Neither suite runs
+a destructive out-of-memory test.
 
 Small workflow shell blocks remain runner bootstrap, checkout, output, and action-launch adapters; revisit them when tested Node entrypoints preserve trusted-source and write ordering. The Git hooks remain Bash because Git invokes them before pinned Node setup.
 

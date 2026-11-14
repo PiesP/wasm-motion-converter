@@ -5,9 +5,10 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { EncodedPacketSink } from 'mediabunny';
 import { expect, it } from 'vite-plus/test';
+
+import { createMediaBunnyInput } from '../../helpers/mediabunny-oracle';
 
 // Generated with FFmpeg from an owned 16x16 black source at 4 fps for 4 seconds:
 // libx264 -preset ultrafast -crf 51 -g 4 -keyint_min 4 -sc_threshold 0 -bf 0
