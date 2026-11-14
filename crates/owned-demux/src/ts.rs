@@ -1063,7 +1063,25 @@ pub struct PacketReassembler {
 }
 
 impl PacketReassembler {
+    #[cfg(test)]
     pub fn new(source: TsPacketSource, expected_size: u32) -> Result<Self, Error> {
+        let mut data = Vec::new();
+        data.try_reserve_exact(expected_size as usize + 264)
+            .map_err(|_| Error::ResourceLimit)?;
+        Self::with_scratch(
+            source,
+            expected_size,
+            data,
+            Vec::with_capacity(MAX_READ + 204),
+        )
+    }
+
+    pub fn with_scratch(
+        source: TsPacketSource,
+        expected_size: u32,
+        mut data: Vec<u8>,
+        mut carry: Vec<u8>,
+    ) -> Result<Self, Error> {
         if source.start >= source.end
             || expected_size == 0
             || expected_size > PACKET_BUDGET
@@ -1075,14 +1093,16 @@ impl PacketReassembler {
         {
             return Err(Error::ResourceLimit);
         }
-        let mut data = Vec::new();
-        data.try_reserve_exact(expected_size as usize + 264)
-            .map_err(|_| Error::ResourceLimit)?;
+        if data.capacity() < expected_size as usize + 264 || carry.capacity() < MAX_READ + 204 {
+            return Err(Error::ResourceLimit);
+        }
+        data.clear();
+        carry.clear();
         Ok(Self {
             source,
             expected_size,
             next_offset: source.start,
-            carry: Vec::new(),
+            carry,
             data,
             started: false,
         })
@@ -1133,7 +1153,7 @@ impl PacketReassembler {
         self.carry.drain(..full);
         Ok(())
     }
-    pub fn finish(mut self) -> Result<Vec<u8>, Error> {
+    pub fn finish_with_scratch(mut self) -> Result<(Vec<u8>, Vec<u8>), Error> {
         if self.next_offset != self.source.end || !self.carry.is_empty() || !self.started {
             return Err(Error::Truncated);
         }
@@ -1147,7 +1167,11 @@ impl PacketReassembler {
         }
         self.data.copy_within(header.data_start.., 0);
         self.data.truncate(self.expected_size as usize);
-        Ok(self.data)
+        Ok((self.data, self.carry))
+    }
+    #[cfg(test)]
+    pub fn finish(self) -> Result<Vec<u8>, Error> {
+        self.finish_with_scratch().map(|(data, _)| data)
     }
 }
 
@@ -1338,6 +1362,45 @@ mod tests {
             )
             .unwrap();
             assert_eq!(output, expected);
+        }
+    }
+
+    #[test]
+    fn reuses_prepared_packet_buffers_across_access_units() {
+        let (file, first, second) = small_owned_ts();
+        let mut parser = TsParser::new(file.len() as u64).unwrap();
+        parser.feed(0, &file).unwrap();
+        let result = parser.finish().unwrap();
+        let max = result
+            .track
+            .packets
+            .iter()
+            .map(|packet| packet.size)
+            .max()
+            .unwrap() as usize;
+        let mut data = Vec::with_capacity(max + 264);
+        let mut carry = Vec::with_capacity(MAX_READ + 204);
+        let data_capacity = data.capacity();
+        let carry_capacity = carry.capacity();
+        for (index, expected) in [first, second].into_iter().enumerate() {
+            let source = result.packet_sources[index];
+            let mut lease = PacketReassembler::with_scratch(
+                source,
+                result.track.packets[index].size,
+                data,
+                carry,
+            )
+            .unwrap();
+            lease
+                .feed(
+                    source.start,
+                    &file[source.start as usize..source.end as usize],
+                )
+                .unwrap();
+            (data, carry) = lease.finish_with_scratch().unwrap();
+            assert_eq!(data, expected);
+            assert_eq!(data.capacity(), data_capacity);
+            assert_eq!(carry.capacity(), carry_capacity);
         }
     }
 

@@ -96,6 +96,8 @@ pub struct Mp4Session {
     ts_reassembly: Option<ts::PacketReassembler>,
     ts_reassembly_cursor: u64,
     ts_reconstructed: Vec<u8>,
+    ts_carry: Vec<u8>,
+    ts_prepared_max: u32,
     final_scan: usize,
     final_end: i64,
 }
@@ -170,6 +172,8 @@ impl Mp4Session {
             ts_reassembly: None,
             ts_reassembly_cursor: 0,
             ts_reconstructed: Vec::new(),
+            ts_carry: Vec::new(),
+            ts_prepared_max: 0,
             final_scan: 0,
             final_end: 0,
         })
@@ -201,6 +205,7 @@ impl Mp4Session {
         if self.format != Format::Ts
             || self.status != Status::Complete
             || self.ts_reassembly.is_some()
+            || self.ts_prepared_max == 0
         {
             return Err(Error::Invalid);
         }
@@ -211,9 +216,64 @@ impl Mp4Session {
             .and_then(|track| track.packets.get(index))
             .ok_or(Error::Invalid)?
             .size;
-        self.ts_reconstructed = Vec::new();
-        self.ts_reassembly = Some(ts::PacketReassembler::new(source, size)?);
+        if size > self.ts_prepared_max {
+            return Err(Error::ResourceLimit);
+        }
+        let data = std::mem::take(&mut self.ts_reconstructed);
+        let carry = std::mem::take(&mut self.ts_carry);
+        self.ts_reassembly = Some(ts::PacketReassembler::with_scratch(
+            source, size, data, carry,
+        )?);
         self.ts_reassembly_cursor = source.start;
+        Ok(())
+    }
+
+    fn prepare_ts_packets(&mut self, max_packet: u32) -> Result<(), Error> {
+        if self.format != Format::Ts
+            || self.status != Status::Complete
+            || self.ts_prepared_max != 0
+            || max_packet == 0
+            || max_packet > PACKET_BUDGET
+        {
+            return Err(Error::Invalid);
+        }
+        let track = self.track.as_ref().ok_or(Error::Invalid)?;
+        let index_bytes = track
+            .packets
+            .capacity()
+            .checked_mul(std::mem::size_of::<Packet>())
+            .and_then(|n| {
+                n.checked_add(
+                    self.ts_sources
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<ts::TsPacketSource>())?,
+                )
+            })
+            .ok_or(Error::Overflow)?;
+        let scratch = (max_packet as usize)
+            .checked_add(264)
+            .ok_or(Error::Overflow)?;
+        let carry = INPUT_CAPACITY + 204;
+        let total = index_bytes
+            .checked_add(scratch)
+            .and_then(|n| n.checked_add(carry))
+            .and_then(|n| n.checked_add(self.input.capacity()))
+            .and_then(|n| n.checked_add(track.description.capacity()))
+            .and_then(|n| n.checked_add(self.codec_string.capacity()))
+            .ok_or(Error::Overflow)?;
+        if total > 60 * 1024 * 1024 {
+            return Err(Error::ResourceLimit);
+        }
+        self.ts_reconstructed
+            .try_reserve_exact(scratch)
+            .map_err(|_| Error::ResourceLimit)?;
+        self.ts_carry
+            .try_reserve_exact(carry)
+            .map_err(|_| Error::ResourceLimit)?;
+        if self.ts_reconstructed.capacity() < scratch || self.ts_carry.capacity() < carry {
+            return Err(Error::ResourceLimit);
+        }
+        self.ts_prepared_max = max_packet;
         Ok(())
     }
 
@@ -232,7 +292,7 @@ impl Mp4Session {
 
     fn finish_ts_packet(&mut self) -> Result<*const u8, Error> {
         let lease = self.ts_reassembly.take().ok_or(Error::Invalid)?;
-        self.ts_reconstructed = lease.finish()?;
+        (self.ts_reconstructed, self.ts_carry) = lease.finish_with_scratch()?;
         Ok(self.ts_reconstructed.as_ptr())
     }
 
@@ -1017,6 +1077,17 @@ pub extern "C" fn demux_packet_begin(index: u32) -> u32 {
 }
 
 #[no_mangle]
+pub extern "C" fn demux_prepare_packets(max_packet: u32) -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    state
+        .session
+        .as_mut()
+        .is_some_and(|session| session.prepare_ts_packets(max_packet).is_ok()) as u32
+}
+
+#[no_mangle]
 pub extern "C" fn demux_packet_feed(length: u32) -> u32 {
     let Ok(mut state) = abi().lock() else {
         return 0;
@@ -1044,5 +1115,43 @@ pub extern "C" fn demux_release() {
     if let Ok(mut state) = abi().lock() {
         state.session = None;
         state.event.fill(0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moof_admission_counts_retained_index_before_allocating_box() {
+        let mut session = Mp4Session::new(40 * 1024 * 1024).unwrap();
+        session.format = Format::Mp4;
+        session.window_len = 8;
+        session.input[..4].copy_from_slice(&(30 * 1024 * 1024u32 + 8).to_be_bytes());
+        session.input[4..8].copy_from_slice(b"moof");
+        session.track = Some(Track {
+            track_id: 1,
+            codec: *b"avc1",
+            width: 16,
+            height: 16,
+            display_width: 16,
+            display_height: 16,
+            color_primaries: 0,
+            color_transfer: 0,
+            color_matrix: 0,
+            color_full_range: -1,
+            timescale: 1000,
+            duration: 1,
+            rotation: 0,
+            description: Vec::new(),
+            packets: Vec::with_capacity(250_000),
+            fragment_default_duration: 0,
+            fragment_default_size: 0,
+            fragment_default_flags: 0,
+            edit_shift: 0,
+        });
+        assert_eq!(session.step(1), Status::Error);
+        assert_eq!(session.error(), Some(Error::ResourceLimit));
+        assert!(session.pending.is_none());
     }
 }
