@@ -13,7 +13,7 @@
  * Invocation transfers ownership of the pixels to that callback.
  *
  * Both encoders share the same demux output and frame extraction logic;
- * only the encoding step (gifenc vs wasm-webp) differs.
+ * only the GIF and WebP encoding steps differ.
  *
  * Canonical source policy: [Code style](../../CONTRIBUTING.md#code-style).
  */
