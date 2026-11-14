@@ -144,6 +144,9 @@ describe('encodeGif timing', () => {
       selectedFrames: 2,
       encodedFrames: 1,
       emittedFrames: 1,
+      gifRetainedMappedFrames: 0,
+      gifRetainedImageDataWrites: 0,
+      gifRetainedWasmCapacityBytes: 0,
     });
   });
 
