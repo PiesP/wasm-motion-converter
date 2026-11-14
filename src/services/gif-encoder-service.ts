@@ -15,7 +15,7 @@
  *
  * Pipeline:
  *   1. decodeFrames streams frames via callback (no array accumulation)
- *   2. Per frame: exact RGBA scratch → dither → quantize/mapPalette → pending index
+ *   2. Per frame: admitted WASM RGBA → exact dither → quantize/mapPalette → pending index
  *   3. Encoder writes GIF incrementally
  */
 
@@ -62,79 +62,6 @@ const GIF_SCALAR_PALETTE_BYTES = 32 * 1024;
 interface GifEncoderOptions extends BaseEncoderOptions {
   /** Assert the aggregate Worker budget using the GIF stream's live peak bytes. */
   assertAdditionalMemoryBytes?: ((additionalBytes: number) => void) | undefined;
-}
-
-// ─── Bayer Ordered Dithering ────────────────────────────────────────
-
-// Bayer ordered dithering 8x8 pattern (pre-normalized to 0-63 range)
-const BAYER_8X8 = [
-  [0, 32, 8, 40, 2, 34, 10, 42],
-  [48, 16, 56, 24, 50, 18, 58, 26],
-  [12, 44, 4, 36, 14, 46, 6, 38],
-  [60, 28, 52, 20, 62, 30, 54, 22],
-  [3, 35, 11, 43, 1, 33, 9, 41],
-  [51, 19, 59, 27, 49, 17, 57, 25],
-  [15, 47, 7, 39, 13, 45, 5, 37],
-  [63, 31, 55, 23, 61, 29, 53, 21],
-];
-
-/**
- * Pre-computed scaled threshold LUT cache.
- * Key = dither strength (0-255), Value = flattened 64-element Int8Array.
- *
- * Bounded to at most 3 entries (one per quality level: 0, 8, 12).
- * Each entry is a 64-element Int8Array (~64 bytes).
- *
- * Instead of computing (BAYER[y][x] - 32) * scale per-pixel per-frame,
- * we pre-compute the threshold for each quality's strength once.
- */
-const DITHER_LUT_CACHE: Map<number, Int8Array> = new Map();
-
-function getDitherLUT(strength: number): Int8Array {
-  let lut = DITHER_LUT_CACHE.get(strength);
-  if (lut) return lut;
-
-  const scale = strength / 64;
-  lut = new Int8Array(64);
-  for (let y = 0; y < 8; y++) {
-    for (let x = 0; x < 8; x++) {
-      lut[y * 8 + x] = ((BAYER_8X8[y]![x]! - 32) * scale) | 0;
-    }
-  }
-  DITHER_LUT_CACHE.set(strength, lut);
-  return lut;
-}
-
-/**
- * Apply Bayer ordered dithering to the RGB channels of an RGBA buffer in-place.
- * Uses pre-computed LUT for thresholds — avoids per-pixel multiply.
- * Skips pixels where threshold === 0 (1/64 of pixels at strength=8).
- */
-function bayerDitherRgba(rgba: Uint8Array, width: number, height: number, strength: number): void {
-  if (strength <= 0) return;
-
-  const lut = getDitherLUT(strength);
-
-  for (let y = 0; y < height; y++) {
-    const rowOffset = y * width * 4;
-    const lutRow = y & 7;
-    for (let x = 0; x < width; x++) {
-      const threshold = lut[lutRow * 8 + (x & 7)]!;
-      if (threshold === 0) continue;
-
-      const idx = rowOffset + x * 4;
-      const r = rgba[idx]!;
-      const g = rgba[idx + 1]!;
-      const b = rgba[idx + 2]!;
-
-      const rt = r + threshold;
-      const gt = g + threshold;
-      const bt = b + threshold;
-      rgba[idx] = rt < 0 ? 0 : rt > 255 ? 255 : rt;
-      rgba[idx + 1] = gt < 0 ? 0 : gt > 255 ? 255 : gt;
-      rgba[idx + 2] = bt < 0 ? 0 : bt > 255 ? 255 : bt;
-    }
-  }
 }
 
 const GIF_MIN_FRAME_DELAY_CS = GIF_MIN_FRAME_DELAY_MS / 10;
@@ -271,7 +198,6 @@ export async function encodeGif(
   opts.assertAdditionalMemoryBytes?.(initialStreamCapacity);
   const pixelCount = w * h;
   const exactRgbaBytes = pixelCount * 4;
-  let exactRgbaScratch: Uint8Array | null = null;
   let lastIndexedData: Uint8Array | null = null;
   let liveIndexedBytes = 0;
   let comparisonWorkingBytes = 0;
@@ -279,13 +205,11 @@ export async function encodeGif(
 
   const assertGifWorkingMemory = (
     streamPeakBytes: number,
-    scratchBytes = exactRgbaScratch?.byteLength ?? 0,
     indexedBytes = liveIndexedBytes + comparisonWorkingBytes,
     wasmPeakBytes = wasmCapacity
   ): void => {
     const additionalBytes =
       streamPeakBytes +
-      scratchBytes +
       indexedBytes +
       wasmPeakBytes +
       (wasmPeakBytes > 0 ? GIF_SCALAR_PALETTE_BYTES : 0);
@@ -305,7 +229,6 @@ export async function encodeGif(
     (oldBytes, newBytes) =>
       assertGifWorkingMemory(
         encoder.stream.buffer.byteLength,
-        exactRgbaScratch?.byteLength ?? 0,
         liveIndexedBytes + comparisonWorkingBytes,
         oldBytes + newBytes
       ),
@@ -387,7 +310,6 @@ export async function encodeGif(
     const comparisonBytes = lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
     assertGifWorkingMemory(
       encoder.stream.buffer.byteLength,
-      exactRgbaBytes,
       liveIndexedBytes + pixelCount + comparisonBytes
     );
     const paletteMapStart = opts.profileOperation ? performance.now() : null;
@@ -407,7 +329,6 @@ export async function encodeGif(
       indexed.buffer instanceof ArrayBuffer ? indexed.buffer.byteLength : indexed.byteLength;
     assertGifWorkingMemory(
       encoder.stream.buffer.byteLength,
-      exactRgbaBytes,
       liveIndexedBytes + indexedBytes + comparisonBytes
     );
     const compact = compactIndexedPalette(indexed, palette);
@@ -589,7 +510,6 @@ export async function encodeGif(
               try {
                 assertGifWorkingMemory(
                   encoder.stream.buffer.byteLength,
-                  exactRgbaBytes,
                   liveIndexedBytes + pixelCount + GIF_PALETTE_COMPARISON_BYTES
                 );
               } catch (error) {
@@ -610,22 +530,12 @@ export async function encodeGif(
                 `Decoded RGBA buffer is too small: expected ${exactRgbaBytes} bytes, got ${rgbaData.byteLength}`
               );
             }
-            assertGifWorkingMemory(
-              encoder.stream.buffer.byteLength,
-              exactRgbaBytes,
-              liveIndexedBytes
-            );
-            if (!exactRgbaScratch) {
-              exactRgbaScratch = new Uint8Array(exactRgbaBytes);
-            }
+            assertGifWorkingMemory(encoder.stream.buffer.byteLength, liveIndexedBytes);
             const pixelPreparationStart = opts.profileOperation ? performance.now() : null;
-            exactRgbaScratch.set(rgbaData.subarray(0, exactRgbaBytes));
+            const exactRgba = rgbaData.subarray(0, exactRgbaBytes);
+            quantizePalette.prepare(exactRgba, w, h, ditherStrength);
             globalBufferPool.release(rgbaData);
             rgbaReleased = true;
-
-            if (ditherStrength > 0) {
-              bayerDitherRgba(exactRgbaScratch, w, h, ditherStrength);
-            }
             if (pixelPreparationStart !== null) {
               opts.profileOperation?.(
                 'gifPixelPreparation',
@@ -636,14 +546,14 @@ export async function encodeGif(
             // Quantize independently; only an exact post-quantization match may
             // extend the pending frame's source presentation interval.
             const quantizationStart = opts.profileOperation ? performance.now() : null;
-            const framePalette = quantizePalette(exactRgbaScratch, maxColors);
+            const framePalette = quantizePalette.quantizePrepared(maxColors);
             if (quantizationStart !== null) {
               opts.profileOperation?.(
                 'gifQuantization',
                 Math.max(0, performance.now() - quantizationStart)
               );
             }
-            const candidate = prepareIndexedFrame(exactRgbaScratch, framePalette);
+            const candidate = prepareIndexedFrame(exactRgba, framePalette);
             const precedingIndexedBytes = liveIndexedBytes;
             liveIndexedBytes += candidate.indexedBytes;
             comparisonWorkingBytes = lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
@@ -749,9 +659,8 @@ export async function encodeGif(
       }
     }
 
-    // Pixel scratch and the tail index are no longer needed during GIF stream
-    // finalization, which may allocate a second output-sized buffer.
-    exactRgbaScratch = null;
+    // The tail index is no longer needed during GIF stream finalization,
+    // which may allocate a second output-sized buffer.
     lastIndexedData = null;
     liveIndexedBytes = 0;
     comparisonWorkingBytes = 0;
@@ -811,7 +720,6 @@ export async function encodeGif(
 
     return rawBytes;
   } finally {
-    exactRgbaScratch = null;
     lastIndexedData = null;
     liveIndexedBytes = 0;
     comparisonWorkingBytes = 0;

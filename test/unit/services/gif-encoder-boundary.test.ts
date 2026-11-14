@@ -42,14 +42,20 @@ vi.mock('@services/gif-scalar-wasm', async () => {
   const gifenc = await import('gifenc');
   return {
     createGifScalarQuantizer: async () => {
-      const quantize = (rgba: Uint8Array, colors: number) => {
-        mocks.quantizeInputs.push(rgba);
-        return gifenc.quantize(rgba, colors, { format: 'rgb565' });
-      };
+      let prepared = new Uint8Array();
+      const quantize = (rgba: Uint8Array, colors: number) =>
+        gifenc.quantize(rgba, colors, { format: 'rgb565' });
       return Object.assign(quantize, {
-        mapPalette: (rgba: Uint8Array, palette: number[][]) => {
-          mocks.applyInputs.push(rgba);
-          const result = gifenc.applyPalette(rgba, palette, 'rgb565');
+        prepare: (rgba: Uint8Array) => {
+          prepared = rgba.slice();
+        },
+        quantizePrepared: (colors: number) => {
+          mocks.quantizeInputs.push(prepared);
+          return quantize(prepared, colors);
+        },
+        mapPalette: (_rgba: Uint8Array, palette: number[][]) => {
+          mocks.applyInputs.push(prepared);
+          const result = gifenc.applyPalette(prepared, palette, 'rgb565');
           mocks.applyResults.push(result);
           return result;
         },
@@ -146,8 +152,6 @@ describe('GIF exact pixel boundaries', () => {
     expect(mocks.applyResults[0]?.buffer.byteLength).toBe(width * height);
     expect(mocks.writeInputs).toHaveLength(1);
     expect(mocks.writeInputs[0]).toBe(mocks.applyResults[0]);
-    expect(memoryChecks.some((bytes) => bytes >= 4096 + exactRgbaBytes + width * height)).toBe(
-      true
-    );
+    expect(memoryChecks.some((bytes) => bytes >= 4096 + width * height)).toBe(true);
   });
 });

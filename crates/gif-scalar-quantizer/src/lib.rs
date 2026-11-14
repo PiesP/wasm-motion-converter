@@ -15,6 +15,11 @@ const DELETED: u32 = (BIN_COUNT - 1) as u32;
 const PAGE_BYTES: usize = 65_536;
 const LZW_HASH_SIZE: usize = 5003;
 const LZW_MAX_CODE: u32 = 4096;
+const BAYER_8X8: [i16; 64] = [
+    0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60,
+    28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15,
+    47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21,
+];
 
 // The field order keeps each bin at 64 bytes. All arithmetic stays f64 and in
 // the same expression order as the locked gifenc RGB565 path.
@@ -57,6 +62,7 @@ struct State {
     palette: [u8; 256 * 3],
     reserved_input_len: u32,
     input_was_mapped: bool,
+    input_prepared: bool,
 }
 
 struct ConversionState(UnsafeCell<State>);
@@ -73,7 +79,13 @@ static STATE: ConversionState = ConversionState(UnsafeCell::new(State {
     palette: [0; 256 * 3],
     reserved_input_len: 0,
     input_was_mapped: false,
+    input_prepared: false,
 }));
+
+#[no_mangle]
+pub extern "C" fn abi_version() -> u32 {
+    2
+}
 
 extern "C" {
     static __heap_base: u8;
@@ -111,7 +123,60 @@ pub extern "C" fn reserve_input(input_len: u32) -> i32 {
     unsafe {
         (*STATE.0.get()).reserved_input_len = input_len;
         (*STATE.0.get()).input_was_mapped = false;
+        (*STATE.0.get()).input_prepared = false;
     };
+    0
+}
+
+// Apply the locked JS 8x8 Bayer threshold after the host has made its one
+// admitted RGBA copy. Signed integer division truncates toward zero, matching
+// the Int8 LUT's `(value * strength / 64) | 0` for every supported strength.
+#[no_mangle]
+pub extern "C" fn prepare_rgba(input_len: u32, width: u32, height: u32, strength: u32) -> i32 {
+    if input_len == 0
+        || input_len as usize > isize::MAX as usize
+        || width == 0
+        || height == 0
+        || strength > 255
+    {
+        return -1;
+    }
+    let Some(pixels) = width.checked_mul(height) else {
+        return -1;
+    };
+    if pixels.checked_mul(4) != Some(input_len) {
+        return -1;
+    }
+    let state = unsafe { &mut *STATE.0.get() };
+    if state.reserved_input_len != input_len || state.input_was_mapped || state.input_prepared {
+        return -1;
+    }
+    let Some(end) = input_start().checked_add(input_len as usize) else {
+        return -1;
+    };
+    if end > memory_size::<0>() * PAGE_BYTES {
+        return -2;
+    }
+    // The input arena begins at __heap_base and is disjoint from static State.
+    // No input borrow survives this synchronous ABI call.
+    let rgba =
+        unsafe { core::slice::from_raw_parts_mut(input_start() as *mut u8, input_len as usize) };
+    if strength != 0 {
+        for y in 0..height as usize {
+            for x in 0..width as usize {
+                let threshold =
+                    ((BAYER_8X8[(y & 7) * 8 + (x & 7)] - 32) as i32 * strength as i32) / 64;
+                if threshold == 0 {
+                    continue;
+                }
+                let offset = (y * width as usize + x) * 4;
+                for channel in &mut rgba[offset..offset + 3] {
+                    *channel = (*channel as i32 + threshold).clamp(0, 255) as u8;
+                }
+            }
+        }
+    }
+    state.input_prepared = true;
     0
 }
 
