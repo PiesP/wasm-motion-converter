@@ -9,6 +9,7 @@ import {
 } from '@services/owned-demux-core';
 import {
   activeOwnedInputGeneration,
+  MAX_OWNED_INDEX_DESCRIPTION_BYTES,
   publishOwnedInputIndex,
 } from '@services/owned-input-index-cache';
 import type { VideoMetadata, VideoRotation } from '@t/conversion-types';
@@ -50,12 +51,20 @@ export async function extractVideoMetadata(
         ? Math.round(stats.averageBitrate)
         : 0;
     const selectedGeneration = source instanceof Blob ? activeOwnedInputGeneration(source) : null;
-    if (source instanceof Blob && selectedGeneration !== null) {
+    if (
+      source instanceof Blob &&
+      selectedGeneration !== null &&
+      track.description.byteLength <= MAX_OWNED_INDEX_DESCRIPTION_BYTES
+    ) {
       const snapshot = await session.exportIndex(signal);
       if (snapshot) {
         const fingerprint = await fingerprintOwnedDemuxSource(source, signal);
         signal?.throwIfAborted();
-        publishOwnedInputIndex(source, selectedGeneration, snapshot, fingerprint, signal);
+        publishOwnedInputIndex(source, selectedGeneration, snapshot, fingerprint, signal, {
+          packetCount: track.packetCount,
+          maxPacketBytes: track.maxPacketBytes,
+          descriptionBytes: track.description.byteLength,
+        });
       }
     }
     const rotation: VideoRotation =

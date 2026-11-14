@@ -61,7 +61,11 @@ export function buildConversionRequest(
     maxFrames: options.maxFrames,
     maxOutputBytes: options.maxOutputBytes,
   });
-  const selectedSnapshot = indexSnapshot ?? (inputBlob ? copyOwnedInputIndex(inputBlob) : null);
+  const selectedSnapshot =
+    indexSnapshot ??
+    (inputBlob
+      ? copyOwnedInputIndex(inputBlob, config?.description?.byteLength, options.trimStart)
+      : null);
   return {
     ...(inputBuffer !== undefined ? { inputBuffer } : {}),
     ...(inputBlob !== undefined ? { inputBlob } : {}),

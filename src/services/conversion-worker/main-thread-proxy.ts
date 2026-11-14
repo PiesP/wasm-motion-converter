@@ -300,7 +300,10 @@ export async function runPipelineViaWorker(
     // copy, transferred only after Worker construction and abort registration.
     let indexSnapshot: OwnedInputIndexSnapshot | null;
     try {
-      indexSnapshot = input instanceof Blob ? copyOwnedInputIndex(input) : null;
+      indexSnapshot =
+        input instanceof Blob
+          ? copyOwnedInputIndex(input, config.description?.byteLength ?? 0, options.trimStart)
+          : null;
     } catch (error) {
       settled = true;
       cleanup();
