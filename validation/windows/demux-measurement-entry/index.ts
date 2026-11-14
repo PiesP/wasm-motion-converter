@@ -64,7 +64,7 @@ export async function seek(source: Blob, selected: VideoMetadata, trimStart: num
   );
   const transferStartMs = performance.now();
   const transferred = structuredClone(
-    { source, snapshot },
+    { source, snapshot, selected },
     snapshot ? { transfer: [snapshot.bytes] } : undefined
   );
   const hostTransferMs = performance.now() - transferStartMs;
@@ -79,7 +79,7 @@ export async function seek(source: Blob, selected: VideoMetadata, trimStart: num
     trimEnd: 0,
     maxMemoryMB: 512,
   };
-  const result = await demuxVideo(request, selected);
+  const result = await demuxVideo(request, transferred.selected);
   try {
     for await (const chunk of result.chunks) {
       return {
