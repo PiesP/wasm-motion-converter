@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vite-plus/test';
 
 import {
   RgbaFrameCollector,
+  readMetadata,
   declaredOutputs,
   extractVp8Frames,
   writeIvf,
@@ -40,6 +41,20 @@ function animation(...frames: Buffer[]): Buffer {
 }
 
 describe('saved animation verifier', () => {
+  it('reads PowerShell UTF-8 BOM metadata while preserving its exact receipt digest', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vp8-bom-receipt-'));
+    try {
+      const path = join(root, 'result.json');
+      await writeFile(path, '\uFEFF{"status":"passed"}\r\n', 'utf8');
+      expect(await readMetadata(path)).toEqual({
+        value: { status: 'passed' },
+        sha256: '8dff0e2036bae5ab4238c518bbdd4bf9d504b71e2c2053abf6010fdc3b10f59b',
+      });
+    } finally {
+      await rm(root, { recursive: true });
+    }
+  });
+
   it('extracts odd-padded VP8 payloads into exact millisecond IVF frame boundaries', async () => {
     const bytes = animation(frame(83), frame(167));
     const { parsed, frames } = extractVp8Frames(bytes);

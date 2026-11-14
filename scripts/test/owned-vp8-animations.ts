@@ -327,9 +327,12 @@ function parseArgs(argv: string[]) {
   };
 }
 
-async function readMetadata(path: string) {
+export async function readMetadata(path: string) {
   const bytes = await readFile(path);
-  return { sha256: sha256(bytes), value: JSON.parse(bytes.toString('utf8')) as unknown };
+  return {
+    sha256: sha256(bytes),
+    value: JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/u, '')) as unknown,
+  };
 }
 
 function assertReportName(name: string): void {
