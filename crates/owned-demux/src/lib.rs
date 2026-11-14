@@ -124,6 +124,7 @@ struct EbmlState {
     observed_duration: u64,
     cluster_time: u64,
     presentation: BTreeMap<(i64, usize), usize>,
+    display_explicit: bool,
 }
 impl Default for EbmlState {
     fn default() -> Self {
@@ -134,6 +135,7 @@ impl Default for EbmlState {
             observed_duration: 0,
             cluster_time: 0,
             presentation: BTreeMap::new(),
+            display_explicit: false,
         }
     }
 }
@@ -200,6 +202,44 @@ impl Mp4Session {
     }
     fn codec_string(&self) -> &str {
         &self.codec_string
+    }
+
+    fn probe_vp9(&mut self, length: usize) -> Result<(), Error> {
+        if self.format != Format::Ebml
+            || self.status != Status::Complete
+            || !self.codec_string.is_empty()
+            || length == 0
+            || length > 4096
+        {
+            return Err(Error::Invalid);
+        }
+        let track = self.track.as_mut().ok_or(Error::Invalid)?;
+        if track.codec != *b"VP90" {
+            return Err(Error::Unsupported);
+        }
+        let metadata = codec_metadata::vp9_from_keyframe(&self.input[..length])?;
+        let codec = metadata.codec_string()?;
+        if codec.len() > 128 {
+            return Err(Error::ResourceLimit);
+        }
+        if !self.ebml.display_explicit {
+            track.display_width = metadata.render_width;
+            track.display_height = metadata.render_height;
+        }
+        if track.color_primaries == 0 {
+            track.color_primaries = metadata.color_primaries as u16;
+        }
+        if track.color_transfer == 0 {
+            track.color_transfer = metadata.color_transfer as u16;
+        }
+        if track.color_matrix == 0 {
+            track.color_matrix = metadata.color_matrix as u16;
+        }
+        if track.color_full_range == -1 {
+            track.color_full_range = i8::from(metadata.full_range);
+        }
+        self.codec_string = codec;
+        Ok(())
     }
 
     fn begin_ts_packet(&mut self, index: usize) -> Result<(), Error> {
@@ -328,8 +368,9 @@ impl Mp4Session {
         Ok(None)
     }
 
-    /// Each call performs at most `work_credit` top-level box or 64 KiB copy steps.
-    /// The host must return to a real task between yielded calls.
+    /// Each call performs at most `work_credit` outer steps. An index step
+    /// expands at most 64 samples; a source-copy or TS-feed step reads at most
+    /// 64 KiB. The host returns to a browser task between yielded calls.
     pub fn step(&mut self, work_credit: u32) -> Status {
         if self.status == Status::Error || self.status == Status::Complete || self.need.is_some() {
             return self.status;
@@ -553,10 +594,10 @@ impl Mp4Session {
                     }
                 } else if pending.kind == *b"trks" {
                     if self.track.is_none() {
-                        self.track = Some(
-                            ebml::parse_tracks(&pending.data, self.ebml.scale, self.ebml.duration)?
-                                .0,
-                        );
+                        let (track, _, display_explicit) =
+                            ebml::parse_tracks(&pending.data, self.ebml.scale, self.ebml.duration)?;
+                        self.track = Some(track);
+                        self.ebml.display_explicit = display_explicit;
                     }
                 }
                 continue;
@@ -1063,6 +1104,11 @@ pub extern "C" fn demux_packet(index: u32) -> u32 {
     else {
         return 0;
     };
+    if state.session.as_ref().is_some_and(|session| {
+        session.format == Format::Ts && session.ts_source(index as usize).is_none()
+    }) {
+        return 0;
+    }
     state.event.fill(0);
     state.event[0..4].copy_from_slice(&5u32.to_le_bytes());
     state.event[8..16].copy_from_slice(&packet.offset.to_le_bytes());
@@ -1104,6 +1150,23 @@ pub extern "C" fn demux_prepare_packets(max_packet: u32) -> u32 {
         .session
         .as_mut()
         .is_some_and(|session| session.prepare_ts_packets(max_packet).is_ok()) as u32
+}
+
+#[no_mangle]
+pub extern "C" fn demux_probe_vp9(length: u32) -> u32 {
+    let Ok(mut state) = abi().lock() else {
+        return 0;
+    };
+    let Some(session) = state.session.as_mut() else {
+        return 0;
+    };
+    match session.probe_vp9(length as usize) {
+        Ok(()) => 1,
+        Err(Error::Unsupported) => 2,
+        Err(Error::Invalid | Error::Truncated) => 3,
+        Err(Error::ResourceLimit) => 4,
+        Err(Error::Overflow) => 5,
+    }
 }
 
 #[no_mangle]
@@ -1172,5 +1235,43 @@ mod tests {
         assert_eq!(session.step(1), Status::Error);
         assert_eq!(session.error(), Some(Error::ResourceLimit));
         assert!(session.pending.is_none());
+    }
+
+    #[test]
+    fn malformed_ranges_terminate_and_new_sessions_reset_state() {
+        let mut seed = 0x5eed_492u32;
+        for length in [8usize, 17, 257, 4096] {
+            for _ in 0..16 {
+                let mut source = vec![0u8; length];
+                for byte in &mut source {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    *byte = seed as u8;
+                }
+                let mut session = Mp4Session::new(length as u64).unwrap();
+                let mut terminal = false;
+                for _ in 0..256 {
+                    match session.step(64) {
+                        Status::NeedInput => {
+                            let request = session.request().unwrap();
+                            let start = request.offset as usize;
+                            let end = start + request.length as usize;
+                            assert!(end <= source.len());
+                            session.input[..request.length as usize]
+                                .copy_from_slice(&source[start..end]);
+                            session.feed(request.length as usize).unwrap();
+                        }
+                        Status::Yield => {}
+                        Status::Error => {
+                            terminal = true;
+                            break;
+                        }
+                        Status::Complete => panic!("malformed media completed"),
+                    }
+                }
+                assert!(terminal, "malformed input failed to terminate");
+            }
+        }
     }
 }

@@ -163,7 +163,7 @@ fn video_size(data: &[u8]) -> Result<(u32, u32, u32, u32, u16, u16, u16, i8), Er
     ))
 }
 
-pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u64), Error> {
+pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u64, bool), Error> {
     for (id, entry) in children(data, 256)? {
         if id != TRACK_ENTRY {
             continue;
@@ -188,6 +188,7 @@ pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u6
             _ => return Err(Error::Unsupported),
         };
         let video = find(entry, 0xe0)?.ok_or(Error::Unsupported)?;
+        let display_explicit = find(video, 0x54b0)?.is_some() || find(video, 0x54ba)?.is_some();
         let (
             width,
             height,
@@ -250,6 +251,7 @@ pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u6
                 edit_shift: 0,
             },
             scale,
+            display_explicit,
         ));
     }
     Err(Error::Unsupported)
