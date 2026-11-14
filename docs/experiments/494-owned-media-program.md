@@ -190,3 +190,7 @@ range/MAD and <=500ms active cancellation/recovery remain required. Report
 source reads, copied bytes, snapshot live bytes and reserved WASM capacity
 separately. Exact config/packet/seek/output and source replacement/late-I/O tests
 must pass; reduced read count alone does not qualify production adoption.
+
+## #495 qualification result
+
+The unchanged prospective contract is evaluated in [the owned demux report](495-owned-demux-results.md) and [raw numerical results](495-owned-demux-results.json). V5 passes all 14 conditions; V4 remains a separately retained failed cohort. Issue #494 will record actual protected integration and deployment disposition after those gates complete.
