@@ -33,6 +33,8 @@ async function main(): Promise<void> {
     configFile: false,
     root,
     base: '/',
+    mode: 'production',
+    define: { __APP_SOURCE_SHA__: JSON.stringify(sourceSha) },
     resolve: { alias: appAliases },
     build: {
       target: 'es2022',
@@ -42,6 +44,7 @@ async function main(): Promise<void> {
       manifest: true,
       rollupOptions: {
         input: entry,
+        preserveEntrySignatures: 'strict',
         output: {
           entryFileNames: 'entry.js',
           chunkFileNames: 'assets/[name]-[hash].js',
