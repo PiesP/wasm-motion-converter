@@ -1155,7 +1155,7 @@
       "decodedDurationUs": 1000000
     }
   },
-  "qualificationStatus": "Performance, deterministic-output and actual Chrome/Edge active cancellation/recovery gates passed; final combined verification/protected integration pending.",
+  "qualificationStatus": "ADOPT complete retained-state candidate after performance/output/resource/actual Chrome and Edge lifecycle gates; final protected CI, integration and deployment tracked in issues494/496.",
   "deliveredExecutableAssets": {
     "baseline": {
       "sourceSha": "eba3cebad1f8234a2bc44b2ccbc8ac67472cfef2",
@@ -6131,5 +6131,15 @@
         }
       ]
     }
-  ]
+  ],
+  "finalLocalVerification": {
+    "sourceSha": "e406a8fa2a79c37aad8be0026cc0172785c4692a",
+    "command": "vp run verify:full",
+    "tasksPassed": 11,
+    "policyTestsPassed": 39,
+    "unitBrowserTestsPassed": 1643,
+    "e2eTestsPassed": 78,
+    "integratedTypeCheckedFiles": 354,
+    "laterResultRevisionExecutableChanges": false
+  }
 }
