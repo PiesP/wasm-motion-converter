@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-use crate::{Error, Packet, Track, MAX_SAMPLES, METADATA_BUDGET, PACKET_BUDGET};
+use crate::{codec_metadata, Error, Packet, Track, MAX_SAMPLES, METADATA_BUDGET, PACKET_BUDGET};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy)]
@@ -144,6 +144,7 @@ fn sample_description(data: &[u8]) -> Result<SampleDescription, Error> {
     if description.is_empty() || description.len() > 1024 * 1024 {
         return Err(Error::ResourceLimit);
     }
+    let signal = codec_metadata::from_config(codec, description)?;
     let (display_width, display_height) = if let Some(pasp) = child(extra, *b"pasp")? {
         let h = u32be(pasp, 0)?;
         let v = u32be(pasp, 4)?;
@@ -155,7 +156,11 @@ fn sample_description(data: &[u8]) -> Result<SampleDescription, Error> {
             height.checked_mul(v).ok_or(Error::Overflow)?,
         )
     } else {
-        (width, height)
+        let (num, den) = signal.map_or((1, 1), |metadata| (metadata.sar_num, metadata.sar_den));
+        (
+            width.checked_mul(num).ok_or(Error::Overflow)?,
+            height.checked_mul(den).ok_or(Error::Overflow)?,
+        )
     };
     let (color_primaries, color_transfer, color_matrix, color_full_range) =
         if let Some(colr) = child(extra, *b"colr")? {
@@ -171,10 +176,24 @@ fn sample_description(data: &[u8]) -> Result<SampleDescription, Error> {
                     },
                 )
             } else {
-                (0, 0, 0, 0)
+                signal.map_or((0, 0, 0, -1), |metadata| {
+                    (
+                        metadata.color_primaries,
+                        metadata.color_transfer,
+                        metadata.color_matrix,
+                        metadata.color_full_range,
+                    )
+                })
             }
         } else {
-            (0, 0, 0, 0)
+            signal.map_or((0, 0, 0, -1), |metadata| {
+                (
+                    metadata.color_primaries,
+                    metadata.color_transfer,
+                    metadata.color_matrix,
+                    metadata.color_full_range,
+                )
+            })
         };
     Ok(SampleDescription {
         codec,
