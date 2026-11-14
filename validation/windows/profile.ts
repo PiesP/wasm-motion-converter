@@ -3413,7 +3413,9 @@ export async function run({
           artifacts,
           fallbackRecovery
             ? { quality: 'medium', smartFrameSkip: 'off', minimumProgress: 74 }
-            : undefined
+            : ownerVideo
+              ? { quality: 'high', smartFrameSkip: 'adaptive', minimumProgress: 74 }
+              : undefined
         );
         result.cancellation = ownerVideo
           ? { ...cancellation, id: 'cancel-owner-video', inputSha256: primarySha256 }
