@@ -147,7 +147,8 @@ export async function exerciseOwnedDemuxServiceMeasurement({
       warmMetadata: 'same document and Blob, compiled/module cache, repeated metadata extraction',
       seek: 'snapshot copy, Blob structuredClone, index import or parse, verified key seek, first chunk and disposal',
       excluded: 'input staging, payload hash, diagnostic parser pass and full Worker startup',
-      reads: 'Blob.slice requested bytes and completed Blob.arrayBuffer bytes only',
+      reads:
+        'Blob.slice view extents, completed Blob.arrayBuffer bytes, and native stream reader chunks; phase-attributed call and completion counts',
       wasmCapacity: 'separate untimed diagnostic session, not the timed instance',
     },
     requests,
@@ -189,14 +190,50 @@ export async function exerciseOwnedDemuxServiceMeasurement({
             const sourceBytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
             const source = new Blob([sourceBytes]);
             const tracked = new WeakSet<Blob>([source]);
-            const reads = {
+            type Phase =
+              | 'firstMetadata'
+              | 'firstSeek'
+              | 'warmMetadata'
+              | 'warmSeek'
+              | 'diagnostic'
+              | 'unattributed';
+            const makeReads = () => ({
               sliceCalls: 0,
-              requestedBytes: 0,
+              viewSliceBytes: 0,
               arrayBufferCalls: 0,
-              completedBytes: 0,
+              arrayBufferCompletedBytes: 0,
+              arrayBufferErrors: 0,
+              streamCalls: 0,
+              defaultReaderCalls: 0,
+              byobReaderCalls: 0,
+              unobservedReaderCalls: 0,
+              streamReadCalls: 0,
+              streamCompletedBytes: 0,
+              streamDoneReads: 0,
+              streamReadErrors: 0,
+              streamNonUint8Values: 0,
+              streamLateCompletions: 0,
+              streamLateCompletedBytes: 0,
+              streamLateErrors: 0,
+              arrayBufferLateCompletions: 0,
+              arrayBufferLateCompletedBytes: 0,
+              arrayBufferLateErrors: 0,
+            });
+            const readsByPhase: Record<Phase, ReturnType<typeof makeReads>> = {
+              firstMetadata: makeReads(),
+              firstSeek: makeReads(),
+              warmMetadata: makeReads(),
+              warmSeek: makeReads(),
+              diagnostic: makeReads(),
+              unattributed: makeReads(),
             };
+            let phase: Phase = 'unattributed';
+            const closedPhases = new Set<Phase>();
+            const pendingReads = new Set<Promise<void>>();
+            const restorers: Array<() => void> = [];
             const nativeSlice = Blob.prototype.slice;
             const nativeArrayBuffer = Blob.prototype.arrayBuffer;
+            const nativeStream = Blob.prototype.stream;
             const nativeClone = globalThis.structuredClone;
             globalThis.structuredClone = ((
               value: unknown,
@@ -220,26 +257,154 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               const result = nativeSlice.call(this, start, end, type);
               if (tracked.has(this)) {
                 tracked.add(result);
-                reads.sliceCalls++;
-                reads.requestedBytes += result.size;
+                readsByPhase[phase].sliceCalls++;
+                // A slice is a view; its length is not an observed I/O amount.
+                readsByPhase[phase].viewSliceBytes += result.size;
               }
               return result;
             };
-            Blob.prototype.arrayBuffer = async function () {
-              const result = await nativeArrayBuffer.call(this);
+            Blob.prototype.arrayBuffer = function () {
+              const result = nativeArrayBuffer.call(this);
               if (tracked.has(this)) {
-                reads.arrayBufferCalls++;
-                reads.completedBytes += result.byteLength;
+                const callPhase = phase;
+                const counts = readsByPhase[callPhase];
+                counts.arrayBufferCalls++;
+                const settled = result.then(
+                  (bytes) => {
+                    counts.arrayBufferCompletedBytes += bytes.byteLength;
+                    if (closedPhases.has(callPhase)) {
+                      counts.arrayBufferLateCompletions++;
+                      counts.arrayBufferLateCompletedBytes += bytes.byteLength;
+                    }
+                  },
+                  () => {
+                    counts.arrayBufferErrors++;
+                    if (closedPhases.has(callPhase)) counts.arrayBufferLateErrors++;
+                  }
+                );
+                pendingReads.add(settled);
+                void settled.then(() => {
+                  pendingReads.delete(settled);
+                });
               }
               return result;
             };
-            const currentReads = () => ({ ...reads });
-            const delta = (before: typeof reads, after: typeof reads) => ({
-              sliceCalls: after.sliceCalls - before.sliceCalls,
-              requestedBytes: after.requestedBytes - before.requestedBytes,
-              arrayBufferCalls: after.arrayBufferCalls - before.arrayBufferCalls,
-              completedBytes: after.completedBytes - before.completedBytes,
-            });
+            Blob.prototype.stream = function () {
+              const stream = nativeStream.call(this);
+              if (!tracked.has(this)) return stream;
+              const streamPhase = phase;
+              readsByPhase[streamPhase].streamCalls++;
+              if (!(stream instanceof ReadableStream)) {
+                readsByPhase[streamPhase].unobservedReaderCalls++;
+                return stream;
+              }
+              const nativeGetReader = stream.getReader;
+              const previousGetReader = Object.getOwnPropertyDescriptor(stream, 'getReader');
+              try {
+                Object.defineProperty(stream, 'getReader', {
+                  configurable: true,
+                  writable: true,
+                  value: function (this: ReadableStream<Uint8Array>, ...args: unknown[]) {
+                    const reader = (
+                      nativeGetReader as (...values: unknown[]) => ReadableStreamReader<Uint8Array>
+                    ).apply(this, args);
+                    const callPhase = phase;
+                    if (!(reader instanceof ReadableStreamDefaultReader)) {
+                      readsByPhase[callPhase].byobReaderCalls++;
+                      return reader;
+                    }
+                    readsByPhase[callPhase].defaultReaderCalls++;
+                    const nativeRead = reader.read;
+                    const previousRead = Object.getOwnPropertyDescriptor(reader, 'read');
+                    try {
+                      Object.defineProperty(reader, 'read', {
+                        configurable: true,
+                        writable: true,
+                        value: function (this: ReadableStreamDefaultReader<Uint8Array>) {
+                          const readPhase = phase;
+                          const counts = readsByPhase[readPhase];
+                          counts.streamReadCalls++;
+                          let result: ReturnType<typeof nativeRead>;
+                          try {
+                            result = nativeRead.call(this);
+                          } catch (error) {
+                            counts.streamReadErrors++;
+                            throw error;
+                          }
+                          // Observe settlement without replacing the native read promise.
+                          const settled = result.then(
+                            ({ done, value }) => {
+                              if (done) counts.streamDoneReads++;
+                              else if (value instanceof Uint8Array) {
+                                counts.streamCompletedBytes += value.byteLength;
+                                if (closedPhases.has(readPhase))
+                                  counts.streamLateCompletedBytes += value.byteLength;
+                              } else counts.streamNonUint8Values++;
+                              if (closedPhases.has(readPhase)) counts.streamLateCompletions++;
+                            },
+                            () => {
+                              counts.streamReadErrors++;
+                              if (closedPhases.has(readPhase)) counts.streamLateErrors++;
+                            }
+                          );
+                          pendingReads.add(settled);
+                          void settled.then(() => {
+                            pendingReads.delete(settled);
+                          });
+                          return result;
+                        },
+                      });
+                      restorers.push(() => {
+                        if (previousRead) Object.defineProperty(reader, 'read', previousRead);
+                        else Reflect.deleteProperty(reader, 'read');
+                      });
+                    } catch {
+                      readsByPhase[callPhase].unobservedReaderCalls++;
+                    }
+                    return reader;
+                  },
+                });
+                restorers.push(() => {
+                  if (previousGetReader)
+                    Object.defineProperty(stream, 'getReader', previousGetReader);
+                  else Reflect.deleteProperty(stream, 'getReader');
+                });
+              } catch {
+                readsByPhase[streamPhase].unobservedReaderCalls++;
+              }
+              return stream;
+            };
+            const timedPhase = async <T>(name: Phase, work: () => Promise<T>) => {
+              phase = name;
+              const start = performance.now();
+              try {
+                const value = await work();
+                return { value, ms: performance.now() - start };
+              } finally {
+                closedPhases.add(name);
+                phase = 'unattributed';
+              }
+            };
+            const settleReads = async () => {
+              const start = performance.now();
+              const deadline = start + 2000;
+              while (pendingReads.size && performance.now() < deadline) {
+                const remaining = Math.max(1, Math.ceil(deadline - performance.now()));
+                await new Promise<void>((resolve) => {
+                  const timer = setTimeout(resolve, remaining);
+                  void Promise.allSettled([...pendingReads]).then(() => {
+                    clearTimeout(timer);
+                    resolve();
+                  });
+                });
+              }
+              return {
+                deadlineMs: 2000,
+                awaitedMs: performance.now() - start,
+                remainingReads: pendingReads.size,
+                remainingReadBytesUnverified: pendingReads.size > 0,
+              };
+            };
             const hex = (bytes: Uint8Array) =>
               Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
             const digest = async (bytes: Uint8Array) =>
@@ -313,62 +478,84 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               };
             };
             let api: Entry | undefined;
+            let readsSettled = false;
             try {
-              const beforeFirstMetadata = currentReads();
-              const firstMetadataStart = performance.now();
-              api = (await import(entry)) as Entry;
-              api.select(source);
-              const firstMetadata = await api.metadata(source);
-              const firstMetadataMs = performance.now() - firstMetadataStart;
-              const firstMetadataReads = delta(beforeFirstMetadata, currentReads());
+              const firstMetadataTimed = await timedPhase('firstMetadata', async () => {
+                api = (await import(entry)) as Entry;
+                api.select(source);
+                return api.metadata(source);
+              });
+              const firstMetadata = firstMetadataTimed.value;
               const firstMetadataValue = await summarize(firstMetadata);
 
-              const beforeFirstSeek = currentReads();
-              const firstSeekStart = performance.now();
-              const firstSeek = await api.seek(source, firstMetadata, trimStart);
-              const firstSeekMs = performance.now() - firstSeekStart;
-              const firstSeekReads = delta(beforeFirstSeek, currentReads());
+              const firstSeekTimed = await timedPhase('firstSeek', () =>
+                api!.seek(source, firstMetadata, trimStart)
+              );
+              const firstSeek = firstSeekTimed.value;
               const firstPacket = await packet(firstSeek);
 
-              const beforeWarmMetadata = currentReads();
-              const warmMetadataStart = performance.now();
-              const warmMetadata = await api.metadata(source);
-              const warmMetadataMs = performance.now() - warmMetadataStart;
-              const warmMetadataReads = delta(beforeWarmMetadata, currentReads());
+              const warmMetadataTimed = await timedPhase('warmMetadata', () =>
+                api!.metadata(source)
+              );
+              const warmMetadata = warmMetadataTimed.value;
               const warmMetadataValue = await summarize(warmMetadata);
 
-              const beforeWarmSeek = currentReads();
-              const warmSeekStart = performance.now();
-              const warmSeek = await api.seek(source, warmMetadata, trimStart);
-              const warmSeekMs = performance.now() - warmSeekStart;
-              const warmSeekReads = delta(beforeWarmSeek, currentReads());
+              const warmSeekTimed = await timedPhase('warmSeek', () =>
+                api!.seek(source, warmMetadata, trimStart)
+              );
+              const warmSeek = warmSeekTimed.value;
               const warmPacket = await packet(warmSeek);
 
-              const diagnosticReadsBefore = currentReads();
-              const ownedDiagnostic = await api.diagnosticOwnedCapacity(source);
-              const diagnosticReads = delta(diagnosticReadsBefore, currentReads());
+              const ownedDiagnostic = (
+                await timedPhase('diagnostic', () => api!.diagnosticOwnedCapacity(source))
+              ).value;
+              // Reader settlement is outside all measured latency intervals.
+              const readSettlement = await settleReads();
+              readsSettled = true;
               return {
                 engine: api.engine,
                 timeOrigin: performance.timeOrigin,
                 firstMetadata: {
-                  ms: firstMetadataMs,
-                  reads: firstMetadataReads,
+                  ms: firstMetadataTimed.ms,
+                  reads: { ...readsByPhase.firstMetadata },
                   value: firstMetadataValue,
                 },
                 warmMetadata: {
-                  ms: warmMetadataMs,
-                  reads: warmMetadataReads,
+                  ms: warmMetadataTimed.ms,
+                  reads: { ...readsByPhase.warmMetadata },
                   value: warmMetadataValue,
                 },
-                firstSeek: { ms: firstSeekMs, reads: firstSeekReads, firstPacket },
-                warmSeek: { ms: warmSeekMs, reads: warmSeekReads, firstPacket: warmPacket },
-                diagnostic: { ownedDiagnostic, reads: diagnosticReads },
+                firstSeek: {
+                  ms: firstSeekTimed.ms,
+                  reads: { ...readsByPhase.firstSeek },
+                  firstPacket,
+                },
+                warmSeek: {
+                  ms: warmSeekTimed.ms,
+                  reads: { ...readsByPhase.warmSeek },
+                  firstPacket: warmPacket,
+                },
+                diagnostic: { ownedDiagnostic, reads: { ...readsByPhase.diagnostic } },
+                unattributedReads: { ...readsByPhase.unattributed },
+                readSettlement,
               };
             } finally {
-              api?.clearSelection();
-              Blob.prototype.slice = nativeSlice;
-              Blob.prototype.arrayBuffer = nativeArrayBuffer;
-              globalThis.structuredClone = nativeClone;
+              try {
+                api?.clearSelection();
+              } finally {
+                try {
+                  try {
+                    if (!readsSettled) await settleReads();
+                  } finally {
+                    for (let index = restorers.length - 1; index >= 0; index--) restorers[index]!();
+                  }
+                } finally {
+                  Blob.prototype.slice = nativeSlice;
+                  Blob.prototype.arrayBuffer = nativeArrayBuffer;
+                  Blob.prototype.stream = nativeStream;
+                  globalThis.structuredClone = nativeClone;
+                }
+              }
             }
           },
           {
