@@ -90,7 +90,9 @@ export async function exerciseOwnedDemuxServiceMeasurement({
     const file = pathname.slice(1);
     const body =
       pathname === '/'
-        ? Buffer.from('<!doctype html><title>Demux measurement</title>')
+        ? Buffer.from(
+            '<!doctype html><title>Demux measurement</title><input id="diagnostic-file" type="file">'
+          )
         : files.get(file);
     response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
     response.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
@@ -151,10 +153,15 @@ export async function exerciseOwnedDemuxServiceMeasurement({
       firstMetadata: 'dynamic entry import, selection, metadata read/index export and disposal',
       warmMetadata: 'same document and Blob, compiled/module cache, repeated metadata extraction',
       seek: 'snapshot copy, Blob structuredClone, index import or parse, verified key seek, first chunk and disposal',
-      excluded: 'input staging, payload hash, diagnostic parser pass and full Worker startup',
+      excluded:
+        'The four latency metrics exclude input staging, payload hash, diagnostic parser pass, full drain and full Worker startup',
       reads:
-        'Blob.slice view extents, completed Blob.arrayBuffer bytes, and native stream reader chunks; phase-attributed call and completion counts',
+        'Blob.slice view extents, completed Blob.arrayBuffer bytes, native stream reader chunks and cumulative completed read wait; phase-attributed call and completion counts',
       wasmCapacity: 'separate untimed diagnostic session, not the timed instance',
+      filePreparation:
+        'owned selection and metadata extraction from the preloaded native file input after the four Blob latency samples; Playwright file staging excluded',
+      fullDrain:
+        'separate trim-zero product stream from native file input; setup and stream wall time exclude packet hashing',
     },
     requests,
     expectedEngine,
@@ -190,6 +197,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
       });
       try {
         await page.goto(origin, { waitUntil: 'load' });
+        await page.locator('#diagnostic-file').setInputFiles(path);
         const sample = await page.evaluate(
           async ({ base64, entry, trimStart }) => {
             const sourceBytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -200,6 +208,8 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               | 'firstSeek'
               | 'warmMetadata'
               | 'warmSeek'
+              | 'filePreparationDiagnostic'
+              | 'fullDrainDiagnostic'
               | 'diagnostic'
               | 'unattributed';
             const makeReads = () => ({
@@ -207,6 +217,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               viewSliceBytes: 0,
               arrayBufferCalls: 0,
               arrayBufferCompletedBytes: 0,
+              arrayBufferCompletedWaitMs: 0,
               arrayBufferErrors: 0,
               streamCalls: 0,
               defaultReaderCalls: 0,
@@ -214,6 +225,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               unobservedReaderCalls: 0,
               streamReadCalls: 0,
               streamCompletedBytes: 0,
+              streamCompletedWaitMs: 0,
               streamDoneReads: 0,
               streamReadErrors: 0,
               streamNonUint8Values: 0,
@@ -229,6 +241,8 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               firstSeek: makeReads(),
               warmMetadata: makeReads(),
               warmSeek: makeReads(),
+              filePreparationDiagnostic: makeReads(),
+              fullDrainDiagnostic: makeReads(),
               diagnostic: makeReads(),
               unattributed: makeReads(),
             };
@@ -240,6 +254,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
             const nativeArrayBuffer = Blob.prototype.arrayBuffer;
             const nativeStream = Blob.prototype.stream;
             const nativeClone = globalThis.structuredClone;
+            let diagnosticFile: File | undefined;
             globalThis.structuredClone = ((
               value: unknown,
               options?: StructuredSerializeOptions
@@ -249,7 +264,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
                 value &&
                 typeof value === 'object' &&
                 'source' in value &&
-                value.source === source &&
+                (value.source === source || value.source === diagnosticFile) &&
                 result &&
                 typeof result === 'object' &&
                 'source' in result &&
@@ -269,6 +284,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               return result;
             };
             Blob.prototype.arrayBuffer = function () {
+              const readStartMs = performance.now();
               const result = nativeArrayBuffer.call(this);
               if (tracked.has(this)) {
                 const callPhase = phase;
@@ -277,6 +293,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
                 const settled = result.then(
                   (bytes) => {
                     counts.arrayBufferCompletedBytes += bytes.byteLength;
+                    counts.arrayBufferCompletedWaitMs += performance.now() - readStartMs;
                     if (closedPhases.has(callPhase)) {
                       counts.arrayBufferLateCompletions++;
                       counts.arrayBufferLateCompletedBytes += bytes.byteLength;
@@ -329,6 +346,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
                           const readPhase = phase;
                           const counts = readsByPhase[readPhase];
                           counts.streamReadCalls++;
+                          const readStartMs = performance.now();
                           let result: ReturnType<typeof nativeRead>;
                           try {
                             result = nativeRead.call(this);
@@ -339,6 +357,7 @@ export async function exerciseOwnedDemuxServiceMeasurement({
                           // Observe settlement without replacing the native read promise.
                           const settled = result.then(
                             ({ done, value }) => {
+                              counts.streamCompletedWaitMs += performance.now() - readStartMs;
                               if (done) counts.streamDoneReads++;
                               else if (value instanceof Uint8Array) {
                                 counts.streamCompletedBytes += value.byteLength;
@@ -429,11 +448,26 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               indexSnapshotBytes: number;
               hostTransferMs: number;
             };
+            type FullDrainResult = {
+              chunks: EncodedVideoChunk[];
+              setupMs: number;
+              streamWallMs: number;
+              packetCount: number;
+              compressedBytes: number;
+              retainedByteLimit: number;
+              chunkAllowanceBytes: number;
+              indexRoute: string;
+              indexSnapshotBytes: number;
+              hostTransferMs: number;
+              reportedTotalFrames: number;
+              sourceTotalMs: number;
+            };
             type Entry = {
               engine: string;
               select: (input: Blob) => void;
               metadata: (input: Blob) => Promise<Metadata>;
               seek: (input: Blob, metadata: Metadata, trim: number) => Promise<SeekResult>;
+              diagnosticFullDrain: (input: Blob, metadata: Metadata) => Promise<FullDrainResult>;
               clearSelection: () => void;
               diagnosticOwnedCapacity: (input: Blob) => Promise<Record<string, number> | null>;
             };
@@ -513,6 +547,48 @@ export async function exerciseOwnedDemuxServiceMeasurement({
               const warmSeek = warmSeekTimed.value;
               const warmPacket = await packet(warmSeek);
 
+              const file = document.querySelector<HTMLInputElement>('#diagnostic-file')?.files?.[0];
+              if (!(file instanceof File) || file.size !== sourceBytes.byteLength)
+                throw new Error('Native file input is missing or has an unexpected size');
+              diagnosticFile = file;
+              tracked.add(file);
+              const filePreparationTimed = await timedPhase('filePreparationDiagnostic', () => {
+                readyApi.select(file);
+                return readyApi.metadata(file);
+              });
+              const fileMetadata = filePreparationTimed.value;
+              const fileMetadataValue = await summarize(fileMetadata);
+              if (JSON.stringify(fileMetadataValue) !== JSON.stringify(warmMetadataValue))
+                throw new Error('Native File metadata differs from the memory Blob metadata');
+
+              const fullDrainTimed = await timedPhase('fullDrainDiagnostic', () =>
+                readyApi.diagnosticFullDrain(file, fileMetadata)
+              );
+              const fullDrain = fullDrainTimed.value;
+              const trace: Array<{
+                type: EncodedVideoChunk['type'];
+                timestampUs: number;
+                durationUs: number | null;
+                bytes: number;
+                sha256: string;
+              }> = [];
+              try {
+                // Copy and hash only after the complete product stream has been timed.
+                for (const chunk of fullDrain.chunks) {
+                  const bytes = new Uint8Array(chunk.byteLength);
+                  chunk.copyTo(bytes);
+                  trace.push({
+                    type: chunk.type,
+                    timestampUs: chunk.timestamp,
+                    durationUs: chunk.duration,
+                    bytes: chunk.byteLength,
+                    sha256: await digest(bytes),
+                  });
+                }
+              } finally {
+                fullDrain.chunks.length = 0;
+              }
+
               const ownedDiagnostic = (
                 await timedPhase('diagnostic', () => readyApi.diagnosticOwnedCapacity(source))
               ).value;
@@ -541,6 +617,29 @@ export async function exerciseOwnedDemuxServiceMeasurement({
                   ms: warmSeekTimed.ms,
                   reads: { ...readsByPhase.warmSeek },
                   firstPacket: warmPacket,
+                },
+                filePreparationDiagnostic: {
+                  ms: filePreparationTimed.ms,
+                  sourceBacking: 'native-file-input',
+                  reads: { ...readsByPhase.filePreparationDiagnostic },
+                  value: fileMetadataValue,
+                },
+                fullDrainDiagnostic: {
+                  ms: fullDrainTimed.ms,
+                  sourceBacking: 'native-file-input',
+                  setupMs: fullDrain.setupMs,
+                  streamWallMs: fullDrain.streamWallMs,
+                  packetCount: fullDrain.packetCount,
+                  compressedBytes: fullDrain.compressedBytes,
+                  retainedByteLimit: fullDrain.retainedByteLimit,
+                  chunkAllowanceBytes: fullDrain.chunkAllowanceBytes,
+                  indexRoute: fullDrain.indexRoute,
+                  indexSnapshotBytes: fullDrain.indexSnapshotBytes,
+                  hostTransferMs: fullDrain.hostTransferMs,
+                  reportedTotalFrames: fullDrain.reportedTotalFrames,
+                  sourceTotalMs: fullDrain.sourceTotalMs,
+                  reads: { ...readsByPhase.fullDrainDiagnostic },
+                  trace,
                 },
                 diagnostic: { ownedDiagnostic, reads: { ...readsByPhase.diagnostic } },
                 unattributedReads: { ...readsByPhase.unattributed },
@@ -572,6 +671,8 @@ export async function exerciseOwnedDemuxServiceMeasurement({
           }
         );
         assert.deepEqual(sample.firstMetadata.value, sample.warmMetadata.value);
+        assert.deepEqual(sample.filePreparationDiagnostic.value, sample.warmMetadata.value);
+        assert.equal(sample.fullDrainDiagnostic.sourceBacking, 'native-file-input');
         assert.equal(sample.engine, expectedEngine);
         assert.deepEqual(sample.firstSeek.firstPacket.sha256, sample.warmSeek.firstPacket.sha256);
         assert.deepEqual(
@@ -581,6 +682,19 @@ export async function exerciseOwnedDemuxServiceMeasurement({
         assert.deepEqual(sample.firstSeek.firstPacket.type, sample.warmSeek.firstPacket.type);
         assert(sample.firstMetadata.ms > 0 && sample.warmMetadata.ms > 0);
         assert(sample.firstSeek.ms > 0 && sample.warmSeek.ms > 0);
+        assert(sample.fullDrainDiagnostic.ms > 0 && sample.fullDrainDiagnostic.streamWallMs > 0);
+        assert.equal(
+          sample.fullDrainDiagnostic.trace.length,
+          sample.fullDrainDiagnostic.packetCount
+        );
+        assert.equal(
+          sample.fullDrainDiagnostic.trace.reduce((sum, packet) => sum + packet.bytes, 0),
+          sample.fullDrainDiagnostic.compressedBytes
+        );
+        assert.equal(
+          sample.fullDrainDiagnostic.reportedTotalFrames,
+          sample.fullDrainDiagnostic.packetCount
+        );
         assert.deepEqual(errors, [], `${input.id}: browser errors`);
         (report.samples as unknown[]).push({
           id: input.id,
