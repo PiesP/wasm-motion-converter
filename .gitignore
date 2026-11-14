@@ -113,3 +113,4 @@ validation/windows/inputs/output-finalization-v2.json
 
 /validation/windows/inputs/settings-schema.json
 /validation/windows/inputs/owned-demux-service-measurement.json
+/dist-validation/owned-demux-measurement.json

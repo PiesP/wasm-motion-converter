@@ -4,13 +4,13 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { extname, join, relative, sep } from 'node:path';
+import { extname, join } from 'node:path';
 
 import type { Browser } from '@playwright/test';
 
-type BuildFile = { path: string; bytes: number; sha256: string };
+type BuildFile = { path: string; bytes: number; sha256: string; base64: string };
 type BenchmarkBuild = { schema: 1; sourceSha: string; inventory: BuildFile[] };
 
 export type DemuxMeasurementInput = {
@@ -23,15 +23,10 @@ export type DemuxMeasurementInput = {
 
 const MAX_INPUT_BYTES = 16 * 1024 * 1024;
 const MAX_BUNDLE_BYTES = 2 * 1024 * 1024;
-const BUNDLE_PATH = 'temp/owned-demux-measurement';
+const BUNDLE_PATH = 'dist-validation/owned-demux-measurement.json';
 
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
-}
-
-function inside(parent: string, child: string): boolean {
-  const path = relative(parent, child);
-  return path === '' || (path !== '..' && !path.startsWith(`..${sep}`));
 }
 
 function errorText(error: unknown): string {
@@ -60,10 +55,9 @@ export async function exerciseOwnedDemuxServiceMeasurement({
   assert(build && typeof build === 'object' && 'state' in build);
   const sourceBuild = build as { state: { sourceSha: string } };
   await mkdir(output, { recursive: true });
-  const bundlePath = await validateBundleFile(bundleRoot, BUNDLE_PATH);
-  assert((await stat(bundlePath)).isDirectory(), 'Demux measurement bundle is not a directory');
-  const manifestPath = await validateBundleFile(bundleRoot, `${BUNDLE_PATH}/build-info.json`);
+  const manifestPath = await validateBundleFile(bundleRoot, BUNDLE_PATH);
   const manifestBytes = await readFile(manifestPath);
+  assert(manifestBytes.byteLength > 0 && manifestBytes.byteLength <= 4 * 1024 * 1024);
   const manifest = JSON.parse(manifestBytes.toString('utf8')) as BenchmarkBuild;
   assert.equal(manifest.schema, 1);
   assert.match(manifest.sourceSha, /^[0-9a-f]{40}$/);
@@ -75,10 +69,9 @@ export async function exerciseOwnedDemuxServiceMeasurement({
     assert.match(file.path, /^(?:entry\.js|assets\/[\w.-]+\.(?:js|wasm))$/);
     assert(file.bytes > 0 && file.bytes <= MAX_BUNDLE_BYTES);
     assert.match(file.sha256, /^[0-9a-f]{64}$/);
+    assert.match(file.base64, /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
     assert(!files.has(file.path), 'Duplicate measurement bundle asset');
-    const path = await validateBundleFile(bundleRoot, `${BUNDLE_PATH}/${file.path}`);
-    assert(inside(bundlePath, path), 'Measurement bundle asset escaped its root');
-    const bytes = await readFile(path);
+    const bytes = Buffer.from(file.base64, 'base64');
     assert.equal(bytes.length, file.bytes);
     assert.equal(sha256(bytes), file.sha256);
     files.set(file.path, bytes);
@@ -139,7 +132,16 @@ export async function exerciseOwnedDemuxServiceMeasurement({
     status: 'running',
     browserVersion: browser.version(),
     productionBuild: build,
-    measurementBuild: { ...manifest, manifestSha256: sha256(manifestBytes) },
+    measurementBuild: {
+      schema: manifest.schema,
+      sourceSha: manifest.sourceSha,
+      inventory: manifest.inventory.map((file) => ({
+        path: file.path,
+        bytes: file.bytes,
+        sha256: file.sha256,
+      })),
+      manifestSha256: sha256(manifestBytes),
+    },
     metricLimits: {
       firstMetadata: 'dynamic entry import, selection, metadata read/index export and disposal',
       warmMetadata: 'same document and Blob, compiled/module cache, repeated metadata extraction',

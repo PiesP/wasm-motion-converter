@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,7 +24,7 @@ function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function main(): Promise<void> {
+export async function buildDemuxMeasurement(): Promise<void> {
   if (git('status', '--porcelain'))
     throw new Error('Demux measurement source checkout must be clean');
   const sourceSha = git('rev-parse', 'HEAD');
@@ -65,15 +66,17 @@ async function main(): Promise<void> {
       const bytes = await readFile(resolve(output, path));
       if (bytes.length === 0 || bytes.length > 2 * 1024 * 1024)
         throw new Error(`Demux measurement artifact exceeds its bound: ${path}`);
-      return { path, bytes: bytes.length, sha256: sha256(bytes) };
+      return { path, bytes: bytes.length, sha256: sha256(bytes), base64: bytes.toString('base64') };
     })
   );
   if (!inventory.some((file) => file.path === 'entry.js'))
     throw new Error('Demux measurement entry was not emitted');
-  await writeFile(
-    resolve(output, 'build-info.json'),
-    `${JSON.stringify({ schema: 1, sourceSha, inventory }, null, 2)}\n`
-  );
+  const packageBytes = Buffer.from(`${JSON.stringify({ schema: 1, sourceSha, inventory })}\n`);
+  if (packageBytes.byteLength > 4 * 1024 * 1024)
+    throw new Error('Demux measurement package exceeds its byte bound');
+  const validationDir = resolve(root, 'dist-validation');
+  await mkdir(validationDir, { recursive: true });
+  await writeFile(resolve(validationDir, 'owned-demux-measurement.json'), packageBytes);
 }
 
-await main();
+if (import.meta.main) await buildDemuxMeasurement();

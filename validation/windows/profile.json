@@ -306,24 +306,15 @@
         "modes": ["desktop"],
         "required_inputs": [
           "dist",
-          "temp/owned-demux-measurement",
+          "dist-validation/owned-demux-measurement.json",
           "public/test-video-ci-h264.mp4",
           "validation/windows/private-inputs",
           "validation/windows/gif-quantization-owner-video.json",
           "validation/windows/inputs/owned-demux-service-measurement.json"
         ],
-        "generated_assets": ["dist", "temp/owned-demux-measurement"],
+        "generated_assets": ["dist-validation/owned-demux-measurement.json"],
         "bundle_asset_policy": "source-modules-and-required-inputs",
-        "build_commands": [
-          ["vp", "run", "build:ci"],
-          [
-            "vp",
-            "exec",
-            "node",
-            "--experimental-strip-types",
-            "scripts/test/build-demux-measurement.ts"
-          ]
-        ],
+        "build_commands": [["vp", "run", "build:ci"]],
         "unused_full_campaign_assets": [
           "validation/windows/prior-dist",
           "validation/windows/public-target.json"
