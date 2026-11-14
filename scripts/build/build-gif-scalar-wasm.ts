@@ -121,6 +121,7 @@ function inspectWasm(bytes: Buffer): { sha256: string; rawBytes: number; gzipByt
     ['enable_retained', 'function'],
     ['map_retained', 'function'],
     ['promote_retained', 'function'],
+    ['retained_result_ptr', 'function'],
     ['release_retained', 'function'],
     ['retained_palette_len', 'function'],
     ['retained_palette_ptr', 'function'],
