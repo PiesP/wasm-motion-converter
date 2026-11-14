@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn frame_class_counts_collapse_or_signal_four_absolute_qindices() {
-        for (quality, ramp, textured) in [(60, 18, 34), (75, 22, 27), (85, 15, 14)] {
+        for (quality, ramp, textured) in [(60, 22, 34), (75, 26, 27), (85, 15, 14)] {
             for (id, qindex) in [presets::SMOOTH_QINDEX, 8, ramp, textured]
                 .into_iter()
                 .enumerate()
