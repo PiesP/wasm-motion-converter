@@ -10,6 +10,8 @@ import { resolve, join } from 'node:path';
 const output = resolve(process.argv[2] || '');
 if (!process.argv[2] || output.startsWith(resolve('public')))
   throw new Error('Use an external fixture directory');
+if (process.argv[3] && process.argv[3] !== '--variants')
+  throw new Error('Usage: generate-owned-demux-fixtures.ts OUTPUT [--variants]');
 mkdirSync(output, { recursive: true });
 const cases = [
   ['avc-baseline.mp4', ['-c:v', 'libx264', '-profile:v', 'baseline', '-bf', '0']],
@@ -102,9 +104,83 @@ const cases = [
     'hevc.ts',
     ['-c:v', 'libx265', '-x265-params', 'pools=1:frame-threads=1:log-level=error', '-f', 'mpegts'],
   ],
+  [
+    'vp9-10bit.webm',
+    [
+      '-c:v',
+      'libvpx-vp9',
+      '-deadline',
+      'realtime',
+      '-cpu-used',
+      '8',
+      '-color_primaries',
+      'bt2020',
+      '-color_trc',
+      'bt2020-10',
+      '-colorspace',
+      'bt2020nc',
+    ],
+  ],
+  [
+    'vp9-fullrange.webm',
+    ['-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8', '-color_range', 'pc'],
+  ],
+  [
+    'avc-color-sar.mp4',
+    [
+      '-c:v',
+      'libx264',
+      '-x264-params',
+      'colorprim=bt709:transfer=bt709:colormatrix=bt709:fullrange=on',
+      '-vf',
+      'setsar=2/1',
+      '-color_range',
+      'pc',
+      '-color_primaries',
+      'bt709',
+      '-color_trc',
+      'bt709',
+      '-colorspace',
+      'bt709',
+    ],
+  ],
+  [
+    'hevc-color-sar.mp4',
+    [
+      '-c:v',
+      'libx265',
+      '-x265-params',
+      'pools=1:frame-threads=1:log-level=error:colorprim=bt709:transfer=bt709:colormatrix=bt709:range=full',
+      '-vf',
+      'setsar=2/1',
+      '-color_range',
+      'pc',
+      '-color_primaries',
+      'bt709',
+      '-color_trc',
+      'bt709',
+      '-colorspace',
+      'bt709',
+    ],
+  ],
+  ['avc3-inband.mp4', ['-c:v', 'libx264', '-tag:v', 'avc3', '-bsf:v', 'dump_extra']],
+  ['avc-edit-prefix.mp4', ['-c:v', 'libx264', '-output_ts_offset', '0.5']],
 ] as const;
 const manifest = [];
-for (const [id, args] of cases) {
+const selected =
+  process.argv[3] === '--variants'
+    ? cases.filter(([id]) =>
+        [
+          'vp9-10bit.webm',
+          'vp9-fullrange.webm',
+          'avc-color-sar.mp4',
+          'hevc-color-sar.mp4',
+          'avc3-inband.mp4',
+          'avc-edit-prefix.mp4',
+        ].includes(id)
+      )
+    : cases;
+for (const [id, args] of selected) {
   const path = join(output, id);
   const command =
     id === 'av1.webm'
@@ -130,7 +206,7 @@ for (const [id, args] of cases) {
           'testsrc2=size=96x64:rate=6:duration=2',
           '-an',
           '-pix_fmt',
-          'yuv420p',
+          id === 'vp9-10bit.webm' ? 'yuv420p10le' : 'yuv420p',
           '-threads',
           '1',
           ...args,
