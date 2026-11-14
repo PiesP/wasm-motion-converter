@@ -51,7 +51,7 @@ describe('owned demux packet statistics and terminal errors', () => {
     expect(classifyOwnedDemuxError(new Error('Owned demux ABI version mismatch'))).toBeInstanceOf(
       OwnedDemuxAbiError
     );
-    expect(classifyOwnedDemuxError(new Error('Owned demux parser error 4'))).toBeInstanceOf(
+    expect(classifyOwnedDemuxError(new Error('Owned demux parser error 3'))).toBeInstanceOf(
       OwnedDemuxResourceError
     );
     expect(classifyOwnedDemuxError(new Error('Owned demux parser error 2'))).toBeInstanceOf(

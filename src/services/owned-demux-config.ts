@@ -118,9 +118,10 @@ export function ownedTimestampUs(ticks: bigint, timescale: number): number {
   const exact = (ticks * 1_000_000n) / BigInt(timescale);
   if (ticks < -bound || ticks > bound || exact < -bound || exact > bound)
     throw new RangeError('Owned video timestamp exceeds safe WebCodecs range');
-  // The patched oracle truncates (ticks / scale) * 1e6, which can differ by one
-  // microsecond from integer division. Keep that public boundary after wide checks.
-  const result = Math.trunc((Number(ticks) / timescale) * 1_000_000);
+  // The pinned reference uses an epsilon-tilted multiplier before truncation,
+  // avoiding a one-microsecond underflow at boundaries such as 123/120 seconds.
+  // Preserve that public boundary only after checked wide-integer admission.
+  const result = Math.trunc((Number(ticks) / timescale) * (1_000_000 * (1 + Number.EPSILON)));
   if (!Number.isSafeInteger(result) || Math.abs(result - Number(exact)) > 1)
     throw new RangeError('Owned video timestamp rounding exceeds its checked bound');
   return result;

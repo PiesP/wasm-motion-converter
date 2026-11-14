@@ -58,7 +58,11 @@ function findKey(source: Buffer, packet: Packet): Buffer {
   throw new Error('Oracle key bytes absent from owned source');
 }
 
-function makeWebm(mode: 'xiph' | 'fixed' | 'ebml', frame: Buffer): Buffer {
+function makeWebm(
+  mode: 'xiph' | 'fixed' | 'ebml',
+  frame: Buffer,
+  frameDurationNs = 250_000_000
+): Buffer {
   const header = element(
     '1a45dfa3',
     Buffer.concat([
@@ -72,7 +76,7 @@ function makeWebm(mode: 'xiph' | 'fixed' | 'ebml', frame: Buffer): Buffer {
     ])
   );
   const duration = Buffer.alloc(8);
-  duration.writeDoubleBE(750); // 750 ticks at 1 ms per tick.
+  duration.writeDoubleBE((frameDurationNs / 1_000_000) * 3);
   const info = element(
     '1549a966',
     Buffer.concat([
@@ -93,7 +97,7 @@ function makeWebm(mode: 'xiph' | 'fixed' | 'ebml', frame: Buffer): Buffer {
       element('73c5', unsigned(1)),
       element('83', unsigned(1)),
       element('86', Buffer.from('V_VP8')),
-      element('23e383', unsigned(250_000_000)),
+      element('23e383', unsigned(frameDurationNs)),
       video,
     ])
   );
@@ -114,8 +118,13 @@ function makeWebm(mode: 'xiph' | 'fixed' | 'ebml', frame: Buffer): Buffer {
 }
 
 function main(): void {
-  const [sourceArg, oracleArg, outputArg] = process.argv.slice(2);
-  if (!sourceArg || !oracleArg || !outputArg || process.argv.length !== 5) {
+  const [sourceArg, oracleArg, outputArg, extra] = process.argv.slice(2);
+  if (
+    !sourceArg ||
+    !oracleArg ||
+    !outputArg ||
+    (process.argv.length !== 5 && !(process.argv.length === 6 && extra === '--long-hold'))
+  ) {
     throw new Error(
       'Usage: generate-owned-demux-lacing.ts <owned-source.webm> <oracle.json> <outside-repo-output-dir>'
     );
@@ -138,7 +147,7 @@ function main(): void {
   }
   const key = fixture?.packets.find((packet) => packet.type === 'key');
   if (!key) throw new Error('Oracle has no key packet for source fixture');
-  if (key.size > 255) throw new Error('Xiph one-byte fixture requires a short key');
+  if (key.size >= 255) throw new Error('Xiph one-byte fixture requires a short key');
   const frame = findKey(source, key);
   mkdirSync(outputDir, { recursive: true });
   const outputs = (['xiph', 'fixed', 'ebml'] as const).map((mode) => {
@@ -147,12 +156,19 @@ function main(): void {
     writeFileSync(resolve(outputDir, name), bytes);
     return { name, mode, bytes: bytes.length, sha256: hash(bytes) };
   });
+  if (extra === '--long-hold') {
+    const bytes = makeWebm('fixed', frame, 5_000_000_000);
+    const name = 'owned-lacing-long-hold.webm';
+    writeFileSync(resolve(outputDir, name), bytes);
+    outputs.push({ name, mode: 'fixed', bytes: bytes.length, sha256: hash(bytes) });
+  }
   const manifest = {
     source: { name: basename(sourcePath), sha256: hash(source) },
     oracle: { sha256: hash(oracleBytes), packetSha256: key.sha256 },
     frame: { bytes: frame.length, sha256: hash(frame), repeated: 3 },
     timescaleNs: 1_000_000,
-    defaultDurationNs: 250_000_000,
+    baseDefaultDurationNs: 250_000_000,
+    longHoldDefaultDurationNs: extra === '--long-hold' ? 5_000_000_000 : null,
     declaredDurationNs: 750_000_000,
     outputs,
   };

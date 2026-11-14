@@ -110,6 +110,8 @@ export function classifyOwnedDemuxError(error: unknown, signal?: AbortSignal): E
     error instanceof OwnedDemuxConversionError
   )
     return error;
+  if (error instanceof WebAssembly.RuntimeError)
+    return new OwnedDemuxConversionError('Owned demux WASM trapped', { cause: error });
   if (error instanceof WebAssembly.LinkError)
     return new OwnedDemuxAbiError(error.message, { cause: error });
   if (error instanceof RangeError)
@@ -119,7 +121,7 @@ export function classifyOwnedDemuxError(error: unknown, signal?: AbortSignal): E
     return new OwnedDemuxAbiError(message, { cause: error });
   if (
     /resource|memory|capacity|limit|admission|out of range/i.test(message) ||
-    /parser error 4\b/.test(message)
+    /parser error 3\b/.test(message)
   )
     return new OwnedDemuxResourceError(message, { cause: error });
   return new OwnedDemuxParseError(message, { cause: error });
