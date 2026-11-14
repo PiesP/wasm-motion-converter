@@ -16,7 +16,7 @@ export type FixtureSpec = {
   width: number;
   height: number;
   layout: PixelLayout;
-  source: 'generated' | 'photo' | 'video';
+  source: 'generated' | 'tuning-photo' | 'photo' | 'video';
   frame?: number;
   repeatOf?: string;
 };
@@ -40,6 +40,18 @@ export const EXTERNAL_SOURCES = {
     author: 'BMKME',
     sha256: 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1',
   },
+} as const;
+
+export const TUNING_PHOTO = {
+  name: 'Landscape, road, clouds.jpg',
+  page: 'https://commons.wikimedia.org/wiki/File:Landscape,_road,_clouds.jpg',
+  download: 'https://upload.wikimedia.org/wikipedia/commons/e/ee/Landscape%2C_road%2C_clouds.jpg',
+  license: 'CC0-1.0',
+  author: 'Digitura',
+  originalSha256: 'd3950b277f47453e4bfcbda3028b445cb00b6c64e8b2a9362c512a2ff39fefca',
+  decodedSha256: '0c752d698e82232c286fc24c210ba7ae08a88318d2ceee607743f5d4817a2255',
+  decodedPath: 'test/fixtures/owned-vp8/tuning-photo-rgba.base64',
+  decodedBytes: 128 * 96 * 4,
 } as const;
 
 // The first five names and their pixel formulas reproduce the fifteen controls
@@ -116,6 +128,15 @@ export const FIXTURES: readonly FixtureSpec[] = [
     height: 96,
     layout: 'RGBA',
     source: 'generated',
+  },
+  {
+    id: 'tune-photo',
+    split: 'tuning',
+    class: 'photograph',
+    width: 128,
+    height: 96,
+    layout: 'RGBA',
+    source: 'tuning-photo',
   },
   {
     id: 'held-gray',
@@ -404,8 +425,31 @@ function decodeExternal(spec: FixtureSpec, paths: SourcePaths): Uint8Array {
 export function generateFixture(id: string, paths: SourcePaths = {}): PixelFixture {
   const spec = FIXTURES.find((fixture) => fixture.id === id);
   if (!spec) throw new Error(`Unknown fixture: ${id}`);
-  const pixels = spec.source === 'generated' ? fillGenerated(spec) : decodeExternal(spec, paths);
+  const pixels =
+    spec.source === 'generated'
+      ? fillGenerated(spec)
+      : spec.source === 'tuning-photo'
+        ? decodeTuningPhoto(spec)
+        : decodeExternal(spec, paths);
   return { ...spec, stride: spec.width * 4, pixels };
+}
+
+function decodeTuningPhoto(spec: FixtureSpec): Uint8Array {
+  const encoded = readFileSync(
+    new URL('../../test/fixtures/owned-vp8/tuning-photo-rgba.base64', import.meta.url),
+    'utf8'
+  );
+  const pixels = Buffer.from(encoded, 'base64');
+  if (
+    pixels.length !== TUNING_PHOTO.decodedBytes ||
+    pixels.length !== spec.width * spec.height * 4
+  ) {
+    throw new Error(`Invalid tuning photograph extent: ${pixels.length}`);
+  }
+  const digest = createHash('sha256').update(pixels).digest('hex');
+  if (digest !== TUNING_PHOTO.decodedSha256)
+    throw new Error(`Tuning photograph SHA256 mismatch: ${digest}`);
+  return pixels;
 }
 
 export function manifest(paths: SourcePaths): object {
@@ -442,9 +486,10 @@ export function manifest(paths: SourcePaths): object {
       command:
         'ffmpeg -v error -noautorotate -i SOURCE -vf FILTER -frames:v 1 -f rawvideo -pix_fmt rgba pipe:1',
       photoFilter: 'scale=512:384:flags=bicubic',
+      tuningPhotoFilter: 'scale=128:96:flags=bicubic',
       videoFilter: 'select=eq(n\\,FRAME),scale=512:288:flags=bicubic',
     },
-    sources: EXTERNAL_SOURCES,
+    sources: { ...EXTERNAL_SOURCES, tuningPhoto: TUNING_PHOTO },
     fixtures,
   };
 }

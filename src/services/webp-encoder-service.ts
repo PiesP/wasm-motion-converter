@@ -5,8 +5,8 @@
  * WebP Encoder Service — Streaming Architecture (Decode→Encode Interleaved)
  *
  * Uses wasm-webp's single-frame encodeRGB API with streaming decode→encode
- * interleaving. Frames are encoded immediately upon decoding, so only 1 RGB
- * frame exists in memory at any time during the decode→encode phase.
+ * interleaving. Ordered delivery keeps one active encoding callback; the
+ * decoder may overlap one staged RGB copy with that callback.
  *
  * Pipeline:
  *   1. decodeFrames streams frames via onFrameAvailable callback

@@ -2,12 +2,13 @@
   "schemaVersion": 1,
   "baselineRevision": "be35f5fa89a60189475fe2ef7fd446e9fa18cef4",
   "generator": "scripts/test/owned-vp8-v2-fixtures.ts",
-  "generatorSha256": "5f3d0ff5062ba9d40e584aa02e18e275378f62fbc2827c3c0ec0a9d4f291debd",
+  "generatorSha256": "397ebfe08b60f00d14ce10fb119679250486fa0bdf9db8250638efd2586904c0",
   "colorContract": "Packed opaque 8-bit code values; no alpha compression, premultiplication or ICC transform",
   "externalDecode": {
     "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
     "command": "ffmpeg -v error -noautorotate -i SOURCE -vf FILTER -frames:v 1 -f rawvideo -pix_fmt rgba pipe:1",
     "photoFilter": "scale=512:384:flags=bicubic",
+    "tuningPhotoFilter": "scale=128:96:flags=bicubic",
     "videoFilter": "select=eq(n\\,FRAME),scale=512:288:flags=bicubic"
   },
   "sources": {
@@ -26,6 +27,17 @@
       "license": "CC0-1.0",
       "author": "BMKME",
       "sha256": "c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1"
+    },
+    "tuningPhoto": {
+      "name": "Landscape, road, clouds.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Landscape,_road,_clouds.jpg",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/e/ee/Landscape%2C_road%2C_clouds.jpg",
+      "license": "CC0-1.0",
+      "author": "Digitura",
+      "originalSha256": "d3950b277f47453e4bfcbda3028b445cb00b6c64e8b2a9362c512a2ff39fefca",
+      "decodedSha256": "0c752d698e82232c286fc24c210ba7ae08a88318d2ceee607743f5d4817a2255",
+      "decodedPath": "test/fixtures/owned-vp8/tuning-photo-rgba.base64",
+      "decodedBytes": 49152
     }
   },
   "fixtures": [
@@ -156,6 +168,22 @@
         85
       ],
       "sha256": "0f0dce50271ea75d370f65176c6db29c8e00db97ef26aecfa3a139af506bcd8f"
+    },
+    {
+      "id": "tune-photo",
+      "split": "tuning",
+      "class": "photograph",
+      "width": 128,
+      "height": 96,
+      "layout": "RGBA",
+      "source": "tuning-photo",
+      "stride": 512,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "0c752d698e82232c286fc24c210ba7ae08a88318d2ceee607743f5d4817a2255"
     },
     {
       "id": "held-gray",
