@@ -107,7 +107,8 @@ format narrowing, quality changes, new hardware or paid infrastructure.
 Confirmed stale comments at initial f2d6bf67: decoder-service.ts:16 and
 constants.ts:68 still named gifenc after #492; streaming-webp-encoder.ts:5-18
 described the shared mux as wasm-webp-only. This branch corrects all three
-without changing runtime behavior. No other confirmed conflict is claimed.
+without changing runtime behavior. Later confirmed conflicts and their resolutions are recorded in the coordinator
+ledger; this initial inventory does not claim a repository-wide audit.
 
 ## #496 stage 2: prospective retained-state experiment
 
@@ -115,9 +116,12 @@ Admitted after stage-1 source was frozen, while its independent schedule remains
 in progress. Stage-1 `f21c1cf0` and all samples stay immutable. Stage 2 evaluates
 retaining compact indices/palettes and fusing compaction/hash in Rust. The
 qualified predecessor remains f2d6bf67; the new data-flow premise is an explicit
-avoidable N-byte index copy out plus N-byte copy back for compression.
+avoidable N-byte index copy out for each mapping and N-byte copy back for each
+image-data write. Duplicate elimination and delay splitting can change these counts.
 
-Reserve two protected N-byte index slots after the 4N-byte RGBA arena. The
+Reserve two protected N-byte index slots at B+max(4N,N+LZWbound(N)). This
+also keeps compressed output disjoint for tiny frames, where its bound can
+exceed the RGBA arena. The
 current transient index uses the first N bytes; pending and deferred predecessor
 use protected slots. Promotion costs one internal N-byte copy. Direct LZW from
 a retained slot must never overwrite the current transient index; compression
@@ -127,9 +131,10 @@ Hash remains only a prefilter before exact expanded-color equality. Preserve
 first-occurrence palette compaction, equal-RGB behavior, all tie/order/rounding,
 TS presentation timing, frame selection and writer byte layout.
 
-The materiality target is elimination of two N-byte host/WASM index crossings
-per selected frame on the retained route, while acknowledging the internal
-promotion copy. No physical-peak saving is presumed: linear capacity grows by
+The materiality target is elimination of N bytes per mapped frame out and
+N bytes per image-data write back on the retained route, while acknowledging
+the internal promotion copy. gifRetainedIndexMapping and gifRetainedFrameWrite
+profile sample counts distinguish these actual route observations. No physical-peak saving is presumed: linear capacity grows by
 roughly 2N while host retained indices disappear. With the current heap base,
 new rounded capacities at540-square/720-square/1080p are7,536,640/8,912,896/
 18,219,008 bytes, within existing dimension-adjusted limits. A4K retained layout
@@ -149,3 +154,39 @@ stage-2 measurements. ADOPT only if exactness, resource fallback and material
 crossing reduction plus regression gates pass; otherwise retain qualified
 stage1 with the failed candidate and an explicit resume condition. Direct
 VideoFrame ingress remains a separate conditional experiment.
+
+## #495 stage 2: bounded selected-input index reuse
+
+Admitted after initial parser differential correctness at62f5e771 (29 frozen
+inputs,505 packet traces,145 verified seeks). This is a separate implementation
+and measurement stage. Live source confirms metadata analysis currently runs on
+the main thread; there is no existing metadata Worker to reuse. A conversion
+Worker receives a structured clone of the selected immutable Blob. Do not claim
+cross-realm linear-memory reuse or retain a metadata codec instance while idle.
+
+Keep one <=8MiB logical index snapshot, keyed by the exact selected Blob object
+and a selection generation. Replacement/analysis cancellation clears it and
+rejects late publication. A bounded first/last64KiB SHA256 token supplements
+this identity; it is not a complete content hash. Each conversion transfers one
+independently owned copy of the master snapshot, checks generation/source size/
+token before import, then imports versioned fixed-width records in bounded
+host-task steps into fresh conversion-owned WASM. No raw Rust heap snapshots.
+CRC and complete field/offset/extent/time checks precede ready publication.
+Oversize prospective export or an unavailable matching cache is an ordinary
+pre-use miss and takes the normal parser route. Malformed imports, OOM, abort,
+traps and post-bootstrap errors remain terminal; never retry a failed job.
+
+Charge the idle master, per-job copy, imported index and any still-live import
+source separately. They are not extra slots inside already-counted WASM
+capacity. Preserve32MiB live metadata/index,64MiB linear capacity and128MiB demux
+envelopes including growth overlap and outstanding/retired source reads. Index
+import must prepare required reconstructed-packet scratch before external ready.
+The selected idle state retains no demux WASM or codec scratch peak.
+
+Before performance comparison freeze sources/builds and metadata/export/import/
+seek/whole-product workloads. Five balanced first/warm attempts per variant,
+max(5% baseline median,20ms) no-regression per declared condition, raw samples,
+range/MAD and <=500ms active cancellation/recovery remain required. Report
+source reads, copied bytes, snapshot live bytes and reserved WASM capacity
+separately. Exact config/packet/seek/output and source replacement/late-I/O tests
+must pass; reduced read count alone does not qualify production adoption.

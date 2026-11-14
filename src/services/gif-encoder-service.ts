@@ -6,8 +6,8 @@
  *
  * Interleaves decoding and encoding: each selected frame is indexed immediately,
  * then written when the next selected source timestamp fixes its display hold.
- * One RGBA scratch and at most two indexed frames are retained while an exact
- * duplicate is checked; the second index is charged to the existing budget.
+ * The conversion owns one admitted RGBA arena and at most two protected indexed
+ * frames. When that layout cannot fit, the admitted JS-index route is used.
  *
  * Previous architecture held ALL decoded frames in an array, causing:
  *   - 1080p @ 30fps × 5s = 146 frames × 6MB = ~900MB peak
@@ -322,7 +322,9 @@ export async function encodeGif(
       if (!globalPalette) globalPalette = palette;
     }
     if (writeStart !== null) {
-      opts.profileOperation?.('gifFrameWrite', Math.max(0, performance.now() - writeStart));
+      const elapsed = Math.max(0, performance.now() - writeStart);
+      opts.profileOperation?.('gifFrameWrite', elapsed);
+      if (retained) opts.profileOperation?.('gifRetainedFrameWrite', elapsed);
     }
     outputFrames++;
   }
@@ -593,10 +595,9 @@ export async function encodeGif(
                 }
               : prepareIndexedFrame(exactRgba, framePalette as number[][]);
             if (retainedMappingStart !== null) {
-              opts.profileOperation?.(
-                'gifPaletteMapping',
-                Math.max(0, performance.now() - retainedMappingStart)
-              );
+              const elapsed = Math.max(0, performance.now() - retainedMappingStart);
+              opts.profileOperation?.('gifPaletteMapping', elapsed);
+              opts.profileOperation?.('gifRetainedIndexMapping', elapsed);
             }
             const precedingIndexedBytes = liveIndexedBytes;
             liveIndexedBytes += candidate.indexedBytes;
