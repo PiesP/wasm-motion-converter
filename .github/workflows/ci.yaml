@@ -177,6 +177,18 @@ jobs:
         if: ${{ needs.changes.outputs.unit == 'true' }}
         run: vp run build:gif-wasm:check && vp run build:demux-wasm:check
 
+      - name: 🦀 Verify experimental VP8 engineering correctness
+        if: ${{ needs.changes.outputs.unit == 'true' }}
+        run: |
+          rustup component add clippy rustfmt --toolchain 1.99.1
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          cargo +1.99.1 fmt --manifest-path crates/owned-vp8/Cargo.toml --check
+          cargo +1.99.1 clippy --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --all-targets -- -D warnings
+          cargo +1.99.1 test --manifest-path crates/owned-vp8/Cargo.toml --locked --offline -- --include-ignored
+          cargo +1.99.1 build --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --release --target wasm32-unknown-unknown
+          node --experimental-strip-types scripts/test/owned-vp8-compiled.ts
+
       - name: Record release setup inputs
         if: ${{ needs.changes.outputs.unit == 'true' }}
         run: sha256sum .node-version package.json pnpm-lock.yaml pnpm-workspace.yaml > "$RUNNER_TEMP/release-setup-inputs.sha256"

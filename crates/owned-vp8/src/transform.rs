@@ -1,5 +1,7 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT AND BSD-3-Clause
 // Copyright (c) 2026 PiesP
+// Adapted forward transform arithmetic: Copyright (c) 2011 Google Inc.
+// See ../LICENSE.libwebp and ../PATENTS.libwebp.
 // VP8 integer transform rules: RFC 6386 sections 14.3-14.4.
 // Forward transform scaling/rounding and its structure are adapted from
 // libwebp 1.3.2 src/dsp/enc.c (Copyright 2011 Google Inc.; BSD-style license
