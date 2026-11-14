@@ -6,7 +6,7 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { extname, join, relative, resolve, sep } from 'node:path';
+import { extname, join, relative, sep } from 'node:path';
 
 import type { Browser } from '@playwright/test';
 
@@ -266,16 +266,23 @@ export async function exerciseOwnedDemuxServiceMeasurement({
             };
             const summarize = async (value: Metadata) => {
               const description = value.config?.description;
-              const descriptionBytes =
-                description instanceof ArrayBuffer
-                  ? new Uint8Array(description)
-                  : description
-                    ? new Uint8Array(
-                        description.buffer,
-                        description.byteOffset,
-                        description.byteLength
-                      )
-                    : null;
+              let descriptionBytes: Uint8Array | null = null;
+              if (description instanceof ArrayBuffer) {
+                descriptionBytes = new Uint8Array(description);
+              } else if (ArrayBuffer.isView(description)) {
+                descriptionBytes = new Uint8Array(
+                  description.buffer,
+                  description.byteOffset,
+                  description.byteLength
+                );
+              } else if (
+                typeof SharedArrayBuffer !== 'undefined' &&
+                description instanceof SharedArrayBuffer
+              ) {
+                descriptionBytes = new Uint8Array(description);
+              } else if (description) {
+                throw new Error('Unexpected decoder description buffer type');
+              }
               return {
                 width: value.width,
                 height: value.height,
