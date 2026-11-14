@@ -509,6 +509,8 @@ impl CompactIndex {
 
 enum Phase {
     Scan,
+    ValidateStsc,
+    ValidateStss,
     BuildRuns,
     HeapifyRuns,
     SortRuns,
@@ -540,6 +542,8 @@ pub struct CompactBuilder {
     max_pts: i64,
     max_pts_duration: u32,
     phase: Phase,
+    validate_at: usize,
+    validate_previous: u32,
     run_at: usize,
     heapify_at: usize,
     sort_at: usize,
@@ -697,6 +701,8 @@ impl CompactBuilder {
             max_pts: i64::MIN,
             max_pts_duration: 0,
             phase: Phase::Scan,
+            validate_at: 0,
+            validate_previous: 0,
             run_at: 0,
             heapify_at: 0,
             sort_at: 0,
@@ -823,6 +829,75 @@ impl CompactBuilder {
         Ok(())
     }
 
+    fn scan_fixed_tail(&mut self, track: &Track) -> Result<(), Error> {
+        if self.index.fixed_size == 0 {
+            return Ok(());
+        }
+        let mut count = self
+            .index
+            .count
+            .checked_sub(self.sample_at)
+            .ok_or(Error::Invalid)?
+            .min(
+                self.per_chunk
+                    .checked_sub(self.sample_in_chunk)
+                    .ok_or(Error::Invalid)?,
+            )
+            .min(self.stts_remaining);
+        if self.ctts.is_some() {
+            count = count.min(self.ctts_remaining);
+        }
+        if let Some(stss) = self.index.stss {
+            if self.stss_at < stss.count {
+                let next_key = u32be(stss.entry(&self.index.raw, self.stss_at)?, 0)?;
+                if next_key <= self.sample_at {
+                    return Err(Error::Invalid);
+                }
+                count = count.min(next_key - 1 - self.sample_at);
+            }
+        }
+        if count == 0 {
+            return Ok(());
+        }
+        let byte_count = u64::from(count)
+            .checked_mul(u64::from(self.index.fixed_size))
+            .ok_or(Error::Overflow)?;
+        let end = self.offset.checked_add(byte_count).ok_or(Error::Overflow)?;
+        if end > self.index.file_len {
+            return Err(Error::Truncated);
+        }
+        let last_dts = i64::from(count - 1)
+            .checked_mul(i64::from(self.stts_delta))
+            .and_then(|n| self.dts.checked_add(n))
+            .ok_or(Error::Overflow)?;
+        let last_pts = last_dts
+            .checked_add(self.ctts_offset)
+            .and_then(|n| n.checked_add(track.edit_shift))
+            .ok_or(Error::Overflow)?;
+        if last_pts >= self.max_pts {
+            self.max_pts = last_pts;
+            self.max_pts_duration = self.stts_delta;
+        }
+        let next_dts = i64::from(count)
+            .checked_mul(i64::from(self.stts_delta))
+            .and_then(|n| self.dts.checked_add(n))
+            .ok_or(Error::Overflow)?;
+        let size_total = self
+            .size_total
+            .checked_add(byte_count)
+            .ok_or(Error::Overflow)?;
+        self.offset = end;
+        self.size_total = size_total;
+        self.dts = next_dts;
+        self.sample_at += count;
+        self.sample_in_chunk += count;
+        self.stts_remaining -= count;
+        if self.ctts.is_some() {
+            self.ctts_remaining -= count;
+        }
+        Ok(())
+    }
+
     fn order_higher(left: RunOrder, right: RunOrder) -> bool {
         (left.start_pts, left.run) > (right.start_pts, right.run)
     }
@@ -858,10 +933,16 @@ impl CompactBuilder {
                 Phase::Scan => {
                     if self.sample_at < self.index.count {
                         self.scan_one(track)?;
+                        self.scan_fixed_tail(track)?;
                         continue;
                     }
                     if self.chunk_at as usize + 1 != self.index.offsets.count
                         || self.sample_in_chunk != self.per_chunk
+                        || self.stts_remaining != 0
+                        || self.stts_at != self.stts.count
+                        || self.ctts.is_some_and(|ctts| {
+                            self.ctts_remaining != 0 || self.ctts_at != ctts.count
+                        })
                     {
                         return Err(Error::Invalid);
                     }
@@ -870,6 +951,39 @@ impl CompactBuilder {
                         .checked_add(i64::from(self.max_pts_duration))
                         .ok_or(Error::Overflow)?;
                     track.duration = u64::try_from(end.max(0)).map_err(|_| Error::Overflow)?;
+                    self.phase = Phase::ValidateStsc;
+                }
+                Phase::ValidateStsc => {
+                    if self.validate_at < self.stsc.count {
+                        let entry = self.stsc.entry(&self.index.raw, self.validate_at)?;
+                        let first_chunk = u32be(entry, 0)?;
+                        if first_chunk <= self.validate_previous
+                            || first_chunk as usize > self.index.offsets.count
+                            || u32be(entry, 4)? == 0
+                            || u32be(entry, 8)? != 1
+                        {
+                            return Err(Error::Invalid);
+                        }
+                        self.validate_previous = first_chunk;
+                        self.validate_at += 1;
+                    } else {
+                        self.validate_at = 0;
+                        self.validate_previous = 0;
+                        self.phase = Phase::ValidateStss;
+                    }
+                }
+                Phase::ValidateStss => {
+                    if let Some(stss) = self.index.stss {
+                        if self.validate_at < stss.count {
+                            let sample = u32be(stss.entry(&self.index.raw, self.validate_at)?, 0)?;
+                            if sample <= self.validate_previous || sample > self.index.count {
+                                return Err(Error::Invalid);
+                            }
+                            self.validate_previous = sample;
+                            self.validate_at += 1;
+                            continue;
+                        }
+                    }
                     self.phase = if self.ctts.is_some() {
                         Phase::BuildRuns
                     } else {
@@ -996,15 +1110,25 @@ mod tests {
         ]
         .concat()
     }
-    fn complete(raw: Vec<u8>, file_len: u64, track: &mut Track) -> Result<CompactIndex, Error> {
+    fn complete_with_calls(
+        raw: Vec<u8>,
+        file_len: u64,
+        track: &mut Track,
+    ) -> Result<(CompactIndex, usize), Error> {
         let len = raw.len();
         let mut builder = CompactBuilder::new(raw, (0, len), file_len, track)?;
-        let mut steps = 0usize;
-        while !builder.advance(track, 64)? {
-            steps += 1;
-            assert!(steps < 100_000);
+        let mut calls = 0usize;
+        loop {
+            calls += 1;
+            if builder.advance(track, 64)? {
+                break;
+            }
+            assert!(calls < 100_000);
         }
-        builder.into_index()
+        Ok((builder.into_index()?, calls))
+    }
+    fn complete(raw: Vec<u8>, file_len: u64, track: &mut Track) -> Result<CompactIndex, Error> {
+        complete_with_calls(raw, file_len, track).map(|(index, _)| index)
     }
     fn query_packet(index: &mut CompactIndex, sample: u32) -> Packet {
         assert!(index.packet(sample).is_err());
@@ -1024,7 +1148,11 @@ mod tests {
         let raw = fixed_file(700_000, 24);
         assert!(CompactBuilder::preferred(&raw, (0, raw.len())).unwrap());
         let mut track = track();
-        let mut index = complete(raw, 16_800_100, &mut track).unwrap();
+        let (mut index, calls) = complete_with_calls(raw, 16_800_100, &mut track).unwrap();
+        assert!(
+            calls <= 1024,
+            "fixed-size sparse track took {calls} parser calls"
+        );
         assert_eq!(index.count(), 700_000);
         assert_eq!(index.max_packet(), 24);
         assert!(index.retained_bytes(&track).unwrap() < 128 * 1024);
@@ -1097,6 +1225,112 @@ mod tests {
         assert!(index.query_end());
         assert_eq!(index.packet(0).unwrap().duration, 0);
         assert_eq!(query_packet(&mut index, count - 1).duration, 1);
+    }
+
+    #[test]
+    fn fixed_batch_stops_at_chunk_time_offset_and_key_boundaries() {
+        let count = 6u32;
+        let mut raw = fixed_file(count, 3);
+        let stco = raw.windows(4).position(|bytes| bytes == b"stco").unwrap();
+        raw[stco + 8..stco + 12].copy_from_slice(&2u32.to_be_bytes());
+        raw.splice(stco + 16..stco + 16, 200u32.to_be_bytes());
+        let stco_len = stco - 4;
+        raw[stco_len..stco_len + 4].copy_from_slice(&24u32.to_be_bytes());
+        let stsc = raw.windows(4).position(|bytes| bytes == b"stsc").unwrap();
+        raw[stsc + 16..stsc + 20].copy_from_slice(&3u32.to_be_bytes());
+        let stts = raw.windows(4).position(|bytes| bytes == b"stts").unwrap();
+        raw[stts + 8..stts + 12].copy_from_slice(&2u32.to_be_bytes());
+        raw[stts + 12..stts + 16].copy_from_slice(&3u32.to_be_bytes());
+        raw[stts + 16..stts + 20].copy_from_slice(&10u32.to_be_bytes());
+        raw.splice(
+            stts + 20..stts + 20,
+            [3u32.to_be_bytes(), 20u32.to_be_bytes()].concat(),
+        );
+        raw[stts - 4..stts].copy_from_slice(&32u32.to_be_bytes());
+        let mut ctts = table_body(&[(2, 0), (4, (-5i32) as u32)]);
+        ctts[0] = 1;
+        let mut stss = vec![0; 8];
+        stss[4..8].copy_from_slice(&3u32.to_be_bytes());
+        for sample in [1u32, 4, 6] {
+            stss.extend_from_slice(&sample.to_be_bytes());
+        }
+        raw.extend_from_slice(&atom(b"ctts", &ctts));
+        raw.extend_from_slice(&atom(b"stss", &stss));
+        let mut track = track();
+        let mut index = complete(raw, 209, &mut track).unwrap();
+        assert_eq!(track.duration, 85);
+        let packets = (0..count)
+            .map(|sample| query_packet(&mut index, sample))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            packets.iter().map(|p| p.offset).collect::<Vec<_>>(),
+            [100, 103, 106, 200, 203, 206]
+        );
+        assert_eq!(
+            packets.iter().map(|p| p.pts).collect::<Vec<_>>(),
+            [0, 10, 15, 25, 45, 65]
+        );
+        assert_eq!(
+            packets.iter().map(|p| p.duration).collect::<Vec<_>>(),
+            [10, 5, 10, 20, 20, 20]
+        );
+        assert_eq!(
+            packets.iter().map(|p| p.key).collect::<Vec<_>>(),
+            [true, false, false, true, false, true]
+        );
+    }
+
+    #[test]
+    fn fixed_batch_rejects_a_late_truncated_extent() {
+        let raw = fixed_file(700_000, 24);
+        let mut track = track();
+        assert_eq!(
+            complete(raw, 16_800_099, &mut track).err(),
+            Some(Error::Truncated)
+        );
+    }
+
+    #[test]
+    fn fixed_batch_rejects_trailing_and_inconsistent_table_rows() {
+        let count = 300_000u32;
+        let file_len = 100 + u64::from(count) * 24;
+        let mut stsc = fixed_file(count, 24);
+        let stsc_type = stsc.windows(4).position(|bytes| bytes == b"stsc").unwrap();
+        stsc[stsc_type + 8..stsc_type + 12].copy_from_slice(&2u32.to_be_bytes());
+        stsc.splice(
+            stsc_type + 24..stsc_type + 24,
+            [1u32.to_be_bytes(), count.to_be_bytes(), 1u32.to_be_bytes()].concat(),
+        );
+        stsc[stsc_type - 4..stsc_type].copy_from_slice(&40u32.to_be_bytes());
+        assert_eq!(
+            complete(stsc, file_len, &mut track()).err(),
+            Some(Error::Invalid)
+        );
+
+        let mut stss = fixed_file(count, 24);
+        let mut keys = vec![0; 8];
+        keys[4..8].copy_from_slice(&1u32.to_be_bytes());
+        keys.extend_from_slice(&(count + 1).to_be_bytes());
+        stss.extend_from_slice(&atom(b"stss", &keys));
+        assert_eq!(
+            complete(stss, file_len, &mut track()).err(),
+            Some(Error::Invalid)
+        );
+
+        let mut stts = fixed_file(count, 24);
+        let stts_type = stts.windows(4).position(|bytes| bytes == b"stts").unwrap();
+        stts[stts_type + 12..stts_type + 16].copy_from_slice(&(count + 1).to_be_bytes());
+        assert_eq!(
+            complete(stts, file_len, &mut track()).err(),
+            Some(Error::Invalid)
+        );
+
+        let mut ctts = fixed_file(count, 24);
+        ctts.extend_from_slice(&atom(b"ctts", &table_body(&[(count + 1, 0)])));
+        assert_eq!(
+            complete(ctts, file_len, &mut track()).err(),
+            Some(Error::Invalid)
+        );
     }
 
     #[test]
