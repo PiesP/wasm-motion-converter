@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   analyze: vi.fn(),
   readPacket: vi.fn(),
   release: vi.fn(),
+  enablePacketReadWindow: vi.fn(),
 }));
 vi.mock('@services/owned-demux-core', () => ({
   createOwnedDemuxSession: vi.fn(async (_source: Blob | ArrayBuffer, signal?: AbortSignal) => {
@@ -23,6 +24,7 @@ vi.mock('@services/owned-demux-core', () => ({
       }),
       readPacket: mocks.readPacket,
       release: mocks.release,
+      enablePacketReadWindow: mocks.enablePacketReadWindow,
       transferStats: { wasmCapacityBytes: 8 * 1024 * 1024 },
     };
   }),
@@ -101,6 +103,7 @@ describe('demuxVideo owned parser cancellation', () => {
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(mocks.release).toHaveBeenCalledOnce();
+    expect(mocks.enablePacketReadWindow).not.toHaveBeenCalled();
   });
 
   it('aborts an active lazy packet read without publishing a chunk', async () => {
@@ -126,6 +129,7 @@ describe('demuxVideo owned parser cancellation', () => {
     await expect(next).rejects.toMatchObject({ name: 'AbortError' });
     expect(result.totalFrames).toBe(0);
     expect(mocks.release).toHaveBeenCalledOnce();
+    expect(mocks.enablePacketReadWindow).toHaveBeenCalledOnce();
   });
 
   it('recovers with a fresh session after cancellation', async () => {
@@ -141,5 +145,6 @@ describe('demuxVideo owned parser cancellation', () => {
     for await (const chunk of next.chunks) chunks.push(chunk);
     expect(chunks).toHaveLength(1);
     expect(mocks.release).toHaveBeenCalledOnce();
+    expect(mocks.enablePacketReadWindow).toHaveBeenCalledOnce();
   });
 });
