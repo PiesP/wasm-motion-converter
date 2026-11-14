@@ -51,6 +51,8 @@ vi.mock('@services/gif-scalar-wasm', () => ({
   createGifScalarQuantizer: async () => {
     const quantize = () => mocks.frames[mocks.currentFrame]!.palette;
     return Object.assign(quantize, {
+      prepare: () => {},
+      quantizePrepared: quantize,
       mapPalette: () => mocks.frames[mocks.currentFrame]!.indices.slice(),
       compress: (indices: Uint8Array, depth: number) => {
         const palette = Array.from({ length: 1 << depth }, (_, index) => [index, index, index]);

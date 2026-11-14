@@ -9,11 +9,17 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@services/gif-scalar-wasm', () => ({
-  createGifScalarQuantizer: async () =>
-    Object.assign((rgba: Uint8Array) => [[rgba[0]!, rgba[0]!, rgba[0]!]], {
+  createGifScalarQuantizer: async () => {
+    let prepared: Uint8Array = new Uint8Array();
+    return Object.assign((rgba: Uint8Array) => [[rgba[0]!, rgba[0]!, rgba[0]!]], {
+      prepare: (rgba: Uint8Array) => {
+        prepared = rgba;
+      },
+      quantizePrepared: () => [[prepared[0]!, prepared[0]!, prepared[0]!]],
       mapPalette: () => Uint8Array.of(0),
       compress: () => Uint8Array.of(2, 2, 0),
-    }),
+    });
+  },
 }));
 vi.mock('@services/gif-owned-writer', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@services/gif-owned-writer')>();

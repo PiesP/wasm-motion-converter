@@ -8,8 +8,10 @@ const PRIMARY_LINEAR_LIMIT_BYTES = 12 * 1024 * 1024;
 
 interface QuantizerExports {
   memory: WebAssembly.Memory;
+  abi_version(): number;
   input_ptr(): number;
   reserve_input(length: number): number;
+  prepare_rgba(length: number, width: number, height: number, strength: number): number;
   palette_ptr(): number;
   quantize(length: number, colors: number): number;
   indices_ptr(): number;
@@ -40,6 +42,8 @@ function throwStatus(status: number, stage: string): never {
 
 export interface GifScalarQuantizer {
   (rgba: Uint8Array, colors: number): number[][];
+  prepare(rgba: Uint8Array, width: number, height: number, strength: number): void;
+  quantizePrepared(colors: number): number[][];
   mapPalette(rgba: Uint8Array, palette: number[][]): Uint8Array;
   /** Borrowed view: consumed before the next module operation. */
   compress(indices: Uint8Array, depth: number): Uint8Array;
@@ -80,8 +84,10 @@ export async function createGifScalarQuantizer(
   const exports = instance.exports as unknown as Partial<QuantizerExports>;
   if (
     !(exports.memory instanceof WebAssembly.Memory) ||
+    typeof exports.abi_version !== 'function' ||
     typeof exports.input_ptr !== 'function' ||
     typeof exports.reserve_input !== 'function' ||
+    typeof exports.prepare_rgba !== 'function' ||
     typeof exports.palette_ptr !== 'function' ||
     typeof exports.quantize !== 'function' ||
     ['indices_ptr', 'map_palette', 'lzw_bound', 'lzw_output_ptr', 'lzw_encode'].some(
@@ -91,6 +97,9 @@ export async function createGifScalarQuantizer(
     throw new GifScalarAbiError('GIF scalar WASM exports are invalid');
   }
   const wasm = exports as QuantizerExports;
+  if (wasm.abi_version() !== 2) {
+    throw new GifScalarAbiError('GIF scalar WASM ABI version is unsupported');
+  }
   let capacity = wasm.memory.buffer.byteLength;
   if (capacity > MAX_INITIAL_LINEAR_BYTES) {
     throw new GifScalarMemoryError('GIF scalar WASM initial memory exceeds 8 MiB');
@@ -98,6 +107,7 @@ export async function createGifScalarQuantizer(
   setCapacity(capacity);
 
   let lastInput: Uint8Array | null = null;
+  let preparedInput: Uint8Array | null = null;
   let reservedLength = 0;
   const abort = (): void => {
     if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
@@ -143,21 +153,30 @@ export async function createGifScalarQuantizer(
     return new Uint8Array(wasm.memory.buffer, pointer, length);
   }
   const quantizer: GifScalarQuantizer = (rgba, colors) => {
+    quantizer.prepare(rgba, rgba.byteLength / 4, 1, 0);
+    return quantizer.quantizePrepared(colors);
+  };
+  quantizer.prepare = (rgba, width, height, strength) => {
     abort();
     lastInput = null;
+    preparedInput = null;
 
     if (
       !(rgba instanceof Uint8Array) ||
       !(rgba.buffer instanceof ArrayBuffer) ||
-      rgba.byteOffset !== 0 ||
-      rgba.byteLength !== rgba.buffer.byteLength ||
       rgba.byteLength === 0 ||
       (rgba.byteLength & 3) !== 0 ||
-      !Number.isInteger(colors) ||
-      colors < 1 ||
-      colors > 256
+      !Number.isSafeInteger(width) ||
+      width < 1 ||
+      !Number.isSafeInteger(height) ||
+      height < 1 ||
+      !Number.isInteger(strength) ||
+      strength < 0 ||
+      strength > 255 ||
+      width * height * 4 !== rgba.byteLength ||
+      rgba.buffer === wasm.memory.buffer
     ) {
-      throw new GifScalarAbiError('GIF scalar WASM requires whole nonempty RGBA and 1–256 colors');
+      throw new GifScalarAbiError('GIF scalar WASM requires exact nonempty RGBA geometry');
     }
     const pointer = wasm.input_ptr();
     const end = pointer + rgba.byteLength;
@@ -171,7 +190,21 @@ export async function createGifScalarQuantizer(
     }
     // memory.grow detaches old views; construct a fresh view for every copy.
     new Uint8Array(wasm.memory.buffer, pointer, rgba.byteLength).set(rgba);
-    const count = wasm.quantize(rgba.byteLength, colors);
+    const prepared = wasm.prepare_rgba(rgba.byteLength, width, height, strength);
+    if (prepared !== 0) throwStatus(prepared, 'RGBA preparation');
+    if (wasm.memory.buffer.byteLength !== capacity) {
+      throw new GifScalarMemoryError('GIF scalar WASM memory grew during RGBA preparation');
+    }
+    reservedLength = rgba.byteLength;
+    preparedInput = rgba;
+    abort();
+  };
+  quantizer.quantizePrepared = (colors) => {
+    abort();
+    if (preparedInput === null || !Number.isInteger(colors) || colors < 1 || colors > 256) {
+      throw new GifScalarAbiError('GIF scalar WASM requires prepared RGBA and 1–256 colors');
+    }
+    const count = wasm.quantize(reservedLength, colors);
     if (count < 0) {
       throwStatus(count, 'quantization');
     }
@@ -181,6 +214,7 @@ export async function createGifScalarQuantizer(
     if (wasm.memory.buffer.byteLength !== capacity) {
       throw new GifScalarMemoryError('GIF scalar WASM memory grew during quantization');
     }
+    const pointer = wasm.input_ptr();
     const palettePointer = wasm.palette_ptr();
     if (
       !validOffset(palettePointer) ||
@@ -195,8 +229,8 @@ export async function createGifScalarQuantizer(
       const offset = index * 3;
       palette.push([bytes[offset]!, bytes[offset + 1]!, bytes[offset + 2]!]);
     }
-    reservedLength = rgba.byteLength;
-    lastInput = rgba;
+    lastInput = preparedInput;
+    preparedInput = null;
     abort();
     return palette;
   };

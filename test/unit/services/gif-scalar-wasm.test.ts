@@ -3,6 +3,7 @@
 
 import { readFileSync } from 'node:fs';
 
+import { OwnedGifWriter } from '@services/gif-owned-writer';
 import {
   createGifScalarQuantizer,
   GifScalarLoadError,
@@ -28,8 +29,10 @@ function reference(input: Uint8Array, colors: number): number[][] {
 
 function instantiate(): {
   memory: WebAssembly.Memory;
+  abi_version(): number;
   input_ptr(): number;
   reserve_input(length: number): number;
+  prepare_rgba(length: number, width: number, height: number, strength: number): number;
   palette_ptr(): number;
   quantize(length: number, colors: number): number;
   indices_ptr(): number;
@@ -112,6 +115,61 @@ function runCompiled(input: Uint8Array, colors: number, wasm = instantiate()): n
 afterEach(() => vi.unstubAllGlobals());
 
 describe('compiled scalar WASM and gifenc 1.0.3', () => {
+  it('prepares exact Bayer RGBA in its admitted arena across strengths, geometry and reuse', () => {
+    const wasm = instantiate();
+    expect(wasm.abi_version()).toBe(2);
+    const bayer = [
+      0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60,
+      28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15,
+      47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21,
+    ];
+    for (const [width, height, strength] of [
+      [1, 1, 0],
+      [8, 8, 8],
+      [17, 13, 12],
+      [9, 2, 255],
+      [17, 13, 8],
+    ]) {
+      const input = new Uint8Array(width! * height! * 4);
+      for (let pixel = 0; pixel < width! * height!; pixel++) {
+        input.set([pixel & 255, 255 - (pixel & 255), (pixel * 17) & 255, pixel & 1], pixel * 4);
+      }
+      const expected = input.slice();
+      for (let y = 0; y < height!; y++) {
+        for (let x = 0; x < width!; x++) {
+          const threshold = (((bayer[(y & 7) * 8 + (x & 7)]! - 32) * strength!) / 64) | 0;
+          const offset = (y * width! + x) * 4;
+          for (let channel = 0; channel < 3; channel++) {
+            expected[offset + channel] = Math.max(
+              0,
+              Math.min(255, expected[offset + channel]! + threshold)
+            );
+          }
+        }
+      }
+      const pointer = wasm.input_ptr();
+      const end = pointer + input.byteLength;
+      if (end > wasm.memory.buffer.byteLength) {
+        wasm.memory.grow(Math.ceil((end - wasm.memory.buffer.byteLength) / 65_536));
+      }
+      expect(wasm.reserve_input(input.byteLength)).toBe(0);
+      new Uint8Array(wasm.memory.buffer, pointer, input.byteLength).set(input);
+      expect(wasm.prepare_rgba(input.byteLength, width!, height!, strength!)).toBe(0);
+      expect(new Uint8Array(wasm.memory.buffer, pointer, input.byteLength)).toEqual(expected);
+      expect(wasm.prepare_rgba(input.byteLength, width!, height!, strength!)).toBe(-1);
+      const count = wasm.quantize(input.byteLength, 16);
+      expect(count).toBeGreaterThan(0);
+      const palette = Array.from({ length: count }, (_, index) =>
+        Array.from(new Uint8Array(wasm.memory.buffer, wasm.palette_ptr() + index * 3, 3))
+      );
+      expect(palette).toEqual(reference(expected, 16));
+    }
+    expect(wasm.prepare_rgba(4, 1, 1, 8)).toBe(-1);
+    expect(wasm.reserve_input(4)).toBe(0);
+    expect(wasm.prepare_rgba(4, 2, 1, 8)).toBe(-1);
+    expect(wasm.prepare_rgba(4, 1, 1, 256)).toBe(-1);
+    expect(wasm.prepare_rgba(4, 0xffff_ffff, 2, 8)).toBe(-1);
+  });
   it('maps RGB565 using the first pixel per key, the green mask, and last-index distance ties', () => {
     const palette = [
       [0, 0, 0],
@@ -366,6 +424,83 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
 });
 
 describe('conversion-owned WASM glue', () => {
+  it('matches complete gifenc bytes after native Bayer preparation from oversized pooled RGBA', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(wasmBytes, {
+          status: 200,
+          headers: { 'content-type': 'application/wasm' },
+        })
+    );
+    const quantize = await createGifScalarQuantizer(
+      () => {},
+      () => {}
+    );
+    const owned = new OwnedGifWriter(
+      4096,
+      1 << 20,
+      () => {},
+      (indices, depth) => quantize.compress(indices, depth)
+    );
+    const oracle = referenceGifEncoder({ auto: true });
+    const width = 17;
+    const height = 13;
+    const bayer = [
+      0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60,
+      28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15,
+      47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21,
+    ];
+    for (const [frame, [colors, strength]] of [
+      [64, 0],
+      [128, 8],
+      [256, 12],
+    ].entries()) {
+      const backing = new Uint8Array(width * height * 4 + 32);
+      for (let pixel = 0; pixel < width * height; pixel++) {
+        const offset = pixel * 4;
+        backing.set(
+          [
+            (pixel * 17 + frame * 13) & 255,
+            (pixel * 3 + frame * 29) & 255,
+            (pixel * 31 + frame * 7) & 255,
+            pixel & 1,
+          ],
+          offset
+        );
+      }
+      backing.fill(0xa5, width * height * 4);
+      const source = backing.subarray(0, width * height * 4);
+      const expected = source.slice();
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const threshold = (((bayer[(y & 7) * 8 + (x & 7)]! - 32) * strength!) / 64) | 0;
+          const offset = (y * width + x) * 4;
+          for (let channel = 0; channel < 3; channel++) {
+            expected[offset + channel] = Math.max(
+              0,
+              Math.min(255, expected[offset + channel]! + threshold)
+            );
+          }
+        }
+      }
+      quantize.prepare(source, width, height, strength!);
+      const palette = quantize.quantizePrepared(colors!);
+      expect(palette).toEqual(reference(expected, colors!));
+      const indices = quantize.mapPalette(source, palette);
+      const oracleIndices = referenceApplyPalette(expected, palette, 'rgb565');
+      expect(indices).toEqual(oracleIndices);
+      const depth = Math.max(2, Math.ceil(Math.log2(palette.length)));
+      const options = { palette, colorDepth: depth, repeat: 0, delay: 20 };
+      owned.writeFrame(indices, width, height, options);
+      oracle.writeFrame(oracleIndices, width, height, options);
+      expect(backing.subarray(width * height * 4)).toEqual(new Uint8Array(32).fill(0xa5));
+    }
+    owned.finish();
+    oracle.finish();
+    expect(owned.bytes()).toEqual(oracle.bytes());
+  });
+
   it('precharges initial memory and growth, then matches the ordered palette', async () => {
     vi.stubGlobal(
       'fetch',

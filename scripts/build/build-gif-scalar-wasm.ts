@@ -106,8 +106,10 @@ function inspectWasm(bytes: Buffer): { sha256: string; rawBytes: number; gzipByt
   const exports = new Map(wasmRuntime.Module.exports(module).map((item) => [item.name, item.kind]));
   for (const [name, kind] of [
     ['memory', 'memory'],
+    ['abi_version', 'function'],
     ['input_ptr', 'function'],
     ['reserve_input', 'function'],
+    ['prepare_rgba', 'function'],
     ['palette_ptr', 'function'],
     ['quantize', 'function'],
     ['indices_ptr', 'function'],
