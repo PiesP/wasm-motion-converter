@@ -256,6 +256,7 @@ export class OwnedDemuxSession {
   private stepCalls = 0;
   private maxPacketBytes = 0;
   private preparedWasmCapacityBytes = 0;
+  private analyzedTrack: OwnedDemuxTrack | null = null;
 
   get transferStats(): OwnedDemuxTransferStats {
     const readCredit = ownedReadCreditStats();
@@ -374,6 +375,7 @@ export class OwnedDemuxSession {
           this.preparedWasmCapacityBytes = this.wasm.memory.buffer.byteLength;
           track.maxPacketBytes = this.maxPacketBytes;
           this.ready = true;
+          this.analyzedTrack = track;
           return track;
         } else if (status === 4) {
           throw new Error(`Owned demux parser error ${event.getUint32(4, true)}`);
@@ -616,7 +618,9 @@ export class OwnedDemuxSession {
       throw new Error('Owned demux seek request invalid');
     this.seeking = true;
     try {
-      const track = this.track();
+      // Reuse the analyzed track's description during seek; a third JS copy
+      // would escape the two-copy descriptor reservation in the caller.
+      const track = this.analyzedTrack ?? this.track();
       const scaled = seconds * track.timescale;
       if (!Number.isFinite(scaled) || Math.abs(scaled) > Number.MAX_SAFE_INTEGER)
         throw new Error('Owned demux seek timestamp out of range');
@@ -695,6 +699,7 @@ export class OwnedDemuxSession {
     if (!this.active) return;
     this.active = false;
     this.ready = false;
+    this.analyzedTrack = null;
     this.generation++;
     this.wasm.demux_release();
   }
