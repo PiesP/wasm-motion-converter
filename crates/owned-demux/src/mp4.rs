@@ -269,7 +269,7 @@ pub fn parse_moov(data: &[u8]) -> Result<(Track, Option<(usize, usize)>), Error>
         if track_id == 0 {
             return Err(Error::Invalid);
         }
-        let (timescale, duration) = mdhd(required(mdia, *b"mdhd")?)?;
+        let (timescale, _metadata_duration) = mdhd(required(mdia, *b"mdhd")?)?;
         let edit_shift = if let Some(edts) = child(atom.data, *b"edts")? {
             child(edts, *b"elst")?
                 .map(|elst| edit_offset(elst, movie_scale, timescale))
@@ -321,7 +321,9 @@ pub fn parse_moov(data: &[u8]) -> Result<(Track, Option<(usize, usize)>), Error>
                 color_matrix: sample.color_matrix,
                 color_full_range: sample.color_full_range,
                 timescale,
-                duration,
+                // computeDuration() uses the last packet presentation end,
+                // including edit-list shifts. The host derives it after indexing.
+                duration: 0,
                 rotation,
                 description: sample.description,
                 packets,
@@ -701,6 +703,72 @@ impl FragmentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mp4_duration_is_derived_from_indexed_packets() {
+        fn box_bytes(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut bytes = Vec::with_capacity(body.len() + 8);
+            bytes.extend_from_slice(&((body.len() + 8) as u32).to_be_bytes());
+            bytes.extend_from_slice(kind);
+            bytes.extend_from_slice(body);
+            bytes
+        }
+        fn moov(with_edit: bool) -> Vec<u8> {
+            let mut mvhd = [0; 20];
+            mvhd[12..16].copy_from_slice(&1000u32.to_be_bytes());
+            let mut tkhd = [0; 60];
+            tkhd[12..16].copy_from_slice(&1u32.to_be_bytes());
+            let mut mdhd = [0; 20];
+            mdhd[12..16].copy_from_slice(&1000u32.to_be_bytes());
+            mdhd[16..20].copy_from_slice(&2000u32.to_be_bytes());
+            let mut hdlr = [0; 12];
+            hdlr[8..12].copy_from_slice(b"vide");
+            let mut entry = [0; 86];
+            entry[32..34].copy_from_slice(&16u16.to_be_bytes());
+            entry[34..36].copy_from_slice(&16u16.to_be_bytes());
+            let mut entry = [entry.as_slice(), box_bytes(b"vpcC", &[1]).as_slice()].concat();
+            let entry_len = entry.len() as u32;
+            entry[..4].copy_from_slice(&entry_len.to_be_bytes());
+            entry[4..8].copy_from_slice(b"vp09");
+            let mut stsd = vec![0; 8];
+            stsd[4..8].copy_from_slice(&1u32.to_be_bytes());
+            stsd.extend_from_slice(&entry);
+            let stbl = box_bytes(b"stbl", &box_bytes(b"stsd", &stsd));
+            let minf = box_bytes(b"minf", &stbl);
+            let mdia = box_bytes(
+                b"mdia",
+                &[box_bytes(b"hdlr", &hdlr), box_bytes(b"mdhd", &mdhd), minf].concat(),
+            );
+            let mut trak = vec![box_bytes(b"tkhd", &tkhd), mdia];
+            if with_edit {
+                let mut elst = vec![0; 8];
+                elst[4..8].copy_from_slice(&2u32.to_be_bytes());
+                elst.extend_from_slice(&500u32.to_be_bytes());
+                elst.extend_from_slice(&(-1i32).to_be_bytes());
+                elst.extend_from_slice(&[0, 1, 0, 0]);
+                elst.extend_from_slice(&1500u32.to_be_bytes());
+                elst.extend_from_slice(&0i32.to_be_bytes());
+                elst.extend_from_slice(&[0, 1, 0, 0]);
+                trak.push(box_bytes(b"edts", &box_bytes(b"elst", &elst)));
+            }
+            let mut trex = [0; 24];
+            trex[4..8].copy_from_slice(&1u32.to_be_bytes());
+            trex[8..12].copy_from_slice(&1u32.to_be_bytes());
+            [
+                box_bytes(b"mvhd", &mvhd),
+                box_bytes(b"trak", &trak.concat()),
+                box_bytes(b"mvex", &box_bytes(b"trex", &trex)),
+            ]
+            .concat()
+        }
+
+        let (plain, _) = parse_moov(&moov(false)).unwrap();
+        assert_eq!(plain.duration, 0);
+        let (edited, _) = parse_moov(&moov(true)).unwrap();
+        assert_eq!(edited.edit_shift, 500);
+        assert_eq!(edited.duration, 0);
+    }
+
     #[test]
     fn rejects_zero_size_and_short_boxes() {
         assert_eq!(
