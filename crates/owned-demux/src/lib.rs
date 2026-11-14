@@ -4,6 +4,7 @@
 //! Bounded, conversion-owned parser for local media container metadata and packet ranges.
 //! The host owns file reads and compressed payloads. No codec implementation is linked.
 
+mod codec_metadata;
 mod ebml;
 mod mp4;
 mod ts;

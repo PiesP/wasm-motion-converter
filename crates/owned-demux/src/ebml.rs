@@ -3,7 +3,7 @@
 
 //! Minimal bounded EBML structure parsing for selected local video tracks.
 
-use crate::{Error, Track};
+use crate::{codec_metadata, Error, Track};
 
 pub const EBML: u64 = 0x1a45_dfa3;
 pub const SEGMENT: u64 = 0x1853_8067;
@@ -146,7 +146,11 @@ fn video_size(data: &[u8]) -> Result<(u32, u32, u32, u32, u16, u16, u16, i8), Er
         u16::try_from(value).map_err(|_| Error::ResourceLimit)
     };
     let range = field(0x55b9)?;
-    let full_range = if range == 2 { 1 } else { 0 };
+    let full_range = match range {
+        1 => 0,
+        2 => 1,
+        _ => -1,
+    };
     Ok((
         width as u32,
         height as u32,
@@ -183,19 +187,40 @@ pub fn parse_tracks(data: &[u8], scale: u64, duration: u64) -> Result<(Track, u6
             b"V_MPEGH/ISO/HEVC" => *b"hev1",
             _ => return Err(Error::Unsupported),
         };
+        let video = find(entry, 0xe0)?.ok_or(Error::Unsupported)?;
         let (
             width,
             height,
-            display_width,
-            display_height,
-            color_primaries,
-            color_transfer,
-            color_matrix,
-            color_full_range,
-        ) = video_size(find(entry, 0xe0)?.ok_or(Error::Unsupported)?)?;
-        let description = find(entry, 0x63a2)?.unwrap_or(&[]).to_vec();
-        if description.len() > 1024 * 1024 {
+            mut display_width,
+            mut display_height,
+            mut color_primaries,
+            mut color_transfer,
+            mut color_matrix,
+            mut color_full_range,
+        ) = video_size(video)?;
+        let description_bytes = find(entry, 0x63a2)?.unwrap_or(&[]);
+        if description_bytes.len() > 1024 * 1024 {
             return Err(Error::ResourceLimit);
+        }
+        let signal = codec_metadata::from_config(codec, description_bytes)?;
+        let description = description_bytes.to_vec();
+        if let Some(signal) = signal {
+            if find(video, 0x54b0)?.is_none() && find(video, 0x54ba)?.is_none() {
+                display_width = width.checked_mul(signal.sar_num).ok_or(Error::Overflow)?;
+                display_height = height.checked_mul(signal.sar_den).ok_or(Error::Overflow)?;
+            }
+            if color_primaries == 0 {
+                color_primaries = signal.color_primaries;
+            }
+            if color_transfer == 0 {
+                color_transfer = signal.color_transfer;
+            }
+            if color_matrix == 0 {
+                color_matrix = signal.color_matrix;
+            }
+            if color_full_range == -1 {
+                color_full_range = signal.color_full_range;
+            }
         }
         let default_duration = find(entry, 0x23e383)?
             .map(unsigned)
@@ -351,5 +376,25 @@ mod tests {
             lace_ranges(&[0x81, 0, 0, 0x02, 2, 5], 22, 0x02, 4),
             Err(Error::Truncated)
         );
+    }
+
+    #[test]
+    fn explicit_display_and_color_metadata_override_bitstream_defaults() {
+        fn element(id: &[u8], body: &[u8]) -> Vec<u8> {
+            let mut bytes = id.to_vec();
+            bytes.push(0x80 | body.len() as u8);
+            bytes.extend_from_slice(body);
+            bytes
+        }
+        let mut color = element(&[0x55, 0xb9], &[2]);
+        color.extend(element(&[0x55, 0xbb], &[1]));
+        color.extend(element(&[0x55, 0xba], &[13]));
+        color.extend(element(&[0x55, 0xb1], &[6]));
+        let mut video = element(&[0xb0], &[16]);
+        video.extend(element(&[0xba], &[8]));
+        video.extend(element(&[0x54, 0xb0], &[32]));
+        video.extend(element(&[0x54, 0xba], &[8]));
+        video.extend(element(&[0x55, 0xb0], &color));
+        assert_eq!(video_size(&video), Ok((16, 8, 32, 8, 1, 13, 6, 1)));
     }
 }
