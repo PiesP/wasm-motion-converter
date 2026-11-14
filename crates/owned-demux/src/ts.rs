@@ -1337,6 +1337,40 @@ mod tests {
     }
 
     #[test]
+    fn fragmented_188_192_and_204_packet_strides_reassemble_identically() {
+        let (plain, first, second) = small_owned_ts();
+        for (stride, prefix) in [(188, 0), (192, 4), (204, 0)] {
+            let mut file = Vec::new();
+            for packet in plain.chunks_exact(TS_BYTES) {
+                file.resize(file.len() + prefix, 0);
+                file.extend_from_slice(packet);
+                file.resize(file.len() + stride - prefix - TS_BYTES, 0);
+            }
+            let mut parser = TsParser::new(file.len() as u64).unwrap();
+            for (i, chunk) in file.chunks(61).enumerate() {
+                parser.feed((i * 61) as u64, chunk).unwrap();
+            }
+            let result = parser.finish().unwrap();
+            for (index, expected) in [&first, &second].into_iter().enumerate() {
+                let source = result.packet_sources[index];
+                assert_eq!(
+                    (source.stride, source.prefix),
+                    (stride as u16, prefix as u8)
+                );
+                let mut lease =
+                    PacketReassembler::new(source, result.track.packets[index].size).unwrap();
+                for (i, chunk) in file[source.start as usize..source.end as usize]
+                    .chunks(47)
+                    .enumerate()
+                {
+                    lease.feed(source.start + (i * 47) as u64, chunk).unwrap();
+                }
+                assert_eq!(&lease.finish().unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
     fn malformed_program_and_discontinuous_video_fail() {
         let (mut file, _, _) = small_owned_ts();
         let pmt_payload = TS_BYTES + 5 + usize::from(file[TS_BYTES + 4]);
