@@ -329,6 +329,8 @@ function parseArgs(argv: string[]) {
 
 export async function readMetadata(path: string) {
   const bytes = await readFile(path);
+  // Windows PowerShell receipts may start with a UTF-8 BOM. Parse without it,
+  // but bind the original receipt bytes, including the BOM, to their digest.
   return {
     sha256: sha256(bytes),
     value: JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/u, '')) as unknown,
@@ -466,6 +468,29 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
   });
   assert.equal(ffmpegVersion.status, 0, 'ffmpeg -version failed');
   const scriptSha256 = sha256(await readFile(fileURLToPath(import.meta.url)));
+  const parserPath = 'validation/windows/helpers/owned-vp8-product.ts';
+  const repository = resolve(import.meta.dirname, '../..');
+  const parserSha256 = sha256(await readFile(join(repository, parserPath)));
+  assert(
+    bundle.value.files.some(
+      (entry: unknown) =>
+        plainObject(entry) && entry.file === parserPath && entry.sha256 === parserSha256
+    ),
+    'Verifier parser differs from the source-bound bundled parser'
+  );
+  const revision = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repository,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024,
+  });
+  assert.equal(revision.status, 0, 'Verifier source revision is unavailable');
+  assert(/^[0-9a-f]{40}$/.test(revision.stdout.trim()), 'Invalid verifier source revision');
+  const status = spawnSync('git', ['status', '--porcelain=v1', '--untracked-files=normal'], {
+    cwd: repository,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024,
+  });
+  assert.equal(status.status, 0, 'Verifier source status is unavailable');
   const report: Record<string, unknown> = {
     schemaVersion: 1,
     status: 'running',
@@ -488,6 +513,8 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     frozenInputManifestSha256: frozenManifest ?? null,
     ffmpegVersion: ffmpegVersion.stdout,
     scriptSha256,
+    parserSha256,
+    verifierSource: { head: revision.stdout.trim(), dirty: status.stdout.trim() !== '' },
     outputs: [] as unknown[],
     iccPairs: [] as unknown[],
   };
