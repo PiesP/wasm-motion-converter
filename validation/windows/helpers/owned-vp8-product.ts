@@ -75,6 +75,25 @@ const V8_FIXTURE: Fixture = {
 };
 const V8_SHA256 = 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1';
 const STOP_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
+/** Frozen owned-demux oracle for the generated 96x64 clustered VP9 fixture. */
+export const DIRECT_WORKER_CLUSTER_CONFIG = {
+  codec: 'vp09.00.10.08.01.02.02.02.00',
+  codedWidth: 96,
+  codedHeight: 64,
+  colorSpace: { fullRange: false },
+} as const;
+export const DIRECT_WORKER_OPTIONS = {
+  format: 'webp',
+  quality: 'medium',
+  fps: 4,
+  scale: 1,
+  trimStart: 0,
+  trimEnd: 4,
+  maxFrames: MAX_FRAMES,
+  maxOutputBytes: MAX_OUTPUT_BYTES,
+  smartFrameSkip: 'off',
+  maxMemoryMB: 512,
+} as const;
 const OWNED_FIELDS = [
   'ownedVp8Frames',
   'ownedVp8Steps',
@@ -89,6 +108,57 @@ function digest(bytes: Uint8Array): string {
 
 function failure(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
+export async function captureFailure(
+  page: Page,
+  output: string,
+  caseId: string,
+  error: unknown,
+  pageErrors: string[]
+): Promise<void> {
+  const record: Record<string, unknown> = {
+    caseId,
+    error: failure(error),
+    pageErrors: pageErrors.slice(-32).map((message) => message.slice(0, 512)),
+  };
+  try {
+    record.url = page.url();
+  } catch (captureError) {
+    record.urlError = failure(captureError);
+  }
+  try {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      record.dom = await Promise.race([
+        page.evaluate(() => document.documentElement.outerHTML.slice(0, 32_768)),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('DOM snapshot timed out')), 5_000);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  } catch (captureError) {
+    record.domError = failure(captureError);
+  }
+  try {
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 70, timeout: 5_000 });
+    if (screenshot.byteLength <= 2 * 1024 * 1024) {
+      const file = `${caseId}-failure.jpg`;
+      await writeFile(join(output, file), screenshot);
+      record.screenshot = { file, bytes: screenshot.byteLength, sha256: digest(screenshot) };
+    } else {
+      record.screenshotError = 'Viewport screenshot exceeded 2 MiB';
+    }
+  } catch (captureError) {
+    record.screenshotError = failure(captureError);
+  }
+  try {
+    await writeFile(join(output, `${caseId}-failure.json`), `${JSON.stringify(record, null, 2)}\n`);
+  } catch {
+    // Preserve the original product or harness failure if diagnostics cannot be written.
+  }
 }
 
 function u24(bytes: Buffer, offset: number): number {
@@ -252,6 +322,20 @@ async function decodeWebp(page: Page, bytes: Buffer) {
       decoder.close();
     }
   }, bytes.toString('base64'));
+}
+
+function assertClusterSequence(frames: readonly { centerRgb: number[] }[]): void {
+  const color = (rgb: number[]) => {
+    const [r, g, b] = rgb;
+    if (r! > 120 && g! < 110 && b! < 110) return 'red';
+    if (g! > 100 && r! < 120 && b! < 120) return 'lime';
+    if (b! > 110 && r! < 120 && g! < 120) return 'blue';
+    if (r! > 110 && g! > 100 && b! < 120) return 'yellow';
+    return 'unknown';
+  };
+  const sequence = frames.map((frame) => color(frame.centerRgb));
+  const groups = sequence.filter((name, index) => index === 0 || name !== sequence[index - 1]);
+  assert.deepEqual(groups, ['red', 'lime', 'blue', 'yellow'], 'Cluster scene order differs');
 }
 
 async function downloadWebp(page: Page): Promise<Buffer> {
@@ -517,17 +601,7 @@ async function measureJob(
     );
   }
   if (fixture.id === 'clusters') {
-    const color = (rgb: number[]) => {
-      const [r, g, b] = rgb;
-      if (r! > 120 && g! < 110 && b! < 110) return 'red';
-      if (g! > 100 && r! < 120 && b! < 120) return 'lime';
-      if (b! > 110 && r! < 120 && g! < 120) return 'blue';
-      if (r! > 110 && g! > 100 && b! < 120) return 'yellow';
-      return 'unknown';
-    };
-    const sequence = decoded.frames.map((frame) => color(frame.centerRgb));
-    const groups = sequence.filter((name, index) => index === 0 || name !== sequence[index - 1]);
-    assert.deepEqual(groups, ['red', 'lime', 'blue', 'yellow'], 'Cluster scene order differs');
+    assertClusterSequence(decoded.frames);
   }
   return {
     build,
@@ -618,6 +692,157 @@ function ownedCounts(value: unknown) {
     counts.ownedVp8PeakReservedLinearCapacityBytes! >= counts.ownedVp8PeakActualLinearCapacityBytes!
   );
   return counts;
+}
+
+async function exerciseDirectWorker(
+  page: Page,
+  build: Build,
+  fixturePath: string,
+  fixtureDigest: string,
+  output: string
+) {
+  const fixture = FIXTURES[1]!;
+  const workerAssets = build.state.files.filter((entry) =>
+    /^assets\/worker-[\w-]+\.js$/.test(entry.path)
+  );
+  assert.equal(workerAssets.length, 1, 'Candidate has no unique bundled conversion Worker');
+  const input = await readFile(fixturePath);
+  assert(input.length > 0 && input.length <= MAX_INPUT_BYTES, 'Worker fixture outside bound');
+  assert.equal(digest(input), fixtureDigest, 'Direct Worker input differs from bundled fixture');
+  const result = await page.evaluate(
+    async ({ workerPath, inputBase64, config, options }) => {
+      const requestId = 'owned-vp8-direct-worker';
+      const input = Uint8Array.from(atob(inputBase64), (character) => character.charCodeAt(0));
+      return new Promise<{
+        requestId: string;
+        durationMs: number;
+        progressCount: number;
+        ownedProgress: unknown[];
+        output: number[];
+      }>((resolve, reject) => {
+        const worker = new Worker(`/${workerPath}`, { type: 'module' });
+        const ownedProgress: unknown[] = [];
+        let progressCount = 0;
+        let started = false;
+        let settled = false;
+        const timer = setTimeout(() => finish(new Error('Direct Worker timed out')), 180_000);
+        const finish = (
+          error?: Error,
+          value?: {
+            requestId: string;
+            durationMs: number;
+            progressCount: number;
+            ownedProgress: unknown[];
+            output: number[];
+          }
+        ) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          worker.terminate();
+          if (error) reject(error);
+          else if (value) resolve(value);
+          else reject(new Error('Direct Worker completed without a result'));
+        };
+        worker.addEventListener('error', (event) => {
+          event.preventDefault();
+          finish(new Error(`Direct Worker script error: ${event.message}`));
+        });
+        worker.addEventListener('messageerror', () =>
+          finish(new Error('Direct Worker message error'))
+        );
+        worker.addEventListener('message', ({ data }: MessageEvent<unknown>) => {
+          if (!data || typeof data !== 'object') return;
+          const message = data as Record<string, unknown>;
+          if (message.type === 'ready' && message.requestId === '' && !started) {
+            started = true;
+            try {
+              worker.postMessage(
+                {
+                  type: 'start',
+                  requestId,
+                  inputBuffer: input.buffer,
+                  config,
+                  options,
+                  duration: 4,
+                  framerate: 4,
+                },
+                [input.buffer]
+              );
+            } catch (error) {
+              finish(new Error(`Direct Worker start failed: ${String(error)}`));
+            }
+            return;
+          }
+          if (message.requestId !== requestId) return;
+          if (message.type === 'progress') {
+            progressCount++;
+            if (message.ownedVp8Steps !== undefined) {
+              if (ownedProgress.length === 32) ownedProgress.shift();
+              ownedProgress.push(message);
+            }
+          } else if (message.type === 'error') {
+            finish(new Error(`Direct Worker ${String(message.code)}: ${String(message.message)}`));
+          } else if (message.type === 'complete') {
+            if (!(message.outputBuffer instanceof ArrayBuffer)) {
+              finish(new Error('Direct Worker returned no ArrayBuffer'));
+              return;
+            }
+            if (
+              message.outputBuffer.byteLength === 0 ||
+              message.outputBuffer.byteLength > 8 * 1024 * 1024
+            ) {
+              finish(new Error('Direct Worker small output outside transfer bound'));
+              return;
+            }
+            finish(undefined, {
+              requestId,
+              durationMs: Number(message.durationMs),
+              progressCount,
+              ownedProgress,
+              output: Array.from(new Uint8Array(message.outputBuffer)),
+            });
+          }
+        });
+      });
+    },
+    {
+      workerPath: workerAssets[0]!.path,
+      inputBase64: input.toString('base64'),
+      config: DIRECT_WORKER_CLUSTER_CONFIG,
+      options: DIRECT_WORKER_OPTIONS,
+    }
+  );
+  assert(Number.isFinite(result.durationMs) && result.durationMs > 0);
+  assert(result.progressCount > 0, 'Direct Worker emitted no progress');
+  assert(result.ownedProgress.length > 0, 'Direct Worker emitted no owned VP8 progress');
+  const owned = ownedCounts(result.ownedProgress.at(-1));
+  const bytes = Buffer.from(result.output);
+  const file = 'owned-vp8-functional-direct-worker.webp';
+  await writeFile(join(output, file), bytes);
+  const parsed = parseAnimatedWebp(bytes);
+  assert.deepEqual(parsed.canvas, { width: fixture.width, height: fixture.height });
+  assert(Math.abs(parsed.totalDurationMs - fixture.durationMs) <= 250);
+  const decoded = await decodeWebp(page, bytes);
+  assert.equal(decoded.frames.length, parsed.frames.length);
+  for (const [index, frame] of decoded.frames.entries()) {
+    assert.equal(frame.width, fixture.width);
+    assert.equal(frame.height, fixture.height);
+    assert(Math.abs(frame.durationMs - parsed.frames[index]!.durationMs) <= 1);
+  }
+  assertClusterSequence(decoded.frames);
+  return {
+    route: 'direct-conversion-worker',
+    requestId: result.requestId,
+    workerAsset: workerAssets[0]!,
+    progressCount: result.progressCount,
+    owned,
+    durationMs: result.durationMs,
+    inputSha256: fixtureDigest,
+    saved: { file, bytes: bytes.length, sha256: digest(bytes) },
+    parsed,
+    decoded,
+  };
 }
 
 async function exerciseActiveStop(
@@ -715,6 +940,9 @@ async function exerciseActiveStop(
     assert.equal(after.timeOrigin, documentIdentity, 'Stop recovery changed document');
     assert.deepEqual(errors, [], 'Active Stop page emitted errors');
     return { stop, stopToIdleMs: stop.idleMs - stop.stopMs, recovery, after };
+  } catch (error) {
+    await captureFailure(page, output, 'owned-vp8-functional-active-stop', error, errors);
+    throw error;
   } finally {
     await page.close();
   }
@@ -727,12 +955,14 @@ async function candidateFunctional(
   output: string,
   fixturePath: string,
   fixtureDigest: string,
+  workerFixturePath: string,
+  workerFixtureDigest: string,
   stopFixturePath: string,
-  loadApplication: (page: Page, url: string) => Promise<unknown>
+  loadApplication: (page: Page, url: string) => Promise<unknown>,
+  recordCheck: (check: unknown) => Promise<void>
 ) {
-  const checks: unknown[] = [];
   for (const main of [false, true]) {
-    const route = main ? 'main' : 'worker';
+    const route = main ? 'ui-main' : 'direct-worker';
     const workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }> =
       [];
     const context = await createContext(browser, build, true, main, workerPatches);
@@ -749,64 +979,76 @@ async function candidateFunctional(
       const page = await context.newPage();
       const errors: string[] = [];
       page.on('pageerror', (error) => errors.push(error.message));
-      await loadApplication(page, server.url);
-      if (!main)
-        await page.evaluate(() => {
-          const observer = Reflect.get(globalThis, '__wmcMotionObserver') as {
-            onConversionWorkerMessage: ((message: unknown) => void) | null;
-          };
-          Reflect.set(globalThis, '__wmcVp8WorkerProgress', []);
-          observer.onConversionWorkerMessage = (message) => {
-            if (
-              !message ||
-              typeof message !== 'object' ||
-              Reflect.get(message, 'type') !== 'progress'
-            )
-              return;
-            const log = Reflect.get(globalThis, '__wmcVp8WorkerProgress') as unknown[];
-            if (log.length < 64 && Reflect.get(message, 'ownedVp8Steps') !== undefined)
-              log.push(message);
-          };
+      try {
+        await loadApplication(page, server.url);
+        if (!main) {
+          const direct = await exerciseDirectWorker(
+            page,
+            build,
+            workerFixturePath,
+            workerFixtureDigest,
+            output
+          );
+          assert.deepEqual(errors, [], 'Direct Worker page errors');
+          assert(
+            workerPatches.some(
+              (patch) =>
+                patch.path === direct.workerAsset.path &&
+                patch.originalSha256 === direct.workerAsset.sha256
+            ),
+            'Direct Worker did not load the source-bound bundled entry'
+          );
+          const ownedAsset = build.state.files.find((entry) =>
+            /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
+          );
+          assert(ownedAsset, 'Candidate compiled owned WASM inventory entry is absent');
+          const wasm = await Promise.all(fetchedWasm);
+          assert(
+            wasm.some(
+              (entry) =>
+                entry.path === ownedAsset.path &&
+                entry.bytes === ownedAsset.size &&
+                entry.sha256 === ownedAsset.sha256
+            ),
+            'Direct Worker fetched WASM differs from candidate inventory'
+          );
+          await recordCheck({ ...direct, fetchedWasm: wasm, workerPatches });
+          continue;
+        }
+        const fixture = FIXTURES[0]!;
+        await configurePage(page, fixturePath, fixture, 'medium');
+        const recovery: Record<string, unknown> = { route };
+        // An invalid selection must be recoverable in the same document before the valid job.
+        await page.locator('[data-testid="file-input"]').setInputFiles({
+          name: 'invalid.mp4',
+          mimeType: 'video/mp4',
+          buffer: Buffer.from('invalid media'),
         });
-      const fixture = FIXTURES[0]!;
-      await configurePage(page, fixturePath, fixture, 'medium');
-      const recovery: Record<string, unknown> = { route };
-      // An invalid selection must be recoverable in the same document before the valid job.
-      await page.locator('[data-testid="file-input"]').setInputFiles({
-        name: 'invalid.mp4',
-        mimeType: 'video/mp4',
-        buffer: Buffer.from('invalid media'),
-      });
-      await page
-        .locator('[data-testid="error-display"]')
-        .waitFor({ state: 'visible', timeout: 30_000 });
-      recovery.invalidError = (
-        await page.locator('[data-testid="error-display"]').textContent()
-      )?.trim();
-      await page
-        .locator(
-          '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
-        )
-        .click();
-      await configurePage(page, fixturePath, fixture, 'medium');
-      const sample = await measureJob(
-        page,
-        fixture,
-        fixtureDigest,
-        'medium',
-        'candidate',
-        'first-in-document',
-        output,
-        `owned-vp8-functional-${route}`
-      );
-      recovery.valid = sample;
-      const probe = await page.evaluate(() => ({
-        abi: Reflect.get(globalThis, '__wmcVp8AbiProbe'),
-        progress: Reflect.get(globalThis, '__wmcVp8WorkerProgress'),
-        workers: Reflect.get(globalThis, '__wmcMotionObserver'),
-      }));
-      if (main) {
-        const abi = probe.abi as { instances: number; stepCalls: number };
+        await page
+          .locator('[data-testid="error-display"]')
+          .waitFor({ state: 'visible', timeout: 30_000 });
+        recovery.invalidError = (
+          await page.locator('[data-testid="error-display"]').textContent()
+        )?.trim();
+        await page
+          .locator(
+            '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
+          )
+          .click();
+        await configurePage(page, fixturePath, fixture, 'medium');
+        const sample = await measureJob(
+          page,
+          fixture,
+          fixtureDigest,
+          'medium',
+          'candidate',
+          'first-in-document',
+          output,
+          `owned-vp8-functional-${route}`
+        );
+        recovery.valid = sample;
+        const probe = await page.evaluate(() => Reflect.get(globalThis, '__wmcVp8AbiProbe'));
+        const abi = probe as { instances: number; stepCalls: number };
         assert(
           abi?.instances > 0 && abi.stepCalls > 0,
           'Main route did not call compiled VP8 ABI step'
@@ -821,52 +1063,34 @@ async function candidateFunctional(
           output,
           loadApplication
         );
-      } else {
-        const progress = probe.progress as unknown[];
-        assert(progress?.length > 0, 'Worker route emitted no owned VP8 progress');
-        recovery.owned = ownedCounts(progress.at(-1));
-        const workers = probe.workers as {
-          workers: Array<{
-            starts: Array<{ requestId: string; options: Record<string, unknown> }>;
-            completes: Array<{ requestId: string; outputBytes: number }>;
-          }>;
-        };
-        const conversion = workers.workers.find((entry) =>
-          entry.starts.some((start) => start.options.format === 'webp')
+        assert.deepEqual(errors, [], 'Functional page errors');
+        const wasm = await Promise.all(fetchedWasm);
+        const ownedAsset = build.state.files.find((entry) =>
+          /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
         );
+        assert(ownedAsset, 'Candidate compiled owned WASM inventory entry is absent');
         assert(
-          conversion && conversion.starts.length === 1 && conversion.completes.length === 1,
-          'Worker route did not complete one conversion'
+          wasm.some(
+            (entry) =>
+              entry.path === ownedAsset.path &&
+              entry.bytes === ownedAsset.size &&
+              entry.sha256 === ownedAsset.sha256
+          ),
+          'Fetched owned WASM differs from candidate inventory'
         );
-        assert.equal(conversion.starts[0]!.requestId, conversion.completes[0]!.requestId);
-        recovery.worker = {
-          requestId: conversion.starts[0]!.requestId,
-          outputBytes: conversion.completes[0]!.outputBytes,
-        };
+        recovery.fetchedWasm = wasm;
+        recovery.workerPatches = workerPatches;
+        await recordCheck(recovery);
+      } catch (error) {
+        await captureFailure(page, output, `owned-vp8-functional-${route}`, error, errors);
+        throw error;
+      } finally {
+        await page.close();
       }
-      assert.deepEqual(errors, [], 'Functional page errors');
-      const wasm = await Promise.all(fetchedWasm);
-      const ownedAsset = build.state.files.find((entry) =>
-        /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
-      );
-      assert(ownedAsset, 'Candidate compiled owned WASM inventory entry is absent');
-      assert(
-        wasm.some(
-          (entry) =>
-            entry.path === ownedAsset.path &&
-            entry.bytes === ownedAsset.size &&
-            entry.sha256 === ownedAsset.sha256
-        ),
-        'Fetched owned WASM differs from candidate inventory'
-      );
-      recovery.fetchedWasm = wasm;
-      recovery.workerPatches = workerPatches;
-      checks.push(recovery);
     } finally {
       await context.close();
     }
   }
-  return checks;
 }
 
 export async function exerciseOwnedVp8Product({
@@ -936,10 +1160,10 @@ export async function exerciseOwnedVp8Product({
     cacheScope:
       'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
     softwareInjection:
-      'Page and conversion Worker OffscreenCanvas.convertToBlob disabled before their application code; Worker response prefix digest recorded',
+      'Page OffscreenCanvas.convertToBlob disabled before application code; Worker JS is patched only if loaded, and a patch record alone is not encoding-route proof',
     functionalScope: fullVideo
       ? 'V8 selector measures and decodes only; active Stop and invalid-to-valid recovery are exercised in the small product selector, not repeated for each V8 quality'
-      : 'Candidate Worker and main software routes, invalid-to-valid recovery, and active main owned-work Stop/recovery',
+      : 'Candidate UI main software recovery and active Stop; separate direct conversion Worker protocol and owned output',
     samples: [] as Sample[],
     functional: [] as unknown[],
   };
@@ -1040,12 +1264,14 @@ export async function exerciseOwnedVp8Product({
           for (const quality of qualities) {
             const page = await context.newPage();
             const errors: string[] = [];
+            let activeCase = `owned-vp8-${scenario}-${name}-${fixture.id}-${quality}-prepare`;
             page.on('pageerror', (error) => errors.push(error.message));
             try {
               await loadApplication(page, server.url);
               await configurePage(page, path, fixture, quality);
               let firstDocumentTimeOrigin: unknown;
               for (const condition of ['first-in-document', 'same-document-warm'] as const) {
+                activeCase = `owned-vp8-${scenario}-${name}-${fixture.id}-${quality}-${condition}`;
                 const sample = await measureJob(
                   page,
                   fixture,
@@ -1054,7 +1280,7 @@ export async function exerciseOwnedVp8Product({
                   name,
                   condition,
                   output,
-                  `owned-vp8-${scenario}-${name}-${fixture.id}-${quality}-${condition}`
+                  activeCase
                 );
                 sample.contextIdentity = `${scenario}:${name}`;
                 sample.pageIdentity = `${fixture.id}:${quality}`;
@@ -1069,15 +1295,14 @@ export async function exerciseOwnedVp8Product({
                 (report.samples as Sample[]).push(sample);
                 await persist();
               }
+            } catch (error) {
+              await captureFailure(page, output, activeCase, error, errors);
+              throw error;
             } finally {
               await page.close();
             }
           }
         }
-        assert(
-          workerPatches.length > 0,
-          `${name} conversion Worker software injection was not observed`
-        );
         report[`${name}WorkerPatches`] = workerPatches;
       } finally {
         await context.close();
@@ -1108,15 +1333,21 @@ export async function exerciseOwnedVp8Product({
     await server.setDistribution(candidate.relativePath);
     if (!fullVideo) {
       const stopFixturePath = await validateBundleFile(bundleRoot, STOP_FIXTURE);
-      report.functional = await candidateFunctional(
+      await candidateFunctional(
         browser,
         candidate,
         server,
         output,
         inputs[0]!.path,
         inputs[0]!.sha256,
+        inputs[1]!.path,
+        inputs[1]!.sha256,
         stopFixturePath,
-        loadApplication
+        loadApplication,
+        async (check) => {
+          (report.functional as unknown[]).push(check);
+          await persist();
+        }
       );
     }
     report.status = 'passed';

@@ -1,12 +1,19 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
-import { describe, expect, it } from 'vite-plus/test';
+import type { Page } from '@playwright/test';
+import { describe, expect, it, vi } from 'vite-plus/test';
 
 import { checkOwnedVp8Inputs } from '../../../scripts/check/owned-vp8-inputs.ts';
-import { parseAnimatedWebp } from '../../../validation/windows/helpers/owned-vp8-product.ts';
+import { isWorkerRequest } from '../../../src/services/conversion-worker/guards.ts';
+import {
+  DIRECT_WORKER_CLUSTER_CONFIG,
+  DIRECT_WORKER_OPTIONS,
+  captureFailure,
+  parseAnimatedWebp,
+} from '../../../validation/windows/helpers/owned-vp8-product.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
 
@@ -39,6 +46,79 @@ function animation(...frames: Buffer[]) {
 }
 
 describe('owned VP8 Windows product contract', () => {
+  it('retains bounded flat DOM, page errors, and screenshot before closing a failed page', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'wmc-vp8-failure-'));
+    vi.stubGlobal('document', { documentElement: { outerHTML: 'x'.repeat(40_000) } });
+    const page = {
+      url: () => 'http://127.0.0.1:8787/',
+      evaluate: async (callback: () => string) => callback(),
+      screenshot: async () => Buffer.from('viewport screenshot'),
+    } as unknown as Page;
+    try {
+      await captureFailure(
+        page,
+        directory,
+        'owned-vp8-test',
+        new Error('original failure'),
+        Array.from({ length: 40 }, () => 'e'.repeat(600))
+      );
+      const report = JSON.parse(
+        await readFile(resolve(directory, 'owned-vp8-test-failure.json'), 'utf8')
+      ) as { error: string; dom: string; pageErrors: string[]; screenshot: { file: string } };
+      expect(report.error).toBe('Error: original failure');
+      expect(report.dom).toHaveLength(32_768);
+      expect(report.pageErrors).toHaveLength(32);
+      expect(report.pageErrors.every((message) => message.length === 512)).toBe(true);
+      expect(report.screenshot.file).toBe('owned-vp8-test-failure.jpg');
+      expect(await readFile(resolve(directory, report.screenshot.file))).toEqual(
+        Buffer.from('viewport screenshot')
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('binds its direct Worker request to the generated VP9 cluster oracle and current protocol', () => {
+    const oracle = JSON.parse(
+      readFileSync(resolve(root, 'test/fixtures/owned-demux/oracle.json'), 'utf8')
+    ) as {
+      fixtures: Array<{
+        id: string;
+        config: Record<string, unknown>;
+        duration: number;
+        stats: { averagePacketRate: number };
+      }>;
+    };
+    const cluster = oracle.fixtures.find(
+      (fixture) => fixture.id === 'test-video-contract-clusters.webm'
+    );
+    expect(cluster).toBeDefined();
+    const { description, ...config } = cluster!.config;
+    expect(description).toBeNull();
+    expect(DIRECT_WORKER_CLUSTER_CONFIG).toEqual(config);
+    expect(DIRECT_WORKER_OPTIONS).toMatchObject({
+      format: 'webp',
+      quality: 'medium',
+      fps: cluster!.stats.averagePacketRate,
+      trimStart: 0,
+      trimEnd: cluster!.duration,
+      scale: 1,
+      smartFrameSkip: 'off',
+    });
+    expect(
+      isWorkerRequest({
+        type: 'start',
+        requestId: 'owned-vp8-direct-worker',
+        inputBuffer: new ArrayBuffer(1),
+        config: DIRECT_WORKER_CLUSTER_CONFIG,
+        options: DIRECT_WORKER_OPTIONS,
+        duration: cluster!.duration,
+        framerate: cluster!.stats.averagePacketRate,
+      })
+    ).toBe(true);
+  });
+
   it('registers balanced selectors with the same two deterministic fixtures and prior build', () => {
     const profile = JSON.parse(
       readFileSync(resolve(root, 'validation/windows/profile.json'), 'utf8')
