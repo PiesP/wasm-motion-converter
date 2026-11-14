@@ -185,7 +185,7 @@ impl Bits {
     fn se(&mut self) -> Result<i32, Error> {
         let value = self.ue()?;
         Ok(if value & 1 != 0 {
-            ((u64::from(value) + 1) / 2) as i32
+            u64::from(value).div_ceil(2) as i32
         } else {
             -(value as i32 / 2)
         })

@@ -95,13 +95,13 @@ fn atom_at(data: &[u8], at: usize, limit: usize) -> Result<([u8; 4], usize, usiz
     Ok((kind, at + header, end))
 }
 
-fn child<'a>(data: &'a [u8], kind: [u8; 4]) -> Result<Option<&'a [u8]>, Error> {
+fn child(data: &[u8], kind: [u8; 4]) -> Result<Option<&[u8]>, Error> {
     Ok(atoms(data)?
         .into_iter()
         .find(|atom| atom.kind == kind)
         .map(|atom| atom.data))
 }
-fn required<'a>(data: &'a [u8], kind: [u8; 4]) -> Result<&'a [u8], Error> {
+fn required(data: &[u8], kind: [u8; 4]) -> Result<&[u8], Error> {
     child(data, kind)?.ok_or(Error::Unsupported)
 }
 
@@ -325,7 +325,7 @@ pub fn parse_moov(data: &[u8]) -> Result<(Track, Option<(usize, usize)>), Error>
                 rotation,
                 description: sample.description,
                 packets,
-                fragment_default_duration,
+                fragment_default_duration: u64::from(fragment_default_duration),
                 fragment_default_size,
                 fragment_default_flags,
                 edit_shift,
@@ -377,7 +377,7 @@ struct TrafCursor {
     end: usize,
     id: u32,
     base: u64,
-    default_duration: u32,
+    default_duration: u64,
     default_size: u32,
     default_flags: u32,
     dts: u64,
@@ -430,7 +430,7 @@ impl FragmentBuilder {
             at += 4;
         }
         let default_duration = if flags & 0x000008 != 0 {
-            let value = u32be(tfhd, at)?;
+            let value = u64::from(u32be(tfhd, at)?);
             at += 4;
             value
         } else {
@@ -577,7 +577,7 @@ impl FragmentBuilder {
         let body = &self.raw[..trun.end];
         let flags = trun.flags;
         let duration = if flags & 0x000100 != 0 {
-            let value = u32be(body, trun.at)?;
+            let value = u64::from(u32be(body, trun.at)?);
             trun.at += 4;
             value
         } else {
@@ -637,11 +637,11 @@ impl FragmentBuilder {
                 .map(|(position, _)| position.0);
             if let Some((previous_pts, previous_index)) = previous {
                 track.packets[previous_index].duration =
-                    u32::try_from(pts.checked_sub(previous_pts).ok_or(Error::Overflow)?)
+                    u64::try_from(pts.checked_sub(previous_pts).ok_or(Error::Overflow)?)
                         .map_err(|_| Error::Overflow)?;
             }
             let frame_duration = if let Some(following_pts) = following {
-                u32::try_from(following_pts.checked_sub(pts).ok_or(Error::Overflow)?)
+                u64::try_from(following_pts.checked_sub(pts).ok_or(Error::Overflow)?)
                     .map_err(|_| Error::Overflow)?
             } else {
                 duration
@@ -656,10 +656,7 @@ impl FragmentBuilder {
             });
             traf.presentation.insert(key, decode_index);
         }
-        traf.dts = traf
-            .dts
-            .checked_add(duration as u64)
-            .ok_or(Error::Overflow)?;
+        traf.dts = traf.dts.checked_add(duration).ok_or(Error::Overflow)?;
         trun.offset = end;
         trun.index += 1;
         if trun.index == trun.count {
@@ -670,7 +667,7 @@ impl FragmentBuilder {
     }
 
     pub fn advance(&mut self, track: &mut Track, credit: u32) -> Result<bool, Error> {
-        for _ in 0..credit.min(64).max(1) {
+        for _ in 0..credit.clamp(1, 64) {
             if self.traf.as_ref().is_some_and(|traf| traf.trun.is_some()) {
                 self.one_sample(track)?;
                 continue;
@@ -969,7 +966,7 @@ impl IndexBuilder {
     }
 
     pub fn advance(&mut self, track: &mut Track, credit: u32) -> Result<bool, Error> {
-        for _ in 0..credit.min(64).max(1) {
+        for _ in 0..credit.clamp(1, 64) {
             if self.sample_at == self.sizes.count {
                 if self.chunk_at + 1 != self.offsets.count || self.sample_in_chunk != self.per_chunk
                 {
@@ -1072,7 +1069,7 @@ impl IndexBuilder {
                 size,
                 dts,
                 pts,
-                duration,
+                duration: u64::from(duration),
                 key,
             });
             self.dts = self

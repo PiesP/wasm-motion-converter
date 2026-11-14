@@ -12,7 +12,7 @@ mod ts;
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock};
 
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 pub const INPUT_CAPACITY: usize = 64 * 1024;
 pub const METADATA_BUDGET: usize = 32 * 1024 * 1024;
 pub const PACKET_BUDGET: u32 = 16 * 1024 * 1024 - 1024;
@@ -33,7 +33,7 @@ pub struct Packet {
     pub size: u32,
     pub dts: i64,
     pub pts: i64,
-    pub duration: u32,
+    pub duration: u64,
     pub key: bool,
 }
 
@@ -55,7 +55,7 @@ pub struct Track {
     pub rotation: u16,
     pub description: Vec<u8>,
     pub packets: Vec<Packet>,
-    pub fragment_default_duration: u32,
+    pub fragment_default_duration: u64,
     pub fragment_default_size: u32,
     pub fragment_default_flags: u32,
     pub edit_shift: i64,
@@ -150,7 +150,7 @@ struct PendingBox {
 
 impl Mp4Session {
     pub fn new(len: u64) -> Result<Self, Error> {
-        if len < 8 || len > 500 * 1024 * 1024 {
+        if !(8..=500 * 1024 * 1024).contains(&len) {
             return Err(Error::ResourceLimit);
         }
         Ok(Self {
@@ -375,7 +375,7 @@ impl Mp4Session {
         if self.status == Status::Error || self.status == Status::Complete || self.need.is_some() {
             return self.status;
         }
-        let result = self.step_inner(work_credit.min(64).max(1));
+        let result = self.step_inner(work_credit.clamp(1, 64));
         if let Err(error) = result {
             self.error = Some(error);
             self.status = Status::Error;
@@ -472,7 +472,9 @@ impl Mp4Session {
                     for packet in &track.packets[self.final_scan..end_at] {
                         let next = packet
                             .pts
-                            .checked_add(packet.duration as i64)
+                            .checked_add(
+                                i64::try_from(packet.duration).map_err(|_| Error::Overflow)?,
+                            )
                             .ok_or(Error::Overflow)?;
                         self.final_end = self.final_end.max(next);
                     }
@@ -592,13 +594,11 @@ impl Mp4Session {
                     if let Some(track) = &mut self.track {
                         track.duration = self.ebml.duration;
                     }
-                } else if pending.kind == *b"trks" {
-                    if self.track.is_none() {
-                        let (track, _, display_explicit) =
-                            ebml::parse_tracks(&pending.data, self.ebml.scale, self.ebml.duration)?;
-                        self.track = Some(track);
-                        self.ebml.display_explicit = display_explicit;
-                    }
+                } else if pending.kind == *b"trks" && self.track.is_none() {
+                    let (track, _, display_explicit) =
+                        ebml::parse_tracks(&pending.data, self.ebml.scale, self.ebml.duration)?;
+                    self.track = Some(track);
+                    self.ebml.display_explicit = display_explicit;
                 }
                 continue;
             }
@@ -613,7 +613,7 @@ impl Mp4Session {
                     let packet = &self.track.as_ref().ok_or(Error::Invalid)?.packets[*index];
                     let end = packet
                         .pts
-                        .checked_add(packet.duration as i64)
+                        .checked_add(i64::try_from(packet.duration).map_err(|_| Error::Overflow)?)
                         .ok_or(Error::Overflow)?;
                     self.ebml.observed_duration = self
                         .ebml
@@ -788,8 +788,7 @@ impl Mp4Session {
                     if let Some(track) = self.track.as_mut() {
                         let count = track.packets.len().saturating_sub(index);
                         if count > 0 {
-                            let per_frame = u32::try_from(ticks / count as u64)
-                                .map_err(|_| Error::ResourceLimit)?;
+                            let per_frame = ticks / count as u64;
                             for packet in &mut track.packets[index..] {
                                 packet.duration = per_frame;
                             }
@@ -880,7 +879,10 @@ impl Mp4Session {
                         let next_pts = pts
                             .checked_add(
                                 (lace_index as i64)
-                                    .checked_mul(track.fragment_default_duration as i64)
+                                    .checked_mul(
+                                        i64::try_from(track.fragment_default_duration)
+                                            .map_err(|_| Error::Overflow)?,
+                                    )
                                     .ok_or(Error::Overflow)?,
                             )
                             .ok_or(Error::Overflow)?;
@@ -899,13 +901,13 @@ impl Mp4Session {
                             .next()
                             .map(|(position, _)| position.0);
                         if let Some((prev_pts, prev_index)) = previous {
-                            track.packets[prev_index].duration = u32::try_from(
+                            track.packets[prev_index].duration = u64::try_from(
                                 next_pts.checked_sub(prev_pts).ok_or(Error::Overflow)?,
                             )
                             .map_err(|_| Error::ResourceLimit)?;
                         }
                         let duration = if let Some(following_pts) = following {
-                            u32::try_from(
+                            u64::try_from(
                                 following_pts.checked_sub(next_pts).ok_or(Error::Overflow)?,
                             )
                             .map_err(|_| Error::ResourceLimit)?
@@ -1116,16 +1118,16 @@ pub extern "C" fn demux_packet(index: u32) -> u32 {
     state.event[20..24].copy_from_slice(&(packet.key as u32).to_le_bytes());
     state.event[24..32].copy_from_slice(&packet.dts.to_le_bytes());
     state.event[32..40].copy_from_slice(&packet.pts.to_le_bytes());
-    state.event[40..44].copy_from_slice(&packet.duration.to_le_bytes());
+    state.event[40..48].copy_from_slice(&packet.duration.to_le_bytes());
     if let Some(source) = state
         .session
         .as_ref()
         .and_then(|session| session.ts_source(index as usize))
     {
-        state.event[44..52].copy_from_slice(&source.end.to_le_bytes());
-        state.event[52..54].copy_from_slice(&source.pid.to_le_bytes());
-        state.event[54..56].copy_from_slice(&source.stride.to_le_bytes());
-        state.event[56] = source.prefix;
+        state.event[48..56].copy_from_slice(&source.end.to_le_bytes());
+        state.event[56..58].copy_from_slice(&source.pid.to_le_bytes());
+        state.event[58..60].copy_from_slice(&source.stride.to_le_bytes());
+        state.event[60] = source.prefix;
     }
     state.event.as_ptr() as u32
 }
@@ -1239,7 +1241,7 @@ mod tests {
 
     #[test]
     fn malformed_ranges_terminate_and_new_sessions_reset_state() {
-        let mut seed = 0x5eed_492u32;
+        let mut seed = 0x05ee_d492_u32;
         for length in [8usize, 17, 257, 4096] {
             for _ in 0..16 {
                 let mut source = vec![0u8; length];

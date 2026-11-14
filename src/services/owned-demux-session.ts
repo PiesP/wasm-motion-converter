@@ -5,11 +5,11 @@
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 
-const ABI_VERSION = 1;
+const ABI_VERSION = 2;
 const MAX_INPUT_BYTES = 500 * 1024 * 1024;
 const MAX_PACKET_BYTES = 16 * 1024 * 1024 - 1024;
 const MAX_WASM_CAPACITY_BYTES = 64 * 1024 * 1024;
-const MAX_TRACK_PACKETS = Math.floor((32 * 1024 * 1024) / 40);
+const MAX_TRACK_PACKETS = Math.floor((32 * 1024 * 1024) / 48);
 const EVENT_BYTES = 64;
 const MAX_STEPS = 2_000_000;
 let nextSessionId = 1;
@@ -66,7 +66,7 @@ export type OwnedDemuxPacket = {
   byteLength: number;
   dtsTicks: bigint;
   ptsTicks: bigint;
-  durationTicks: number;
+  durationTicks: bigint;
   key: boolean;
   sourceEnd: bigint | null;
 };
@@ -461,7 +461,7 @@ export class OwnedDemuxSession {
     if (view.getUint32(0, true) !== 5) throw new Error('Owned demux packet unavailable');
     const offset = view.getBigUint64(8, true);
     const byteLength = view.getUint32(16, true);
-    const sourceEnd = view.getBigUint64(44, true);
+    const sourceEnd = view.getBigUint64(48, true);
     if (
       byteLength < 1 ||
       byteLength > MAX_PACKET_BYTES ||
@@ -479,7 +479,7 @@ export class OwnedDemuxSession {
       key: view.getUint32(20, true) === 1,
       dtsTicks: view.getBigInt64(24, true),
       ptsTicks: view.getBigInt64(32, true),
-      durationTicks: view.getUint32(40, true),
+      durationTicks: view.getBigUint64(40, true),
     };
   }
 

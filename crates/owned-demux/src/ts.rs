@@ -148,8 +148,8 @@ fn crc32_mpeg(data: &[u8]) -> u32 {
     crc
 }
 
-fn table_with_pointer<'a>(
-    payload: &'a [u8],
+fn table_with_pointer(
+    payload: &[u8],
     new_section: bool,
     section: &mut Section,
 ) -> Result<Option<Vec<u8>>, Error> {
@@ -853,7 +853,7 @@ impl TsParser {
             let matched = [(188, 0), (192, 4), (204, 0)]
                 .into_iter()
                 .find(|&(stride, prefix)| {
-                    self.carry.len() >= prefix + stride * 2 + 1
+                    self.carry.len() > prefix + stride * 2
                         && self.carry[prefix] == 0x47
                         && self.carry[prefix + stride] == 0x47
                         && self.carry[prefix + stride * 2] == 0x47
@@ -992,11 +992,11 @@ impl TsParser {
         // arrive; no unbounded final sort or decoded-frame assumption is needed.
         if let Some((&previous, &prev_index)) = self.presentation.range(..pts).next_back() {
             self.packets[prev_index].duration =
-                u32::try_from(pts - previous).map_err(|_| Error::Overflow)?;
+                u64::try_from(pts - previous).map_err(|_| Error::Overflow)?;
         }
         if let Some((&next, _)) = self.presentation.range(pts..).next() {
             self.packets[index].duration =
-                u32::try_from(next - pts).map_err(|_| Error::Overflow)?;
+                u64::try_from(next - pts).map_err(|_| Error::Overflow)?;
         }
         self.presentation.insert(pts, index);
         Ok(())
@@ -1013,13 +1013,13 @@ impl TsParser {
             .ok_or(Error::Unsupported)?;
         let duration = if let Some((&prev_pts, _)) = self.presentation.range(..last_pts).next_back()
         {
-            u32::try_from(last_pts - prev_pts).map_err(|_| Error::Overflow)?
+            u64::try_from(last_pts - prev_pts).map_err(|_| Error::Overflow)?
         } else {
             0
         };
         self.packets[last_index].duration = duration;
         let end = last_pts
-            .checked_add(i64::from(duration))
+            .checked_add(i64::try_from(duration).map_err(|_| Error::Overflow)?)
             .ok_or(Error::Overflow)?;
         let video_info = self.video_info.ok_or(Error::Unsupported)?;
         let track = Track {
@@ -1273,7 +1273,9 @@ mod tests {
 
     fn hex_bytes(hex: &str) -> Vec<u8> {
         hex.as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
             .collect()
     }
@@ -1409,7 +1411,7 @@ mod tests {
         let (plain, first, second) = small_owned_ts();
         for (stride, prefix) in [(188, 0), (192, 4), (204, 0)] {
             let mut file = Vec::new();
-            for packet in plain.chunks_exact(TS_BYTES) {
+            for packet in plain.as_chunks::<TS_BYTES>().0 {
                 file.resize(file.len() + prefix, 0);
                 file.extend_from_slice(packet);
                 file.resize(file.len() + stride - prefix - TS_BYTES, 0);
