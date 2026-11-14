@@ -94,6 +94,10 @@ vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --
 vp exec node --experimental-strip-types scripts/test/owned-vp8-compiled.ts
 ```
 
+The provenance manifest includes this README and license files as well as Rust
+sources. Regenerate it after changing any listed input, then run `--check`; an
+unchanged WASM digest alone does not validate stale provenance.
+
 The artifact is `owned-vp8.wasm` in this crate, outside the production import
 and delivery graph. Its memory declaration has an exact 192-MiB maximum; raw
 Cargo development output without that declaration does not qualify delivery.
