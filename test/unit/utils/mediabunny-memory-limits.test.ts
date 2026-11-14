@@ -2,9 +2,10 @@
 // Copyright (c) 2026 PiesP
 
 import { ENCODED_PACKET_BUDGET_BYTES, MEDIA_BUNNY_BUFFER_BUDGET_BYTES } from '@utils/constants';
-import { createMediaBunnyInput } from '@utils/mediabunny-utils';
 import { ALL_FORMATS, BufferSource, Input, InputFormat, Source } from 'mediabunny';
 import { describe, expect, it } from 'vite-plus/test';
+
+import { createMediaBunnyInput } from '../../helpers/mediabunny-oracle';
 
 class ProbeSource extends Source {
   readLengths: number[] = [];

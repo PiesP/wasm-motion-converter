@@ -50,6 +50,7 @@ describe('Pages source-build contract', () => {
     git(['init', '-q']);
     git(['config', 'user.email', 'test@example.test']);
     git(['config', 'user.name', 'Test']);
+    git(['config', 'commit.gpgSign', 'false']);
     git(['add', 'package.json', '.node-version', 'pnpm-workspace.yaml']);
     git(['commit', '-qm', 'fixture']);
     const source = git(['rev-parse', 'HEAD']);
@@ -360,6 +361,7 @@ describe('Pages source-build contract', () => {
     git(['init', '-q']);
     git(['config', 'user.email', 'test@example.test']);
     git(['config', 'user.name', 'Test']);
+    git(['config', 'commit.gpgSign', 'false']);
     git(['add', 'package.json', '.node-version', 'pnpm-workspace.yaml']);
     git(['commit', '-qm', 'fixture']);
     const core = git(['rev-parse', 'HEAD']);

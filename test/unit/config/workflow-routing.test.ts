@@ -67,6 +67,7 @@ function gitFixture(): {
   };
   git('init', '-q');
   git('config', 'user.name', 'Routing Fixture');
+  git('config', 'commit.gpgSign', 'false');
   git('config', 'user.email', 'routing@example.invalid');
   return { directory, git, write };
 }

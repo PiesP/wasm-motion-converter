@@ -77,7 +77,8 @@ function inferPurpose(name: string): string {
     gifenc:
       'Owned GIF source adaptation (PNN, RGB565 mapping, GIF blocks and LZW); development-only differential oracle',
     'wasm-webp': 'WebP encoding via WebAssembly (encodeRGB)',
-    mediabunny: 'Video demuxing (Input, BufferSource, EncodedPacketSink)',
+    mediabunny:
+      'Development-only patched metadata and demux differential oracle; no production executable',
     'solid-js': 'UI framework (reactive signals, components)',
   };
   return purposes[name] || 'Runtime dependency';
@@ -149,7 +150,8 @@ function collectViteHelperOwner(pkg: Record<string, unknown>): LicenseEntry | nu
 function generateLicenseText(
   entries: LicenseEntry[],
   viteHelperOwner: LicenseEntry | null,
-  ownedGif: LicenseEntry | null
+  ownedGif: LicenseEntry | null,
+  demuxOracle: LicenseEntry | null
 ): string {
   let md = `# Third-Party Licenses
 
@@ -157,12 +159,20 @@ function generateLicenseText(
 > Do not edit manually — run \`vp run build\` to regenerate.
 
 Declared runtime dependencies and their installed license/notice texts follow.
-Owned GIF source attribution and supplemental wasm-webp notices are included separately from runtime package ownership.
+Owned GIF source attribution, the development-only MediaBunny oracle, and supplemental wasm-webp notices are classified separately from runtime package ownership.
 
 `;
-  for (const entry of [...entries, ...(ownedGif ? [ownedGif] : [])]) {
+  for (const entry of [
+    ...entries,
+    ...(ownedGif ? [ownedGif] : []),
+    ...(demuxOracle ? [demuxOracle] : []),
+  ]) {
     md +=
-      entry === ownedGif ? '## Owned GIF source attribution (gifenc)\n\n' : `## ${entry.name}\n\n`;
+      entry === ownedGif
+        ? '## Owned GIF source attribution (gifenc)\n\n'
+        : entry === demuxOracle
+          ? '## Development-only demux oracle (MediaBunny)\n\n'
+          : `## ${entry.name}\n\n`;
     md += `- **Version:** ${entry.version}\n`;
     md += `- **License:** ${entry.license}\n`;
     if (entry.url) md += `- **Repository:** ${entry.url}\n`;
@@ -256,7 +266,14 @@ export function generateLicenses(): void {
     !entries.some((entry) => entry.name === 'gifenc')
       ? collectInstalledDependency('gifenc', inferPurpose('gifenc'))
       : null;
-  const licenseMd = `${generateLicenseText(entries, viteHelperOwner, ownedGif).trimEnd()}\n`;
+  const demuxOracle =
+    dev &&
+    typeof dev === 'object' &&
+    'mediabunny' in dev &&
+    !entries.some((entry) => entry.name === 'mediabunny')
+      ? collectInstalledDependency('mediabunny', inferPurpose('mediabunny'))
+      : null;
+  const licenseMd = `${generateLicenseText(entries, viteHelperOwner, ownedGif, demuxOracle).trimEnd()}\n`;
   const outputPath = join(ROOT, 'public', 'LICENSES.md');
   writeFileSync(outputPath, licenseMd, 'utf-8');
 

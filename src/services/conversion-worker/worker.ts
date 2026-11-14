@@ -11,11 +11,27 @@
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
+import {
+  OwnedDemuxAbiError,
+  OwnedDemuxConversionError,
+  OwnedDemuxLoadError,
+  OwnedDemuxParseError,
+  OwnedDemuxResourceError,
+} from '@services/owned-demux-core';
 
 import { classifyWorkerError } from './classify-worker-error';
 import { isWorkerRequest } from './guards';
 import { runWorkerPipeline } from './pipeline-worker';
-import type { WorkerResponse } from './types';
+import type { OwnedDemuxFailureKind, WorkerResponse } from './types';
+
+function ownedDemuxFailureKind(error: unknown): OwnedDemuxFailureKind | undefined {
+  if (error instanceof OwnedDemuxLoadError) return 'load';
+  if (error instanceof OwnedDemuxAbiError) return 'abi';
+  if (error instanceof OwnedDemuxResourceError) return 'resource';
+  if (error instanceof OwnedDemuxParseError) return 'parse';
+  if (error instanceof OwnedDemuxConversionError) return 'conversion';
+  return undefined;
+}
 
 // ─── AbortController registry ────────────────────────────────────────────
 
@@ -56,7 +72,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
 
   switch (request.type) {
     case 'start': {
-      const { requestId, config, options, duration, framerate } = request;
+      const { requestId, config, options, duration, framerate, indexSnapshot } = request;
       const input = request.inputBlob ?? request.inputBuffer;
       const pipelineStart = performance.now();
 
@@ -78,7 +94,8 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
           abortController.signal,
           config,
           duration,
-          framerate
+          framerate,
+          indexSnapshot
         );
 
         const durationMs = Math.round(performance.now() - pipelineStart);
@@ -96,19 +113,28 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
         );
       } catch (err) {
         const message = getErrorMessage(err);
-        // Classify error using the same compact rules as pipeline-worker.ts
-        const code =
-          err instanceof ConversionMemoryLimitError
-            ? err.code
-            : isCancellationError(err)
-              ? 'CANCELLED'
-              : classifyWorkerError(message);
+        const cancelled = abortController.signal.aborted || isCancellationError(err);
+        const timedOut = err instanceof Error && err.name === 'TimeoutError';
+        // Cancellation and actual timeouts are terminal even if another error is present.
+        const demuxFailureKind = cancelled || timedOut ? undefined : ownedDemuxFailureKind(err);
+        const code = cancelled
+          ? 'CANCELLED'
+          : timedOut
+            ? 'TIMEOUT'
+            : err instanceof ConversionMemoryLimitError
+              ? err.code
+              : demuxFailureKind === 'resource'
+                ? 'OUT_OF_MEMORY'
+                : demuxFailureKind !== undefined
+                  ? 'DECODER_ERROR'
+                  : classifyWorkerError(message);
 
         respond({
           type: 'error',
           requestId,
           message,
           code,
+          ...(demuxFailureKind ? { demuxFailureKind } : {}),
         });
       } finally {
         activeControllers.delete(requestId);

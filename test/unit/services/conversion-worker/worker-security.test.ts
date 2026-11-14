@@ -60,6 +60,196 @@ describe('conversion worker message security', () => {
     );
   });
 
+  it.each([
+    ['OwnedDemuxLoadError', 'load', 'DECODER_ERROR'],
+    ['OwnedDemuxAbiError', 'abi', 'DECODER_ERROR'],
+    ['OwnedDemuxResourceError', 'resource', 'OUT_OF_MEMORY'],
+    ['OwnedDemuxParseError', 'parse', 'DECODER_ERROR'],
+    ['OwnedDemuxConversionError', 'conversion', 'DECODER_ERROR'],
+  ] as const)('preserves typed %s across the Worker response', async (className, kind, code) => {
+    const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+    vi.stubGlobal('self', workerScope);
+    const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+    const demuxCore = await import('@services/owned-demux-core');
+    vi.mocked(runWorkerPipeline).mockRejectedValueOnce(
+      new demuxCore[className]('Opaque timeout abort marker')
+    );
+    await import('@services/conversion-worker/worker');
+    workerScope.postMessage.mockClear();
+
+    await workerScope.onmessage?.({
+      source: null,
+      data: {
+        type: 'start',
+        requestId: 'typed-demux',
+        inputBlob: new Blob(['video']),
+        config: { codec: 'vp09', codedHeight: 16, codedWidth: 16 },
+        options: {
+          format: 'gif',
+          fps: 30,
+          maxFrames: 1,
+          maxOutputBytes: 1024,
+          quality: 'medium',
+          scale: 1,
+          trimEnd: 0,
+          trimStart: 0,
+        },
+      },
+    } as unknown as MessageEvent);
+
+    expect(workerScope.postMessage).toHaveBeenCalledWith(
+      {
+        type: 'error',
+        requestId: 'typed-demux',
+        message: 'Opaque timeout abort marker',
+        code,
+        demuxFailureKind: kind,
+      },
+      []
+    );
+  });
+
+  it.each(['memory', 'parse'] as const)(
+    'gives an active cancellation priority over a %s failure',
+    async (failure) => {
+      const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+      vi.stubGlobal('self', workerScope);
+      const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+      const { OwnedDemuxParseError } = await import('@services/owned-demux-core');
+      const { ConversionMemoryLimitError: CurrentMemoryLimitError } =
+        await import('@services/conversion-memory-limit-error');
+      let rejectPipeline!: (error: Error) => void;
+      vi.mocked(runWorkerPipeline).mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectPipeline = reject;
+          })
+      );
+      await import('@services/conversion-worker/worker');
+      workerScope.postMessage.mockClear();
+
+      const start = workerScope.onmessage?.({
+        source: null,
+        data: {
+          type: 'start',
+          requestId: 'cancel-first',
+          inputBlob: new Blob(['video']),
+          config: { codec: 'vp09', codedHeight: 16, codedWidth: 16 },
+          options: {
+            format: 'gif',
+            fps: 30,
+            maxFrames: 1,
+            maxOutputBytes: 1024,
+            quality: 'medium',
+            scale: 1,
+            trimEnd: 0,
+            trimStart: 0,
+          },
+        },
+      } as unknown as MessageEvent);
+      await workerScope.onmessage?.({
+        source: null,
+        data: { type: 'abort', requestId: 'cancel-first' },
+      } as unknown as MessageEvent);
+      rejectPipeline(
+        failure === 'memory'
+          ? new CurrentMemoryLimitError('Budget exhausted')
+          : new OwnedDemuxParseError('Malformed media')
+      );
+      await start;
+
+      expect(workerScope.postMessage).toHaveBeenCalledWith(
+        {
+          type: 'error',
+          requestId: 'cancel-first',
+          message: expect.any(String),
+          code: 'CANCELLED',
+        },
+        []
+      );
+    }
+  );
+
+  it('gives an actual TimeoutError name its terminal category without a demux kind', async () => {
+    const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+    vi.stubGlobal('self', workerScope);
+    const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+    vi.mocked(runWorkerPipeline).mockRejectedValueOnce(
+      new DOMException('Deadline expired', 'TimeoutError')
+    );
+    await import('@services/conversion-worker/worker');
+    workerScope.postMessage.mockClear();
+
+    await workerScope.onmessage?.({
+      source: null,
+      data: {
+        type: 'start',
+        requestId: 'actual-timeout',
+        inputBlob: new Blob(['video']),
+        config: { codec: 'vp09', codedHeight: 16, codedWidth: 16 },
+        options: {
+          format: 'gif',
+          fps: 30,
+          maxFrames: 1,
+          maxOutputBytes: 1024,
+          quality: 'medium',
+          scale: 1,
+          trimEnd: 0,
+          trimStart: 0,
+        },
+      },
+    } as unknown as MessageEvent);
+
+    expect(workerScope.postMessage).toHaveBeenCalledWith(
+      {
+        type: 'error',
+        requestId: 'actual-timeout',
+        message: 'Deadline expired',
+        code: 'TIMEOUT',
+      },
+      []
+    );
+  });
+
+  it('keeps a non-demux codec failure on the existing Worker category', async () => {
+    const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+    vi.stubGlobal('self', workerScope);
+    const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+    vi.mocked(runWorkerPipeline).mockRejectedValueOnce(new Error('codec unsupported'));
+    await import('@services/conversion-worker/worker');
+    workerScope.postMessage.mockClear();
+
+    await workerScope.onmessage?.({
+      source: null,
+      data: {
+        type: 'start',
+        requestId: 'ordinary-codec',
+        inputBlob: new Blob(['video']),
+        config: { codec: 'vp09', codedHeight: 16, codedWidth: 16 },
+        options: {
+          format: 'gif',
+          fps: 30,
+          maxFrames: 1,
+          maxOutputBytes: 1024,
+          quality: 'medium',
+          scale: 1,
+          trimEnd: 0,
+          trimStart: 0,
+        },
+      },
+    } as unknown as MessageEvent);
+
+    expect(workerScope.postMessage).toHaveBeenCalledWith(
+      {
+        type: 'error',
+        requestId: 'ordinary-codec',
+        message: 'codec unsupported',
+        code: 'CODEC_NOT_SUPPORTED',
+      },
+      []
+    );
+  });
+
   it('emits the validated readiness control event from the actual Worker entry', async () => {
     const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
     vi.stubGlobal('self', workerScope);

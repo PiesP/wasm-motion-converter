@@ -3,15 +3,17 @@
 ## MediaBunny memory limits
 
 `mediabunny@1.65.2.patch` applies to the exact published 1.65.2 package. The
-application sets finite limits in `src/utils/mediabunny-utils.ts`; the patch
-enforces them in the imported ESM modules and mirrors the changes in the shipped
-TypeScript source. It bounds contiguous reads, encoded packets, retained parser
+development-only oracle sets finite limits in `test/helpers/mediabunny-oracle.ts`;
+the patch enforces them in the oracle's imported ESM modules and mirrors the
+changes in the shipped TypeScript source. Production metadata and demux use the
+owned Rust/WASM core; MediaBunny and this patch remain development references.
+The patch bounds contiguous reads, encoded packets, retained parser
 buffers, nested HLS inputs, and packet-sink prefetch. MP4 parsing also enforces
 cumulative metadata and logical-sample budgets before expanding tables or
 fragments. FLAC, Ogg, Matroska, and MPEG-TS apply the same input budgets to their
 retained data. The Reader and Matroska declarations match their patched source.
 
-WMC does not use Matroska tags or attachments. Its inputs opt into skipping these
+The development oracle does not use Matroska tags or attachments. Its inputs opt into skipping these
 descriptive elements before reading their payloads, including leading metadata
 and tags reached through seek entries in later segments. The shared element
 traversal also skips descriptive IDs before decoding or retaining them, even in

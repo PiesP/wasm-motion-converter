@@ -2,6 +2,10 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { getErrorMessage } from '@piesp/browser-core/error';
+import {
+  beginOwnedInputSelection,
+  clearOwnedInputSelection,
+} from '@services/owned-input-index-cache';
 import { checkVideoDecoderSupport } from '@services/video-decoder-support';
 import { conversionSettings, setConversionSettings } from '@stores/conversion-settings-store';
 import {
@@ -59,6 +63,7 @@ export async function handleFileSelected(
 ): Promise<void> {
   const run = runtime.startNewRun();
   if (!run) return;
+  const selectionGeneration = beginOwnedInputSelection(file);
   const isStale = () => !run.isActive() || run.signal.aborted;
 
   runtime.resetRuntimeState();
@@ -73,13 +78,21 @@ export async function handleFileSelected(
   if (previousPreviewUrl) URL.revokeObjectURL(previousPreviewUrl);
   setVideoPreviewUrl(null);
 
-  const validation = await validateVideoFile(file, t);
+  let validation: Awaited<ReturnType<typeof validateVideoFile>>;
+  try {
+    validation = await validateVideoFile(file, t);
+  } catch (error) {
+    clearOwnedInputSelection(selectionGeneration);
+    runtime.finishAnalysisRun(run);
+    throw error;
+  }
   if (isStale()) {
     runtime.finishAnalysisRun(run);
     return;
   }
 
   if (!validation.valid) {
+    clearOwnedInputSelection(selectionGeneration);
     logger.warn('conversion', 'File validation failed — conversion blocked', {
       fileName: file.name,
       fileSizeBytes: file.size,
@@ -107,7 +120,7 @@ export async function handleFileSelected(
   setInputFile(file);
 
   try {
-    // BlobSource lets MediaBunny read only the ranges needed for metadata.
+    // The owned demux host reads bounded source ranges for metadata.
     const { extractVideoMetadata } = await awaitAdvisory(
       import('@services/video-metadata'),
       run.signal
@@ -124,6 +137,7 @@ export async function handleFileSelected(
       );
       if (isStale()) return;
       if (decoderSupported === false) {
+        clearOwnedInputSelection(selectionGeneration);
         const message = `Unsupported codec configuration: ${decoderConfig.codec}`;
         const context = {
           ...classifyConversionError(message, metadata, conversionSettings(), t),
@@ -148,6 +162,7 @@ export async function handleFileSelected(
     transitionToState('idle');
   } catch (error) {
     if (isStale()) return;
+    clearOwnedInputSelection(selectionGeneration);
 
     logger.warn('conversion', 'Metadata extraction failed', {
       fileName: file.name,
@@ -161,6 +176,7 @@ export async function handleFileSelected(
     focusPrimaryErrorAction();
   } finally {
     runtime.finishAnalysisRun(run);
+    if (run.signal.aborted) clearOwnedInputSelection(selectionGeneration);
     if (run.signal.aborted && run.isLatest() && appState() === 'cancelling') {
       const url = videoPreviewUrl();
       if (url) URL.revokeObjectURL(url);

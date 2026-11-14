@@ -56,7 +56,10 @@ describe('Playwright workflow profiles', () => {
 
     expect(packageJson.scripts?.['test:e2e:ci']).toContain('run-playwright.ts ci');
     expect(packageJson.scripts?.['pretest:e2e:ci']).toBe(
-      'vp run build:gif-wasm && vp run prepare:e2e:fixture'
+      'vp run build:owned-wasm && vp run prepare:e2e:fixture'
+    );
+    expect(packageJson.scripts?.['build:owned-wasm']).toBe(
+      'vp run build:gif-wasm && vp run build:demux-wasm'
     );
     expect(workflow).toContain('vp run test:e2e:ci');
     expect(workflow).toContain('sudo apt-get install --yes ffmpeg');

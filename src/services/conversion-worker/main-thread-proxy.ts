@@ -23,13 +23,20 @@ import {
   setLastConversionProfileReport,
 } from '@services/conversion-profile-store';
 import { resolveVideoDimensions } from '@services/frame-utils';
+import { copyOwnedInputIndex } from '@services/owned-input-index-cache';
+import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
 
 import { buildConversionRequest } from './build-conversion-request';
 import { isWorkerResponse } from './guards';
-import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerRequest } from './types';
+import type {
+  OwnedDemuxFailureKind,
+  SerializedConversionOptions,
+  SerializedDecoderConfig,
+  WorkerRequest,
+} from './types';
 
 /**
  * Error thrown when a worker operation exceeds the timeout.
@@ -45,7 +52,10 @@ export class WorkerTimeoutError extends Error {
 /** A worker reached its conservative memory budget and must not be retried. */
 export class WorkerMemoryLimitError extends Error {
   readonly code = 'OUT_OF_MEMORY' as const;
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly demuxFailureKind?: 'resource'
+  ) {
     super(`Worker ran out of memory: ${message}`);
     this.name = 'WorkerMemoryLimitError';
   }
@@ -63,7 +73,8 @@ export class WorkerUnavailableError extends Error {
 export class WorkerPipelineError extends Error {
   constructor(
     readonly code: string,
-    message: string
+    message: string,
+    readonly demuxFailureKind?: OwnedDemuxFailureKind
   ) {
     super(`Worker error: ${message}`);
     this.name = 'WorkerPipelineError';
@@ -260,9 +271,16 @@ export async function runPipelineViaWorker(
           if (response.code === 'CANCELLED') {
             reject(new DOMException('Cancelled', 'AbortError'));
           } else if (response.code === 'OUT_OF_MEMORY') {
-            reject(new WorkerMemoryLimitError(response.message));
+            reject(
+              new WorkerMemoryLimitError(
+                response.message,
+                response.demuxFailureKind === 'resource' ? 'resource' : undefined
+              )
+            );
           } else {
-            reject(new WorkerPipelineError(response.code, response.message));
+            reject(
+              new WorkerPipelineError(response.code, response.message, response.demuxFailureKind)
+            );
           }
           break;
         }
@@ -297,6 +315,21 @@ export async function runPipelineViaWorker(
       }
     };
 
+    // Keep the selected-file master in this realm. A conversion gets one owned
+    // copy, transferred only after Worker construction and abort registration.
+    let indexSnapshot: OwnedInputIndexSnapshot | null;
+    try {
+      indexSnapshot =
+        input instanceof Blob
+          ? copyOwnedInputIndex(input, config.description?.byteLength ?? 0, options.trimStart)
+          : null;
+    } catch (error) {
+      settled = true;
+      cleanup();
+      worker.terminate();
+      reject(error);
+      return;
+    }
     // Blob handles use structured cloning and remain available for startup
     // fallback. ArrayBuffer ownership moves to the worker through the transfer list.
     const startMsg: WorkerRequest = {
@@ -307,9 +340,13 @@ export async function runPipelineViaWorker(
       options,
       ...(duration !== undefined ? { duration } : {}),
       ...(framerate !== undefined ? { framerate } : {}),
+      ...(indexSnapshot ? { indexSnapshot } : {}),
     };
     try {
-      worker.postMessage(startMsg, input instanceof ArrayBuffer ? [input] : []);
+      worker.postMessage(startMsg, [
+        ...(input instanceof ArrayBuffer ? [input] : []),
+        ...(indexSnapshot ? [indexSnapshot.bytes] : []),
+      ]);
     } catch (error) {
       settled = true;
       cleanup();
@@ -365,7 +402,7 @@ export async function runPipelineWithFallback(
 
     // Fall back to the main thread without allocating another full-file copy.
     // Reuse an attached buffer when Worker startup failed before transfer;
-    // otherwise let MediaBunny consume the original Blob lazily.
+    // otherwise let the owned demux host read the original Blob lazily.
     const fallbackBuffer = input instanceof ArrayBuffer && input.byteLength > 0 ? input : undefined;
     const fallbackBlob =
       input instanceof Blob ? input : fallbackBuffer === undefined ? inputBlob : undefined;

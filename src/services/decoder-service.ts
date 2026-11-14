@@ -1366,7 +1366,7 @@ export async function decodeFrames(
   let decodeResult: DecodeResult | null = null;
 
   try {
-    // Pull and feed chunks with backpressure — prevent both MediaBunny and the
+    // Pull and feed chunks with backpressure — prevent both the demux host and the
     // VideoDecoder queue from growing unbounded. Backpressure is checked before
     // requesting the next chunk, so the producer cannot run ahead.
     // VideoDecoder internally queues decoded frames; if we feed chunks faster than

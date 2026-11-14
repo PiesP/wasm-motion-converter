@@ -38,6 +38,8 @@ import {
 } from './cancellation-inspector.ts';
 import { assertGifPlayback, collectGifPlayback, parseGifDelaysCs } from './gif-playback.ts';
 import { armGifNativeInitProbe } from './helpers/gif-native-init-probe.ts';
+import { exerciseOwnedDemuxServiceMeasurement } from './helpers/owned-demux-measurement.ts';
+import { exerciseOwnedDemuxProduct } from './helpers/owned-demux-product.ts';
 import { runOwnedVp8NativeProbe } from './helpers/owned-vp8-probe.ts';
 import {
   assertUsefulOutput,
@@ -3786,6 +3788,123 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const demuxMeasurementSelector = resolve(
+    bundleRoot,
+    'validation/windows/inputs/owned-demux-service-measurement.json'
+  );
+  let demuxMeasurementSelectorText: string | undefined;
+  try {
+    demuxMeasurementSelectorText = await readFile(demuxMeasurementSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (demuxMeasurementSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(demuxMeasurementSelectorText), {
+      scenario: 'owned-demux-service-measurement',
+    });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter(
+        (name) => name.endsWith('.json') && name !== 'owned-demux-service-measurement.json'
+      ),
+      [],
+      'Demux service measurement requires one focused selector'
+    );
+    const build = await readBuild(bundleRoot, 'dist', validateBundleFile, {
+      verifyInventory: true,
+      exactInventory: true,
+    });
+    const ownedWasm = build.state.files.filter((file) =>
+      /^assets\/owned-demux[-.][\w-]{8}\.wasm$/.test(file.path)
+    );
+    assert(ownedWasm.length <= 1, 'Ambiguous production demux WASM assets');
+    const ownerManifest = JSON.parse(
+      await readFile(
+        await validateBundleFile(
+          bundleRoot,
+          'validation/windows/gif-quantization-owner-video.json'
+        ),
+        'utf8'
+      )
+    ) as {
+      schemaVersion: number;
+      input: { path: string; bytes: number; sha256: string };
+      smallControl: { path: string; bytes: number; sha256: string };
+    };
+    assert.equal(ownerManifest.schemaVersion, 1);
+    assert.deepEqual(ownerManifest.input, {
+      path: 'validation/windows/private-inputs/motion-owner-video.mp4',
+      bytes: 1_092_710,
+      sha256: 'c1ebdf56c8af5d830c6b86689d2bff05cbc3f371da3b1c898c4cfad8a335373c',
+      width: 720,
+      height: 720,
+      decodedSourceFrames: 671,
+      videoDurationUs: 11_157_178,
+    });
+    assert.equal(ownerManifest.smallControl.path, MOTION_SMALL_FIXTURE);
+    assert.equal(ownerManifest.smallControl.bytes, 5_184);
+    assert.equal(
+      ownerManifest.smallControl.sha256,
+      'de4c15ff513d41c964eadb5d45ce08030b2a94eea501e9f86edfd8a301e1411e'
+    );
+    return exerciseOwnedDemuxServiceMeasurement({
+      browser,
+      bundleRoot,
+      output,
+      build,
+      validateBundleFile,
+      expectedEngine: ownedWasm.length ? 'owned-rust-wasm' : 'mediabunny',
+      inputs: [
+        {
+          id: 'owner',
+          path: ownerManifest.input.path,
+          size: ownerManifest.input.bytes,
+          sha256: ownerManifest.input.sha256,
+          trimStart: 1.25,
+        },
+        {
+          id: 'small',
+          path: ownerManifest.smallControl.path,
+          size: ownerManifest.smallControl.bytes,
+          sha256: ownerManifest.smallControl.sha256,
+          trimStart: 0.5,
+        },
+      ],
+    });
+  }
+  const demuxSelector = resolve(bundleRoot, 'validation/windows/inputs/owned-demux-product.json');
+  let demuxSelectorText: string | undefined;
+  try {
+    demuxSelectorText = await readFile(demuxSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (demuxSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(demuxSelectorText), { scenario: 'owned-demux-product' });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter((name) => name.endsWith('.json') && name !== 'owned-demux-product.json'),
+      []
+    );
+    const build = await readBuild(bundleRoot, 'dist', validateBundleFile, {
+      verifyInventory: true,
+      exactInventory: true,
+    });
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseOwnedDemuxProduct({
+        browser,
+        bundleRoot,
+        output,
+        build,
+        url: started.url,
+        validateBundleFile,
+        loadApplication,
+      });
+    } finally {
+      await closeServer(started.server);
+    }
+  }
   const vp8Selector = resolve(bundleRoot, 'validation/windows/inputs/owned-vp8-native.json');
   let vp8SelectorText: string | undefined;
   try {
@@ -4028,6 +4147,15 @@ export async function run({
           size: gifWasmFiles[0].size,
         }
       : null;
+    const demuxWasmFiles = build.state.files.filter((file) =>
+      /^assets\/owned-demux[-.][\w-]{8}\.wasm$/.test(file.path)
+    );
+    assert(demuxWasmFiles.length <= 1, 'Build contains multiple owned demux WASM assets');
+    const additionalWasmAssets: MotionWasmAsset[] = demuxWasmFiles.map((file) => ({
+      path: `/${file.path}`,
+      sha256: file.sha256,
+      size: file.size,
+    }));
     const smallSha256 = sha256(await readFile(smallPath));
     const primarySha256 = sha256(await readFile(primaryPath));
     const ownerManifest = ownerVideo
@@ -4195,12 +4323,36 @@ export async function run({
               warmController: sample.cacheObservation.serviceWorkerController,
             })
           : null;
+      const additionalWasmWarmCaches = additionalWasmAssets.map((asset) => {
+        if (sample.condition !== 'warm' || firstSample?.sample.workload !== sample.workload)
+          return { path: asset.path, evidence: null };
+        const first = firstSample.sample.cacheObservation.additionalWasmAssetCaches.find(
+          (entry) => entry.path === asset.path
+        );
+        const warm = sample.cacheObservation.additionalWasmAssetCaches.find(
+          (entry) => entry.path === asset.path
+        );
+        assert(first && warm, 'Additional WASM cache observations missing');
+        return {
+          path: asset.path,
+          evidence: classifyWasmWarmCache({
+            asset,
+            first,
+            warm,
+            firstHost: firstSample.wasmRequests,
+            warmHost: wasmRequests,
+            firstController: firstSample.sample.cacheObservation.serviceWorkerController,
+            warmController: sample.cacheObservation.serviceWorkerController,
+          }),
+        };
+      });
       if (sample.condition !== 'warm') firstSample = { sample, wasmRequests };
       return Object.assign(sample, {
         deliveryEvidence: {
           staticServerJsAssetRequests: assetRequests(),
           staticServerWasmAssetRequests: wasmRequests,
           wasmWarmCache,
+          additionalWasmWarmCaches,
           workerCacheControlFromDistHeaders:
             matchedHeaders(headerRules, workerPath).get('cache-control') ?? null,
           workerCacheHeaderSource: 'dist/_headers',
@@ -4217,6 +4369,7 @@ export async function run({
       fixtureSha256: { small: smallSha256, primary: primarySha256 },
       inputManifest: ownerManifest,
       gifWasmAsset: wasmAsset,
+      additionalWasmAssets,
       staticServerJsAssetRequests: assetRequests(),
       staticServerWasmAssetRequests: wasmAssetRequests(),
       samples,
@@ -4573,7 +4726,9 @@ export async function run({
         await chooseMotionOption(page, 'smart-frame-skip', 'low');
         const recovered = fallbackRecovery
           ? await measureFallback(page, workloads[1]!)
-          : attachDeliveryEvidence(await measureMotion(page, workloads[1]!, 'warm', 0, wasmAsset));
+          : attachDeliveryEvidence(
+              await measureMotion(page, workloads[1]!, 'warm', 0, wasmAsset, additionalWasmAssets)
+            );
         result.recovery = recovered;
         assert(
           Math.abs(recovered.decoded.durationUs - 1_000_000) <= 250_000,
@@ -4654,7 +4809,8 @@ export async function run({
         output,
         diagnostics,
         quantizationScenario ? 'single-pair' : 'three-pair-cohort',
-        wasmAsset
+        wasmAsset,
+        additionalWasmAssets
       );
       result = { ...result, ...measured, scenario };
       return { profile: scenario, ...result };

@@ -61,6 +61,13 @@ import type {
   SerializedConversionOptions,
   SerializedDecoderConfig,
 } from '@services/conversion-worker/types';
+import { OwnedDemuxParseError } from '@services/owned-demux-core';
+import {
+  beginOwnedInputSelection,
+  clearOwnedInputSelection,
+  copyOwnedInputIndex,
+  publishOwnedInputIndex,
+} from '@services/owned-input-index-cache';
 import { MAX_CODEC_DESCRIPTION_BYTES, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 
 const validDecoderConfig: SerializedDecoderConfig = {
@@ -176,6 +183,55 @@ describe('runPipelineViaWorker lifecycle', () => {
     ThrowingWorker.workerError = null;
     runConversionPipeline.mockReset();
     for (const method of Object.values(logger)) method.mockReset();
+  });
+
+  it.each([
+    ['load', 'DECODER_ERROR', 'WorkerPipelineError'],
+    ['abi', 'DECODER_ERROR', 'WorkerPipelineError'],
+    ['resource', 'OUT_OF_MEMORY', 'WorkerMemoryLimitError'],
+    ['parse', 'DECODER_ERROR', 'WorkerPipelineError'],
+    ['conversion', 'DECODER_ERROR', 'WorkerPipelineError'],
+  ] as const)(
+    'retains owned demux %s failure identity after Worker delivery',
+    async (demuxFailureKind, code, name) => {
+      ThrowingWorker.response = {
+        type: 'error',
+        requestId: 'request-1',
+        message: 'Opaque diagnostic wording',
+        code,
+        demuxFailureKind,
+      };
+
+      await expect(
+        runPipelineWithFallback(new Blob(['video']), validDecoderConfig, validOptions, vi.fn())
+      ).rejects.toMatchObject({ name, code, demuxFailureKind });
+      expect(runConversionPipeline).not.toHaveBeenCalled();
+      expect(ThrowingWorker.instance?.terminate).toHaveBeenCalledOnce();
+    }
+  );
+
+  it('keeps ordinary Worker memory failures in the existing memory class', async () => {
+    ThrowingWorker.response = {
+      type: 'error',
+      requestId: 'request-1',
+      message: 'Ordinary budget',
+      code: 'OUT_OF_MEMORY',
+    };
+    await expect(
+      runPipelineViaWorker(new Blob(['video']), validDecoderConfig, validOptions, vi.fn())
+    ).rejects.toMatchObject({ name: 'WorkerMemoryLimitError', code: 'OUT_OF_MEMORY' });
+    expect(runConversionPipeline).not.toHaveBeenCalled();
+  });
+
+  it('preserves the original typed demux failure in the bootstrap-only main fallback', async () => {
+    const failure = new OwnedDemuxParseError('Malformed local input');
+    ThrowingWorker.constructionError = new Error('Worker constructor unavailable');
+    runConversionPipeline.mockRejectedValueOnce(failure);
+
+    await expect(
+      runPipelineWithFallback(new Blob(['video']), validDecoderConfig, validOptions, vi.fn())
+    ).rejects.toBe(failure);
+    expect(runConversionPipeline).toHaveBeenCalledOnce();
   });
 
   it('rejects a pre-aborted request without starting or transferring to the Worker', async () => {
@@ -844,6 +900,33 @@ describe('runPipelineViaWorker lifecycle', () => {
     expect(runConversionPipeline.mock.calls[0]?.[0]).not.toHaveProperty('inputBuffer');
     expect(readWholeFile).not.toHaveBeenCalled();
     expect(ThrowingWorker.instance?.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('transfers only a job copy and gives bootstrap fallback a fresh index copy', async () => {
+    const input = new Blob(['video']);
+    const generation = beginOwnedInputSelection(input);
+    const master = new ArrayBuffer(96);
+    new Uint8Array(master)[0] = 31;
+    expect(publishOwnedInputIndex(input, generation, master, 'a'.repeat(64))).toBe(true);
+    ThrowingWorker.workerError = new ErrorEvent('error', { message: 'Worker bootstrap failed' });
+    runConversionPipeline.mockResolvedValue(new ArrayBuffer(4));
+    const post = vi.spyOn(ThrowingWorker.prototype, 'postMessage');
+    try {
+      await runPipelineWithFallback(input, validDecoderConfig, validOptions, vi.fn());
+      const sent = post.mock.calls[0]?.[0] as { indexSnapshot?: { bytes: ArrayBuffer } };
+      const transfer = post.mock.calls[0]?.[1] ?? [];
+      expect(transfer).toHaveLength(1);
+      expect(sent.indexSnapshot?.bytes.byteLength).toBe(0);
+      const fallback = runConversionPipeline.mock.calls[0]?.[0] as {
+        indexSnapshot?: { bytes: ArrayBuffer };
+      };
+      expect(fallback.indexSnapshot?.bytes.byteLength).toBe(96);
+      expect(fallback.indexSnapshot?.bytes).not.toBe(master);
+      expect(new Uint8Array(copyOwnedInputIndex(input)!.bytes)[0]).toBe(31);
+    } finally {
+      post.mockRestore();
+      clearOwnedInputSelection(generation);
+    }
   });
 
   it('keeps diagnostic logs out of bootstrap control and falls back on a pre-ready error', async () => {

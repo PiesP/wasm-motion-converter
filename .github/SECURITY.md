@@ -20,11 +20,12 @@ coordinate disclosure after a fix is available.
 
 - Conversion runs locally in the browser; user media is not uploaded for
   server-side processing.
-- WebCodecs handles decoding. MediaBunny, wasm-webp, gifenc, and other runtime
-  code are bundled at build time instead of loaded from a runtime CDN.
-- The GIF scalar quantizer adds a local Rust/WASM module. Its Rust source and
-  JavaScript/WASM memory boundary need focused review; see the threat model for
-  the build verification and scanner coverage limits.
+- WebCodecs handles decoding. Owned demux/GIF Rust/WASM, wasm-webp and UI runtime
+  code are bundled at build time instead of loaded from a runtime CDN. MediaBunny
+  and gifenc remain development-only differential oracles, not production fallbacks.
+- Owned Rust sources and JavaScript/WASM memory boundaries need focused review,
+  including bounded parser/index state, palette/LZW slots and generation leases;
+  see the threat model for build verification and scanner coverage limits.
 - The application does not use `eval()` or similar dynamic code execution.
 - COOP/COEP headers provide the cross-origin security boundary and make
   `SharedArrayBuffer` available. The current single-threaded WASM encoders do

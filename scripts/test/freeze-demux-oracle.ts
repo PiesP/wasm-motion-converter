@@ -61,6 +61,23 @@ export async function freezeOracle(path: string): Promise<unknown> {
       });
     }
     const duration = await track.computeDuration();
+    const decodedFrameHashCommand = [
+      '-v',
+      'error',
+      '-i',
+      '<input>',
+      '-map',
+      '0:v:0',
+      '-pix_fmt',
+      'rgba',
+      '-fps_mode',
+      'passthrough',
+      '-f',
+      'framehash',
+      '-hash',
+      'sha256',
+      '-',
+    ];
     const seek = [];
     for (const seconds of [
       0,
@@ -91,23 +108,10 @@ export async function freezeOracle(path: string): Promise<unknown> {
       stats: await track.computePacketStats(50),
       packets,
       seek,
+      decodedFrameHashCommand,
       decodedFrameHashes: execFileSync(
         'ffmpeg',
-        [
-          '-v',
-          'error',
-          '-i',
-          path,
-          '-map',
-          '0:v:0',
-          '-pix_fmt',
-          'rgba',
-          '-f',
-          'framehash',
-          '-hash',
-          'sha256',
-          '-',
-        ],
+        decodedFrameHashCommand.map((argument) => (argument === '<input>' ? path : argument)),
         { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }
       ),
       independent: JSON.parse(
@@ -155,6 +159,10 @@ if (import.meta.main) {
         source: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
         oracle: { package: 'mediabunny', version: '1.65.2', patchSha256: digest(patch) },
         node: process.version,
+        tools: {
+          ffmpeg: execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0],
+          ffprobe: execFileSync('ffprobe', ['-version'], { encoding: 'utf8' }).split('\n')[0],
+        },
         fixtures,
       },
       null,

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 
+import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
+
 /**
  * Conversion Types
  *
@@ -24,14 +26,13 @@ export const isConversionFormat = (value: unknown): value is ConversionFormat =>
   typeof value === 'string' && CONVERSION_FORMATS.some((format) => format === value);
 
 /**
- * VideoDecoderConfig as extended by mediabunny at runtime.
+ * Decoder configuration with container presentation dimensions.
  *
- * The standard WebCodecs `VideoDecoderConfig` does not include
- * `displayAspectWidth`/`displayAspectHeight` or `displayWidth`/`displayHeight`,
- * but mediabunny patches these onto the config object when pixel aspect ratio
- * information is available in the container.
+ * displayAspectWidth/Height are standard WebCodecs fields supplied by the owned
+ * demuxer. displayWidth/Height are optional container-derived presentation hints
+ * accepted by the frame dimension resolver.
  */
-export interface MediabunnyVideoDecoderConfig extends VideoDecoderConfig {
+export interface ContainerVideoDecoderConfig extends VideoDecoderConfig {
   displayAspectWidth?: number;
   displayAspectHeight?: number;
   displayWidth?: number;
@@ -264,8 +265,10 @@ export type ProgressCallback = (progress: ConversionProgress) => void;
 export interface ConversionRequest {
   /** Full file content for worker/legacy paths. Omit when inputBlob is provided. */
   inputBuffer?: ArrayBuffer | undefined;
-  /** File as Blob — enables on-demand reading via BlobSource, avoiding full memory load */
+  /** File as Blob — enables bounded range reads without a full input copy */
   inputBlob?: Blob | undefined;
+  /** One conversion-owned logical index copy, distinct from the selected-file master. */
+  indexSnapshot?: OwnedInputIndexSnapshot | undefined;
   /** Omit for programmatic callers that need demux to extract metadata once. */
   preComputedMetadata?: PrecomputedVideoMetadata | undefined;
   fileName: string;

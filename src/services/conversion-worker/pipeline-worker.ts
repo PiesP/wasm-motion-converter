@@ -17,6 +17,7 @@ import { demuxVideo } from '@services/demuxer-service';
 import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder-common';
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
+import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import { encodeWebp } from '@services/webp-encoder-service';
 import {
   BYTES_PER_MB,
@@ -101,7 +102,8 @@ export async function runWorkerPipeline(
   signal?: AbortSignal,
   config?: SerializedDecoderConfig,
   duration?: number,
-  framerate?: number
+  framerate?: number,
+  indexSnapshot?: OwnedInputIndexSnapshot
 ): Promise<{ outputBuffer: ArrayBuffer; profile?: ConversionProfileReport }> {
   const pipelineStart = performance.now();
   const profilerClass = import.meta.env.DEV
@@ -129,7 +131,8 @@ export async function runWorkerPipeline(
     'input.webm',
     config,
     duration,
-    framerate
+    framerate,
+    indexSnapshot
   );
 
   const progressState = createWorkerProgressTracker();
@@ -148,7 +151,10 @@ export async function runWorkerPipeline(
   // pooled frame buffers, and any known output buffer in a conservative estimate.
   const sampleMemoryMB = (additionalBytes = 0): number => {
     const estimatedBytes =
-      (inputBuffer?.byteLength ?? 0) + globalBufferPool.totalRetainedMemory + additionalBytes;
+      (inputBuffer?.byteLength ?? 0) +
+      2 * (request.indexSnapshot?.bytes.byteLength ?? 0) +
+      globalBufferPool.totalRetainedMemory +
+      additionalBytes;
     return Math.ceil(estimatedBytes / BYTES_PER_MB);
   };
   const assertMemoryBudget = (additionalBytes = 0): number => {

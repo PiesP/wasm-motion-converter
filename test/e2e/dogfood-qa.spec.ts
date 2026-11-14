@@ -372,7 +372,8 @@ test.describe('Footer & Links', () => {
 
     const footer = page.getByRole('contentinfo');
     await expect(footer).toHaveCount(1);
-    await expect(footer).toContainText('mediabunny');
+    await expect(footer).toContainText('wasm-webp');
+    await expect(footer).not.toContainText('mediabunny');
   });
 
   test('external links have rel=noopener noreferrer', async ({ page }) => {

@@ -68,6 +68,7 @@ vi.mock('@utils/logger', () => ({
 
 import { ConversionRuntimeController } from '@hooks/conversion-handlers/use-conversion-runtime-controller';
 import { handleFileSelected } from '@hooks/conversion-handlers/use-handle-file-selected';
+import { activeOwnedInputGeneration } from '@services/owned-input-index-cache';
 
 function createRuntime(): ConversionRuntimeController {
   let sequence = 0;
@@ -131,6 +132,22 @@ describe('handleFileSelected conversion settings', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('releases the selected index owner when validation unexpectedly throws', async () => {
+    const failure = new Error('validation unavailable');
+    mocks.validateVideoFile.mockRejectedValueOnce(failure);
+    const runtime = createRuntime();
+    const file = new File(['video'], 'failed.mp4', { type: 'video/mp4' });
+    await expect(
+      handleFileSelected(
+        file,
+        runtime,
+        ((key: string) => key) as Parameters<typeof handleFileSelected>[2]
+      )
+    ).rejects.toBe(failure);
+    expect(activeOwnedInputGeneration(file)).toBeNull();
+    expect(runtime.finishAnalysisRun).toHaveBeenCalledOnce();
   });
 
   it('resets file-specific trim when a valid new file is accepted', async () => {

@@ -248,4 +248,10 @@ export function postbuild(
   writeDeploymentState(root, dist);
 }
 
-if (import.meta.main) postbuild();
+if (import.meta.main) {
+  postbuild();
+  if (process.env.WMC_OWNED_DEMUX_MEASUREMENT === '1') {
+    const { buildDemuxMeasurement } = await import('../test/build-demux-measurement.ts');
+    await buildDemuxMeasurement();
+  }
+}
