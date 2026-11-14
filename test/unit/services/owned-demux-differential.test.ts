@@ -103,6 +103,32 @@ describe('actual compiled owned demux versus pinned patched development oracle',
           ).toEqual(seek.packet);
         }
         expect(session.transferStats.wasmCapacityBytes).toBe(capacity);
+        const snapshot = await session.exportIndex();
+        expect(snapshot).not.toBeNull();
+        const reused = new OwnedDemuxSession(new Blob([bytes]), module);
+        try {
+          const importedTrack = await reused.importIndex(snapshot!);
+          expect(normalizedConfig(reused)).toEqual(fixture.config);
+          expect(Number(importedTrack.durationTicks) / importedTrack.timescale).toBe(
+            fixture.duration
+          );
+          expect(importedTrack.packetCount).toBe(track.packetCount);
+          expect(reused.transferStats.rangeReads).toBe(0);
+          const importedCapacity = reused.transferStats.wasmCapacityBytes;
+          for (let index = 0; index < importedTrack.packetCount; index++) {
+            const { sequence: _sequence, ...expected } = fixture.packets[index]!;
+            expect(await normalizedPacket(reused, reused.packet(index))).toEqual(expected);
+          }
+          for (const seek of fixture.seek) {
+            const index = await reused.findVerifiedKey(seek.seconds);
+            expect(
+              index === null ? null : await normalizedPacket(reused, reused.packet(index))
+            ).toEqual(seek.packet);
+          }
+          expect(reused.transferStats.wasmCapacityBytes).toBe(importedCapacity);
+        } finally {
+          reused.release();
+        }
       } finally {
         session.release();
       }

@@ -102,6 +102,46 @@ describe('actual compiled selected-input index route', () => {
     }
   });
 
+  const admitted = JSON.parse(
+    readFileSync(new URL('../../fixtures/owned-demux/oracle.json', import.meta.url), 'utf8')
+  ).fixtures as Array<{
+    id: string;
+    duration: number;
+    stats: { averagePacketRate: number; averageBitrate: number };
+    packets: Array<{ timestampUs: number; durationUs: number; sha256: string }>;
+  }>;
+  for (const entry of admitted) {
+    it(`preserves metadata and imported product demux packets: ${entry.id}`, async () => {
+      const bytes = Buffer.from(
+        readFileSync(
+          new URL(`../../fixtures/owned-demux/${entry.id}.base64`, import.meta.url),
+          'utf8'
+        ),
+        'base64'
+      );
+      const source = new Blob([bytes]);
+      beginOwnedInputSelection(source);
+      const metadata = await extractVideoMetadata(source);
+      expect(metadata.duration).toBe(entry.duration);
+      expect(metadata.framerate).toBe(Math.round(entry.stats.averagePacketRate * 100) / 100);
+      expect(metadata.bitrate).toBe(Math.round(entry.stats.averageBitrate));
+      const indexSnapshot = copyOwnedInputIndex(source);
+      expect(indexSnapshot).not.toBeNull();
+      const result = await demuxVideo(
+        { ...requestFor(source), indexSnapshot: indexSnapshot! },
+        metadata
+      );
+      expect(result.indexRoute).toBe('imported');
+      expect(await packetTrace(result)).toEqual(
+        entry.packets.map(({ timestampUs, durationUs, sha256 }) => ({
+          timestampUs,
+          durationUs,
+          sha256,
+        }))
+      );
+    });
+  }
+
   it('treats a different source token as a pre-use miss and a malformed import as terminal', async () => {
     const source = new Blob([fixtureBytes]);
     beginOwnedInputSelection(source);

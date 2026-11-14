@@ -172,6 +172,11 @@ function inspect(bytes: Buffer): object {
     'demux_packet_begin',
     'demux_packet_feed',
     'demux_packet_finish',
+    'demux_snapshot_begin',
+    'demux_snapshot_next',
+    'demux_snapshot_import_begin',
+    'demux_snapshot_import_feed',
+    'demux_snapshot_import_step',
     'demux_release',
   ])
     if (exports.get(name) !== 'function')
@@ -180,7 +185,7 @@ function inspect(bytes: Buffer): object {
   const instance = new wasm.Instance(module, {});
   if (
     typeof instance.exports.demux_abi_version !== 'function' ||
-    instance.exports.demux_abi_version() !== 2
+    instance.exports.demux_abi_version() !== 3
   )
     throw new Error('Owned demux ABI version differs');
   return {
