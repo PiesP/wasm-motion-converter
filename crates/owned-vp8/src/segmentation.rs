@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn frame_class_counts_collapse_or_signal_three_absolute_qindices() {
-        for (quality, chromatic, textured) in [(60, 12, 30), (75, 12, 23), (85, 8, 14)] {
+        for (quality, chromatic, textured) in [(60, 8, 30), (75, 8, 23), (85, 8, 14)] {
             for (id, qindex) in [presets::SMOOTH_QINDEX, chromatic, textured]
                 .into_iter()
                 .enumerate()
