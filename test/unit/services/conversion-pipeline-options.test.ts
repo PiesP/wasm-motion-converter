@@ -218,6 +218,13 @@ describe('main conversion pipeline encoder options', () => {
           selectedFrames: 5,
           encodedFrames: 3,
           emittedFrames: 2,
+          ...(route === 'gif-main'
+            ? {
+                gifRetainedMappedFrames: 3,
+                gifRetainedImageDataWrites: 2,
+                gifRetainedWasmCapacityBytes: 65_536,
+              }
+            : {}),
         });
         return new Uint8Array([1, 2, 3]);
       });
@@ -249,6 +256,13 @@ describe('main conversion pipeline encoder options', () => {
           emittedFrames: 2,
           currentFrame: 13,
           outputFrames: 2,
+          ...(route === 'gif-main'
+            ? {
+                gifRetainedMappedFrames: 3,
+                gifRetainedImageDataWrites: 2,
+                gifRetainedWasmCapacityBytes: 65_536,
+              }
+            : {}),
         });
         expect(getLastConversionProfileReport()?.encoderRoute).toBe(route);
       } finally {

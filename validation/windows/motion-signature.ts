@@ -272,6 +272,12 @@ type WorkerEvent = {
   url: string;
   starts: { requestId: string; options: Record<string, unknown> }[];
   completes: { requestId: string; outputBytes: number; profile: unknown | null }[];
+  retainedRoute: {
+    requestId: string;
+    gifRetainedMappedFrames: number;
+    gifRetainedImageDataWrites: number;
+    gifRetainedWasmCapacityBytes: number;
+  } | null;
   errors: { requestId: string; code: string }[];
   terminationCalls: number;
 };
@@ -390,12 +396,38 @@ export function installMotionObserver(options?: { forceConversionWorkerFailure?:
       }
       super(scriptURL, options);
       this.entry = /^\/assets\/worker-[\w-]+\.js$/.test(url.pathname)
-        ? { url: url.href, starts: [], completes: [], errors: [], terminationCalls: 0 }
+        ? {
+            url: url.href,
+            starts: [],
+            completes: [],
+            retainedRoute: null,
+            errors: [],
+            terminationCalls: 0,
+          }
         : null;
       if (this.entry) observed.workers.push(this.entry);
       this.addEventListener('message', ({ data }: MessageEvent<unknown>) => {
         if (!this.entry || !data || typeof data !== 'object' || !('type' in data)) return;
-        if (
+        if (data.type === 'progress' && 'phase' in data && data.phase === 'assembling') {
+          const mapped = Reflect.get(data, 'gifRetainedMappedFrames');
+          const writes = Reflect.get(data, 'gifRetainedImageDataWrites');
+          const capacity = Reflect.get(data, 'gifRetainedWasmCapacityBytes');
+          if (
+            Number.isSafeInteger(mapped) &&
+            Number.isSafeInteger(writes) &&
+            Number.isSafeInteger(capacity) &&
+            mapped >= 0 &&
+            writes >= 0 &&
+            capacity >= 0
+          ) {
+            this.entry.retainedRoute = {
+              requestId: 'requestId' in data ? String(data.requestId) : '',
+              gifRetainedMappedFrames: mapped,
+              gifRetainedImageDataWrites: writes,
+              gifRetainedWasmCapacityBytes: capacity,
+            };
+          }
+        } else if (
           data.type === 'complete' &&
           'outputBuffer' in data &&
           data.outputBuffer instanceof ArrayBuffer
@@ -712,6 +744,13 @@ export async function measure(
   assert.equal(worker.starts.length, 1, 'Worker did not receive exactly one start');
   assert.equal(worker.completes.length, 1, 'Worker did not complete exactly once');
   assert.deepEqual(worker.errors, [], 'Worker reported a failure');
+  if (worker.retainedRoute) {
+    assert.equal(
+      worker.retainedRoute.requestId,
+      worker.starts[0]?.requestId,
+      'Retained-route progress belongs to a different request'
+    );
+  }
   assert.deepEqual(
     {
       format: worker.starts[0]?.options.format,
@@ -793,6 +832,7 @@ export async function measure(
       url: worker.url,
       starts: worker.starts,
       completes: worker.completes,
+      retainedRoute: worker.retainedRoute,
       terminationCalls: worker.terminationCalls,
     },
     cacheObservation: { ...cacheObservation, wasmAssetCache },
