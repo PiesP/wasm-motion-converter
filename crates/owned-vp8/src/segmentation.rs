@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// Three absolute VP8 quantizer segments. Bit syntax follows RFC 6386 section 9.3
+// Four absolute VP8 quantizer segments. Bit syntax follows RFC 6386 section 9.3
 // and the reference decoder's SEGMENT_ABSDATA=1 definition.
 
 use crate::{presets, rate::BoolSink, EncodeError};
 
 pub(crate) const NEUTRAL_SMOOTH: u8 = 0;
-pub(crate) const CHROMATIC_SMOOTH: u8 = 1;
-pub(crate) const TEXTURED: u8 = 2;
+pub(crate) const CHROMATIC_FLAT: u8 = 1;
+pub(crate) const CHROMATIC_RAMP: u8 = 2;
+pub(crate) const TEXTURED: u8 = 3;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Config {
     pub enabled: bool,
     pub base_qindex: usize,
-    pub qindex: [usize; 3],
-    pub map_probabilities: [u8; 2],
-    active: [bool; 3],
+    pub qindex: [usize; 4],
+    pub map_probabilities: [u8; 3],
+    active: [bool; 4],
 }
 
 impl Config {
@@ -23,21 +24,22 @@ impl Config {
         Self {
             enabled: false,
             base_qindex: qindex,
-            qindex: [qindex; 3],
-            map_probabilities: [255; 2],
-            active: [false; 3],
+            qindex: [qindex; 4],
+            map_probabilities: [255; 3],
+            active: [false; 4],
         }
     }
 
-    pub(crate) fn from_counts(quality: u32, counts: [usize; 3], total: usize) -> Self {
+    pub(crate) fn from_counts(quality: u32, counts: [usize; 4], total: usize) -> Self {
         debug_assert_eq!(counts.iter().sum::<usize>(), total);
         let qindex = [
             presets::SMOOTH_QINDEX,
-            presets::chromatic_smooth_qindex(quality),
+            presets::CHROMATIC_FLAT_QINDEX,
+            presets::chromatic_ramp_qindex(quality),
             presets::textured_qindex(quality),
         ];
         let enabled = counts.iter().filter(|&&count| count > 0).count() > 1;
-        let base_qindex = qindex[counts.iter().position(|&count| count > 0).unwrap_or(2)];
+        let base_qindex = qindex[counts.iter().position(|&count| count > 0).unwrap_or(3)];
         let probability = |numerator: usize, denominator: usize| {
             (numerator * 256 + denominator / 2)
                 .checked_div(denominator)
@@ -48,9 +50,10 @@ impl Config {
             [
                 probability(counts[0] + counts[1], total),
                 probability(counts[0], counts[0] + counts[1]),
+                probability(counts[2], counts[2] + counts[3]),
             ]
         } else {
-            [255; 2]
+            [255; 3]
         };
         Self {
             enabled,
@@ -81,16 +84,14 @@ impl Config {
         sink.bit(true)?; // Fresh segment feature data.
         sink.bit(true)?; // Absolute quantizer values (SEGMENT_ABSDATA).
         for id in 0..4 {
-            sink.bit(id < 3)?;
-            if id < 3 {
-                sink.literal(self.qindex[id] as u32, 7)?;
-                sink.bit(false)?; // Positive value.
-            }
+            sink.bit(true)?;
+            sink.literal(self.qindex[id] as u32, 7)?;
+            sink.bit(false)?; // Positive value.
         }
         // Absolute segmentation replaces the frame's filter level. Signal
         // the same level for each active ID, leaving unused IDs at zero.
         for id in 0..4 {
-            let active = id < 3 && self.active[id] && filter_level > 0;
+            let active = self.active[id] && filter_level > 0;
             sink.bit(active)?;
             if active {
                 sink.literal(u32::from(filter_level), 6)?;
@@ -101,7 +102,8 @@ impl Config {
         sink.literal(u32::from(self.map_probabilities[0]), 8)?; // IDs 0/1 versus 2/3.
         sink.bit(true)?;
         sink.literal(u32::from(self.map_probabilities[1]), 8)?; // IDs 0 versus 1.
-        sink.bit(false)?; // Unused IDs 2/3 branch stays 255.
+        sink.bit(true)?;
+        sink.literal(u32::from(self.map_probabilities[2]), 8)?; // IDs 2 versus 3.
         Ok(())
     }
 
@@ -110,19 +112,20 @@ impl Config {
             if id > TEXTURED {
                 return Err(EncodeError::InvalidInput);
             }
-            sink.write(self.map_probabilities[0], id == TEXTURED)?;
-            if id == TEXTURED {
-                sink.write(255, false)?; // ID 2 in the 2/3 subtree.
+            sink.write(self.map_probabilities[0], id >= CHROMATIC_RAMP)?;
+            if id >= CHROMATIC_RAMP {
+                sink.write(self.map_probabilities[2], id == TEXTURED)?;
             } else {
-                sink.write(self.map_probabilities[1], id == CHROMATIC_SMOOTH)?;
+                sink.write(self.map_probabilities[1], id == CHROMATIC_FLAT)?;
             }
         }
         Ok(())
     }
 }
 
-/// Curvature selects smooth tiles; neutral chroma then selects the finest
-/// smooth class. Tile boundaries are excluded so padding cannot create edges.
+/// Curvature selects smooth tiles. Chroma neutrality selects the finest class;
+/// otherwise each plane's range separates flat colors from ramps. Tile
+/// boundaries are excluded so padding cannot create edges.
 pub(crate) fn classify(y: &[u8], u: &[u8], v: &[u8], y_stride: usize, mx: usize, my: usize) -> u8 {
     fn smooth_tile(plane: &[u8], stride: usize, x: usize, y: usize, size: usize) -> bool {
         for row in 0..size {
@@ -147,20 +150,43 @@ pub(crate) fn classify(y: &[u8], u: &[u8], v: &[u8], y_stride: usize, mx: usize,
         }
         true
     }
+    fn flat_tile(plane: &[u8], stride: usize, x: usize, y: usize, size: usize) -> bool {
+        let mut minimum = u8::MAX;
+        let mut maximum = u8::MIN;
+        for row in 0..size {
+            for col in 0..size {
+                let value = plane[(y + row) * stride + x + col];
+                minimum = minimum.min(value);
+                maximum = maximum.max(value);
+            }
+        }
+        maximum - minimum <= 1
+    }
     if smooth_tile(y, y_stride, mx * 16, my * 16, 16)
         && smooth_tile(u, y_stride / 2, mx * 8, my * 8, 8)
         && smooth_tile(v, y_stride / 2, mx * 8, my * 8, 8)
     {
         let uv_stride = y_stride / 2;
-        for row in 0..8 {
+        let mut neutral = true;
+        'chroma: for row in 0..8 {
             for col in 0..8 {
                 let at = (my * 8 + row) * uv_stride + mx * 8 + col;
                 if u[at].abs_diff(128) > 1 || v[at].abs_diff(128) > 1 {
-                    return CHROMATIC_SMOOTH;
+                    neutral = false;
+                    break 'chroma;
                 }
             }
         }
-        NEUTRAL_SMOOTH
+        if neutral {
+            NEUTRAL_SMOOTH
+        } else if flat_tile(y, y_stride, mx * 16, my * 16, 16)
+            && flat_tile(u, uv_stride, mx * 8, my * 8, 8)
+            && flat_tile(v, uv_stride, mx * 8, my * 8, 8)
+        {
+            CHROMATIC_FLAT
+        } else {
+            CHROMATIC_RAMP
+        }
     } else {
         TEXTURED
     }
@@ -171,22 +197,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frame_class_counts_collapse_or_signal_three_absolute_qindices() {
-        for (quality, chromatic, textured) in [(60, 8, 30), (75, 8, 23), (85, 8, 14)] {
-            for (id, qindex) in [presets::SMOOTH_QINDEX, chromatic, textured]
+    fn frame_class_counts_collapse_or_signal_four_absolute_qindices() {
+        for (quality, ramp, textured) in [(60, 16, 30), (75, 16, 23), (85, 12, 14)] {
+            for (id, qindex) in [presets::SMOOTH_QINDEX, 8, ramp, textured]
                 .into_iter()
                 .enumerate()
             {
-                let mut counts = [0; 3];
+                let mut counts = [0; 4];
                 counts[id] = 4;
                 let single = Config::from_counts(quality, counts, 4);
                 assert!(!single.enabled);
                 assert_eq!(single.base_qindex, qindex);
             }
-            let mixed = Config::from_counts(quality, [1, 1, 2], 4);
+            let mixed = Config::from_counts(quality, [1, 1, 1, 1], 4);
             assert!(mixed.enabled);
-            assert_eq!(mixed.qindex, [presets::SMOOTH_QINDEX, chromatic, textured]);
-            assert_eq!(mixed.map_probabilities, [128, 128]);
+            assert_eq!(mixed.qindex, [presets::SMOOTH_QINDEX, 8, ramp, textured]);
+            assert_eq!(mixed.map_probabilities, [128, 128, 128]);
         }
     }
 
@@ -198,9 +224,22 @@ mod tests {
         let uv = vec![128; 16 * 8];
         assert_eq!(classify(&y, &uv, &uv, 32, 0, 0), NEUTRAL_SMOOTH);
         let chromatic_u = vec![126; 16 * 8];
-        assert_eq!(classify(&y, &chromatic_u, &uv, 32, 0, 0), CHROMATIC_SMOOTH);
+        assert_eq!(classify(&y, &chromatic_u, &uv, 32, 0, 0), CHROMATIC_RAMP);
         let chromatic_v = vec![130; 16 * 8];
-        assert_eq!(classify(&y, &uv, &chromatic_v, 32, 0, 0), CHROMATIC_SMOOTH);
+        assert_eq!(classify(&y, &uv, &chromatic_v, 32, 0, 0), CHROMATIC_RAMP);
+        let flat_y = vec![80; 32 * 16];
+        assert_eq!(
+            classify(&flat_y, &chromatic_u, &uv, 32, 0, 0),
+            CHROMATIC_FLAT
+        );
+        let mut chromatic_ramp_u = chromatic_u.clone();
+        for row in 0..8 {
+            chromatic_ramp_u[row * 16..row * 16 + 8].fill(126 + row as u8);
+        }
+        assert_eq!(
+            classify(&flat_y, &chromatic_ramp_u, &uv, 32, 0, 0),
+            CHROMATIC_RAMP
+        );
         let mut textured_y = y.clone();
         textured_y[8 * 32 + 8] = 0;
         assert_eq!(classify(&textured_y, &uv, &uv, 32, 0, 0), TEXTURED);
@@ -213,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn all_three_ids_use_the_signaled_map_tree() {
+    fn all_four_ids_use_the_signaled_map_tree() {
         struct Operations(Vec<(u8, bool)>);
         impl BoolSink for Operations {
             fn write(&mut self, probability: u8, bit: bool) -> Result<(), EncodeError> {
@@ -221,18 +260,19 @@ mod tests {
                 Ok(())
             }
         }
-        let config = Config::from_counts(75, [1, 1, 1], 3);
+        let config = Config::from_counts(75, [1, 1, 1, 1], 4);
         for (id, expected) in [
-            (NEUTRAL_SMOOTH, [(171, false), (128, false)]),
-            (CHROMATIC_SMOOTH, [(171, false), (128, true)]),
-            (TEXTURED, [(171, true), (255, false)]),
+            (NEUTRAL_SMOOTH, [(128, false), (128, false)]),
+            (CHROMATIC_FLAT, [(128, false), (128, true)]),
+            (CHROMATIC_RAMP, [(128, true), (128, false)]),
+            (TEXTURED, [(128, true), (128, true)]),
         ] {
             let mut operations = Operations(Vec::new());
             config.write_id(&mut operations, id).unwrap();
             assert_eq!(operations.0, expected);
         }
         assert_eq!(
-            config.write_id(&mut Operations(Vec::new()), 3),
+            config.write_id(&mut Operations(Vec::new()), 4),
             Err(EncodeError::InvalidInput)
         );
     }
@@ -246,21 +286,21 @@ mod tests {
                 Ok(())
             }
         }
-        let config = Config::from_counts(75, [1, 0, 1], 2);
+        let config = Config::from_counts(75, [1, 0, 0, 1], 2);
         let mut bits = Bits(Vec::new());
         config.write_header(&mut bits, 6).unwrap();
         // Four control bits and four quantizer feature records precede the
         // per-segment filter strengths.
         assert_eq!(
-            &bits.0[32..50],
+            &bits.0[40..58],
             &[
-                true, false, false, false, true, true, false, false, false, true, false, false,
-                false, true, true, false, false, false,
+                true, false, false, false, true, true, false, false, false, false, true, false,
+                false, false, true, true, false, false,
             ]
         );
         let mut disabled = Bits(Vec::new());
         config.write_header(&mut disabled, 0).unwrap();
-        assert_eq!(&disabled.0[32..36], &[false; 4]);
+        assert_eq!(&disabled.0[40..44], &[false; 4]);
         assert_eq!(
             config.write_header(&mut Bits(Vec::new()), 64),
             Err(EncodeError::InvalidInput)
