@@ -5,6 +5,8 @@
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 
+import { ownedReadCreditStats, readOwnedRange } from './owned-demux-source-reads';
+
 const ABI_VERSION = 2;
 const MAX_INPUT_BYTES = 500 * 1024 * 1024;
 const MAX_PACKET_BYTES = 16 * 1024 * 1024 - 1024;
@@ -79,6 +81,8 @@ export type OwnedDemuxTransferStats = {
   stepCalls: number;
   wasmCapacityBytes: number;
   maxPacketBytes: number;
+  realmReadLiveBytes: number;
+  realmReadRetiredBytes: number;
 };
 
 /** Only accepts a container key hint after inspecting the actual compressed frame. */
@@ -254,6 +258,7 @@ export class OwnedDemuxSession {
   private preparedWasmCapacityBytes = 0;
 
   get transferStats(): OwnedDemuxTransferStats {
+    const readCredit = ownedReadCreditStats();
     return {
       rangeReads: this.rangeReads,
       sourceReadBytes: this.sourceReadBytes,
@@ -262,6 +267,8 @@ export class OwnedDemuxSession {
       stepCalls: this.stepCalls,
       wasmCapacityBytes: this.wasm.memory.buffer.byteLength,
       maxPacketBytes: this.maxPacketBytes,
+      realmReadLiveBytes: readCredit.liveBytes,
+      realmReadRetiredBytes: readCredit.retiredBytes,
     };
   }
 
@@ -329,7 +336,7 @@ export class OwnedDemuxSession {
           if (length < 1 || length > 64 * 1024 || start + length > this.source.size)
             throw new Error('Owned demux invalid input request');
           const window = new Uint8Array(
-            await this.source.slice(start, start + length).arrayBuffer()
+            await readOwnedRange(this.source, start, start + length, signal)
           );
           this.rangeReads++;
           this.sourceReadBytes += window.byteLength;
@@ -514,7 +521,7 @@ export class OwnedDemuxSession {
         start + packet.byteLength > this.source.size
       )
         throw new Error('Owned demux packet range invalid');
-      const data = await this.source.slice(start, start + packet.byteLength).arrayBuffer();
+      const data = await readOwnedRange(this.source, start, start + packet.byteLength, signal);
       this.rangeReads++;
       this.sourceReadBytes += data.byteLength;
       this.packetReadBytes += data.byteLength;
@@ -539,7 +546,7 @@ export class OwnedDemuxSession {
     while (at < end) {
       signal?.throwIfAborted();
       const length = Math.min(64 * 1024, end - at);
-      const chunk = new Uint8Array(await this.source.slice(at, at + length).arrayBuffer());
+      const chunk = new Uint8Array(await readOwnedRange(this.source, at, at + length, signal));
       this.rangeReads++;
       this.sourceReadBytes += chunk.byteLength;
       signal?.throwIfAborted();
@@ -579,7 +586,9 @@ export class OwnedDemuxSession {
       if (!packet.key || packet.sourceEnd !== null) continue;
       const start = safeOffset(packet.offset);
       const length = Math.min(packet.byteLength, 4096);
-      const prefix = new Uint8Array(await this.source.slice(start, start + length).arrayBuffer());
+      const prefix = new Uint8Array(
+        await readOwnedRange(this.source, start, start + length, signal)
+      );
       this.rangeReads++;
       this.sourceReadBytes += prefix.byteLength;
       signal?.throwIfAborted();
@@ -608,9 +617,14 @@ export class OwnedDemuxSession {
     this.seeking = true;
     try {
       const track = this.track();
-      const scaled = Math.trunc(seconds * track.timescale);
-      if (!Number.isSafeInteger(scaled)) throw new Error('Owned demux seek timestamp out of range');
-      const target = BigInt(scaled);
+      const scaled = seconds * track.timescale;
+      if (!Number.isFinite(scaled) || Math.abs(scaled) > Number.MAX_SAFE_INTEGER)
+        throw new Error('Owned demux seek timestamp out of range');
+      // Match the oracle's roundIfAlmostInteger conversion. Ordinary fractional
+      // ticks remain fractional, so a request just before a key excludes it.
+      const rounded = Math.round(scaled);
+      const target = Math.abs(scaled / rounded - 1) < 10 * Number.EPSILON ? rounded : scaled;
+      const safeTick = BigInt(Number.MAX_SAFE_INTEGER);
       // The two typed arrays use at most 12 bytes per admitted indexed packet.
       // Heap insertion and removal are logarithmic; no whole-index sort occurs.
       const indices = new Uint32Array(track.packetCount);
@@ -633,7 +647,9 @@ export class OwnedDemuxSession {
           await nextTask();
         }
         const packet = this.packet(index);
-        if (!packet.key || packet.ptsTicks > target) continue;
+        if (packet.ptsTicks < -safeTick || packet.ptsTicks > safeTick)
+          throw new Error('Owned demux seek timestamp out of range');
+        if (!packet.key || Number(packet.ptsTicks) > target) continue;
         let at = count++;
         points[at] = packet.ptsTicks;
         indices[at] = index;

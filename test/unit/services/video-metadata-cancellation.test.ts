@@ -4,15 +4,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const mocks = vi.hoisted(() => ({
-  dispose: vi.fn(),
-  getVideoTracks: vi.fn(),
+  analyze: vi.fn(),
+  release: vi.fn(),
+  stats: vi.fn(),
 }));
-
-vi.mock('@utils/mediabunny-utils', () => ({
-  createMediaBunnyInput: () => ({
-    dispose: mocks.dispose,
-    getVideoTracks: mocks.getVideoTracks,
+vi.mock('@services/owned-demux-core', () => ({
+  createOwnedDemuxSession: vi.fn(async () => ({
+    analyze: mocks.analyze,
+    release: mocks.release,
+  })),
+  computeOwnedPacketStats: mocks.stats,
+  classifyOwnedDemuxError: (error: unknown) => error,
+}));
+vi.mock('@services/owned-demux-config', () => ({
+  ownedDecoderConfig: () => ({
+    codec: 'avc1.42c00a',
+    codedWidth: 80,
+    codedHeight: 48,
+    colorSpace: { fullRange: false },
   }),
+  ownedTimestampUs: (ticks: bigint, timescale: number) =>
+    Math.trunc((Number(ticks) / timescale) * 1_000_000),
 }));
 vi.mock('@utils/logger', () => ({
   logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
@@ -20,138 +32,67 @@ vi.mock('@utils/logger', () => ({
 
 import { extractVideoMetadata } from '@services/video-metadata';
 
-describe('extractVideoMetadata cancellation', () => {
+const track = {
+  width: 80,
+  height: 48,
+  displayWidth: 80,
+  displayHeight: 48,
+  rotation: 270,
+  durationTicks: 2_000n,
+  timescale: 1_000,
+  packetCount: 12,
+};
+
+describe('extractVideoMetadata owned parser lifecycle', () => {
   beforeEach(() => {
-    mocks.dispose.mockReset();
-    mocks.getVideoTracks.mockReset();
+    vi.clearAllMocks();
+    mocks.analyze.mockResolvedValue(track);
+    mocks.stats.mockResolvedValue({ averagePacketRate: 29.997, averageBitrate: 1_000_000.4 });
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  afterEach(() => vi.useRealTimers());
 
-  it('releases the caller-owned input after a shared timeout and ignores late statistics', async () => {
-    vi.useFakeTimers();
-    const statistics = Promise.withResolvers<{
-      averageBitrate: number;
-      averagePacketRate: number;
-    }>();
-    const track = {
-      computeDuration: vi.fn().mockResolvedValue(2),
-      computePacketStats: vi.fn().mockReturnValue(statistics.promise),
-      getAverageBitrate: vi.fn(),
-      getBitrate: vi.fn(),
-      getDecoderConfig: vi.fn().mockResolvedValue({
-        codec: 'vp09.00.10.08',
-        codedHeight: 16,
-        codedWidth: 16,
-      }),
-      getRotation: vi.fn().mockResolvedValue(0),
-    };
-    mocks.getVideoTracks.mockResolvedValue([track]);
-    const controller = new AbortController();
-    const extraction = extractVideoMetadata(new Blob(['video']), 24, controller.signal);
-
-    await vi.advanceTimersByTimeAsync(2_000);
-    const metadata = await extraction;
-    expect(metadata).toMatchObject({ duration: 2, framerate: 24, bitrate: 0 });
-    expect(mocks.dispose).toHaveBeenCalledOnce();
-    expect(track.getAverageBitrate).not.toHaveBeenCalled();
-    expect(track.getBitrate).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
-
-    statistics.resolve({ averageBitrate: 1_000_000, averagePacketRate: 60 });
-    await statistics.promise;
-    controller.abort();
-    expect(metadata).toMatchObject({ framerate: 24, bitrate: 0 });
-    expect(mocks.dispose).toHaveBeenCalledOnce();
-  });
-
-  it('disposes the active MediaBunny input and rejects immediately on abort', async () => {
-    mocks.getVideoTracks.mockReturnValue(new Promise(() => {}));
-    const controller = new AbortController();
-    const extraction = extractVideoMetadata(new Blob(['video']), 30, controller.signal);
-
-    controller.abort();
-
-    expect(mocks.dispose).toHaveBeenCalledOnce();
-    await expect(extraction).rejects.toMatchObject({ name: 'AbortError' });
-    expect(mocks.dispose).toHaveBeenCalledOnce();
-  });
-
-  it('does not swallow cancellation during optional packet statistics', async () => {
-    const computePacketStats = vi.fn().mockReturnValue(new Promise(() => {}));
-    mocks.getVideoTracks.mockResolvedValue([
-      {
-        computeDuration: vi.fn().mockResolvedValue(2),
-        computePacketStats,
-        getDecoderConfig: vi.fn().mockResolvedValue({
-          codec: 'vp09.00.10.08',
-          codedHeight: 16,
-          codedWidth: 16,
-        }),
-        getRotation: vi.fn().mockResolvedValue(0),
-      },
-    ]);
-    const controller = new AbortController();
-    const extraction = extractVideoMetadata(new Blob(['video']), 30, controller.signal);
-    await vi.waitFor(() => expect(computePacketStats).toHaveBeenCalledOnce());
-
-    controller.abort();
-
-    await expect(extraction).rejects.toMatchObject({ name: 'AbortError' });
-    expect(mocks.dispose).toHaveBeenCalledOnce();
-  });
-
-  it('preserves ordinary metadata extraction and disposes once', async () => {
-    const track = {
-      computeDuration: vi.fn().mockResolvedValue(2),
-      computePacketStats: vi.fn().mockResolvedValue({
-        averageBitrate: 1_000_000,
-        averagePacketRate: 30,
-      }),
-      getDecoderConfig: vi.fn().mockResolvedValue({
-        codec: 'vp09.00.10.08',
-        codedHeight: 48,
-        codedWidth: 80,
-      }),
-      getRotation: vi.fn().mockResolvedValue(270),
-    };
-    mocks.getVideoTracks.mockResolvedValue([track]);
-
+  it('uses owned decoder metadata and rounded packet statistics, then releases once', async () => {
     await expect(extractVideoMetadata(new Blob(['video']))).resolves.toMatchObject({
-      codec: 'vp09',
-      duration: 2,
-      height: 80,
-      rotation: 270,
       width: 48,
+      height: 80,
+      codec: 'avc1',
+      duration: 2,
+      framerate: 30,
+      bitrate: 1_000_000,
+      rotation: 270,
     });
-    expect(mocks.dispose).toHaveBeenCalledOnce();
+    expect(mocks.stats).toHaveBeenCalledOnce();
+    expect(mocks.release).toHaveBeenCalledOnce();
   });
 
-  it('falls back instead of forwarding non-finite packet metadata', async () => {
-    const track = {
-      computeDuration: vi.fn().mockResolvedValue(Number.POSITIVE_INFINITY),
-      computePacketStats: vi.fn().mockResolvedValue({
-        averageBitrate: Number.POSITIVE_INFINITY,
-        averagePacketRate: Number.POSITIVE_INFINITY,
-      }),
-      getAverageBitrate: vi.fn().mockResolvedValue(Number.POSITIVE_INFINITY),
-      getBitrate: vi.fn().mockResolvedValue(Number.NaN),
-      getDecoderConfig: vi.fn().mockResolvedValue({
-        codec: 'vp09.00.10.08',
-        codedHeight: 16,
-        codedWidth: 16,
-      }),
-      getRotation: vi.fn().mockResolvedValue(0),
-    };
-    mocks.getVideoTracks.mockResolvedValue([track]);
-
+  it('falls back to the caller FPS when bounded statistics are unavailable', async () => {
+    mocks.stats.mockResolvedValue(null);
     await expect(extractVideoMetadata(new Blob(['video']), 24)).resolves.toMatchObject({
-      bitrate: 0,
-      duration: 0,
       framerate: 24,
+      bitrate: 0,
     });
-    expect(mocks.dispose).toHaveBeenCalledOnce();
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+
+  it('rejects cancellation during metadata analysis and releases the parser', async () => {
+    const controller = new AbortController();
+    mocks.analyze.mockImplementation(
+      (signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('Cancelled', 'AbortError')),
+            {
+              once: true,
+            }
+          );
+        })
+    );
+    const pending = extractVideoMetadata(new Blob(['video']), 30, controller.signal);
+    await vi.waitFor(() => expect(mocks.analyze).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(mocks.release).toHaveBeenCalledOnce();
   });
 });

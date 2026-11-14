@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { readFileSync } from 'node:fs';
+
+import { OwnedDemuxSession } from '@services/owned-demux-session';
 import { verifyOwnedVideoKey } from '@services/owned-demux-session';
 import { describe, expect, it } from 'vite-plus/test';
 
@@ -46,5 +49,104 @@ describe('owned demux bitstream key verification', () => {
     const pending = verifyOwnedVideoKey('avc1', new Uint8Array(), bytes, controller.signal);
     setTimeout(() => controller.abort(), 0);
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('owned demux late range reads', () => {
+  it('settles an aborted analysis before its Blob read resolves and recovers', async () => {
+    const module = await WebAssembly.compile(
+      Uint8Array.from(
+        readFileSync(new URL('../../../src/services/owned-demux.wasm', import.meta.url))
+      )
+    );
+    const source = new Blob([new Uint8Array(8)]);
+    const pending = Promise.withResolvers<ArrayBuffer>();
+    const range = new Blob();
+    vi.spyOn(range, 'arrayBuffer').mockReturnValue(pending.promise);
+    const slice = vi.spyOn(source, 'slice').mockReturnValue(range);
+    const session = new OwnedDemuxSession(source, module);
+    const controller = new AbortController();
+    const analysis = session.analyze(controller.signal);
+    await vi.waitFor(() => expect(slice).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(analysis).rejects.toMatchObject({ name: 'AbortError' });
+    pending.resolve(new ArrayBuffer(8));
+    await Promise.resolve();
+    expect(session.transferStats.inputCopiedToWasmBytes).toBe(0);
+
+    const base64 = readFileSync(
+      new URL('../../fixtures/owned-demux/avc-baseline.mp4.base64', import.meta.url),
+      'utf8'
+    );
+    const recovered = new OwnedDemuxSession(
+      new Blob([Uint8Array.from(Buffer.from(base64, 'base64'))]),
+      module
+    );
+    try {
+      await expect(recovered.analyze()).resolves.toMatchObject({ codec: 'avc1', packetCount: 12 });
+    } finally {
+      recovered.release();
+    }
+  });
+
+  it('rejects an aborted packet read before a delayed Blob completes', async () => {
+    const module = await WebAssembly.compile(
+      Uint8Array.from(
+        readFileSync(new URL('../../../src/services/owned-demux.wasm', import.meta.url))
+      )
+    );
+    const base64 = readFileSync(
+      new URL('../../fixtures/owned-demux/avc-baseline.mp4.base64', import.meta.url),
+      'utf8'
+    );
+    const source = new Blob([Uint8Array.from(Buffer.from(base64, 'base64'))]);
+    const session = new OwnedDemuxSession(source, module);
+    try {
+      await session.analyze();
+      const pending = Promise.withResolvers<ArrayBuffer>();
+      const range = new Blob();
+      vi.spyOn(range, 'arrayBuffer').mockReturnValue(pending.promise);
+      const slice = vi.spyOn(source, 'slice').mockReturnValue(range);
+      const controller = new AbortController();
+      const packet = session.packet(0);
+      const read = session.readPacket(packet, controller.signal);
+      await vi.waitFor(() => expect(slice).toHaveBeenCalledOnce());
+      controller.abort();
+      await expect(read).rejects.toMatchObject({ name: 'AbortError' });
+      session.release();
+      pending.resolve(new ArrayBuffer(packet.byteLength));
+      await Promise.resolve();
+      expect(session.transferStats.packetReadBytes).toBe(0);
+    } finally {
+      session.release();
+    }
+  });
+});
+
+describe('owned demux verified key boundaries', () => {
+  it('does not choose a future key within a fractional source tick', async () => {
+    const module = await WebAssembly.compile(
+      Uint8Array.from(
+        readFileSync(new URL('../../../src/services/owned-demux.wasm', import.meta.url))
+      )
+    );
+    const base64 = readFileSync(
+      new URL('../../fixtures/owned-demux/avc-bframes.mp4.base64', import.meta.url),
+      'utf8'
+    );
+    const session = new OwnedDemuxSession(
+      new Blob([Uint8Array.from(Buffer.from(base64, 'base64'))]),
+      module
+    );
+    try {
+      const track = await session.analyze();
+      const before = 1 - 0.25 / track.timescale;
+      const after = 1 + 0.25 / track.timescale;
+      await expect(session.findVerifiedKey(before)).resolves.toBe(0);
+      await expect(session.findVerifiedKey(1)).resolves.toBe(6);
+      await expect(session.findVerifiedKey(after)).resolves.toBe(6);
+    } finally {
+      session.release();
+    }
   });
 });
