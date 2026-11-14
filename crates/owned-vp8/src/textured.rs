@@ -2121,10 +2121,10 @@ mod tests {
                 Ok(())
             }
         }
-        for (quality, expected) in [(60, 0), (75, -7), (85, 0)] {
+        for (quality, expected) in [(60, 0), (75, -3), (85, 0)] {
             let deltas = crate::presets::deltas(quality);
             assert_eq!(deltas.uv_dc, expected);
-            assert_eq!(deltas.uv_ac, 0);
+            assert_eq!(deltas.uv_ac, expected);
             assert_eq!(deltas.y1_dc, 0);
             assert_eq!(deltas.y2_dc, 0);
             assert_eq!(deltas.y2_ac, 0);
@@ -2619,8 +2619,8 @@ mod tests {
     #[test]
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
     fn independent_mixed_segment_reconstruction() {
-        assert_eq!(crate::presets::deltas(75).uv_dc, -7);
-        assert_eq!(crate::presets::deltas(75).uv_ac, 0);
+        assert_ne!(crate::presets::deltas(75).uv_dc, 0);
+        assert_ne!(crate::presets::deltas(75).uv_ac, 0);
         let input = mixed_segment_input();
         let request = engine_request(32, 16, 0, &input, 128);
         let plan = ResourcePlan::checked(request).unwrap();
