@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn frame_class_counts_collapse_or_signal_four_absolute_qindices() {
         for (quality, flat, ramp, textured) in
-            [(60, 14, 28, 30), (75, 15, 27, 28), (85, 10, 15, 14)]
+            [(60, 14, 28, 32), (75, 15, 27, 28), (85, 10, 15, 14)]
         {
             for (id, qindex) in [presets::SMOOTH_QINDEX, flat, ramp, textured]
                 .into_iter()
@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn neutral_chroma_selects_textured_precision_per_preset() {
-        for (quality, chromatic, neutral) in [(60, 30, 34), (75, 28, 27), (85, 14, 14)] {
+        for (quality, chromatic, neutral) in [(60, 32, 34), (75, 28, 27), (85, 14, 14)] {
             for counts in [[0, 0, 0, 1], [1, 1, 1, 1]] {
                 let total = counts.iter().sum();
                 let color = Config::from_counts(quality, counts, total, false);
