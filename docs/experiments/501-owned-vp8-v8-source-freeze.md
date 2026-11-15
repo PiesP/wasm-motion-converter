@@ -42,5 +42,7 @@ and frozen criteria were registered before the first V8 comparison.
 The [first complete V8 result](501-owned-vp8-v8-result.md) rejected candidate
 adoption at 59/60 conditions after a q85 SSIM failure on `fresh8-tiny-7x1`.
 All v1-v8 held-out inputs are now exposed regression evidence and require
-`--regression`; no fresh successor is currently frozen. The original generator,
-manifest, source digests and failed result are retained unchanged.
+`--regression`; no fresh successor had been frozen at this closeout. The later
+[V9 source freeze](501-owned-vp8-v9-source-freeze.md) records its own inputs.
+The original generator, manifest, source digests and failed result are retained
+unchanged.

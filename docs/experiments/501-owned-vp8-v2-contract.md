@@ -262,9 +262,21 @@ qualification.
 
 The [first complete V8 result](501-owned-vp8-v8-result.md) rejected candidate
 adoption at 59/60 conditions: only `fresh8-tiny-7x1` at q85 missed the unchanged
-SSIM gate. All v1-v8 held-out inputs now require `--regression`, and no fresh
-successor is currently frozen. Preserve the prospective source manifest and
-failed receipt; neither the old tuning set nor the numeric gates changed.
+SSIM gate. All v1-v8 held-out inputs now require `--regression`. Preserve the
+prospective source manifest and failed receipt; neither the old tuning set nor
+the numeric gates changed.
+
+## Prospective corrected-v9 source-only freeze
+
+The [corrected-v9 source freeze](501-owned-vp8-v9-source-freeze.md) binds 20 new
+held-out pixel inputs / 60 q60/75/85 conditions before any V9 codec evaluation.
+Its [manifest](501-owned-vp8-v9-fixtures.json) fixes the new photograph's two
+disjoint crops, previously unused video frames, generated seed and formulas,
+visible geometry, layouts, row padding, exact input digests and all V1–V8
+predecessor manifest digests. V9 is the only currently selectable fresh held-out
+cohort. Subsets fail before evidence creation or codec initialization. All
+previous held-out cohorts remain explicit regression controls. This is an input
+freeze, not a candidate acceptance result or product adoption.
 
 ## Resources and adoption
 
