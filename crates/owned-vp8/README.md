@@ -182,7 +182,7 @@ cargo build --locked --offline --release --target wasm32-unknown-unknown
 ```
 
 From the repository root, use the project-selected Node to generate or verify
-the development-only bounded artifact and its source provenance:
+the bounded candidate artifact and its source provenance:
 
 ```sh
 vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --generate
@@ -194,8 +194,9 @@ The provenance manifest includes this README and license files as well as Rust
 sources. Regenerate it after changing any listed input, then run `--check`; an
 unchanged WASM digest alone does not validate stale provenance.
 
-The artifact is `owned-vp8.wasm` in this crate, outside the production import
-and delivery graph. Its memory declaration has an exact 192-MiB maximum; raw
+The artifact is `owned-vp8.wasm` in this crate, imported by the candidate main
+and conversion Worker software routes. Master delivery remains gated by product
+qualification. Its memory declaration has an exact 192-MiB maximum; raw
 Cargo development output without that declaration does not qualify delivery.
 
 Ignored tests explicitly require FFmpeg's native `vp8` and separate `libvpx`
