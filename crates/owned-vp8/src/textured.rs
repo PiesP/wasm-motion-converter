@@ -1235,7 +1235,7 @@ fn refine_selected_uv(
         my,
     };
     let mut cache = None;
-    let mut best_gain = 0u64;
+    let mut best_gain = 0.0f64;
     let mut best = None;
     for plane in 0..2 {
         let reconstructed = if plane == 0 {
@@ -1267,10 +1267,10 @@ fn refine_selected_uv(
                     .find(|&position| coefficients[residual::SCAN[position]] != 0)
                     .map(|position| residual::SCAN[position]);
                 let positions = [Some(0), last_ac];
-                let (left_px, right_px, top_px, bottom_px) = frame.affected(bx, by);
-                if left_px >= right_px || top_px >= bottom_px {
+                if !frame.has_affected_windows(bx, by) {
                     continue;
                 }
+                let bounds = frame.affected(bx, by);
                 let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
                 for coefficient_index in positions.into_iter().flatten() {
                     let step = if coefficient_index == 0 {
@@ -1321,10 +1321,8 @@ fn refine_selected_uv(
                             by,
                             patch: &patch,
                         };
-                        let (baseline, candidate) =
-                            cache.score(&frame, change, (left_px, right_px, top_px, bottom_px));
-                        let gain = baseline.saturating_sub(candidate);
-                        if candidate < baseline && gain > best_gain {
+                        let gain = cache.score(&frame, change, bounds);
+                        if gain > best_gain {
                             best_gain = gain;
                             best = Some((plane, index, coefficient_index, level, patch));
                         }
@@ -3500,7 +3498,7 @@ mod tests {
     }
 
     #[test]
-    fn uv_refinement_requires_strict_rgb_gain_and_nonincreasing_complete_rate() {
+    fn uv_refinement_requires_strict_ssim_gain_and_nonincreasing_complete_rate() {
         let source_y = [128u8; 256];
         let source_uv = [128u8; 64];
         let reconstructed_y = [0u8; 256];
@@ -3628,7 +3626,7 @@ mod tests {
             u: baseline_uv.u,
             ..Macroblock::default()
         };
-        let mut tie_uv = baseline_uv;
+        let mut tie_uv = baseline_uv.clone();
         refine_selected_uv(
             &mut tie_block,
             &mut tie_uv,
@@ -3658,6 +3656,84 @@ mod tests {
         )
         .unwrap();
         assert_eq!(tie_block.u[0][0], 1);
+
+        let mut zero_block = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        let mut zero_uv = UvCandidate {
+            u: [[0; 16]; 4],
+            v: [[0; 16]; 4],
+            u_tile: neutral_uv,
+            v_tile: neutral_uv,
+            distortion: 0,
+        };
+        let zero_rate = selected_cost(
+            &zero_block,
+            0,
+            &contexts,
+            &above,
+            &left,
+            0,
+            1,
+            segments,
+            &budget,
+            &mut None,
+            &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(zero_rate < before);
+        let desired = display_rgb::Frame {
+            tile_u: &zero_uv.u_tile,
+            original: display_rgb::Original {
+                pixels: &tie_target,
+                stride: 64,
+                layout: 0,
+            },
+            ..baseline
+        };
+        let gain = display_rgb::LocalCache::new(&desired).score(
+            &desired,
+            display_rgb::Change {
+                plane: 0,
+                bx: 0,
+                by: 0,
+                patch: &patch,
+            },
+            desired.affected(0, 0),
+        );
+        assert!(gain > 0.0);
+        refine_selected_uv(
+            &mut zero_block,
+            &mut zero_uv,
+            &y_tile,
+            display_rgb::Original {
+                pixels: &tie_target,
+                stride: 64,
+                layout: 0,
+            },
+            &source_y,
+            &source_uv,
+            &source_uv,
+            &reconstructed_y,
+            &reconstructed_uv,
+            &reconstructed_uv,
+            16,
+            16,
+            16,
+            0,
+            0,
+            steps,
+            &contexts,
+            &above,
+            &left,
+            segments,
+            &budget,
+        )
+        .unwrap();
+        assert_eq!(zero_block.u[0][0], 0);
+        assert_eq!(zero_uv.u_tile, neutral_uv);
     }
 
     #[test]
