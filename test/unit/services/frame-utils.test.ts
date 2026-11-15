@@ -11,6 +11,7 @@ import {
   resolveVideoDimensions,
 } from '@services/frame-utils';
 import { OwnedVp8MemoryAdmissionError } from '@services/owned-vp8-core';
+import { OwnedVp8MemoryAdmissionError as LeafAdmissionError } from '@services/owned-vp8-memory-admission-error';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
@@ -267,6 +268,7 @@ describe('clearCanvasCache', () => {
   });
 
   it('does not retry a Canvas copy after a pooled RGB admission failure', async () => {
+    expect(OwnedVp8MemoryAdmissionError).toBe(LeafAdmissionError);
     globalBufferPool.clear();
     const closeBitmap = vi.fn();
     const context = {

@@ -3,6 +3,10 @@
 
 import { schedulerYield } from '@piesp/browser-core/util';
 
+import { OwnedVp8MemoryAdmissionError } from './owned-vp8-memory-admission-error';
+
+export { OwnedVp8MemoryAdmissionError };
+
 const ABI_VERSION = 2;
 const REQUEST_BYTES = 48;
 const RESPONSE_BYTES = 96;
@@ -34,9 +38,6 @@ export class OwnedVp8UnsupportedLayoutError extends Error {
 }
 export class OwnedVp8UnsupportedPixelsError extends Error {
   override name = 'OwnedVp8UnsupportedPixelsError';
-}
-export class OwnedVp8MemoryAdmissionError extends Error {
-  override name = 'OwnedVp8MemoryAdmissionError';
 }
 export class OwnedVp8OutputLimitError extends Error {
   override name = 'OwnedVp8OutputLimitError';

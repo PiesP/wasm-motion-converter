@@ -21,7 +21,7 @@ import type { BufferPool } from './buffer-pool';
 import { getPooledBufferSize, globalBufferPool } from './buffer-pool';
 import { ConversionMemoryLimitError } from './conversion-memory-limit-error';
 import type { CpuPixelFormat } from './frame-memory';
-import { OwnedVp8MemoryAdmissionError } from './owned-vp8-core';
+import { OwnedVp8MemoryAdmissionError } from './owned-vp8-memory-admission-error';
 
 function isMemoryAdmissionError(error: unknown): boolean {
   return (
