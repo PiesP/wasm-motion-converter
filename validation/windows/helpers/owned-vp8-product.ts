@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { Browser, BrowserContext, Page } from '@playwright/test';
+import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/test';
 
 import { installMotionObserver } from '../motion-signature.ts';
 
@@ -119,6 +119,34 @@ const OWNED_FIELDS = [
   'ownedVp8PeakActualLinearCapacityBytes',
   'ownedVp8PeakReservedLinearCapacityBytes',
 ] as const;
+const MAX_FAILURE_CONSOLE_LINES = 64;
+const MAX_FAILURE_CONSOLE_CHARS = 2_048;
+
+export function captureNearCapConsole(page: Page) {
+  const lines: Array<{ level: 'warning' | 'error'; text: string }> = [];
+  const onConsole = (message: ConsoleMessage) => {
+    try {
+      const level = message.type();
+      if (level !== 'warning' && level !== 'error') return;
+      const text = message.text().slice(0, MAX_FAILURE_CONSOLE_CHARS);
+      if (lines.length === MAX_FAILURE_CONSOLE_LINES) lines.shift();
+      lines.push({ level, text });
+    } catch {
+      // A failed diagnostic listener cannot interrupt the conversion.
+    }
+  };
+  page.on('console', onConsole);
+  return {
+    snapshot: () => lines.map((line) => ({ ...line })),
+    detach: () => {
+      try {
+        page.off('console', onConsole);
+      } catch {
+        // Page teardown must not replace the original conversion failure.
+      }
+    },
+  };
+}
 
 function digest(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -133,7 +161,8 @@ export async function captureFailure(
   output: string,
   caseId: string,
   error: unknown,
-  pageErrors: string[]
+  pageErrors: string[],
+  nearCapConsole?: Array<{ level: 'warning' | 'error'; text: string }>
 ): Promise<void> {
   const record: Record<string, unknown> = {
     caseId,
@@ -144,6 +173,81 @@ export async function captureFailure(
     record.url = page.url();
   } catch (captureError) {
     record.urlError = failure(captureError);
+  }
+  if (nearCapConsole) {
+    record.consoleWarningsAndErrors = nearCapConsole
+      .slice(-MAX_FAILURE_CONSOLE_LINES)
+      .map((line) => ({
+        level: line.level,
+        text: line.text.slice(0, MAX_FAILURE_CONSOLE_CHARS),
+      }));
+    try {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        record.nearCapState = await Promise.race([
+          page.evaluate(() => {
+            const abi = Reflect.get(globalThis, '__wmcVp8AbiProbe') as
+              | {
+                  instances: number;
+                  stepCalls: number;
+                  successfulBeginCalls: number;
+                  beginStatusCounts: Record<string, number>;
+                  statusCounts: Record<string, number>;
+                  records: Array<{
+                    id: number;
+                    stepCalls: number;
+                    retireCalls: number;
+                    retireStatus: number | null;
+                    peakCapacityBytes: number;
+                    retainedCapacityBytes: number | null;
+                  }>;
+                }
+              | undefined;
+            const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as
+              | { publicationCount: number; publications: Array<{ size: number; atMs: number }> }
+              | undefined;
+            return {
+              abi: abi
+                ? {
+                    instances: abi.instances,
+                    stepCalls: abi.stepCalls,
+                    successfulBeginCalls: abi.successfulBeginCalls,
+                    beginStatusCounts: { ...abi.beginStatusCounts },
+                    statusCounts: { ...abi.statusCounts },
+                    records: abi.records.slice(-32).map((entry) => ({ ...entry })),
+                  }
+                : null,
+              publication: observed
+                ? {
+                    count: observed.publicationCount,
+                    recent: observed.publications.slice(-16).map(({ size, atMs }) => ({
+                      size,
+                      atMs,
+                    })),
+                  }
+                : null,
+              fallbackResourceCount: performance
+                .getEntriesByType('resource')
+                .filter((entry) =>
+                  /\/(?:webp-wasm|wasm-webp)[\w.-]*\.(?:wasm|js)$/.test(
+                    new URL(entry.name).pathname
+                  )
+                ).length,
+            };
+          }),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error('Near-cap state snapshot timed out')),
+              3_000
+            );
+          }),
+        ]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    } catch (captureError) {
+      record.nearCapStateError = failure(captureError);
+    }
   }
   try {
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -1571,6 +1675,7 @@ async function nearCapFunctional(
       page.on('pageerror', (error) => {
         if (errors.length < 32) errors.push(error.message);
       });
+      const consoleCapture = captureNearCapConsole(page);
       try {
         await loadApplication(page, server.url);
         const decoderSupport = await page.evaluate(async () => {
@@ -1691,10 +1796,18 @@ async function nearCapFunctional(
         });
         if (name === 'candidate') candidatePassed = true;
       } catch (error) {
-        await captureFailure(page, output, `owned-vp8-functional-near-cap-${name}`, error, errors);
+        await captureFailure(
+          page,
+          output,
+          `owned-vp8-functional-near-cap-${name}`,
+          error,
+          errors,
+          consoleCapture.snapshot()
+        );
         await record({ phase: 'failed', build: name, status: 'failed', error: failure(error) });
         if (name === 'candidate') throw error;
       } finally {
+        consoleCapture.detach();
         await page.close();
       }
     } finally {

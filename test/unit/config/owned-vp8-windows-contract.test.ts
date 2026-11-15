@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
-import type { Page } from '@playwright/test';
+import type { ConsoleMessage, Page } from '@playwright/test';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import { checkOwnedVp8Inputs } from '../../../scripts/check/owned-vp8-inputs.ts';
@@ -18,6 +19,7 @@ import {
   DIRECT_WORKER_CLUSTER_CONFIG,
   DIRECT_WORKER_OPTIONS,
   captureFailure,
+  captureNearCapConsole,
   instrumentOwnedInstance,
   parseAnimatedWebp,
   assertClusterTimeline,
@@ -60,6 +62,114 @@ function animation(...frames: Buffer[]) {
 }
 
 describe('owned VP8 Windows product contract', () => {
+  it('retains only the last bounded warning/error lines per page and detaches the listener', () => {
+    const page = new EventEmitter() as Page & EventEmitter;
+    const capture = captureNearCapConsole(page);
+    for (let index = 0; index < 70; index++) {
+      page.emit('console', {
+        type: () => (index % 2 ? 'error' : 'warning'),
+        text: () => `${index}:` + 'x'.repeat(3_000),
+      } as ConsoleMessage);
+    }
+    page.emit('console', { type: () => 'log', text: () => 'ignored' } as ConsoleMessage);
+    page.emit('console', {
+      type: () => 'error',
+      text: () => {
+        throw new Error('unavailable');
+      },
+    } as unknown as ConsoleMessage);
+    const snapshot = capture.snapshot();
+    expect(snapshot).toHaveLength(64);
+    expect(snapshot[0]?.text.startsWith('6:')).toBe(true);
+    expect(snapshot.every((line) => line.text.length === 2_048)).toBe(true);
+    capture.detach();
+    page.emit('console', { type: () => 'error', text: () => 'after detach' } as ConsoleMessage);
+    expect(capture.snapshot()).toEqual(snapshot);
+  });
+
+  it('keeps a near-cap producer line and bounded probe state in the failure record', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'wmc-vp8-near-cap-failure-'));
+    vi.stubGlobal('document', { documentElement: { outerHTML: '<html></html>' } });
+    vi.stubGlobal('performance', { getEntriesByType: () => [] });
+    Reflect.set(globalThis, '__wmcVp8AbiProbe', {
+      instances: 1,
+      stepCalls: 0,
+      successfulBeginCalls: 0,
+      beginStatusCounts: { '3': 1 },
+      statusCounts: {},
+      records: [],
+    });
+    Reflect.set(globalThis, '__wmcVp8ProductObserver', {
+      publicationCount: 0,
+      publications: [],
+    });
+    const page = {
+      url: () => 'http://127.0.0.1/',
+      evaluate: async (callback: () => unknown) => callback(),
+      screenshot: async () => Buffer.from('image'),
+    } as unknown as Page;
+    try {
+      await captureFailure(
+        page,
+        directory,
+        'near-cap-test',
+        new Error('original'),
+        [],
+        [{ level: 'error', text: 'Decoded frame output memory limit exceeded' }]
+      );
+      const report = JSON.parse(
+        await readFile(resolve(directory, 'near-cap-test-failure.json'), 'utf8')
+      );
+      expect(report.error).toBe('Error: original');
+      expect(report.consoleWarningsAndErrors).toEqual([
+        { level: 'error', text: 'Decoded frame output memory limit exceeded' },
+      ]);
+      expect(report.nearCapState.abi.beginStatusCounts).toEqual({ '3': 1 });
+      expect(report.nearCapState.publication).toEqual({ count: 0, recent: [] });
+      expect(report.nearCapState.fallbackResourceCount).toBe(0);
+    } finally {
+      Reflect.deleteProperty(globalThis, '__wmcVp8AbiProbe');
+      Reflect.deleteProperty(globalThis, '__wmcVp8ProductObserver');
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('times out a failed near-cap probe read without replacing the original failure', async () => {
+    const directory = await mkdtemp(resolve(tmpdir(), 'wmc-vp8-near-cap-timeout-'));
+    vi.useFakeTimers();
+    const page = {
+      url: () => 'http://127.0.0.1/',
+      evaluate: vi
+        .fn()
+        .mockImplementationOnce(() => new Promise(() => undefined))
+        .mockResolvedValueOnce('<html></html>'),
+      screenshot: async () => {
+        throw new Error('screenshot failed');
+      },
+    } as unknown as Page;
+    try {
+      const pending = captureFailure(
+        page,
+        directory,
+        'near-cap-timeout',
+        new Error('original'),
+        [],
+        []
+      );
+      await vi.advanceTimersByTimeAsync(3_000);
+      await pending;
+      const report = JSON.parse(
+        await readFile(resolve(directory, 'near-cap-timeout-failure.json'), 'utf8')
+      );
+      expect(report.error).toBe('Error: original');
+      expect(report.nearCapStateError).toBe('Error: Near-cap state snapshot timed out');
+      expect(report.screenshotError).toBe('Error: screenshot failed');
+    } finally {
+      vi.useRealTimers();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it('binds the explicit near-cap generator to a frozen source and settings manifest', () => {
     const manifest = JSON.parse(
       readFileSync(resolve(root, 'validation/windows/owned-vp8-near-cap.json'), 'utf8')
