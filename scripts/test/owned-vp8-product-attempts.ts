@@ -70,20 +70,22 @@ async function withRegularFile<T>(
   consume: (handle: FileHandle, size: number) => Promise<T>
 ): Promise<T> {
   try {
-    const entry = await lstat(path);
-    assert(entry.isFile() && !entry.isSymbolicLink(), `${label} is missing or linked`);
-    // POSIX flags reject a swapped leaf link and avoid blocking if it becomes
-    // a FIFO. Windows Node lacks O_NOFOLLOW; compare the opened handle with
-    // both path stats there.
+    // Open first: POSIX flags reject a leaf link and avoid blocking on a FIFO.
+    // Windows Node lacks O_NOFOLLOW; compare the handle with the path before
+    // consuming bytes. The digest still binds the admitted content.
     const flags =
       constants.O_RDONLY |
       (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const handle = await open(path, flags);
     try {
-      const before = await handle.stat();
+      const [before, entry] = await Promise.all([handle.stat(), lstat(path)]);
       assert(
-        before.isFile() && before.dev === entry.dev && before.ino === entry.ino,
-        `${label} changed while opening`
+        before.isFile() &&
+          entry.isFile() &&
+          !entry.isSymbolicLink() &&
+          before.dev === entry.dev &&
+          before.ino === entry.ino,
+        `${label} is missing or linked`
       );
       assert(
         Number.isSafeInteger(before.size) && before.size <= limit,
@@ -108,6 +110,8 @@ async function withRegularFile<T>(
       await handle.close();
     }
   } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ELOOP')
+      throw new Error(`${label} is missing or linked`);
     if (error instanceof Error && 'code' in error && error.code !== 'ERR_ASSERTION')
       throw new Error(`${label} is missing or unreadable`);
     throw error;
