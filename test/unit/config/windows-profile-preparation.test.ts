@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { posix, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vite-plus/test';
 
@@ -120,7 +120,7 @@ describe('Windows campaign preparation contract', () => {
       visited.add(name);
       const moduleSource = readFileSync(resolve(root, name), 'utf8');
       for (const match of moduleSource.matchAll(/from ['"]\.\/([^'"]+\.ts)['"]/g)) {
-        const imported = `validation/windows/${match[1]}`;
+        const imported = posix.join(posix.dirname(name), match[1]!);
         expect(profile.assets).toContain(imported);
         pending.push(imported);
       }
