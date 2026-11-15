@@ -77,6 +77,12 @@ test('per-job Worker attestation checks epoch, actual copies, capacity and unsup
     () => checkTimingAttestation({ ...valid, rawPixels: [1, 2] }, epoch, 'candidate'),
     /unsupported fields/
   );
+  const workerWithPixels = probe(epoch);
+  Object.assign(workerWithPixels.workerObservation.state, { rawPixels: [1, 2] });
+  assert.throws(
+    () => checkTimingAttestation(workerWithPixels, epoch, 'candidate'),
+    /unsupported fields/
+  );
   assert.throws(
     () => checkTimingAttestation({ ...valid, staleWorkerEvents: 1 }, epoch, 'candidate'),
     /stale Worker/

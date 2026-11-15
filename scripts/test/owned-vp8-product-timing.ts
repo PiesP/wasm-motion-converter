@@ -213,7 +213,10 @@ export function checkTimingAttestation(value: unknown, epoch: string, build: Bui
     worker = object(workerObservation.state, `${epoch} Worker state`);
     equal(worker.epoch, workerRequestId, `${epoch} Worker epoch`);
     checkState(worker, `${epoch} Worker`);
-    assert(JSON.stringify(worker).length <= 1024, `${epoch} Worker snapshot exceeds bound`);
+    assert(
+      Buffer.byteLength(JSON.stringify(worker), 'utf8') <= 1024,
+      `${epoch} Worker snapshot exceeds bound`
+    );
   }
   if (build === 'prior') {
     equal(probe.ownedInstances, 0, `${epoch} prior owned instance`);
