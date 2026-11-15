@@ -15,18 +15,32 @@ Per-frame coefficient statistics follow frozen mode/coefficient decisions. A
 bounded optimizer proposes updates, and exact whole-frame counting includes
 update flags and literals. The encoder adopts updates only when the complete
 frame is strictly smaller; count and emission use the same frozen model.
-The bounded resumable ABI2 core is implemented. Color/preset calibration,
-filter tuning, and browser/product qualification remain unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
-or removal of `wasm-webp`.
+The bounded resumable ABI2 core is implemented. The exact Rust/module candidate
+passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as recorded
+in the [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
+Browser/product performance and lifecycle qualification remain unfinished; these
+codec results do not qualify runtime removal of `wasm-webp`.
 
 Textured allocation uses a per-frame flag that is true only when every imported,
 padded U/V sample is exactly 128, accumulated during bounded RGB-to-YUV conversion.
-The colored and neutral tables for every quality are canonical in `presets.rs`.
-High-input-chroma-loss q60 profile decisions use the completed RGB and rate
-objective described below. One working state is reused; resets and analysis
-remain bounded stages.
-The source import, four segment IDs and resource ceilings are unchanged.
-These engineering decisions have no independent product qualification claim.
+The current exploratory colored and neutral qindices are defined in `src/presets.rs`.
+The neutral allocation preserves the earlier grayscale control. Per-preset
+fixed-pixel results against the shipped baseline are recorded in the linked
+source-bound result; product performance and lifecycle gates remain open.
+The source color conversion and four segment IDs are unchanged.
+
+For normal q60 frames with non-neutral imported chroma and exclusively Textured
+source macroblocks, the photo allocation also requires each imported padded Y/U/V
+plane's frame mean absolute within-tile second difference to be at most 2. The
+classifier retains its separate maximum-curvature rule and four class IDs. The
+mean uses 448 Y and 96 U/V differences per macroblock, excludes tile boundaries,
+and is accumulated during source classification. Eligible frames lower the coding base and all segment
+qindices by four. It signals Y1 DC, Y2 DC and Y2 AC deltas of +4 and UV DC/AC
+deltas of -15/-7. The original qindices remain the mode-rate reference. Y1 AC
+also becomes finer because VP8 has no separate Y1 AC delta. Neutral, mixed-map
+and high-chroma-loss q60 frames, or frames above the per-plane mean cutoff,
+keep their prior allocation. Padded edge replication can dilute the measured
+mean for narrow or odd inputs; this candidate does not assert visible-only parity.
 
 At q60, the existing source-derived high-chroma-loss predicate compares the
 Original and Reduced profiles. Each completed trial is filtered after its
@@ -64,20 +78,22 @@ counterpart of the published wrapper tag. Its native import oracle does not prov
 the shipped comparator WASM was built from that commit. The encoder implementation
 remains owned Rust; these adapted arithmetic/table portions retain attribution. Retain
 [LICENSE.libwebp](LICENSE.libwebp) and [PATENTS.libwebp](PATENTS.libwebp) with source
-and candidate binary distributions. Format tables and decoder reconstruction are
+and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
 
 The q75 engineering calibration applies only when every admitted macroblock is
 Textured and the visible source RGB error from nearest-chroma import is at most
 4,096 per channel. It lowers every base and segment luma qindex by two, including
 unused classes and neutral inputs. UV DC and AC deltas increase by two so scalar
-UV quantizer steps remain unchanged, including clamping; mode and coefficient
-rate weights use original qindices. Other q75 frames retain the previous q75
-quantizers and rate weights. Mode choices and UV reconstruction may still change.
-The condition reuses the q60 import-error reference but does not change q60/q85,
-geometry, cadence or acceptance thresholds. This source candidate requires a
-new compiled artifact, all exposed regressions and a new held-out cohort before
-adoption.
+UV quantizer steps remain unchanged for neutral inputs, including clamping. For
+non-neutral inputs satisfying that same policy, UV DC delta then decreases by
+four, to -11; UV AC remains -7. Mode and coefficient rate weights use original
+qindices. Other q75 frames retain the previous q75 quantizers and rate weights.
+Mode choices and UV reconstruction may still change. The condition reuses the
+q60 import-error reference and does not change q85, geometry, cadence or
+acceptance thresholds. The [fixed-pixel result](../../docs/experiments/501-owned-vp8-low-curvature-result.md)
+binds the compiled artifact, exposed regressions and first V12 cohort. Full
+product and delivery gates remain required before adoption.
 
 ## ABI2 and resources
 
@@ -166,11 +182,11 @@ cargo build --locked --offline --release --target wasm32-unknown-unknown
 ```
 
 From the repository root, use the project-selected Node to generate or verify
-the bounded candidate artifact and its source provenance:
+the development-only bounded artifact and its source provenance:
 
 ```sh
-vp run build:vp8-wasm:generate
-vp run build:vp8-wasm:check
+vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --generate
+vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --check
 vp exec node --experimental-strip-types scripts/test/owned-vp8-compiled.ts
 ```
 
@@ -178,9 +194,8 @@ The provenance manifest includes this README and license files as well as Rust
 sources. Regenerate it after changing any listed input, then run `--check`; an
 unchanged WASM digest alone does not validate stale provenance.
 
-The artifact is `owned-vp8.wasm` in this crate and participates in the candidate
-product import/build graph. It is not yet qualified for master delivery. Its
-memory declaration has an exact 192-MiB maximum; raw
+The artifact is `owned-vp8.wasm` in this crate, outside the production import
+and delivery graph. Its memory declaration has an exact 192-MiB maximum; raw
 Cargo development output without that declaration does not qualify delivery.
 
 Ignored tests explicitly require FFmpeg's native `vp8` and separate `libvpx`

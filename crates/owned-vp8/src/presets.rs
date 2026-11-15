@@ -99,6 +99,39 @@ pub(crate) fn medium_textured_deltas(mut original: Deltas) -> Deltas {
     original
 }
 
+pub(crate) fn photo_q60_all_texture(
+    quality: u32,
+    counts: [usize; 4],
+    total: usize,
+    neutral_chroma: bool,
+    high_chroma_loss: bool,
+    low_curvature: bool,
+) -> bool {
+    quality == 60
+        && !neutral_chroma
+        && !high_chroma_loss
+        && total > 0
+        && counts[crate::segmentation::TEXTURED as usize] == total
+        && low_curvature
+}
+
+pub(crate) fn photo_allocation_deltas(
+    mut selected: Deltas,
+    q60_all_texture: bool,
+    q75_medium_non_neutral: bool,
+) -> Deltas {
+    if q60_all_texture {
+        selected.y1_dc = 4;
+        selected.y2_dc = 4;
+        selected.y2_ac = 4;
+        selected.uv_dc = -15;
+        selected.uv_ac = -7;
+    } else if q75_medium_non_neutral {
+        selected.uv_dc -= 4;
+    }
+    selected
+}
+
 pub(crate) const fn medium_luma_reduction() -> usize {
     MEDIUM_LUMA_REDUCTION
 }
@@ -146,6 +179,39 @@ pub(crate) fn lambda_for_quality(qindex: usize, quality: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn photo_allocation_requires_exact_source_profile() {
+        let all = [0, 0, 0, 4];
+        assert!(photo_q60_all_texture(60, all, 4, false, false, true));
+        for (quality, counts, total, neutral, high_loss) in [
+            (75, all, 4, false, false),
+            (85, all, 4, false, false),
+            (60, [1, 0, 0, 3], 4, false, false),
+            (60, all, 0, false, false),
+            (60, all, 4, true, false),
+            (60, all, 4, false, true),
+        ] {
+            assert!(!photo_q60_all_texture(
+                quality, counts, total, neutral, high_loss, true
+            ));
+        }
+        assert!(!photo_q60_all_texture(60, all, 4, false, false, false));
+
+        let q60 = photo_allocation_deltas(deltas(60), true, false);
+        assert_eq!(
+            (q60.y1_dc, q60.y2_dc, q60.y2_ac, q60.uv_dc, q60.uv_ac),
+            (4, 4, 4, -15, -7)
+        );
+        assert_eq!(
+            photo_allocation_deltas(deltas(60), false, false),
+            deltas(60)
+        );
+        let medium = medium_textured_deltas(deltas(75));
+        let q75 = photo_allocation_deltas(medium, false, true);
+        assert_eq!((q75.uv_dc, q75.uv_ac), (-11, -7));
+        assert_eq!(photo_allocation_deltas(medium, false, false), medium);
+    }
 
     #[test]
     fn medium_precision_preserves_uv_steps_and_original_rate_weights() {
