@@ -5321,6 +5321,65 @@ mod tests {
         }
     }
 
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_reconstruct_an_asserted_uv_ac_drop() {
+        let predictor = [128u8; 16];
+        let deltas = Deltas::default();
+        let steps = ac_quant::steps(23, deltas, Plane::UV);
+        for plane in 0..2 {
+            for sign in [-1, 1] {
+                let mut original = [0i16; 16];
+                original[0] = -2;
+                original[residual::SCAN[3]] = 2;
+                original[residual::SCAN[15]] = sign;
+                let mut wanted = original;
+                wanted[residual::SCAN[15]] = 0;
+                let ideal = reconstructed_patch(&wanted, &predictor, steps);
+                let (chosen, patch) = optimize_uv_block(
+                    &ideal,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    0,
+                    1,
+                    (original, reconstructed_patch(&original, &predictor, steps)),
+                );
+                assert_eq!(
+                    chosen, wanted,
+                    "the independent oracle must exercise AC removal"
+                );
+                assert_ne!(chosen, original);
+                let mut block = Macroblock {
+                    i16: true,
+                    ..Macroblock::default()
+                };
+                if plane == 0 {
+                    block.u[0] = chosen;
+                } else {
+                    block.v[0] = chosen;
+                }
+                let frame = emit_segmented_frame(
+                    &[block],
+                    16,
+                    16,
+                    SegmentConfig::nonsegmented(23),
+                    deltas,
+                    FilterConfig::DISABLED,
+                )
+                .unwrap();
+                let mut expected = vec![128u8; 16 * 16 + 2 * 8 * 8];
+                for row in 0..4 {
+                    let at = 16 * 16 + plane * 8 * 8 + row * 8;
+                    expected[at..at + 4].copy_from_slice(&patch[row * 4..row * 4 + 4]);
+                }
+                assert_decodes(&frame, 16, 16, &expected, "asserted signed UV AC removal");
+            }
+        }
+    }
+
     /// External engineering oracle, deliberately separate from product acceptance.
     /// Both FFmpeg's native VP8 decoder and libvpx must match every visible YUV byte.
     #[test]
