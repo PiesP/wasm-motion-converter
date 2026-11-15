@@ -16,6 +16,7 @@ import {
   FIXTURES,
   generateFixture,
   QUALITIES,
+  type FixtureSpec,
   type FixtureSplit,
   type PixelFixture,
 } from './owned-vp8-v2-fixtures.ts';
@@ -31,8 +32,11 @@ export type FixtureCohort = 'initial-v1' | 'corrected-v2' | 'corrected-v3' | 'co
 export function selectFixtureCohort(
   split: FixtureSplit,
   cohort: FixtureCohort,
-  regression = false
+  regression = false,
+  fixtureIds?: readonly string[]
 ) {
+  if (fixtureIds !== undefined && split === 'held-out' && !regression)
+    throw new Error('Fixture subsets are diagnostic only; acceptance requires the full cohort');
   if (split === 'held-out' && !regression)
     throw new Error(
       `${cohort} is exposed: use --regression; no fresh successor is currently frozen`
@@ -59,7 +63,51 @@ export function selectFixtureCohort(
               ...CORRECTION_HELDOUT,
             ]
           : FIXTURES;
-  return entries.filter((item) => item.split === split);
+  const available = entries.filter((item) => item.split === split);
+  if (fixtureIds === undefined) return available;
+  if (fixtureIds.length === 0) throw new Error('Fixture subset must contain at least one ID');
+  const requested = new Set<string>();
+  for (const id of fixtureIds) {
+    if (!id) throw new Error('Fixture ID must not be empty');
+    if (requested.has(id)) throw new Error(`Duplicate fixture ID: ${id}`);
+    if (!available.some((item) => item.id === id))
+      throw new Error(`Fixture ${id} is outside the selected ${cohort} ${split} split`);
+    requested.add(id);
+  }
+  return available.filter((item) => requested.has(item.id));
+}
+
+export function parseFixtureIds(args: readonly string[]): string[] | undefined {
+  const ids: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    if (args[index]?.startsWith('--fixture='))
+      throw new Error('Use --fixture ID, not --fixture=ID');
+    if (args[index] !== '--fixture') continue;
+    const id = args[++index];
+    if (!id || id.startsWith('--')) throw new Error('Use --fixture ID with a nonempty ID');
+    ids.push(id);
+  }
+  return ids.length > 0 ? ids : undefined;
+}
+
+export function fixtureSelectionIdentity(
+  selected: readonly FixtureSpec[],
+  split: FixtureSplit,
+  regression: boolean,
+  diagnosticSubset: boolean
+) {
+  return {
+    selectedFixtureIds: selected.map((item) => item.id),
+    expectedConditionCount: selected.length * QUALITIES.length,
+    completeCohort: !diagnosticSubset,
+    scope: diagnosticSubset
+      ? 'DIAGNOSTIC_SUBSET_NOT_ACCEPTANCE'
+      : split === 'tuning'
+        ? 'TUNING_ONLY_NOT_ACCEPTANCE'
+        : regression
+          ? 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE'
+          : 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+  };
 }
 
 export function rgbPixels(fixture: PixelFixture): Uint8Array {
@@ -193,10 +241,22 @@ export async function compare(options: {
   sources: V4SourcePaths;
   cohort?: FixtureCohort;
   regression?: boolean;
+  fixtureIds?: readonly string[];
   candidateRoot?: string;
 }): Promise<object> {
   const cohort = options.cohort ?? 'initial-v1';
-  const selected = selectFixtureCohort(options.split, cohort, options.regression);
+  const selected = selectFixtureCohort(
+    options.split,
+    cohort,
+    options.regression,
+    options.fixtureIds
+  );
+  const selection = fixtureSelectionIdentity(
+    selected,
+    options.split,
+    options.regression ?? false,
+    options.fixtureIds !== undefined
+  );
   const output = resolve(options.output);
   const candidateRoot = resolve(options.candidateRoot ?? ROOT);
   for (const forbidden of ['public', 'dist']) {
@@ -283,6 +343,7 @@ export async function compare(options: {
   }
   assert.equal(new Set(frozen.fixtures.map((entry) => entry.id)).size, frozen.fixtures.length);
   const identities = {
+    ...selection,
     cohort,
     purpose: options.regression ? 'EXPOSED_REGRESSION_NOT_FRESH_ACCEPTANCE' : options.split,
     correctionManifestSha256:
@@ -335,12 +396,6 @@ export async function compare(options: {
     abiDriverSha256: digest(readFileSync(new URL('./owned-vp8-v2-abi.ts', import.meta.url))),
     metrics:
       'PSNR on all RGB bytes; FFmpeg ssim on gbrp, nearest replication to minimum8x8 for tiny metrics only',
-    scope:
-      options.split === 'tuning'
-        ? 'TUNING_ONLY_NOT_ACCEPTANCE'
-        : options.regression
-          ? 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE'
-          : 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
   };
   if (options.split === 'held-out' && (identities.dirty || identities.harnessDirty)) {
     throw new Error('Held-out acceptance requires committed candidate and harness identities');
@@ -437,6 +492,7 @@ export async function compare(options: {
       results.push(record);
     }
   }
+  assert.equal(results.length, selection.expectedConditionCount);
   const report = { ...identities, results };
   writeFileSync(join(output, 'results.json'), `${JSON.stringify(report, null, 2)}\n`, {
     flag: 'wx',
@@ -446,6 +502,7 @@ export async function compare(options: {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
+  const fixtureIds = parseFixtureIds(args);
   const output = args[args.indexOf('--output') + 1];
   const photo = args.includes('--photo') ? args[args.indexOf('--photo') + 1] : undefined;
   const video = args.includes('--video') ? args[args.indexOf('--video') + 1] : undefined;
@@ -471,13 +528,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     : undefined;
   if (!args.includes('--output') || !output)
     throw new Error(
-      'Use --output NEW_EVIDENCE_DIRECTORY [--photo PATH --video PATH] [--acceptance]'
+      'Use --output NEW_EVIDENCE_DIRECTORY [--photo PATH --video PATH] [--fixture ID ... for tuning or --regression only]'
     );
   const report = await compare({
     output,
     split: acceptance || regression ? 'held-out' : 'tuning',
     cohort,
     regression,
+    ...(fixtureIds ? { fixtureIds } : {}),
     sources: {
       ...(photo ? { photo } : {}),
       ...(video ? { video } : {}),

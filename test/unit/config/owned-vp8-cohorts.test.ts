@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vite-plus/test';
 
-import { selectFixtureCohort } from '../../../scripts/test/owned-vp8-v2-compare';
+import {
+  compare,
+  fixtureSelectionIdentity,
+  parseFixtureIds,
+  selectFixtureCohort,
+} from '../../../scripts/test/owned-vp8-v2-compare';
 import {
   CORRECTION_HELDOUT,
   CORRECTION_PHOTO,
@@ -143,5 +149,84 @@ describe('owned VP8 prospective cohort isolation', () => {
       );
     expect(() => generateV4Fixture('fresh4-photo')).toThrow('Missing fresh photo source');
     expect(() => generateV4Fixture('fresh4-video-73')).toThrow('Missing video source');
+  });
+
+  it('selects repeated --fixture IDs in frozen cohort order and marks the result incomplete', () => {
+    expect(parseFixtureIds(['--cohort', 'corrected-v4'])).toBeUndefined();
+    const ids = parseFixtureIds([
+      '--fixture',
+      'tune3-chroma-stripe-5',
+      '--fixture',
+      'tune-colored-text',
+      '--fixture',
+      'tune-photo-detail',
+    ]);
+    expect(ids).toEqual(['tune3-chroma-stripe-5', 'tune-colored-text', 'tune-photo-detail']);
+    const selected = selectFixtureCohort('tuning', 'corrected-v4', false, ids);
+    expect(selected.map((item) => item.id)).toEqual([
+      'tune-colored-text',
+      'tune-photo-detail',
+      'tune3-chroma-stripe-5',
+    ]);
+    expect(fixtureSelectionIdentity(selected, 'tuning', false, true)).toEqual({
+      selectedFixtureIds: selected.map((item) => item.id),
+      expectedConditionCount: 9,
+      completeCohort: false,
+      scope: 'DIAGNOSTIC_SUBSET_NOT_ACCEPTANCE',
+    });
+    expect(selectFixtureCohort('tuning', 'corrected-v4')).toHaveLength(15);
+    expect(
+      fixtureSelectionIdentity(
+        selectFixtureCohort('tuning', 'corrected-v4'),
+        'tuning',
+        false,
+        false
+      ).completeCohort
+    ).toBe(true);
+  });
+
+  it('rejects empty, duplicate and out-of-split diagnostic IDs', () => {
+    expect(() => parseFixtureIds(['--fixture'])).toThrow('nonempty ID');
+    expect(() => parseFixtureIds(['--fixture', '--regression'])).toThrow('nonempty ID');
+    expect(() => parseFixtureIds(['--fixture=some-id'])).toThrow('--fixture ID');
+    expect(() => selectFixtureCohort('tuning', 'corrected-v4', false, [])).toThrow('at least one');
+    expect(() => selectFixtureCohort('tuning', 'corrected-v4', false, [''])).toThrow('empty');
+    expect(() =>
+      selectFixtureCohort('tuning', 'corrected-v4', false, [
+        'tune-colored-text',
+        'tune-colored-text',
+      ])
+    ).toThrow('Duplicate');
+    expect(() => selectFixtureCohort('tuning', 'corrected-v4', false, ['unknown'])).toThrow(
+      'outside'
+    );
+    expect(() => selectFixtureCohort('tuning', 'corrected-v4', false, ['fresh4-tiny'])).toThrow(
+      'outside'
+    );
+    expect(
+      selectFixtureCohort('held-out', 'corrected-v4', true, ['fresh4-photo', 'fresh4-tiny']).map(
+        (item) => item.id
+      )
+    ).toEqual(['fresh4-tiny', 'fresh4-photo']);
+  });
+
+  it('rejects any acceptance subset before creating evidence or initializing a codec', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-subset-'));
+    const output = join(parent, 'evidence');
+    try {
+      await expect(
+        compare({
+          output,
+          split: 'held-out',
+          cohort: 'corrected-v4',
+          fixtureIds: ['fresh4-tiny'],
+          sources: {},
+          candidateRoot: join(parent, 'missing-candidate'),
+        })
+      ).rejects.toThrow('diagnostic only');
+      expect(existsSync(output)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 });
