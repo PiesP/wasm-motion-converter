@@ -23,6 +23,7 @@ class FakeInstance {
 function realm(kind: 'dedicated' | 'window' | 'shared' | 'unsupported') {
   const listeners: Array<(event: { source: unknown; data: unknown }) => void> = [];
   const sent: Array<{ message: unknown; transfer: unknown }> = [];
+  const tasks: Array<() => void> = [];
   const nativePostMessage = (message: unknown, transfer: unknown) => {
     sent.push({ message, transfer });
   };
@@ -35,6 +36,11 @@ function realm(kind: 'dedicated' | 'window' | 'shared' | 'unsupported') {
       listeners.push(listener);
     },
     postMessage: nativePostMessage,
+    setTimeout: (callback: () => void, delay: number) => {
+      expect(delay).toBe(0);
+      tasks.push(callback);
+      return tasks.length;
+    },
   };
   if (kind === 'window') context.window = context;
   if (kind === 'shared') context.onconnect = null;
@@ -50,7 +56,14 @@ function realm(kind: 'dedicated' | 'window' | 'shared' | 'unsupported') {
     `(${installRetainedWorkerProbe.toString()})`,
     context
   ) as () => void;
-  return { context, install, listeners, sent, nativePostMessage };
+  return {
+    context,
+    install,
+    listeners,
+    sent,
+    nativePostMessage,
+    runNextTask: () => tasks.shift()?.(),
+  };
 }
 
 describe('retained Worker probe scope and parent channel', () => {
@@ -131,7 +144,7 @@ describe('retained Worker probe scope and parent channel', () => {
   });
 
   it('captures the actual parent abort before the later product handler retires ABI2', () => {
-    const { context, install, listeners, sent } = realm('dedicated');
+    const { context, install, listeners, sent, runNextTask } = realm('dedicated');
     install();
     const wasm = context.WebAssembly as { Instance: typeof FakeInstance };
     const instance = new wasm.Instance();
@@ -139,10 +152,15 @@ describe('retained Worker probe scope and parent channel', () => {
     instance.exports.vp8_v2_step();
     listeners[0]!({ source: null, data: { type: 'start', requestId: 'direct-1' } });
     listeners.push((event) => {
-      if ((event.data as { type?: string }).type === 'abort') instance.exports.vp8_v2_retire();
+      if ((event.data as { type?: string }).type === 'abort') {
+        expect(sent).toHaveLength(0);
+        instance.exports.vp8_v2_retire();
+      }
     });
     for (const listener of listeners)
       listener({ source: null, data: { type: 'abort', requestId: 'direct-1' } });
+    expect(sent).toHaveLength(0);
+    runNextTask();
     expect(sent).toHaveLength(1);
     expect(sent[0]!.message).toMatchObject({
       type: '__wmcVp8OwnerAbortObservation',

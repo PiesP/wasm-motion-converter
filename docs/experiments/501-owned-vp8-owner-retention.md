@@ -24,7 +24,19 @@ with one Worker and a distinct request ID per attempt. The 96 × 64, four-second
 clustered VP9 fixture is transferred in a `start` request with the frozen direct
 Worker decoder configuration and WebP options. Three requests must complete,
 then an active fourth request must show positive owned ABI step activity in its
-live Playwright Worker target before a direct `abort` and `terminate`. A fifth,
+live Playwright Worker target before a direct `abort` and `terminate`. The live
+ABI inventory is polled immediately and then on fixed 10 ms host tasks, with a
+30-second bound. The qualifying observation is the prefix snapshot taken when
+the Worker receives the actual matching `abort` message, before the production
+handler synchronously aborts the request. Retirement already present in that
+observation rejects active cancellation. Retirement during cancellation cleanup
+is allowed before the later harness termination. The prefix captures immediately
+but sends its acknowledgement in the next Worker task, after the synchronous
+production abort handler has run; it does not pause or delay encoder work.
+A live snapshot followed by a
+separate page call alone cannot establish this ordering. The progress-message
+counter is not the active trigger
+because production publishes owned counts only after encoding completes. A fifth,
 fresh request must complete in the same page and browser context. This route
 qualifies compiled Worker protocol ownership and termination; it does not claim
 that the WebP UI selected a conversion Worker or that direct termination is the

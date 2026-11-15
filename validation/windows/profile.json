@@ -319,6 +319,7 @@
           "dist",
           "public/test-video-ci-h264.mp4",
           "public/test-video-ci-high-motion-120fps.mp4",
+          "public/test-video-contract-clusters.webm",
           "validation/windows/inputs/owned-vp8-owner-retention.json"
         ],
         "generated_assets": ["dist"],
@@ -568,6 +569,7 @@
     "validation/windows/helpers/owned-vp8-probe.ts",
     "validation/windows/helpers/owned-vp8-product.ts",
     "validation/windows/helpers/owned-vp8-owner-retention.ts",
+    "validation/windows/helpers/owned-vp8-direct-owner.ts",
     "validation/windows/vp8-timing-probe.ts",
     "validation/windows/helpers/vp8-windows-environment.ts",
     "validation/windows/helpers/owned-demux-product.ts",

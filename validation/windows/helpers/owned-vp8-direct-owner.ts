@@ -335,6 +335,7 @@ export async function runDirectOwnerActiveTermination(page: Page, request: Direc
               reject(new Error('Direct Worker active handle missing'));
               return;
             }
+            const ownedWorker = active.worker;
             const lifecycle = Reflect.get(globalThis, '__wmcVp8WorkerLifecycle') as {
               snapshot: () => Array<{ requestId: string | null; terminalType: string | null }>;
             };
@@ -385,9 +386,9 @@ export async function runDirectOwnerActiveTermination(page: Page, request: Direc
               if (settled) return;
               settled = true;
               clearTimeout(timer);
-              active.worker.removeEventListener('message', onMessage);
-              active.worker.removeEventListener('error', onError);
-              active.worker.removeEventListener('messageerror', onMessageError);
+              ownedWorker.removeEventListener('message', onMessage);
+              ownedWorker.removeEventListener('error', onError);
+              ownedWorker.removeEventListener('messageerror', onMessageError);
               if (error) reject(error);
               else if (value) resolve(value);
               else reject(new Error('Direct Worker abort observation missing'));

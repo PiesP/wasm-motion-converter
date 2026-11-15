@@ -103,11 +103,14 @@ export function installRetainedWorkerProbe() {
       abortObserved = true;
       // This prefix listener was registered before the bundled Worker's onmessage.
       // Capture before its abort handler or later encoding cleanup can retire ABI2.
-      nativePostMessage.call(worker, {
+      const atAbort = {
         type: abortObservationType,
         requestId,
         snapshot: snapshot(),
-      });
+      };
+      // A new task follows the remaining synchronous abort-event handlers.
+      // Posting now could let the parent terminate before the product abort runs.
+      setTimeout(() => nativePostMessage.call(worker, atAbort), 0);
     }
   });
   Reflect.set(globalThis, '__wmcVp8RetainedWorkerProbe', {

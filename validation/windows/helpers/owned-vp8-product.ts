@@ -12,6 +12,11 @@ import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/
 import { installMotionObserver } from '../motion-signature.ts';
 import { installVp8TimingProbe } from '../vp8-timing-probe.ts';
 import {
+  assertDirectOwnerSnapshot,
+  runDirectOwnerActiveTermination,
+  runDirectOwnerCompletion,
+} from './owned-vp8-direct-owner.ts';
+import {
   collectGarbageCheckpoint,
   installRetainedWorkerProbe,
   installWorkerLifecycleObserver,
@@ -2333,8 +2338,9 @@ export async function exerciseOwnedVp8Product({
     cacheScope: functionalOnly
       ? 'separate browser context and one functional first-in-document attempt per build; no fresh-profile cold claim'
       : 'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
-    softwareInjection:
-      'Page OffscreenCanvas.convertToBlob disabled before application code; page and conversion Worker have numeric ABI/copy probes and both pinned prior main and Worker loaders have post-loop copy callbacks; served-asset and per-job observations establish the route',
+    softwareInjection: fullVideo
+      ? 'Page OffscreenCanvas.convertToBlob disabled before application code; page and conversion Worker have numeric ABI/copy probes and both pinned prior main and Worker loaders have post-loop copy callbacks; served-asset and per-job observations establish the route'
+      : 'Page OffscreenCanvas.convertToBlob disabled before application code; functional owned-ABI and fetched-asset checks are recorded separately; V8 timing/copy probes and pinned legacy-loader callbacks are not installed',
     functionalScope: functionalOnly
       ? `Independent pinned-prior legacy wasm-webp and candidate owned-VP8 ${largeAdmitted ? 'large admitted' : 'near-cap'} UI attempts, outside the V8 timing cohort; candidate must pass and prior outcome is retained separately`
       : fullVideo
@@ -2812,7 +2818,7 @@ export async function exerciseOwnedVp8OwnerRetention({
     ownerReleaseBinding: {
       main: 'src/services/webp-encoder-service.ts:208-211,273-280; src/services/owned-vp8-core.ts:466-485,624-649',
       worker:
-        'src/services/conversion-worker/main-thread-proxy.ts:112-123,136-143,188-194,253-270,305-314',
+        'Direct compiled src/services/conversion-worker/worker.ts protocol; validation-owned per-request termination in owned-vp8-direct-owner.ts; UI main-thread-proxy lifecycle is not executed',
       observationLimit:
         'Private broker.release is source-bound, not independently observed by this probe',
     },
@@ -3110,7 +3116,8 @@ export async function exerciseOwnedVp8OwnerRetention({
       const recordWorker = async (kind: string, outputBytes?: number, stopSnapshot?: unknown) => {
         const current = await lifecycle();
         const record = current.records.at(-1);
-        if (!record) throw new Error('Product Worker creation was not observed');
+        if (!record) throw new Error('Direct compiled Worker creation was not observed');
+        assert(!record.invalidSnapshot, 'Direct Worker terminal snapshot is invalid');
         const matching = browserWorkers.find((entry) => entry.id === record.id);
         if (matching && record.terminatedAtMs !== null) {
           const deadline = Date.now() + 5_000;
@@ -3148,116 +3155,77 @@ export async function exerciseOwnedVp8OwnerRetention({
       };
       try {
         await loadApplication(page, server.url);
-        await configurePage(page, fixturePath, fixture, 'medium');
-        for (let index = 0; index < 3; index++) {
-          const sample = await measureJob(
-            page,
-            fixture,
-            fixtureDigest,
-            'medium',
-            'candidate',
-            index === 0 ? 'first-in-document' : 'same-document-warm',
-            output,
-            `${scenario}-worker-complete-${index + 1}`
-          );
-          await recordWorker(`complete-${index + 1}`, sample.saved.bytes);
-        }
-        await configurePage(
-          page,
-          stopFixturePath,
-          {
-            id: 'active-stop',
-            path: STOP_FIXTURE,
-            mime: 'video/mp4',
-            width: 320,
-            height: 180,
-            durationMs: 3_000,
-          },
-          'high'
+        const workerAssets = candidate.state.files.filter((entry) =>
+          /^assets\/worker-[\w-]+\.js$/.test(entry.path)
         );
-        await page.evaluate(() =>
-          (Reflect.get(globalThis, '__wmcVp8ProductObserver') as { reset: () => void }).reset()
-        );
-        const workerCreated = page.waitForEvent('worker', { timeout: 30_000 });
-        await page.locator('[data-testid="convert-button"]').click();
-        const prompt = page.locator('[data-testid="modal-confirm-button"]');
-        if (await prompt.isVisible()) await prompt.click();
-        let activeWorker: Awaited<typeof workerCreated> | undefined = await workerCreated;
-        let stopSnapshot: unknown = null;
-        const deadline = Date.now() + 30_000;
-        while (Date.now() < deadline) {
-          try {
-            stopSnapshot = await activeWorker.evaluate(() => {
-              const probe = Reflect.get(globalThis, '__wmcVp8RetainedWorkerProbe') as
-                | { snapshot: () => { records: Array<{ stepCalls: number }> } }
-                | undefined;
-              return probe?.snapshot() ?? null;
-            });
-          } catch {
-            break;
-          }
-          if (
-            (stopSnapshot as { records?: Array<{ stepCalls: number }> } | null)?.records?.some(
-              (r) => r.stepCalls > 0
-            )
-          )
-            break;
-          await new Promise<void>((resolve) => setTimeout(resolve, 50));
-        }
-        activeWorker = undefined;
-        await page.locator('[data-testid="stop-conversion-button"]').click({ timeout: 10_000 });
-        await page.waitForFunction(
-          () => {
-            const button = document.querySelector<HTMLButtonElement>(
-              '[data-testid="convert-button"]'
-            );
-            return (
-              !!button &&
-              !button.disabled &&
-              !document.querySelector('[data-testid="stop-conversion-button"]')
-            );
-          },
-          undefined,
-          { timeout: 10_000 }
-        );
-        const workerStopOutcome = await page.evaluate(() => {
-          const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
-            stopMs: number | null;
-            idleMs: number | null;
-            publications: unknown[];
-          };
-          return {
-            stopMs: observed.stopMs,
-            idleMs: observed.idleMs,
-            publications: observed.publications.length,
-            resultVisible: !!document
-              .querySelector('[data-testid="result-section"]')
-              ?.getClientRects().length,
-          };
+        assert.equal(workerAssets.length, 1, 'Candidate has no unique compiled Worker');
+        await validateBundleFile(bundleRoot, `${candidate.relativePath}/${workerAssets[0]!.path}`);
+        const workerFixture = FIXTURES[1]!;
+        const workerFixturePath = await validateBundleFile(bundleRoot, workerFixture.path);
+        const workerInput = await readFile(workerFixturePath);
+        const workerInputDigest = digest(workerInput);
+        const request = (kind: string) => ({
+          workerPath: workerAssets[0]!.path,
+          inputBase64: workerInput.toString('base64'),
+          requestId: `${String(report.invocationId)}:direct-owner:${kind}`,
+          config: DIRECT_WORKER_CLUSTER_CONFIG,
+          options: DIRECT_WORKER_OPTIONS,
         });
-        assert(
-          workerStopOutcome.stopMs !== null &&
-            workerStopOutcome.idleMs !== null &&
-            workerStopOutcome.idleMs >= workerStopOutcome.stopMs &&
-            workerStopOutcome.idleMs - workerStopOutcome.stopMs <= 500 &&
-            workerStopOutcome.publications === 0 &&
-            !workerStopOutcome.resultVisible,
-          'Worker Stop did not reach the existing idle/no-publication contract'
-        );
-        report.workerStopOutcome = workerStopOutcome;
-        await recordWorker('stop', undefined, stopSnapshot);
-        await configurePage(page, fixturePath, fixture, 'medium');
-        const recovery = await measureJob(
-          page,
-          fixture,
-          fixtureDigest,
-          'medium',
-          'candidate',
-          'same-document-warm',
-          output,
-          `${scenario}-worker-after-stop`
-        );
-        await recordWorker('after-stop', recovery.saved.bytes);
+        const complete = async (kind: string) => {
+          const asked = request(kind);
+          const result = await runDirectOwnerCompletion(page, asked);
+          const current = await lifecycle();
+          assertDirectOwnerSnapshot(
+            current.records.at(-1)?.terminalSnapshot as Parameters<
+              typeof assertDirectOwnerSnapshot
+            >[0],
+            asked.requestId,
+            true
+          );
+          const bytes = Buffer.from(result.output);
+          const file = `${scenario}-direct-worker-${kind}.webp`;
+          await writeFile(join(output, file), bytes);
+          const parsed = parseAnimatedWebp(bytes);
+          assert.deepEqual(parsed.canvas, {
+            width: workerFixture.width,
+            height: workerFixture.height,
+          });
+          assert(Math.abs(parsed.totalDurationMs - workerFixture.durationMs) <= 250);
+          const decoded = await decodeWebp(page, bytes, true);
+          assert.equal(decoded.frames.length, parsed.frames.length);
+          for (const [index, frame] of decoded.frames.entries()) {
+            assert.equal(frame.width, workerFixture.width);
+            assert.equal(frame.height, workerFixture.height);
+            assert(Math.abs(frame.durationMs - parsed.frames[index]!.durationMs) <= 1);
+          }
+          assertClusterSequence(decoded.frames);
+          const outputs = (report.directWorkerOutputs ??= []) as unknown[];
+          outputs.push({
+            kind,
+            requestId: asked.requestId,
+            route: 'direct-compiled-conversion-worker',
+            inputSha256: workerInputDigest,
+            saved: { file, bytes: bytes.length, sha256: digest(bytes) },
+            parsed,
+            decoded,
+          });
+          await recordWorker(kind, bytes.length);
+        };
+        report.workerRoute =
+          'direct-compiled-conversion-worker; validation-owned lifecycle; not UI Stop or main-thread-proxy';
+        report.workerAsset = workerAssets[0];
+        report.workerFixture = { ...workerFixture, sha256: workerInputDigest };
+        for (let index = 0; index < 3; index++) await complete(`complete-${index + 1}`);
+        const stopped = await runDirectOwnerActiveTermination(page, request('stop'));
+        report.directWorkerCancellation = {
+          requestId: stopped.requestId,
+          progressCount: stopped.progressCount,
+          observedStepCalls: stopped.observedStepCalls,
+          liveSnapshotPollIntervalMs: 10,
+          kind: 'validation-owned protocol abort and termination after observed ABI steps; no UI Stop timing claim',
+        };
+        await recordWorker('stop', undefined, stopped.snapshot);
+        await complete('after-stop');
         report.workerPatches = workerPatches;
       } finally {
         await page.close();
