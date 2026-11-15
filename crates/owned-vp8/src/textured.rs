@@ -17,7 +17,7 @@ use crate::{
     transform,
 };
 
-#[derive(Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 struct Macroblock {
     y: [[i16; 16]; 16],
     y2: [i16; 16],
@@ -1175,6 +1175,50 @@ fn adjacent_level(value: i16, step: i32, direction: i32) -> Option<i16> {
     (proposed.abs() <= limit).then_some(proposed as i16)
 }
 
+fn uv_future_consumers(mx: usize, my: usize, padded_w: usize, padded_h: usize) -> (bool, bool) {
+    (mx + 1 < padded_w / 16, my + 1 < padded_h / 16)
+}
+
+// Preserve only the UV state read by later macroblocks. The current patch is
+// reconstructed and clamped before this check: changed coefficients can still
+// leave the outgoing predictor samples byte-identical.
+#[allow(clippy::too_many_arguments)]
+fn uv_frontier_preserved(
+    baseline_tile: &[u8; 64],
+    trial_patch: &[u8; 16],
+    baseline_coefficients: &[i16; 16],
+    trial_coefficients: &[i16; 16],
+    bx: usize,
+    by: usize,
+    has_right: bool,
+    has_below: bool,
+    baseline_skip: bool,
+    trial_skip: bool,
+) -> bool {
+    if baseline_skip != trial_skip {
+        return false;
+    }
+    if bx == 1
+        && has_right
+        && (0..4).any(|row| trial_patch[row * 4 + 3] != baseline_tile[(by * 4 + row) * 8 + 7])
+    {
+        return false;
+    }
+    if by == 1
+        && has_below
+        && (0..4).any(|col| trial_patch[12 + col] != baseline_tile[7 * 8 + bx * 4 + col])
+    {
+        return false;
+    }
+    if (bx == 1 && has_right || by == 1 && has_below)
+        && baseline_coefficients.iter().any(|&level| level != 0)
+            != trial_coefficients.iter().any(|&level| level != 0)
+    {
+        return false;
+    }
+    true
+}
+
 // A single selected UV coefficient may change. All trials use the current
 // contexts and full local header/skip/coefficient rate before display scoring.
 #[allow(clippy::too_many_arguments)]
@@ -1217,6 +1261,9 @@ fn refine_selected_uv(
         &mut uv_cost,
     )?
     .ok_or(EncodeError::OutputLimit)?;
+    let baseline_skip = block.skip();
+    let (has_right, has_below) =
+        uv_future_consumers(mx, my, padded_w, reconstructed_y.len() / padded_w);
     let frame = display_rgb::Frame {
         width,
         height,
@@ -1302,6 +1349,7 @@ fn refine_selected_uv(
                             &mut luma_cost,
                             &mut trial_uv_cost,
                         );
+                        let trial_skip = block.skip();
                         if plane == 0 {
                             block.u[index][coefficient_index] = old;
                         } else {
@@ -1310,11 +1358,26 @@ fn refine_selected_uv(
                         if !rate?.is_some_and(|rate| rate <= baseline_rate) {
                             continue;
                         }
-                        let cache =
-                            cache.get_or_insert_with(|| display_rgb::LocalCache::new(&frame));
                         let mut trial_coefficients = coefficients;
                         trial_coefficients[coefficient_index] = level;
                         let patch = reconstructed_patch(&trial_coefficients, &predictor, steps);
+                        let baseline_tile = if plane == 0 { &uv.u_tile } else { &uv.v_tile };
+                        if !uv_frontier_preserved(
+                            baseline_tile,
+                            &patch,
+                            &coefficients,
+                            &trial_coefficients,
+                            bx,
+                            by,
+                            has_right,
+                            has_below,
+                            baseline_skip,
+                            trial_skip,
+                        ) {
+                            continue;
+                        }
+                        let cache =
+                            cache.get_or_insert_with(|| display_rgb::LocalCache::new(&frame));
                         let change = display_rgb::Change {
                             plane,
                             bx,
@@ -2056,6 +2119,7 @@ impl SkipStats {
 const MAX_I16_HEADER_SYMBOLS: usize = 9;
 const FINAL_TAIL_BYTES: usize = 4;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct HeaderBudget {
     limit: usize,
     fixed_symbols_and_tail: usize,
@@ -3498,6 +3562,502 @@ mod tests {
     }
 
     #[test]
+    fn uv_frontier_matches_all_later_predictor_inputs_on_padded_grid() {
+        let odd_input = vec![0u8; 17 * 17 * 4];
+        let odd_plan =
+            ResourcePlan::checked(engine_request(17, 17, 0, &odd_input, 17 * 4)).unwrap();
+        assert_eq!((odd_plan.padded_width, odd_plan.padded_height), (32, 32));
+        let odd_w = odd_plan.padded_width as usize;
+        let odd_h = odd_plan.padded_height as usize;
+        assert_eq!(uv_future_consumers(0, 0, odd_w, odd_h), (true, true));
+        assert_eq!(uv_future_consumers(1, 0, odd_w, odd_h), (false, true));
+        assert_eq!(uv_future_consumers(0, 1, odd_w, odd_h), (true, false));
+        assert_eq!(uv_future_consumers(1, 1, odd_w, odd_h), (false, false));
+        let stride = 24; // Three padded macroblocks for predictor edge probes.
+        let tile = std::array::from_fn(|i| (32 + (i * 17) % 181) as u8);
+        let coefficients = [0i16; 16];
+        for (mx, my) in [(0, 0), (2, 0), (0, 2), (2, 2), (1, 1)] {
+            let (has_right, has_below) = uv_future_consumers(mx, my, 48, 48);
+            let mut baseline: Vec<u8> = (0..stride * stride)
+                .map(|i| (21 + (i * 37) % 211) as u8)
+                .collect();
+            commit_tile::<8, 64>(&mut baseline, stride, mx * 8, my * 8, &tile);
+            for by in 0..2 {
+                for bx in 0..2 {
+                    let mut patch = prediction_patch::<8, 64>(&tile, bx, by);
+                    patch[0] ^= 1; // Interior of this macroblock, never a later edge.
+                    assert!(uv_frontier_preserved(
+                        &tile,
+                        &patch,
+                        &coefficients,
+                        &coefficients,
+                        bx,
+                        by,
+                        has_right,
+                        has_below,
+                        false,
+                        false,
+                    ));
+                    let mut trial = baseline.clone();
+                    for row in 0..4 {
+                        for col in 0..4 {
+                            trial[(my * 8 + by * 4 + row) * stride + mx * 8 + bx * 4 + col] =
+                                patch[row * 4 + col];
+                        }
+                    }
+                    for (cx, cy) in [(mx + 1, my), (mx, my + 1), (mx + 1, my + 1)] {
+                        if cx >= 3 || cy >= 3 {
+                            continue;
+                        }
+                        let before = edge::<8>(&baseline, stride, cx * 8, cy * 8);
+                        let after = edge::<8>(&trial, stride, cx * 8, cy * 8);
+                        assert_eq!(
+                            after, before,
+                            "mb=({mx},{my}) patch=({bx},{by}) consumer=({cx},{cy})"
+                        );
+                        for mode in 0..4 {
+                            assert_eq!(
+                                prediction::predict_uv(
+                                    &before.0,
+                                    &before.1,
+                                    before.2,
+                                    cy > 0,
+                                    cx > 0,
+                                    mode_from_u8(mode)
+                                ),
+                                prediction::predict_uv(
+                                    &after.0,
+                                    &after.1,
+                                    after.2,
+                                    cy > 0,
+                                    cx > 0,
+                                    mode_from_u8(mode)
+                                )
+                            );
+                        }
+                    }
+                    let mut right_edge = prediction_patch::<8, 64>(&tile, bx, by);
+                    right_edge[3] ^= 1;
+                    assert_eq!(
+                        uv_frontier_preserved(
+                            &tile,
+                            &right_edge,
+                            &coefficients,
+                            &coefficients,
+                            bx,
+                            by,
+                            has_right,
+                            has_below,
+                            false,
+                            false
+                        ),
+                        !(bx == 1 && has_right)
+                    );
+                    let mut bottom_edge = prediction_patch::<8, 64>(&tile, bx, by);
+                    bottom_edge[12] ^= 1;
+                    assert_eq!(
+                        uv_frontier_preserved(
+                            &tile,
+                            &bottom_edge,
+                            &coefficients,
+                            &coefficients,
+                            bx,
+                            by,
+                            has_right,
+                            has_below,
+                            false,
+                            false
+                        ),
+                        !(by == 1 && has_below)
+                    );
+                    let mut corner_edge = prediction_patch::<8, 64>(&tile, bx, by);
+                    corner_edge[15] ^= 1;
+                    assert_eq!(
+                        uv_frontier_preserved(
+                            &tile,
+                            &corner_edge,
+                            &coefficients,
+                            &coefficients,
+                            bx,
+                            by,
+                            has_right,
+                            has_below,
+                            false,
+                            false
+                        ),
+                        !((bx == 1 && has_right) || (by == 1 && has_below))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn uv_frontier_matches_exported_contexts_and_rejects_skip_transitions() {
+        let tile = [255u8; 64];
+        let predictor = [255u8; 16];
+        let steps = Steps { dc: 1, ac: 1 };
+        for coefficient_index in [0, residual::SCAN[15]] {
+            let mut baseline_coefficients = [0i16; 16];
+            baseline_coefficients[coefficient_index] = 1;
+            let trial_coefficients = [0i16; 16];
+            let baseline_patch = reconstructed_patch(&baseline_coefficients, &predictor, steps);
+            let trial_patch = reconstructed_patch(&trial_coefficients, &predictor, steps);
+            assert_eq!(
+                baseline_patch, trial_patch,
+                "coefficient={coefficient_index}"
+            );
+            for plane in 0..2 {
+                for by in 0..2 {
+                    for bx in 0..2 {
+                        let index = by * 2 + bx;
+                        let mut baseline = Macroblock {
+                            i16: true,
+                            ..Macroblock::default()
+                        };
+                        baseline.y2[0] = 1;
+                        if plane == 0 {
+                            baseline.u[index] = baseline_coefficients;
+                        } else {
+                            baseline.v[index] = baseline_coefficients;
+                        }
+                        let mut trial = Macroblock {
+                            i16: true,
+                            ..Macroblock::default()
+                        };
+                        trial.y2[0] = 1;
+                        if plane == 0 {
+                            trial.u[index] = trial_coefficients;
+                        } else {
+                            trial.v[index] = trial_coefficients;
+                        }
+                        for (has_right, has_below) in
+                            [(true, true), (true, false), (false, true), (false, false)]
+                        {
+                            let permitted = uv_frontier_preserved(
+                                &tile,
+                                &trial_patch,
+                                &baseline_coefficients,
+                                &trial_coefficients,
+                                bx,
+                                by,
+                                has_right,
+                                has_below,
+                                baseline.skip(),
+                                trial.skip(),
+                            );
+                            let mut before = CoeffContexts::new(2);
+                            let mut after = before.clone();
+                            before
+                                .encode_coefficients(&mut RateCounter::default(), &baseline, 0)
+                                .unwrap();
+                            after
+                                .encode_coefficients(&mut RateCounter::default(), &trial, 0)
+                                .unwrap();
+                            let same_export = if plane == 0 {
+                                (!has_right || before.left_u == after.left_u)
+                                    && (!has_below || before.u[..2] == after.u[..2])
+                            } else {
+                                (!has_right || before.left_v == after.left_v)
+                                    && (!has_below || before.v[..2] == after.v[..2])
+                            };
+                            assert_eq!(
+                            permitted, same_export,
+                            "plane={plane} patch=({bx},{by}) right={has_right} below={has_below}"
+                        );
+                        }
+                    }
+                }
+            }
+        }
+        let baseline = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        let mut trial = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        trial.u[3][0] = 1;
+        assert!(baseline.skip());
+        assert!(!trial.skip());
+        assert!(!uv_frontier_preserved(
+            &tile,
+            &[255; 16],
+            &[0; 16],
+            &trial.u[3],
+            1,
+            1,
+            false,
+            false,
+            baseline.skip(),
+            trial.skip()
+        ));
+        let mut before = CoeffContexts::new(1);
+        before.u[0] = true;
+        before.left_u[0] = true;
+        let mut after = before.clone();
+        before
+            .encode_coefficients(&mut RateCounter::default(), &baseline, 0)
+            .unwrap();
+        after
+            .encode_coefficients(&mut RateCounter::default(), &trial, 0)
+            .unwrap();
+        assert_eq!(before.u, [false, false]);
+        assert_eq!(before.left_u, [false, false]);
+        assert_eq!(after.u, [false, true]);
+        assert_eq!(after.left_u, [false, true]);
+    }
+
+    fn frontier_rgb_input(width: usize, height: usize) -> Vec<u8> {
+        (0..height)
+            .flat_map(|y| {
+                (0..width).flat_map(move |x| {
+                    let gray = 48 + (x * 9 + y * 13 + (x * y % 7) * 3) % 160;
+                    [
+                        (gray + (x * 5 + y * 3) % 17) as u8,
+                        gray as u8,
+                        (gray - (x * 3 + y * 7) % 13) as u8,
+                        255,
+                    ]
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn guarded_uv_refinement_preserves_later_pre_refinement_choices() {
+        // 33 visible pixels make the third padded macroblock a real raster
+        // consumer even though most of its samples lie beyond the image.
+        let width = 33;
+        let height = 33;
+        let input = frontier_rgb_input(width, height);
+        let mut accepted_before_final = 0;
+        for quality in [60, 75, 85] {
+            let mut request = engine_request(width, height, 0, &input, width * 4);
+            request.quality = quality;
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut baseline = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            let mut guarded = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            for engine in [&mut baseline, &mut guarded] {
+                while engine.stage != Stage::Analyze {
+                    engine.step().unwrap();
+                }
+                assert!(!engine.high_chroma_loss);
+                assert_eq!(engine.plan.macroblock_count, 9);
+            }
+            let padded_w = plan.padded_width as usize;
+            let uv_w = padded_w / 2;
+            for index in 0..9 {
+                let mx = index % 3;
+                let my = index / 3;
+                if mx == 0 {
+                    baseline.contexts.row();
+                    baseline.left_modes.fill(0);
+                    guarded.contexts.row();
+                    guarded.left_modes.fill(0);
+                }
+                for (before, after) in [
+                    (&baseline.reconstructed_u, &guarded.reconstructed_u),
+                    (&baseline.reconstructed_v, &guarded.reconstructed_v),
+                ] {
+                    assert_eq!(
+                        edge::<8>(before, uv_w, mx * 8, my * 8),
+                        edge::<8>(after, uv_w, mx * 8, my * 8),
+                        "quality={quality} block={index}"
+                    );
+                }
+                assert_eq!(baseline.contexts, guarded.contexts);
+                assert_eq!(baseline.above_modes, guarded.above_modes);
+                assert_eq!(baseline.left_modes, guarded.left_modes);
+                assert_eq!(baseline.header_budget, guarded.header_budget);
+
+                let segment_id = baseline.blocks[index].segment_id;
+                assert_eq!(segment_id, guarded.blocks[index].segment_id);
+                let qindex = baseline.segments.qindex_for(segment_id);
+                let y_steps = ac_quant::steps(qindex as u8, baseline.deltas, Plane::Y1);
+                let uv_steps = ac_quant::steps(qindex as u8, baseline.deltas, Plane::UV);
+                let y2_steps = ac_quant::steps(qindex as u8, baseline.deltas, Plane::Y2);
+                let lambda = crate::presets::lambda_for_quality(qindex, quality);
+
+                // Probe the guarded path with refinement disabled before its
+                // real ABI2 step. The probe has isolated reconstruction,
+                // coefficient contexts, modes and header budget.
+                let mut probe_y = guarded.reconstructed_y.clone();
+                let mut probe_u = guarded.reconstructed_u.clone();
+                let mut probe_v = guarded.reconstructed_v.clone();
+                let mut probe_contexts = guarded.contexts.clone();
+                let mut probe_above = guarded.above_modes.clone();
+                let mut probe_left = guarded.left_modes;
+                let mut probe_budget = guarded.header_budget.clone();
+                let probe = analyze_one(
+                    &guarded.source_y,
+                    &guarded.source_u,
+                    &guarded.source_v,
+                    None,
+                    false,
+                    &mut probe_y,
+                    &mut probe_u,
+                    &mut probe_v,
+                    padded_w,
+                    uv_w,
+                    mx,
+                    my,
+                    y_steps,
+                    uv_steps,
+                    y2_steps,
+                    &mut probe_contexts,
+                    &mut probe_above,
+                    &mut probe_left,
+                    lambda,
+                    quality,
+                    width,
+                    height,
+                    false,
+                    0,
+                    segment_id,
+                    guarded.segments,
+                    &mut probe_budget,
+                )
+                .unwrap();
+                let selected = analyze_one(
+                    &baseline.source_y,
+                    &baseline.source_u,
+                    &baseline.source_v,
+                    None,
+                    false,
+                    &mut baseline.reconstructed_y,
+                    &mut baseline.reconstructed_u,
+                    &mut baseline.reconstructed_v,
+                    padded_w,
+                    uv_w,
+                    mx,
+                    my,
+                    y_steps,
+                    uv_steps,
+                    y2_steps,
+                    &mut baseline.contexts,
+                    &mut baseline.above_modes,
+                    &mut baseline.left_modes,
+                    lambda,
+                    quality,
+                    width,
+                    height,
+                    false,
+                    0,
+                    segment_id,
+                    baseline.segments,
+                    &mut baseline.header_budget,
+                )
+                .unwrap();
+                assert_eq!(
+                    probe.block, selected.block,
+                    "quality={quality} block={index}"
+                );
+                assert_eq!(probe_contexts, baseline.contexts);
+                assert_eq!(probe_above, baseline.above_modes);
+                assert_eq!(probe_left, baseline.left_modes);
+                assert_eq!(probe_budget, baseline.header_budget);
+                assert_eq!(probe_y, baseline.reconstructed_y);
+                for (probe_plane, baseline_plane) in [
+                    (&probe_u, &baseline.reconstructed_u),
+                    (&probe_v, &baseline.reconstructed_v),
+                ] {
+                    for row in 0..8 {
+                        let at = (my * 8 + row) * uv_w + mx * 8;
+                        assert_eq!(
+                            &probe_plane[at..at + 8],
+                            &baseline_plane[at..at + 8],
+                            "quality={quality} block={index} row={row}"
+                        );
+                    }
+                }
+                baseline.blocks[index] = selected.block;
+                baseline.cursor += 1;
+
+                guarded.analyze_one_step().unwrap();
+                let actual = &guarded.blocks[index];
+                let expected = &baseline.blocks[index];
+                assert_eq!(actual.y, expected.y);
+                assert_eq!(actual.y2, expected.y2);
+                assert_eq!(actual.i16, expected.i16);
+                assert_eq!(actual.y_mode, expected.y_mode);
+                assert_eq!(actual.b_modes, expected.b_modes);
+                assert_eq!(actual.uv_mode, expected.uv_mode);
+                assert_eq!(actual.skip(), expected.skip());
+                if index + 1 < 9 {
+                    // The ABI2 stage resets coding state immediately after
+                    // its final analysis step for the counting pass.
+                    assert_eq!(guarded.contexts, baseline.contexts);
+                    assert_eq!(guarded.above_modes, baseline.above_modes);
+                    assert_eq!(guarded.left_modes, baseline.left_modes);
+                    assert_eq!(guarded.header_budget, baseline.header_budget);
+                }
+                assert_eq!(guarded.reconstructed_y, baseline.reconstructed_y);
+                let changed_coefficients = actual
+                    .u
+                    .iter()
+                    .zip(&expected.u)
+                    .chain(actual.v.iter().zip(&expected.v))
+                    .flat_map(|(a, b)| a.iter().zip(b))
+                    .filter(|(a, b)| a != b)
+                    .count();
+                assert!(changed_coefficients <= 1);
+                if index + 1 < 9 {
+                    accepted_before_final += changed_coefficients;
+                }
+            }
+            let abi2 = run_engine(guarded);
+            let sync = encode_textured(
+                &input,
+                width as u32,
+                height as u32,
+                (width * 4) as u32,
+                0,
+                quality,
+            )
+            .unwrap();
+            assert_eq!(abi2.output(), sync, "quality={quality} sync/ABI2");
+        }
+        assert!(
+            accepted_before_final > 0,
+            "fixture must exercise a guarded refinement before a later padded macroblock"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_guarded_uv_refinement_on_padded_odd_grid() {
+        let width = 33;
+        let height = 33;
+        let input = frontier_rgb_input(width, height);
+        for quality in [60, 75, 85] {
+            let mut request = engine_request(width, height, 0, &input, width * 4);
+            request.quality = quality;
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            let (y, u, v, padded_w) = engine.reconstruction();
+            let expected = filtered_visible_yuv(
+                y,
+                u,
+                v,
+                padded_w,
+                width,
+                height,
+                &engine.blocks,
+                engine.filter,
+            );
+            assert_decodes(
+                engine.output(),
+                width,
+                height,
+                &expected,
+                "guarded UV refinement on three-by-three padded grid",
+            );
+        }
+    }
+
+    #[test]
     fn uv_refinement_requires_strict_ssim_gain_and_nonincreasing_complete_rate() {
         let source_y = [128u8; 256];
         let source_uv = [128u8; 64];
@@ -3525,6 +4085,7 @@ mod tests {
             u: uv.u,
             ..Macroblock::default()
         };
+        block.y2[0] = 1;
         let contexts = CoeffContexts::new(1);
         let above = [0u8; 4];
         let left = [0u8; 4];
@@ -3626,6 +4187,7 @@ mod tests {
             u: baseline_uv.u,
             ..Macroblock::default()
         };
+        tie_block.y2[0] = 1;
         let mut tie_uv = baseline_uv.clone();
         refine_selected_uv(
             &mut tie_block,
