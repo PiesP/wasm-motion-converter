@@ -6,7 +6,7 @@ import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { performance } from 'node:perf_hooks';
+import { performance as nodePerformance } from 'node:perf_hooks';
 
 import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/test';
 
@@ -3112,7 +3112,7 @@ export async function exerciseOwnedVp8OwnerRetention({
         };
         browserWorkers.push(entry);
         worker.on('close', () => {
-          entry.closeMonotonicAtMs = performance.now();
+          entry.closeMonotonicAtMs = nodePerformance.now();
           entry.closeAtMs = Date.now();
           // This page-clock read happens after the actual Worker close event.
           const read = page
@@ -3155,8 +3155,8 @@ export async function exerciseOwnedVp8OwnerRetention({
         assert(!record.invalidSnapshot, 'Direct Worker terminal snapshot is invalid');
         const matching = browserWorkers.find((entry) => entry.id === record.id);
         if (matching && record.terminatedAtMs !== null) {
-          const deadline = performance.now() + 5_000;
-          while (matching.closeMonotonicAtMs === null && performance.now() < deadline)
+          const deadline = nodePerformance.now() + 5_000;
+          while (matching.closeMonotonicAtMs === null && nodePerformance.now() < deadline)
             await new Promise<void>((resolve) => setTimeout(resolve, 50));
         }
         const openAfterTimeout = (() => {
