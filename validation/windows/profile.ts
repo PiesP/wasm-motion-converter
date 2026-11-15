@@ -5852,7 +5852,7 @@ export async function run({
     const started = await startStaticServer(bundleRoot);
     const checks: unknown[] = [];
     try {
-      for (const mode of ['factory', 'import', 'cancelled-factory'] as const) {
+      for (const mode of ['http-failure', 'invalid-module', 'cancelled-load'] as const) {
         const context = await browser.newContext({
           locale: 'en-US',
           serviceWorkers: 'block',

@@ -660,10 +660,10 @@ declare global {
   var __wmcIdentitySizedVideoFrameDraws: number;
 }
 
-test.describe('built WASM initialization recovery', () => {
+test.describe('built owned VP8 load recovery', () => {
   test.use({ locale: 'en-US' });
-  for (const mode of ['factory', 'import', 'cancelled-factory'] as const) {
-    test(`recovers through explicit reload after ${mode} failure`, async ({ page, baseURL }) => {
+  for (const mode of ['http-failure', 'invalid-module', 'cancelled-load'] as const) {
+    test(`recovers in the same document after ${mode}`, async ({ page, baseURL }) => {
       const contract = cases.find((entry) => entry.id === 'vfr-par-webp')!;
       await exerciseWebpInitialization(
         page,

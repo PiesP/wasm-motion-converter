@@ -8,16 +8,17 @@ import type { Page } from '@playwright/test';
 import type { OutputContractCase } from './output-contract.ts';
 import { verifyAnimatedOutput } from './output-contract.ts';
 
-/** Exercise the real built UI, factory and decoder; inject only the failed load boundary. */
+/** Exercise the built UI and its owned VP8 asset boundary in one document. */
 export async function exerciseWebpInitialization(
   page: Page,
   url: string,
   fixturePath: string,
   contract: OutputContractCase,
   markers: Record<string, number[]>,
-  mode: 'factory' | 'import' | 'cancelled-factory'
+  mode: 'http-failure' | 'invalid-module' | 'cancelled-load'
 ) {
-  let failures = 0;
+  let injections = 0;
+  let moduleRequests = 0;
   let blocked!: () => void;
   const requestBlocked = new Promise<void>((resolve) => {
     blocked = resolve;
@@ -37,37 +38,24 @@ export async function exerciseWebpInitialization(
       configurable: true,
       value: undefined,
     });
-    const nativeSetInterval = globalThis.setInterval;
-    const nativeClearInterval = globalThis.clearInterval;
-    const watchers = new Set<number>();
-    globalThis.setInterval = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
-      const id = nativeSetInterval(handler, timeout, ...args);
-      if (timeout === 10000) watchers.add(id);
-      return id;
-    }) as typeof setInterval;
-    globalThis.clearInterval = (id) => {
-      if (typeof id === 'number') watchers.delete(id);
-      nativeClearInterval(id);
-    };
-    Reflect.set(globalThis, '__wmcInitializationWatchers', watchers);
   });
   await page.route('**/*', async (route) => {
     const path = new URL(route.request().url()).pathname;
-    const target =
-      mode === 'import'
-        ? /\/(?:webp-wasm|wasm-webp)[.-].*\.js$/.test(path) ||
-          /wasm-webp_dist_esm_webp-wasm_+js\.js$/.test(path)
-        : /\/(?:webp-wasm|wasm-webp)(?:[.-][^/]*)?\.wasm$/.test(path);
-    if (!target || failures > 0) return route.continue();
-    failures++;
+    if (!/\/owned-vp8(?:[-.][A-Za-z0-9_-]+)?\.wasm$/.test(path)) return route.continue();
+    moduleRequests++;
+    if (injections > 0) return route.continue();
+    injections++;
     blocked();
-    if (mode === 'cancelled-factory') await released;
-    if (mode === 'import') {
+    if (mode === 'cancelled-load') await released;
+    if (mode === 'invalid-module') {
       await route.fulfill({
         status: 200,
-        contentType: 'text/javascript',
-        body: 'throw new Error("Bounded WebP module evaluation failure");',
+        contentType: 'application/wasm',
+        headers: { 'cache-control': 'no-store' },
+        body: Buffer.from('invalid owned VP8 module'),
       });
+    } else if (mode === 'http-failure') {
+      await route.fulfill({ status: 503, contentType: 'application/wasm', body: '' });
     } else await route.abort('failed');
   });
   async function convert() {
@@ -90,25 +78,28 @@ export async function exerciseWebpInitialization(
     const response = await page.goto(url);
     assert(response);
     assert(response.ok());
-    const csp = response.headers()['content-security-policy'] ?? '';
+    const headers = await response.allHeaders();
+    assert.equal(headers['cross-origin-opener-policy'], 'same-origin');
+    assert.equal(headers['cross-origin-embedder-policy'], 'require-corp');
+    const csp = headers['content-security-policy'] ?? '';
     assert(
       csp.includes("'wasm-unsafe-eval'") && !csp.includes("'unsafe-eval'"),
       'Built CSP was not enforced'
     );
     assert(await page.evaluate(() => crossOriginIsolated));
-    const before = await page.evaluate(() => performance.timeOrigin);
+    const documentOrigin = await page.evaluate(() => performance.timeOrigin);
     await convert();
-    if (mode === 'cancelled-factory') {
-      await Promise.race([
-        requestBlocked,
-        new Promise<never>((_resolve, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error('WASM failure request was not intercepted within 15 seconds')),
-            15000
-          );
-          timer.unref();
-        }),
-      ]);
+    await Promise.race([
+      requestBlocked,
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('Owned VP8 WASM request was not intercepted within 15 seconds')),
+          15000
+        );
+        timer.unref();
+      }),
+    ]);
+    if (mode === 'cancelled-load') {
       await page.locator('[data-testid="dropzone-cancel-button"]').click();
       release();
       await page
@@ -124,37 +115,29 @@ export async function exerciseWebpInitialization(
         0,
         'Stale initialization published an error'
       );
-      // The later explicit conversion observes the retained failed factory.
+      assert.equal(moduleRequests, 1, 'Cancelled load retried without a new user request');
       await page.locator('[data-testid="convert-button"]').click();
-    }
-    const error = page.locator('[data-testid="error-display"]');
-    await error.waitFor({ state: 'visible', timeout: 30000 });
-    assert(
-      (await error.textContent())?.includes(
-        `WebP initialization failed (${mode === 'import' ? 'import' : 'factory'})`
-      ),
-      `Unexpected initialization UI: ${(await error.textContent())?.slice(0, 2000)}; console: ${consoleErrors.join('; ').slice(0, 2000)}`
-    );
-    assert.equal(await error.locator('[data-testid="error-retry-button"]').count(), 0);
-    assert.equal(await error.locator('[data-testid^="error-select-different"]').count(), 0);
-    const retainedWatchers = await page.evaluate(
-      () => (Reflect.get(globalThis, '__wmcInitializationWatchers') as Set<number>).size
-    );
-    if (mode !== 'import')
+    } else {
+      const error = page.locator('[data-testid="error-display"]');
+      await error.waitFor({ state: 'visible', timeout: 30000 });
       assert(
-        retainedWatchers > 0,
-        'Expected the locked factory to retain its dependency watcher after failed fetch'
+        (await error.textContent())?.trim(),
+        'Owned VP8 load failure did not show an error message'
       );
-    assert.equal(await page.evaluate(() => performance.timeOrigin), before);
-    const reload = page.getByRole('button', { name: 'Reload page', exact: true });
-    assert(await reload.isEnabled());
-    await Promise.all([page.waitForEvent('load'), reload.click()]);
-    assert.notEqual(await page.evaluate(() => performance.timeOrigin), before);
-    await convert();
+      assert.equal(moduleRequests, 1, 'Failed load retried without a new user request');
+      assert.equal(await page.locator('[data-testid="result-section"]').count(), 0);
+      // The current generic WebP classifier offers a new-file action here.
+      // Re-select the same fixture explicitly rather than requiring reload.
+      await error.locator('[data-testid="error-select-different-fallback-button"]').click();
+      await convert();
+    }
     await page
       .locator('[data-testid="result-section"]')
       .waitFor({ state: 'visible', timeout: 60000 });
     assert.equal(await page.locator('[data-testid="error-display"]').count(), 0);
+    assert.equal(await page.evaluate(() => performance.timeOrigin), documentOrigin);
+    assert.equal(injections, 1, 'Owned VP8 load failure was not injected exactly once');
+    assert(moduleRequests >= 2, 'A fresh user request made no new owned VP8 module request');
     const downloadPromise = page.waitForEvent('download');
     await page.locator('[data-testid="download-result-button"]').click();
     const stream = await (await downloadPromise).createReadStream();
@@ -163,16 +146,10 @@ export async function exerciseWebpInitialization(
     for await (const chunk of stream) chunks.push(chunk);
     const bytes = Buffer.concat(chunks);
     const decoded = await verifyAnimatedOutput(page, bytes, contract, markers);
-    assert.equal(failures, 1);
-    assert(
-      pageErrors.every(
-        (error) => mode === 'import' && error.includes('Bounded WebP module evaluation failure')
-      ),
-      `Unexpected page errors: ${pageErrors.join('; ')}`
-    );
+    assert.equal(pageErrors.length, 0, `Unexpected page errors: ${pageErrors.join('; ')}`);
     assert(
       consoleErrors.every((error) =>
-        /net::ERR_FAILED|WebP initialization failed|Conversion failed|Frame conversion errors detected/.test(
+        /Failed to load resource|net::ERR_FAILED|Conversion failed|Frame conversion errors detected/.test(
           error
         )
       ),
@@ -180,10 +157,10 @@ export async function exerciseWebpInitialization(
     );
     return {
       mode,
-      failures,
-      retainedWatchers,
-      explicitReload: true,
-      cancelledResultSuppressed: mode === 'cancelled-factory',
+      injections,
+      moduleRequests,
+      sameDocument: true,
+      cancelledResultSuppressed: mode === 'cancelled-load',
       decoded,
       bytes: bytes.length,
       pageErrors,
@@ -195,7 +172,7 @@ export async function exerciseWebpInitialization(
       .textContent()
       .catch(() => null);
     throw new Error(
-      `WebP ${mode} recovery failed; injected=${failures}; state=${state}; pageErrors=${pageErrors.join('; ').slice(0, 2000)}; consoleErrors=${consoleErrors.join('; ').slice(0, 2000)}`,
+      `Owned VP8 ${mode} recovery failed; injected=${injections}; requests=${moduleRequests}; state=${state}; pageErrors=${pageErrors.join('; ').slice(0, 2000)}; consoleErrors=${consoleErrors.join('; ').slice(0, 2000)}`,
       { cause: error }
     );
   } finally {
