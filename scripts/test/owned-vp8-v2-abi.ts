@@ -51,6 +51,10 @@ const runtime = (
   }
 ).WebAssembly;
 export type CompiledVp8 = { module: object; sha256: string };
+export type MaxStepMetadata = {
+  before: Pick<Vp8Record, 'phase' | 'stage' | 'done' | 'total' | 'status'>;
+  after: Pick<Vp8Record, 'phase' | 'stage' | 'done' | 'total' | 'status'>;
+};
 export function compileVp8(bytes: Uint8Array): CompiledVp8 {
   const module = new runtime.Module(bytes);
   if (runtime.Module.imports(module).length !== 0)
@@ -155,14 +159,22 @@ export class Vp8TestJob {
   async encode(
     pixels: Uint8Array,
     request: Vp8Request,
-    signal?: AbortSignal
-  ): Promise<{ bytes: Uint8Array; capacity: number; steps: number; maxStepMs: number }> {
+    signal?: AbortSignal,
+    onStep?: (record: Vp8Record) => void
+  ): Promise<{
+    bytes: Uint8Array;
+    capacity: number;
+    steps: number;
+    maxStepMs: number;
+    maxStepMetadata: MaxStepMetadata | null;
+  }> {
     if (this.retired || this.frame === 0xffff_ffff) throw new Error('VP8 instance is retired');
     this.frame++;
     const frame = this.frame;
     let lease: 'none' | 'input' | 'output' = 'none';
     let steps = 0;
     let maxStepMs = 0;
+    let maxStepMetadata: MaxStepMetadata | null = null;
     let deadline = performance.now() + 4;
     const tick = async (): Promise<void> => {
       signal?.throwIfAborted();
@@ -212,13 +224,26 @@ export class Vp8TestJob {
       }
       // Every input copy settled before begin relinquishes the destination lease.
       lease = 'none';
-      this.checked(this.api.vp8_v2_begin(this.generation, frame), [10]);
+      let beforeStep = this.checked(this.api.vp8_v2_begin(this.generation, frame), [10]);
       let output: Vp8Record;
       for (;;) {
         const start = performance.now();
         const status = this.api.vp8_v2_step(this.generation, frame);
-        maxStepMs = Math.max(maxStepMs, performance.now() - start);
+        const stepMs = performance.now() - start;
         output = this.checked(status, [10, 11]);
+        if (stepMs > maxStepMs) {
+          maxStepMs = stepMs;
+          const progress = (record: Vp8Record) => ({
+            phase: record.phase,
+            stage: record.stage,
+            done: record.done,
+            total: record.total,
+            status: record.status,
+          });
+          maxStepMetadata = { before: progress(beforeStep), after: progress(output) };
+        }
+        onStep?.(output);
+        beforeStep = output;
         if (++steps > 1_000_000) throw new Error('VP8 step protocol did not terminate');
         if (status === 11) break;
         await tick();
@@ -236,7 +261,13 @@ export class Vp8TestJob {
       }
       this.checked(this.api.vp8_v2_release_output(this.generation, frame), [0]);
       lease = 'none';
-      return { bytes: result, capacity: this.api.memory.buffer.byteLength, steps, maxStepMs };
+      return {
+        bytes: result,
+        capacity: this.api.memory.buffer.byteLength,
+        steps,
+        maxStepMs,
+        maxStepMetadata,
+      };
     } catch (error) {
       // No copies remain physically pending: all writes above finish before tick.
       this.api.vp8_v2_abort(this.generation, frame);

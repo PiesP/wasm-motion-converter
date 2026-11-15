@@ -109,6 +109,7 @@ async function check(
       capacity: result.capacity,
       steps: result.steps,
       nodeEngineeringMaxStepMs: result.maxStepMs,
+      nodeEngineeringMaxStepMetadata: result.maxStepMetadata,
     });
   } finally {
     job.retire();

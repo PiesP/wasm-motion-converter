@@ -46,6 +46,12 @@ import {
   V7_PHOTO_REGIONS,
   generateV7Fixture,
 } from '../../../scripts/test/owned-vp8-v7-fixtures';
+import {
+  V8_HELDOUT,
+  V8_PHOTO,
+  V8_PHOTO_REGIONS,
+  generateV8Fixture,
+} from '../../../scripts/test/owned-vp8-v8-fixtures';
 
 describe('owned VP8 prospective cohort isolation', () => {
   const root = resolve(import.meta.dirname, '../../..');
@@ -594,5 +600,142 @@ describe('owned VP8 prospective cohort isolation', () => {
     }
     expect(() => generateV7Fixture('fresh7-photo')).toThrow('Missing fresh photo source');
     expect(() => generateV7Fixture('fresh7-video-47')).toThrow('Missing video source');
+  });
+
+  it('selects exactly the fresh V8 conditions and keeps all previous held-out cohorts exposed', () => {
+    for (const cohort of [
+      'initial-v1',
+      'corrected-v2',
+      'corrected-v3',
+      'corrected-v4',
+      'corrected-v5',
+      'corrected-v6',
+      'corrected-v7',
+    ] as const)
+      expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
+    const selected = selectFixtureCohort('held-out', 'corrected-v8');
+    expect(selected).toEqual(V8_HELDOUT);
+    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+      expectedConditionCount: 60,
+      completeCohort: true,
+      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+    });
+    expect(selectFixtureCohort('tuning', 'corrected-v8')).toHaveLength(15);
+    expect(() => selectFixtureCohort('held-out', 'corrected-v8', false, ['fresh8-gray'])).toThrow(
+      'diagnostic only'
+    );
+    expect(selectFixtureCohort('held-out', 'corrected-v8', true, ['fresh8-gray'])).toHaveLength(1);
+  });
+
+  it('binds prospective V8 source identities, input pixels, and admission geometry', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v8-fixtures.json'), 'utf8')
+    ) as {
+      cohort: string;
+      generatorSha256: string;
+      priorManifestSha256: Record<string, string>;
+      thresholds: Record<string, number>;
+      sources: { photo: { sha256: string }; video: { sha256: string; frameCount: number } };
+      fixtures: Array<{
+        id: string;
+        source: string;
+        frame?: number;
+        width: number;
+        height: number;
+        layout: string;
+        stride: number;
+        sha256: string;
+        repeatOf?: string;
+        qualities: number[];
+      }>;
+    };
+    expect(manifest.cohort).toBe('corrected-v8');
+    expect(manifest.generatorSha256).toBe(sha256('scripts/test/owned-vp8-v8-fixtures.ts'));
+    expect(manifest.thresholds).toEqual({
+      psnrBaselineDeltaDb: -1,
+      ssimBaselineDelta: -0.01,
+      sizeRatio: 1.25,
+      sizeAdditiveBytes: 128,
+    });
+    const priorFiles = {
+      initialV1: 'v2',
+      correctedV2: 'v2-correction',
+      correctedV3: 'v3',
+      correctedV4: 'v4',
+      correctedV5: 'v5',
+      correctedV6: 'v6',
+      correctedV7: 'v7',
+    } as const;
+    expect(manifest.priorManifestSha256).toEqual(
+      Object.fromEntries(
+        Object.entries(priorFiles).map(([name, suffix]) => [
+          name,
+          sha256(`docs/experiments/501-owned-vp8-${suffix}-fixtures.json`),
+        ])
+      )
+    );
+    const prior = Object.values(priorFiles).flatMap(
+      (suffix) =>
+        (
+          JSON.parse(
+            readFileSync(
+              resolve(root, `docs/experiments/501-owned-vp8-${suffix}-fixtures.json`),
+              'utf8'
+            )
+          ) as { fixtures: Array<{ id: string; sha256: string; frame?: number }> }
+        ).fixtures
+    );
+    expect(manifest.fixtures).toHaveLength(20);
+    expect(new Set(manifest.fixtures.map((item) => item.id)).size).toBe(20);
+    expect(
+      manifest.fixtures.every(
+        (item) =>
+          !prior.some((old) => old.id === item.id) &&
+          (item.repeatOf !== undefined || !prior.some((old) => old.sha256 === item.sha256)) &&
+          item.qualities.join(',') === '60,75,85' &&
+          item.width * item.height <= 10_066_329 &&
+          item.stride >= item.width * 4
+      )
+    ).toBe(true);
+    expect(manifest.fixtures.find((item) => item.id === 'fresh8-large-admitted')).toMatchObject({
+      width: 4100,
+      height: 2455,
+    });
+    expect(4100 * 2455).toBe(10_065_500);
+    expect(manifest.fixtures.find((item) => item.id === 'fresh8-padded-rgba')?.stride).toBe(
+      301 * 4 + 20
+    );
+    expect(
+      manifest.fixtures.filter((item) => item.source === 'video').map((item) => item.frame)
+    ).toEqual([63, 159, 63]);
+    expect(prior.some((item) => item.frame === 63 || item.frame === 159)).toBe(false);
+    expect(manifest.sources.video.frameCount).toBe(192);
+    expect(manifest.sources.video.sha256).toBe(EXTERNAL_SOURCES.video.sha256);
+    expect(manifest.sources.photo.sha256).toBe(V8_PHOTO.sha256);
+    expect(V8_PHOTO.bytes).toBe(5_289_121);
+    expect(V8_PHOTO_REGIONS.primary.x + V8_PHOTO_REGIONS.primary.width).toBeLessThan(
+      V8_PHOTO_REGIONS.detail.x
+    );
+    expect(manifest.fixtures.find((item) => item.id === 'fresh8-video-63')?.sha256).toBe(
+      manifest.fixtures.find((item) => item.id === 'fresh8-duplicate-hold')?.sha256
+    );
+    for (const item of manifest.fixtures.filter((entry) => entry.source === 'generated')) {
+      const fixture = generateV8Fixture(item.id);
+      const pixels = fixture.pixels;
+      expect(createHash('sha256').update(pixels).digest('hex')).toBe(item.sha256);
+      expect(pixels.length).toBe(item.stride * item.height);
+      if (item.id === 'fresh8-padded-rgba') {
+        for (let y = 0; y < item.height; y++)
+          expect(
+            pixels
+              .subarray(y * item.stride + item.width * 4, (y + 1) * item.stride)
+              .every((value) => value === 0xa7)
+          ).toBe(true);
+      }
+      if (item.layout === 'BGRX' || item.layout === 'RGBX')
+        expect(new Set(pixels.filter((_value, index) => index % 4 === 3)).size).toBeGreaterThan(1);
+    }
+    expect(() => generateV8Fixture('fresh8-photo')).toThrow('Missing fresh photo source');
+    expect(() => generateV8Fixture('fresh8-video-63')).toThrow('Missing video source');
   });
 });
