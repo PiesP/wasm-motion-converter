@@ -411,27 +411,46 @@ mod tests {
                 })
             })
             .collect();
-        for target in [27, 29, 28, 35] {
+        let joint_input: Vec<u8> = (0..5)
+            .flat_map(|x| {
+                let rgb = if (3 * x) % 4 == 0 {
+                    [244, 29, 171]
+                } else if (2 * x) & 1 != 0 {
+                    [35, 227, 91]
+                } else {
+                    [89, 61, 239]
+                };
+                [rgb[0], rgb[1], rgb[2], 255]
+            })
+            .collect();
+        for target in [36, 37, 38, 39, 40, 27, 29, 28, 35] {
             let mut reached = false;
-            for quality in [60, 75, 85] {
+            let joint = (37..=40).contains(&target);
+            let (case_width, case_height, case_input, qualities): (usize, usize, &[u8], &[u32]) =
+                if joint {
+                    (5, 1, &joint_input, &[85])
+                } else {
+                    (width, height, &input, &[60, 75, 85])
+                };
+            for &quality in qualities {
                 let mut state = State::new();
                 state.request = [
                     2,
-                    width as u32,
-                    height as u32,
-                    (width * 4) as u32,
+                    case_width as u32,
+                    case_height as u32,
+                    (case_width * 4) as u32,
                     0,
                     quality,
-                    input.len() as u32,
+                    case_input.len() as u32,
                     1_048_576,
                     41,
                     1,
-                    input.len() as u32,
+                    case_input.len() as u32,
                     0,
                 ];
                 assert_eq!(state.plan(), Ok(0));
                 reserve(&mut state);
-                state.input.copy_from_slice(&input);
+                state.input.copy_from_slice(case_input);
                 assert_eq!(state.begin(41, 1), Ok(WORKING));
                 for _ in 0..4096 {
                     if state.job.as_ref().unwrap().stage() == target {

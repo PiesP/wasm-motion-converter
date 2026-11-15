@@ -9,6 +9,7 @@ import { setImmediate } from 'node:timers/promises';
 
 import { compileVp8, Vp8TestJob } from './owned-vp8-v2-abi.ts';
 import { FIXTURES, generateFixture, QUALITIES } from './owned-vp8-v2-fixtures.ts';
+import { generateV7Fixture } from './owned-vp8-v7-fixtures.ts';
 
 const wasmPath = resolve('crates/owned-vp8/owned-vp8.wasm');
 const compiled = compileVp8(readFileSync(wasmPath));
@@ -46,7 +47,7 @@ async function check(
   try {
     const request = { width, height, stride, layout, quality };
     const result = await job.encode(pixels, request, undefined, (record) => {
-      if ([27, 28, 29, 30, 31, 32, 33, 34, 35].includes(record.stage)) {
+      if ([27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40].includes(record.stage)) {
         assert.equal(record.outputLength, 0, 'Refinement stages cannot publish output');
         assert.equal(record.outputPointer, 0, 'Refinement stages cannot lease output');
       }
@@ -207,26 +208,21 @@ async function cancellation(): Promise<object> {
   }
   let observed = false;
   let stoppedAt = 0;
-  const timer = setInterval(() => {
-    const record = job.record();
-    if (record.phase === 4 && record.stage === 2 && record.done > 0) {
-      observed = true;
-      stoppedAt = performance.now();
-      controller.abort();
-    }
-  }, 1);
-  try {
-    await assert.rejects(
-      job.encode(
-        pixels,
-        { width, height, stride: width * 4, layout: 0, quality: 75 },
-        controller.signal
-      ),
-      { name: 'AbortError' }
-    );
-  } finally {
-    clearInterval(timer);
-  }
+  await assert.rejects(
+    job.encode(
+      pixels,
+      { width, height, stride: width * 4, layout: 0, quality: 75 },
+      controller.signal,
+      (record) => {
+        if (!observed && record.phase === 4 && record.stage === 2 && record.done > 0) {
+          observed = true;
+          stoppedAt = performance.now();
+          controller.abort();
+        }
+      }
+    ),
+    { name: 'AbortError' }
+  );
   assert.ok(observed, 'Cancellation must observe actual owned macroblock analysis');
   assert.equal(job.record().outputLength, 0);
   const idleMs = performance.now() - stoppedAt;
@@ -304,7 +300,30 @@ try {
         'refinement-frontier-33x33',
         (stage) => refinementStages.add(stage)
       );
-    for (const stage of [27, 28, 29, 35])
+    for (const [id, quality] of [
+      ['fresh7-tiny-2x9', 60],
+      ['fresh7-tiny-5x1', 85],
+      ['fresh7-tiny-1x11', 75],
+    ] as const) {
+      const fixture = generateV7Fixture(id);
+      await check(
+        fixture.pixels,
+        fixture.width,
+        fixture.height,
+        fixture.stride,
+        0,
+        quality,
+        id,
+        (stage) => refinementStages.add(stage)
+      );
+    }
+    assert.deepEqual(
+      results
+        .filter((entry) => (entry as { id: string }).id.startsWith('fresh7-tiny-'))
+        .map((entry) => (entry as { rawBytes: number }).rawBytes),
+      [98, 81, 92]
+    );
+    for (const stage of [36, 37, 38, 39, 40, 27, 28, 29, 35])
       assert.ok(refinementStages.has(stage), `Compiled ABI2 must reach refinement stage ${stage}`);
     for (const layout of [0, 1, 2, 3, 4]) {
       const width = 17;

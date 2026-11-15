@@ -103,6 +103,7 @@ fn cubic(distance: i64) -> i64 {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct Frame<'a> {
     pub width: usize,
     pub height: usize,
@@ -227,6 +228,29 @@ impl Frame<'_> {
                 sum += i64::from(i32::from(new) - i32::from(old))
                     * i64::from(h.weight[col])
                     * i64::from(v.weight[row]);
+            }
+        }
+        sum
+    }
+
+    fn tile_delta(&self, plane: usize, h: Axis, v: Axis, trial: &[u8; 64]) -> i64 {
+        let tile = if plane == 0 { self.tile_u } else { self.tile_v };
+        let x0 = self.mx * 8;
+        let y0 = self.my * 8;
+        let mut sum = 0i64;
+        for row in 0..v.len {
+            let sy = v.at[row];
+            if !(y0..y0 + 8).contains(&sy) {
+                continue;
+            }
+            for col in 0..h.len {
+                let sx = h.at[col];
+                if (x0..x0 + 8).contains(&sx) {
+                    let index = (sy - y0) * 8 + sx - x0;
+                    sum += i64::from(i32::from(trial[index]) - i32::from(tile[index]))
+                        * i64::from(h.weight[col])
+                        * i64::from(v.weight[row]);
+                }
             }
         }
         sum
@@ -357,7 +381,8 @@ struct Pixel {
 // each. UV influence lies in [MB-4, MB+20); aligned stride-4 window starts
 // range from MB-8 through MB+16, giving cached samples [MB-8, MB+24).
 // Clipped edges and minimum-8 metric dimensions only shrink that region.
-// The cache is built only after coefficient syntax and frontier checks pass.
+// The single-edit cache is built after syntax/frontier checks; the bounded
+// joint search also uses it for private full-tile trials.
 pub(super) struct LocalCache {
     x0: usize,
     y0: usize,
@@ -481,6 +506,62 @@ impl LocalCache {
                     (pixel.u_sum, pixel.v_sum + delta)
                 };
                 let updated = render(pixel.luma, sums.0, sums.1);
+                if updated == pixel.baseline {
+                    continue;
+                }
+                let wx0 = x.saturating_sub(7).div_ceil(4).max(windows.x0);
+                let wx1 = (x / 4 + 1).min(windows.x1);
+                let wy0 = y.saturating_sub(7).div_ceil(4).max(windows.y0);
+                let wy1 = (y / 4 + 1).min(windows.y1);
+                for wy in wy0..wy1 {
+                    for wx in wx0..wx1 {
+                        let index = (wy - self.wy0) * 7 + wx - self.wx0;
+                        for channel in 0..3 {
+                            trial[index][channel].replace(
+                                pixel.original[channel],
+                                pixel.baseline[channel],
+                                updated[channel],
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let mut gain = 0.0;
+        for wy in windows.y0..windows.y1 {
+            for wx in windows.x0..windows.x1 {
+                let index = (wy - self.wy0) * 7 + wx - self.wx0;
+                for (updated, original) in trial[index].iter().zip(self.baseline[index].iter()) {
+                    gain += updated.ssim() - original.ssim();
+                }
+            }
+        }
+        gain
+    }
+
+    // Score the complete U/V trial jointly. Replacing the baseline moments
+    // once per rendered pixel retains chroma coupling and overlapping windows.
+    pub(super) fn score_tiles(&self, frame: &Frame<'_>, u: &[u8; 64], v: &[u8; 64]) -> f64 {
+        let bounds = (
+            (frame.mx * 16).saturating_sub(4),
+            (frame.mx * 16 + 20).min(frame.width),
+            (frame.my * 16).saturating_sub(4),
+            (frame.my * 16 + 20).min(frame.height),
+        );
+        let Some(windows) = intersecting_windows(frame, bounds) else {
+            return 0.0;
+        };
+        let right = (windows.x1 - 1) * 4 + 8;
+        let bottom = (windows.y1 - 1) * 4 + 8;
+        let mut trial = self.baseline;
+        for y in self.y0..bottom {
+            for x in self.x0..right {
+                let pixel = self.pixels[(y - self.y0) * 32 + x - self.x0];
+                let h = self.horizontal[x - self.x0];
+                let vertical = self.vertical[y - self.y0];
+                let u_sum = pixel.u_sum + frame.tile_delta(0, h, vertical, u);
+                let v_sum = pixel.v_sum + frame.tile_delta(1, h, vertical, v);
+                let updated = render(pixel.luma, u_sum, v_sum);
                 if updated == pixel.baseline {
                     continue;
                 }
@@ -765,6 +846,24 @@ mod tests {
         let direct = full_proxy_ssim(&frame, Some(change)) - full_proxy_ssim(&frame, None);
         let global_windows = ((frame.width.max(8) >> 2) - 1) * ((frame.height.max(8) >> 2) - 1);
         assert!((cached / (3 * global_windows) as f64 - direct).abs() < 1e-9);
+        let mut trial_u = u_tile;
+        for row in 0..4 {
+            trial_u[row * 8..row * 8 + 4].copy_from_slice(&patch[row * 4..row * 4 + 4]);
+        }
+        assert!((cache.score_tiles(&frame, &trial_u, &uv) - cached).abs() < 1e-9);
+        let mut trial_v = uv;
+        trial_v[0] = 74;
+        trial_v[3 * 8 + 3] = 211;
+        let joint = cache.score_tiles(&frame, &trial_u, &trial_v);
+        let direct_joint = full_proxy_ssim(
+            &Frame {
+                tile_u: &trial_u,
+                tile_v: &trial_v,
+                ..frame
+            },
+            None,
+        ) - full_proxy_ssim(&frame, None);
+        assert!((joint / (3 * global_windows) as f64 - direct_joint).abs() < 1e-9);
         assert_ne!(cached, 0.0);
         let hidden = Frame {
             width: 1,
@@ -773,6 +872,132 @@ mod tests {
         };
         let bounds = hidden.affected(1, 1);
         assert!(bounds.0 >= bounds.1 || bounds.2 >= bounds.3);
+    }
+
+    #[test]
+    fn combined_tiles_match_full_rerender_at_tiny_tails_and_macroblock_edges() {
+        for (width, height) in [
+            (1usize, 1usize),
+            (5, 1),
+            (1, 11),
+            (2, 9),
+            (17, 17),
+            (31, 31),
+            (32, 32),
+        ] {
+            let padded_w = width.div_ceil(16) * 16;
+            let padded_h = height.div_ceil(16) * 16;
+            let uv_stride = padded_w / 2;
+            let source_y: Vec<_> = (0..padded_w * padded_h)
+                .map(|i| ((i * 29 + 41) % 256) as u8)
+                .collect();
+            let reconstructed_y: Vec<_> = (0..padded_w * padded_h)
+                .map(|i| ((i * 47 + 71) % 256) as u8)
+                .collect();
+            let source_u: Vec<_> = (0..padded_w * padded_h / 4)
+                .map(|i| ((i * 13 + 91) % 256) as u8)
+                .collect();
+            let source_v: Vec<_> = (0..padded_w * padded_h / 4)
+                .map(|i| ((i * 23 + 123) % 256) as u8)
+                .collect();
+            let reconstructed_u: Vec<_> = (0..padded_w * padded_h / 4)
+                .map(|i| ((i * 31 + 101) % 256) as u8)
+                .collect();
+            let reconstructed_v: Vec<_> = (0..padded_w * padded_h / 4)
+                .map(|i| ((i * 19 + 149) % 256) as u8)
+                .collect();
+            for layout in [0, 1, 4] {
+                let bpp = if layout == 4 { 3 } else { 4 };
+                let stride = width * bpp + 3;
+                let mut original = vec![0; stride * height];
+                for y in 0..height {
+                    for x in 0..width {
+                        let rgb = [
+                            ((x * 53 + y * 7) % 256) as u8,
+                            ((x * 11 + y * 31) % 256) as u8,
+                            ((x * 17 + y * 19) % 256) as u8,
+                        ];
+                        let pixel = &mut original[y * stride + x * bpp..][..bpp];
+                        if layout == 1 {
+                            pixel[..3].copy_from_slice(&[rgb[2], rgb[1], rgb[0]]);
+                        } else {
+                            pixel[..3].copy_from_slice(&rgb);
+                        }
+                    }
+                }
+                for my in 0..padded_h / 16 {
+                    for mx in 0..padded_w / 16 {
+                        let mut tile_y = [0; 256];
+                        let mut tile_u = [0; 64];
+                        let mut tile_v = [0; 64];
+                        for row in 0..16 {
+                            tile_y[row * 16..row * 16 + 16].copy_from_slice(
+                                &reconstructed_y[(my * 16 + row) * padded_w + mx * 16..][..16],
+                            );
+                        }
+                        for row in 0..8 {
+                            tile_u[row * 8..row * 8 + 8].copy_from_slice(
+                                &reconstructed_u[(my * 8 + row) * uv_stride + mx * 8..][..8],
+                            );
+                            tile_v[row * 8..row * 8 + 8].copy_from_slice(
+                                &reconstructed_v[(my * 8 + row) * uv_stride + mx * 8..][..8],
+                            );
+                        }
+                        let frame = Frame {
+                            width,
+                            height,
+                            stride_y: padded_w,
+                            original: Original {
+                                pixels: &original,
+                                stride,
+                                layout,
+                            },
+                            source_y: &source_y,
+                            source_u: &source_u,
+                            source_v: &source_v,
+                            reconstructed_y: &reconstructed_y,
+                            reconstructed_u: &reconstructed_u,
+                            reconstructed_v: &reconstructed_v,
+                            tile_y: &tile_y,
+                            tile_u: &tile_u,
+                            tile_v: &tile_v,
+                            mx,
+                            my,
+                        };
+                        if !(0..4).any(|patch| frame.has_affected_windows(patch % 2, patch / 2)) {
+                            continue;
+                        }
+                        let cache = LocalCache::new(&frame);
+                        assert_eq!(cache.score_tiles(&frame, &tile_u, &tile_v), 0.0);
+                        let mut trial_u = tile_u;
+                        let mut trial_v = tile_v;
+                        for i in 0..64 {
+                            if i % 7 == 0 {
+                                trial_u[i] = trial_u[i].wrapping_add(67);
+                            }
+                            if i % 11 == 0 {
+                                trial_v[i] = trial_v[i].wrapping_sub(83);
+                            }
+                        }
+                        let count = ((width.max(8) >> 2) - 1) * ((height.max(8) >> 2) - 1);
+                        let actual =
+                            cache.score_tiles(&frame, &trial_u, &trial_v) / (3 * count) as f64;
+                        let expected = full_proxy_ssim(
+                            &Frame {
+                                tile_u: &trial_u,
+                                tile_v: &trial_v,
+                                ..frame
+                            },
+                            None,
+                        ) - full_proxy_ssim(&frame, None);
+                        assert!(
+                            (actual - expected).abs() < 1e-9,
+                            "{width}x{height} layout={layout} MB={mx},{my}: {actual} != {expected}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

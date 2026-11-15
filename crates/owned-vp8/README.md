@@ -78,13 +78,25 @@ capacity can exceed logical input length and must be admitted explicitly.
 
 `FrameEncoder` in `src/textured.rs` stages initialization, color import,
 macroblock analysis, exact partition-length counting, frozen-decision emission,
-finalization and assembly. When visible UV refinement commits an edit, it counts
-the refined and same-owned unrefined records with independent statistics and
-models, then selects the legal smaller complete frame (refinement wins a tie).
-A bounded coefficient log reverses and reapplies reconstruction between counts;
-its slabs are released before output allocation. Finalized sizes are published
-at a separate preparation barrier after selection, so the host can reserve the
-new plan before advancing;
+finalization and assembly. Visible UV refinement retains the mandatory one-edit
+choice per macroblock and spends at most 128 additional proposal evaluations per
+frame, assigned by uniform per-macroblock quotas. Its private search uses at most
+64 directed coefficient moves per macroblock, a two-path beam and four distinct
+coefficient positions per path. Each additional proposal takes one bounded ABI
+step. Complete trials score the combined U/V reconstruction; the search commits
+only a final state with the original skip syntax and coefficient frontier.
+
+Exact byte counting independently evaluates the extended choice, the mandatory
+choices captured during the same analysis, and the unrefined records when those
+variants differ. It selects legal extended output within the legal unrefined
+size, otherwise legal captured mandatory output within that size, otherwise
+unrefined output. If unrefined output is illegal under the partition or output
+limit, it selects legal extended output, then legal captured mandatory output,
+or reports the unrefined limit error. A bounded coefficient log and
+captured-choice overrides reverse and reapply reconstruction between counts;
+their storage is released before the single output allocation. Finalized sizes
+are published at a separate preparation barrier after selection, so the host
+can reserve the new plan before advancing;
 first-partition overflow is separate from total output overflow. Output remains
 hidden until arithmetic coding and final assembly finish. Carry scans and finalization resume in bounded units; emission retains at most
 8192 two-byte operations per partition for one macroblock, drains at most 1024
