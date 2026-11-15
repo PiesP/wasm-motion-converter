@@ -92,6 +92,15 @@ const NEAR_CAP_FIXTURE: Fixture = {
   height: 2457,
   durationMs: 1_000,
 };
+const LARGE_ADMITTED_FIXTURE: Fixture = {
+  id: 'large-admitted',
+  path: 'dist-validation/owned-vp8-large-admitted.webm',
+  mime: 'video/webm',
+  width: 4032,
+  height: 2457,
+  durationMs: 1_000,
+};
+const MAX_ADMITTED_FRAME_PIXELS = 10_066_329;
 const STOP_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 /** Frozen owned-demux oracle for the generated 96x64 clustered VP9 fixture. */
 export const DIRECT_WORKER_CLUSTER_CONFIG = {
@@ -235,6 +244,41 @@ export function instrumentNearCapDecodedFrames() {
       },
     })
   );
+}
+
+export function assertLargeAdmittedDecodedFrames(value: {
+  installed: boolean;
+  outputCount: number;
+  records: Array<{
+    codedWidth: number;
+    codedHeight: number;
+    displayWidth: number;
+    displayHeight: number;
+  }>;
+}): void {
+  assert(value?.installed, 'Large admitted decoder output observer is absent');
+  assert(
+    Number.isSafeInteger(value.outputCount) && value.outputCount > 0 && value.outputCount <= 8,
+    'Large admitted decoder output count is absent or exceeds capture bound'
+  );
+  assert.equal(value.records.length, value.outputCount, 'Decoded frame metadata is incomplete');
+  for (const frame of value.records) {
+    for (const [width, height] of [
+      [frame.codedWidth, frame.codedHeight],
+      [frame.displayWidth, frame.displayHeight],
+    ] as const) {
+      assert(
+        Number.isSafeInteger(width) &&
+          Number.isSafeInteger(height) &&
+          width > 0 &&
+          height > 0 &&
+          width <= MAX_ADMITTED_FRAME_PIXELS / height,
+        'Large admitted decoded frame exceeds the existing per-frame pixel limit'
+      );
+    }
+    assert.equal(frame.displayWidth, LARGE_ADMITTED_FIXTURE.width);
+    assert.equal(frame.displayHeight, LARGE_ADMITTED_FIXTURE.height);
+  }
 }
 
 function digest(bytes: Uint8Array): string {
@@ -609,7 +653,8 @@ type SceneFrame = {
 function assertSceneTimeline(
   frames: readonly SceneFrame[],
   expectedTimeline: readonly { scene: string; startMs: number; endMs: number }[],
-  label: string
+  label: string,
+  toleranceMs = 250
 ): void {
   let elapsedMs = 0;
   const groups: Array<{ scene: string; startMs: number; endMs: number }> = [];
@@ -633,12 +678,12 @@ function assertSceneTimeline(
     const actual = groups[index]!;
     assert.equal(actual.scene, expected.scene, `${label} scene ${index} differs`);
     assert(
-      Math.abs(actual.startMs - expected.startMs) <= 250,
-      `${label} transition ${index} differs by over 250ms`
+      Math.abs(actual.startMs - expected.startMs) <= toleranceMs,
+      `${label} transition ${index} differs by over ${toleranceMs}ms`
     );
     assert(
-      Math.abs(actual.endMs - expected.endMs) <= 250,
-      `${label} hold ${index} differs by over 250ms`
+      Math.abs(actual.endMs - expected.endMs) <= toleranceMs,
+      `${label} hold ${index} differs by over ${toleranceMs}ms`
     );
   }
 }
@@ -649,6 +694,10 @@ export function assertClusterTimeline(frames: readonly SceneFrame[]): void {
 
 export function assertNearCapTimeline(frames: readonly SceneFrame[]): void {
   assertSceneTimeline(frames, NEAR_CAP_SCENE_TIMELINE, 'Near-cap');
+}
+
+export function assertLargeAdmittedTimeline(frames: readonly SceneFrame[]): void {
+  assertSceneTimeline(frames, NEAR_CAP_SCENE_TIMELINE, 'Large admitted', 50);
 }
 
 function assertClusterSequence(
@@ -1700,6 +1749,7 @@ async function candidateFunctional(
 }
 
 async function nearCapFunctional(
+  mode: 'near-cap' | 'large-admitted',
   browser: Browser,
   bundleRoot: string,
   output: string,
@@ -1710,9 +1760,13 @@ async function nearCapFunctional(
   loadApplication: (page: Page, url: string) => Promise<unknown>,
   record: (value: unknown) => Promise<void>
 ) {
+  const largeAdmitted = mode === 'large-admitted';
+  const fixture = largeAdmitted ? LARGE_ADMITTED_FIXTURE : NEAR_CAP_FIXTURE;
   const manifestPath = await validateBundleFile(
     bundleRoot,
-    'validation/windows/owned-vp8-near-cap.json'
+    largeAdmitted
+      ? 'validation/windows/owned-vp8-large-admitted.json'
+      : 'validation/windows/owned-vp8-near-cap.json'
   );
   const manifestBytes = await readFile(manifestPath);
   const manifest = JSON.parse(manifestBytes.toString()) as {
@@ -1740,15 +1794,22 @@ async function nearCapFunctional(
     };
   };
   assert.equal(manifest.schemaVersion, 1);
-  assert.equal(manifest.generator, 'scripts/test/generate-owned-vp8-near-cap.ts');
+  assert.equal(
+    manifest.generator,
+    largeAdmitted
+      ? 'scripts/test/generate-owned-vp8-large-admitted.ts'
+      : 'scripts/test/generate-owned-vp8-near-cap.ts'
+  );
   assert.deepEqual(manifest.input, {
-    path: NEAR_CAP_FIXTURE.path,
-    sha256: '7cdc718657b916d30243b53c80db6c72460b15bb37881cca2b4efc34fd6a896e',
-    bytes: 8885,
+    path: fixture.path,
+    sha256: largeAdmitted
+      ? 'd3aae8949721b4f278e0c12f5abe3b4b98edbfd37d2f7143e7d1e7fbf35abe10'
+      : '7cdc718657b916d30243b53c80db6c72460b15bb37881cca2b4efc34fd6a896e',
+    bytes: largeAdmitted ? 7762 : 8885,
     codec: 'vp9',
-    width: 4096,
+    width: fixture.width,
     height: 2457,
-    pixels: 10_063_872,
+    pixels: fixture.width * fixture.height,
     frames: 2,
     fps: 2,
     durationMs: 1_000,
@@ -1761,10 +1822,10 @@ async function nearCapFunctional(
     scale: 1,
     smartFrameSkip: 'off',
   });
-  const inputPath = await validateBundleFile(bundleRoot, NEAR_CAP_FIXTURE.path);
+  const inputPath = await validateBundleFile(bundleRoot, fixture.path);
   const source = await readFile(inputPath);
-  assert.equal(source.length, manifest.input.bytes, 'Near-cap input size differs');
-  assert.equal(digest(source), manifest.input.sha256, 'Near-cap input digest differs');
+  assert.equal(source.length, manifest.input.bytes, `${mode} input size differs`);
+  assert.equal(digest(source), manifest.input.sha256, `${mode} input digest differs`);
   let candidatePassed = false;
   for (const name of ['prior', 'candidate'] as const) {
     const build = name === 'prior' ? prior : candidate;
@@ -1790,23 +1851,26 @@ async function nearCapFunctional(
       const consoleCapture = captureNearCapConsole(page);
       try {
         await loadApplication(page, server.url);
-        const decoderSupport = await page.evaluate(async () => {
-          if (typeof VideoDecoder === 'undefined')
-            return { supported: false, reason: 'VideoDecoder unavailable' };
-          try {
-            const result = await VideoDecoder.isConfigSupported({
-              codec: 'vp09.00.10.08',
-              codedWidth: 4096,
-              codedHeight: 2457,
-            });
-            return {
-              supported: result.supported,
-              reason: result.supported ? null : 'VP9 4096x2457 unsupported',
-            };
-          } catch (error) {
-            return { supported: false, reason: String(error) };
-          }
-        });
+        const decoderSupport = await page.evaluate(
+          async ({ width, height }) => {
+            if (typeof VideoDecoder === 'undefined')
+              return { supported: false, reason: 'VideoDecoder unavailable' };
+            try {
+              const result = await VideoDecoder.isConfigSupported({
+                codec: 'vp09.00.10.08',
+                codedWidth: width,
+                codedHeight: height,
+              });
+              return {
+                supported: result.supported,
+                reason: result.supported ? null : `VP9 ${width}x${height} unsupported`,
+              };
+            } catch (error) {
+              return { supported: false, reason: String(error) };
+            }
+          },
+          { width: fixture.width, height: fixture.height }
+        );
         await record({
           phase: 'decoder-support',
           build: name,
@@ -1819,19 +1883,23 @@ async function nearCapFunctional(
         });
         assert(
           decoderSupport.supported,
-          `Near-cap native source decode unsupported: ${decoderSupport.reason}`
+          `${mode} native source decode unsupported: ${decoderSupport.reason}`
         );
-        await configurePage(page, inputPath, NEAR_CAP_FIXTURE, manifest.settings.quality);
+        await configurePage(page, inputPath, fixture, manifest.settings.quality);
         const checked = await measureJob(
           page,
-          NEAR_CAP_FIXTURE,
+          fixture,
           manifest.input.sha256,
           manifest.settings.quality,
           name,
           'first-in-document',
           output,
-          `owned-vp8-functional-near-cap-${name}`
+          `owned-vp8-functional-${mode}-${name}`
         );
+        const decodedFrameProbe = largeAdmitted
+          ? await page.evaluate(() => Reflect.get(globalThis, '__wmcNearCapDecodedFrames'))
+          : null;
+        if (largeAdmitted) assertLargeAdmittedDecodedFrames(decodedFrameProbe);
         const probe = (await page.evaluate(() => Reflect.get(globalThis, '__wmcVp8AbiProbe'))) as {
           instances: number;
           successfulBeginCalls: number;
@@ -1846,7 +1914,7 @@ async function nearCapFunctional(
         };
         assert(
           probe.instances > 0 && probe.successfulBeginCalls > 0 && probe.stepCalls > 0,
-          'Near-cap conversion missed owned WASM begin/step'
+          `${mode} conversion missed owned WASM begin/step`
         );
         assert(
           probe.records.some(
@@ -1860,9 +1928,9 @@ async function nearCapFunctional(
               entry.retainedCapacityBytes >= entry.peakCapacityBytes &&
               entry.retainedCapacityBytes <= 192 * 1024 * 1024
           ),
-          'Near-cap retained linear capacity is absent or exceeds admission'
+          `${mode} retained linear capacity is absent or exceeds admission`
         );
-        assert(checked.parsed.frames.length > 0, 'Near-cap WebP has no saved frames');
+        assert(checked.parsed.frames.length > 0, `${mode} WebP has no saved frames`);
         const scenes = checked.decoded.frames.map((frame) => {
           const [r, g, b] = frame.centerRgb;
           if (r! > 120 && g! < 110 && b! < 110) return 'red';
@@ -1872,8 +1940,15 @@ async function nearCapFunctional(
         assert.deepEqual(
           scenes.filter((scene, index) => index === 0 || scene !== scenes[index - 1]),
           ['red', 'blue'],
-          'Near-cap visible source scenes differ'
+          `${mode} visible source scenes differ`
         );
+        if (largeAdmitted)
+          assertLargeAdmittedTimeline(
+            checked.decoded.frames.map((frame, index) => ({
+              scene: scenes[index]!,
+              durationMs: frame.durationMs,
+            }))
+          );
         const ownedAsset = build.state.files.find((entry) =>
           /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
         );
@@ -1886,20 +1961,21 @@ async function nearCapFunctional(
               entry.bytes === ownedAsset.size &&
               entry.sha256 === ownedAsset.sha256
           ),
-          'Near-cap fetched WASM differs from candidate inventory'
+          `${mode} fetched WASM differs from candidate inventory`
         );
-        assert.deepEqual(errors, [], 'Near-cap page errors');
+        assert.deepEqual(errors, [], `${mode} page errors`);
         await record({
           phase: 'completed',
           build: name,
           status: 'passed',
-          route: 'ui-main-near-cap',
-          fixture: NEAR_CAP_FIXTURE.id,
+          route: `ui-main-${mode}`,
+          fixture: fixture.id,
           inputSha256: manifest.input.sha256,
           manifestSha256: digest(manifestBytes),
           settings: manifest.settings,
           decoderSupport,
           probe,
+          decodedFrameProbe,
           saved: checked.saved,
           parsed: checked.parsed,
           decoded: checked.decoded,
@@ -1911,7 +1987,7 @@ async function nearCapFunctional(
         await captureFailure(
           page,
           output,
-          `owned-vp8-functional-near-cap-${name}`,
+          `owned-vp8-functional-${mode}-${name}`,
           error,
           errors,
           consoleCapture.snapshot()
@@ -1926,7 +2002,7 @@ async function nearCapFunctional(
       await context.close();
     }
   }
-  assert(candidatePassed, 'Near-cap candidate did not complete');
+  assert(candidatePassed, `${mode} candidate did not complete`);
 }
 
 export async function exerciseOwnedVp8Product({
@@ -1952,7 +2028,8 @@ export async function exerciseOwnedVp8Product({
     | 'owned-vp8-product-v8-medium-ba'
     | 'owned-vp8-product-v8-high'
     | 'owned-vp8-product-v8-high-ba'
-    | 'owned-vp8-product-near-cap';
+    | 'owned-vp8-product-near-cap'
+    | 'owned-vp8-product-large-admitted';
   prior: Build;
   candidate: Build;
   server: Server;
@@ -1961,6 +2038,8 @@ export async function exerciseOwnedVp8Product({
 }) {
   await mkdir(output, { recursive: true });
   const fullVideo = scenario.includes('-v8');
+  const largeAdmitted = scenario === 'owned-vp8-product-large-admitted';
+  const functionalOnly = scenario === 'owned-vp8-product-near-cap' || largeAdmitted;
   const v8Quality = fullVideo
     ? (/^owned-vp8-product-v8-(low|medium|high)(?:-ba)?$/.exec(scenario)?.[1] as
         | Quality
@@ -1968,12 +2047,11 @@ export async function exerciseOwnedVp8Product({
     : undefined;
   if (fullVideo) assert(v8Quality, 'V8 scenario has no fixed quality');
   const qualities: readonly Quality[] = v8Quality ? [v8Quality] : ['low', 'medium', 'high'];
-  const order =
-    scenario === 'owned-vp8-product-near-cap'
-      ? (['prior', 'candidate'] as const)
-      : scenario.endsWith('-ba')
-        ? (['candidate', 'prior'] as const)
-        : (['prior', 'candidate'] as const);
+  const order = functionalOnly
+    ? (['prior', 'candidate'] as const)
+    : scenario.endsWith('-ba')
+      ? (['candidate', 'prior'] as const)
+      : (['prior', 'candidate'] as const);
   const report: Record<string, unknown> = {
     schemaVersion: 1,
     scenario,
@@ -1993,36 +2071,34 @@ export async function exerciseOwnedVp8Product({
       coreSha: candidate.state.coreSha,
       manifestSha256: candidate.manifestSha256,
     },
-    timingScope:
-      scenario === 'owned-vp8-product-near-cap'
-        ? 'Functional-only conversion; incidental elapsed time is not a performance sample'
-        : 'UI Convert click to matching published WebP Blob download control ready; save, parse and independent decode follow timing',
-    timingGate:
-      scenario === 'owned-vp8-product-near-cap'
-        ? null
-        : 'After five balanced controller invocations, compare medians for matching workload and condition; candidate regression <= max(5%, 20ms); retain every sample and range/MAD',
-    cacheScope:
-      scenario === 'owned-vp8-product-near-cap'
-        ? 'separate browser context and one functional first-in-document attempt per build; no fresh-profile cold claim'
-        : 'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
+    timingScope: functionalOnly
+      ? 'Functional-only conversion; incidental elapsed time is not a performance sample'
+      : 'UI Convert click to matching published WebP Blob download control ready; save, parse and independent decode follow timing',
+    timingGate: functionalOnly
+      ? null
+      : 'After five balanced controller invocations, compare medians for matching workload and condition; candidate regression <= max(5%, 20ms); retain every sample and range/MAD',
+    cacheScope: functionalOnly
+      ? 'separate browser context and one functional first-in-document attempt per build; no fresh-profile cold claim'
+      : 'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
     softwareInjection:
       'Page OffscreenCanvas.convertToBlob disabled before application code; Worker JS is patched only if loaded, and a patch record alone is not encoding-route proof',
-    functionalScope:
-      scenario === 'owned-vp8-product-near-cap'
-        ? 'Independent prior and candidate generated near-cap UI main-WASM attempts, outside the V8 timing cohort; candidate must pass and prior outcome is retained separately'
-        : fullVideo
-          ? 'After uninstrumented first/warm samples, one additional candidate main-WASM conversion attests successful ABI2 begin calls; emitted ANMF counts are recorded separately. Active Stop and recovery remain in the small selector.'
-          : 'Candidate UI main software recovery and active Stop; separate direct conversion Worker protocol and owned output',
+    functionalScope: functionalOnly
+      ? `Independent prior and candidate generated ${largeAdmitted ? 'large admitted' : 'near-cap'} UI main-WASM attempts, outside the V8 timing cohort; candidate must pass and prior outcome is retained separately`
+      : fullVideo
+        ? 'After uninstrumented first/warm samples, one additional candidate main-WASM conversion attests successful ABI2 begin calls; emitted ANMF counts are recorded separately. Active Stop and recovery remain in the small selector.'
+        : 'Candidate UI main software recovery and active Stop; separate direct conversion Worker protocol and owned output',
     samples: [] as Sample[],
     functional: [] as unknown[],
     nearCapPreflights: [] as unknown[],
+    largeAdmittedPreflights: [] as unknown[],
   };
   const reportPath = join(output, `${scenario}.json`);
   const persist = async () => writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   await persist();
   try {
-    if (scenario === 'owned-vp8-product-near-cap') {
+    if (functionalOnly) {
       await nearCapFunctional(
+        largeAdmitted ? 'large-admitted' : 'near-cap',
         browser,
         bundleRoot,
         output,
@@ -2040,13 +2116,20 @@ export async function exerciseOwnedVp8Product({
             status?: string;
           };
           if (entry.phase === 'decoder-support') {
-            (report.nearCapPreflights as unknown[]).push(value);
+            (
+              (largeAdmitted
+                ? report.largeAdmittedPreflights
+                : report.nearCapPreflights) as unknown[]
+            ).push(value);
             report.inputs = [entry.input];
-            report.nearCapInputManifestSha256 = entry.manifestSha256;
+            report[
+              largeAdmitted ? 'largeAdmittedInputManifestSha256' : 'nearCapInputManifestSha256'
+            ] = entry.manifestSha256;
           } else {
             (report.functional as unknown[]).push(value);
-            if (entry.build === 'prior') report.nearCapPriorStatus = entry.status;
-            if (entry.build === 'candidate') report.nearCapCandidateStatus = entry.status;
+            const prefix = largeAdmitted ? 'largeAdmitted' : 'nearCap';
+            if (entry.build === 'prior') report[`${prefix}PriorStatus`] = entry.status;
+            if (entry.build === 'candidate') report[`${prefix}CandidateStatus`] = entry.status;
           }
           await persist();
         }

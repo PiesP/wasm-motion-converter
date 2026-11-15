@@ -10,16 +10,24 @@ import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import { checkOwnedVp8Inputs } from '../../../scripts/check/owned-vp8-inputs.ts';
 import {
+  LARGE_ADMITTED_COMMAND,
+  verifyLargeAdmittedBytes,
+  verifyLargeAdmittedManifest,
+} from '../../../scripts/test/generate-owned-vp8-large-admitted.ts';
+import {
   NEAR_CAP_COMMAND,
   verifyNearCapBytes,
   verifyNearCapManifest,
 } from '../../../scripts/test/generate-owned-vp8-near-cap.ts';
 import { isWorkerRequest } from '../../../src/services/conversion-worker/guards.ts';
+import { MAX_FRAME_PIXEL_COUNT } from '../../../src/utils/constants.ts';
 import {
   DIRECT_WORKER_CLUSTER_CONFIG,
   DIRECT_WORKER_OPTIONS,
   captureFailure,
   captureNearCapConsole,
+  assertLargeAdmittedDecodedFrames,
+  assertLargeAdmittedTimeline,
   instrumentNearCapDecodedFrames,
   instrumentOwnedInstance,
   parseAnimatedWebp,
@@ -64,6 +72,65 @@ function animation(...frames: Buffer[]) {
 }
 
 describe('owned VP8 Windows product contract', () => {
+  it('freezes a distinct large admitted source without changing near-cap generation', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'validation/windows/owned-vp8-large-admitted.json'), 'utf8')
+    ) as unknown;
+    verifyLargeAdmittedManifest(manifest);
+    expect(manifest.input.width * manifest.input.height).toBe(9_906_624);
+    expect(manifest.input.pixels).toBeLessThan(MAX_FRAME_PIXEL_COUNT);
+    expect(MAX_FRAME_PIXEL_COUNT).toBe(10_066_329);
+    expect(LARGE_ADMITTED_COMMAND).toContain('+bitexact');
+    expect(LARGE_ADMITTED_COMMAND).toEqual(
+      NEAR_CAP_COMMAND.map((part) =>
+        part.includes('size=4096x2457') ? part.replace('size=4096x2457', 'size=4032x2457') : part
+      )
+    );
+    expect(() => verifyLargeAdmittedBytes(Buffer.alloc(manifest.input.bytes), manifest)).toThrow(
+      /digest differs/
+    );
+    expect(() =>
+      verifyLargeAdmittedManifest({ ...manifest, settings: { ...manifest.settings, scale: 0.5 } })
+    ).toThrow();
+  });
+
+  it('requires actual coded and display frames to fit the existing pixel cap', () => {
+    const admitted = {
+      installed: true,
+      outputCount: 2,
+      records: Array.from({ length: 2 }, () => ({
+        codedWidth: 4096,
+        codedHeight: 2457,
+        displayWidth: 4032,
+        displayHeight: 2457,
+      })),
+    };
+    expect(() => assertLargeAdmittedDecodedFrames(admitted)).not.toThrow();
+    expect(() =>
+      assertLargeAdmittedDecodedFrames({
+        ...admitted,
+        records: [{ ...admitted.records[0]!, codedWidth: 4160 }, admitted.records[1]!],
+      })
+    ).toThrow(/pixel limit/);
+    expect(() =>
+      assertLargeAdmittedDecodedFrames({ ...admitted, records: admitted.records.slice(1) })
+    ).toThrow(/incomplete/);
+    expect(() => assertLargeAdmittedDecodedFrames({ ...admitted, installed: false })).toThrow(
+      /observer is absent/
+    );
+  });
+
+  it('requires the new large input to retain separate red and blue 500ms holds', () => {
+    const frames = [
+      { scene: 'red', durationMs: 500 },
+      { scene: 'blue', durationMs: 500 },
+    ];
+    expect(() => assertLargeAdmittedTimeline(frames)).not.toThrow();
+    expect(() =>
+      assertLargeAdmittedTimeline([{ ...frames[0]!, durationMs: 440 }, frames[1]!])
+    ).toThrow(/50ms/);
+  });
+
   it('observes bounded decoder output metadata while preserving construction and callbacks', async () => {
     class FakeDecoder {
       static isConfigSupported = vi.fn(async function (this: unknown, config: VideoDecoderConfig) {
@@ -403,6 +470,18 @@ describe('owned VP8 Windows product contract', () => {
       ['vp', 'run', 'prepare:owned-vp8-near-cap'],
       ['vp', 'run', 'build:ci'],
     ]);
+    const large = profile.preparation.scenarios['owned-vp8-product-large-admitted'];
+    expect(profile.preparation.selector_files).toContain('owned-vp8-product-large-admitted.json');
+    expect(large?.selector).toBe('owned-vp8-product-large-admitted.json');
+    expect(large?.required_inputs).toContain('dist-validation/owned-vp8-large-admitted.webm');
+    expect(large?.required_inputs).toContain('validation/windows/owned-vp8-large-admitted.json');
+    expect(large?.required_inputs).toContain('validation/windows/prior-dist');
+    expect(large?.required_inputs).toContain('dist');
+    expect(large?.generated_assets).toEqual(['dist-validation/owned-vp8-large-admitted.webm']);
+    expect(large?.build_commands).toEqual([
+      ['vp', 'run', 'prepare:owned-vp8-large-admitted'],
+      ['vp', 'run', 'build:ci'],
+    ]);
     const buildConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
     expect(buildConfig).toMatch(
       /'build:ci:native':\s*\{\s*command:\s*\[\s*'vp run check:owned-vp8-inputs'/
@@ -427,6 +506,8 @@ describe('owned VP8 Windows product contract', () => {
     );
     const ignores = readFileSync(resolve(root, '.gitignore'), 'utf8');
     expect(ignores).toContain('/dist-validation/owned-vp8-near-cap.webm');
+    expect(ignores).toContain('/dist-validation/owned-vp8-large-admitted.webm');
+    expect(ignores).toContain('/validation/windows/inputs/owned-vp8-product-large-admitted.json');
     expect(ignores).toContain('/dist-validation/.owned-vp8-near-cap-attempt-*/');
   });
 

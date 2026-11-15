@@ -14,6 +14,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   assertClusterTimeline,
+  assertLargeAdmittedDecodedFrames,
+  assertLargeAdmittedTimeline,
   assertNearCapTimeline,
   parseAnimatedWebp,
 } from '../../validation/windows/helpers/owned-vp8-product.ts';
@@ -36,6 +38,7 @@ type SourceRecord = {
   inputSha256?: string;
   saved: Saved;
   parsed?: { canvas?: unknown; totalDurationMs?: unknown; icc?: unknown; frames?: unknown[] };
+  decodedFrameProbe?: unknown;
 };
 type DeclaredRecord = { origin: string; record: SourceRecord };
 type Frame = { payload: Buffer; timestampMs: number; holdMs: number; vp8Sha256: string };
@@ -124,6 +127,30 @@ export function assertNearCapSavedRecords(
       records.every(({ record }) => record.fixture === 'near-cap'),
     'Near-cap saved output omitted its source scene contract'
   );
+}
+
+export function assertLargeAdmittedSavedRecords(
+  report: Record<string, unknown>,
+  records: readonly DeclaredRecord[]
+): void {
+  assert.equal(
+    report.largeAdmittedCandidateStatus,
+    'passed',
+    'Large admitted candidate did not pass'
+  );
+  assert(
+    report.largeAdmittedPriorStatus === 'passed' || report.largeAdmittedPriorStatus === 'failed',
+    'Large admitted prior outcome is absent'
+  );
+  assert(
+    records.some(({ record }) => record.build === 'candidate') &&
+      records.every(({ record }) => record.fixture === 'large-admitted'),
+    'Large admitted saved output omitted its source scene contract'
+  );
+  for (const { record } of records)
+    assertLargeAdmittedDecodedFrames(
+      record.decodedFrameProbe as Parameters<typeof assertLargeAdmittedDecodedFrames>[0]
+    );
 }
 
 /** Structural parsing is shared; this pass extracts only bounded opaque VP8 payloads. */
@@ -302,6 +329,18 @@ function assertClusterOrder(frames: PixelFrame[], timeline: Frame[]): void {
 function assertNearCapOrder(frames: PixelFrame[], timeline: Frame[]): void {
   assert.equal(frames.length, timeline.length);
   assertNearCapTimeline(
+    frames.map((frame, index) => ({
+      scene: frame.scene ?? color(frame.centerRgb),
+      durationMs: timeline[index]!.holdMs,
+      scenePixelCount: frame.scenePixelCount,
+      totalPixels: frame.totalPixels,
+    }))
+  );
+}
+
+function assertLargeAdmittedOrder(frames: PixelFrame[], timeline: Frame[]): void {
+  assert.equal(frames.length, timeline.length);
+  assertLargeAdmittedTimeline(
     frames.map((frame, index) => ({
       scene: frame.scene ?? color(frame.centerRgb),
       durationMs: timeline[index]!.holdMs,
@@ -576,7 +615,8 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       typeof path === 'string' &&
         (/^public\/[A-Za-z0-9._-]+\.(?:mp4|webm)$/.test(path) ||
           path === 'validation/windows/owned-vp8-inputs/v8.webm' ||
-          path === 'dist-validation/owned-vp8-near-cap.webm'),
+          path === 'dist-validation/owned-vp8-near-cap.webm' ||
+          path === 'dist-validation/owned-vp8-large-admitted.webm'),
       'Unexpected input path'
     );
     assert(
@@ -645,12 +685,40 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     );
     assert.equal(sha256(bytes), nearCapManifest, 'Near-cap manifest digest differs');
   }
+  const largeAdmittedManifest = product.value.largeAdmittedInputManifestSha256;
+  if (largeAdmittedManifest !== undefined) {
+    assert(
+      typeof largeAdmittedManifest === 'string' && /^[0-9a-f]{64}$/.test(largeAdmittedManifest)
+    );
+    assert(
+      bundle.value.files.some(
+        (entry: unknown) =>
+          plainObject(entry) &&
+          entry.file === 'validation/windows/owned-vp8-large-admitted.json' &&
+          entry.sha256 === largeAdmittedManifest
+      ),
+      'Large admitted manifest differs from bundle inventory'
+    );
+    const bytes = await readStableFile(
+      join(run, 'payload/validation/windows/owned-vp8-large-admitted.json'),
+      MAX_INPUT_BYTES,
+      undefined,
+      'Large admitted manifest'
+    );
+    assert.equal(sha256(bytes), largeAdmittedManifest, 'Large admitted manifest digest differs');
+  }
   const records = declaredOutputs(product.value);
   if (product.value.scenario === 'owned-vp8-product-near-cap') {
     assert.equal(inputs.length, 1, 'Near-cap input cohort differs');
     assert.equal(inputs[0]!.path, 'dist-validation/owned-vp8-near-cap.webm');
     assert(nearCapManifest, 'Near-cap source manifest is absent');
     assertNearCapSavedRecords(product.value, records);
+  }
+  if (product.value.scenario === 'owned-vp8-product-large-admitted') {
+    assert.equal(inputs.length, 1, 'Large admitted input cohort differs');
+    assert.equal(inputs[0]!.path, 'dist-validation/owned-vp8-large-admitted.webm');
+    assert(largeAdmittedManifest, 'Large admitted source manifest is absent');
+    assertLargeAdmittedSavedRecords(product.value, records);
   }
   const ffmpegVersion = spawnSync('ffmpeg', ['-version'], {
     encoding: 'utf8',
@@ -702,6 +770,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     inputs,
     frozenInputManifestSha256: frozenManifest ?? null,
     nearCapInputManifestSha256: nearCapManifest ?? null,
+    largeAdmittedInputManifestSha256: largeAdmittedManifest ?? null,
     ffmpegVersion: ffmpegVersion.stdout,
     scriptSha256,
     parserSha256,
@@ -735,6 +804,8 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       const bytes = await readStableFile(path, MAX_OUTPUT_BYTES, saved.bytes, 'Saved output');
       assert.equal(sha256(bytes), saved.sha256, 'Saved output digest differs');
       const { parsed, frames } = extractVp8Frames(bytes);
+      if (declared.record.fixture === 'large-admitted')
+        assert.deepEqual(parsed.canvas, { width: 4032, height: 2457 });
       if (declared.record.parsed) {
         assert.deepEqual(declared.record.parsed.canvas, parsed.canvas, 'Reported canvas differs');
         assert.equal(
@@ -782,6 +853,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
           frames.length,
           declared.record.fixture === 'clusters' ||
             declared.record.fixture === 'near-cap' ||
+            declared.record.fixture === 'large-admitted' ||
             saved.file.includes('direct-worker')
         );
       }
@@ -793,6 +865,8 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       if (declared.record.fixture === 'clusters' || saved.file.includes('direct-worker'))
         assertClusterOrder(decoded.vp8!.frames, frames);
       if (declared.record.fixture === 'near-cap') assertNearCapOrder(decoded.vp8!.frames, frames);
+      if (declared.record.fixture === 'large-admitted')
+        assertLargeAdmittedOrder(decoded.vp8!.frames, frames);
       const verified = {
         origin: declared.origin,
         saved,
@@ -849,6 +923,25 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       });
       await persist();
       assert(same, `Paired ICC profiles differ for ${key}`);
+    }
+    if (product.value.scenario === 'owned-vp8-product-large-admitted') {
+      const prior = [...identities.values()].find(
+        ({ declared }) => declared.record.build === 'prior'
+      );
+      const candidate = [...identities.values()].find(
+        ({ declared }) => declared.record.build === 'candidate'
+      );
+      if (prior && candidate) {
+        const same = JSON.stringify(prior.icc) === JSON.stringify(candidate.icc);
+        (report.iccPairs as unknown[]).push({
+          key: 'large-admitted/low/first-in-document',
+          priorIcc: prior.icc,
+          candidateIcc: candidate.icc,
+          same,
+        });
+        await persist();
+        assert(same, 'Large admitted prior/candidate ICC profiles differ');
+      }
     }
     report.status = 'passed';
     await persist();

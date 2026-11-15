@@ -1,5 +1,32 @@
 # Application update acceptance inputs
 
+## Owned VP8 large admitted source
+
+Use `{"scenario":"owned-vp8-product-large-admitted"}` in the ignored
+`validation/windows/inputs/owned-vp8-product-large-admitted.json` after preserving
+other focused selectors. Stage the exact source-bound prior distribution at
+`validation/windows/prior-dist/`; the profile prepares the generated source before
+`build:ci` and requires `validation/windows/owned-vp8-large-admitted.json` plus
+`dist-validation/owned-vp8-large-admitted.webm` in the bundle. Its source is
+4032×2457 VP9, two red/blue frames with 500ms holds, frozen at 7,762 bytes and
+SHA-256 `d3aae8949721b4f278e0c12f5abe3b4b98edbfd37d2f7143e7d1e7fbf35abe10`.
+The selector is local input, not a repository asset.
+
+This prospective large-input check is separate from the unchanged 4096×2457
+near-cap case, whose installed Edge decoded frame was 4160×2457 coded and
+4096×2457 displayed. The product's existing decoder guard checks **both**
+actual dimensions against 10,066,329 pixels. Rust's VP8 macroblock padding is
+an independent encoder allocation for the visible RGB input; it does not predict
+the decoder's coded dimensions. Do not assume the observed coded padding for the
+new source or other decoders. The profile records actual decoded metadata on
+both prior and candidate attempts and requires admitted dimensions on every
+successful new-source output. Candidate saved output, owned begin/step/retire,
+WebP structure, visible geometry and red/blue holds remain required. Run the
+source-bound `scripts/test/owned-vp8-animations.ts` verifier on a completed
+profile to check full-scene pixels, infinite loop, ICC and independent native
+VP8/libvpx decode. No conversion timing or quality improvement follows from a
+functional pass.
+
 ## Output finalization comparison
 
 The original motion workload uses a task-owned, ignored 12-second 1280×720 input:

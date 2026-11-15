@@ -113,7 +113,9 @@ validation/windows/inputs/output-finalization-v2.json
 
 /validation/windows/inputs/settings-schema.json
 /validation/windows/inputs/owned-demux-service-measurement.json
+/validation/windows/inputs/owned-vp8-product-large-admitted.json
 /validation/windows/owned-vp8-inputs/v8.webm
 /dist-validation/owned-demux-measurement.json
 /dist-validation/owned-vp8-near-cap.webm
+/dist-validation/owned-vp8-large-admitted.webm
 /dist-validation/.owned-vp8-near-cap-attempt-*/

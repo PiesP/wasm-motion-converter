@@ -14,6 +14,7 @@ import {
   readStableFile,
   readMetadata,
   declaredOutputs,
+  assertLargeAdmittedSavedRecords,
   assertNearCapSavedRecords,
   extractVp8Frames,
   writeIvf,
@@ -48,6 +49,38 @@ function animation(...frames: Buffer[]): Buffer {
 }
 
 describe('saved animation verifier', () => {
+  it('requires a separate large admitted candidate output and prior outcome', () => {
+    const saved = { file: 'large-candidate.webp', bytes: 8, sha256: 'a'.repeat(64) };
+    const decodedFrameProbe = {
+      installed: true,
+      outputCount: 1,
+      records: [{ codedWidth: 4096, codedHeight: 2457, displayWidth: 4032, displayHeight: 2457 }],
+    };
+    const report = {
+      samples: [],
+      functional: [{ build: 'candidate', fixture: 'large-admitted', saved, decodedFrameProbe }],
+      largeAdmittedCandidateStatus: 'passed',
+      largeAdmittedPriorStatus: 'failed',
+    };
+    expect(() => assertLargeAdmittedSavedRecords(report, declaredOutputs(report))).not.toThrow();
+    expect(() =>
+      assertLargeAdmittedSavedRecords(
+        { ...report, largeAdmittedCandidateStatus: 'failed' },
+        declaredOutputs(report)
+      )
+    ).toThrow(/candidate did not pass/);
+    const wrong = { ...report, functional: [{ build: 'candidate', fixture: 'near-cap', saved }] };
+    expect(() => assertLargeAdmittedSavedRecords(wrong, declaredOutputs(wrong))).toThrow(
+      /scene contract/
+    );
+    const missingProbe = {
+      ...report,
+      functional: [{ build: 'candidate', fixture: 'large-admitted', saved }],
+    };
+    expect(() =>
+      assertLargeAdmittedSavedRecords(missingProbe, declaredOutputs(missingProbe))
+    ).toThrow(/observer is absent/);
+  });
   it('requires near-cap candidate output and its full-scene fixture marker', () => {
     const saved = { file: 'candidate.webp', bytes: 8, sha256: 'a'.repeat(64) };
     const report = {
