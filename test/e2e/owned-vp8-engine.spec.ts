@@ -192,6 +192,7 @@ test('active compiled-step cancellation retires the job and a fresh same-documen
   expect(cancelled.analyzedMacroblocks).toBeLessThanOrEqual(cancelled.totalMacroblocks);
   expect(cancelled.totalMacroblocks).toBe(32 * 24);
   expect(cancelled.hostTaskRan).toBe(true);
+  expect(['scheduler-user-blocking', 'timer-fallback']).toContain(cancelled.cancellationTaskKind);
   expect(cancelled.taskObservedActive).toBe(true);
   expect(cancelled.outputPublished).toBe(false);
   expect(cancelled.errorName).toBe('OwnedVp8CancelledError');

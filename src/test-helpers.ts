@@ -26,6 +26,7 @@
  * 9. eval `__TEST_HELPERS__.resetApp()` — clean up, repeat
  */
 
+import { schedulerPostTask } from '@piesp/browser-core/util';
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
 import type { OwnedVp8Stats } from '@services/owned-vp8-core';
@@ -190,6 +191,7 @@ export interface OwnedVp8CancellationResult {
   analyzedMacroblocks: number;
   totalMacroblocks: number;
   hostTaskRan: boolean;
+  cancellationTaskKind: 'scheduler-user-blocking' | 'timer-fallback';
   taskObservedActive: boolean;
   outputPublished: boolean;
   errorName: string;
@@ -518,7 +520,14 @@ const cancelOwnedVp8AfterStep = async (
   let taskObservedActive = false;
   let outputPublished = false;
   let encodingActive = false;
-  let cancelTimer: ReturnType<typeof setTimeout> | undefined;
+  const taskController = new AbortController();
+  const cancellationTaskKind =
+    typeof globalThis.scheduler !== 'undefined' &&
+    typeof globalThis.scheduler.postTask === 'function'
+      ? 'scheduler-user-blocking'
+      : 'timer-fallback';
+  let cancelTask: Promise<void> | undefined;
+  let cancelTaskError: unknown;
   const readResponse = (generation: number, frame: number) => {
     const buffer = api.memory.buffer;
     const pointer = api.vp8_v2_response_ptr();
@@ -549,10 +558,10 @@ const cancelOwnedVp8AfterStep = async (
   const wrappedExports = {
     ...instance.exports,
     vp8_v2_step(generation: number, frame: number): number {
-      const before = cancelTimer === undefined ? readResponse(generation, frame) : undefined;
+      const before = cancelTask === undefined ? readResponse(generation, frame) : undefined;
       const status = api.vp8_v2_step(generation, frame);
       realSteps++;
-      if (before?.stage === 2 && cancelTimer === undefined) {
+      if (before?.stage === 2 && cancelTask === undefined) {
         const after = readResponse(generation, frame);
         if (status !== 10 || after.stage !== 2 || after.done !== before.done + 1)
           throw new Error('Owned VP8 Analyze step did not complete one macroblock');
@@ -560,11 +569,16 @@ const cancelOwnedVp8AfterStep = async (
         cancellationStage = before.stage;
         analyzedMacroblocks = after.done;
         totalMacroblocks = after.total;
-        cancelTimer = setTimeout(() => {
-          hostTaskRan = true;
-          taskObservedActive = encodingActive;
-          controller.abort('host task after a compiled VP8 Analyze step');
-        }, 0);
+        cancelTask = schedulerPostTask(
+          () => {
+            hostTaskRan = true;
+            taskObservedActive = encodingActive;
+            controller.abort('host task after a compiled VP8 Analyze step');
+          },
+          { priority: 'user-blocking', signal: taskController.signal }
+        ).catch((error: unknown) => {
+          if (!taskController.signal.aborted) cancelTaskError = error;
+        });
       }
       return status;
     },
@@ -593,7 +607,8 @@ const cancelOwnedVp8AfterStep = async (
     errorName = error.name;
   } finally {
     encodingActive = false;
-    if (cancelTimer !== undefined) clearTimeout(cancelTimer);
+    taskController.abort();
+    await cancelTask;
     encoder.retire();
   }
   if (
@@ -605,9 +620,12 @@ const cancelOwnedVp8AfterStep = async (
     !hostTaskRan ||
     !taskObservedActive ||
     outputPublished ||
-    !errorName
+    !errorName ||
+    cancelTaskError !== undefined
   )
-    throw new Error('Owned VP8 host-task cancellation did not interrupt active compiled work');
+    throw new Error(
+      `Owned VP8 host-task cancellation did not interrupt active compiled work: ${JSON.stringify({ realSteps, observedAnalysisSteps, cancellationStage, analyzedMacroblocks, totalMacroblocks, cancellationTaskKind, hostTaskRan, taskObservedActive, outputPublished, errorName, cancelTaskError: String(cancelTaskError) })}`
+    );
   return {
     moduleSha256,
     abiVersion,
@@ -617,6 +635,7 @@ const cancelOwnedVp8AfterStep = async (
     analyzedMacroblocks,
     totalMacroblocks,
     hostTaskRan,
+    cancellationTaskKind,
     taskObservedActive,
     outputPublished,
     errorName,
