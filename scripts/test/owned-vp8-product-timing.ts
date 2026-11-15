@@ -1,9 +1,11 @@
 /** Post-run V8 whole-product timing verifier. It never launches a browser or encoder. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readdir, readFile, realpath } from 'node:fs/promises';
-import { resolve, sep } from 'node:path';
+import { readFile, realpath } from 'node:fs/promises';
+import { basename, dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
+
+import { readBuild } from '../../validation/windows/app-update.ts';
 
 const PRIOR_SOURCE = 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4';
 const PRIOR_WASM = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
@@ -77,96 +79,41 @@ export type Distribution = {
   module: { path: string; size: number; sha256: string };
 };
 
-/** Bind a retained distribution manifest to the shipped module bytes. */
+/** Reuse the controller's exact source-bound distribution admission. */
 export async function readDistribution(directory: string, kind: Build): Promise<Distribution> {
-  const bytes = await readFile(resolve(directory, 'deployment-state.json'));
-  const state = object(JSON.parse(bytes.toString('utf8')), `${kind} deployment state`);
-  equal(state.schemaVersion, 1, `${kind} deployment schema`);
-  equal(state.sourceDirty, false, `${kind} source cleanliness`);
-  const files = array(state.files, `${kind} inventory`).map((entry) =>
-    object(entry, 'inventory entry')
-  );
   const root = await realpath(directory);
-  const inventoryPaths = new Set<string>();
-  for (const file of files) {
-    assert(
-      typeof file.path === 'string' &&
-        file.path.length > 0 &&
-        !file.path.startsWith('/') &&
-        !file.path.includes('\\') &&
-        file.path.split('/').every((part) => part !== '' && part !== '.' && part !== '..'),
-      `${kind} has unsafe inventory path`
-    );
-    assert(!inventoryPaths.has(file.path), `${kind} has duplicate inventory path`);
-    inventoryPaths.add(file.path);
-    const actualPath = await realpath(resolve(directory, file.path));
-    assert(actualPath.startsWith(`${root}${sep}`), `${kind} inventory path escapes distribution`);
-    const content = await readFile(actualPath);
-    assert(
-      Number.isSafeInteger(file.size) && (file.size as number) >= 0,
-      `${kind} inventory size is invalid`
-    );
-    equal(content.length, file.size, `${kind} ${file.path} size`);
-    equal(
-      digest(content),
-      sha(file.sha256, `${kind} ${file.path} digest`),
-      `${kind} ${file.path} bytes`
-    );
-  }
-  const headers = await readFile(resolve(directory, '_headers'));
-  equal(
-    digest(headers),
-    sha(state.headersSha256, `${kind} headers digest`),
-    `${kind} headers bytes`
-  );
-  const actualPaths: string[] = [];
-  const visit = async (path: string, prefix = ''): Promise<void> => {
-    for (const entry of await readdir(path, { withFileTypes: true })) {
-      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      assert(actualPaths.length < 128, `${kind} distribution has too many files`);
-      if (entry.isDirectory()) await visit(resolve(path, entry.name), relative);
-      else {
-        assert(entry.isFile(), `${kind} distribution has a non-file entry`);
-        actualPaths.push(relative);
-      }
-    }
-  };
-  await visit(root);
-  assert.deepEqual(
-    actualPaths.sort(),
-    [...inventoryPaths, '_headers', 'deployment-state.json'].sort(),
-    `${kind} exact inventory`
+  const parent = dirname(root);
+  const relative = basename(root);
+  const build = await readBuild(
+    parent,
+    relative,
+    async (_bundleRoot, path) => {
+      const fullPath = await realpath(resolve(parent, path));
+      assert(fullPath.startsWith(`${root}${sep}`), `${kind} path escapes distribution`);
+      return fullPath;
+    },
+    { requireCompiledSource: true, verifyInventory: true, exactInventory: true }
   );
   const pattern =
     kind === 'prior'
       ? /^assets\/webp-wasm[-.][\w-]{8}\.wasm$/
       : /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/;
-  const matching = files.filter(
-    (entry) => typeof entry.path === 'string' && pattern.test(entry.path)
-  );
+  const matching = build.state.files.filter((entry) => pattern.test(entry.path));
   equal(matching.length, 1, `${kind} module count`);
   const module = matching[0]!;
-  const path = module.path as string;
-  const fullPath = await realpath(resolve(directory, path));
-  assert(fullPath.startsWith(`${root}${sep}`), `${kind} module path escapes distribution`);
-  const moduleBytes = await readFile(fullPath);
-  const size = number(module.size, `${kind} module size`, true);
-  equal(moduleBytes.length, size, `${kind} module byte length`);
-  const moduleSha = sha(module.sha256, `${kind} module digest`);
-  equal(digest(moduleBytes), moduleSha, `${kind} module bytes`);
   return {
-    sourceSha: sourceSha(state.sourceSha, `${kind} source`),
-    treeSha: sourceSha(state.treeSha, `${kind} tree`),
-    coreSha: sourceSha(state.coreSha, `${kind} core`),
-    manifestSha256: digest(bytes),
-    module: { path, size, sha256: moduleSha },
+    sourceSha: build.state.sourceSha,
+    treeSha: build.state.treeSha,
+    coreSha: build.state.coreSha,
+    manifestSha256: build.manifestSha256,
+    module: { path: module.path, size: module.size, sha256: module.sha256 },
   };
 }
 
-function checkResource(sample: Json, modulePath: string, label: string): void {
+function checkResource(sample: Json, modulePath: string, label: string) {
   const resources = array(sample.wasmResources, `${label} WASM resources`);
   assert(resources.length > 0, `${label} has no WASM resource entries`);
-  const paths = resources.map((item) => {
+  const resourceIds = resources.map((item) => {
     const entry = object(item, `${label} WASM resource`);
     assert(typeof entry.name === 'string', `${label} WASM resource URL is absent`);
     const url = new URL(entry.name);
@@ -174,21 +121,23 @@ function checkResource(sample: Json, modulePath: string, label: string): void {
       url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost'),
       `${label} WASM resource is not local`
     );
-    number(entry.transferSize, `${label} transfer size`);
-    number(entry.encodedBodySize, `${label} body size`, true);
-    return url.pathname.slice(1);
+    const transferSize = number(entry.transferSize, `${label} transfer size`);
+    const encodedBodySize = number(entry.encodedBodySize, `${label} body size`, true);
+    return { path: url.pathname.slice(1), transferSize, encodedBodySize };
   });
   equal(
-    paths.filter((path) => path === modulePath).length,
+    resourceIds.filter((entry) => entry.path === modulePath).length,
     1,
     `${label} expected module resource count`
   );
   assert(
-    !paths.some(
-      (path) => /^(?:assets\/)(?:webp-wasm|owned-vp8)[-.]/.test(path) && path !== modulePath
+    !resourceIds.some(
+      (entry) =>
+        /^(?:assets\/)(?:webp-wasm|owned-vp8)[-.]/.test(entry.path) && entry.path !== modulePath
     ),
     `${label} fetched another WebP module`
   );
+  return resourceIds;
 }
 
 export function verifyTiming(
@@ -198,11 +147,13 @@ export function verifyTiming(
     candidateModuleSha256: string;
     priorDistribution: Distribution;
     candidateDistribution: Distribution;
-  }
+  },
+  receiptDigests: readonly string[]
 ) {
   sourceSha(expected.candidateSourceSha, 'expected candidate source');
   sha(expected.candidateModuleSha256, 'expected candidate module');
   equal(reports.length, 15, 'controller invocation count');
+  equal(receiptDigests.length, reports.length, 'receipt digest count');
   const priorDist = expected.priorDistribution;
   const candidateDist = expected.candidateDistribution;
   equal(priorDist.sourceSha, PRIOR_SOURCE, 'frozen prior source');
@@ -215,15 +166,24 @@ export function verifyTiming(
   const orders = new Map<Quality, string[]>();
   const measured = new Map<string, number[]>();
   const sampleRecords: Array<{
+    controllerReceiptSha256: string;
     quality: Quality;
     order: string;
     build: Build;
     condition: Condition;
     elapsedMs: number;
     wallStart: string;
+    requestToBlobPublicationMs: number;
+    documentTimeOrigin: number;
+    contextIdentity: string;
+    pageIdentity: string;
+    navigationCount: number;
+    contextCacheScope: string;
+    wasmResources: Array<{ path: string; transferSize: number; encodedBodySize: number }>;
   }> = [];
-  for (const raw of reports) {
+  for (const [index, raw] of reports.entries()) {
     const report = object(raw, 'controller receipt');
+    const controllerReceiptSha256 = sha(receiptDigests[index], 'controller receipt digest');
     const receiptHash = digest(Buffer.from(JSON.stringify(raw)));
     assert(!seenReceipts.has(receiptHash), 'duplicate controller receipt');
     seenReceipts.add(receiptHash);
@@ -319,12 +279,31 @@ export function verifyTiming(
         sample.parsed !== undefined && sample.decoded !== undefined,
         `${label} independent output checks absent`
       );
-      checkResource(sample, (build === 'prior' ? priorDist : candidateDist).module.path, label);
+      const wasmResources = checkResource(
+        sample,
+        (build === 'prior' ? priorDist : candidateDist).module.path,
+        label
+      );
       const bucket = `${quality}/${condition}/${build}`;
       const values = measured.get(bucket) ?? [];
       values.push(elapsed);
       measured.set(bucket, values);
-      sampleRecords.push({ quality, order, build, condition, elapsedMs: elapsed, wallStart });
+      sampleRecords.push({
+        controllerReceiptSha256,
+        quality,
+        order,
+        build,
+        condition,
+        elapsedMs: elapsed,
+        wallStart,
+        requestToBlobPublicationMs: publication,
+        documentTimeOrigin: sample.timeOrigin as number,
+        contextIdentity: sample.contextIdentity as string,
+        pageIdentity: sample.pageIdentity as string,
+        navigationCount: sample.navigationCount as number,
+        contextCacheScope: sample.contextCacheScope as string,
+        wasmResources,
+      });
     }
     for (const build of ['prior', 'candidate'] as const) {
       const first = cells.get(`${build}/first-in-document`)!;
@@ -409,16 +388,29 @@ export function verifyTiming(
     qualificationReason:
       'Timed samples attest a fetched WASM resource, but the maintained V8 receipt does not attest the executed encoder route for each timed conversion or copied bytes and retained capacity. Separate candidate cadence instrumentation is outside timing; prior execution is not independently instrumented.',
     identities: {
-      priorSourceSha: PRIOR_SOURCE,
-      priorModuleSha256: PRIOR_WASM,
-      candidateSourceSha: expected.candidateSourceSha,
-      candidateModuleSha256: expected.candidateModuleSha256,
-      priorManifestSha256: priorDist.manifestSha256,
-      candidateManifestSha256: candidateDist.manifestSha256,
-      inputSha256: INPUT,
-      browserVersion: common.get('browserVersion')
-        ? (JSON.parse(common.get('browserVersion')!) as string)
-        : null,
+      prior: priorDist,
+      candidate: candidateDist,
+      input: {
+        fixture: 'v8-full',
+        path: 'validation/windows/owned-vp8-inputs/v8.webm',
+        bytes: 3_145_371,
+        sha256: INPUT,
+        frozenInputManifestSha256: JSON.parse(common.get('frozenInputManifestSha256')!) as string,
+      },
+      settings: {
+        format: 'webp',
+        qualityPercent: { low: 60, medium: 75, high: 85 },
+        targetCadenceFps: CADENCE,
+        scale: 1,
+        smartFrameSkip: 'off',
+      },
+      timingScope: TIMING_SCOPE,
+      cache: {
+        reportScope: CACHE_REPORT_SCOPE,
+        sampleScope: CACHE_SCOPE,
+        conditions: CONDITIONS,
+      },
+      browserVersion: JSON.parse(common.get('browserVersion')!) as string,
     },
     invocationOrders: Object.fromEntries(orders),
     samples: sampleRecords,
@@ -460,15 +452,18 @@ async function main(args: readonly string[]) {
   equal(paths.length, 15, 'receipt path count');
   const absolute = paths.map((path) => resolve(path));
   equal(new Set(absolute).size, 15, 'unique receipt path count');
-  const reports = await Promise.all(
-    absolute.map(async (path) => JSON.parse(await readFile(path, 'utf8')) as unknown)
+  const bytes = await Promise.all(absolute.map((path) => readFile(path)));
+  const reports = bytes.map((content) => JSON.parse(content.toString('utf8')) as unknown);
+  return verifyTiming(
+    reports,
+    {
+      candidateSourceSha: one('--candidate-source-sha'),
+      candidateModuleSha256: one('--candidate-module-sha256'),
+      priorDistribution: await readDistribution(one('--prior-dist'), 'prior'),
+      candidateDistribution: await readDistribution(one('--candidate-dist'), 'candidate'),
+    },
+    bytes.map(digest)
   );
-  return verifyTiming(reports, {
-    candidateSourceSha: one('--candidate-source-sha'),
-    candidateModuleSha256: one('--candidate-module-sha256'),
-    priorDistribution: await readDistribution(one('--prior-dist'), 'prior'),
-    candidateDistribution: await readDistribution(one('--candidate-dist'), 'candidate'),
-  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

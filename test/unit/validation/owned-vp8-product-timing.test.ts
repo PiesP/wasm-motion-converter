@@ -131,8 +131,17 @@ function makeReports(candidateTime = 1010) {
   );
 }
 
+function verifyFixture(reports: ReturnType<typeof makeReports>, pins = expected) {
+  return verifyTiming(
+    reports,
+    pins,
+    reports.map((report) => createHash('sha256').update(JSON.stringify(report)).digest('hex'))
+  );
+}
+
 test('five balanced receipts per quality retain first and warm cohorts without claiming qualification', () => {
-  const result = verifyTiming(makeReports(), expected);
+  const reports = makeReports();
+  const result = verifyFixture(reports);
   assert.equal(result.status, 'NOT_VERIFIED');
   assert.equal(result.numericGate, 'PASS');
   assert.equal(result.conditions.length, 6);
@@ -144,10 +153,23 @@ test('five balanced receipts per quality retain first and warm cohorts without c
     madMs: 0,
   });
   assert.equal(result.conditions[0]?.allowanceMs, 50);
+  assert.deepEqual(result.identities.prior, priorDistribution);
+  assert.deepEqual(result.identities.candidate, candidateDistribution);
+  assert.equal(result.identities.input.frozenInputManifestSha256, '3'.repeat(64));
+  assert.equal(result.identities.settings.targetCadenceFps.low, 12);
+  assert.equal(result.identities.cache.sampleScope.includes('first-in-document'), true);
+  assert.equal(
+    result.samples[0]?.controllerReceiptSha256,
+    createHash('sha256').update(JSON.stringify(reports[0])).digest('hex')
+  );
+  assert.equal(result.samples[0]?.documentTimeOrigin, 1_800_000_000_000);
+  assert.equal(result.samples[0]?.contextIdentity, 'owned-vp8-product-v8-low:prior');
+  assert.equal(result.samples[0]?.wasmResources[0]?.path, priorDistribution.module.path);
+  assert.equal(result.samples[0]?.requestToBlobPublicationMs, 900);
 });
 
 test('a median increase above five percent fails the numeric gate', () => {
-  const result = verifyTiming(makeReports(1051), expected);
+  const result = verifyFixture(makeReports(1051));
   assert.equal(result.status, 'FAIL');
   assert.equal(result.conditions[0]?.increaseMs, 51);
 });
@@ -159,37 +181,37 @@ test('the twenty millisecond floor is applied for short runs', () => {
       if (sample.build === 'prior') sample.requestToDownloadReadyMs = 10;
       sample.requestToBlobPublicationMs = 5;
     }
-  assert.equal(verifyTiming(reports, expected).conditions[0]?.allowanceMs, 20);
+  assert.equal(verifyFixture(reports).conditions[0]?.allowanceMs, 20);
 });
 
 test('rejects duplicates, nonfinite values, incomplete samples, and identity drift', () => {
   const duplicate = makeReports();
   duplicate[1] = structuredClone(duplicate[0]!);
-  assert.throws(() => verifyTiming(duplicate, expected), /duplicate controller receipt/);
+  assert.throws(() => verifyFixture(duplicate), /duplicate controller receipt/);
   const nonfinite = makeReports();
   nonfinite[0]!.samples[0]!.requestToDownloadReadyMs = Number.NaN;
-  assert.throws(() => verifyTiming(nonfinite, expected), /not finite/);
+  assert.throws(() => verifyFixture(nonfinite), /not finite/);
   const incomplete = makeReports();
   incomplete[0]!.samples.pop();
-  assert.throws(() => verifyTiming(incomplete, expected), /sample count/);
+  assert.throws(() => verifyFixture(incomplete), /sample count/);
   const sourceDrift = makeReports();
   sourceDrift[0]!.candidate.sourceSha = '9'.repeat(40);
-  assert.throws(() => verifyTiming(sourceDrift, expected), /candidate sourceSha/);
+  assert.throws(() => verifyFixture(sourceDrift), /candidate sourceSha/);
   const wrongResource = makeReports();
   wrongResource[0]!.samples[0]!.wasmResources[0]!.name = 'http://127.0.0.1:12345/assets/other.wasm';
-  assert.throws(() => verifyTiming(wrongResource, expected), /expected module resource/);
+  assert.throws(() => verifyFixture(wrongResource), /expected module resource/);
   const missingCadence = makeReports();
   missingCadence[0]!.functional = [];
-  assert.throws(() => verifyTiming(missingCadence, expected), /functional check count/);
+  assert.throws(() => verifyFixture(missingCadence), /functional check count/);
 });
 
 test('does not accept a self-consistent but unpinned candidate', () => {
   assert.throws(
-    () => verifyTiming(makeReports(), { ...expected, candidateSourceSha: '8'.repeat(40) }),
+    () => verifyFixture(makeReports(), { ...expected, candidateSourceSha: '8'.repeat(40) }),
     /candidate source/
   );
   assert.throws(
-    () => verifyTiming(makeReports(), { ...expected, candidateModuleSha256: '8'.repeat(64) }),
+    () => verifyFixture(makeReports(), { ...expected, candidateModuleSha256: '8'.repeat(64) }),
     /candidate module/
   );
 });
@@ -199,6 +221,12 @@ test('distribution admission binds the manifest to actual module bytes', async (
   try {
     const module = Buffer.from('compiled module bytes');
     const moduleSha = createHash('sha256').update(module).digest('hex');
+    const app = Buffer.from(`compiled source ${candidateSource}`);
+    const appSha = createHash('sha256').update(app).digest('hex');
+    const html = Buffer.from('<script type="module" src="/assets/index.ABCDEFGH.js"></script>');
+    const htmlSha = createHash('sha256').update(html).digest('hex');
+    const serviceWorker = Buffer.from('self.addEventListener("fetch",()=>{});');
+    const serviceWorkerSha = createHash('sha256').update(serviceWorker).digest('hex');
     const headers = Buffer.from('/*\n  Cross-Origin-Opener-Policy: same-origin\n');
     const headersSha = createHash('sha256').update(headers).digest('hex');
     await mkdir(join(directory, 'assets'));
@@ -207,14 +235,45 @@ test('distribution admission binds the manifest to actual module bytes', async (
     const state = {
       schemaVersion: 1,
       sourceDirty: false,
+      version: '0.2.5',
       sourceSha: candidateSource,
       treeSha: candidateDistribution.treeSha,
       coreSha: candidateDistribution.coreSha,
       headersSha256: headersSha,
-      files: [{ path: candidateDistribution.module.path, size: module.length, sha256: moduleSha }],
+      files: [
+        { path: candidateDistribution.module.path, size: module.length, sha256: moduleSha },
+        { path: 'assets/index.ABCDEFGH.js', size: app.length, sha256: appSha },
+        { path: 'index.html', size: html.length, sha256: htmlSha },
+        { path: 'service-worker.js', size: serviceWorker.length, sha256: serviceWorkerSha },
+      ],
     };
+    await writeFile(
+      join(directory, 'deployment-state.json'),
+      JSON.stringify({ ...state, files: state.files.slice(0, 1) })
+    );
+    await assert.rejects(readDistribution(directory, 'candidate'), /source-bound app entry/);
+    await writeFile(join(directory, 'assets/index.ABCDEFGH.js'), app);
+    await writeFile(join(directory, 'index.html'), html);
+    await writeFile(join(directory, 'service-worker.js'), serviceWorker);
     await writeFile(join(directory, 'deployment-state.json'), JSON.stringify(state));
     assert.equal((await readDistribution(directory, 'candidate')).module.sha256, moduleSha);
+    const wrongApp = Buffer.from(`compiled source ${'0'.repeat(40)}`);
+    await writeFile(join(directory, 'assets/index.ABCDEFGH.js'), wrongApp);
+    state.files[1]!.sha256 = createHash('sha256').update(wrongApp).digest('hex');
+    await writeFile(join(directory, 'deployment-state.json'), JSON.stringify(state));
+    await assert.rejects(readDistribution(directory, 'candidate'), /compiled source identity/);
+    await writeFile(join(directory, 'assets/index.ABCDEFGH.js'), app);
+    state.files[1]!.sha256 = appSha;
+    const wrongHtml = Buffer.from('<script src="/assets/other.js"></script>');
+    await writeFile(join(directory, 'index.html'), wrongHtml);
+    state.files[2]!.size = wrongHtml.length;
+    state.files[2]!.sha256 = createHash('sha256').update(wrongHtml).digest('hex');
+    await writeFile(join(directory, 'deployment-state.json'), JSON.stringify(state));
+    await assert.rejects(readDistribution(directory, 'candidate'), /HTML does not load/);
+    await writeFile(join(directory, 'index.html'), html);
+    state.files[2]!.size = html.length;
+    state.files[2]!.sha256 = htmlSha;
+    await writeFile(join(directory, 'deployment-state.json'), JSON.stringify(state));
     await writeFile(join(directory, candidateDistribution.module.path), 'modified');
     await assert.rejects(readDistribution(directory, 'candidate'), /size differs/);
   } finally {
