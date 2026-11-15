@@ -1,5 +1,9 @@
 # Product filtered-refinement candidate: acceptance pending
 
+Historical product snapshot at4c3c9995. The subsequent
+[completed-RGB profile candidate](501-owned-vp8-product-completed-rgb-candidate.md)
+records the new engine import without upgrading this point's rejected result.
+
 This unmerged engineering candidate imports the owned Rust source from
 `9c308303c5cc0da8d2be0a45355275a24e4aaf59`, following the historical
 [product refresh](501-owned-vp8-product-refresh-candidate.md). Production master

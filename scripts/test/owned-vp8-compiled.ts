@@ -18,6 +18,18 @@ const results: object[] = [];
 let succeeded = false;
 const sha = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
+function v9ChromaEdge(): Uint8Array {
+  const width = 407;
+  const height = 277;
+  const pixels = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const rgb = (Math.floor((13 * x + 5 * y) / 19) & 1) !== 0 ? [221, 44, 184] : [35, 207, 71];
+      pixels.set([...rgb, 255], (y * width + x) * 4);
+    }
+  return pixels;
+}
+
 function asIvf(frame: Uint8Array, width: number, height: number): Buffer {
   const ivf = Buffer.alloc(44 + frame.length);
   ivf.write('DKIF');
@@ -51,19 +63,21 @@ async function check(
     const result = await job.encode(pixels, request, undefined, (record) => {
       if (
         (record.stage >= 27 && record.stage <= 40) ||
-        (record.stage >= 41 && record.stage <= 53)
+        (record.stage >= 41 && record.stage <= 57)
       ) {
         assert.equal(record.outputLength, 0, 'Refinement stages cannot publish output');
         assert.equal(record.outputPointer, 0, 'Refinement stages cannot lease output');
       }
-      if (record.stage === previousStage && record.stage >= 41 && record.stage <= 53) {
+      if (record.stage === previousStage && record.stage >= 41 && record.stage <= 57) {
         const bound = [42, 46, 50].includes(record.stage)
           ? 65_536
-          : [43, 47, 51].includes(record.stage)
+          : [43, 47, 51, 54, 56].includes(record.stage)
             ? 1
-            : [44, 48, 52].includes(record.stage)
-              ? 64
-              : 546;
+            : record.stage === 55 || record.stage === 57
+              ? 1_024
+              : [44, 48, 52].includes(record.stage)
+                ? 64
+                : 546;
         assert.ok(
           record.done >= previousDone && record.done - previousDone <= bound,
           `Quality stage ${record.stage} must progress within its work bound`
@@ -304,6 +318,57 @@ async function qualityCancellation(): Promise<object> {
   return { filteredCopyObserved: observed, noOutputLease: true };
 }
 
+async function profileCancellation(): Promise<object> {
+  const pixels = v9ChromaEdge();
+  const reached: number[] = [];
+  for (const [index, target] of [54, 55, 56, 57].entries()) {
+    const job = new Vp8TestJob(compiled, 30 + index);
+    const controller = new AbortController();
+    try {
+      await assert.rejects(
+        job.encode(
+          pixels,
+          { width: 407, height: 277, stride: 407 * 4, layout: 0, quality: 60 },
+          controller.signal,
+          (record) => {
+            if (record.phase === 4 && record.stage === target && record.done > 0) {
+              assert.equal(job.api.vp8_v2_step(job.generation, 2), 7);
+              assert.equal(job.record().stage, target);
+              reached.push(target);
+              controller.abort();
+            }
+          }
+        ),
+        { name: 'AbortError' }
+      );
+      assert.equal(job.record().outputLength, 0);
+      assert.equal(job.record().outputPointer, 0);
+    } finally {
+      job.retire();
+    }
+    const recovered = new Vp8TestJob(compiled, 40 + index);
+    try {
+      const neutral = new Uint8Array(16 * 16 * 4);
+      for (let at = 0; at < neutral.length; at += 4) neutral.set([128, 128, 128, 255], at);
+      assert.ok(
+        (
+          await recovered.encode(neutral, {
+            width: 16,
+            height: 16,
+            stride: 64,
+            layout: 0,
+            quality: 75,
+          })
+        ).bytes.length > 10
+      );
+    } finally {
+      recovered.retire();
+    }
+  }
+  assert.deepEqual(reached, [54, 55, 56, 57]);
+  return { profileStagesCancelled: reached, noOutputLease: true, newInstanceRecovery: true };
+}
+
 try {
   const largeOnly = process.argv.includes('--large-only');
   let leaseCheck = 'NOT_RUN';
@@ -406,6 +471,41 @@ try {
       ]);
       assert.equal(sha(yuv), '4f072056a8e663df2a1614af55583af59e6cb88b8aec9ad13f9c41b5f674f70b');
     }
+    const v9 = v9ChromaEdge();
+    assert.equal(sha(v9), '5eb62c1a42930b9bec9eeed26ae60778b4c80243e890cf9c6a40d7005896f313');
+    const profileStages = new Set<number>();
+    await check(v9, 407, 277, 407 * 4, 0, 60, 'frozen-v9-chroma-edge', (stage) =>
+      profileStages.add(stage)
+    );
+    assert.deepEqual(
+      [...profileStages].filter((stage) => stage >= 54 && stage <= 57).sort(),
+      [54, 55, 56, 57],
+      'Compiled Original and Reduced filter and RGB score stages'
+    );
+    const v9Result = results.at(-1) as { rawBytes: number; sha256: string };
+    assert.equal(v9Result.rawBytes, 40_869);
+    assert.equal(
+      v9Result.sha256,
+      '8660307d21aac70d59a53d3e2f78764cfa2d270cac4a7d60ca1e3d5afc5ce79f'
+    );
+    for (const decoder of ['vp8', 'libvpx']) {
+      const yuv = execFileSync('ffmpeg', [
+        '-v',
+        'error',
+        '-c:v',
+        decoder,
+        '-i',
+        join(root, 'frozen-v9-chroma-edge-q60.ivf'),
+        '-frames:v',
+        '1',
+        '-f',
+        'rawvideo',
+        '-pix_fmt',
+        'yuv420p',
+        'pipe:1',
+      ]);
+      assert.equal(sha(yuv), '399d837e7b36403510975d12a529d1dbf9cb5271b95e3ac84168d692dee4125c');
+    }
     assert.deepEqual(
       results
         .filter((entry) => (entry as { id: string }).id.startsWith('fresh7-tiny-'))
@@ -463,7 +563,11 @@ try {
       'Resource probe must cross the retired prototype output cap'
     );
   } else {
-    cancel = { analysis: await cancellation(), quality: await qualityCancellation() };
+    cancel = {
+      analysis: await cancellation(),
+      quality: await qualityCancellation(),
+      profile: await profileCancellation(),
+    };
   }
   console.log(
     JSON.stringify(

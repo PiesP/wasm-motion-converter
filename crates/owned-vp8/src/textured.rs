@@ -682,7 +682,6 @@ struct LumaCandidate {
 }
 struct AnalyzedBlock {
     block: Macroblock,
-    visible_error: u64,
     refinement: Option<RefinementChange>,
     refinement_gain: f64,
 }
@@ -903,14 +902,6 @@ struct ProfileComparison {
 }
 
 impl ProfileComparison {
-    fn observe(&mut self, analyzed: &AnalyzedBlock) -> Result<(), EncodeError> {
-        self.visible_error = self
-            .visible_error
-            .checked_add(analyzed.visible_error)
-            .ok_or(EncodeError::OutputLimit)?;
-        Ok(())
-    }
-
     fn add_rate(
         &mut self,
         rate: u64,
@@ -1020,25 +1011,6 @@ fn squared_error<const N: usize, const LEN: usize>(
     result
 }
 
-fn visible_error<const N: usize, const LEN: usize>(
-    source: &[u8],
-    stride: usize,
-    x: usize,
-    y: usize,
-    visible_width: usize,
-    visible_height: usize,
-    tile: &[u8; LEN],
-) -> u64 {
-    let mut result = 0u64;
-    for row in 0..visible_height.saturating_sub(y).min(N) {
-        for col in 0..visible_width.saturating_sub(x).min(N) {
-            let diff =
-                i32::from(source[(y + row) * stride + x + col]) - i32::from(tile[row * N + col]);
-            result += (diff * diff) as u64;
-        }
-    }
-    result
-}
 fn commit_tile<const N: usize, const LEN: usize>(
     destination: &mut [u8],
     stride: usize,
@@ -2005,7 +1977,6 @@ fn encode_observed(
                     quality,
                     width,
                     height,
-                    score_required,
                     luma_policy,
                     segment_id,
                     segments,
@@ -2125,9 +2096,6 @@ fn encode_observed(
                         commit_tile::<8, 64>(&mut reconstructed_v, uv_w, mx * 8, my * 8, &result.v);
                     }
                 }
-                if score_required {
-                    comparison.observe(&analyzed)?;
-                }
                 blocks.push(analyzed.block);
             }
         }
@@ -2180,6 +2148,38 @@ fn encode_observed(
                 )?;
             }
         }
+        for index in 0..blocks.len() {
+            filter_completed_one(
+                &mut reconstructed_y,
+                &mut reconstructed_u,
+                &mut reconstructed_v,
+                padded_w,
+                padded_h,
+                index,
+                &blocks,
+                filter,
+            )?;
+        }
+        let view = display_rgb::CompleteFrame::checked(
+            width,
+            height,
+            padded_w,
+            display_rgb::Original {
+                pixels,
+                stride,
+                layout: format,
+            },
+            &reconstructed_y,
+            &reconstructed_u,
+            &reconstructed_v,
+        )
+        .ok_or(EncodeError::InvalidInput)?;
+        for start in (0..width * height).step_by(1_024) {
+            comparison.visible_error = comparison
+                .visible_error
+                .checked_add(view.squared_error_chunk(start, (width * height - start).min(1_024)))
+                .ok_or(EncodeError::OutputLimit)?;
+        }
         comparison.score(
             estimated_profile_header_rate(segments, deltas, filter, &model, skip_probability)?,
             original_segments.base_qindex,
@@ -2197,6 +2197,7 @@ fn encode_observed(
         if reduced_profile_wins(original_score, reduced_score) {
             segments = reduced_segments;
             deltas = reduced_deltas;
+            run_profile(reduced_segments, reduced_deltas, false)?;
         } else {
             run_profile(original_segments, original_deltas, false)?;
         }
@@ -2454,7 +2455,6 @@ fn analyze_one(
     quality: u32,
     visible_width: usize,
     visible_height: usize,
-    score_visible: bool,
     luma_policy: u8,
     segment_id: u8,
     segments: SegmentConfig,
@@ -2633,37 +2633,6 @@ fn analyze_one(
             }
         }
     }
-    let visible_uv_width = visible_width.div_ceil(2);
-    let visible_uv_height = visible_height.div_ceil(2);
-    let visible_error = if score_visible {
-        visible_error::<16, 256>(
-            source_y,
-            padded_w,
-            x,
-            y,
-            visible_width,
-            visible_height,
-            &selected_luma.tile,
-        ) + visible_error::<8, 64>(
-            source_u,
-            uv_w,
-            mx * 8,
-            my * 8,
-            visible_uv_width,
-            visible_uv_height,
-            &selected_uv.u_tile,
-        ) + visible_error::<8, 64>(
-            source_v,
-            uv_w,
-            mx * 8,
-            my * 8,
-            visible_uv_width,
-            visible_uv_height,
-            &selected_uv.v_tile,
-        )
-    } else {
-        0
-    };
     header_budget.commit(&block, mx, above_modes, left_modes, segments)?;
     commit_tile::<16, 256>(reconstructed_y, padded_w, x, y, &selected_luma.tile);
     commit_tile::<8, 64>(reconstructed_u, uv_w, mx * 8, my * 8, &selected_uv.u_tile);
@@ -2672,7 +2641,6 @@ fn analyze_one(
     update_modes(&block, mx, above_modes, left_modes);
     Ok(AnalyzedBlock {
         block,
-        visible_error,
         refinement,
         refinement_gain,
     })
@@ -3225,6 +3193,8 @@ enum Stage {
     PreviewOptimize = 24,
     PreviewRateBlocks = 25,
     PreviewResetMetadata = 26,
+    PreviewFilter = 54,
+    PreviewRgbError = 55,
     ReverseRefinements = 27,
     ReapplyRefinements = 28,
     ReleaseRefinements = 35,
@@ -3308,16 +3278,18 @@ enum VariantChoice {
     Base,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreviewTrial {
     None,
     Original,
     Reduced,
     FinalOriginal,
+    FinalReduced,
 }
 
 /// One step initializes or copies at most 64 KiB, converts one YUV row pair,
-/// analyzes or filters one macroblock, scores at most 64 moment blocks, codes
+/// analyzes or filters one macroblock, scores at most 1,024 profile pixels
+/// or 64 moment blocks, codes
 /// one macroblock, or assembles at most 64 KiB. Quality-cache chunks are
 /// allocated and released at most 64 KiB per step. The host owns scheduling
 /// and cancellation between calls.
@@ -3550,6 +3522,23 @@ impl FrameEncoder {
     }
 
     pub(crate) fn stage(&self) -> u32 {
+        // ABI2 diagnostics distinguish the two scored profiles without
+        // changing the internal filter/metric state machine or record layout.
+        if matches!(
+            self.preview_trial,
+            PreviewTrial::Original | PreviewTrial::Reduced
+        ) {
+            let profile = if self.preview_trial == PreviewTrial::Original {
+                0
+            } else {
+                2
+            };
+            match self.stage {
+                Stage::PreviewFilter => return 54 + profile,
+                Stage::PreviewRgbError => return 55 + profile,
+                _ => {}
+            }
+        }
         if matches!(
             self.stage,
             Stage::QualityInit | Stage::QualityCopy | Stage::QualityFilter | Stage::QualityMetric
@@ -3631,6 +3620,10 @@ impl FrameEncoder {
                 )
             }
             Stage::QualityFilter => (self.cursor as u32, blocks),
+            Stage::PreviewFilter => (self.cursor as u32, blocks),
+            Stage::PreviewRgbError => {
+                (self.cursor as u32, self.request.width * self.request.height)
+            }
             Stage::QualityMetric => self.quality_score.as_ref().map_or((0, 1), |score| {
                 let (done, total) = score.progress();
                 (done as u32, total as u32)
@@ -4250,14 +4243,13 @@ impl FrameEncoder {
             }
             PreviewTrial::Reduced => {
                 if reduced_profile_wins(self.preview_original_score, score) {
-                    self.reset_coding_state();
-                    self.stage = Stage::CountPrefix;
+                    self.preview_trial = PreviewTrial::FinalReduced;
                 } else {
                     self.segments = original;
                     self.deltas = crate::presets::original_high_chroma_loss_deltas();
                     self.preview_trial = PreviewTrial::FinalOriginal;
-                    self.begin_preview_reset();
                 }
+                self.begin_preview_reset();
             }
             _ => return Err(Status::InvalidInput),
         }
@@ -4363,24 +4355,12 @@ impl FrameEncoder {
             self.request.quality,
             self.request.width as usize,
             self.request.height as usize,
-            matches!(
-                self.preview_trial,
-                PreviewTrial::Original | PreviewTrial::Reduced
-            ),
             0,
             segment_id,
             self.segments,
             &mut self.header_budget,
         )
         .map_err(encode_status)?;
-        if matches!(
-            self.preview_trial,
-            PreviewTrial::Original | PreviewTrial::Reduced
-        ) {
-            self.preview_comparison
-                .observe(&analyzed)
-                .map_err(encode_status)?;
-        }
         if let Some(change) = analyzed.refinement {
             self.refinement_log.push_reserved(RefinementEdit {
                 block: self.cursor as u32,
@@ -4626,7 +4606,7 @@ impl FrameEncoder {
         self.cursor += 1;
         if self.cursor == self.blocks.len() {
             self.reset_coding_state();
-            self.finish_preview()?;
+            self.stage = Stage::PreviewFilter;
         }
         Ok(())
     }
@@ -4896,6 +4876,53 @@ impl FrameEncoder {
                 }
             }
             Stage::PreviewRateBlocks => self.preview_rate_one_step()?,
+            Stage::PreviewFilter => {
+                filter_completed_one(
+                    &mut self.reconstructed_y,
+                    &mut self.reconstructed_u,
+                    &mut self.reconstructed_v,
+                    self.plan.padded_width as usize,
+                    self.plan.padded_height as usize,
+                    self.cursor,
+                    &self.blocks,
+                    self.filter,
+                )
+                .map_err(encode_status)?;
+                self.cursor += 1;
+                if self.cursor == self.blocks.len() {
+                    self.cursor = 0;
+                    self.stage = Stage::PreviewRgbError;
+                }
+            }
+            Stage::PreviewRgbError => {
+                let width = self.request.width as usize;
+                let total = width * self.request.height as usize;
+                let count = (total - self.cursor).min(1_024);
+                let view = display_rgb::CompleteFrame::checked(
+                    width,
+                    self.request.height as usize,
+                    self.plan.padded_width as usize,
+                    display_rgb::Original {
+                        pixels: &self.input,
+                        stride: self.request.stride as usize,
+                        layout: self.request.layout,
+                    },
+                    &self.reconstructed_y,
+                    &self.reconstructed_u,
+                    &self.reconstructed_v,
+                )
+                .ok_or(Status::InvalidInput)?;
+                self.preview_comparison.visible_error = self
+                    .preview_comparison
+                    .visible_error
+                    .checked_add(view.squared_error_chunk(self.cursor, count))
+                    .ok_or(Status::OutputLimit)?;
+                self.cursor += count;
+                if self.cursor == total {
+                    self.reset_coding_state();
+                    self.finish_preview()?;
+                }
+            }
             Stage::CollectStats => {
                 let blocks_x = self.plan.padded_width as usize / 16;
                 let mx = self.cursor % blocks_x;
@@ -6192,7 +6219,6 @@ mod tests {
                     quality,
                     width,
                     height,
-                    false,
                     0,
                     segment_id,
                     guarded.segments,
@@ -6222,7 +6248,6 @@ mod tests {
                     quality,
                     width,
                     height,
-                    false,
                     0,
                     segment_id,
                     baseline.segments,
@@ -6681,47 +6706,27 @@ mod tests {
     }
 
     #[test]
-    fn preview_comparison_uses_visible_support_and_strict_improvement() {
+    fn preview_comparison_uses_completed_rgb_error_and_checked_rate() {
         assert!(!reduced_profile_wins(7, 7));
         assert!(!reduced_profile_wins(7, 8));
         assert!(reduced_profile_wins(7, 6));
 
-        let source_y = [0u8; 256];
-        let mut tile_y = [0u8; 256];
-        tile_y[15 * 16 + 15] = 255;
-        assert_eq!(
-            visible_error::<16, 256>(&source_y, 16, 0, 0, 3, 7, &tile_y),
-            0
-        );
-        tile_y[6 * 16 + 2] = 3;
-        assert_eq!(
-            visible_error::<16, 256>(&source_y, 16, 0, 0, 3, 7, &tile_y),
-            9
-        );
-
-        let source_uv = [0u8; 64];
-        let mut tile_uv = [0u8; 64];
-        tile_uv[4 * 8 + 1] = 255;
-        assert_eq!(
-            visible_error::<8, 64>(&source_uv, 8, 0, 0, 2, 4, &tile_uv),
-            0
-        );
-        tile_uv[3 * 8 + 1] = 2;
-        assert_eq!(
-            visible_error::<8, 64>(&source_uv, 8, 0, 0, 2, 4, &tile_uv),
-            4
-        );
-
-        let analyzed = AnalyzedBlock {
-            block: Macroblock::default(),
+        let mut comparison = ProfileComparison {
             visible_error: 9,
-            refinement: None,
-            refinement_gain: 0.0,
+            ..ProfileComparison::default()
         };
-        let mut comparison = ProfileComparison::default();
-        comparison.observe(&analyzed).unwrap();
         comparison.add_rate(10, 32, 60).unwrap();
         assert_eq!(comparison.score(7, 32, 60).unwrap(), 9 * 256 + 17 * 480);
+        comparison.visible_error = u64::MAX;
+        assert!(matches!(
+            comparison.score(0, 32, 60),
+            Err(EncodeError::OutputLimit)
+        ));
+        comparison.visible_error = 0;
+        assert!(matches!(
+            comparison.add_rate(u64::MAX, 32, 60),
+            Err(EncodeError::OutputLimit)
+        ));
     }
 
     #[test]
@@ -7664,7 +7669,6 @@ mod tests {
                     75,
                     32,
                     16,
-                    false,
                     if mx == 0 { 2 } else { 0 },
                     0,
                     segments,
@@ -9202,7 +9206,7 @@ mod tests {
                 let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
                 assert!(engine.rgb_error_sum > 4096 * 3 * (width * height) as u64);
                 assert!(engine.high_chroma_loss);
-                let reduced = engine.preview_trial == PreviewTrial::Reduced;
+                let reduced = engine.preview_trial == PreviewTrial::FinalReduced;
                 assert_eq!(
                     (engine.deltas.uv_dc, engine.deltas.uv_ac),
                     if reduced {
@@ -9236,9 +9240,120 @@ mod tests {
         assert_eq!(engine.segments.qindex_for(segmentation::FINE_SMOOTH), 6);
     }
 
+    // Frozen synthetic V9 control. This input exposed a profile decision whose
+    // source-YUV objective disagreed with completed visible RGB distortion.
+    fn v9_chroma_edge() -> Vec<u8> {
+        let mut pixels = Vec::with_capacity(407 * 277 * 4);
+        for y in 0..277 {
+            for x in 0..407 {
+                let rgb = if ((13 * x + 5 * y) / 19) & 1 != 0 {
+                    [221, 44, 184]
+                } else {
+                    [35, 207, 71]
+                };
+                pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn v9_chroma_edge_chooses_completed_rgb_profile_and_preserves_source() {
+        let input = v9_chroma_edge();
+        let request = Request {
+            quality: 60,
+            ..engine_request(407, 277, 0, &input, 407 * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        let mut metrics = Vec::new();
+        let mut scores = Vec::new();
+        let mut stage_ids = Vec::new();
+        let mut source = None;
+        let mut reduced_unfiltered = None;
+        while engine.stage != Stage::Done {
+            let previous = engine.stage;
+            let before = engine.progress();
+            if matches!(previous, Stage::PreviewFilter | Stage::PreviewRgbError) {
+                stage_ids.push(engine.stage());
+            }
+            engine.step().unwrap();
+            if previous == Stage::PreviewFilter && engine.stage == Stage::PreviewFilter {
+                let after = engine.progress();
+                assert!(after.0 > before.0 && after.0 - before.0 <= 1);
+            }
+            if previous == Stage::Classify && engine.stage == Stage::Analyze {
+                source = Some((
+                    engine.source_y.clone(),
+                    engine.source_u.clone(),
+                    engine.source_v.clone(),
+                ));
+            }
+            if previous == Stage::PreviewRateBlocks
+                && engine.preview_trial == PreviewTrial::Reduced
+                && engine.stage == Stage::PreviewFilter
+            {
+                reduced_unfiltered = Some((
+                    engine.reconstructed_y.clone(),
+                    engine.reconstructed_u.clone(),
+                    engine.reconstructed_v.clone(),
+                    engine.blocks.clone(),
+                ));
+            }
+            if previous == Stage::Analyze
+                && engine.stage == Stage::CollectStats
+                && engine.preview_trial == PreviewTrial::FinalReduced
+            {
+                let (y, u, v, blocks) = reduced_unfiltered.as_ref().unwrap();
+                assert_eq!(&engine.reconstructed_y, y);
+                assert_eq!(&engine.reconstructed_u, u);
+                assert_eq!(&engine.reconstructed_v, v);
+                assert_eq!(&engine.blocks, blocks);
+            }
+            if previous == Stage::PreviewRgbError {
+                if engine.stage == Stage::PreviewRgbError {
+                    let after = engine.progress();
+                    assert_eq!(after.1, 407 * 277);
+                    assert!(after.0 > before.0 && after.0 - before.0 <= 1_024);
+                } else {
+                    metrics.push((
+                        engine.preview_comparison.visible_error,
+                        engine.preview_comparison.weighted_rate,
+                    ));
+                    scores.push(
+                        engine
+                            .preview_comparison
+                            .score(engine.preview_header_rate.cost, 32, 60)
+                            .unwrap(),
+                    );
+                    let (y, u, v) = source.as_ref().unwrap();
+                    assert_eq!(&engine.source_y, y);
+                    assert_eq!(&engine.source_u, u);
+                    assert_eq!(&engine.source_v, v);
+                }
+            }
+            if engine.stage != Stage::Done {
+                assert!(engine.output().is_empty());
+            }
+        }
+        assert_eq!(metrics.len(), 2);
+        stage_ids.sort_unstable();
+        stage_ids.dedup();
+        assert_eq!(stage_ids, [54, 55, 56, 57]);
+        assert_eq!(metrics[0].0, 2_623_431_528);
+        assert_eq!(metrics[1].0, 2_610_868_808);
+        assert_eq!(scores, [710_750_621_568, 708_626_067_008]);
+        assert_eq!(engine.preview_trial, PreviewTrial::FinalReduced);
+        assert_eq!(engine.output().len(), 40_869);
+        assert_eq!(
+            engine.output(),
+            encode_textured(&input, 407, 277, 407 * 4, 0, 60).unwrap()
+        );
+    }
+
     #[test]
     fn high_loss_profile_preview_selects_by_content_and_resets_before_final_analysis() {
-        for (width, height, reduced) in [(3usize, 7usize, false), (373, 263, true)] {
+        for (width, height) in [(3usize, 7usize), (373, 263)] {
             let mut input = Vec::with_capacity(width * height * 4);
             for y in 0..height {
                 for x in 0..width {
@@ -9266,10 +9381,33 @@ mod tests {
             let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
             let mut preview_resets = 0;
             let mut reset_steps = 0;
+            let mut original_unfiltered = None;
             while engine.stage != Stage::Done {
                 let previous = engine.stage;
                 let (before, _) = engine.progress();
                 engine.step().unwrap();
+                if previous == Stage::PreviewRateBlocks
+                    && engine.preview_trial == PreviewTrial::Original
+                    && engine.stage == Stage::PreviewFilter
+                {
+                    original_unfiltered = Some((
+                        engine.reconstructed_y.clone(),
+                        engine.reconstructed_u.clone(),
+                        engine.reconstructed_v.clone(),
+                        engine.blocks.clone(),
+                    ));
+                }
+                if width == 3
+                    && previous == Stage::Analyze
+                    && engine.stage == Stage::CollectStats
+                    && engine.preview_trial == PreviewTrial::FinalOriginal
+                {
+                    let (y, u, v, blocks) = original_unfiltered.as_ref().unwrap();
+                    assert_eq!(&engine.reconstructed_y, y);
+                    assert_eq!(&engine.reconstructed_u, u);
+                    assert_eq!(&engine.reconstructed_v, v);
+                    assert_eq!(&engine.blocks, blocks);
+                }
                 if previous == Stage::PreviewReset {
                     reset_steps += 1;
                     if engine.stage == Stage::PreviewReset {
@@ -9289,9 +9427,16 @@ mod tests {
                 }
             }
             assert!(engine.high_chroma_loss);
-            assert_eq!(preview_resets, if reduced { 1 } else { 2 });
+            assert_eq!(preview_resets, 2);
             assert!(reset_steps >= 8, "width={width} reset_steps={reset_steps}");
-            assert_eq!(engine.preview_trial == PreviewTrial::Reduced, reduced);
+            let reduced = engine.preview_trial == PreviewTrial::FinalReduced;
+            if width == 3 {
+                assert!(!reduced);
+            }
+            assert!(matches!(
+                engine.preview_trial,
+                PreviewTrial::FinalOriginal | PreviewTrial::FinalReduced
+            ));
             assert_eq!(
                 engine.segments.qindex_for(segmentation::TEXTURED),
                 if reduced { 28 } else { 32 }
@@ -9334,12 +9479,12 @@ mod tests {
         let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
         assert!(matches!(
             engine.preview_trial,
-            PreviewTrial::Reduced | PreviewTrial::FinalOriginal
+            PreviewTrial::FinalReduced | PreviewTrial::FinalOriginal
         ));
         assert!(engine.neutral_chroma);
         assert_eq!(
             engine.segments.qindex_for(segmentation::TEXTURED),
-            if engine.preview_trial == PreviewTrial::Reduced {
+            if engine.preview_trial == PreviewTrial::FinalReduced {
                 30
             } else {
                 34

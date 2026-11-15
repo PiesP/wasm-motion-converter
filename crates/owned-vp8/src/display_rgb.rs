@@ -453,6 +453,23 @@ impl<'a> CompleteFrame<'a> {
             self.chroma_sum(self.v, h, v),
         )
     }
+
+    // A profile trial owns a completed, filtered reconstruction. Keep the
+    // objective in the visible RGB domain and bound each host step to pixels.
+    pub(super) fn squared_error_chunk(&self, start: usize, count: usize) -> u64 {
+        let mut error = 0u64;
+        for pixel in start..start + count {
+            let x = pixel % self.width;
+            let y = pixel / self.width;
+            let source = self.original.at(x, y);
+            let rendered = self.rendered(x, y);
+            for channel in 0..3 {
+                let difference = i32::from(source[channel]) - i32::from(rendered[channel]);
+                error += (difference * difference) as u64;
+            }
+        }
+        error
+    }
 }
 
 pub(super) const MAX_QUALITY_CACHE_BYTES: usize = 1024 * 1024;
@@ -1138,6 +1155,78 @@ mod tests {
             .at(0, 1),
             [40, 50, 60]
         );
+    }
+
+    #[test]
+    fn completed_rgb_squared_error_chunks_cover_layouts_strides_and_tails() {
+        for (width, height) in [(1usize, 1usize), (5, 9), (17, 13), (33, 31)] {
+            let padded_w = width.div_ceil(16) * 16;
+            let padded_h = height.div_ceil(16) * 16;
+            let y: Vec<u8> = (0..padded_w * padded_h)
+                .map(|index| (index * 37 + 31) as u8)
+                .collect();
+            let u: Vec<u8> = (0..padded_w * padded_h / 4)
+                .map(|index| (index * 17 + 89) as u8)
+                .collect();
+            let v: Vec<u8> = (0..padded_w * padded_h / 4)
+                .map(|index| (index * 29 + 123) as u8)
+                .collect();
+            for layout in 0..=4 {
+                let bpp = if layout == 4 { 3 } else { 4 };
+                let stride = width * bpp + 5;
+                let mut pixels = vec![42u8; stride * height];
+                for row in 0..height {
+                    for col in 0..width {
+                        let rgb = [
+                            (col * 31 + row * 7 + 11) as u8,
+                            (col * 13 + row * 19 + 23) as u8,
+                            (col * 3 + row * 43 + 47) as u8,
+                        ];
+                        let at = row * stride + col * bpp;
+                        let stored = if layout == 1 || layout == 3 {
+                            [rgb[2], rgb[1], rgb[0]]
+                        } else {
+                            rgb
+                        };
+                        pixels[at..at + 3].copy_from_slice(&stored);
+                    }
+                }
+                let frame = CompleteFrame::checked(
+                    width,
+                    height,
+                    padded_w,
+                    Original {
+                        pixels: &pixels,
+                        stride,
+                        layout,
+                    },
+                    &y,
+                    &u,
+                    &v,
+                )
+                .unwrap();
+                let mut scalar = 0u64;
+                for row in 0..height {
+                    for col in 0..width {
+                        let source = frame.original.at(col, row);
+                        let rendered = frame.rendered(col, row);
+                        for channel in 0..3 {
+                            let difference =
+                                i32::from(source[channel]) - i32::from(rendered[channel]);
+                            scalar += (difference * difference) as u64;
+                        }
+                    }
+                }
+                let mut chunked = 0u64;
+                let mut cursor = 0;
+                while cursor < width * height {
+                    let count = (width * height - cursor).min(17);
+                    chunked += frame.squared_error_chunk(cursor, count);
+                    cursor += count;
+                }
+                assert_eq!(chunked, scalar, "{width}x{height} layout={layout}");
+            }
+        }
     }
 
     #[test]

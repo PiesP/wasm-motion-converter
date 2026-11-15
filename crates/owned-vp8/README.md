@@ -29,6 +29,20 @@ selects refinement, otherwise original analysis is retained or reconstructed.
 The source import, four segment IDs and resource ceilings are unchanged.
 These engineering decisions have no independent product qualification claim.
 
+At q60, the existing source-derived high-chroma-loss predicate compares the
+Original and Reduced profiles. Each completed trial is filtered after its
+analysis and rate statistics are finished. Its visible owned-renderer RGB
+squared error is multiplied by 256 and added to the existing block and header
+rate terms weighted with Original qindices; exact ties retain Original. This is
+a prospective change of distortion domain and effective rate balance. Source
+YUV remains live through both trials and the final selected-profile analysis.
+The filtered trial reconstruction is discarded through the bounded reset, and
+that third analysis restores the selected unfiltered records and prediction
+state before counting or emission. The ABI reports distinct Original and
+Reduced filter/RGB stages and charges one filter macroblock or at most 1,024
+RGB pixels per step without another full-frame buffer. This policy
+does not change ordinary filtered-SSIM refinement or qualify product fidelity.
+
 The finest smooth segment also preserves DC precision when all three imported
 Y/U/V tile ranges are exactly zero. Smooth colored tiles with a one-level range
 retain the separate flat-class rate allocation. This uses bounded per-tile range
