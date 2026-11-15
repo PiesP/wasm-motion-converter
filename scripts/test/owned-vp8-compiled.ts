@@ -9,6 +9,7 @@ import { setImmediate } from 'node:timers/promises';
 
 import { compileVp8, Vp8TestJob } from './owned-vp8-v2-abi.ts';
 import { FIXTURES, generateFixture, QUALITIES } from './owned-vp8-v2-fixtures.ts';
+import { generateV7Fixture } from './owned-vp8-v7-fixtures.ts';
 
 const wasmPath = resolve('crates/owned-vp8/owned-vp8.wasm');
 const compiled = compileVp8(readFileSync(wasmPath));
@@ -39,12 +40,39 @@ async function check(
   stride: number,
   layout: number,
   quality: number,
-  id: string
+  id: string,
+  onStage?: (stage: number) => void
 ): Promise<void> {
   const job = new Vp8TestJob(compiled);
   try {
     const request = { width, height, stride, layout, quality };
-    const result = await job.encode(pixels, request);
+    let previousStage = -1;
+    let previousDone = 0;
+    const result = await job.encode(pixels, request, undefined, (record) => {
+      if (
+        (record.stage >= 27 && record.stage <= 40) ||
+        (record.stage >= 41 && record.stage <= 53)
+      ) {
+        assert.equal(record.outputLength, 0, 'Refinement stages cannot publish output');
+        assert.equal(record.outputPointer, 0, 'Refinement stages cannot lease output');
+      }
+      if (record.stage === previousStage && record.stage >= 41 && record.stage <= 53) {
+        const bound = [42, 46, 50].includes(record.stage)
+          ? 65_536
+          : [43, 47, 51].includes(record.stage)
+            ? 1
+            : [44, 48, 52].includes(record.stage)
+              ? 64
+              : 546;
+        assert.ok(
+          record.done >= previousDone && record.done - previousDone <= bound,
+          `Quality stage ${record.stage} must progress within its work bound`
+        );
+      }
+      previousStage = record.stage;
+      previousDone = record.done;
+      onStage?.(record.stage);
+    });
     assert.deepEqual(
       (await job.encode(pixels, request)).bytes,
       result.bytes,
@@ -200,26 +228,21 @@ async function cancellation(): Promise<object> {
   }
   let observed = false;
   let stoppedAt = 0;
-  const timer = setInterval(() => {
-    const record = job.record();
-    if (record.phase === 4 && record.stage === 2 && record.done > 0) {
-      observed = true;
-      stoppedAt = performance.now();
-      controller.abort();
-    }
-  }, 1);
-  try {
-    await assert.rejects(
-      job.encode(
-        pixels,
-        { width, height, stride: width * 4, layout: 0, quality: 75 },
-        controller.signal
-      ),
-      { name: 'AbortError' }
-    );
-  } finally {
-    clearInterval(timer);
-  }
+  await assert.rejects(
+    job.encode(
+      pixels,
+      { width, height, stride: width * 4, layout: 0, quality: 75 },
+      controller.signal,
+      (record) => {
+        if (!observed && record.phase === 4 && record.stage === 2 && record.done > 0) {
+          observed = true;
+          stoppedAt = performance.now();
+          controller.abort();
+        }
+      }
+    ),
+    { name: 'AbortError' }
+  );
   assert.ok(observed, 'Cancellation must observe actual owned macroblock analysis');
   assert.equal(job.record().outputLength, 0);
   const idleMs = performance.now() - stoppedAt;
@@ -246,8 +269,44 @@ async function cancellation(): Promise<object> {
   };
 }
 
+async function qualityCancellation(): Promise<object> {
+  const fixture = generateV7Fixture('fresh7-tiny-5x1');
+  const job = new Vp8TestJob(compiled, 11);
+  const controller = new AbortController();
+  let observed = false;
+  try {
+    await assert.rejects(
+      job.encode(
+        fixture.pixels,
+        {
+          width: fixture.width,
+          height: fixture.height,
+          stride: fixture.stride,
+          layout: 0,
+          quality: 85,
+        },
+        controller.signal,
+        (record) => {
+          if (!observed && record.phase === 4 && record.stage === 42) {
+            observed = true;
+            controller.abort();
+          }
+        }
+      ),
+      { name: 'AbortError' }
+    );
+    assert.ok(observed, 'Cancellation must observe the filtered-copy stage');
+    assert.equal(job.record().outputLength, 0);
+    assert.equal(job.record().outputPointer, 0);
+  } finally {
+    job.retire();
+  }
+  return { filteredCopyObserved: observed, noOutputLease: true };
+}
+
 try {
   const largeOnly = process.argv.includes('--large-only');
+  let leaseCheck = 'NOT_RUN';
   if (!largeOnly) {
     for (const [width, height, layout] of [
       [16, 16, 0],
@@ -273,6 +332,88 @@ try {
           fixture.id
         );
     }
+    const frontierWidth = 33;
+    const frontierHeight = 33;
+    const frontier = new Uint8Array(frontierWidth * frontierHeight * 4);
+    for (let y = 0; y < frontierHeight; y++)
+      for (let x = 0; x < frontierWidth; x++) {
+        const gray = 48 + ((x * 9 + y * 13 + ((x * y) % 7) * 3) % 160);
+        frontier.set(
+          [gray + ((x * 5 + y * 3) % 17), gray, gray - ((x * 3 + y * 7) % 13), 255],
+          (y * frontierWidth + x) * 4
+        );
+      }
+    const refinementStages = new Set<number>();
+    for (const quality of QUALITIES)
+      await check(
+        frontier,
+        frontierWidth,
+        frontierHeight,
+        frontierWidth * 4,
+        0,
+        quality,
+        'refinement-frontier-33x33',
+        (stage) => refinementStages.add(stage)
+      );
+    for (const [id, quality] of [
+      ['fresh7-tiny-2x9', 60],
+      ['fresh7-tiny-5x1', 85],
+      ['fresh7-tiny-1x11', 75],
+    ] as const) {
+      const fixture = generateV7Fixture(id);
+      await check(
+        fixture.pixels,
+        fixture.width,
+        fixture.height,
+        fixture.stride,
+        0,
+        quality,
+        id,
+        (stage) => refinementStages.add(stage)
+      );
+    }
+    // Synthetic 7x1 control: the already-counted extended frame earns one byte.
+    const tinyChroma = Uint8Array.from([
+      244, 29, 171, 255, 89, 61, 239, 255, 89, 61, 239, 255, 89, 61, 239, 255, 244, 29, 171, 255,
+      89, 61, 239, 255, 89, 61, 239, 255,
+    ]);
+    assert.equal(
+      sha(tinyChroma),
+      '98327a8e2b199892e85c2ff74865b026c6b4e478c3711a015a19590e02cf1c0e'
+    );
+    await check(tinyChroma, 7, 1, 28, 0, 85, 'synthetic-tiny-chroma-7x1');
+    const tinyChromaResult = results.at(-1) as { rawBytes: number; sha256: string };
+    assert.equal(tinyChromaResult.rawBytes, 69);
+    assert.equal(
+      tinyChromaResult.sha256,
+      '44311bcce84a2fc6aa42ee2c56b586672ccb7ed66edca1d4f8faf8a9b4d676fa'
+    );
+    for (const decoder of ['vp8', 'libvpx']) {
+      const yuv = execFileSync('ffmpeg', [
+        '-v',
+        'error',
+        '-c:v',
+        decoder,
+        '-i',
+        join(root, 'synthetic-tiny-chroma-7x1-q85.ivf'),
+        '-frames:v',
+        '1',
+        '-f',
+        'rawvideo',
+        '-pix_fmt',
+        'yuv420p',
+        'pipe:1',
+      ]);
+      assert.equal(sha(yuv), '4f072056a8e663df2a1614af55583af59e6cb88b8aec9ad13f9c41b5f674f70b');
+    }
+    assert.deepEqual(
+      results
+        .filter((entry) => (entry as { id: string }).id.startsWith('fresh7-tiny-'))
+        .map((entry) => (entry as { rawBytes: number }).rawBytes),
+      [99, 81, 92]
+    );
+    for (const stage of [36, 37, 38, 39, 40, 27, 28, 29, 35, 42, 44, 46, 48, 50, 52, 53])
+      assert.ok(refinementStages.has(stage), `Compiled ABI2 must reach refinement stage ${stage}`);
     for (const layout of [0, 1, 2, 3, 4]) {
       const width = 17;
       const height = 13;
@@ -304,6 +445,7 @@ try {
       await check(pixels, width, height, width * 4, 0, 75, `axis-${width}x${height}`);
     }
     await leases();
+    leaseCheck = 'pending-input/output-stability-and-stale-publication-passed';
   }
   let cancel: object | null = null;
   if (largeOnly) {
@@ -321,7 +463,7 @@ try {
       'Resource probe must cross the retired prototype output cap'
     );
   } else {
-    cancel = await cancellation();
+    cancel = { analysis: await cancellation(), quality: await qualityCancellation() };
   }
   console.log(
     JSON.stringify(
@@ -331,7 +473,7 @@ try {
         wasmSha256: compiled.sha256,
         node: process.version,
         ffmpeg: execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0],
-        leases: 'pending-input/output-stability-and-stale-publication-passed',
+        leases: leaseCheck,
         cancellation: cancel,
         results,
       },

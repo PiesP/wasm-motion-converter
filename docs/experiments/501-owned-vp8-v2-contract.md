@@ -153,8 +153,103 @@ All PSNR, SSIM, size, performance, resource and delivery thresholds remain
 unchanged. Following its rejected evaluation, select `--cohort corrected-v3`
 for tuning or explicit `--regression`; it is no longer fresh acceptance.
 Retain initial-v1 and corrected-v2 as explicit regression cohorts.
-See [the frozen candidate result](501-owned-vp8-v3-result.md). No fresh successor
-cohort is currently frozen; do not relabel any observed condition as fresh.
+See [the frozen candidate result](501-owned-vp8-v3-result.md). At that result no fresh successor
+cohort had been frozen; do not relabel any observed condition as fresh.
+
+## Prospective corrected-v4 source-only freeze
+
+After corrected-v3 passed 43/45 fresh conditions and failed the q60/q85 size
+gates on its admitted large fixture, the old three held-out cohorts are exposed
+regression inputs. Before any corrected-v4 comparator or candidate output,
+`501-owned-vp8-v4-fixtures.json` froze 15 new held-out inputs / 45 conditions.
+The source-only generator `scripts/test/owned-vp8-v4-fixtures.ts` uses distinct
+formulas, seed and geometry for grayscale, gradient, chroma, text, noise, tiny,
+row, column, near-cap large and X-layout records. It also binds a new CC0
+photograph, two previously unobserved frames 73 and 169 of the pinned V8 video,
+and one exact duplicate hold of frame 73. See
+`501-owned-vp8-v4-photo-PROVENANCE.md` for the original photo license and digest.
+The original source is privately staged outside Git and public assets.
+
+The existing 15 tuning inputs and all numerical quality, size, performance,
+resource and delivery gates are unchanged. Its first frozen evaluation rejected
+the candidate at44/45; see [the result](501-owned-vp8-v4-result.md).
+All four observed held-out cohorts now require `--regression`; at that result no
+fresh successor had been frozen. Supply `--fresh-photo PATH` for
+the v4 photograph and `--video PATH` for the pinned video. Preserve the v4
+manifest, generator, input bytes and every outcome after first evaluation;
+subsequent v4 runs become exposed regression evidence and must require the
+explicit regression purpose. Source-only freeze does not qualify any codec,
+browser route, Windows result or product adoption.
+
+## Prospective corrected-v5 source-only freeze
+
+Following the corrected-v4 44/45 rejection at the q60 SSIM gate on its tiny
+fixture, `501-owned-vp8-v5-fixtures.json` freezes 18 new held-out inputs and
+54 conditions before any corrected-v5 codec output. Its source-only generator
+`scripts/test/owned-vp8-v5-fixtures.ts` binds distinct grayscale, gradient,
+chroma, text, noise, three independent tiny color patterns (2 × 7, 5 × 3,
+7 × 2), one-row and one-column patterns, a near-cap large frame, opaque BGRA
+and RGBX layouts, a new CC0 photograph and its nonoverlapping detail region,
+two previously unobserved frames 24 and 137 of the pinned V8 video, and an
+exact duplicate hold of frame 24. The photo's original identity, license and
+private staging are in `501-owned-vp8-v5-photo-PROVENANCE.md`; the manifest binds
+the pixel hashes, source hashes, decode filters and prior manifest identities.
+
+The existing 15 tuning inputs and all numerical quality, size, performance,
+resource and delivery gates remain unchanged. Its first frozen candidate
+evaluation passed 50/54 conditions and was rejected; see
+[the retained result](501-owned-vp8-v5-result.md). All v1-v5 held-out inputs are
+now exposed regression evidence and require `--regression`; at that result no
+fresh successor had been frozen. Use
+`--cohort corrected-v5 --regression --fresh-photo PATH --video PATH` for the
+preserved source identities. Preserve all original
+manifests, generators, inputs, thresholds and outcomes. This source-only freeze
+and later regression use establish no browser, Windows or product qualification.
+
+## Prospective corrected-v6 source-only freeze
+
+`501-owned-vp8-v6-fixtures.json` freezes 18 new held-out inputs / 54 conditions
+at q60/75/85 before any corrected-v6 codec output. The source-only generator
+`scripts/test/owned-vp8-v6-fixtures.ts` provides new seeded/formula grayscale,
+gradient, chroma-edge, colored-text and noise pixels; three tiny/odd patterns
+(1 × 9, 3 × 7, 9 × 1), separate one-row and one-column controls, a near-cap
+4080 × 2467 frame, opaque BGRA and RGBX layouts, a new CC0 photograph and
+nonoverlapping detail crop, unobserved V8 frames 32 and 181, and an exact
+duplicate hold of frame 32. [Photo provenance](501-owned-vp8-v6-photo-PROVENANCE.md)
+binds the pinned original; the manifest binds its bytes and decoded pixels,
+the V8 source, decode filters, generator and every earlier manifest hash.
+
+The complete `--cohort corrected-v6 --acceptance` set served the first frozen
+candidate evaluation: 53/54 conditions passed and the candidate was rejected;
+see [the retained result](501-owned-vp8-v6-result.md). Explicit acceptance
+subsets fail before evidence creation or codec initialization. All v1-v6
+held-out inputs now require `--regression`; the same 15 tuning inputs and all
+numeric gates remain unchanged. At that result no fresh successor had been frozen.
+Preserve the source-only manifest, generator, originals and original gates.
+Fixed-pixel evidence establishes no browser, Windows, or product qualification.
+
+## Prospective corrected-v7 source-only freeze
+
+`501-owned-vp8-v7-fixtures.json` freezes 18 new held-out inputs / 54 conditions
+at q60/75/85 before any corrected-v7 codec output. The independent source-only
+generator `scripts/test/owned-vp8-v7-fixtures.ts` uses a new seed, formulas and
+geometry for grayscale, gradient, chroma edges, colored text, noise, three
+tiny/odd controls (2 × 9, 5 × 1, 1 × 11), separate one-row and one-column
+controls, an admitted 4110 × 2449 near-cap frame, opaque BGRA and RGBX layouts,
+a new CC0 photograph with a nonoverlapping detail crop, previously unselected
+V8 frames 47 and 184, and an exact duplicate hold of frame 47. The
+[photo provenance](501-owned-vp8-v7-photo-PROVENANCE.md) binds its pinned
+original; the manifest binds source bytes, decoded pixels, FFmpeg filters,
+generator and every previous manifest hash.
+
+The complete set served its first frozen candidate evaluation: 51/54 conditions
+passed and the candidate was rejected; see
+[the retained result](501-owned-vp8-v7-result.md). Explicit acceptance subsets
+fail before evidence creation or codec initialization. All v1-v7 held-out inputs
+now require `--regression`; no fresh successor is currently frozen. The same
+15 tuning inputs and every numeric gate remain unchanged. Preserve the original
+source-only freeze, candidate, inputs and failed results. Fixed-pixel evidence
+does not qualify a browser, Windows environment, or product route.
 
 ## Resources and adoption
 
@@ -191,6 +286,15 @@ exact baseline through Infinity/NaN subtraction. Thresholds remain unchanged.
 These fixed-pixel checks do not qualify product timing, animation or memory.
 
 ## Discrepancy inventory
+
+- Fixed during low-preset UV calibration: `crates/owned-vp8/src/presets.rs`
+  described tuning-only calibration while the execution ledger also records
+  explicitly exposed regression controls after rejected candidates. Its comment
+  now distinguishes those controls from fresh acceptance. All failures remain.
+- Fixed during the corrected-v4 freeze: the exposed-input diagnostic in
+  `scripts/test/owned-vp8-v2-compare.ts` still said no fresh cohort was frozen
+  after admitting v4. That historical diagnostic was corrected; all v1-v7
+  cohorts now require explicit regression after their own evaluations.
 
 - Fixed after the first owned-load CI run: the comment in
   `validation/windows/webp-initialization.ts` assumed a WebP-format new-file

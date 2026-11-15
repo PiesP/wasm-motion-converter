@@ -29,6 +29,11 @@ selects refinement, otherwise original analysis is retained or reconstructed.
 The source import, four segment IDs and resource ceilings are unchanged.
 These engineering decisions have no independent product qualification claim.
 
+The finest smooth segment also preserves DC precision when all three imported
+Y/U/V tile ranges are exactly zero. Smooth colored tiles with a one-level range
+retain the separate flat-class rate allocation. This uses bounded per-tile range
+scans and the existing four IDs; no geometry-specific rule or extra segment is used.
+
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
 sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
 tables are format constants from sections 13.4, 13.5 and 14.1 respectively;
@@ -76,8 +81,37 @@ capacity can exceed logical input length and must be admitted explicitly.
 
 `FrameEncoder` in `src/textured.rs` stages initialization, color import,
 macroblock analysis, exact partition-length counting, frozen-decision emission,
-finalization and assembly. Finalized sizes are published at a separate preparation barrier before output
-allocation, so the host can reserve the new plan before advancing;
+finalization and assembly. Visible UV refinement retains the mandatory one-edit
+choice per macroblock and spends at most 128 additional proposal evaluations per
+frame, assigned by uniform per-macroblock quotas. Its private search uses at most
+64 directed coefficient moves per macroblock, a two-path beam and four distinct
+coefficient positions per path. Each additional proposal takes one bounded ABI
+step. Complete trials score the combined U/V reconstruction; the search commits
+only a final state with the original skip syntax and coefficient frontier.
+
+Exact byte counting independently evaluates the extended choice, the mandatory
+choices captured during the same analysis, and the unrefined records when those
+variants differ. After each count, the encoder copies completed reconstruction
+into the former source YUV slots, applies the signaled loop filter in raster
+order, and scores visible RGB with streaming SSIM moments. With legal unrefined
+output, it first finds the best finite score among legal variants no larger than
+that output. A legal refined variant exactly one byte larger is eligible only
+when its score strictly exceeds that best score. It then selects the highest
+finite score among eligible variants; variants two or more bytes larger remain
+ineligible. This one-byte admission window does not raise the output or
+partition safety limits. If unrefined output is illegal, it selects the highest
+finite score among legal refined variants or returns the unrefined limit error.
+Exact score ties prefer extended, then captured mandatory, then unrefined. The RGB view
+approximates decoder conversion and cannot replace external quality gates.
+A bounded coefficient log and
+captured-choice overrides reverse and reapply reconstruction between counts;
+the unfiltered reconstruction remains intact for replay. One macroblock of
+filtering, 64 KiB of copying, or 64 four-by-four metric blocks run per ABI step.
+The two-row moment cache is capped at 1 MiB inside the unchanged 8 MiB scratch
+charge and releases at most 64 KiB per step. Metadata is released before the
+single output allocation. Finalized sizes
+are published at a separate preparation barrier after selection, so the host
+can reserve the new plan before advancing;
 first-partition overflow is separate from total output overflow. Output remains
 hidden until arithmetic coding and final assembly finish. Carry scans and finalization resume in bounded units; emission retains at most
 8192 two-byte operations per partition for one macroblock, drains at most 1024

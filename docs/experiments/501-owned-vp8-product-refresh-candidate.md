@@ -1,5 +1,9 @@
 # Product engineering refresh candidate, quality hold retained
 
+Historical product snapshot at `16d8c0cc`. The later filtered-refinement import
+is recorded in [the byte-window candidate](501-owned-vp8-product-byte-window-candidate.md);
+its checks do not retroactively qualify this snapshot.
+
 This refresh prepares M3/product-path diagnostics, **not adoption**. Main and
 conversion Worker use the narrow existing owned adapter and animation mux in
 this unmerged candidate branch. Master still uses wasm-webp.
