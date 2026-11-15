@@ -1232,7 +1232,10 @@ fn encode_observed(
             segment_ids.push(id);
         }
     }
-    let segments = SegmentConfig::from_counts(quality, class_counts, count, neutral_chroma);
+    let high_chroma_loss =
+        crate::presets::high_chroma_loss(quality, rgb_error_sum, width as u32, height as u32);
+    let segments = SegmentConfig::from_counts(quality, class_counts, count, neutral_chroma)
+        .with_high_chroma_loss_luma(high_chroma_loss);
     let deltas = crate::presets::frame_deltas(quality, rgb_error_sum, width as u32, height as u32);
     let mut header_budget = HeaderBudget::new(
         count,
@@ -1996,6 +1999,7 @@ pub(crate) struct FrameEncoder {
     class_counts: [usize; 4],
     neutral_chroma: bool,
     rgb_error_sum: u64,
+    high_chroma_loss: bool,
     deltas: Deltas,
     segments: SegmentConfig,
     header_budget: HeaderBudget,
@@ -2095,6 +2099,7 @@ impl FrameEncoder {
             class_counts: [0; 4],
             neutral_chroma: true,
             rgb_error_sum: 0,
+            high_chroma_loss: false,
             deltas: crate::presets::deltas(request.quality),
             segments: SegmentConfig::nonsegmented(crate::presets::qindex(request.quality)),
             header_budget: HeaderBudget::new(
@@ -2289,6 +2294,12 @@ impl FrameEncoder {
         }
         self.cursor += 1;
         if self.cursor == self.plan.padded_height as usize / 2 {
+            self.high_chroma_loss = crate::presets::high_chroma_loss(
+                self.request.quality,
+                self.rgb_error_sum,
+                self.request.width,
+                self.request.height,
+            );
             self.deltas = crate::presets::frame_deltas(
                 self.request.quality,
                 self.rgb_error_sum,
@@ -2332,7 +2343,8 @@ impl FrameEncoder {
                 self.class_counts,
                 self.blocks.len(),
                 self.neutral_chroma,
-            );
+            )
+            .with_high_chroma_loss_luma(self.high_chroma_loss);
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
                 self.segments,
@@ -4962,11 +4974,14 @@ mod tests {
                 let plan = ResourcePlan::checked(request).unwrap();
                 let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
                 assert!(engine.rgb_error_sum > 4096 * 3 * (width * height) as u64);
+                assert!(engine.high_chroma_loss);
                 assert_eq!(
                     (engine.deltas.uv_dc, engine.deltas.uv_ac),
-                    crate::presets::HIGH_CHROMA_LOSS_PROFILES
-                        [crate::presets::ACTIVE_HIGH_CHROMA_LOSS_PROFILE]
+                    crate::presets::HIGH_CHROMA_LOSS_UV_DELTAS
                 );
+                assert_eq!(engine.segments.qindex, [2, 14, 28, 28]);
+                assert!(!engine.segments.enabled);
+                assert_eq!(engine.segments.base_qindex, 28);
                 assert_eq!(engine.output(), expected, "layout={layout} frame={frame}");
             }
         }
@@ -4977,7 +4992,9 @@ mod tests {
         };
         let plan = ResourcePlan::checked(request).unwrap();
         let engine = run_engine(FrameEncoder::new(request, neutral, plan).unwrap());
+        assert!(!engine.high_chroma_loss);
         assert_eq!(engine.deltas, crate::presets::deltas(60));
+        assert_eq!(engine.segments.qindex_for(segmentation::FINE_SMOOTH), 6);
     }
 
     #[test]
@@ -5003,9 +5020,10 @@ mod tests {
         let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
         assert_eq!(
             (engine.deltas.uv_dc, engine.deltas.uv_ac),
-            crate::presets::HIGH_CHROMA_LOSS_PROFILES
-                [crate::presets::ACTIVE_HIGH_CHROMA_LOSS_PROFILE]
+            crate::presets::HIGH_CHROMA_LOSS_UV_DELTAS
         );
+        assert!(engine.neutral_chroma);
+        assert_eq!(engine.segments.qindex_for(segmentation::TEXTURED), 30);
         let (y, u, v, padded_width) = engine.reconstruction();
         let expected =
             filtered_visible_yuv(y, u, v, padded_width, 16, 16, &engine.blocks, engine.filter);

@@ -73,6 +73,22 @@ impl Config {
         self.qindex[id as usize]
     }
 
+    pub(crate) fn with_high_chroma_loss_luma(mut self, high_loss: bool) -> Self {
+        if high_loss {
+            let reduction = presets::HIGH_CHROMA_LOSS_QINDEX_REDUCTION;
+            self.base_qindex = self
+                .base_qindex
+                .checked_sub(reduction)
+                .expect("q60 base preset is at least four");
+            self.qindex = self.qindex.map(|qindex| {
+                qindex
+                    .checked_sub(reduction)
+                    .expect("q60 segment presets are at least four")
+            });
+        }
+        self
+    }
+
     pub(crate) fn write_header(
         self,
         sink: &mut impl BoolSink,
@@ -244,6 +260,51 @@ mod tests {
                 );
                 assert_eq!(color.enabled, mono.enabled);
                 assert_eq!(color.map_probabilities, mono.map_probabilities);
+            }
+        }
+    }
+
+    #[test]
+    fn high_loss_luma_shift_preserves_segment_map_and_uv_steps() {
+        use crate::ac_quant::{self, Deltas, Plane};
+
+        for neutral in [false, true] {
+            for counts in [
+                [1, 1, 1, 1],
+                [4, 0, 0, 0],
+                [0, 4, 0, 0],
+                [0, 0, 4, 0],
+                [0, 0, 0, 4],
+            ] {
+                let original = Config::from_counts(60, counts, 4, neutral);
+                let selected = original.with_high_chroma_loss_luma(true);
+                assert!(original.qindex.iter().all(|&qindex| qindex >= 6));
+                assert_eq!(selected.base_qindex, original.base_qindex - 4);
+                assert_eq!(selected.qindex, original.qindex.map(|qindex| qindex - 4));
+                assert_eq!(selected.map_probabilities, original.map_probabilities);
+                assert_eq!(selected.enabled, original.enabled);
+                assert_eq!(selected.active, original.active);
+                assert_eq!(
+                    original.with_high_chroma_loss_luma(false).qindex,
+                    original.qindex
+                );
+                let old_deltas = Deltas {
+                    uv_dc: -13,
+                    uv_ac: 0,
+                    ..Deltas::default()
+                };
+                let new_deltas = crate::presets::frame_deltas(60, 4096 * 3 * 5 * 3 + 1, 5, 3);
+                for id in 0..4 {
+                    let original_steps =
+                        ac_quant::steps(original.qindex[id] as u8, old_deltas, Plane::UV);
+                    let selected_steps =
+                        ac_quant::steps(selected.qindex[id] as u8, new_deltas, Plane::UV);
+                    assert_eq!(original_steps, selected_steps);
+                }
+                if counts == [0, 0, 0, 4] && !neutral {
+                    assert!(!selected.enabled);
+                    assert_eq!(selected.base_qindex, 28);
+                }
             }
         }
     }
