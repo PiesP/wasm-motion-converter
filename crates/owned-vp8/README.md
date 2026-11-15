@@ -27,11 +27,17 @@ The source color conversion and four segment IDs are unchanged. This allocation
 has no independent qualification claim.
 
 For normal q60 frames with non-neutral imported chroma and exclusively Textured
-source macroblocks, the photo allocation lowers the coding base and all segment
+source macroblocks, the photo allocation also requires each imported padded Y/U/V
+plane's frame mean absolute within-tile second difference to be at most 2. The
+classifier retains its separate maximum-curvature rule and four class IDs. The
+mean uses 448 Y and 96 U/V differences per macroblock, excludes tile boundaries,
+and is accumulated during source classification. Eligible frames lower the coding base and all segment
 qindices by four. It signals Y1 DC, Y2 DC and Y2 AC deltas of +4 and UV DC/AC
 deltas of -15/-7. The original qindices remain the mode-rate reference. Y1 AC
 also becomes finer because VP8 has no separate Y1 AC delta. Neutral, mixed-map
-and high-chroma-loss q60 frames keep their prior allocation.
+and high-chroma-loss q60 frames, or frames above the per-plane mean cutoff,
+keep their prior allocation. Padded edge replication can dilute the measured
+mean for narrow or odd inputs; this candidate does not assert visible-only parity.
 
 At q60, the existing source-derived high-chroma-loss predicate compares the
 Original and Reduced profiles. Each completed trial is filtered after its

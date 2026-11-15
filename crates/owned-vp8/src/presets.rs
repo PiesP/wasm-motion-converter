@@ -105,12 +105,14 @@ pub(crate) fn photo_q60_all_texture(
     total: usize,
     neutral_chroma: bool,
     high_chroma_loss: bool,
+    low_curvature: bool,
 ) -> bool {
     quality == 60
         && !neutral_chroma
         && !high_chroma_loss
         && total > 0
         && counts[crate::segmentation::TEXTURED as usize] == total
+        && low_curvature
 }
 
 pub(crate) fn photo_allocation_deltas(
@@ -181,7 +183,7 @@ mod tests {
     #[test]
     fn photo_allocation_requires_exact_source_profile() {
         let all = [0, 0, 0, 4];
-        assert!(photo_q60_all_texture(60, all, 4, false, false));
+        assert!(photo_q60_all_texture(60, all, 4, false, false, true));
         for (quality, counts, total, neutral, high_loss) in [
             (75, all, 4, false, false),
             (85, all, 4, false, false),
@@ -191,9 +193,10 @@ mod tests {
             (60, all, 4, false, true),
         ] {
             assert!(!photo_q60_all_texture(
-                quality, counts, total, neutral, high_loss
+                quality, counts, total, neutral, high_loss, true
             ));
         }
+        assert!(!photo_q60_all_texture(60, all, 4, false, false, false));
 
         let q60 = photo_allocation_deltas(deltas(60), true, false);
         assert_eq!(
