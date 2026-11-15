@@ -30,13 +30,18 @@ impl Config {
         }
     }
 
-    pub(crate) fn from_counts(quality: u32, counts: [usize; 4], total: usize) -> Self {
+    pub(crate) fn from_counts(
+        quality: u32,
+        counts: [usize; 4],
+        total: usize,
+        neutral_chroma: bool,
+    ) -> Self {
         debug_assert_eq!(counts.iter().sum::<usize>(), total);
         let qindex = [
             presets::SMOOTH_QINDEX,
             presets::chromatic_flat_qindex(quality),
             presets::chromatic_ramp_qindex(quality),
-            presets::textured_qindex(quality),
+            presets::textured_qindex(quality, neutral_chroma),
         ];
         let enabled = counts.iter().filter(|&&count| count > 0).count() > 1;
         let base_qindex = qindex[counts.iter().position(|&count| count > 0).unwrap_or(3)];
@@ -206,14 +211,33 @@ mod tests {
             {
                 let mut counts = [0; 4];
                 counts[id] = 4;
-                let single = Config::from_counts(quality, counts, 4);
+                let single = Config::from_counts(quality, counts, 4, false);
                 assert!(!single.enabled);
                 assert_eq!(single.base_qindex, qindex);
             }
-            let mixed = Config::from_counts(quality, [1, 1, 1, 1], 4);
+            let mixed = Config::from_counts(quality, [1, 1, 1, 1], 4, false);
             assert!(mixed.enabled);
             assert_eq!(mixed.qindex, [presets::SMOOTH_QINDEX, flat, ramp, textured]);
             assert_eq!(mixed.map_probabilities, [128, 128, 128]);
+        }
+    }
+
+    #[test]
+    fn neutral_chroma_changes_only_medium_textured_qindex() {
+        for (quality, chromatic, neutral) in [(60, 34, 34), (75, 28, 27), (85, 14, 14)] {
+            for counts in [[0, 0, 0, 1], [1, 1, 1, 1]] {
+                let total = counts.iter().sum();
+                let color = Config::from_counts(quality, counts, total, false);
+                let mono = Config::from_counts(quality, counts, total, true);
+                assert_eq!(color.qindex[TEXTURED as usize], chromatic);
+                assert_eq!(mono.qindex[TEXTURED as usize], neutral);
+                assert_eq!(
+                    color.qindex[..TEXTURED as usize],
+                    mono.qindex[..TEXTURED as usize]
+                );
+                assert_eq!(color.enabled, mono.enabled);
+                assert_eq!(color.map_probabilities, mono.map_probabilities);
+            }
         }
     }
 
@@ -261,7 +285,7 @@ mod tests {
                 Ok(())
             }
         }
-        let config = Config::from_counts(75, [1, 1, 1, 1], 4);
+        let config = Config::from_counts(75, [1, 1, 1, 1], 4, false);
         for (id, expected) in [
             (NEUTRAL_SMOOTH, [(128, false), (128, false)]),
             (CHROMATIC_FLAT, [(128, false), (128, true)]),
@@ -287,7 +311,7 @@ mod tests {
                 Ok(())
             }
         }
-        let config = Config::from_counts(75, [1, 0, 0, 1], 2);
+        let config = Config::from_counts(75, [1, 0, 0, 1], 2, false);
         let mut bits = Bits(Vec::new());
         config.write_header(&mut bits, 6).unwrap();
         // Four control bits and four quantizer feature records precede the

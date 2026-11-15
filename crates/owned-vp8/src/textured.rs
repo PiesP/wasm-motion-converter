@@ -920,6 +920,7 @@ fn encode_observed(
     let mut reconstructed_y = allocated(y_size)?;
     let mut reconstructed_u = allocated(uv_size)?;
     let mut reconstructed_v = allocated(uv_size)?;
+    let mut neutral_chroma = true;
     for cy in 0..padded_h / 2 {
         for cx in 0..uv_w {
             let mut rgb = [[0u8; 3]; 4];
@@ -937,6 +938,7 @@ fn encode_observed(
                 }
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
+            neutral_chroma &= u == 128 && v == 128;
             for dy in 0..2 {
                 for dx in 0..2 {
                     source_y[(cy * 2 + dy) * padded_w + cx * 2 + dx] = luma[dy * 2 + dx];
@@ -967,7 +969,7 @@ fn encode_observed(
             segment_ids.push(id);
         }
     }
-    let segments = SegmentConfig::from_counts(quality, class_counts, count);
+    let segments = SegmentConfig::from_counts(quality, class_counts, count, neutral_chroma);
     let deltas = crate::presets::deltas(quality);
     let mut header_budget = HeaderBudget::new(
         count,
@@ -1696,6 +1698,7 @@ pub(crate) struct FrameEncoder {
     reconstructed_v: Vec<u8>,
     blocks: Vec<Macroblock>,
     class_counts: [usize; 4],
+    neutral_chroma: bool,
     segments: SegmentConfig,
     header_budget: HeaderBudget,
     contexts: CoeffContexts,
@@ -1792,6 +1795,7 @@ impl FrameEncoder {
             reconstructed_v: Vec::new(),
             blocks,
             class_counts: [0; 4],
+            neutral_chroma: true,
             segments: SegmentConfig::nonsegmented(crate::presets::qindex(request.quality)),
             header_budget: HeaderBudget::new(
                 plan.macroblock_count as usize,
@@ -1964,6 +1968,7 @@ impl FrameEncoder {
                 }
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
+            self.neutral_chroma &= u == 128 && v == 128;
             for dy in 0..2 {
                 for dx in 0..2 {
                     self.source_y[(cy * 2 + dy) * y_stride + cx * 2 + dx] = luma[dy * 2 + dx];
@@ -2010,6 +2015,7 @@ impl FrameEncoder {
                 self.request.quality,
                 self.class_counts,
                 self.blocks.len(),
+                self.neutral_chroma,
             );
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
@@ -2608,7 +2614,7 @@ mod tests {
     #[test]
     fn first_partition_symbol_reservation_covers_every_mode_and_admitted_geometry() {
         let nonsegmented = SegmentConfig::nonsegmented(23);
-        let segmented = SegmentConfig::from_counts(75, [1; 4], 4);
+        let segmented = SegmentConfig::from_counts(75, [1; 4], 4, false);
         for segments in [nonsegmented, segmented] {
             for i16 in [true, false] {
                 for y_mode in 0..4 {
@@ -2689,7 +2695,7 @@ mod tests {
 
     #[test]
     fn first_partition_budget_switch_preserves_future_i16_capacity() {
-        let segments = SegmentConfig::from_counts(75, [1; 4], 4);
+        let segments = SegmentConfig::from_counts(75, [1; 4], 4, false);
         let fixed = HeaderBudget::new(
             3,
             segments,
@@ -2953,7 +2959,7 @@ mod tests {
                 crate::presets::SMOOTH_QINDEX,
                 crate::presets::chromatic_flat_qindex(request.quality),
                 crate::presets::chromatic_ramp_qindex(request.quality),
-                crate::presets::textured_qindex(request.quality)
+                crate::presets::textured_qindex(request.quality, false)
             ]
         );
         assert_eq!(first.segments.map_probabilities, [128, 128, 128]);
@@ -3017,7 +3023,7 @@ mod tests {
                 Ok(())
             }
         }
-        let segments = SegmentConfig::from_counts(75, [1, 1, 1, 1], 4);
+        let segments = SegmentConfig::from_counts(75, [1, 1, 1, 1], 4, false);
         let mut header = Operations(Vec::new());
         write_header_prefix(
             &mut header,
@@ -3540,6 +3546,143 @@ mod tests {
             }
             if done {
                 return engine;
+            }
+        }
+    }
+
+    fn textured_checker(low: [u8; 3], high: [u8; 3]) -> Vec<u8> {
+        let mut pixels = Vec::with_capacity(16 * 16 * 4);
+        for y in 0..16 {
+            for x in 0..16 {
+                let rgb = if (x + y) % 2 == 0 { low } else { high };
+                pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            }
+        }
+        pixels
+    }
+
+    fn near_neutral_high(uv_value: u8) -> [u8; 3] {
+        for r in 184..=200 {
+            for g in 184..=200 {
+                for b in 184..=200 {
+                    let high = [r, g, b];
+                    let (_, u, v) = crate::color::convert_2x2([[64; 3], high, high, [64; 3]]);
+                    if u.abs_diff(128) <= 1
+                        && v.abs_diff(128) <= 1
+                        && (u == uv_value || v == uv_value)
+                    {
+                        return high;
+                    }
+                }
+            }
+        }
+        panic!("missing near-neutral imported chroma value {uv_value}");
+    }
+
+    #[test]
+    fn exact_neutral_frame_allocation_and_repeated_frame_state() {
+        let gray = textured_checker([64; 3], [192; 3]);
+        let colored = textured_checker([7, 239, 117], [248, 18, 184]);
+        let one_near_neutral_pair = |value| {
+            let mut pixels = gray.clone();
+            let tint = near_neutral_high(value);
+            for (x, y) in [(15, 14), (14, 15)] {
+                let at = (y * 16 + x) * 4;
+                pixels[at..at + 3].copy_from_slice(&tint);
+            }
+            pixels
+        };
+        let near_low = one_near_neutral_pair(127);
+        let near_high = one_near_neutral_pair(129);
+        let mut first_gray = None;
+        for (index, (input, expected_neutral, expected_q)) in [
+            (&gray, true, 27),
+            (&colored, false, 28),
+            (&near_low, false, 28),
+            (&near_high, false, 28),
+            (&gray, true, 27),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let request = engine_request(16, 16, 0, input, 64);
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            assert_eq!(engine.class_counts, [0, 0, 0, 1]);
+            assert_eq!(engine.neutral_chroma, expected_neutral);
+            assert_eq!(
+                engine.segments.qindex_for(segmentation::TEXTURED),
+                expected_q
+            );
+            assert_eq!(
+                engine.source_u.iter().all(|&u| u == 128)
+                    && engine.source_v.iter().all(|&v| v == 128),
+                expected_neutral
+            );
+            if index == 2 {
+                assert!(engine.source_u.contains(&127) || engine.source_v.contains(&127));
+            }
+            if index == 3 {
+                assert!(engine.source_u.contains(&129) || engine.source_v.contains(&129));
+            }
+            if matches!(index, 2 | 3) {
+                assert_eq!(
+                    engine
+                        .source_u
+                        .iter()
+                        .zip(&engine.source_v)
+                        .filter(|(u, v)| **u != 128 || **v != 128)
+                        .count(),
+                    1
+                );
+            }
+            let sync = encode_textured(input, 16, 16, 64, 0, 75).unwrap();
+            assert_eq!(engine.output(), sync);
+            if index == 0 {
+                first_gray = Some(sync);
+            } else if index == 4 {
+                assert_eq!(Some(sync), first_gray);
+            }
+        }
+        for (quality, expected_q) in [(60, 34), (85, 14)] {
+            let request = Request {
+                quality,
+                ..engine_request(16, 16, 0, &gray, 64)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, gray.clone(), plan).unwrap());
+            assert_eq!(
+                engine.segments.qindex_for(segmentation::TEXTURED),
+                expected_q
+            );
+            assert_eq!(
+                engine.output(),
+                encode_textured(&gray, 16, 16, 64, 0, quality).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn neutral_and_colored_texture_decode_with_both_filter_modes() {
+        for (input, expected_q) in [
+            (textured_checker([64; 3], [192; 3]), 27),
+            (textured_checker([7, 239, 117], [248, 18, 184]), 28),
+        ] {
+            let request = engine_request(16, 16, 0, &input, 64);
+            let plan = ResourcePlan::checked(request).unwrap();
+            for filter in [FilterConfig::DISABLED, FilterConfig::for_quality(75)] {
+                let engine = run_engine(
+                    FrameEncoder::new_with_filter(request, input.clone(), plan, filter).unwrap(),
+                );
+                assert_eq!(
+                    engine.segments.qindex_for(segmentation::TEXTURED),
+                    expected_q
+                );
+                let (y, u, v, padded_w) = engine.reconstruction();
+                let expected =
+                    filtered_visible_yuv(y, u, v, padded_w, 16, 16, &engine.blocks, filter);
+                assert_decodes(engine.output(), 16, 16, &expected, "neutral/color texture");
             }
         }
     }
