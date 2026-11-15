@@ -19,12 +19,15 @@ The bounded resumable ABI2 core is implemented. Color/preset calibration,
 filter tuning, and browser/product qualification remain unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
 or removal of `wasm-webp`.
 
-The exploratory q75 textured preset retains its finer luma quantizer for a
-frame only when every imported, padded U/V sample is exactly 128. This flag is
-accumulated during the existing bounded RGB-to-YUV conversion. Other textured
-frames use the chromatic q75 preset; q60/q85 are identical in both tables.
-The source color conversion and four segment IDs are unchanged. This allocation
-has no independent qualification claim.
+Textured allocation uses a per-frame flag that is true only when every imported,
+padded U/V sample is exactly 128, accumulated during bounded RGB-to-YUV conversion.
+The colored and neutral tables for every quality are canonical in `presets.rs`.
+High-input-chroma-loss q60 frames compare original and refined luma profiles
+using visible YUV error and frozen modeled rate. One working state is reused;
+resets and probability/rate analysis are bounded stages. Strict improvement
+selects refinement, otherwise original analysis is retained or reconstructed.
+The source import, four segment IDs and resource ceilings are unchanged.
+These engineering decisions have no independent product qualification claim.
 
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
 sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
