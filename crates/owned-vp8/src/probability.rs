@@ -69,6 +69,13 @@ pub(crate) struct Model {
     estimated_savings: [u128; NODE_COUNT],
 }
 
+/// Only these fields affect frozen coefficient syntax during emission.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EmissionModel {
+    probabilities: [u8; NODE_COUNT],
+    update_flags: [bool; NODE_COUNT],
+}
+
 impl Default for Model {
     fn default() -> Self {
         Self::new()
@@ -76,6 +83,18 @@ impl Default for Model {
 }
 
 impl Model {
+    pub(crate) fn emission(&self) -> EmissionModel {
+        EmissionModel {
+            probabilities: self.probabilities,
+            update_flags: self.update_flags,
+        }
+    }
+
+    pub(crate) fn restore_emission(&mut self, emission: &EmissionModel) {
+        self.probabilities = emission.probabilities;
+        self.update_flags = emission.update_flags;
+        self.estimated_savings.fill(0);
+    }
     pub(crate) fn new() -> Self {
         Self {
             probabilities: DEFAULT_COEFF_PROBS,
@@ -180,6 +199,25 @@ fn data_cost<F: Fn(u8, bool) -> u32>(zeros: u32, ones: u32, probability: u8, cos
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frozen_emission_restores_probabilities_and_flags_without_stale_savings() {
+        let mut biased = Statistics::new();
+        for _ in 0..8 {
+            biased.observe(528, true).unwrap();
+        }
+        let mut model = Model::new();
+        model.optimize_one(&biased, 528, &diagnostic_cost).unwrap();
+        assert!(model.updated(528).unwrap());
+        let frozen = model.emission();
+        model
+            .optimize_one(&Statistics::new(), 528, &diagnostic_cost)
+            .unwrap();
+        assert_ne!(model.emission(), frozen);
+        model.restore_emission(&frozen);
+        assert_eq!(model.emission(), frozen);
+        assert_eq!(model.estimated_saving(528).unwrap(), 0);
+    }
 
     // Independent floating-point diagnostic for the fixed-point caller API.
     // Zero probability is treated as a bounded maximum cost, as in rate.rs.

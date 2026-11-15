@@ -8,9 +8,12 @@ use crate::ac_quant::{self, Deltas, Plane, Steps};
 use crate::{
     bmode_probs::BMODE_PROBS,
     display_rgb,
-    limits::{Request, ResourcePlan, Status, MAX_DIMENSION, MAX_FIRST_PARTITION_BYTES},
+    limits::{
+        Request, ResourcePlan, Status, MAX_DIMENSION, MAX_FIRST_PARTITION_BYTES,
+        REFINEMENT_LOG_BUDGET_BYTES, SCRATCH_ALLOWANCE_BYTES,
+    },
     prediction::{self, LargeMode, SmallMode},
-    probability::{Model, Statistics, NODE_COUNT},
+    probability::{EmissionModel, Model, Statistics, NODE_COUNT},
     rate::{probability_cost, BoolSink, CountingBoolSink, OpBuffer, RateCounter, SymbolCounter},
     residual,
     segmentation::{self, Config as SegmentConfig},
@@ -588,6 +591,159 @@ struct LumaCandidate {
 struct AnalyzedBlock {
     block: Macroblock,
     visible_error: u64,
+    refinement: Option<RefinementChange>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RefinementChange {
+    plane: u8,
+    patch: u8,
+    coefficient: u8,
+    old: i16,
+    new: i16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RefinementEdit {
+    block: u32,
+    change: RefinementChange,
+}
+
+const REFINEMENT_SLAB_LEN: usize = 256;
+const _: () = assert!(std::mem::size_of::<RefinementEdit>() <= 12);
+
+/// Bounded slabs avoid a frame-sized relocation during an ABI work unit.
+#[derive(Default)]
+struct RefinementLog {
+    slabs: Vec<Vec<RefinementEdit>>,
+    len: usize,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_edit_state(
+    blocks: &mut [Macroblock],
+    reconstructed_u: &mut [u8],
+    reconstructed_v: &mut [u8],
+    padded_w: usize,
+    segments: SegmentConfig,
+    deltas: Deltas,
+    edit: RefinementEdit,
+    forward: bool,
+) -> Result<(), Status> {
+    let blocks_x = padded_w / 16;
+    let mx = edit.block as usize % blocks_x;
+    let my = edit.block as usize / blocks_x;
+    let block = blocks
+        .get_mut(edit.block as usize)
+        .ok_or(Status::InvalidInput)?;
+    let change = edit.change;
+    let patch_index = usize::from(change.patch);
+    let coefficient_index = usize::from(change.coefficient);
+    if patch_index >= 4 || coefficient_index >= 16 {
+        return Err(Status::InvalidInput);
+    }
+    let (coefficients, reconstructed) = match change.plane {
+        0 => (&mut block.u[patch_index], reconstructed_u),
+        1 => (&mut block.v[patch_index], reconstructed_v),
+        _ => return Err(Status::InvalidInput),
+    };
+    let (expected, replacement) = if forward {
+        (change.old, change.new)
+    } else {
+        (change.new, change.old)
+    };
+    if coefficients[coefficient_index] != expected {
+        return Err(Status::InvalidInput);
+    }
+    let stride = padded_w / 2;
+    let x = mx * 8;
+    let y = my * 8;
+    let (top, left, corner) = edge::<8>(reconstructed, stride, x, y);
+    let predicted = prediction::predict_uv(
+        &top,
+        &left,
+        corner,
+        y > 0,
+        x > 0,
+        mode_from_u8(block.uv_mode),
+    );
+    let bx = patch_index % 2;
+    let by = patch_index / 2;
+    let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
+    let qindex = segments.qindex_for(block.segment_id);
+    let steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
+    let expected_patch = reconstructed_patch(coefficients, &predictor, steps);
+    for row in 0..4 {
+        let at = (y + by * 4 + row) * stride + x + bx * 4;
+        if reconstructed[at..at + 4] != expected_patch[row * 4..row * 4 + 4] {
+            return Err(Status::InvalidInput);
+        }
+    }
+    let mut changed = *coefficients;
+    changed[coefficient_index] = replacement;
+    let patch = reconstructed_patch(&changed, &predictor, steps);
+    *coefficients = changed;
+    for row in 0..4 {
+        let at = (y + by * 4 + row) * stride + x + bx * 4;
+        reconstructed[at..at + 4].copy_from_slice(&patch[row * 4..row * 4 + 4]);
+    }
+    Ok(())
+}
+
+impl RefinementLog {
+    fn reserve_one(&mut self, max_edits: usize) -> Result<(), Status> {
+        if self.len >= max_edits {
+            return Err(Status::MemoryAdmission);
+        }
+        if self.len == self.slabs.len() * REFINEMENT_SLAB_LEN {
+            if self.slabs.is_empty() {
+                self.slabs
+                    .try_reserve_exact(max_edits.div_ceil(REFINEMENT_SLAB_LEN))
+                    .map_err(|_| Status::MemoryAdmission)?;
+            }
+            let mut slab = Vec::new();
+            slab.try_reserve_exact(REFINEMENT_SLAB_LEN)
+                .map_err(|_| Status::MemoryAdmission)?;
+            self.slabs.push(slab);
+        }
+        if self.capacity_bytes() > REFINEMENT_LOG_BUDGET_BYTES {
+            return Err(Status::MemoryAdmission);
+        }
+        Ok(())
+    }
+
+    fn capacity_bytes(&self) -> usize {
+        self.slabs.capacity() * std::mem::size_of::<Vec<RefinementEdit>>()
+            + self
+                .slabs
+                .iter()
+                .map(|slab| slab.capacity() * std::mem::size_of::<RefinementEdit>())
+                .sum::<usize>()
+    }
+
+    fn push_reserved(&mut self, edit: RefinementEdit) -> Result<(), Status> {
+        let slab = self
+            .slabs
+            .get_mut(self.len / REFINEMENT_SLAB_LEN)
+            .ok_or(Status::MemoryAdmission)?;
+        if slab.len() == slab.capacity() {
+            return Err(Status::MemoryAdmission);
+        }
+        slab.push(edit);
+        self.len += 1;
+        Ok(())
+    }
+
+    fn get(&self, index: usize) -> Option<RefinementEdit> {
+        self.slabs
+            .get(index / REFINEMENT_SLAB_LEN)?
+            .get(index % REFINEMENT_SLAB_LEN)
+            .copied()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 #[derive(Default)]
@@ -1219,8 +1375,8 @@ fn uv_frontier_preserved(
     true
 }
 
-// A single selected UV coefficient may change. All trials use the current
-// contexts and full local header/skip/coefficient rate before display scoring.
+// A single selected UV coefficient may change. Local rate checks syntax and
+// header legality; complete independently modeled frame bytes decide admission.
 #[allow(clippy::too_many_arguments)]
 fn refine_selected_uv(
     block: &mut Macroblock,
@@ -1244,10 +1400,10 @@ fn refine_selected_uv(
     left_modes: &[u8; 4],
     segments: SegmentConfig,
     budget: &HeaderBudget,
-) -> Result<(), EncodeError> {
+) -> Result<Option<RefinementChange>, EncodeError> {
     let mut luma_cost = None;
     let mut uv_cost = None;
-    let baseline_rate = selected_cost(
+    selected_cost(
         block,
         mx,
         contexts,
@@ -1355,7 +1511,7 @@ fn refine_selected_uv(
                         } else {
                             block.v[index][coefficient_index] = old;
                         }
-                        if !rate?.is_some_and(|rate| rate <= baseline_rate) {
+                        if rate?.is_none() {
                             continue;
                         }
                         let mut trial_coefficients = coefficients;
@@ -1387,14 +1543,14 @@ fn refine_selected_uv(
                         let gain = cache.score(&frame, change, bounds);
                         if gain > best_gain {
                             best_gain = gain;
-                            best = Some((plane, index, coefficient_index, level, patch));
+                            best = Some((plane, index, coefficient_index, old, level, patch));
                         }
                     }
                 }
             }
         }
     }
-    if let Some((plane, index, coefficient_index, level, patch)) = best {
+    let refinement = if let Some((plane, index, coefficient_index, old, level, patch)) = best {
         if plane == 0 {
             block.u[index][coefficient_index] = level;
             uv.u[index][coefficient_index] = level;
@@ -1404,8 +1560,17 @@ fn refine_selected_uv(
             uv.v[index][coefficient_index] = level;
             store_patch::<8, 64>(&mut uv.v_tile, index % 2, index / 2, &patch);
         }
-    }
-    Ok(())
+        Some(RefinementChange {
+            plane: plane as u8,
+            patch: index as u8,
+            coefficient: coefficient_index as u8,
+            old,
+            new: level,
+        })
+    } else {
+        None
+    };
+    Ok(refinement)
 }
 
 #[cfg(test)]
@@ -1607,6 +1772,7 @@ fn encode_observed(
     let mut coeff_contexts = CoeffContexts::new(blocks_x);
     let mut above_modes = vec![0u8; blocks_x * 4];
     let mut left_modes = [0u8; 4];
+    let mut refinement_log = RefinementLog::default();
     let mut run_profile = |segments: SegmentConfig,
                            deltas: Deltas,
                            score_required: bool|
@@ -1615,6 +1781,7 @@ fn encode_observed(
         reconstructed_u.fill(0);
         reconstructed_v.fill(0);
         blocks.clear();
+        refinement_log = RefinementLog::default();
         coeff_contexts.reset();
         above_modes.fill(0);
         left_modes.fill(0);
@@ -1636,6 +1803,11 @@ fn encode_observed(
                 let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
                 let lambda = crate::presets::lambda_for_quality(qindex, quality);
+                if !high_chroma_loss {
+                    refinement_log
+                        .reserve_one(count)
+                        .map_err(|_| EncodeError::OutputLimit)?;
+                }
                 let analyzed = analyze_one(
                     &source_y,
                     &source_u,
@@ -1671,6 +1843,14 @@ fn encode_observed(
                 )?;
                 if score_required {
                     comparison.observe(&analyzed)?;
+                }
+                if let Some(change) = analyzed.refinement {
+                    refinement_log
+                        .push_reserved(RefinementEdit {
+                            block: (my * blocks_x + mx) as u32,
+                            change,
+                        })
+                        .map_err(|_| EncodeError::OutputLimit)?;
                 }
                 blocks.push(analyzed.block);
             }
@@ -1748,6 +1928,48 @@ fn encode_observed(
         run_profile(original_segments, original_deltas, false)?;
     }
     drop(run_profile);
+    if !refinement_log.is_empty() {
+        let refined_sizes =
+            count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
+        for index in (0..refinement_log.len).rev() {
+            replay_edit_state(
+                &mut blocks,
+                &mut reconstructed_u,
+                &mut reconstructed_v,
+                padded_w,
+                segments,
+                deltas,
+                refinement_log.get(index).ok_or(EncodeError::InvalidInput)?,
+                false,
+            )
+            .map_err(|_| EncodeError::InvalidInput)?;
+        }
+        let base_sizes =
+            count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
+        let refined_total = 10 + refined_sizes.0 + refined_sizes.1;
+        let base_total = 10 + base_sizes.0 + base_sizes.1;
+        if refined_sizes.0 <= 0x7ffff
+            && refined_total <= MAX_OUTPUT_BYTES
+            && (base_sizes.0 > 0x7ffff
+                || base_total > MAX_OUTPUT_BYTES
+                || refined_total <= base_total)
+        {
+            for index in 0..refinement_log.len {
+                replay_edit_state(
+                    &mut blocks,
+                    &mut reconstructed_u,
+                    &mut reconstructed_v,
+                    padded_w,
+                    segments,
+                    deltas,
+                    refinement_log.get(index).ok_or(EncodeError::InvalidInput)?,
+                    true,
+                )
+                .map_err(|_| EncodeError::InvalidInput)?;
+            }
+        }
+    }
+    drop(refinement_log);
     let result = emit_segmented_frame(&blocks, width, height, segments, deltas, filter)?;
     observe(
         &reconstructed_y,
@@ -1929,9 +2151,10 @@ fn analyze_one(
         u: selected_uv.u,
         v: selected_uv.v,
     };
+    let mut refinement = None;
     if !high_chroma_loss {
         if let Some(original) = original_rgb {
-            refine_selected_uv(
+            refinement = refine_selected_uv(
                 &mut block,
                 &mut selected_uv,
                 &selected_luma.tile,
@@ -1996,6 +2219,7 @@ fn analyze_one(
     Ok(AnalyzedBlock {
         block,
         visible_error,
+        refinement,
     })
 }
 
@@ -2317,34 +2541,12 @@ fn emit_segmented_frame(
     filter.validate()?;
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
-    let (model, skip_probability) = model_frozen(blocks, blocks_x, blocks_y)?;
-    let default_sizes = count_partitions(
-        blocks,
-        blocks_x,
-        blocks_y,
-        segments,
-        deltas,
-        filter,
-        None,
+    let FrozenVariant {
+        model,
         skip_probability,
-    )?;
-    let modeled_sizes = count_partitions(
-        blocks,
-        blocks_x,
-        blocks_y,
-        segments,
-        deltas,
-        filter,
-        Some(&model),
-        skip_probability,
-    )?;
-    let use_model = modeled_sizes.0 <= 0x7ffff
-        && modeled_sizes.0 + modeled_sizes.1 < default_sizes.0 + default_sizes.1;
-    let selected = if use_model {
-        modeled_sizes
-    } else {
-        default_sizes
-    };
+        sizes: selected,
+        use_model,
+    } = count_frozen_variant(blocks, blocks_x, blocks_y, segments, deltas, filter)?;
     let total = 10usize
         .checked_add(selected.0)
         .and_then(|n| n.checked_add(selected.1))
@@ -2384,6 +2586,59 @@ fn emit_segmented_frame(
     result.extend_from_slice(&first);
     result.extend_from_slice(&second);
     Ok(result)
+}
+
+struct FrozenVariant {
+    model: Model,
+    skip_probability: Option<u8>,
+    sizes: (usize, usize),
+    use_model: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn count_frozen_variant(
+    blocks: &[Macroblock],
+    blocks_x: usize,
+    blocks_y: usize,
+    segments: SegmentConfig,
+    deltas: Deltas,
+    filter: FilterConfig,
+) -> Result<FrozenVariant, EncodeError> {
+    let (model, skip_probability) = model_frozen(blocks, blocks_x, blocks_y)?;
+    let default_sizes = count_partitions(
+        blocks,
+        blocks_x,
+        blocks_y,
+        segments,
+        deltas,
+        filter,
+        None,
+        skip_probability,
+    )?;
+    let modeled_sizes = count_partitions(
+        blocks,
+        blocks_x,
+        blocks_y,
+        segments,
+        deltas,
+        filter,
+        Some(&model),
+        skip_probability,
+    )?;
+    let use_model = modeled_sizes.0 <= 0x7ffff
+        && (default_sizes.0 > 0x7ffff
+            || modeled_sizes.0 + modeled_sizes.1 < default_sizes.0 + default_sizes.1);
+    let selected = if use_model {
+        modeled_sizes
+    } else {
+        default_sizes
+    };
+    Ok(FrozenVariant {
+        model,
+        skip_probability,
+        sizes: selected,
+        use_model,
+    })
 }
 
 fn model_frozen(
@@ -2515,6 +2770,41 @@ enum Stage {
     PreviewOptimize = 24,
     PreviewRateBlocks = 25,
     PreviewResetMetadata = 26,
+    ReverseRefinements = 27,
+    ReapplyRefinements = 28,
+    ReleaseRefinements = 35,
+}
+
+struct RefinedCheckpoint {
+    emission: EmissionModel,
+    skip_probability: Option<u8>,
+    sizes: (u32, u32),
+    default_frame_bytes: u32,
+    selected_frame_bytes: u32,
+    update_count: u32,
+    use_model: bool,
+    legality: Result<(), Status>,
+}
+
+fn choose_refined_variant(
+    refined_bytes: u32,
+    refined_legality: Result<(), Status>,
+    base_bytes: u32,
+    base_legality: Result<(), Status>,
+) -> Result<bool, Status> {
+    for legality in [refined_legality, base_legality] {
+        if let Err(error) = legality {
+            if !matches!(error, Status::OutputLimit | Status::PartitionLimit) {
+                return Err(error);
+            }
+        }
+    }
+    match (refined_legality, base_legality) {
+        (Ok(()), Ok(())) => Ok(refined_bytes <= base_bytes),
+        (Ok(()), Err(_)) => Ok(true),
+        (Err(_), Ok(())) => Ok(false),
+        (Err(_), Err(error)) => Err(error),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2540,6 +2830,13 @@ pub(crate) struct FrameEncoder {
     reconstructed_u: Vec<u8>,
     reconstructed_v: Vec<u8>,
     blocks: Vec<Macroblock>,
+    refinement_log: RefinementLog,
+    refined_checkpoint: Option<RefinedCheckpoint>,
+    base_count: bool,
+    replay_index: usize,
+    pending_output_sizes: Option<(u32, u32)>,
+    #[cfg(test)]
+    disable_refinement: bool,
     class_counts: [usize; 4],
     neutral_chroma: bool,
     rgb_error_sum: u64,
@@ -2583,6 +2880,16 @@ pub(crate) struct FrameEncoder {
 // context. Large reconstruction and macroblock storage is reset separately.
 const _: () = assert!(
     std::mem::size_of::<FrameEncoder>() + 13 * (MAX_DIMENSION as usize).div_ceil(16) <= 65_536
+);
+// The shared 8 MiB scratch charge covers the bounded log, two Boolean op
+// buffers, display cache, fixed engine state and an allocator margin.
+const _: () = assert!(
+    REFINEMENT_LOG_BUDGET_BYTES
+        + 2 * crate::rate::MAX_BUFFERED_OPS * 2
+        + 65_536
+        + std::mem::size_of::<FrameEncoder>()
+        + 1024 * 1024
+        <= SCRATCH_ALLOWANCE_BYTES as usize
 );
 
 fn encode_status(error: EncodeError) -> Status {
@@ -2651,6 +2958,13 @@ impl FrameEncoder {
             reconstructed_u: Vec::new(),
             reconstructed_v: Vec::new(),
             blocks,
+            refinement_log: RefinementLog::default(),
+            refined_checkpoint: None,
+            base_count: false,
+            replay_index: 0,
+            pending_output_sizes: None,
+            #[cfg(test)]
+            disable_refinement: false,
             class_counts: [0; 4],
             neutral_chroma: true,
             rgb_error_sum: 0,
@@ -2703,6 +3017,17 @@ impl FrameEncoder {
     }
 
     pub(crate) fn stage(&self) -> u32 {
+        if self.base_count {
+            match self.stage {
+                Stage::CollectStats => return 29,
+                Stage::Optimize => return 30,
+                Stage::CountPrefix => return 31,
+                Stage::CountUpdates => return 32,
+                Stage::CountSuffix => return 33,
+                Stage::CountBlocks => return 34,
+                _ => {}
+            }
+        }
         self.stage as u32
     }
 
@@ -2745,6 +3070,16 @@ impl FrameEncoder {
                 (done as u32, (plane_bytes + block_bytes) as u32)
             }
             Stage::Assemble => (self.output.len() as u32, self.plan.frame_bytes),
+            Stage::ReverseRefinements => (
+                (self.refinement_log.len - self.replay_index) as u32,
+                self.refinement_log.len as u32,
+            ),
+            Stage::ReapplyRefinements => (self.replay_index as u32, self.refinement_log.len as u32),
+            Stage::ReleaseRefinements => (
+                (self.refinement_log.len.div_ceil(REFINEMENT_SLAB_LEN)
+                    - self.refinement_log.slabs.len()) as u32,
+                self.refinement_log.len.div_ceil(REFINEMENT_SLAB_LEN) as u32,
+            ),
             Stage::Done => (1, 1),
             _ => (0, 1),
         }
@@ -2901,6 +3236,49 @@ impl FrameEncoder {
         self.above_modes.fill(0);
         self.left_modes.fill(0);
         self.cursor = 0;
+    }
+
+    fn reset_variant_count(&mut self) {
+        self.reset_coding_state();
+        self.stats = Statistics::new();
+        self.skip_stats = SkipStats::default();
+        self.skip_probability = Some(128);
+        self.model = Model::new();
+        self.model_count_pass = false;
+        self.use_model = false;
+        self.default_sizes = (0, 0);
+        self.default_frame_bytes = 0;
+        self.selected_frame_bytes = 0;
+        self.update_count = 0;
+        self.count_header = CountingBoolSink::default();
+        self.count_token = CountingBoolSink::default();
+    }
+
+    fn replay_one_refinement(&mut self, forward: bool) -> Result<(), Status> {
+        let index = if forward {
+            self.replay_index
+        } else {
+            self.replay_index
+                .checked_sub(1)
+                .ok_or(Status::InvalidInput)?
+        };
+        let edit = self.refinement_log.get(index).ok_or(Status::InvalidInput)?;
+        replay_edit_state(
+            &mut self.blocks,
+            &mut self.reconstructed_u,
+            &mut self.reconstructed_v,
+            self.plan.padded_width as usize,
+            self.segments,
+            self.deltas,
+            edit,
+            forward,
+        )?;
+        if forward {
+            self.replay_index += 1;
+        } else {
+            self.replay_index -= 1;
+        }
+        Ok(())
     }
 
     fn original_segments(&self) -> SegmentConfig {
@@ -3067,15 +3445,26 @@ impl FrameEncoder {
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
         let lambda = crate::presets::lambda_for_quality(qindex, self.request.quality);
+        let original_rgb = Some(display_rgb::Original {
+            pixels: &self.input,
+            stride: self.request.stride as usize,
+            layout: self.request.layout,
+        });
+        #[cfg(test)]
+        let original_rgb = if self.disable_refinement {
+            None
+        } else {
+            original_rgb
+        };
+        if !self.high_chroma_loss {
+            self.refinement_log
+                .reserve_one(self.plan.macroblock_count as usize)?;
+        }
         let analyzed = analyze_one(
             &self.source_y,
             &self.source_u,
             &self.source_v,
-            Some(display_rgb::Original {
-                pixels: &self.input,
-                stride: self.request.stride as usize,
-                layout: self.request.layout,
-            }),
+            original_rgb,
             self.high_chroma_loss,
             &mut self.reconstructed_y,
             &mut self.reconstructed_u,
@@ -3112,9 +3501,18 @@ impl FrameEncoder {
                 .observe(&analyzed)
                 .map_err(encode_status)?;
         }
+        if let Some(change) = analyzed.refinement {
+            self.refinement_log.push_reserved(RefinementEdit {
+                block: self.cursor as u32,
+                change,
+            })?;
+        }
         self.blocks[self.cursor] = analyzed.block;
         self.cursor += 1;
         if self.cursor == self.plan.macroblock_count as usize {
+            if self.refinement_log.is_empty() {
+                self.refinement_log = RefinementLog::default();
+            }
             self.reset_coding_state();
             self.stage = if matches!(
                 self.preview_trial,
@@ -3224,7 +3622,9 @@ impl FrameEncoder {
                     .checked_add(second)
                     .and_then(|n| n.checked_add(10))
                     .ok_or(Status::OutputLimit)?;
-                self.use_model = first <= 0x7ffff && proposed_total < self.default_frame_bytes;
+                self.use_model = first <= MAX_FIRST_PARTITION_BYTES as u32
+                    && (self.default_sizes.0 > MAX_FIRST_PARTITION_BYTES as u32
+                        || proposed_total < self.default_frame_bytes);
                 let (first, second) = if self.use_model {
                     (first, second)
                 } else {
@@ -3242,10 +3642,52 @@ impl FrameEncoder {
                 } else {
                     0
                 };
-                self.plan = self.plan.with_output_sizes(first, second)?;
-                // Publish the final plan before any partition or frame reserve.
-                // The host can reserve its concurrent budget at this step boundary.
-                self.stage = Stage::PrepareOutput;
+                if self.refinement_log.is_empty() {
+                    self.plan = self.plan.with_output_sizes(first, second)?;
+                    self.stage = Stage::PrepareOutput;
+                } else if !self.base_count {
+                    let legality = match self.plan.with_output_sizes(first, second) {
+                        Ok(_) => Ok(()),
+                        Err(error @ (Status::PartitionLimit | Status::OutputLimit)) => Err(error),
+                        Err(error) => return Err(error),
+                    };
+                    self.refined_checkpoint = Some(RefinedCheckpoint {
+                        emission: self.model.emission(),
+                        skip_probability: self.skip_probability,
+                        sizes: (first, second),
+                        default_frame_bytes: self.default_frame_bytes,
+                        selected_frame_bytes: self.selected_frame_bytes,
+                        update_count: self.update_count,
+                        use_model: self.use_model,
+                        legality,
+                    });
+                    self.replay_index = self.refinement_log.len;
+                    self.stage = Stage::ReverseRefinements;
+                } else {
+                    let base_legality = match self.plan.with_output_sizes(first, second) {
+                        Ok(_) => Ok(()),
+                        Err(error @ (Status::PartitionLimit | Status::OutputLimit)) => Err(error),
+                        Err(error) => return Err(error),
+                    };
+                    self.pending_output_sizes = Some((first, second));
+                    let refined = self
+                        .refined_checkpoint
+                        .as_ref()
+                        .ok_or(Status::InvalidInput)?;
+                    let choose_refined = choose_refined_variant(
+                        refined.selected_frame_bytes,
+                        refined.legality,
+                        self.selected_frame_bytes,
+                        base_legality,
+                    )?;
+                    if choose_refined {
+                        self.stage = Stage::ReapplyRefinements;
+                        self.replay_index = 0;
+                    } else {
+                        self.refined_checkpoint = None;
+                        self.stage = Stage::ReleaseRefinements;
+                    }
+                }
             } else {
                 self.stage = Stage::FinalizeHeader;
             }
@@ -3442,6 +3884,47 @@ impl FrameEncoder {
                 self.stage = Stage::CountBlocks;
             }
             Stage::CountBlocks => self.code_one_step(true)?,
+            Stage::ReverseRefinements => {
+                self.replay_one_refinement(false)?;
+                if self.replay_index == 0 {
+                    self.reset_variant_count();
+                    self.base_count = true;
+                    self.stage = Stage::CollectStats;
+                }
+            }
+            Stage::ReapplyRefinements => {
+                self.replay_one_refinement(true)?;
+                if self.replay_index == self.refinement_log.len {
+                    let refined = self.refined_checkpoint.take().ok_or(Status::InvalidInput)?;
+                    if refined.legality.is_err() {
+                        return Err(Status::InvalidInput);
+                    }
+                    self.model.restore_emission(&refined.emission);
+                    self.skip_probability = refined.skip_probability;
+                    self.default_frame_bytes = refined.default_frame_bytes;
+                    self.selected_frame_bytes = refined.selected_frame_bytes;
+                    self.update_count = refined.update_count;
+                    self.use_model = refined.use_model;
+                    self.pending_output_sizes = Some(refined.sizes);
+                    self.reset_coding_state();
+                    self.stage = Stage::ReleaseRefinements;
+                }
+            }
+            Stage::ReleaseRefinements => {
+                self.refinement_log
+                    .slabs
+                    .pop()
+                    .ok_or(Status::InvalidInput)?;
+                if self.refinement_log.slabs.is_empty() {
+                    self.refinement_log = RefinementLog::default();
+                    let (first, second) = self
+                        .pending_output_sizes
+                        .take()
+                        .ok_or(Status::InvalidInput)?;
+                    self.plan = self.plan.with_output_sizes(first, second)?;
+                    self.stage = Stage::PrepareOutput;
+                }
+            }
             Stage::PrepareOutput => {
                 let header = BoolWriter::with_capacity(self.plan.first_partition_bytes as usize)
                     .map_err(|_| Status::MemoryAdmission)?;
@@ -3549,6 +4032,352 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn exact_variant_choice_prefers_legal_smaller_or_tied_refinement() {
+        assert_eq!(choose_refined_variant(100, Ok(()), 100, Ok(())), Ok(true));
+        assert_eq!(choose_refined_variant(101, Ok(()), 100, Ok(())), Ok(false));
+        assert_eq!(choose_refined_variant(99, Ok(()), 100, Ok(())), Ok(true));
+        assert_eq!(
+            choose_refined_variant(100, Ok(()), 99, Err(Status::OutputLimit)),
+            Ok(true)
+        );
+        assert_eq!(
+            choose_refined_variant(99, Err(Status::PartitionLimit), 100, Ok(())),
+            Ok(false)
+        );
+        assert_eq!(
+            choose_refined_variant(
+                99,
+                Err(Status::OutputLimit),
+                100,
+                Err(Status::PartitionLimit)
+            ),
+            Err(Status::PartitionLimit)
+        );
+        assert_eq!(
+            choose_refined_variant(99, Err(Status::MemoryAdmission), 100, Ok(())),
+            Err(Status::MemoryAdmission)
+        );
+    }
+
+    #[test]
+    fn maximum_admitted_geometry_refinement_log_fits_reserved_scratch() {
+        let request = Request {
+            version: 2,
+            width: 625,
+            height: 16_106,
+            stride: 2_500,
+            layout: 0,
+            quality: 75,
+            input_bytes: 2_500 * 16_106,
+            output_limit: 96 * 1024 * 1024,
+            generation: 1,
+            frame: 1,
+            external_live_bytes: 2_500 * 16_106,
+            retained_output_bytes: 0,
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        assert_eq!(plan.macroblock_count, 40_280);
+        assert_eq!(std::mem::size_of::<RefinementEdit>(), 12);
+        let mut log = RefinementLog::default();
+        for block in 0..plan.macroblock_count {
+            log.reserve_one(plan.macroblock_count as usize).unwrap();
+            log.push_reserved(RefinementEdit {
+                block,
+                change: RefinementChange {
+                    plane: 0,
+                    patch: 0,
+                    coefficient: 0,
+                    old: 0,
+                    new: 1,
+                },
+            })
+            .unwrap();
+        }
+        assert_eq!(log.len, 40_280);
+        assert!(log.capacity_bytes() <= REFINEMENT_LOG_BUDGET_BYTES);
+        assert_eq!(log.slabs.len(), 40_280usize.div_ceil(REFINEMENT_SLAB_LEN));
+    }
+
+    #[test]
+    fn coefficient_replay_roundtrips_uv_modes_patches_edges_and_zero_crossings() {
+        let segments = SegmentConfig::nonsegmented(32);
+        let deltas = Deltas::default();
+        let steps = ac_quant::steps(32, deltas, Plane::UV);
+        for mode in 0..4u8 {
+            for block_index in 0..4u32 {
+                for plane in 0..2u8 {
+                    for patch_index in 0..4u8 {
+                        for (old, new) in [(0, 1), (1, 2), (-1, 0)] {
+                            let mut blocks: Vec<Macroblock> =
+                                (0..4).map(|_| Macroblock::default()).collect();
+                            let block = &mut blocks[block_index as usize];
+                            block.uv_mode = mode;
+                            let coefficients = if plane == 0 {
+                                &mut block.u[patch_index as usize]
+                            } else {
+                                &mut block.v[patch_index as usize]
+                            };
+                            coefficients[0] = new;
+                            let mut u: Vec<u8> =
+                                (0..256).map(|index| 80 + (index % 71) as u8).collect();
+                            let mut v: Vec<u8> =
+                                (0..256).map(|index| 90 + (index % 61) as u8).collect();
+                            let reconstructed = if plane == 0 { &mut u } else { &mut v };
+                            let mx = block_index as usize % 2;
+                            let my = block_index as usize / 2;
+                            let x = mx * 8;
+                            let y = my * 8;
+                            let (top, left, corner) = edge::<8>(reconstructed, 16, x, y);
+                            let predicted = prediction::predict_uv(
+                                &top,
+                                &left,
+                                corner,
+                                y > 0,
+                                x > 0,
+                                mode_from_u8(mode),
+                            );
+                            let bx = usize::from(patch_index % 2);
+                            let by = usize::from(patch_index / 2);
+                            let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
+                            let refined_patch =
+                                reconstructed_patch(coefficients, &predictor, steps);
+                            let old_coefficients = {
+                                let mut previous = *coefficients;
+                                previous[0] = old;
+                                previous
+                            };
+                            for row in 0..4 {
+                                let at = (y + by * 4 + row) * 16 + x + bx * 4;
+                                reconstructed[at..at + 4]
+                                    .copy_from_slice(&refined_patch[row * 4..row * 4 + 4]);
+                            }
+                            let refined_u = u.clone();
+                            let refined_v = v.clone();
+                            let edit = RefinementEdit {
+                                block: block_index,
+                                change: RefinementChange {
+                                    plane,
+                                    patch: patch_index,
+                                    coefficient: 0,
+                                    old,
+                                    new,
+                                },
+                            };
+                            replay_edit_state(
+                                &mut blocks,
+                                &mut u,
+                                &mut v,
+                                32,
+                                segments,
+                                deltas,
+                                edit,
+                                false,
+                            )
+                            .unwrap();
+                            let restored = if plane == 0 { &u } else { &v };
+                            let old_patch =
+                                reconstructed_patch(&old_coefficients, &predictor, steps);
+                            for row in 0..4 {
+                                let at = (y + by * 4 + row) * 16 + x + bx * 4;
+                                assert_eq!(&restored[at..at + 4], &old_patch[row * 4..row * 4 + 4]);
+                            }
+                            replay_edit_state(
+                                &mut blocks,
+                                &mut u,
+                                &mut v,
+                                32,
+                                segments,
+                                deltas,
+                                edit,
+                                true,
+                            )
+                            .unwrap();
+                            assert_eq!(u, refined_u);
+                            assert_eq!(v, refined_v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn global_refinement_replay_matches_fresh_unmodified_analysis_and_exact_output() {
+        let (width, height) = (33, 33);
+        let input = frontier_rgb_input(width, height);
+        let mut exercised = 0;
+        for quality in [60, 75, 85] {
+            let mut request = engine_request(width, height, 0, &input, width * 4);
+            request.quality = quality;
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut fresh = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            fresh.disable_refinement = true;
+            while fresh.stage != Stage::CollectStats {
+                fresh.step().unwrap();
+            }
+            let mut selected = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while selected.stage != Stage::ReverseRefinements
+                && selected.stage != Stage::PrepareOutput
+            {
+                selected.step().unwrap();
+            }
+            if selected.stage == Stage::PrepareOutput {
+                assert!(selected.refinement_log.is_empty());
+                continue;
+            }
+            exercised += 1;
+            let refined = selected.refined_checkpoint.as_ref().unwrap();
+            let refined_bytes = refined.selected_frame_bytes;
+            let refined_legality = refined.legality;
+            let refined_u = selected.reconstructed_u.clone();
+            let refined_v = selected.reconstructed_v.clone();
+            let edit = selected.refinement_log.get(0).unwrap();
+            let mut second = edit;
+            second.change.old = edit.change.new;
+            second.change.new = edit.change.new.checked_add(1).unwrap();
+            replay_edit_state(
+                &mut selected.blocks,
+                &mut selected.reconstructed_u,
+                &mut selected.reconstructed_v,
+                plan.padded_width as usize,
+                selected.segments,
+                selected.deltas,
+                second,
+                true,
+            )
+            .unwrap();
+            replay_edit_state(
+                &mut selected.blocks,
+                &mut selected.reconstructed_u,
+                &mut selected.reconstructed_v,
+                plan.padded_width as usize,
+                selected.segments,
+                selected.deltas,
+                second,
+                false,
+            )
+            .unwrap();
+            assert_eq!(selected.reconstructed_u, refined_u);
+            assert_eq!(selected.reconstructed_v, refined_v);
+            second.change.old = second.change.new;
+            assert_eq!(
+                replay_edit_state(
+                    &mut selected.blocks,
+                    &mut selected.reconstructed_u,
+                    &mut selected.reconstructed_v,
+                    plan.padded_width as usize,
+                    selected.segments,
+                    selected.deltas,
+                    second,
+                    true,
+                ),
+                Err(Status::InvalidInput)
+            );
+            assert_eq!(selected.reconstructed_u, refined_u);
+            assert_eq!(selected.reconstructed_v, refined_v);
+            let mx = edit.block as usize % 3;
+            let my = edit.block as usize / 3;
+            let at = (my * 8 + usize::from(edit.change.patch / 2) * 4)
+                * (plan.padded_width as usize / 2)
+                + mx * 8
+                + usize::from(edit.change.patch % 2) * 4;
+            let plane = if edit.change.plane == 0 {
+                &mut selected.reconstructed_u
+            } else {
+                &mut selected.reconstructed_v
+            };
+            plane[at] ^= 1;
+            assert_eq!(
+                replay_edit_state(
+                    &mut selected.blocks,
+                    &mut selected.reconstructed_u,
+                    &mut selected.reconstructed_v,
+                    plan.padded_width as usize,
+                    selected.segments,
+                    selected.deltas,
+                    edit,
+                    false,
+                ),
+                Err(Status::InvalidInput)
+            );
+            let plane = if edit.change.plane == 0 {
+                &mut selected.reconstructed_u
+            } else {
+                &mut selected.reconstructed_v
+            };
+            plane[at] ^= 1;
+            while selected.stage != Stage::CollectStats {
+                selected.step().unwrap();
+            }
+            assert!(selected.base_count);
+            assert_eq!(selected.blocks, fresh.blocks);
+            assert_eq!(selected.reconstructed_y, fresh.reconstructed_y);
+            assert_eq!(selected.reconstructed_u, fresh.reconstructed_u);
+            assert_eq!(selected.reconstructed_v, fresh.reconstructed_v);
+            while selected.stage != Stage::CountPrefix {
+                selected.step().unwrap();
+            }
+            let (fresh_model, fresh_skip) = model_frozen(&fresh.blocks, 3, 3).unwrap();
+            assert_eq!(selected.model.emission(), fresh_model.emission());
+            assert_eq!(selected.skip_probability, fresh_skip);
+            while !matches!(
+                selected.stage,
+                Stage::ReapplyRefinements | Stage::ReleaseRefinements
+            ) {
+                selected.step().unwrap();
+            }
+            let base_sizes = selected.pending_output_sizes.unwrap();
+            let base_legality = selected
+                .plan
+                .with_output_sizes(base_sizes.0, base_sizes.1)
+                .map(|_| ())
+                .map_err(|error| {
+                    if matches!(error, Status::OutputLimit | Status::PartitionLimit) {
+                        error
+                    } else {
+                        panic!("unexpected base admission {error:?}")
+                    }
+                });
+            let expected_refined = choose_refined_variant(
+                refined_bytes,
+                refined_legality,
+                selected.selected_frame_bytes,
+                base_legality,
+            )
+            .unwrap();
+            assert_eq!(
+                selected.stage == Stage::ReapplyRefinements,
+                expected_refined
+            );
+            while selected.stage != Stage::PrepareOutput {
+                selected.step().unwrap();
+            }
+            assert!(selected.refinement_log.slabs.is_empty());
+            assert!(selected.refined_checkpoint.is_none());
+            assert!(selected.pending_output_sizes.is_none());
+            assert!(selected.output().is_empty());
+            let finished = run_engine(selected);
+            assert_eq!(
+                finished.output().len(),
+                finished.selected_frame_bytes as usize
+            );
+            assert_eq!(
+                finished.output(),
+                encode_textured(
+                    &input,
+                    width as u32,
+                    height as u32,
+                    (width * 4) as u32,
+                    0,
+                    quality
+                )
+                .unwrap()
+            );
+        }
+        assert!(exercised > 0);
+    }
 
     #[test]
     fn adjacent_uv_levels_respect_signed_dequantized_domain() {
@@ -4058,7 +4887,7 @@ mod tests {
     }
 
     #[test]
-    fn uv_refinement_requires_strict_ssim_gain_and_nonincreasing_complete_rate() {
+    fn uv_refinement_requires_strict_ssim_gain_and_preserved_frontier() {
         let source_y = [128u8; 256];
         let source_uv = [128u8; 64];
         let reconstructed_y = [0u8; 256];
@@ -4170,6 +4999,90 @@ mod tests {
         assert_eq!(uv.u_tile, neutral_uv);
         assert!(after <= before);
         assert_eq!(reconstructed_uv, [0; 64]);
+
+        let mut higher_coefficients = coefficients;
+        higher_coefficients[0] = 2;
+        let higher_patch = reconstructed_patch(&higher_coefficients, &predictor, steps);
+        let mut higher_tile = baseline_uv.u_tile;
+        store_patch::<8, 64>(&mut higher_tile, 0, 0, &higher_patch);
+        let higher_frame = display_rgb::Frame {
+            tile_u: &higher_tile,
+            ..neutral
+        };
+        let mut higher_target = target;
+        for y in 0..16 {
+            for x in 0..16 {
+                higher_target[(y * 16 + x) * 4..(y * 16 + x) * 4 + 3]
+                    .copy_from_slice(&higher_frame.rendered(x, y, None));
+            }
+        }
+        let mut expensive_block = Macroblock {
+            i16: true,
+            u: baseline_uv.u,
+            ..Macroblock::default()
+        };
+        expensive_block.y2[0] = 1;
+        let mut expensive_uv = baseline_uv.clone();
+        let higher_before = selected_cost(
+            &expensive_block,
+            0,
+            &contexts,
+            &above,
+            &left,
+            0,
+            1,
+            segments,
+            &budget,
+            &mut None,
+            &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        let chosen = refine_selected_uv(
+            &mut expensive_block,
+            &mut expensive_uv,
+            &y_tile,
+            display_rgb::Original {
+                pixels: &higher_target,
+                stride: 64,
+                layout: 0,
+            },
+            &source_y,
+            &source_uv,
+            &source_uv,
+            &reconstructed_y,
+            &reconstructed_uv,
+            &reconstructed_uv,
+            16,
+            16,
+            16,
+            0,
+            0,
+            steps,
+            &contexts,
+            &above,
+            &left,
+            segments,
+            &budget,
+        )
+        .unwrap();
+        let higher_after = selected_cost(
+            &expensive_block,
+            0,
+            &contexts,
+            &above,
+            &left,
+            0,
+            1,
+            segments,
+            &budget,
+            &mut None,
+            &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(chosen.unwrap().new, 2);
+        assert!(higher_after > higher_before);
 
         let mut tie_target = target;
         let baseline = display_rgb::Frame {
@@ -4333,6 +5246,7 @@ mod tests {
         let analyzed = AnalyzedBlock {
             block: Macroblock::default(),
             visible_error: 9,
+            refinement: None,
         };
         let mut comparison = ProfileComparison::default();
         comparison.observe(&analyzed).unwrap();
@@ -6249,7 +7163,7 @@ mod tests {
                 let (after, _) = engine.progress();
                 let bound = match stage {
                     0 | 13 | 22 => 65_536,
-                    4 | 8 | 16 | 20 | 24 => 64,
+                    4 | 8 | 16 | 20 | 24 | 30 | 32 => 64,
                     _ => 1,
                 };
                 assert!(after >= before && after - before <= bound, "stage={stage}");

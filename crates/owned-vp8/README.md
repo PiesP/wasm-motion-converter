@@ -78,8 +78,13 @@ capacity can exceed logical input length and must be admitted explicitly.
 
 `FrameEncoder` in `src/textured.rs` stages initialization, color import,
 macroblock analysis, exact partition-length counting, frozen-decision emission,
-finalization and assembly. Finalized sizes are published at a separate preparation barrier before output
-allocation, so the host can reserve the new plan before advancing;
+finalization and assembly. When visible UV refinement commits an edit, it counts
+the refined and same-owned unrefined records with independent statistics and
+models, then selects the legal smaller complete frame (refinement wins a tie).
+A bounded coefficient log reverses and reapplies reconstruction between counts;
+its slabs are released before output allocation. Finalized sizes are published
+at a separate preparation barrier after selection, so the host can reserve the
+new plan before advancing;
 first-partition overflow is separate from total output overflow. Output remains
 hidden until arithmetic coding and final assembly finish. Carry scans and finalization resume in bounded units; emission retains at most
 8192 two-byte operations per partition for one macroblock, drains at most 1024

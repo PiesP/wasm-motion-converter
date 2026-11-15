@@ -396,6 +396,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stale_ticket_and_abort_at_refinement_count_replay_and_release_recover() {
+        let (width, height) = (33usize, 33usize);
+        let input: Vec<u8> = (0..height)
+            .flat_map(|y| {
+                (0..width).flat_map(move |x| {
+                    let gray = 48 + (x * 9 + y * 13 + (x * y % 7) * 3) % 160;
+                    [
+                        (gray + (x * 5 + y * 3) % 17) as u8,
+                        gray as u8,
+                        (gray - (x * 3 + y * 7) % 13) as u8,
+                        255,
+                    ]
+                })
+            })
+            .collect();
+        for target in [27, 29, 28, 35] {
+            let mut reached = false;
+            for quality in [60, 75, 85] {
+                let mut state = State::new();
+                state.request = [
+                    2,
+                    width as u32,
+                    height as u32,
+                    (width * 4) as u32,
+                    0,
+                    quality,
+                    input.len() as u32,
+                    1_048_576,
+                    41,
+                    1,
+                    input.len() as u32,
+                    0,
+                ];
+                assert_eq!(state.plan(), Ok(0));
+                reserve(&mut state);
+                state.input.copy_from_slice(&input);
+                assert_eq!(state.begin(41, 1), Ok(WORKING));
+                for _ in 0..4096 {
+                    if state.job.as_ref().unwrap().stage() == target {
+                        reached = true;
+                        assert_eq!(state.step(41, 2), Err(Status::StaleTicket));
+                        assert_eq!(state.job.as_ref().unwrap().stage(), target);
+                        assert!(state.job.as_ref().unwrap().output().is_empty());
+                        assert_eq!(state.abort(41, 1), Ok(Status::Cancelled as u32));
+                        assert_eq!(state.phase, Phase::Idle);
+                        assert!(state.job.is_none());
+                        state.request = [2, 16, 16, 64, 0, 75, 1024, 1_048_576, 41, 2, 1024, 0];
+                        assert_eq!(state.plan(), Ok(0));
+                        ready(&mut state);
+                        assert_eq!(state.phase, Phase::OutputLease);
+                        assert_eq!(state.release_output(41, 2), Ok(0));
+                        break;
+                    }
+                    if state.step(41, 1).unwrap() == OUTPUT_READY {
+                        break;
+                    }
+                }
+                if reached {
+                    break;
+                }
+            }
+            assert!(reached, "stage={target}");
+        }
+    }
+
+    #[test]
     fn capacity_conversion_never_turns_4gib_into_an_unchecked_zero() {
         assert_eq!(capacity_word(18), 18 * 65_536);
         assert_eq!(capacity_word(3072), 192 * 1024 * 1024);

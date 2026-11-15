@@ -357,7 +357,7 @@ struct Pixel {
 // each. UV influence lies in [MB-4, MB+20); aligned stride-4 window starts
 // range from MB-8 through MB+16, giving cached samples [MB-8, MB+24).
 // Clipped edges and minimum-8 metric dimensions only shrink that region.
-// The cache is built only after the modeled rate gate passes.
+// The cache is built only after coefficient syntax and frontier checks pass.
 pub(super) struct LocalCache {
     x0: usize,
     y0: usize,

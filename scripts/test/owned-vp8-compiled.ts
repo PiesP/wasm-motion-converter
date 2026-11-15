@@ -39,12 +39,19 @@ async function check(
   stride: number,
   layout: number,
   quality: number,
-  id: string
+  id: string,
+  onStage?: (stage: number) => void
 ): Promise<void> {
   const job = new Vp8TestJob(compiled);
   try {
     const request = { width, height, stride, layout, quality };
-    const result = await job.encode(pixels, request);
+    const result = await job.encode(pixels, request, undefined, (record) => {
+      if ([27, 28, 29, 30, 31, 32, 33, 34, 35].includes(record.stage)) {
+        assert.equal(record.outputLength, 0, 'Refinement stages cannot publish output');
+        assert.equal(record.outputPointer, 0, 'Refinement stages cannot lease output');
+      }
+      onStage?.(record.stage);
+    });
     assert.deepEqual(
       (await job.encode(pixels, request)).bytes,
       result.bytes,
@@ -273,6 +280,31 @@ try {
           fixture.id
         );
     }
+    const frontierWidth = 33;
+    const frontierHeight = 33;
+    const frontier = new Uint8Array(frontierWidth * frontierHeight * 4);
+    for (let y = 0; y < frontierHeight; y++)
+      for (let x = 0; x < frontierWidth; x++) {
+        const gray = 48 + ((x * 9 + y * 13 + ((x * y) % 7) * 3) % 160);
+        frontier.set(
+          [gray + ((x * 5 + y * 3) % 17), gray, gray - ((x * 3 + y * 7) % 13), 255],
+          (y * frontierWidth + x) * 4
+        );
+      }
+    const refinementStages = new Set<number>();
+    for (const quality of QUALITIES)
+      await check(
+        frontier,
+        frontierWidth,
+        frontierHeight,
+        frontierWidth * 4,
+        0,
+        quality,
+        'refinement-frontier-33x33',
+        (stage) => refinementStages.add(stage)
+      );
+    for (const stage of [27, 28, 29, 35])
+      assert.ok(refinementStages.has(stage), `Compiled ABI2 must reach refinement stage ${stage}`);
     for (const layout of [0, 1, 2, 3, 4]) {
       const width = 17;
       const height = 13;
