@@ -60,6 +60,13 @@ export function assertDirectOwnerSnapshot(
           record.retirementTimeCapacityBytes <= 192 * 1024 * 1024,
         'Direct Worker retirement capacity unavailable or exceeded 192 MiB'
       );
+    } else {
+      assert(
+        record.retireCalls === 0 &&
+          record.retireStatus === null &&
+          record.retirementTimeCapacityBytes === null,
+        'Direct Worker retired before active termination'
+      );
     }
   }
 }
@@ -181,7 +188,7 @@ export async function runDirectOwnerCompletion(page: Page, request: DirectOwnerR
   return result;
 }
 
-/** Snapshot a live isolate after a positive owned step, then send abort and terminate. */
+/** Observe an actual live ABI step, then abort and terminate that exact Worker. */
 export async function runDirectOwnerActiveTermination(page: Page, request: DirectOwnerRequest) {
   validateRequest(request);
   const { workerPath, inputBase64, requestId, config, options } = request;
@@ -189,35 +196,29 @@ export async function runDirectOwnerActiveTermination(page: Page, request: Direc
     predicate: (worker) => new URL(worker.url()).pathname === `/${workerPath}`,
     timeout: 30_000,
   });
-  const started = page.evaluate(
+  const startedPromise = page.evaluate(
     async ({ workerPath, inputBase64, requestId, config, options }) => {
       const input = Uint8Array.from(atob(inputBase64), (character) => character.charCodeAt(0));
-      return new Promise<{ requestId: string; progressCount: number }>((resolve, reject) => {
+      return new Promise<string>((resolve, reject) => {
         const worker = new Worker(`/${workerPath}`, { type: 'module' });
-        Reflect.set(globalThis, '__wmcVp8DirectOwnerActiveWorker', worker);
+        const active = { worker, requestId, progressCount: 0, terminalType: null as string | null };
+        Reflect.set(globalThis, '__wmcVp8DirectOwnerActiveWorker', active);
         let sent = false;
         let settled = false;
-        let progressCount = 0;
-        const timer = setTimeout(
-          () => finish(new Error('Direct Worker active step timed out')),
-          30_000
-        );
-        function finish(error?: Error) {
+        const timer = setTimeout(() => fail(new Error('Direct Worker ready timed out')), 30_000);
+        function fail(error: Error) {
+          active.terminalType = error.message;
           if (settled) return;
           settled = true;
           clearTimeout(timer);
-          if (error) {
-            worker.terminate();
-            Reflect.deleteProperty(globalThis, '__wmcVp8DirectOwnerActiveWorker');
-            reject(error);
-          } else resolve({ requestId, progressCount });
+          reject(error);
         }
         worker.addEventListener('error', (event) => {
           event.preventDefault();
-          finish(new Error(`Direct Worker script error: ${event.message}`));
+          fail(new Error(`Direct Worker script error: ${event.message}`));
         });
         worker.addEventListener('messageerror', () =>
-          finish(new Error('Direct Worker message error'))
+          fail(new Error('Direct Worker message error'))
         );
         worker.addEventListener('message', ({ data }: MessageEvent<unknown>) => {
           if (!data || typeof data !== 'object') return;
@@ -237,63 +238,119 @@ export async function runDirectOwnerActiveTermination(page: Page, request: Direc
                 },
                 [input.buffer]
               );
+              settled = true;
+              clearTimeout(timer);
+              resolve(requestId);
             } catch (error) {
-              finish(new Error(`Direct Worker start failed: ${String(error)}`));
+              fail(new Error(`Direct Worker start failed: ${String(error)}`));
             }
           } else if (message.requestId === requestId && message.type === 'progress') {
-            progressCount++;
-            if (typeof message.ownedVp8Steps === 'number' && message.ownedVp8Steps > 0) finish();
+            active.progressCount++;
           } else if (
             message.requestId === requestId &&
             (message.type === 'complete' || message.type === 'error')
           ) {
-            finish(
-              new Error(`Direct Worker reached ${String(message.type)} before active termination`)
-            );
+            active.terminalType = message.type;
+            if (!settled) fail(new Error(`Direct Worker reached ${message.type} before start`));
           }
         });
       });
     },
     { workerPath, inputBase64, requestId, config, options }
   );
-  let snapshot: DirectOwnerSnapshot | null = null;
   try {
-    const [browserWorker, progress] = await Promise.all([browserWorkerPromise, started]);
-    assert.equal(progress.requestId, requestId);
-    snapshot = await browserWorker.evaluate(() => {
-      const probe = Reflect.get(globalThis, '__wmcVp8RetainedWorkerProbe') as
-        | { snapshot: () => DirectOwnerSnapshot }
-        | undefined;
-      return probe?.snapshot() ?? null;
-    });
+    // Promise.all observes both pending operations on every rejection path.
+    const [browserWorker, startedRequestId] = await Promise.all([
+      browserWorkerPromise,
+      startedPromise,
+    ]);
+    assert.equal(startedRequestId, requestId);
+    const deadline = Date.now() + 30_000;
+    const readLifecycle = () =>
+      page.evaluate((id) => {
+        const active = Reflect.get(globalThis, '__wmcVp8DirectOwnerActiveWorker') as
+          | { requestId: string; terminalType: string | null }
+          | undefined;
+        const lifecycle = Reflect.get(globalThis, '__wmcVp8WorkerLifecycle') as {
+          snapshot: () => Array<{ requestId: string | null; terminalType: string | null }>;
+        };
+        const record = lifecycle.snapshot().at(-1);
+        if (active?.requestId !== id || record?.requestId !== id)
+          throw new Error('Direct Worker active identity mismatch');
+        return active.terminalType ?? record.terminalType;
+      }, requestId);
+    const readLiveSnapshot = async (): Promise<DirectOwnerSnapshot | null> => {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) throw new Error('Direct Worker live ABI step timed out');
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          browserWorker.evaluate(() => {
+            const probe = Reflect.get(globalThis, '__wmcVp8RetainedWorkerProbe') as
+              | { snapshot: () => DirectOwnerSnapshot }
+              | undefined;
+            return probe?.snapshot() ?? null;
+          }),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('Direct Worker live ABI snapshot timed out')),
+              remainingMs
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    };
+    let snapshot: DirectOwnerSnapshot | null = null;
+    while (Date.now() < deadline) {
+      const terminal = await readLifecycle();
+      if (terminal !== null)
+        throw new Error(`Direct Worker reached ${terminal} before termination`);
+      snapshot = await readLiveSnapshot();
+      if (snapshot && snapshot.requestId !== null && snapshot.requestId !== requestId)
+        throw new Error('Direct Worker live ABI request identity mismatch');
+      if (snapshot?.records.some((record) => record.retireCalls > 0))
+        throw new Error('Direct Worker retired before active termination');
+      if (snapshot?.records.some((record) => record.stepCalls > 0)) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    }
     assertDirectOwnerSnapshot(snapshot, requestId, false);
-    const terminal = await page.evaluate((id) => {
-      const worker = Reflect.get(globalThis, '__wmcVp8DirectOwnerActiveWorker') as
-        | Worker
+    // Retirement can occur without a terminal response between observations.
+    const latest = await readLiveSnapshot();
+    assertDirectOwnerSnapshot(latest, requestId, false);
+    const progressCount = await page.evaluate((id) => {
+      const active = Reflect.get(globalThis, '__wmcVp8DirectOwnerActiveWorker') as
+        | { worker: Worker; requestId: string; progressCount: number; terminalType: string | null }
         | undefined;
-      if (!worker) throw new Error('Direct Worker active handle missing');
+      if (active?.requestId !== id) throw new Error('Direct Worker active handle missing');
       const lifecycle = Reflect.get(globalThis, '__wmcVp8WorkerLifecycle') as {
         snapshot: () => Array<{ requestId: string | null; terminalType: string | null }>;
       };
       const record = lifecycle.snapshot().at(-1);
-      if (record?.requestId !== id || record.terminalType !== null)
+      if (record?.requestId !== id || record.terminalType !== null || active.terminalType !== null)
         throw new Error('Direct Worker was no longer active before termination');
-      worker.postMessage({ type: 'abort', requestId: id });
-      worker.terminate();
+      active.worker.postMessage({ type: 'abort', requestId: id });
+      active.worker.terminate();
       Reflect.deleteProperty(globalThis, '__wmcVp8DirectOwnerActiveWorker');
-      return record.terminalType;
+      return active.progressCount;
     }, requestId);
-    assert.equal(terminal, null);
-    return { requestId, progressCount: progress.progressCount, snapshot };
+    return {
+      requestId,
+      progressCount,
+      observedStepCalls: latest!.records.reduce((sum, record) => sum + record.stepCalls, 0),
+      snapshot: latest!,
+    };
   } finally {
     await page
-      .evaluate(() => {
-        const worker = Reflect.get(globalThis, '__wmcVp8DirectOwnerActiveWorker') as
-          | Worker
+      .evaluate((id) => {
+        const active = Reflect.get(globalThis, '__wmcVp8DirectOwnerActiveWorker') as
+          | { worker: Worker; requestId: string }
           | undefined;
-        if (worker) worker.terminate();
+        if (active?.requestId !== id) return;
+        active.worker.terminate();
         Reflect.deleteProperty(globalThis, '__wmcVp8DirectOwnerActiveWorker');
-      })
+      }, requestId)
       .catch(() => undefined);
   }
 }
