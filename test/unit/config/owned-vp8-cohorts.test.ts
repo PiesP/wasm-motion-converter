@@ -37,8 +37,9 @@ describe('owned VP8 prospective cohort isolation', () => {
     expect(selectFixtureCohort('held-out', 'corrected-v2', true)).toEqual(CORRECTION_HELDOUT);
   });
 
-  it('keeps 45 fresh corrected-v3 conditions separate from both exposed sets and tuning', () => {
-    const fresh = selectFixtureCohort('held-out', 'corrected-v3');
+  it('requires regression purpose for corrected-v3 and preserves its original split', () => {
+    expect(() => selectFixtureCohort('held-out', 'corrected-v3')).toThrow('exposed');
+    const fresh = selectFixtureCohort('held-out', 'corrected-v3', true);
     const exposed = new Set(
       [...FIXTURES.filter((item) => item.split === 'held-out'), ...CORRECTION_HELDOUT].map(
         (item) => item.id

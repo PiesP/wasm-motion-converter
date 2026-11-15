@@ -149,8 +149,11 @@ inputs / 45 conditions. No corrected-v2 held-out fixture is relabeled fresh.
 The separate new photograph, external video digest, source geometry, decode
 settings, generated pixel hashes and generator hash are frozen in the v3 manifest.
 All PSNR, SSIM, size, performance, resource and delivery thresholds remain
-unchanged. Select `--cohort corrected-v3` for new tuning or fresh held-out
-acceptance. Retain initial-v1 and corrected-v2 as explicit regression cohorts.
+unchanged. Following its rejected evaluation, select `--cohort corrected-v3`
+for tuning or explicit `--regression`; it is no longer fresh acceptance.
+Retain initial-v1 and corrected-v2 as explicit regression cohorts.
+See [the frozen candidate result](501-owned-vp8-v3-result.md). No fresh successor
+cohort is currently frozen; do not relabel any observed condition as fresh.
 
 ## Resources and adoption
 
@@ -187,6 +190,11 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
 
 ## Discrepancy inventory
 
+- Fixed after final M2 review: `crates/owned-vp8/README.md` described the ignored
+  independent-decoder proof as filtering-disabled only, although
+  `src/textured.rs` also tests enabled filtering, including neutral/colored
+  frames and the enabled-filter reconstruction matrix. The README now describes
+  both cases; no browser or product qualification follows from those tests.
 - Fixed during M1 integration: `crates/owned-vp8/Cargo.toml` initially retained
   MIT-only package metadata after `src/transform.rs` introduced attributed adapted
   libwebp arithmetic (`MIT AND BSD-3-Clause`). The manifest now matches that

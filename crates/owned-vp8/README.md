@@ -118,8 +118,9 @@ Cargo development output without that declaration does not qualify delivery.
 
 Ignored tests explicitly require FFmpeg's native `vp8` and separate `libvpx`
 decoders. They compare every visible YUV byte against encoder reconstruction
-with filtering disabled, including all modulo-16 remainders and synthetic signed
-coefficient categories, zero runs, skips and Y2/B_PRED contexts. They establish
+with explicit disabled and enabled filtering cases, including modulo-16
+remainders, synthetic signed coefficient categories, zero runs, skips and
+Y2/B_PRED contexts. They establish
 engineering correctness only. They do not measure preset fidelity, product
 performance, cancellation or animation/browser acceptance. Forward transform
 vectors also use separately executed pinned C arithmetic; that check alone is
