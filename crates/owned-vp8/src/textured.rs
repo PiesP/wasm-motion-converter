@@ -7,6 +7,7 @@ use super::{BoolWriter, EncodeError, MAX_OUTPUT_BYTES};
 use crate::ac_quant::{self, Deltas, Plane, Steps};
 use crate::{
     bmode_probs::BMODE_PROBS,
+    display_rgb,
     limits::{Request, ResourcePlan, Status, MAX_DIMENSION, MAX_FIRST_PARTITION_BYTES},
     prediction::{self, LargeMode, SmallMode},
     probability::{Model, Statistics, NODE_COUNT},
@@ -686,6 +687,7 @@ fn estimated_block_rate(
     )?;
     Ok(header.cost + token.cost)
 }
+#[derive(Clone)]
 struct UvCandidate {
     u: [[i16; 16]; 4],
     v: [[i16; 16]; 4],
@@ -1167,6 +1169,184 @@ fn selected_cost(
     Ok(Some(distortion * 256 + lambda * cost))
 }
 
+fn adjacent_level(value: i16, step: i32, direction: i32) -> Option<i16> {
+    let proposed = i32::from(value) + direction;
+    let limit = (i32::from(i16::MAX) / step).min(2047);
+    (proposed.abs() <= limit).then_some(proposed as i16)
+}
+
+// A single selected UV coefficient may change. All trials use the current
+// contexts and full local header/skip/coefficient rate before display scoring.
+#[allow(clippy::too_many_arguments)]
+fn refine_selected_uv(
+    block: &mut Macroblock,
+    uv: &mut UvCandidate,
+    y_tile: &[u8; 256],
+    source: display_rgb::Original<'_>,
+    source_y: &[u8],
+    source_u: &[u8],
+    source_v: &[u8],
+    reconstructed_y: &[u8],
+    reconstructed_u: &[u8],
+    reconstructed_v: &[u8],
+    padded_w: usize,
+    width: usize,
+    height: usize,
+    mx: usize,
+    my: usize,
+    steps: Steps,
+    contexts: &CoeffContexts,
+    above_modes: &[u8],
+    left_modes: &[u8; 4],
+    segments: SegmentConfig,
+    budget: &HeaderBudget,
+) -> Result<(), EncodeError> {
+    let mut luma_cost = None;
+    let mut uv_cost = None;
+    let baseline_rate = selected_cost(
+        block,
+        mx,
+        contexts,
+        above_modes,
+        left_modes,
+        0,
+        1,
+        segments,
+        budget,
+        &mut luma_cost,
+        &mut uv_cost,
+    )?
+    .ok_or(EncodeError::OutputLimit)?;
+    let frame = display_rgb::Frame {
+        width,
+        height,
+        stride_y: padded_w,
+        original: source,
+        source_y,
+        source_u,
+        source_v,
+        reconstructed_y,
+        reconstructed_u,
+        reconstructed_v,
+        tile_y: y_tile,
+        tile_u: &uv.u_tile,
+        tile_v: &uv.v_tile,
+        mx,
+        my,
+    };
+    let mut cache = None;
+    let mut best_gain = 0u64;
+    let mut best = None;
+    for plane in 0..2 {
+        let reconstructed = if plane == 0 {
+            reconstructed_u
+        } else {
+            reconstructed_v
+        };
+        let x = mx * 8;
+        let y = my * 8;
+        let (top, left, corner) = edge::<8>(reconstructed, padded_w / 2, x, y);
+        let predicted = prediction::predict_uv(
+            &top,
+            &left,
+            corner,
+            y > 0,
+            x > 0,
+            mode_from_u8(block.uv_mode),
+        );
+        for by in 0..2 {
+            for bx in 0..2 {
+                let index = by * 2 + bx;
+                let coefficients = if plane == 0 {
+                    block.u[index]
+                } else {
+                    block.v[index]
+                };
+                let last_ac = (1..16)
+                    .rev()
+                    .find(|&position| coefficients[residual::SCAN[position]] != 0)
+                    .map(|position| residual::SCAN[position]);
+                let positions = [Some(0), last_ac];
+                let (left_px, right_px, top_px, bottom_px) = frame.affected(bx, by);
+                if left_px >= right_px || top_px >= bottom_px {
+                    continue;
+                }
+                let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
+                for coefficient_index in positions.into_iter().flatten() {
+                    let step = if coefficient_index == 0 {
+                        steps.dc
+                    } else {
+                        steps.ac
+                    };
+                    let old = coefficients[coefficient_index];
+                    for direction in [-1, 1] {
+                        let Some(level) = adjacent_level(old, step, direction) else {
+                            continue;
+                        };
+                        if plane == 0 {
+                            block.u[index][coefficient_index] = level;
+                        } else {
+                            block.v[index][coefficient_index] = level;
+                        }
+                        let mut trial_uv_cost = None;
+                        let rate = selected_cost(
+                            block,
+                            mx,
+                            contexts,
+                            above_modes,
+                            left_modes,
+                            0,
+                            1,
+                            segments,
+                            budget,
+                            &mut luma_cost,
+                            &mut trial_uv_cost,
+                        );
+                        if plane == 0 {
+                            block.u[index][coefficient_index] = old;
+                        } else {
+                            block.v[index][coefficient_index] = old;
+                        }
+                        if !rate?.is_some_and(|rate| rate <= baseline_rate) {
+                            continue;
+                        }
+                        let cache =
+                            cache.get_or_insert_with(|| display_rgb::LocalCache::new(&frame));
+                        let mut trial_coefficients = coefficients;
+                        trial_coefficients[coefficient_index] = level;
+                        let patch = reconstructed_patch(&trial_coefficients, &predictor, steps);
+                        let change = display_rgb::Change {
+                            plane,
+                            bx,
+                            by,
+                            patch: &patch,
+                        };
+                        let (baseline, candidate) =
+                            cache.score(&frame, change, (left_px, right_px, top_px, bottom_px));
+                        let gain = baseline.saturating_sub(candidate);
+                        if candidate < baseline && gain > best_gain {
+                            best_gain = gain;
+                            best = Some((plane, index, coefficient_index, level, patch));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some((plane, index, coefficient_index, level, patch)) = best {
+        if plane == 0 {
+            block.u[index][coefficient_index] = level;
+            uv.u[index][coefficient_index] = level;
+            store_patch::<8, 64>(&mut uv.u_tile, index % 2, index / 2, &patch);
+        } else {
+            block.v[index][coefficient_index] = level;
+            uv.v[index][coefficient_index] = level;
+            store_patch::<8, 64>(&mut uv.v_tile, index % 2, index / 2, &patch);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn selected_cost_reference(
@@ -1399,6 +1579,12 @@ fn encode_observed(
                     &source_y,
                     &source_u,
                     &source_v,
+                    Some(display_rgb::Original {
+                        pixels,
+                        stride,
+                        layout: format,
+                    }),
+                    high_chroma_loss,
                     &mut reconstructed_y,
                     &mut reconstructed_u,
                     &mut reconstructed_v,
@@ -1517,6 +1703,8 @@ fn analyze_one(
     source_y: &[u8],
     source_u: &[u8],
     source_v: &[u8],
+    original_rgb: Option<display_rgb::Original<'_>>,
+    high_chroma_loss: bool,
     reconstructed_y: &mut [u8],
     reconstructed_u: &mut [u8],
     reconstructed_v: &mut [u8],
@@ -1668,7 +1856,45 @@ fn analyze_one(
     }
     let (_, li, ui) = best.ok_or(EncodeError::OutputLimit)?;
     let selected_luma = &luma[li];
-    let selected_uv = &uv[ui];
+    let mut selected_uv = uv[ui].clone();
+    let mut block = Macroblock {
+        y: selected_luma.block.y,
+        y2: selected_luma.block.y2,
+        i16: selected_luma.block.i16,
+        y_mode: selected_luma.block.y_mode,
+        b_modes: selected_luma.block.b_modes,
+        uv_mode: ui as u8,
+        segment_id,
+        u: selected_uv.u,
+        v: selected_uv.v,
+    };
+    if !high_chroma_loss {
+        if let Some(original) = original_rgb {
+            refine_selected_uv(
+                &mut block,
+                &mut selected_uv,
+                &selected_luma.tile,
+                original,
+                source_y,
+                source_u,
+                source_v,
+                reconstructed_y,
+                reconstructed_u,
+                reconstructed_v,
+                padded_w,
+                visible_width,
+                visible_height,
+                mx,
+                my,
+                uv_steps,
+                coeff_contexts,
+                above_modes,
+                left_modes,
+                segments,
+                header_budget,
+            )?;
+        }
+    }
     let visible_uv_width = visible_width.div_ceil(2);
     let visible_uv_height = visible_height.div_ceil(2);
     let visible_error = if score_visible {
@@ -1699,17 +1925,6 @@ fn analyze_one(
         )
     } else {
         0
-    };
-    let block = Macroblock {
-        y: selected_luma.block.y,
-        y2: selected_luma.block.y2,
-        i16: selected_luma.block.i16,
-        y_mode: selected_luma.block.y_mode,
-        b_modes: selected_luma.block.b_modes,
-        uv_mode: ui as u8,
-        segment_id,
-        u: selected_uv.u,
-        v: selected_uv.v,
     };
     header_budget.commit(&block, mx, above_modes, left_modes, segments)?;
     commit_tile::<16, 256>(reconstructed_y, padded_w, x, y, &selected_luma.tile);
@@ -2794,6 +3009,12 @@ impl FrameEncoder {
             &self.source_y,
             &self.source_u,
             &self.source_v,
+            Some(display_rgb::Original {
+                pixels: &self.input,
+                stride: self.request.stride as usize,
+                layout: self.request.layout,
+            }),
+            self.high_chroma_loss,
             &mut self.reconstructed_y,
             &mut self.reconstructed_u,
             &mut self.reconstructed_v,
@@ -3268,6 +3489,178 @@ mod tests {
     use std::process::{Command, Stdio};
 
     #[test]
+    fn adjacent_uv_levels_respect_signed_dequantized_domain() {
+        assert_eq!(adjacent_level(0, 4, -1), Some(-1));
+        assert_eq!(adjacent_level(-1, 4, 1), Some(0));
+        assert_eq!(adjacent_level(2047, 4, 1), None);
+        assert_eq!(adjacent_level(-2047, 4, -1), None);
+        assert_eq!(adjacent_level(115, 284, 1), None);
+        assert_eq!(adjacent_level(-115, 284, -1), None);
+        assert_eq!(adjacent_level(114, 284, 1), Some(115));
+    }
+
+    #[test]
+    fn uv_refinement_requires_strict_rgb_gain_and_nonincreasing_complete_rate() {
+        let source_y = [128u8; 256];
+        let source_uv = [128u8; 64];
+        let reconstructed_y = [0u8; 256];
+        let reconstructed_uv = [0u8; 64];
+        let y_tile = [128u8; 256];
+        let steps = Steps { dc: 8, ac: 8 };
+        let mut coefficients = [0i16; 16];
+        coefficients[0] = 1;
+        let predictor = [128u8; 16];
+        let patch = reconstructed_patch(&coefficients, &predictor, steps);
+        assert_ne!(patch, predictor);
+        let mut uv = UvCandidate {
+            u: [[0; 16]; 4],
+            v: [[0; 16]; 4],
+            u_tile: [128; 64],
+            v_tile: [128; 64],
+            distortion: 0,
+        };
+        uv.u[0] = coefficients;
+        store_patch::<8, 64>(&mut uv.u_tile, 0, 0, &patch);
+        let baseline_uv = uv.clone();
+        let mut block = Macroblock {
+            i16: true,
+            u: uv.u,
+            ..Macroblock::default()
+        };
+        let contexts = CoeffContexts::new(1);
+        let above = [0u8; 4];
+        let left = [0u8; 4];
+        let segments = SegmentConfig::nonsegmented(0);
+        let budget = HeaderBudget::new(
+            1,
+            segments,
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .unwrap();
+        let mut target = [0u8; 16 * 16 * 4];
+        let neutral_uv = [128u8; 64];
+        let neutral = display_rgb::Frame {
+            width: 16,
+            height: 16,
+            stride_y: 16,
+            original: display_rgb::Original {
+                pixels: &[],
+                stride: 0,
+                layout: 0,
+            },
+            source_y: &source_y,
+            source_u: &source_uv,
+            source_v: &source_uv,
+            reconstructed_y: &reconstructed_y,
+            reconstructed_u: &reconstructed_uv,
+            reconstructed_v: &reconstructed_uv,
+            tile_y: &y_tile,
+            tile_u: &neutral_uv,
+            tile_v: &neutral_uv,
+            mx: 0,
+            my: 0,
+        };
+        for y in 0..16 {
+            for x in 0..16 {
+                let rgb = neutral.rendered(x, y, None);
+                target[(y * 16 + x) * 4..(y * 16 + x) * 4 + 3].copy_from_slice(&rgb);
+                target[(y * 16 + x) * 4 + 3] = 255;
+            }
+        }
+        let before = selected_cost(
+            &block, 0, &contexts, &above, &left, 0, 1, segments, &budget, &mut None, &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        refine_selected_uv(
+            &mut block,
+            &mut uv,
+            &y_tile,
+            display_rgb::Original {
+                pixels: &target,
+                stride: 64,
+                layout: 0,
+            },
+            &source_y,
+            &source_uv,
+            &source_uv,
+            &reconstructed_y,
+            &reconstructed_uv,
+            &reconstructed_uv,
+            16,
+            16,
+            16,
+            0,
+            0,
+            steps,
+            &contexts,
+            &above,
+            &left,
+            segments,
+            &budget,
+        )
+        .unwrap();
+        let after = selected_cost(
+            &block, 0, &contexts, &above, &left, 0, 1, segments, &budget, &mut None, &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(block.u[0][0], 0);
+        assert_eq!(uv.u_tile, neutral_uv);
+        assert!(after <= before);
+        assert_eq!(reconstructed_uv, [0; 64]);
+
+        let mut tie_target = target;
+        let baseline = display_rgb::Frame {
+            tile_u: &baseline_uv.u_tile,
+            ..neutral
+        };
+        for y in 0..16 {
+            for x in 0..16 {
+                tie_target[(y * 16 + x) * 4..(y * 16 + x) * 4 + 3]
+                    .copy_from_slice(&baseline.rendered(x, y, None));
+            }
+        }
+        let mut tie_block = Macroblock {
+            i16: true,
+            u: baseline_uv.u,
+            ..Macroblock::default()
+        };
+        let mut tie_uv = baseline_uv;
+        refine_selected_uv(
+            &mut tie_block,
+            &mut tie_uv,
+            &y_tile,
+            display_rgb::Original {
+                pixels: &tie_target,
+                stride: 64,
+                layout: 0,
+            },
+            &source_y,
+            &source_uv,
+            &source_uv,
+            &reconstructed_y,
+            &reconstructed_uv,
+            &reconstructed_uv,
+            16,
+            16,
+            16,
+            0,
+            0,
+            steps,
+            &contexts,
+            &above,
+            &left,
+            segments,
+            &budget,
+        )
+        .unwrap();
+        assert_eq!(tie_block.u[0][0], 1);
+    }
+
+    #[test]
     fn preview_comparison_uses_visible_support_and_strict_improvement() {
         assert!(!reduced_profile_wins(7, 7));
         assert!(!reduced_profile_wins(7, 8));
@@ -3514,7 +3907,7 @@ mod tests {
     }
 
     #[test]
-    fn higher_preset_frame_bytes_match_pre_rdo_wasm() {
+    fn higher_preset_frames_remain_deterministic_and_match_abi2() {
         let pixels: Vec<_> = (0..16 * 16 * 4)
             .map(|i| {
                 if i % 4 == 3 {
@@ -3524,16 +3917,21 @@ mod tests {
                 }
             })
             .collect();
-        // FNV-1a fingerprints of the base c901c052 ABI2 WASM output.
-        for (quality, expected_len, expected_hash) in [
-            (75, 243, 0x7670_01a7_a481_756c),
-            (85, 314, 0x1b5b_a600_8fee_5d8d),
-        ] {
+        // The pre-refinement c901c052 payload fingerprints are retained in
+        // source history; coefficient refinement intentionally changes them.
+        for quality in [75, 85] {
             let bytes = encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap();
-            let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
-                (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
-            });
-            assert_eq!((bytes.len(), hash), (expected_len, expected_hash));
+            assert_eq!(
+                encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap(),
+                bytes
+            );
+            let request = Request {
+                quality,
+                ..engine_request(16, 16, 0, &pixels, 64)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, pixels.clone(), plan).unwrap());
+            assert_eq!(engine.output(), bytes);
         }
     }
 
@@ -3567,11 +3965,9 @@ mod tests {
         assert_eq!(rdo.block_lambda(0, 4), None);
         assert_eq!(rdo.block_lambda(4, 0), None);
         let sync = encode_textured(&input, 2, 5, 8, 0, 60).unwrap();
-        // Retained c901c052 VP8 payload, before the rejected coefficient trials.
-        let fingerprint = sync.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
-        });
-        assert_eq!((sync.len(), fingerprint), (86, 0x2ba7_7544_8b00_1ee3));
+        // The retained c901c052 payload was 86 bytes with FNV-1a
+        // 0x2ba7_7544_8b00_1ee3 before this refinement.
+        assert_eq!(encode_textured(&input, 2, 5, 8, 0, 60).unwrap(), sync);
         for frame in [1, 2] {
             let request = Request {
                 quality: 60,
@@ -4227,6 +4623,8 @@ mod tests {
                     source_y,
                     source_uv,
                     source_uv,
+                    None,
+                    false,
                     &mut reconstructed_y,
                     &mut reconstructed_u,
                     &mut reconstructed_v,
