@@ -30,6 +30,23 @@ confirms isolate disposal, not process memory return. The direct harness Worker
 is excluded. The compiled `WebAssembly.Module` cache may remain live and is
 excluded from mutable Instance/Memory capacity.
 
+The prefix requires a `DedicatedWorkerGlobalScope` before it changes
+`WebAssembly.Instance` or installs its message listener. It accepts a `start`
+request only from the parent Worker channel, whose implicit-port `message`
+event has `source === null`; a message with a Window, MessagePort, or Service
+Worker source cannot replace its request ID. This is a Worker protocol check,
+not a cross-window origin comparison. The prefix is injected only into the
+inventoried conversion Worker response for this functional session; it is not
+part of the production bundle. The Node VM unit checks exercise the scope and
+message boundary, while the installed-browser run must establish that the
+actual dedicated Worker accepts its parent start request. A synthetic
+same-scope dispatch could also have a null source; this guard does not claim
+to authenticate arbitrary script already executing inside that Worker.
+
+The [Worker messaging algorithm](https://html.spec.whatwg.org/multipage/workers.html)
+uses the implicit port, and the [message-port dispatch steps](https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps)
+initialize data and ports without a source, leaving `MessageEvent.source` null.
+
 The guest reads the direct child installed browser process and executable
 digest before and after the functional session. An unavailable or changed
 identity leaves the reachability receipt unverified. This observation does not
@@ -48,5 +65,5 @@ broker state. The private release path is likewise bound to
 `webp-encoder-service.ts` and `owned-vp8-core.ts`, not independently observed.
 
 Whole-program #501 status remains `NOT_VERIFIED` until its independent timing,
-functional, platform, host-load, delivery and physical-memory gates have their
+functional, platform, host-load, delivery and resource gates have their
 own qualifying evidence. A reachability `PASS` never waives another gate.

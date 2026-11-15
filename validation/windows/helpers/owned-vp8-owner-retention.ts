@@ -7,6 +7,9 @@ export const OWNER_RETENTION_SCENARIO = 'owned-vp8-owner-retention';
 
 /** Runs in the conversion Worker, in functional sessions only. */
 export function installRetainedWorkerProbe() {
+  const DedicatedScope = Reflect.get(globalThis, 'DedicatedWorkerGlobalScope');
+  if (typeof DedicatedScope !== 'function' || !(globalThis instanceof DedicatedScope))
+    throw new Error('Retained Worker probe requires a dedicated Worker scope');
   const marker = '__wmcVp8RetainedWorkerSnapshot';
   const NativeInstance = WebAssembly.Instance;
   let requestId: string | null = null;
@@ -75,6 +78,8 @@ export function installRetainedWorkerProbe() {
     },
   });
   globalThis.addEventListener('message', (event: MessageEvent) => {
+    // Worker.postMessage uses the dedicated Worker's implicit port, which has no source.
+    if (event.source !== null) return;
     const message = event.data as { type?: unknown; requestId?: unknown } | null;
     if (message?.type === 'start' && typeof message.requestId === 'string')
       requestId = message.requestId;
