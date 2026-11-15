@@ -65,6 +65,14 @@ remains owned Rust; these adapted arithmetic/table portions retain attribution. 
 and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
 
+The q75 engineering calibration lowers every base and segment luma qindex by
+two relative to the previous tuning, including smooth and neutral inputs. UV DC
+and AC deltas increase by two so scalar UV quantizer steps remain unchanged,
+including clamping; rate weights use the previous qindex. Mode choices and UV
+reconstruction may still change. This fixed calibration does not change q60/q85,
+geometry, cadence or acceptance thresholds, and requires a new compiled candidate,
+all exposed regressions and a new held-out cohort before adoption.
+
 ## ABI2 and resources
 
 The module exports only `vp8_v2_*`; ABI1 FFI exports are retired. The synchronous
@@ -105,11 +113,13 @@ choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction
 into the former source YUV slots, applies the signaled loop filter in raster
 order, and scores visible RGB with streaming SSIM moments. With legal unrefined
-output, it first finds the best finite score among legal variants no larger than
-that output. A legal refined variant exactly one byte larger is eligible only
-when its score strictly exceeds that best score. It then selects the highest
-finite score among eligible variants; variants two or more bytes larger remain
-ineligible. This one-byte admission window does not raise the output or
+output, it first finds the best finite score among legal variants whose
+word-aligned RIFF payload cost is no greater than that output's cost. A legal
+refined variant costing exactly one additional two-byte RIFF word is eligible
+only when its score strictly exceeds that best score. It then selects the
+highest finite score among eligible variants; larger aligned costs remain
+ineligible. Alignment uses widened arithmetic and includes the odd-byte padding
+required by the existing animation mux. This admission window does not raise the output or
 partition safety limits. If unrefined output is illegal, it selects the highest
 finite score among legal refined variants or returns the unrefined limit error.
 Exact score ties prefer extended, then captured mandatory, then unrefined. The RGB view

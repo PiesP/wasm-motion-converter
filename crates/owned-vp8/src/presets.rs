@@ -4,14 +4,24 @@
 // Only a prospectively frozen fresh cohort can establish acceptance.
 use crate::ac_quant::Deltas;
 
-pub(crate) const QINDEX: [usize; 3] = [40, 22, 8];
-pub(crate) const SMOOTH_QINDEX: usize = 6;
-pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [18, 19, 15];
-pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [32, 27, 15];
-pub(crate) const TEXTURED_QINDEX: [usize; 3] = [32, 28, 14];
-pub(crate) const TEXTURED_MONO_QINDEX: [usize; 3] = [34, 27, 14];
-pub(crate) const UV_DC_DELTA: [i8; 3] = [-4, -9, -4];
-pub(crate) const UV_AC_DELTA: [i8; 3] = [-11, -9, -4];
+pub(crate) const QINDEX: [usize; 3] = [40, 20, 8];
+const SMOOTH_QINDEX: usize = 6;
+const MEDIUM_LUMA_REDUCTION: usize = 2;
+
+pub(crate) fn smooth_qindex(quality: u32) -> usize {
+    SMOOTH_QINDEX
+        - if quality == 75 {
+            MEDIUM_LUMA_REDUCTION
+        } else {
+            0
+        }
+}
+pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [18, 17, 15];
+pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [32, 25, 15];
+pub(crate) const TEXTURED_QINDEX: [usize; 3] = [32, 26, 14];
+pub(crate) const TEXTURED_MONO_QINDEX: [usize; 3] = [34, 25, 14];
+pub(crate) const UV_DC_DELTA: [i8; 3] = [-4, -7, -4];
+pub(crate) const UV_AC_DELTA: [i8; 3] = [-11, -7, -4];
 pub(crate) const HIGH_CHROMA_LOSS_QINDEX_REDUCTION: usize = 4;
 pub(crate) const HIGH_CHROMA_LOSS_ORIGINAL_UV_DELTAS: (i8, i8) = (-13, 0);
 pub(crate) const HIGH_CHROMA_LOSS_UV_DELTAS: (i8, i8) = (-9, 4);
@@ -103,7 +113,14 @@ pub(crate) fn lambda_for_q(qindex: usize) -> u64 {
 }
 
 pub(crate) fn lambda_for_quality(qindex: usize, quality: u32) -> u64 {
-    let base = lambda_for_q(qindex);
+    // Precision calibration must not silently cheapen coefficient rate.
+    let reference_qindex = qindex
+        + if quality == 75 {
+            MEDIUM_LUMA_REDUCTION
+        } else {
+            0
+        };
+    let base = lambda_for_q(reference_qindex);
     if quality == 60 {
         base * 6 / 5
     } else {
@@ -114,6 +131,39 @@ pub(crate) fn lambda_for_quality(qindex: usize, quality: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn medium_precision_preserves_uv_steps_and_original_rate_weights() {
+        use crate::ac_quant::{steps, Plane};
+        let original_deltas = Deltas {
+            uv_dc: -9,
+            uv_ac: -9,
+            ..Deltas::default()
+        };
+        for (original, calibrated) in [
+            (22, qindex(75)),
+            (6, smooth_qindex(75)),
+            (19, chromatic_flat_qindex(75)),
+            (27, chromatic_ramp_qindex(75)),
+            (28, textured_qindex(75, false)),
+            (27, textured_qindex(75, true)),
+        ] {
+            assert_eq!(calibrated + 2, original);
+            assert_eq!(
+                steps(calibrated as u8, deltas(75), Plane::UV),
+                steps(original as u8, original_deltas, Plane::UV)
+            );
+            assert_eq!(lambda_for_quality(calibrated, 75), lambda_for_q(original));
+        }
+        for quality in [60, 85] {
+            assert_eq!(smooth_qindex(quality), 6);
+        }
+        assert_eq!((qindex(60), qindex(85)), (40, 8));
+        assert_eq!(
+            (textured_qindex(60, false), textured_qindex(85, false)),
+            (32, 14)
+        );
+    }
 
     #[test]
     fn frame_profile_uses_strict_visible_pixel_threshold_only_at_q60() {
