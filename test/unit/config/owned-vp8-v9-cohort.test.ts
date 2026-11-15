@@ -22,14 +22,14 @@ const root = resolve(import.meta.dirname, '../../..');
 const sha256 = (data: Uint8Array): string => createHash('sha256').update(data).digest('hex');
 const fileHash = (file: string): string => sha256(readFileSync(resolve(root, file)));
 
-describe('owned VP8 prospective V9 source freeze', () => {
-  it('selects exactly 20 fresh held-out inputs and keeps V1-V8 regression only', () => {
-    const selected = selectFixtureCohort('held-out', 'corrected-v9');
+describe('owned VP8 V9 source freeze and exposed regression routing', () => {
+  it('selects exactly 20 exposed V9 held-out inputs and keeps V1-V9 regression only', () => {
+    const selected = selectFixtureCohort('held-out', 'corrected-v9', true);
     expect(selected).toEqual(V9_HELDOUT);
-    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+    expect(fixtureSelectionIdentity(selected, 'held-out', true, false)).toMatchObject({
       expectedConditionCount: 60,
       completeCohort: true,
-      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+      scope: 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE',
     });
     expect(selectFixtureCohort('tuning', 'corrected-v9')).toHaveLength(15);
     for (const cohort of [
@@ -41,47 +41,49 @@ describe('owned VP8 prospective V9 source freeze', () => {
       'corrected-v6',
       'corrected-v7',
       'corrected-v8',
+      'corrected-v9',
     ] as const) {
       expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
       expect(selectFixtureCohort('held-out', cohort, true).length).toBeGreaterThan(0);
     }
   });
 
-  it('rejects partial acceptance before creating evidence or initializing a codec', async () => {
+  it('rejects full and partial V9 acceptance before evidence or codec initialization', async () => {
     const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v9-preflight-'));
     const output = join(parent, 'evidence');
     try {
-      await expect(
-        compare({
-          output,
-          split: 'held-out',
-          cohort: 'corrected-v9',
-          fixtureIds: ['fresh9-gray'],
-          sources: {},
-          candidateRoot: join(parent, 'missing-candidate'),
-        })
-      ).rejects.toThrow('diagnostic only');
-      expect(existsSync(output)).toBe(false);
-      const cli = spawnSync(
-        process.execPath,
-        [
-          '--experimental-strip-types',
-          resolve(root, 'scripts/test/owned-vp8-v2-compare.ts'),
-          '--cohort',
-          'corrected-v9',
-          '--acceptance',
-          '--fixture',
-          'fresh9-gray',
-          '--candidate-root',
-          join(parent, 'missing-candidate'),
-          '--output',
-          output,
-        ],
-        { cwd: root, encoding: 'utf8' }
-      );
-      expect(cli.status).not.toBe(0);
-      expect(cli.stderr).toContain('diagnostic only');
-      expect(existsSync(output)).toBe(false);
+      for (const subset of [false, true]) {
+        await expect(
+          compare({
+            output,
+            split: 'held-out',
+            cohort: 'corrected-v9',
+            ...(subset ? { fixtureIds: ['fresh9-gray'] } : {}),
+            sources: {},
+            candidateRoot: join(parent, 'missing-candidate'),
+          })
+        ).rejects.toThrow(subset ? 'diagnostic only' : 'exposed');
+        expect(existsSync(output)).toBe(false);
+        const cli = spawnSync(
+          process.execPath,
+          [
+            '--experimental-strip-types',
+            resolve(root, 'scripts/test/owned-vp8-v2-compare.ts'),
+            '--cohort',
+            'corrected-v9',
+            '--acceptance',
+            ...(subset ? ['--fixture', 'fresh9-gray'] : []),
+            '--candidate-root',
+            join(parent, 'missing-candidate'),
+            '--output',
+            output,
+          ],
+          { cwd: root, encoding: 'utf8' }
+        );
+        expect(cli.status).not.toBe(0);
+        expect(cli.stderr).toContain(subset ? 'diagnostic only' : 'exposed');
+        expect(existsSync(output)).toBe(false);
+      }
       expect(selectFixtureCohort('held-out', 'corrected-v9', true, ['fresh9-gray'])).toHaveLength(
         1
       );

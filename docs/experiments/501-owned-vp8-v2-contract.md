@@ -273,10 +273,16 @@ held-out pixel inputs / 60 q60/75/85 conditions before any V9 codec evaluation.
 Its [manifest](501-owned-vp8-v9-fixtures.json) fixes the new photograph's two
 disjoint crops, previously unused video frames, generated seed and formulas,
 visible geometry, layouts, row padding, exact input digests and all V1–V8
-predecessor manifest digests. V9 is the only currently selectable fresh held-out
-cohort. Subsets fail before evidence creation or codec initialization. All
-previous held-out cohorts remain explicit regression controls. This is an input
-freeze, not a candidate acceptance result or product adoption.
+predecessor manifest digests. Before its first evaluation, V9 was the only
+selectable fresh held-out cohort; subsets failed before evidence creation or
+codec initialization. This source freeze was an input record, not acceptance.
+
+The [first complete V9 result](501-owned-vp8-v9-result.md) rejected candidate
+adoption at 59/60 conditions: `fresh9-chroma-edge` q60 missed the unchanged
+SSIM gate by 0.001907. All V1–V9 held-out inputs now require `--regression`,
+and no fresh successor is currently frozen. The 15 tuning inputs, source-only
+V9 generator and manifest, numeric gates and earlier failed receipts remain
+unchanged. This fixed-pixel result does not qualify product adoption.
 
 ## Resources and adoption
 

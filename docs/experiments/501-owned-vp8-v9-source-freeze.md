@@ -40,5 +40,12 @@ vary deterministically and are ignored in RGB comparison.
 The numeric gates are unchanged: candidate PSNR at least baseline minus 1 dB,
 SSIM at least baseline minus 0.01, and candidate raw VP8 size at most the greater
 of baseline × 1.25 or baseline plus 128 bytes. This source freeze establishes
-input provenance and selection only. No V9 quality outcome, encoder adoption,
-browser behavior, animation fidelity, or product performance is established.
+input provenance and selection only. At the time of this freeze, no V9 quality
+outcome, encoder adoption, browser behavior, animation fidelity, or product
+performance was established.
+
+The [first complete V9 result](501-owned-vp8-v9-result.md) rejected candidate
+adoption at 59/60 conditions after a q60 SSIM failure on
+`fresh9-chroma-edge`. All V1–V9 held-out inputs are now exposed regression
+evidence and require `--regression`; no fresh successor is currently frozen.
+The original generator, manifest, source digests and failed result remain intact.

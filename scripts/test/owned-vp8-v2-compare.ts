@@ -51,9 +51,9 @@ export function selectFixtureCohort(
 ) {
   if (fixtureIds !== undefined && split === 'held-out' && !regression)
     throw new Error('Fixture subsets are diagnostic only; acceptance requires the full cohort');
-  if (split === 'held-out' && !regression && cohort !== 'corrected-v9')
+  if (split === 'held-out' && !regression)
     throw new Error(
-      `${cohort} is exposed: use --regression; corrected-v9 is the only fresh cohort`
+      `${cohort} is exposed: use --regression; no fresh successor is currently frozen`
     );
   const entries =
     cohort === 'corrected-v9'
@@ -306,12 +306,6 @@ export async function compare(options: {
     options.regression ?? false,
     options.fixtureIds !== undefined
   );
-  if (cohort === 'corrected-v9' && options.split === 'held-out' && !options.regression)
-    assert.equal(
-      selected.length * QUALITIES.length,
-      60,
-      'V9 acceptance requires all 60 conditions'
-    );
   const output = resolve(options.output);
   const candidateRoot = resolve(options.candidateRoot ?? ROOT);
   for (const forbidden of ['public', 'dist']) {
