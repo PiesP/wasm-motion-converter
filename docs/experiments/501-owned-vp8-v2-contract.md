@@ -192,6 +192,15 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
 
 ## Discrepancy inventory
 
+- Fixed during candidate CI recovery migration: the comment at
+  `validation/windows/webp-initialization.ts:11`, test group/case names in
+  `test/e2e/output-contract.spec.ts` and mode list in
+  `validation/windows/profile.ts` still promised Emscripten factory/import failure
+  and explicit reload while the candidate software route used owned VP8.
+  CI observed zero intercepted requests and successful conversion instead.
+  Their replacement covers owned HTTP/invalid-module/cancelled-load boundaries
+  and explicit same-document new-request recovery. The old source and failed
+  CI receipt remain preserved; production master remains gated on qualification.
 - Retained diagnostic-artifact correction: the private task receipt
   `native-large-diagnostic/RESULT.md` said its per-class coefficient byte totals
   sum to the final coefficient partition. Its replay code/log omits the four-byte
