@@ -301,6 +301,14 @@ at q75 missed the unchanged SSIM gate. All V1–V10 held-out inputs now require
 fresh successor had been frozen. The subsequent [V11 source-only freeze](501-owned-vp8-v11-source-freeze.md)
 is separate. The original V10 generator, manifest and negative result remain intact.
 
+The [first complete V11 result](501-owned-vp8-v11-result.md) rejected adoption
+at 58/60 conditions: `fresh11-photo` failed the unchanged PSNR gate at q60 and
+q75. All V1–V11 held-out inputs now require `--regression`; 627 known
+conditions are exposed. The original V11 generator, manifest, source inputs,
+measurement harness identity and failed result remain intact. At this V11
+result checkpoint, a future candidate requires a newly frozen independent
+cohort for fresh quality acceptance.
+
 ## Resources and adoption
 
 Preserve 512 MiB conversion, 128 MiB demux reserve, 192 MiB frame reserve and

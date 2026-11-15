@@ -59,5 +59,10 @@ For every condition, candidate PSNR must be at least primary minus 1 dB, SSIM
 at least primary minus 0.01, and raw VP8 size at most the greater of primary
 × 1.25 or primary plus 128 bytes. All 60 conditions must pass jointly. Fixture
 subsets are diagnostic only. Source preparation, fixed-pixel metrics and later
-product/browser qualification are separate scopes. The first actual candidate
-run requires root registration and independent source review after this freeze.
+product/browser qualification are separate scopes. At this freeze checkpoint,
+the first actual candidate run required root registration and independent source
+review. The registered [first complete V11 result](501-owned-vp8-v11-result.md)
+subsequently rejected candidate adoption at 58/60 after two `fresh11-photo`
+PSNR failures. Its original measurement harness was `1c8bb21e86471107c763eb62aa18ce6c2f6bb0f1`;
+the generator, manifest, source inputs and numeric gates remain frozen. V11 is
+now exposed regression evidence and requires `--regression` for later use.

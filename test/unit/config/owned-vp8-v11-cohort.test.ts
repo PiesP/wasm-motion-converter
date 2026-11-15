@@ -25,7 +25,7 @@ const sha256 = (bytes: Uint8Array): string => createHash('sha256').update(bytes)
 const fileHash = (file: string): string => sha256(readFileSync(resolve(root, file)));
 const oldSuffixes = ['v2', 'v2-correction', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10'];
 
-describe('owned VP8 V11 prospective source freeze', () => {
+describe('owned VP8 V11 frozen source and exposed regression routing', () => {
   it('validates the common V1–V11 source pins before codec setup', () => {
     const preflight = validateFixtureSourcePins('corrected-v11');
     const initial = JSON.parse(readFileSync(preflight.baselineManifestFile, 'utf8')) as {
@@ -38,15 +38,16 @@ describe('owned VP8 V11 prospective source freeze', () => {
     );
   });
 
-  it('selects the full fresh cohort and keeps every predecessor regression only', () => {
-    const selected = selectFixtureCohort('held-out', 'corrected-v11');
+  it('selects the full exposed V11 cohort and keeps every held-out cohort regression only', () => {
+    const selected = selectFixtureCohort('held-out', 'corrected-v11', true);
     expect(selected).toEqual(V11_HELDOUT);
-    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+    expect(fixtureSelectionIdentity(selected, 'held-out', true, false)).toMatchObject({
       expectedConditionCount: 60,
       completeCohort: true,
-      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+      scope: 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE',
     });
     expect(selectFixtureCohort('tuning', 'corrected-v11')).toHaveLength(15);
+    expect(() => selectFixtureCohort('held-out', 'corrected-v11')).toThrow('exposed');
     expect(() => selectFixtureCohort('held-out', 'corrected-v11', false, ['fresh11-gray'])).toThrow(
       'diagnostic only'
     );
@@ -61,53 +62,59 @@ describe('owned VP8 V11 prospective source freeze', () => {
       'corrected-v8',
       'corrected-v9',
       'corrected-v10',
+      'corrected-v11',
     ] as const) {
       expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
       expect(selectFixtureCohort('held-out', cohort, true).length).toBeGreaterThan(0);
     }
   });
 
-  it('rejects an acceptance subset before creating evidence or initializing codecs', async () => {
+  it('rejects full and subset acceptance before creating evidence or initializing codecs', async () => {
     const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v11-subset-'));
     const output = join(parent, 'evidence');
     try {
-      await expect(
-        compare({
-          output,
-          split: 'held-out',
-          cohort: 'corrected-v11',
-          fixtureIds: ['fresh11-gray'],
-          sources: {},
-          candidateRoot: join(parent, 'missing-candidate'),
-        })
-      ).rejects.toThrow('diagnostic only');
-      expect(existsSync(output)).toBe(false);
-      const cli = spawnSync(
-        process.execPath,
-        [
-          '--experimental-strip-types',
-          resolve(root, 'scripts/test/owned-vp8-v2-compare.ts'),
-          '--cohort',
-          'corrected-v11',
-          '--acceptance',
-          '--fixture',
-          'fresh11-gray',
-          '--candidate-root',
-          join(parent, 'missing-candidate'),
-          '--output',
-          output,
-        ],
-        { cwd: root, encoding: 'utf8' }
+      for (const subset of [false, true]) {
+        await expect(
+          compare({
+            output,
+            split: 'held-out',
+            cohort: 'corrected-v11',
+            ...(subset ? { fixtureIds: ['fresh11-gray'] } : {}),
+            sources: {},
+            candidateRoot: join(parent, 'missing-candidate'),
+          })
+        ).rejects.toThrow(subset ? 'diagnostic only' : 'exposed');
+        expect(existsSync(output)).toBe(false);
+        const cli = spawnSync(
+          process.execPath,
+          [
+            '--experimental-strip-types',
+            resolve(root, 'scripts/test/owned-vp8-v2-compare.ts'),
+            '--cohort',
+            'corrected-v11',
+            '--acceptance',
+            ...(subset ? ['--fixture', 'fresh11-gray'] : []),
+            '--candidate-root',
+            join(parent, 'missing-candidate'),
+            '--output',
+            output,
+          ],
+          { cwd: root, encoding: 'utf8' }
+        );
+        expect(cli.status).not.toBe(0);
+        expect(cli.stderr).toContain(subset ? 'diagnostic only' : 'exposed');
+        expect(existsSync(output)).toBe(false);
+      }
+      expect(selectFixtureCohort('held-out', 'corrected-v11', true)).toHaveLength(20);
+      expect(selectFixtureCohort('held-out', 'corrected-v11', true, ['fresh11-gray'])).toHaveLength(
+        1
       );
-      expect(cli.status).not.toBe(0);
-      expect(cli.stderr).toContain('diagnostic only');
-      expect(existsSync(output)).toBe(false);
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
   });
 
-  it('binds 20 fresh inputs to the frozen manifest and ABI layouts', () => {
+  it('binds all 20 V11 inputs to the frozen manifest and ABI layouts', () => {
     const frozen = JSON.parse(
       readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v11-fixtures.json'), 'utf8')
     ) as {
