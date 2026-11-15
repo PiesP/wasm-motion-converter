@@ -29,8 +29,8 @@ quality or metric rule was changed after this failure.
 
 All V1–V9 held-out fixtures have now been observed and require `--regression`
 for later use. The known fixed-pixel corpus totals 507 exposed conditions; no
-fresh successor is currently frozen. The 15 tuning inputs remain tuning-only
-controls. A future candidate needs a new prospectively frozen independent
-cohort before fresh quality acceptance. This result does not qualify animation
+fresh successor had been frozen at the time of this result. The 15 tuning
+inputs remain tuning-only controls. A future candidate needs a new,
+independently frozen cohort before fresh quality acceptance. This result does not qualify animation
 timing or fidelity, live conversion, cancellation, deployment, dependency
 removal, or product adoption.

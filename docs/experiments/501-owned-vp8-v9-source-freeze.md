@@ -47,5 +47,10 @@ performance was established.
 The [first complete V9 result](501-owned-vp8-v9-result.md) rejected candidate
 adoption at 59/60 conditions after a q60 SSIM failure on
 `fresh9-chroma-edge`. All V1–V9 held-out inputs are now exposed regression
-evidence and require `--regression`; no fresh successor is currently frozen.
-The original generator, manifest, source digests and failed result remain intact.
+evidence and require `--regression`; at that result no fresh successor had been
+frozen. The original generator, manifest, source digests and failed result
+remain intact.
+
+The [V10 source-only freeze](501-owned-vp8-v10-source-freeze.md) subsequently
+introduced a distinct prospective cohort. The V9 failure and source identities
+above remain historical evidence.

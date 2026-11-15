@@ -280,9 +280,19 @@ codec initialization. This source freeze was an input record, not acceptance.
 The [first complete V9 result](501-owned-vp8-v9-result.md) rejected candidate
 adoption at 59/60 conditions: `fresh9-chroma-edge` q60 missed the unchanged
 SSIM gate by 0.001907. All V1–V9 held-out inputs now require `--regression`,
-and no fresh successor is currently frozen. The 15 tuning inputs, source-only
-V9 generator and manifest, numeric gates and earlier failed receipts remain
-unchanged. This fixed-pixel result does not qualify product adoption.
+and no fresh successor had been frozen at that result. The 15 tuning inputs,
+source-only V9 generator and manifest, numeric gates and earlier failed receipts
+remain unchanged. This fixed-pixel result does not qualify product adoption.
+
+## Prospective corrected-v10 source-only freeze
+
+The [V10 source freeze](501-owned-vp8-v10-source-freeze.md) and
+[manifest](501-owned-vp8-v10-fixtures.json) bind 20 new held-out inputs at
+q60/75/85 before any V10 codec evaluation. V10 accepts only the full 60-condition
+cohort, with no held-out subset. All V1–V9 held-out cohorts are exposed and
+require `--regression`; the 15 tuning inputs and numeric gates are unchanged.
+This freeze records source provenance and selection, not a quality or product
+result.
 
 ## Resources and adoption
 
