@@ -26,6 +26,13 @@ The release profile uses `opt-level = 3` as a throughput candidate. The
 defines the comparison with the retained `opt-level = "s"` module. This build
 setting alone does not establish faster conversion or product acceptance.
 
+I4 mode selection now applies two exact integer score lower bounds to skip
+modes that cannot replace the current winner. The mode order and strict tie
+rule are unchanged; an exhaustive test-only search checks selected modes,
+coefficients, reconstruction and score. The [prospective experiment and
+source-bound result](../../docs/experiments/501-owned-vp8-exact-rdo-pruning.md)
+define the original module control, byte comparisons and performance limits.
+
 Textured allocation uses a per-frame flag that is true only when every imported,
 padded U/V sample is exactly 128, accumulated during bounded RGB-to-YUV conversion.
 The current exploratory colored and neutral qindices are defined in `src/presets.rs`.

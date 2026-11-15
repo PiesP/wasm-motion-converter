@@ -1169,8 +1169,37 @@ fn make_i4(
     contexts: &CoeffContexts,
     lambda: u64,
 ) -> LumaCandidate {
+    make_i4_with_pruning::<true>(
+        source,
+        reconstructed,
+        stride,
+        mx,
+        my,
+        y_steps,
+        above_modes,
+        left_modes,
+        contexts,
+        lambda,
+    )
+    .0
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_i4_with_pruning<const PRUNE: bool>(
+    source: &[u8],
+    reconstructed: &[u8],
+    stride: usize,
+    mx: usize,
+    my: usize,
+    y_steps: Steps,
+    above_modes: &[u8],
+    left_modes: &[u8; 4],
+    contexts: &CoeffContexts,
+    lambda: u64,
+) -> (LumaCandidate, u64) {
     let mut tile = [0u8; 256];
     let mut block = Macroblock::default();
+    let mut selected_score = 0u64;
     let mut local_above = [false; 4];
     local_above.copy_from_slice(&contexts.y[mx * 4..mx * 4 + 4]);
     let mut local_left = contexts.left_y;
@@ -1192,18 +1221,21 @@ fn make_i4(
             };
             let mut best: Option<([i16; 16], [u8; 16], u8, u64)> = None;
             for mode in 0..10u8 {
+                let mut trial = RateCounter::default();
+                write_bmode(&mut trial, above, left_mode, mode).unwrap();
+                let mode_cost = trial.cost;
+                // Distortion and residual token costs cannot lower this score.
+                // A tie retains the earlier mode under the strict comparison.
+                if PRUNE
+                    && best
+                        .as_ref()
+                        .is_some_and(|last| lambda * mode_cost >= last.3)
+                {
+                    continue;
+                }
                 let predicted = prediction::predict_i4(&top, &left, corner, bmode_from_u8(mode));
                 let (coeff, patch) =
                     code_predicted_block(source, stride, x, y, &predicted, y_steps);
-                let mut trial = RateCounter::default();
-                write_bmode(&mut trial, above, left_mode, mode).unwrap();
-                residual::encode_block(
-                    &mut trial,
-                    &coeff,
-                    3,
-                    usize::from(local_above[bx]) + usize::from(local_left[by]),
-                )
-                .unwrap();
                 let mut distortion = 0u64;
                 for row in 0..4 {
                     for col in 0..4 {
@@ -1212,12 +1244,27 @@ fn make_i4(
                         distortion += (diff * diff) as u64;
                     }
                 }
+                if PRUNE
+                    && best
+                        .as_ref()
+                        .is_some_and(|last| distortion * 256 + lambda * mode_cost >= last.3)
+                {
+                    continue;
+                }
+                residual::encode_block(
+                    &mut trial,
+                    &coeff,
+                    3,
+                    usize::from(local_above[bx]) + usize::from(local_left[by]),
+                )
+                .unwrap();
                 let score = distortion * 256 + lambda * trial.cost;
                 if best.as_ref().is_none_or(|last| score < last.3) {
                     best = Some((coeff, patch, mode, score));
                 }
             }
-            let (coeff, patch, mode, _) = best.unwrap();
+            let (coeff, patch, mode, score) = best.unwrap();
+            selected_score += score;
             block.y[index] = coeff;
             block.b_modes[index] = mode;
             store_patch::<16, 256>(&mut tile, bx, by, &patch);
@@ -1226,11 +1273,14 @@ fn make_i4(
             local_left[by] = nonzero;
         }
     }
-    LumaCandidate {
-        block,
-        tile,
-        distortion: squared_error::<16, 256>(source, stride, mx * 16, my * 16, &tile),
-    }
+    (
+        LumaCandidate {
+            block,
+            tile,
+            distortion: squared_error::<16, 256>(source, stride, mx * 16, my * 16, &tile),
+        },
+        selected_score,
+    )
 }
 #[derive(Clone, Copy)]
 enum UvRatePolicy {
@@ -5232,6 +5282,85 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn i4_lower_bound_pruning_matches_exhaustive_mode_search() {
+        let mut state = 0x5015_4d4fu32;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        };
+        for pattern in 0..10 {
+            let mut source = vec![0u8; 32 * 32];
+            let mut reconstructed = vec![0u8; 32 * 32];
+            for y in 0..32 {
+                for x in 0..32 {
+                    let index = y * 32 + x;
+                    source[index] = match pattern {
+                        0 => 0,
+                        1 => 255,
+                        2 => ((x + y) % 2 * 255) as u8,
+                        3 => (x * 7 + y * 3) as u8,
+                        _ => next(),
+                    };
+                    reconstructed[index] = if pattern < 4 {
+                        ((x * 11 + y * 19 + pattern * 23) & 255) as u8
+                    } else {
+                        next()
+                    };
+                }
+            }
+            let mut contexts = CoeffContexts::new(2);
+            for value in &mut contexts.y {
+                *value = next() & 1 != 0;
+            }
+            for value in &mut contexts.left_y {
+                *value = next() & 1 != 0;
+            }
+            let above: Vec<_> = (0..8).map(|_| next() % 10).collect();
+            let left = std::array::from_fn(|_| next() % 10);
+            for qindex in [0, 22, 80, 127] {
+                let steps = ac_quant::steps(qindex, Deltas::default(), Plane::Y1);
+                for lambda in [0, 1, 225, 2048] {
+                    for (mx, my) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let pruned = make_i4_with_pruning::<true>(
+                            &source,
+                            &reconstructed,
+                            32,
+                            mx,
+                            my,
+                            steps,
+                            &above,
+                            &left,
+                            &contexts,
+                            lambda,
+                        );
+                        let exhaustive = make_i4_with_pruning::<false>(
+                            &source,
+                            &reconstructed,
+                            32,
+                            mx,
+                            my,
+                            steps,
+                            &above,
+                            &left,
+                            &contexts,
+                            lambda,
+                        );
+                        assert_eq!(pruned.0.block, exhaustive.0.block);
+                        assert_eq!(pruned.0.tile, exhaustive.0.tile);
+                        assert_eq!(pruned.0.distortion, exhaustive.0.distortion);
+                        assert_eq!(
+                            pruned.1, exhaustive.1,
+                            "pattern={pattern} q={qindex} lambda={lambda} mx={mx} my={my}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     fn generated_v7_tiny_rgba(width: usize, height: usize) -> Vec<u8> {
         // Same generated RGB rules as scripts/test/owned-vp8-v7-fixtures.ts.
