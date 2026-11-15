@@ -2835,6 +2835,7 @@ pub(crate) struct FrameEncoder {
     base_count: bool,
     replay_index: usize,
     pending_output_sizes: Option<(u32, u32)>,
+    release_total_slabs: usize,
     #[cfg(test)]
     disable_refinement: bool,
     class_counts: [usize; 4],
@@ -2963,6 +2964,7 @@ impl FrameEncoder {
             base_count: false,
             replay_index: 0,
             pending_output_sizes: None,
+            release_total_slabs: 0,
             #[cfg(test)]
             disable_refinement: false,
             class_counts: [0; 4],
@@ -3076,9 +3078,9 @@ impl FrameEncoder {
             ),
             Stage::ReapplyRefinements => (self.replay_index as u32, self.refinement_log.len as u32),
             Stage::ReleaseRefinements => (
-                (self.refinement_log.len.div_ceil(REFINEMENT_SLAB_LEN)
-                    - self.refinement_log.slabs.len()) as u32,
-                self.refinement_log.len.div_ceil(REFINEMENT_SLAB_LEN) as u32,
+                self.release_total_slabs
+                    .saturating_sub(self.refinement_log.slabs.len()) as u32,
+                self.release_total_slabs as u32,
             ),
             Stage::Done => (1, 1),
             _ => (0, 1),
@@ -3252,6 +3254,11 @@ impl FrameEncoder {
         self.update_count = 0;
         self.count_header = CountingBoolSink::default();
         self.count_token = CountingBoolSink::default();
+    }
+
+    fn begin_refinement_release(&mut self) {
+        self.release_total_slabs = self.refinement_log.slabs.len();
+        self.stage = Stage::ReleaseRefinements;
     }
 
     fn replay_one_refinement(&mut self, forward: bool) -> Result<(), Status> {
@@ -3685,7 +3692,7 @@ impl FrameEncoder {
                         self.replay_index = 0;
                     } else {
                         self.refined_checkpoint = None;
-                        self.stage = Stage::ReleaseRefinements;
+                        self.begin_refinement_release();
                     }
                 }
             } else {
@@ -3907,7 +3914,7 @@ impl FrameEncoder {
                     self.use_model = refined.use_model;
                     self.pending_output_sizes = Some(refined.sizes);
                     self.reset_coding_state();
-                    self.stage = Stage::ReleaseRefinements;
+                    self.begin_refinement_release();
                 }
             }
             Stage::ReleaseRefinements => {
@@ -4098,6 +4105,64 @@ mod tests {
         assert_eq!(log.len, 40_280);
         assert!(log.capacity_bytes() <= REFINEMENT_LOG_BUDGET_BYTES);
         assert_eq!(log.slabs.len(), 40_280usize.div_ceil(REFINEMENT_SLAB_LEN));
+    }
+
+    #[test]
+    fn release_progress_counts_reserved_empty_slabs_at_exact_boundaries() {
+        for edits in [256usize, 512] {
+            for trailing_reservation in [false, true] {
+                let height = (edits + 1) * 16;
+                let input = vec![128u8; height * 16 * 4];
+                let request = engine_request(16, height, 0, &input, 64);
+                let plan = ResourcePlan::checked(request).unwrap();
+                let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+                for block in 0..edits {
+                    engine
+                        .refinement_log
+                        .reserve_one(plan.macroblock_count as usize)
+                        .unwrap();
+                    engine
+                        .refinement_log
+                        .push_reserved(RefinementEdit {
+                            block: block as u32,
+                            change: RefinementChange {
+                                plane: 0,
+                                patch: 0,
+                                coefficient: 0,
+                                old: 0,
+                                new: 1,
+                            },
+                        })
+                        .unwrap();
+                }
+                if trailing_reservation {
+                    engine
+                        .refinement_log
+                        .reserve_one(plan.macroblock_count as usize)
+                        .unwrap();
+                    assert!(engine.refinement_log.slabs.last().unwrap().is_empty());
+                }
+                let allocated_slabs =
+                    edits / REFINEMENT_SLAB_LEN + usize::from(trailing_reservation);
+                assert_eq!(engine.refinement_log.slabs.len(), allocated_slabs);
+                engine.pending_output_sizes = Some((10, 10));
+                engine.begin_refinement_release();
+                assert_eq!(engine.progress(), (0, allocated_slabs as u32));
+                for released in 1..=allocated_slabs {
+                    assert!(!engine.step().unwrap());
+                    assert!(engine.output().is_empty());
+                    if released < allocated_slabs {
+                        assert!(engine.stage == Stage::ReleaseRefinements);
+                        assert_eq!(engine.progress(), (released as u32, allocated_slabs as u32));
+                    }
+                }
+                assert!(engine.stage == Stage::PrepareOutput);
+                assert!(engine.refinement_log.slabs.is_empty());
+                assert_eq!(engine.plan.first_partition_bytes, 10);
+                assert_eq!(engine.plan.coefficient_partition_bytes, 10);
+                assert_eq!(engine.plan.frame_bytes, 30);
+            }
+        }
     }
 
     #[test]

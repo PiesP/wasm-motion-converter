@@ -255,6 +255,7 @@ async function cancellation(): Promise<object> {
 
 try {
   const largeOnly = process.argv.includes('--large-only');
+  let leaseCheck = 'NOT_RUN';
   if (!largeOnly) {
     for (const [width, height, layout] of [
       [16, 16, 0],
@@ -336,6 +337,7 @@ try {
       await check(pixels, width, height, width * 4, 0, 75, `axis-${width}x${height}`);
     }
     await leases();
+    leaseCheck = 'pending-input/output-stability-and-stale-publication-passed';
   }
   let cancel: object | null = null;
   if (largeOnly) {
@@ -363,7 +365,7 @@ try {
         wasmSha256: compiled.sha256,
         node: process.version,
         ffmpeg: execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0],
-        leases: 'pending-input/output-stability-and-stale-publication-passed',
+        leases: leaseCheck,
         cancellation: cancel,
         results,
       },
