@@ -11,11 +11,18 @@ visible geometry, layout and row stride, generator digest, external source
 metadata and hashes, FFmpeg version and filters, and all ten predecessor
 manifest digests. The source original and decoded pixels remain outside Git and
 public assets. This freeze does not establish a codec outcome.
-Generator SHA256: `76fbb7319a630651ef6013d71cb340f00c0f3bc54e1f6896d667c646128fa53a`.
-Manifest SHA256: `9c1699d8ad0a3d31de638cb0f816fe7fa0b6119dc7c05452aeadc33e1d652419`.
+Generator SHA256: `df1531d4d98387c23ed55a35536fcf275a20f3f0c8558efdc73a4c978edb0eae`.
+Manifest SHA256: `976a1365e7eeb13759df8f00d8b9ff296875c531ad10c707d445a25ac5c298a0`.
 Two source-only generations produced byte-identical manifests. The 20 inputs
 have 19 distinct hashes; only the intentional frame-111 duplicate hold repeats.
 None of the 20 hashes matches any of the 189 predecessor inputs (567 conditions).
+The initial V11 harness commit `9ccee16b` changed a type in the frozen V1
+generator, causing the common source-pin check to reject its SHA before any
+condition. The corrected harness restores V1's exact frozen generator hash and
+checks all source pins before codec setup. The prior V11 generator/manifest
+digests and full source-only receipt remain in private evidence; all 20 input
+rows, source identities, transforms and numeric gates are byte-identical across
+that repair.
 
 The previously unused original photograph is
 [20190831 Montagne.jpg](https://commons.wikimedia.org/wiki/File:20190831_Montagne.jpg),

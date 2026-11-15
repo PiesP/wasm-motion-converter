@@ -28,7 +28,12 @@ import { V7_HELDOUT, generateV7Fixture } from './owned-vp8-v7-fixtures.ts';
 import { V8_HELDOUT, generateV8Fixture } from './owned-vp8-v8-fixtures.ts';
 import { V9_HELDOUT, generateV9Fixture } from './owned-vp8-v9-fixtures.ts';
 import { V10_HELDOUT, generateV10Fixture } from './owned-vp8-v10-fixtures.ts';
-import { V11_HELDOUT, generateV11Fixture } from './owned-vp8-v11-fixtures.ts';
+import {
+  V11_HELDOUT,
+  generateV11Fixture,
+  type V11FixtureSpec,
+  type V11PixelFixture,
+} from './owned-vp8-v11-fixtures.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ORACLE_HASH = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
@@ -156,7 +161,7 @@ export function parseFixtureIds(args: readonly string[]): string[] | undefined {
 }
 
 export function fixtureSelectionIdentity(
-  selected: readonly FixtureSpec[],
+  selected: readonly (FixtureSpec | V11FixtureSpec)[],
   split: FixtureSplit,
   regression: boolean,
   diagnosticSubset: boolean
@@ -175,7 +180,7 @@ export function fixtureSelectionIdentity(
   };
 }
 
-export function rgbPixels(fixture: PixelFixture): Uint8Array {
+export function rgbPixels(fixture: PixelFixture | V11PixelFixture): Uint8Array {
   const result = new Uint8Array(fixture.width * fixture.height * 3);
   const bgr = fixture.layout === 'BGRA' || fixture.layout === 'BGRX';
   const bytesPerPixel = fixture.layout === 'RGB24' ? 3 : 4;
@@ -301,58 +306,8 @@ function decode(file: string, width: number, height: number): Uint8Array {
   return bytes;
 }
 
-export async function compare(options: {
-  output: string;
-  split: FixtureSplit;
-  sources: V5SourcePaths;
-  cohort?: FixtureCohort;
-  regression?: boolean;
-  fixtureIds?: readonly string[];
-  candidateRoot?: string;
-}): Promise<object> {
-  const cohort = options.cohort ?? 'initial-v1';
-  const selected = selectFixtureCohort(
-    options.split,
-    cohort,
-    options.regression,
-    options.fixtureIds
-  );
-  const selection = fixtureSelectionIdentity(
-    selected,
-    options.split,
-    options.regression ?? false,
-    options.fixtureIds !== undefined
-  );
-  const output = resolve(options.output);
-  const candidateRoot = resolve(options.candidateRoot ?? ROOT);
-  for (const forbidden of ['public', 'dist']) {
-    const path = join(ROOT, forbidden);
-    if (output === path || output.startsWith(path + sep))
-      throw new Error('Evidence must remain outside delivered assets');
-  }
-  mkdirSync(output, { recursive: true });
-  const wasmFile = join(candidateRoot, 'crates/owned-vp8/owned-vp8.wasm');
-  execFileSync(
-    process.execPath,
-    [
-      '--experimental-strip-types',
-      join(candidateRoot, 'scripts/build/build-owned-vp8-wasm.ts'),
-      '--verify-prebuilt',
-    ],
-    { cwd: candidateRoot }
-  );
-  const candidateBytes = readFileSync(wasmFile);
-  const oracleWasm = readFileSync(join(ROOT, 'node_modules/wasm-webp/dist/esm/webp-wasm.wasm'));
-  assert.equal(digest(oracleWasm), ORACLE_HASH, 'Primary shipped comparator changed');
-  const oracleUrl = new URL('../../node_modules/wasm-webp/dist/esm/webp-wasm.js', import.meta.url);
-  const { default: createOracle } = (await import(oracleUrl.href)) as {
-    default(): Promise<{
-      encodeRGB(rgb: Uint8Array, w: number, h: number, quality: number): Uint8Array | null;
-      encoder_version(): string;
-    }>;
-  };
-  const oracle = await createOracle();
-  const compiled = compileVp8(candidateBytes);
+/** Validate the exact frozen generator and manifest chain before any codec setup. */
+export function validateFixtureSourcePins(cohort: FixtureCohort) {
   const baselineManifestFile = join(ROOT, 'docs/experiments/501-owned-vp8-v2-fixtures.json');
   const frozen = JSON.parse(readFileSync(baselineManifestFile, 'utf8')) as {
     generatorSha256: string;
@@ -630,6 +585,87 @@ export async function compare(options: {
     frozen.fixtures.push(...fresh.fixtures);
   }
   assert.equal(new Set(frozen.fixtures.map((entry) => entry.id)).size, frozen.fixtures.length);
+  return {
+    frozen,
+    baselineManifestFile,
+    correctionManifestFile,
+    v3ManifestFile,
+    v4ManifestFile,
+    v5ManifestFile,
+    v6ManifestFile,
+    v7ManifestFile,
+    v8ManifestFile,
+    v9ManifestFile,
+    v10ManifestFile,
+    v11ManifestFile,
+  };
+}
+
+export async function compare(options: {
+  output: string;
+  split: FixtureSplit;
+  sources: V5SourcePaths;
+  cohort?: FixtureCohort;
+  regression?: boolean;
+  fixtureIds?: readonly string[];
+  candidateRoot?: string;
+}): Promise<object> {
+  const cohort = options.cohort ?? 'initial-v1';
+  const selected = selectFixtureCohort(
+    options.split,
+    cohort,
+    options.regression,
+    options.fixtureIds
+  );
+  const selection = fixtureSelectionIdentity(
+    selected,
+    options.split,
+    options.regression ?? false,
+    options.fixtureIds !== undefined
+  );
+  const output = resolve(options.output);
+  const candidateRoot = resolve(options.candidateRoot ?? ROOT);
+  for (const forbidden of ['public', 'dist']) {
+    const path = join(ROOT, forbidden);
+    if (output === path || output.startsWith(path + sep))
+      throw new Error('Evidence must remain outside delivered assets');
+  }
+  const {
+    frozen,
+    correctionManifestFile,
+    v3ManifestFile,
+    v4ManifestFile,
+    v5ManifestFile,
+    v6ManifestFile,
+    v7ManifestFile,
+    v8ManifestFile,
+    v9ManifestFile,
+    v10ManifestFile,
+    v11ManifestFile,
+  } = validateFixtureSourcePins(cohort);
+  mkdirSync(output, { recursive: true });
+  const wasmFile = join(candidateRoot, 'crates/owned-vp8/owned-vp8.wasm');
+  execFileSync(
+    process.execPath,
+    [
+      '--experimental-strip-types',
+      join(candidateRoot, 'scripts/build/build-owned-vp8-wasm.ts'),
+      '--verify-prebuilt',
+    ],
+    { cwd: candidateRoot }
+  );
+  const candidateBytes = readFileSync(wasmFile);
+  const oracleWasm = readFileSync(join(ROOT, 'node_modules/wasm-webp/dist/esm/webp-wasm.wasm'));
+  assert.equal(digest(oracleWasm), ORACLE_HASH, 'Primary shipped comparator changed');
+  const oracleUrl = new URL('../../node_modules/wasm-webp/dist/esm/webp-wasm.js', import.meta.url);
+  const { default: createOracle } = (await import(oracleUrl.href)) as {
+    default(): Promise<{
+      encodeRGB(rgb: Uint8Array, w: number, h: number, quality: number): Uint8Array | null;
+      encoder_version(): string;
+    }>;
+  };
+  const oracle = await createOracle();
+  const compiled = compileVp8(candidateBytes);
   const identities = {
     ...selection,
     cohort,

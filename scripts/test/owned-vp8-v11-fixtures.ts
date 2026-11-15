@@ -6,15 +6,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  EXTERNAL_SOURCES,
-  QUALITIES,
-  type FixtureSpec,
-  type PixelFixture,
-} from './owned-vp8-v2-fixtures.ts';
+import { EXTERNAL_SOURCES, QUALITIES, type FixtureSpec } from './owned-vp8-v2-fixtures.ts';
 import type { V4SourcePaths } from './owned-vp8-v4-fixtures.ts';
 
 export type V11SourcePaths = V4SourcePaths;
+export type V11FixtureSpec = Omit<FixtureSpec, 'layout'> & {
+  layout: FixtureSpec['layout'] | 'RGB24';
+};
+export type V11PixelFixture = V11FixtureSpec & { stride: number; pixels: Uint8Array };
 
 export const V11_PHOTO = {
   name: '20190831 Montagne.jpg',
@@ -46,11 +45,11 @@ function spec(
   kind: string,
   width: number,
   height: number,
-  layout: FixtureSpec['layout'] = 'RGBA',
+  layout: V11FixtureSpec['layout'] = 'RGBA',
   source: 'generated' | 'photo' | 'video' = 'generated',
   frame?: number,
   repeatOf?: string
-): FixtureSpec {
+): V11FixtureSpec {
   return {
     id,
     split,
@@ -64,7 +63,7 @@ function spec(
   };
 }
 
-export const V11_HELDOUT: readonly FixtureSpec[] = [
+export const V11_HELDOUT: readonly V11FixtureSpec[] = [
   spec('fresh11-gray', 'held-out', 'grayscale', 571, 323),
   spec('fresh11-gradient', 'held-out', 'gradient', 443, 307),
   spec('fresh11-chroma-edge', 'held-out', 'chroma', 433, 293),
@@ -122,7 +121,7 @@ function textPixel(x: number, y: number): boolean {
   return within < 5 && glyph?.[row]?.[within] === '1';
 }
 
-function generated(item: FixtureSpec): Uint8Array {
+function generated(item: V11FixtureSpec): Uint8Array {
   const { id, width, height, layout } = item;
   const stride = width * (layout === 'RGB24' ? 3 : 4) + (id === 'fresh11-padded-rgba' ? 36 : 0);
   const bytes = new Uint8Array(stride * height);
@@ -234,7 +233,7 @@ function checkedSource(
   );
 }
 
-export function generateV11Fixture(id: string, paths: V11SourcePaths = {}): PixelFixture {
+export function generateV11Fixture(id: string, paths: V11SourcePaths = {}): V11PixelFixture {
   const item = V11_HELDOUT.find((entry) => entry.id === id);
   if (!item) throw new Error(`Unknown corrected-v11 fixture: ${id}`);
   let pixels: Uint8Array;

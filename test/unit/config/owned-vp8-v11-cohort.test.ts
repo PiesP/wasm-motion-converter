@@ -11,6 +11,7 @@ import {
   fixtureSelectionIdentity,
   rgbPixels,
   selectFixtureCohort,
+  validateFixtureSourcePins,
 } from '../../../scripts/test/owned-vp8-v2-compare.ts';
 import {
   V11_HELDOUT,
@@ -25,6 +26,18 @@ const fileHash = (file: string): string => sha256(readFileSync(resolve(root, fil
 const oldSuffixes = ['v2', 'v2-correction', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8', 'v9', 'v10'];
 
 describe('owned VP8 V11 prospective source freeze', () => {
+  it('validates the common V1–V11 source pins before codec setup', () => {
+    const preflight = validateFixtureSourcePins('corrected-v11');
+    const initial = JSON.parse(readFileSync(preflight.baselineManifestFile, 'utf8')) as {
+      generatorSha256: string;
+    };
+    expect(initial.generatorSha256).toBe(fileHash('scripts/test/owned-vp8-v2-fixtures.ts'));
+    expect(preflight.frozen.fixtures).toHaveLength(209);
+    expect(preflight.frozen.fixtures.slice(-20).map((entry) => entry.id)).toEqual(
+      V11_HELDOUT.map((entry) => entry.id)
+    );
+  });
+
   it('selects the full fresh cohort and keeps every predecessor regression only', () => {
     const selected = selectFixtureCohort('held-out', 'corrected-v11');
     expect(selected).toEqual(V11_HELDOUT);

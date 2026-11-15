@@ -78,7 +78,7 @@
     "correctedV10": "741d4674a4ef687be0e57ea02e8d0470bdbd7f21a74b16c17b25e66f9bc8db40"
   },
   "generator": "scripts/test/owned-vp8-v11-fixtures.ts; source-only generation, no codec outputs",
-  "generatorSha256": "76fbb7319a630651ef6013d71cb340f00c0f3bc54e1f6896d667c646128fa53a",
+  "generatorSha256": "df1531d4d98387c23ed55a35536fcf275a20f3f0c8558efdc73a4c978edb0eae",
   "externalDecode": {
     "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
     "command": "ffmpeg -v error -noautorotate -i SOURCE -vf FILTER -frames:v 1 -f rawvideo -pix_fmt rgba pipe:1",
