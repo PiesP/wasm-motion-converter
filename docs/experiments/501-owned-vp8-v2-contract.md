@@ -215,6 +215,11 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
 
 ## Discrepancy inventory
 
+- Fixed during low-preset UV calibration: `crates/owned-vp8/src/presets.rs`
+  claimed calibration used only the frozen tuning split, while the execution
+  ledger also records explicitly exposed regression controls after rejected
+  candidates. Its comment now distinguishes those controls from fresh acceptance;
+  all original frozen cohorts, failures and thresholds remain unchanged.
 - Fixed during the corrected-v4 freeze: the cohort selector's exposed-input
   diagnostic still said no fresh cohort was frozen after it began admitting the
   new v4 cohort. `scripts/test/owned-vp8-v2-compare.ts` now names that fresh cohort;
