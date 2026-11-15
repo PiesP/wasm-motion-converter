@@ -146,9 +146,12 @@ Its first evaluation is now exposed and regression-only. Subsequent input-loss
 UV calibration and flat-UV DC tie reduction passed all 279 known conditions.
 The [v6 candidate freeze](501-owned-vp8-v6-candidate-freeze.md) then evaluated
 54 fresh conditions and passed 53, with one q60 chroma SSIM failure; see
-[the retained result](501-owned-vp8-v6-result.md). V1-v6 are now regression-only
-and no fresh successor is currently frozen. Preserve all outcomes and correct
-the remaining precision failure against the expanded 333-condition known matrix.
+[the retained result](501-owned-vp8-v6-result.md). V1-v6 are now regression-only.
+No successor had been frozen at that result; the source-only v7 successor is
+now prepared under the [current contract](501-owned-vp8-v2-contract.md).
+An actual candidate still requires prospective registration before any v7
+codec evaluation. Preserve all outcomes and correct the remaining precision
+failure against the expanded 333-condition known matrix.
 
 Bounded UV coefficient rate/distortion decisions and exact-semantic trial-cost
 factorization are now integrated engineering changes. The remaining quality
