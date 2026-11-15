@@ -28,6 +28,7 @@
 
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
+import type { OwnedVp8Stats } from '@services/owned-vp8-core';
 import { confirmDialog } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -160,6 +161,33 @@ export interface TestHelpers {
    * Available in dev mode only.
    */
   getConversionProfile(): ConversionProfileReport | null;
+
+  /** Compiled owned VP8 kernel checks that do not require VideoDecoder or the UI pipeline. */
+  encodeOwnedVp8Fixture(request: OwnedVp8FixtureRequest): Promise<OwnedVp8FixtureResult>;
+  cancelOwnedVp8AfterStep(request: OwnedVp8FixtureRequest): Promise<OwnedVp8CancellationResult>;
+}
+
+export interface OwnedVp8FixtureRequest {
+  width: number;
+  height: number;
+  quality: 60 | 75 | 85;
+  seed: number;
+  repeats?: number;
+}
+
+export interface OwnedVp8FixtureResult {
+  rawFrames: number[][];
+  stats: OwnedVp8Stats[];
+  releases: number;
+}
+
+export interface OwnedVp8CancellationResult {
+  moduleSha256: string;
+  abiVersion: number;
+  realSteps: number;
+  firstStepStatus: number;
+  errorName: string;
+  releases: number;
 }
 
 // ─── Helper implementations ─────────────────────────────────────────────────
@@ -353,6 +381,174 @@ const getResultValidation = (): {
   };
 };
 
+function ownedVp8Pixels(request: OwnedVp8FixtureRequest): Uint8Array {
+  const { width, height, seed } = request;
+  if (
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > 64 ||
+    height > 64 ||
+    !Number.isInteger(seed) ||
+    seed < 0 ||
+    seed > 255
+  ) {
+    throw new Error('Invalid owned VP8 test fixture');
+  }
+  const pixels = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const at = (y * width + x) * 4;
+      pixels[at] = (x * 31 + y * 17 + seed) & 255;
+      pixels[at + 1] = (x * 7 + y * 43 + seed * 3) & 255;
+      pixels[at + 2] = (x * 53 + y * 11 + seed * 5) & 255;
+      pixels[at + 3] = 255;
+    }
+  }
+  return pixels;
+}
+
+function ownedVp8Accounting(): {
+  accounting: {
+    reserve(linearCapacityBytes: number, hostOutputCopyBytes: number): void;
+    observe(actualCapacityBytes: number): void;
+    release(): void;
+  };
+  releases(): number;
+} {
+  let releaseCount = 0;
+  return {
+    accounting: {
+      reserve: () => undefined,
+      observe: () => undefined,
+      release: () => {
+        releaseCount++;
+      },
+    },
+    releases: () => releaseCount,
+  };
+}
+
+function ownedVp8Settings(request: OwnedVp8FixtureRequest, sourceBytes: number) {
+  return {
+    width: request.width,
+    height: request.height,
+    stride: request.width * 4,
+    layout: 0,
+    quality: request.quality,
+    outputLimit: 96 * 1024 * 1024,
+    externalLiveBytes: sourceBytes,
+    retainedOutputBytes: 0,
+  };
+}
+
+const encodeOwnedVp8Fixture = async (
+  request: OwnedVp8FixtureRequest
+): Promise<OwnedVp8FixtureResult> => {
+  const pixels = ownedVp8Pixels(request);
+  const repeats = request.repeats ?? 1;
+  if (!Number.isInteger(repeats) || repeats < 1 || repeats > 2)
+    throw new Error('Invalid owned VP8 test repeat count');
+  const { createOwnedVp8Encoder } = await import('@services/owned-vp8-core');
+  const ledger = ownedVp8Accounting();
+  const encoder = await createOwnedVp8Encoder({ accounting: ledger.accounting });
+  const rawFrames: number[][] = [];
+  const stats: OwnedVp8Stats[] = [];
+  try {
+    for (let i = 0; i < repeats; i++) {
+      stats.push(
+        await encoder.encode(pixels, ownedVp8Settings(request, pixels.byteLength), (raw) => {
+          // Copy while the SDK still owns the output lease.
+          rawFrames.push(Array.from(raw));
+        })
+      );
+    }
+  } finally {
+    encoder.retire();
+  }
+  return { rawFrames, stats, releases: ledger.releases() };
+};
+
+const cancelOwnedVp8AfterStep = async (
+  request: OwnedVp8FixtureRequest
+): Promise<OwnedVp8CancellationResult> => {
+  const pixels = ownedVp8Pixels(request);
+  const sdk = await import('@services/owned-vp8-core');
+  const assetUrl = new URL('../crates/owned-vp8/owned-vp8.wasm', import.meta.url);
+  const response = await fetch(assetUrl, { redirect: 'error', credentials: 'same-origin' });
+  if (
+    !response.ok ||
+    response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/wasm'
+  )
+    throw new Error('Owned VP8 test module response is invalid');
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const moduleSha256 = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
+  const module = await WebAssembly.compile(bytes as BufferSource);
+  if (WebAssembly.Module.imports(module).length !== 0)
+    throw new Error('Owned VP8 test module unexpectedly imports a runtime');
+  const instance = new WebAssembly.Instance(module, {});
+  const api = instance.exports as unknown as {
+    memory: WebAssembly.Memory;
+    vp8_v2_abi_version(): number;
+    vp8_v2_step(generation: number, frame: number): number;
+  };
+  const abiVersion = api.vp8_v2_abi_version();
+  const controller = new AbortController();
+  let realSteps = 0;
+  let firstStepStatus = -1;
+  // WASM export properties are immutable; copy values before wrapping one real call.
+  const wrappedExports = {
+    ...instance.exports,
+    vp8_v2_step(generation: number, frame: number): number {
+      const status = api.vp8_v2_step(generation, frame);
+      realSteps++;
+      if (realSteps === 1) {
+        firstStepStatus = status;
+        controller.abort('after a compiled VP8 step');
+      }
+      return status;
+    },
+  };
+  const wrappedInstance = new Proxy(instance, {
+    get(target, property, receiver) {
+      return property === 'exports' ? wrappedExports : Reflect.get(target, property, receiver);
+    },
+  });
+  const ledger = ownedVp8Accounting();
+  const initialCapacity = api.memory.buffer.byteLength;
+  ledger.accounting.reserve(initialCapacity, 0);
+  const encoder = new sdk.OwnedVp8Encoder(
+    wrappedInstance,
+    { signal: controller.signal, accounting: ledger.accounting },
+    initialCapacity
+  );
+  let errorName = '';
+  try {
+    await encoder.encode(pixels, ownedVp8Settings(request, pixels.byteLength), () => {
+      throw new Error('Cancelled VP8 output must not be consumed');
+    });
+  } catch (error) {
+    if (!(error instanceof sdk.OwnedVp8CancelledError)) throw error;
+    errorName = error.name;
+  } finally {
+    encoder.retire();
+  }
+  if (realSteps < 1 || firstStepStatus < 0 || !errorName)
+    throw new Error('Owned VP8 cancellation did not follow a compiled step');
+  return {
+    moduleSha256,
+    abiVersion,
+    realSteps,
+    firstStepStatus,
+    errorName,
+    releases: ledger.releases(),
+  };
+};
+
 // ─── Create and attach ──────────────────────────────────────────────────────
 
 const testHelpers: TestHelpers = {
@@ -385,6 +581,8 @@ const testHelpers: TestHelpers = {
   autoConfirm,
   // Profiler
   getConversionProfile: getLastConversionProfileReport,
+  encodeOwnedVp8Fixture,
+  cancelOwnedVp8AfterStep,
 };
 
 export function attachTestHelpers(): void {
