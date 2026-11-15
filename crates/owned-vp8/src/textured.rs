@@ -209,6 +209,35 @@ fn optimize_uv_block(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn optimize_uv_dc_zero(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    predictor: &[u8; 16],
+    context: usize,
+    baseline: ([i16; 16], [u8; 16]),
+) -> ([i16; 16], [u8; 16]) {
+    if baseline.0[0].unsigned_abs() != 1 || baseline.0[1..].iter().any(|&value| value != 0) {
+        return baseline;
+    }
+    if patch_error(source, stride, x, y, predictor) > patch_error(source, stride, x, y, &baseline.1)
+    {
+        return baseline;
+    }
+    let zero = [0i16; 16];
+    let mut baseline_rate = RateCounter::default();
+    let mut zero_rate = RateCounter::default();
+    residual::encode_block(&mut baseline_rate, &baseline.0, 2, context).unwrap();
+    residual::encode_block(&mut zero_rate, &zero, 2, context).unwrap();
+    if zero_rate.cost < baseline_rate.cost {
+        (zero, *predictor)
+    } else {
+        baseline
+    }
+}
+
 fn store_patch<const N: usize, const LEN: usize>(
     tile: &mut [u8; LEN],
     bx: usize,
@@ -788,12 +817,19 @@ fn make_i4(
     }
 }
 #[derive(Clone, Copy)]
+enum UvRatePolicy {
+    TexturedAcTail,
+    FlatDcZero,
+}
+
+#[derive(Clone, Copy)]
 struct UvRdo<'a> {
     contexts: &'a CoeffContexts,
     mx: usize,
     lambda: u64,
     visible_width: usize,
     visible_height: usize,
+    policy: UvRatePolicy,
 }
 
 impl UvRdo<'_> {
@@ -847,20 +883,33 @@ fn make_uv(
                 let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
                 let baseline =
                     code_predicted_block(source, stride, x + bx * 4, y + by * 4, &predictor, steps);
-                let (coeff, patch) = if let Some(lambda) =
-                    rdo.and_then(|rdo| rdo.block_lambda(x + bx * 4, y + by * 4))
-                {
-                    optimize_uv_block(
-                        source,
-                        stride,
-                        x + bx * 4,
-                        y + by * 4,
-                        &predictor,
-                        steps,
-                        usize::from(local_above[bx]) + usize::from(local_left[by]),
-                        lambda,
-                        baseline,
-                    )
+                let (coeff, patch) = if let Some((rdo, lambda)) = rdo.and_then(|rdo| {
+                    rdo.block_lambda(x + bx * 4, y + by * 4)
+                        .map(|lambda| (rdo, lambda))
+                }) {
+                    let context = usize::from(local_above[bx]) + usize::from(local_left[by]);
+                    match rdo.policy {
+                        UvRatePolicy::TexturedAcTail => optimize_uv_block(
+                            source,
+                            stride,
+                            x + bx * 4,
+                            y + by * 4,
+                            &predictor,
+                            steps,
+                            context,
+                            lambda,
+                            baseline,
+                        ),
+                        UvRatePolicy::FlatDcZero => optimize_uv_dc_zero(
+                            source,
+                            stride,
+                            x + bx * 4,
+                            y + by * 4,
+                            &predictor,
+                            context,
+                            baseline,
+                        ),
+                    }
                 } else {
                     baseline
                 };
@@ -1329,6 +1378,11 @@ fn analyze_one(
             lambda,
         )]
     };
+    let uv_policy = match (quality, segment_id) {
+        (60, segmentation::TEXTURED) => Some(UvRatePolicy::TexturedAcTail),
+        (75, segmentation::CHROMATIC_FLAT) => Some(UvRatePolicy::FlatDcZero),
+        _ => None,
+    };
     let uv: Vec<_> = (0..4)
         .map(|mode| {
             make_uv(
@@ -1341,12 +1395,13 @@ fn analyze_one(
                 my * 8,
                 mode,
                 uv_steps,
-                (quality == 60 && segment_id == segmentation::TEXTURED).then_some(UvRdo {
+                uv_policy.map(|policy| UvRdo {
                     contexts: coeff_contexts,
                     mx,
                     lambda,
                     visible_width: visible_width.div_ceil(2),
                     visible_height: visible_height.div_ceil(2),
+                    policy,
                 }),
             )
         })
@@ -2745,6 +2800,131 @@ mod tests {
     }
 
     #[test]
+    fn flat_uv_dc_zero_uses_pixel_sse_and_strict_context_rate() {
+        let predictor = [128u8; 16];
+        let steps = Steps { dc: 13, ac: 20 };
+        for sign in [-1, 1] {
+            let mut coefficients = [0i16; 16];
+            coefficients[0] = sign;
+            let baseline_patch = reconstructed_patch(&coefficients, &predictor, steps);
+            let source = [u8::try_from(128 + sign).unwrap(); 16];
+            assert_eq!(patch_error(&source, 4, 0, 0, &baseline_patch), 16);
+            assert_eq!(patch_error(&source, 4, 0, 0, &predictor), 16);
+            for context in 0..=2 {
+                let mut before = RateCounter::default();
+                let mut after = RateCounter::default();
+                residual::encode_block(&mut before, &coefficients, 2, context).unwrap();
+                residual::encode_block(&mut after, &[0; 16], 2, context).unwrap();
+                assert!(after.cost < before.cost);
+                assert_eq!(
+                    optimize_uv_dc_zero(
+                        &source,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        context,
+                        (coefficients, baseline_patch),
+                    ),
+                    ([0; 16], predictor)
+                );
+            }
+            assert_eq!(
+                optimize_uv_dc_zero(
+                    &baseline_patch,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    0,
+                    (coefficients, baseline_patch),
+                ),
+                (coefficients, baseline_patch)
+            );
+        }
+        for (predictor, dc) in [([0u8; 16], -1), ([255u8; 16], 1)] {
+            let mut coefficients = [0i16; 16];
+            coefficients[0] = dc;
+            let patch = reconstructed_patch(&coefficients, &predictor, steps);
+            assert_eq!(patch, predictor);
+            assert_eq!(
+                optimize_uv_dc_zero(&predictor, 4, 0, 0, &predictor, 0, (coefficients, patch)),
+                ([0; 16], predictor)
+            );
+        }
+        for coefficients in [
+            [0i16; 16],
+            std::array::from_fn(|i| if i == 0 { 2 } else { 0 }),
+            std::array::from_fn(|i| if i <= 1 { 1 } else { 0 }),
+        ] {
+            let patch = reconstructed_patch(&coefficients, &predictor, steps);
+            assert_eq!(
+                optimize_uv_dc_zero(&predictor, 4, 0, 0, &predictor, 0, (coefficients, patch)),
+                (coefficients, patch)
+            );
+        }
+    }
+
+    #[test]
+    fn flat_uv_dc_zero_keeps_mode_trials_and_hidden_patches_isolated() {
+        let source = [129u8; 64];
+        let reconstructed = [0u8; 64];
+        let mut contexts = CoeffContexts::new(1);
+        contexts.u = vec![true, false];
+        contexts.v = vec![false, true];
+        contexts.left_u = [false, true];
+        contexts.left_v = [true, false];
+        let before = contexts.clone();
+        let steps = ac_quant::steps(19, crate::presets::deltas(75), Plane::UV);
+        let baseline = make_uv(
+            &source,
+            &source,
+            &reconstructed,
+            &reconstructed,
+            8,
+            0,
+            0,
+            0,
+            steps,
+            None,
+        );
+        assert!(baseline.u.iter().all(|coeff| coeff[0] == 1));
+        assert!(baseline.v.iter().all(|coeff| coeff[0] == 1));
+        let trial = |visible_width, visible_height| {
+            make_uv(
+                &source,
+                &source,
+                &reconstructed,
+                &reconstructed,
+                8,
+                0,
+                0,
+                0,
+                steps,
+                Some(UvRdo {
+                    contexts: &contexts,
+                    mx: 0,
+                    lambda: 1,
+                    visible_width,
+                    visible_height,
+                    policy: UvRatePolicy::FlatDcZero,
+                }),
+            )
+        };
+        let visible = trial(8, 8);
+        assert!(visible.u.iter().all(|coeff| *coeff == [0; 16]));
+        assert!(visible.v.iter().all(|coeff| *coeff == [0; 16]));
+        assert_eq!(visible.u_tile, [128; 64]);
+        assert_eq!(visible.v_tile, [128; 64]);
+        let partial = trial(1, 1);
+        assert_eq!(partial.u[0], [0; 16]);
+        assert_eq!(partial.v[0], [0; 16]);
+        assert_eq!(partial.u[1..], baseline.u[1..]);
+        assert_eq!(partial.v[1..], baseline.v[1..]);
+        assert_eq!(contexts, before);
+    }
+
+    #[test]
     fn higher_preset_frame_bytes_match_pre_rdo_wasm() {
         let pixels: Vec<_> = (0..16 * 16 * 4)
             .map(|i| {
@@ -2792,6 +2972,7 @@ mod tests {
             lambda: 480,
             visible_width: 1,
             visible_height: 3,
+            policy: UvRatePolicy::TexturedAcTail,
         };
         assert_eq!(rdo.block_lambda(0, 0), Some(1));
         assert_eq!(rdo.block_lambda(0, 4), None);
@@ -2859,6 +3040,7 @@ mod tests {
                         lambda,
                         visible_width: 8,
                         visible_height: 8,
+                        policy: UvRatePolicy::TexturedAcTail,
                     }),
                 );
                 assert_eq!(contexts, before);
@@ -5598,6 +5780,83 @@ mod tests {
                 assert_decodes(&frame, 16, 16, &expected, "asserted signed UV AC removal");
             }
         }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_reconstruct_an_asserted_flat_uv_dc_zero_choice() {
+        let source = [129u8; 64];
+        let reconstructed = [0u8; 64];
+        let contexts = CoeffContexts::new(1);
+        let deltas = crate::presets::deltas(75);
+        let steps = ac_quant::steps(19, deltas, Plane::UV);
+        let baseline = make_uv(
+            &source,
+            &source,
+            &reconstructed,
+            &reconstructed,
+            8,
+            0,
+            0,
+            0,
+            steps,
+            None,
+        );
+        let chosen = make_uv(
+            &source,
+            &source,
+            &reconstructed,
+            &reconstructed,
+            8,
+            0,
+            0,
+            0,
+            steps,
+            Some(UvRdo {
+                contexts: &contexts,
+                mx: 0,
+                lambda: 1,
+                visible_width: 8,
+                visible_height: 8,
+                policy: UvRatePolicy::FlatDcZero,
+            }),
+        );
+        assert_eq!(baseline.u[0][0], 1);
+        assert_eq!(
+            chosen.u[0], [0; 16],
+            "the decode oracle must exercise DC removal"
+        );
+        assert_ne!(baseline.u[0], chosen.u[0]);
+        let mut block = Macroblock {
+            i16: true,
+            segment_id: segmentation::CHROMATIC_FLAT,
+            u: chosen.u,
+            v: chosen.v,
+            ..Macroblock::default()
+        };
+        block.v[1][0] = -2; // Keep coefficient/EOB context active after the zero U block.
+        let patch = reconstructed_patch(&block.v[1], &[128; 16], steps);
+        let frame = emit_segmented_frame(
+            &[block],
+            16,
+            16,
+            SegmentConfig::from_counts(75, [0, 1, 0, 0], 1, false),
+            deltas,
+            FilterConfig::DISABLED,
+        )
+        .unwrap();
+        let mut expected = vec![128u8; 16 * 16 + 2 * 8 * 8];
+        for row in 0..4 {
+            let at = 16 * 16 + 8 * 8 + row * 8 + 4;
+            expected[at..at + 4].copy_from_slice(&patch[row * 4..row * 4 + 4]);
+        }
+        assert_decodes(
+            &frame,
+            16,
+            16,
+            &expected,
+            "asserted flat UV DC zero and EOB context",
+        );
     }
 
     /// External engineering oracle, deliberately separate from product acceptance.
