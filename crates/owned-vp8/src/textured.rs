@@ -461,6 +461,7 @@ impl CoeffContexts {
         self.left_u.fill(false);
         self.left_v.fill(false);
     }
+    #[cfg(test)]
     fn measure(&self, block: &Macroblock, mx: usize) -> Result<u64, EncodeError> {
         let mut y2 = [self.y2[mx]];
         let mut y = [false; 4];
@@ -485,6 +486,38 @@ impl CoeffContexts {
         };
         let mut rate = RateCounter::default();
         window.encode_coefficients(&mut rate, block, 0)?;
+        Ok(rate.cost)
+    }
+    fn measure_luma(&self, block: &Macroblock, mx: usize) -> Result<u64, EncodeError> {
+        let mut rate = RateCounter::default();
+        if block.i16 {
+            let context = usize::from(self.y2[mx]) + usize::from(self.left_y2);
+            residual::encode_block(&mut rate, &block.y2, 1, context)?;
+        }
+        let mut y = [false; 4];
+        y.copy_from_slice(&self.y[mx * 4..mx * 4 + 4]);
+        let mut left_y = self.left_y;
+        encode_macroblock_coeffs(
+            &mut rate,
+            &block.y,
+            if block.i16 { 0 } else { 3 },
+            &mut y,
+            &mut left_y,
+            0,
+            4,
+        )?;
+        Ok(rate.cost)
+    }
+    fn measure_uv(&self, block: &Macroblock, mx: usize) -> Result<u64, EncodeError> {
+        let mut rate = RateCounter::default();
+        let mut u = [false; 2];
+        u.copy_from_slice(&self.u[mx * 2..mx * 2 + 2]);
+        let mut v = [false; 2];
+        v.copy_from_slice(&self.v[mx * 2..mx * 2 + 2]);
+        let mut left_u = self.left_u;
+        let mut left_v = self.left_v;
+        encode_macroblock_coeffs(&mut rate, &block.u, 2, &mut u, &mut left_u, 0, 2)?;
+        encode_macroblock_coeffs(&mut rate, &block.v, 2, &mut v, &mut left_v, 0, 2)?;
         Ok(rate.cost)
     }
     fn encode_coefficients(
@@ -898,10 +931,61 @@ fn selected_cost(
     lambda: u64,
     segments: SegmentConfig,
     budget: &HeaderBudget,
+    luma_cost: &mut Option<u64>,
+    uv_cost: &mut Option<u64>,
 ) -> Result<Option<u64>, EncodeError> {
     let mut header = HeaderRateCounter::default();
     // Mode search precedes frozen frame statistics; its skip rate proposal is
     // the current syntax default, while counting and emission share the final.
+    write_macroblock_header(&mut header, block, mx, above, left, segments, Some(128))?;
+    if block.i16 && header.symbols.count > MAX_I16_HEADER_SYMBOLS {
+        return Err(EncodeError::InvalidInput);
+    }
+    if !budget.fits_symbols(header.symbols.count)? {
+        return Ok(None);
+    }
+    // The whole macroblock skip suppresses every coefficient token. Otherwise
+    // even an all-zero plane pays for its EOB tokens, independently of the
+    // other plane. Cache only after the header has passed its budget guard.
+    let coefficient_cost = if block.skip() {
+        0
+    } else {
+        let y = match *luma_cost {
+            Some(cost) => cost,
+            None => {
+                let cost = contexts.measure_luma(block, mx)?;
+                *luma_cost = Some(cost);
+                cost
+            }
+        };
+        let uv = match *uv_cost {
+            Some(cost) => cost,
+            None => {
+                let cost = contexts.measure_uv(block, mx)?;
+                *uv_cost = Some(cost);
+                cost
+            }
+        };
+        y + uv
+    };
+    let cost = header.rate.cost + coefficient_cost;
+    Ok(Some(distortion * 256 + lambda * cost))
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn selected_cost_reference(
+    block: &Macroblock,
+    mx: usize,
+    contexts: &CoeffContexts,
+    above: &[u8],
+    left: &[u8; 4],
+    distortion: u64,
+    lambda: u64,
+    segments: SegmentConfig,
+    budget: &HeaderBudget,
+) -> Result<Option<u64>, EncodeError> {
+    let mut header = HeaderRateCounter::default();
     write_macroblock_header(&mut header, block, mx, above, left, segments, Some(128))?;
     if block.i16 && header.symbols.count > MAX_I16_HEADER_SYMBOLS {
         return Err(EncodeError::InvalidInput);
@@ -1223,6 +1307,8 @@ fn analyze_one(
         })
         .collect();
     let mut best: Option<(u64, usize, usize)> = None;
+    let mut luma_costs = [None; 5];
+    let mut uv_costs = [None; 4];
     for (li, luma_candidate) in luma.iter().enumerate() {
         for (ui, uv_candidate) in uv.iter().enumerate() {
             let candidate = Macroblock {
@@ -1247,6 +1333,8 @@ fn analyze_one(
                 lambda,
                 segments,
                 header_budget,
+                &mut luma_costs[li],
+                &mut uv_costs[ui],
             )?
             else {
                 continue;
@@ -2835,6 +2923,207 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn factored_rate_matrix_matches_reference_scores_and_decisions() {
+        fn candidate(li: usize, ui: usize, segment_id: u8) -> Macroblock {
+            let mut block = Macroblock {
+                i16: li != 4,
+                y_mode: (li % 4) as u8,
+                b_modes: std::array::from_fn(|i| ((i * 3 + li) % 10) as u8),
+                uv_mode: ui as u8,
+                segment_id,
+                ..Macroblock::default()
+            };
+            match li {
+                1 => {
+                    block.y2[0] = -5;
+                    block.y2[15] = 67;
+                }
+                2 => {
+                    block.y[0][0] = 1;
+                    block.y[9][7] = -2114;
+                }
+                3 => {
+                    block.y2[4] = 19;
+                    block.y[3][8] = -35;
+                    block.y[15][15] = 2;
+                }
+                4 => {
+                    block.y[0][0] = 7;
+                    block.y[7][3] = -11;
+                    block.y[15][15] = 2114;
+                }
+                _ => {}
+            }
+            match ui {
+                1 => {
+                    block.u[0][0] = 1;
+                    block.u[3][15] = -2;
+                }
+                2 => {
+                    block.v[1][9] = 2114;
+                    block.v[2][4] = -67;
+                }
+                3 => {
+                    block.u[2][5] = 35;
+                    block.v[3][15] = -19;
+                }
+                _ => {}
+            }
+            block
+        }
+
+        for policy in [0, 1, 2] {
+            let luma_indices: &[usize] = match policy {
+                0 => &[0, 1, 2, 3, 4],
+                1 => &[0, 1, 2, 3],
+                _ => &[4],
+            };
+            for pattern in 0..4 {
+                for segmented in [false, true] {
+                    for (slack, lambda) in [(9, 0), (9, 225), (200, 225)] {
+                        let segments = if segmented {
+                            SegmentConfig::from_counts(75, [1; 4], 4, false)
+                        } else {
+                            SegmentConfig::nonsegmented(23)
+                        };
+                        let segment_id = if segmented { pattern as u8 } else { 0 };
+                        let mut contexts = CoeffContexts::new(2);
+                        let flag = |i: usize| match pattern {
+                            0 => false,
+                            1 => true,
+                            2 => i.is_multiple_of(2),
+                            _ => i.is_multiple_of(3),
+                        };
+                        contexts.y2[0] = flag(0);
+                        for i in 0..4 {
+                            contexts.y[i] = flag(i + 1);
+                        }
+                        for i in 0..2 {
+                            contexts.u[i] = flag(i + 5);
+                            contexts.v[i] = flag(i + 7);
+                        }
+                        contexts.left_y2 = flag(9);
+                        contexts.left_y = std::array::from_fn(|i| flag(i + 10));
+                        contexts.left_u = std::array::from_fn(|i| flag(i + 14));
+                        contexts.left_v = std::array::from_fn(|i| flag(i + 16));
+                        let before = contexts.clone();
+                        let above = [pattern as u8; 8];
+                        let left = [pattern as u8; 4];
+                        let mut budget = HeaderBudget::new(
+                            2,
+                            segments,
+                            Deltas::default(),
+                            FilterConfig::DISABLED,
+                            MAX_FIRST_PARTITION_BYTES as usize,
+                        )
+                        .unwrap();
+                        budget.limit =
+                            budget.fixed_symbols_and_tail + MAX_I16_HEADER_SYMBOLS + slack;
+                        let mut luma_costs = [None; 5];
+                        let mut uv_costs = [None; 4];
+                        let mut factored_best = None;
+                        let mut reference_best = None;
+                        for (li, &source_li) in luma_indices.iter().enumerate() {
+                            for (ui, uv_cost) in uv_costs.iter_mut().enumerate() {
+                                let block = candidate(source_li, ui, segment_id);
+                                let distortion = if lambda == 0 {
+                                    0
+                                } else {
+                                    ((li * 7 + ui * 11 + pattern) % 13) as u64
+                                };
+                                let reference = selected_cost_reference(
+                                    &block, 0, &contexts, &above, &left, distortion, lambda,
+                                    segments, &budget,
+                                );
+                                let factored = selected_cost(
+                                    &block,
+                                    0,
+                                    &contexts,
+                                    &above,
+                                    &left,
+                                    distortion,
+                                    lambda,
+                                    segments,
+                                    &budget,
+                                    &mut luma_costs[li],
+                                    uv_cost,
+                                );
+                                assert_eq!(factored, reference, "policy={policy} pattern={pattern} segmented={segmented} slack={slack} li={li} ui={ui}");
+                                if let Some(score) = reference.unwrap() {
+                                    if reference_best
+                                        .is_none_or(|best: (u64, usize, usize)| score < best.0)
+                                    {
+                                        reference_best = Some((score, source_li, ui));
+                                    }
+                                }
+                                if let Some(score) = factored.unwrap() {
+                                    if factored_best
+                                        .is_none_or(|best: (u64, usize, usize)| score < best.0)
+                                    {
+                                        factored_best = Some((score, source_li, ui));
+                                    }
+                                }
+                            }
+                        }
+                        assert_eq!(factored_best, reference_best);
+                        assert_eq!(contexts, before, "trials changed committed contexts");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn factored_rate_preserves_budget_rejection_before_invalid_tokens() {
+        let segments = SegmentConfig::nonsegmented(23);
+        let mut block = Macroblock {
+            b_modes: [9; 16],
+            ..Macroblock::default()
+        };
+        block.v[0][0] = 2115;
+        let contexts = CoeffContexts::new(1);
+        let above = [0; 4];
+        let left = [0; 4];
+        let mut budget = HeaderBudget::new(
+            2,
+            segments,
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .unwrap();
+        budget.limit = budget.fixed_symbols_and_tail + 2 * MAX_I16_HEADER_SYMBOLS;
+        let mut luma_cost = None;
+        let mut uv_cost = None;
+        let evaluate =
+            |budget: &HeaderBudget, luma_cost: &mut Option<u64>, uv_cost: &mut Option<u64>| {
+                (
+                    selected_cost_reference(
+                        &block, 0, &contexts, &above, &left, 0, 225, segments, budget,
+                    ),
+                    selected_cost(
+                        &block, 0, &contexts, &above, &left, 0, 225, segments, budget, luma_cost,
+                        uv_cost,
+                    ),
+                )
+            };
+        assert_eq!(
+            evaluate(&budget, &mut luma_cost, &mut uv_cost),
+            (Ok(None), Ok(None))
+        );
+        assert_eq!((luma_cost, uv_cost), (None, None));
+        budget.limit = MAX_FIRST_PARTITION_BYTES as usize;
+        assert_eq!(
+            evaluate(&budget, &mut luma_cost, &mut uv_cost),
+            (
+                Err(EncodeError::InvalidInput),
+                Err(EncodeError::InvalidInput)
+            )
+        );
+        assert_eq!(contexts, CoeffContexts::new(1));
     }
 
     #[test]
