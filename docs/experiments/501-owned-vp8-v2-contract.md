@@ -192,6 +192,12 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
 
 ## Discrepancy inventory
 
+- Fixed after the first owned-load CI run: the comment in
+  `validation/windows/webp-initialization.ts` assumed a WebP-format new-file
+  recovery action, but source-bound CI classified actual owned load failures as
+  general errors and `src/components/ErrorDisplay.tsx` exposed Retry. The helper
+  now invokes that explicit same-file user action with a bounded locator wait;
+  the original two timeouts remain retained evidence.
 - Fixed during candidate CI recovery migration: the comment at
   `validation/windows/webp-initialization.ts:11`, test group/case names in
   `test/e2e/output-contract.spec.ts` and mode list in

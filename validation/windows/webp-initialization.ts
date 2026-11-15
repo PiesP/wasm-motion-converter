@@ -126,10 +126,8 @@ export async function exerciseWebpInitialization(
       );
       assert.equal(moduleRequests, 1, 'Failed load retried without a new user request');
       assert.equal(await page.locator('[data-testid="result-section"]').count(), 0);
-      // The current generic WebP classifier offers a new-file action here.
-      // Re-select the same fixture explicitly rather than requiring reload.
-      await error.locator('[data-testid="error-select-different-fallback-button"]').click();
-      await convert();
+      // Actual owned load errors retain the file and expose the general Retry action.
+      await error.locator('[data-testid="error-retry-button"]').click({ timeout: 15000 });
     }
     await page
       .locator('[data-testid="result-section"]')

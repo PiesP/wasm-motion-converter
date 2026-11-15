@@ -488,7 +488,13 @@ const cancelOwnedVp8AfterStep = async (
   const pixels = ownedVp8Pixels(request, 512, 384);
   const sdk = await import('@services/owned-vp8-core');
   const assetUrl = new URL('../crates/owned-vp8/owned-vp8.wasm', import.meta.url);
-  const response = await fetch(assetUrl, { redirect: 'error', credentials: 'same-origin' });
+  // This functional probe compiles fresh code; require an entity response for
+  // network MIME/hash evidence rather than a conditional-cache metadata event.
+  const response = await fetch(assetUrl, {
+    redirect: 'error',
+    credentials: 'same-origin',
+    cache: 'no-store',
+  });
   if (
     !response.ok ||
     response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/wasm'
