@@ -3525,6 +3525,9 @@ mod tests {
                 quality,
             )
             .unwrap();
+            if width == 2 && std::env::var_os("WMC501_SKIP_SYNC_REFERENCE").is_some() {
+                eprintln!("skip-sync-reference-2x5-q60: {expected:?}");
+            }
             for frame in [1, 2] {
                 let request = Request {
                     quality,
