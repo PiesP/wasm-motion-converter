@@ -39,6 +39,10 @@ export const CLUSTER_SCENE_TIMELINE = [
   { scene: 'blue', startMs: 2_000, endMs: 3_000 },
   { scene: 'yellow', startMs: 3_000, endMs: 4_000 },
 ] as const;
+const NEAR_CAP_SCENE_TIMELINE = [
+  { scene: 'red', startMs: 0, endMs: 500 },
+  { scene: 'blue', startMs: 500, endMs: 1_000 },
+] as const;
 type Quality = 'low' | 'medium' | 'high';
 type Sample = {
   build: 'prior' | 'candidate';
@@ -82,7 +86,7 @@ const V8_FIXTURE: Fixture = {
 const V8_SHA256 = 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1';
 const NEAR_CAP_FIXTURE: Fixture = {
   id: 'near-cap',
-  path: 'validation/windows/owned-vp8-near-cap-inputs/near-cap.webm',
+  path: 'dist-validation/owned-vp8-near-cap.webm',
   mime: 'video/webm',
   width: 4096,
   height: 2457,
@@ -380,23 +384,27 @@ async function decodeWebp(page: Page, bytes: Buffer, inspectAllPixels = false) {
   );
 }
 
-export function assertClusterTimeline(
-  frames: readonly {
-    scene: string;
-    durationMs: number;
-    scenePixelCount?: number | undefined;
-    totalPixels?: number | undefined;
-  }[]
+type SceneFrame = {
+  scene: string;
+  durationMs: number;
+  scenePixelCount?: number | undefined;
+  totalPixels?: number | undefined;
+};
+
+function assertSceneTimeline(
+  frames: readonly SceneFrame[],
+  expectedTimeline: readonly { scene: string; startMs: number; endMs: number }[],
+  label: string
 ): void {
   let elapsedMs = 0;
   const groups: Array<{ scene: string; startMs: number; endMs: number }> = [];
   for (const frame of frames) {
-    assert(frame.durationMs > 0, 'Cluster decoded hold is zero');
+    assert(frame.durationMs > 0, `${label} decoded hold is zero`);
     if (frame.totalPixels !== undefined) {
       assert.equal(
         frame.scenePixelCount,
         frame.totalPixels,
-        'Cluster has unexpected pixels outside its source scene'
+        `${label} has unexpected pixels outside its source scene`
       );
     }
     const group = groups.at(-1);
@@ -405,19 +413,27 @@ export function assertClusterTimeline(
     else group.endMs += frame.durationMs;
     elapsedMs += frame.durationMs;
   }
-  assert.equal(groups.length, CLUSTER_SCENE_TIMELINE.length, 'Cluster transition count differs');
-  for (const [index, expected] of CLUSTER_SCENE_TIMELINE.entries()) {
+  assert.equal(groups.length, expectedTimeline.length, `${label} transition count differs`);
+  for (const [index, expected] of expectedTimeline.entries()) {
     const actual = groups[index]!;
-    assert.equal(actual.scene, expected.scene, `Cluster scene ${index} differs`);
+    assert.equal(actual.scene, expected.scene, `${label} scene ${index} differs`);
     assert(
       Math.abs(actual.startMs - expected.startMs) <= 250,
-      `Cluster transition ${index} differs by over 250ms`
+      `${label} transition ${index} differs by over 250ms`
     );
     assert(
       Math.abs(actual.endMs - expected.endMs) <= 250,
-      `Cluster hold ${index} differs by over 250ms`
+      `${label} hold ${index} differs by over 250ms`
     );
   }
+}
+
+export function assertClusterTimeline(frames: readonly SceneFrame[]): void {
+  assertSceneTimeline(frames, CLUSTER_SCENE_TIMELINE, 'Cluster');
+}
+
+export function assertNearCapTimeline(frames: readonly SceneFrame[]): void {
+  assertSceneTimeline(frames, NEAR_CAP_SCENE_TIMELINE, 'Near-cap');
 }
 
 function assertClusterSequence(
@@ -1661,6 +1677,7 @@ async function nearCapFunctional(
           build: name,
           status: 'passed',
           route: 'ui-main-near-cap',
+          fixture: NEAR_CAP_FIXTURE.id,
           inputSha256: manifest.input.sha256,
           manifestSha256: digest(manifestBytes),
           settings: manifest.settings,

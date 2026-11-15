@@ -39,6 +39,7 @@
     "build:vp8-wasm:check": "node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --check",
     "build:vp8-wasm:generate": "node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --generate",
     "build": "vp build",
+    "build:ci": "vp run build:ci:native",
     "postbuild": "node --experimental-strip-types scripts/build/postbuild.ts",
     "preview": "vp preview",
     "clean": "node --experimental-strip-types scripts/build/clean.ts",

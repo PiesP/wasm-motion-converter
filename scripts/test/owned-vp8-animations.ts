@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   assertClusterTimeline,
+  assertNearCapTimeline,
   parseAnimatedWebp,
 } from '../../validation/windows/helpers/owned-vp8-product.ts';
 
@@ -107,6 +108,22 @@ export function declaredOutputs(report: Record<string, unknown>): DeclaredRecord
     byFile.set(entry.record.saved.file, entry);
   }
   return [...byFile.values()];
+}
+
+export function assertNearCapSavedRecords(
+  report: Record<string, unknown>,
+  records: readonly DeclaredRecord[]
+): void {
+  assert.equal(report.nearCapCandidateStatus, 'passed', 'Near-cap candidate did not pass');
+  assert(
+    report.nearCapPriorStatus === 'passed' || report.nearCapPriorStatus === 'failed',
+    'Near-cap prior outcome is absent'
+  );
+  assert(
+    records.some(({ record }) => record.build === 'candidate') &&
+      records.every(({ record }) => record.fixture === 'near-cap'),
+    'Near-cap saved output omitted its source scene contract'
+  );
 }
 
 /** Structural parsing is shared; this pass extracts only bounded opaque VP8 payloads. */
@@ -273,6 +290,18 @@ function color([r, g, b]: readonly number[]): string {
 function assertClusterOrder(frames: PixelFrame[], timeline: Frame[]): void {
   assert.equal(frames.length, timeline.length);
   assertClusterTimeline(
+    frames.map((frame, index) => ({
+      scene: frame.scene ?? color(frame.centerRgb),
+      durationMs: timeline[index]!.holdMs,
+      scenePixelCount: frame.scenePixelCount,
+      totalPixels: frame.totalPixels,
+    }))
+  );
+}
+
+function assertNearCapOrder(frames: PixelFrame[], timeline: Frame[]): void {
+  assert.equal(frames.length, timeline.length);
+  assertNearCapTimeline(
     frames.map((frame, index) => ({
       scene: frame.scene ?? color(frame.centerRgb),
       durationMs: timeline[index]!.holdMs,
@@ -547,7 +576,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       typeof path === 'string' &&
         (/^public\/[A-Za-z0-9._-]+\.(?:mp4|webm)$/.test(path) ||
           path === 'validation/windows/owned-vp8-inputs/v8.webm' ||
-          path === 'validation/windows/owned-vp8-near-cap-inputs/near-cap.webm'),
+          path === 'dist-validation/owned-vp8-near-cap.webm'),
       'Unexpected input path'
     );
     assert(
@@ -617,6 +646,12 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     assert.equal(sha256(bytes), nearCapManifest, 'Near-cap manifest digest differs');
   }
   const records = declaredOutputs(product.value);
+  if (product.value.scenario === 'owned-vp8-product-near-cap') {
+    assert.equal(inputs.length, 1, 'Near-cap input cohort differs');
+    assert.equal(inputs[0]!.path, 'dist-validation/owned-vp8-near-cap.webm');
+    assert(nearCapManifest, 'Near-cap source manifest is absent');
+    assertNearCapSavedRecords(product.value, records);
+  }
   const ffmpegVersion = spawnSync('ffmpeg', ['-version'], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024,
@@ -745,7 +780,9 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
           parsed.canvas.width,
           parsed.canvas.height,
           frames.length,
-          declared.record.fixture === 'clusters' || saved.file.includes('direct-worker')
+          declared.record.fixture === 'clusters' ||
+            declared.record.fixture === 'near-cap' ||
+            saved.file.includes('direct-worker')
         );
       }
       assert.deepEqual(
@@ -755,6 +792,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       );
       if (declared.record.fixture === 'clusters' || saved.file.includes('direct-worker'))
         assertClusterOrder(decoded.vp8!.frames, frames);
+      if (declared.record.fixture === 'near-cap') assertNearCapOrder(decoded.vp8!.frames, frames);
       const verified = {
         origin: declared.origin,
         saved,

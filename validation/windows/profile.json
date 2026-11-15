@@ -333,11 +333,11 @@
         "required_inputs": [
           "dist",
           "validation/windows/prior-dist",
-          "validation/windows/owned-vp8-near-cap-inputs/near-cap.webm",
+          "dist-validation/owned-vp8-near-cap.webm",
           "validation/windows/owned-vp8-near-cap.json",
           "validation/windows/inputs/owned-vp8-product-near-cap.json"
         ],
-        "generated_assets": ["dist", "validation/windows/owned-vp8-near-cap-inputs/near-cap.webm"],
+        "generated_assets": ["dist-validation/owned-vp8-near-cap.webm"],
         "bundle_asset_policy": "source-modules-and-required-inputs",
         "build_commands": [
           ["vp", "run", "prepare:owned-vp8-near-cap"],

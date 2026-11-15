@@ -3,7 +3,7 @@
   "source": "Generated opaque VP9 solid-color video; no external media",
   "generator": "scripts/test/generate-owned-vp8-near-cap.ts",
   "input": {
-    "path": "validation/windows/owned-vp8-near-cap-inputs/near-cap.webm",
+    "path": "dist-validation/owned-vp8-near-cap.webm",
     "sha256": "7cdc718657b916d30243b53c80db6c72460b15bb37881cca2b4efc34fd6a896e",
     "bytes": 8885,
     "codec": "vp9",

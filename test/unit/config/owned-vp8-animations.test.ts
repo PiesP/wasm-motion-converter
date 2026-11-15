@@ -14,6 +14,7 @@ import {
   readStableFile,
   readMetadata,
   declaredOutputs,
+  assertNearCapSavedRecords,
   extractVp8Frames,
   writeIvf,
 } from '../../../scripts/test/owned-vp8-animations.ts';
@@ -47,6 +48,26 @@ function animation(...frames: Buffer[]): Buffer {
 }
 
 describe('saved animation verifier', () => {
+  it('requires near-cap candidate output and its full-scene fixture marker', () => {
+    const saved = { file: 'candidate.webp', bytes: 8, sha256: 'a'.repeat(64) };
+    const report = {
+      samples: [],
+      functional: [{ build: 'candidate', fixture: 'near-cap', saved }],
+      nearCapCandidateStatus: 'passed',
+      nearCapPriorStatus: 'failed',
+    };
+    expect(() => assertNearCapSavedRecords(report, declaredOutputs(report))).not.toThrow();
+    const withoutMarker = { ...report, functional: [{ build: 'candidate', saved }] };
+    expect(() => assertNearCapSavedRecords(withoutMarker, declaredOutputs(withoutMarker))).toThrow(
+      /scene contract/
+    );
+    expect(() =>
+      assertNearCapSavedRecords(
+        { ...report, nearCapCandidateStatus: 'failed' },
+        declaredOutputs(report)
+      )
+    ).toThrow(/candidate did not pass/);
+  });
   it('classifies every independently decoded cluster pixel and exposes a mixed frame', () => {
     const solid = new RgbaFrameCollector(2, 1, 1, true);
     solid.accept(Buffer.from([255, 0, 0, 255, 255, 0, 0, 255]));

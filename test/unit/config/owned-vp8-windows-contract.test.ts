@@ -21,6 +21,7 @@ import {
   instrumentOwnedInstance,
   parseAnimatedWebp,
   assertClusterTimeline,
+  assertNearCapTimeline,
 } from '../../../validation/windows/helpers/owned-vp8-product.ts';
 
 afterEach(() => {
@@ -158,7 +159,12 @@ describe('owned VP8 Windows product contract', () => {
         selector_files: string[];
         scenarios: Record<
           string,
-          { selector: string; required_inputs: string[]; build_commands: string[][] }
+          {
+            selector: string;
+            required_inputs: string[];
+            generated_assets: string[];
+            build_commands: string[][];
+          }
         >;
       };
       assets: string[];
@@ -192,19 +198,41 @@ describe('owned VP8 Windows product contract', () => {
     const near = profile.preparation.scenarios['owned-vp8-product-near-cap'];
     expect(profile.preparation.selector_files).toContain('owned-vp8-product-near-cap.json');
     expect(near?.selector).toBe('owned-vp8-product-near-cap.json');
-    expect(near?.required_inputs).toContain(
-      'validation/windows/owned-vp8-near-cap-inputs/near-cap.webm'
-    );
+    expect(near?.required_inputs).toContain('dist-validation/owned-vp8-near-cap.webm');
     expect(near?.required_inputs).toContain('validation/windows/owned-vp8-near-cap.json');
     expect(near?.required_inputs).toContain('validation/windows/prior-dist');
+    expect(near?.required_inputs).toContain('dist');
+    expect(near?.generated_assets).toEqual(['dist-validation/owned-vp8-near-cap.webm']);
+    expect(profile.assets).not.toContain('dist-validation/owned-vp8-near-cap.webm');
     expect(near?.build_commands).toEqual([
       ['vp', 'run', 'prepare:owned-vp8-near-cap'],
       ['vp', 'run', 'build:ci'],
     ]);
     const buildConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
     expect(buildConfig).toMatch(
-      /'build:ci':\s*\{\s*command:\s*\[\s*'vp run check:owned-vp8-inputs'/
+      /'build:ci:native':\s*\{\s*command:\s*\[\s*'vp run check:owned-vp8-inputs'/
     );
+    const nativeCommands = buildConfig.match(
+      /'build:ci:native':\s*\{\s*command:\s*\[([\s\S]*?)\],\s*cache:\s*false/
+    )?.[1];
+    expect(nativeCommands).toBeDefined();
+    const packageScripts = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    expect(packageScripts.scripts['build:ci']).toBe('vp run build:ci:native');
+    expect([...nativeCommands!.matchAll(/'([^']+)'/g)].map((match) => match[1])).toEqual([
+      'vp run check:owned-vp8-inputs',
+      'vp run build:owned-wasm',
+      'node --experimental-strip-types scripts/build/generate-licenses.ts',
+      'vp build',
+      'node --experimental-strip-types scripts/build/postbuild.ts',
+    ]);
+    expect(buildConfig).toMatch(
+      /verify:\s*\{\s*command:\s*\['vp run quality', 'vp run build:ci'\], cache: false/
+    );
+    const ignores = readFileSync(resolve(root, '.gitignore'), 'utf8');
+    expect(ignores).toContain('/dist-validation/owned-vp8-near-cap.webm');
+    expect(ignores).toContain('/dist-validation/.owned-vp8-near-cap-attempt-*/');
   });
 
   it('enforces every generated cluster scene boundary and duplicate hold', () => {
@@ -243,6 +271,21 @@ describe('owned VP8 Windows product contract', () => {
         valid.map((frame, index) => (index === 2 ? { ...frame, scenePixelCount: 1 } : frame))
       )
     ).toThrow(/unexpected pixels/);
+  });
+
+  it('requires near-cap red and blue source holds across full decoded frames', () => {
+    const valid = [
+      { scene: 'red', durationMs: 500, scenePixelCount: 2, totalPixels: 2 },
+      { scene: 'blue', durationMs: 500, scenePixelCount: 2, totalPixels: 2 },
+    ];
+    expect(() => assertNearCapTimeline(valid)).not.toThrow();
+    expect(() => assertNearCapTimeline([valid[1]!, valid[0]!])).toThrow(/scene/);
+    expect(() => assertNearCapTimeline([{ ...valid[0]!, durationMs: 200 }, valid[1]!])).toThrow(
+      /hold|transition/
+    );
+    expect(() => assertNearCapTimeline([{ ...valid[0]!, scenePixelCount: 1 }, valid[1]!])).toThrow(
+      /unexpected pixels/
+    );
   });
 
   it('parses each RIFF hold in order and rejects an invalid nested geometry', () => {

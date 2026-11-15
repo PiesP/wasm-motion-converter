@@ -5,10 +5,20 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import {
+  chmodSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
-export const NEAR_CAP_INPUT = 'validation/windows/owned-vp8-near-cap-inputs/near-cap.webm';
+export const NEAR_CAP_INPUT = 'dist-validation/owned-vp8-near-cap.webm';
 // Matroska otherwise writes a varying segment UID; bitexact output makes the
 // frozen input digest reproducible for the pinned generated-source contract.
 export const NEAR_CAP_COMMAND = [
@@ -100,16 +110,74 @@ export function verifyNearCapBytes(
   );
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
-  const manifest = JSON.parse(
-    readFileSync(resolve('validation/windows/owned-vp8-near-cap.json'), 'utf8')
-  ) as unknown;
-  verifyNearCapManifest(manifest);
-  const path = resolve(NEAR_CAP_INPUT);
-  mkdirSync(dirname(path), { recursive: true });
-  const result = spawnSync('ffmpeg', [...NEAR_CAP_COMMAND, '-y', path], { encoding: 'utf8' });
-  if (result.error) throw result.error;
-  assert.equal(result.status, 0, `Near-cap FFmpeg generation failed: ${result.stderr}`);
+function missing(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+}
+
+/** Reuse only a verified file. Generate elsewhere, then publish with an atomic no-clobber link. */
+export function prepareNearCapFile(
+  path: string,
+  generate: (attemptPath: string) => void,
+  validate: (filePath: string) => void
+): 'reused' | 'generated' {
+  const parent = dirname(path);
+  mkdirSync(parent, { recursive: true, mode: 0o700 });
+  assert(lstatSync(parent).isDirectory(), 'Near-cap output directory is not a real directory');
+  let existing: ReturnType<typeof lstatSync> | undefined;
+  try {
+    existing = lstatSync(path);
+  } catch (error) {
+    if (!missing(error)) throw error;
+  }
+  if (existing) {
+    assert(existing.isFile(), 'Near-cap output exists but is not a regular file');
+    validate(path);
+    return 'reused';
+  }
+
+  const attemptDir = mkdtempSync(join(parent, '.owned-vp8-near-cap-attempt-'));
+  chmodSync(attemptDir, 0o700);
+  const attemptPath = join(attemptDir, 'near-cap.webm');
+  let stage = 'generate';
+  try {
+    generate(attemptPath);
+    stage = 'validate';
+    assert(lstatSync(attemptPath).isFile(), 'Near-cap attempt is not a regular file');
+    validate(attemptPath);
+    stage = 'publish';
+    linkSync(attemptPath, path);
+    unlinkSync(attemptPath);
+    rmdirSync(attemptDir);
+    return 'generated';
+  } catch (error) {
+    try {
+      writeFileSync(
+        join(attemptDir, 'failure.json'),
+        `${JSON.stringify({ stage, error: String(error) }, null, 2)}\n`,
+        { flag: 'wx', mode: 0o600 }
+      );
+    } catch {
+      // The original error and any attempt bytes remain the primary evidence.
+    }
+    throw new Error(
+      `Near-cap ${stage} failed; retained attempt at ${attemptDir}: ${String(error)}`
+    );
+  }
+}
+
+function validateGeneratedVideo(
+  path: string,
+  manifest: {
+    input: {
+      bytes: number;
+      sha256: string;
+      width: number;
+      height: number;
+      frames: number;
+      durationMs: number;
+    };
+  }
+): void {
   verifyNearCapBytes(readFileSync(path), manifest);
   const probe = spawnSync(
     'ffprobe',
@@ -147,4 +215,25 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename
     nb_read_frames: String(manifest.input.frames),
   });
   assert.equal(Number(metadata.format?.duration), manifest.input.durationMs / 1_000);
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
+  const manifest = JSON.parse(
+    readFileSync(resolve('validation/windows/owned-vp8-near-cap.json'), 'utf8')
+  ) as unknown;
+  verifyNearCapManifest(manifest);
+  const path = resolve(NEAR_CAP_INPUT);
+  const outcome = prepareNearCapFile(
+    path,
+    (attemptPath) => {
+      const result = spawnSync('ffmpeg', [...NEAR_CAP_COMMAND, '-n', attemptPath], {
+        encoding: 'utf8',
+      });
+      if (result.error) throw result.error;
+      assert.equal(result.status, 0, `Near-cap FFmpeg generation failed: ${result.stderr}`);
+      chmodSync(attemptPath, 0o600);
+    },
+    (filePath) => validateGeneratedVideo(filePath, manifest)
+  );
+  process.stdout.write(`Near-cap source ${outcome}: ${manifest.input.sha256}\n`);
 }
