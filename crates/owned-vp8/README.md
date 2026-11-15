@@ -88,13 +88,21 @@ only a final state with the original skip syntax and coefficient frontier.
 
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those
-variants differ. It selects legal extended output within the legal unrefined
-size, otherwise legal captured mandatory output within that size, otherwise
-unrefined output. If unrefined output is illegal under the partition or output
-limit, it selects legal extended output, then legal captured mandatory output,
-or reports the unrefined limit error. A bounded coefficient log and
+variants differ. After each count, the encoder copies completed reconstruction
+into the former source YUV slots, applies the signaled loop filter in raster
+order, and scores visible RGB with streaming SSIM moments. With legal unrefined
+output, it selects the highest finite score among legal variants no larger than
+that output. If unrefined output is illegal, it selects the highest finite score
+among legal refined variants or returns the unrefined limit error. Exact score
+ties prefer extended, then captured mandatory, then unrefined. The RGB view
+approximates decoder conversion and cannot replace external quality gates.
+A bounded coefficient log and
 captured-choice overrides reverse and reapply reconstruction between counts;
-their storage is released before the single output allocation. Finalized sizes
+the unfiltered reconstruction remains intact for replay. One macroblock of
+filtering, 64 KiB of copying, or 64 four-by-four metric blocks run per ABI step.
+The two-row moment cache is capped at 1 MiB inside the unchanged 8 MiB scratch
+charge and releases at most 64 KiB per step. Metadata is released before the
+single output allocation. Finalized sizes
 are published at a separate preparation barrier after selection, so the host
 can reserve the new plan before advancing;
 first-partition overflow is separate from total output overflow. Output remains

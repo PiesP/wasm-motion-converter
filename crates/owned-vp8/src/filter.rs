@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// Test-side VP8 keyframe reconstruction filter. The arithmetic follows RFC 6386
+// VP8 keyframe reconstruction filter. The arithmetic follows RFC 6386
 // section 15 and was checked against libwebp decoder DSP C at commit
 // 6c484cbf92e81a5673b24485ac02d211f69be5b7 (BSD-3-Clause, COPYING).
 // Apply only after *all* macroblocks are reconstructed: intra prediction must
-// read unfiltered neighbors. This module is excluded from production builds.
+// read unfiltered neighbors. Production uses a separate filtered work copy.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FilterParams {
@@ -391,6 +391,7 @@ pub(super) fn filter_macroblock(
 
 /// Run only after the full unfiltered frame and every macroblock's metadata
 /// have been frozen. The caller supplies row-major per-MB segment parameters.
+#[cfg(test)]
 pub(super) fn filter_frame(
     planes: &mut Planes<'_>,
     mb_width: usize,

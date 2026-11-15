@@ -11,7 +11,6 @@ mod color;
 mod dc_quant;
 mod default_coeff_probs;
 mod display_rgb;
-#[cfg(test)]
 mod filter;
 mod limits;
 mod prediction;

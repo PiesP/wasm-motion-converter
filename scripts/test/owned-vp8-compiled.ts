@@ -46,11 +46,31 @@ async function check(
   const job = new Vp8TestJob(compiled);
   try {
     const request = { width, height, stride, layout, quality };
+    let previousStage = -1;
+    let previousDone = 0;
     const result = await job.encode(pixels, request, undefined, (record) => {
-      if ([27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40].includes(record.stage)) {
+      if (
+        (record.stage >= 27 && record.stage <= 40) ||
+        (record.stage >= 41 && record.stage <= 53)
+      ) {
         assert.equal(record.outputLength, 0, 'Refinement stages cannot publish output');
         assert.equal(record.outputPointer, 0, 'Refinement stages cannot lease output');
       }
+      if (record.stage === previousStage && record.stage >= 41 && record.stage <= 53) {
+        const bound = [42, 46, 50].includes(record.stage)
+          ? 65_536
+          : [43, 47, 51].includes(record.stage)
+            ? 1
+            : [44, 48, 52].includes(record.stage)
+              ? 64
+              : 546;
+        assert.ok(
+          record.done >= previousDone && record.done - previousDone <= bound,
+          `Quality stage ${record.stage} must progress within its work bound`
+        );
+      }
+      previousStage = record.stage;
+      previousDone = record.done;
       onStage?.(record.stage);
     });
     assert.deepEqual(
@@ -249,6 +269,41 @@ async function cancellation(): Promise<object> {
   };
 }
 
+async function qualityCancellation(): Promise<object> {
+  const fixture = generateV7Fixture('fresh7-tiny-5x1');
+  const job = new Vp8TestJob(compiled, 11);
+  const controller = new AbortController();
+  let observed = false;
+  try {
+    await assert.rejects(
+      job.encode(
+        fixture.pixels,
+        {
+          width: fixture.width,
+          height: fixture.height,
+          stride: fixture.stride,
+          layout: 0,
+          quality: 85,
+        },
+        controller.signal,
+        (record) => {
+          if (!observed && record.phase === 4 && record.stage === 42) {
+            observed = true;
+            controller.abort();
+          }
+        }
+      ),
+      { name: 'AbortError' }
+    );
+    assert.ok(observed, 'Cancellation must observe the filtered-copy stage');
+    assert.equal(job.record().outputLength, 0);
+    assert.equal(job.record().outputPointer, 0);
+  } finally {
+    job.retire();
+  }
+  return { filteredCopyObserved: observed, noOutputLease: true };
+}
+
 try {
   const largeOnly = process.argv.includes('--large-only');
   let leaseCheck = 'NOT_RUN';
@@ -323,7 +378,7 @@ try {
         .map((entry) => (entry as { rawBytes: number }).rawBytes),
       [98, 81, 92]
     );
-    for (const stage of [36, 37, 38, 39, 40, 27, 28, 29, 35])
+    for (const stage of [36, 37, 38, 39, 40, 27, 28, 29, 35, 42, 44, 46, 48, 50, 52, 53])
       assert.ok(refinementStages.has(stage), `Compiled ABI2 must reach refinement stage ${stage}`);
     for (const layout of [0, 1, 2, 3, 4]) {
       const width = 17;
@@ -374,7 +429,7 @@ try {
       'Resource probe must cross the retired prototype output cap'
     );
   } else {
-    cancel = await cancellation();
+    cancel = { analysis: await cancellation(), quality: await qualityCancellation() };
   }
   console.log(
     JSON.stringify(

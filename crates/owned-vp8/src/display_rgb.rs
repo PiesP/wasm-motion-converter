@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// Bounded local display and SSIM proxy for VP8 coefficient trials. RGB
-// approximates FFmpeg's default limited-range BT.601 YUV420P conversion;
-// neither this prefilter proxy nor its SSIM score is a decoder oracle.
+// Bounded local display and SSIM for VP8 coefficient trials, plus a completed
+// filtered-frame view. RGB approximates FFmpeg's default limited-range BT.601
+// YUV420P conversion; neither view is a decoder RGB oracle.
 
 #[derive(Clone, Copy)]
 pub(super) struct Original<'a> {
@@ -337,6 +337,15 @@ struct Moment {
 }
 
 impl Moment {
+    fn combine(self, other: Self) -> Self {
+        Self {
+            source: self.source + other.source,
+            source_sq: self.source_sq + other.source_sq,
+            encoded: self.encoded + other.encoded,
+            encoded_sq: self.encoded_sq + other.encoded_sq,
+            cross: self.cross + other.cross,
+        }
+    }
     fn add(&mut self, source: u8, encoded: u8) {
         let a = i64::from(source);
         let b = i64::from(encoded);
@@ -364,6 +373,227 @@ impl Moment {
         let numerator = (2 * s1 * s2 + 416) as f64 * (2 * covariance + 235_963) as f64;
         let denominator = (s1 * s1 + s2 * s2 + 416) as f64 * (variance + 235_963) as f64;
         (numerator / denominator) as f32 as f64
+    }
+}
+
+// Read only completed, filtered planes. The trial Frame above intentionally
+// substitutes source samples for future macroblocks; this view never does.
+pub(super) struct CompleteFrame<'a> {
+    width: usize,
+    height: usize,
+    stride_y: usize,
+    original: Original<'a>,
+    y: &'a [u8],
+    u: &'a [u8],
+    v: &'a [u8],
+}
+
+impl<'a> CompleteFrame<'a> {
+    pub(super) fn checked(
+        width: usize,
+        height: usize,
+        stride_y: usize,
+        original: Original<'a>,
+        y: &'a [u8],
+        u: &'a [u8],
+        v: &'a [u8],
+    ) -> Option<Self> {
+        let bpp = if original.layout == 4 { 3 } else { 4 };
+        let uv_stride = stride_y / 2;
+        let uv_width = width.div_ceil(2);
+        let uv_height = height.div_ceil(2);
+        let extent = |stride: usize, w: usize, h: usize| {
+            stride
+                .checked_mul(h.checked_sub(1)?)
+                .and_then(|n| n.checked_add(w))
+        };
+        if width == 0
+            || height == 0
+            || original.layout > 4
+            || !stride_y.is_multiple_of(2)
+            || stride_y < width
+            || original.stride < width.checked_mul(bpp)?
+            || y.len() < extent(stride_y, width, height)?
+            || u.len() < extent(uv_stride, uv_width, uv_height)?
+            || v.len() < extent(uv_stride, uv_width, uv_height)?
+            || original.pixels.len() < extent(original.stride, width.checked_mul(bpp)?, height)?
+        {
+            return None;
+        }
+        Some(Self {
+            width,
+            height,
+            stride_y,
+            original,
+            y,
+            u,
+            v,
+        })
+    }
+
+    fn chroma_sum(&self, plane: &[u8], h: Axis, v: Axis) -> i64 {
+        let mut sum = 0;
+        for row in 0..v.len {
+            for col in 0..h.len {
+                sum += i64::from(plane[v.at[row] * (self.stride_y / 2) + h.at[col]])
+                    * i64::from(h.weight[col])
+                    * i64::from(v.weight[row]);
+            }
+        }
+        sum
+    }
+
+    fn rendered(&self, x: usize, y: usize) -> [u8; 3] {
+        let direct = self.height.is_multiple_of(2);
+        let h = Axis::chroma(x, self.width, true, direct);
+        let v = Axis::chroma(y, self.height, false, direct);
+        render(
+            self.y[y * self.stride_y + x],
+            self.chroma_sum(self.u, h, v),
+            self.chroma_sum(self.v, h, v),
+        )
+    }
+}
+
+pub(super) const MAX_QUALITY_CACHE_BYTES: usize = 1024 * 1024;
+const QUALITY_CHUNK_MOMENTS: usize = 64 * 1024 / std::mem::size_of::<[Moment; 3]>();
+
+pub(super) struct CompleteScore {
+    moments: Vec<Vec<[Moment; 3]>>,
+    initialized_moments: usize,
+    columns: usize,
+    rows: usize,
+    next: usize,
+    sum: f64,
+}
+
+impl CompleteScore {
+    pub(super) fn new(width: usize, height: usize) -> Option<Self> {
+        let columns = width.max(8) / 4;
+        let rows = height.max(8) / 4;
+        let count = columns.checked_mul(2)?;
+        let bytes = count.checked_mul(std::mem::size_of::<[Moment; 3]>())?;
+        if bytes > MAX_QUALITY_CACHE_BYTES {
+            return None;
+        }
+        let mut moments = Vec::new();
+        moments
+            .try_reserve_exact(count.div_ceil(QUALITY_CHUNK_MOMENTS))
+            .ok()?;
+        let outer = moments
+            .capacity()
+            .checked_mul(std::mem::size_of::<Vec<[Moment; 3]>>())?;
+        if bytes.checked_add(outer)? > MAX_QUALITY_CACHE_BYTES {
+            return None;
+        }
+        Some(Self {
+            moments,
+            initialized_moments: 0,
+            columns,
+            rows,
+            next: 0,
+            sum: 0.0,
+        })
+    }
+
+    pub(super) fn initialized(&self) -> bool {
+        self.initialized_moments == self.columns * 2
+    }
+
+    pub(super) fn initialize_chunk(&mut self) -> bool {
+        let count = (self.columns * 2 - self.initialized_moments).min(QUALITY_CHUNK_MOMENTS);
+        let mut chunk = Vec::new();
+        if chunk.try_reserve_exact(count).is_err() {
+            return false;
+        }
+        if chunk.capacity() * std::mem::size_of::<[Moment; 3]>() > 64 * 1024 {
+            return false;
+        }
+        chunk.resize(count, [Moment::default(); 3]);
+        self.initialized_moments += count;
+        self.moments.push(chunk);
+        true
+    }
+
+    pub(super) fn initialization_progress(&self) -> (usize, usize) {
+        (self.initialized_moments, self.columns * 2)
+    }
+
+    pub(super) fn release_one_chunk(&mut self) -> bool {
+        if let Some(chunk) = self.moments.pop() {
+            self.initialized_moments -= chunk.len();
+        }
+        self.moments.is_empty()
+    }
+
+    pub(super) fn release_progress(&self) -> (usize, usize) {
+        (
+            self.columns * 2 - self.initialized_moments,
+            self.columns * 2,
+        )
+    }
+
+    fn moment(&self, index: usize) -> [Moment; 3] {
+        self.moments[index / QUALITY_CHUNK_MOMENTS][index % QUALITY_CHUNK_MOMENTS]
+    }
+
+    fn set_moment(&mut self, index: usize, value: [Moment; 3]) {
+        self.moments[index / QUALITY_CHUNK_MOMENTS][index % QUALITY_CHUNK_MOMENTS] = value;
+    }
+
+    pub(super) fn progress(&self) -> (usize, usize) {
+        (self.next, self.columns * self.rows)
+    }
+
+    pub(super) fn reset(&mut self) {
+        self.next = 0;
+        self.sum = 0.0;
+    }
+
+    pub(super) fn advance(&mut self, frame: &CompleteFrame<'_>) {
+        let end = (self.next + 64).min(self.columns * self.rows);
+        while self.next < end {
+            let bx = self.next % self.columns;
+            let by = self.next / self.columns;
+            let mut moments = [Moment::default(); 3];
+            for dy in 0..4 {
+                for dx in 0..4 {
+                    let x = metric_sample(bx * 4 + dx, frame.width);
+                    let y = metric_sample(by * 4 + dy, frame.height);
+                    let original = frame.original.at(x, y);
+                    let rendered = frame.rendered(x, y);
+                    for channel in 0..3 {
+                        moments[channel].add(original[channel], rendered[channel]);
+                    }
+                }
+            }
+            let index = (by % 2) * self.columns + bx;
+            self.set_moment(index, moments);
+            if bx > 0 && by > 0 {
+                let previous = ((by - 1) % 2) * self.columns + bx - 1;
+                let previous_right = previous + 1;
+                let upper_left = self.moment(previous);
+                let upper_right = self.moment(previous_right);
+                let lower_left = self.moment(index - 1);
+                let lower_right = self.moment(index);
+                for channel in 0..3 {
+                    let window = upper_left[channel]
+                        .combine(upper_right[channel])
+                        .combine(lower_left[channel])
+                        .combine(lower_right[channel]);
+                    self.sum += window.ssim();
+                }
+            }
+            self.next += 1;
+        }
+    }
+
+    pub(super) fn finish(&self) -> Option<f64> {
+        if self.next != self.columns * self.rows {
+            return None;
+        }
+        let score = self.sum / (3 * (self.columns - 1) * (self.rows - 1)) as f64;
+        score.is_finite().then_some(score)
     }
 }
 
@@ -599,6 +829,116 @@ impl LocalCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completed_stream_matches_fresh_scalar_windows_and_checks_extents() {
+        for (width, height) in [
+            (1usize, 1usize),
+            (5, 1),
+            (2, 9),
+            (1, 11),
+            (17, 19),
+            (33, 16),
+        ] {
+            let stride_y = width.div_ceil(16) * 16;
+            let padded_h = height.div_ceil(16) * 16;
+            let y: Vec<u8> = (0..stride_y * padded_h)
+                .map(|at| (at * 41 + 29) as u8)
+                .collect();
+            let u: Vec<u8> = (0..stride_y * padded_h / 4)
+                .map(|at| (at * 67 + 91) as u8)
+                .collect();
+            let v: Vec<u8> = (0..stride_y * padded_h / 4)
+                .map(|at| (at * 53 + 117) as u8)
+                .collect();
+            for layout in [0, 1, 2, 3, 4] {
+                let bpp = if layout == 4 { 3 } else { 4 };
+                let stride = width * bpp + 3;
+                let input: Vec<u8> = (0..stride * height)
+                    .map(|at| (at * 71 + 13) as u8)
+                    .collect();
+                let original = Original {
+                    pixels: &input,
+                    stride,
+                    layout,
+                };
+                assert!(CompleteFrame::checked(
+                    width,
+                    height,
+                    stride_y,
+                    original,
+                    &y[..height - 1],
+                    &u,
+                    &v
+                )
+                .is_none());
+                assert!(CompleteFrame::checked(
+                    width,
+                    height,
+                    stride_y,
+                    Original {
+                        pixels: &input[..stride * (height - 1)],
+                        stride,
+                        layout
+                    },
+                    &y,
+                    &u,
+                    &v
+                )
+                .is_none());
+                let frame =
+                    CompleteFrame::checked(width, height, stride_y, original, &y, &u, &v).unwrap();
+                let scalar = metric_ssim(
+                    width,
+                    height,
+                    |x, y| original.at(x, y),
+                    |x, y| frame.rendered(x, y),
+                );
+                let mut stream = CompleteScore::new(width, height).unwrap();
+                while !stream.initialized() {
+                    assert!(stream.initialize_chunk());
+                }
+                while stream.progress().0 < stream.progress().1 {
+                    stream.advance(&frame);
+                }
+                assert_eq!(
+                    stream.finish(),
+                    Some(scalar),
+                    "{width}x{height} layout={layout}"
+                );
+                stream.reset();
+                while stream.progress().0 < stream.progress().1 {
+                    stream.advance(&frame);
+                }
+                assert_eq!(stream.finish(), Some(scalar));
+            }
+        }
+    }
+
+    #[test]
+    fn completed_row_cache_max_axis_allocates_and_releases_in_bounded_chunks() {
+        let mut score = CompleteScore::new(16_383, 1).unwrap();
+        let mut total_capacity = score.moments.capacity() * std::mem::size_of::<Vec<[Moment; 3]>>();
+        while !score.initialized() {
+            let before = score.initialization_progress().0;
+            assert!(score.initialize_chunk());
+            assert!(score.initialization_progress().0 - before <= QUALITY_CHUNK_MOMENTS);
+        }
+        for chunk in &score.moments {
+            let bytes = chunk.capacity() * std::mem::size_of::<[Moment; 3]>();
+            assert!(bytes <= 64 * 1024);
+            total_capacity += bytes;
+        }
+        assert!(total_capacity <= MAX_QUALITY_CACHE_BYTES);
+        let mut previous = 0;
+        while !score.release_one_chunk() {
+            let done = score.release_progress().0;
+            assert!(done - previous <= QUALITY_CHUNK_MOMENTS);
+            previous = done;
+        }
+        assert!(score.release_progress().0 - previous <= QUALITY_CHUNK_MOMENTS);
+        assert_eq!(score.release_progress().0, score.release_progress().1);
+    }
 
     fn bytes(hex: &str) -> Vec<u8> {
         hex.as_bytes()

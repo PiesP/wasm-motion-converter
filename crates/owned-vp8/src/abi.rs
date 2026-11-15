@@ -423,9 +423,11 @@ mod tests {
                 [rgb[0], rgb[1], rgb[2], 255]
             })
             .collect();
-        for target in [36, 37, 38, 39, 40, 27, 29, 28, 35] {
+        for target in [
+            36, 37, 38, 39, 40, 27, 29, 28, 35, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+        ] {
             let mut reached = false;
-            let joint = (37..=40).contains(&target);
+            let joint = (37..=40).contains(&target) || (45..=48).contains(&target);
             let (case_width, case_height, case_input, qualities): (usize, usize, &[u8], &[u32]) =
                 if joint {
                     (5, 1, &joint_input, &[85])

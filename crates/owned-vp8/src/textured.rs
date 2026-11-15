@@ -7,7 +7,7 @@ use super::{BoolWriter, EncodeError, MAX_OUTPUT_BYTES};
 use crate::ac_quant::{self, Deltas, Plane, Steps};
 use crate::{
     bmode_probs::BMODE_PROBS,
-    display_rgb,
+    display_rgb, filter,
     limits::{
         Request, ResourcePlan, Status, MAX_DIMENSION, MAX_FIRST_PARTITION_BYTES,
         REFINEMENT_LOG_BUDGET_BYTES, SCRATCH_ALLOWANCE_BYTES,
@@ -19,6 +19,94 @@ use crate::{
     segmentation::{self, Config as SegmentConfig},
     transform,
 };
+
+#[allow(clippy::too_many_arguments)]
+fn filter_completed_one(
+    y: &mut [u8],
+    u: &mut [u8],
+    v: &mut [u8],
+    padded_w: usize,
+    padded_h: usize,
+    index: usize,
+    blocks: &[Macroblock],
+    config: FilterConfig,
+) -> Result<(), EncodeError> {
+    let block = blocks.get(index).ok_or(EncodeError::InvalidInput)?;
+    let mut planes = filter::Planes {
+        y: filter::Plane {
+            data: y,
+            width: padded_w,
+            height: padded_h,
+            stride: padded_w,
+        },
+        u: filter::Plane {
+            data: u,
+            width: padded_w / 2,
+            height: padded_h / 2,
+            stride: padded_w / 2,
+        },
+        v: filter::Plane {
+            data: v,
+            width: padded_w / 2,
+            height: padded_h / 2,
+            stride: padded_w / 2,
+        },
+    };
+    filter::filter_macroblock(
+        &mut planes,
+        index % (padded_w / 16),
+        index / (padded_w / 16),
+        filter::FilterParams {
+            level: config.level,
+            sharpness: config.sharpness,
+            simple: config.simple,
+            i4: !block.i16,
+            has_coefficients: !block.skip(),
+        },
+    )
+    .map_err(|_| EncodeError::InvalidInput)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn score_completed_sync(
+    work_y: &mut [u8],
+    work_u: &mut [u8],
+    work_v: &mut [u8],
+    reconstructed_y: &[u8],
+    reconstructed_u: &[u8],
+    reconstructed_v: &[u8],
+    padded_w: usize,
+    padded_h: usize,
+    width: usize,
+    height: usize,
+    original: display_rgb::Original<'_>,
+    blocks: &[Macroblock],
+    config: FilterConfig,
+) -> Result<f64, EncodeError> {
+    work_y.copy_from_slice(reconstructed_y);
+    work_u.copy_from_slice(reconstructed_u);
+    work_v.copy_from_slice(reconstructed_v);
+    for index in 0..blocks.len() {
+        filter_completed_one(
+            work_y, work_u, work_v, padded_w, padded_h, index, blocks, config,
+        )?;
+    }
+    let view = display_rgb::CompleteFrame::checked(
+        width, height, padded_w, original, work_y, work_u, work_v,
+    )
+    .ok_or(EncodeError::InvalidInput)?;
+    let mut score =
+        display_rgb::CompleteScore::new(width, height).ok_or(EncodeError::OutputLimit)?;
+    while !score.initialized() {
+        if !score.initialize_chunk() {
+            return Err(EncodeError::OutputLimit);
+        }
+    }
+    while score.progress().0 < score.progress().1 {
+        score.advance(&view);
+    }
+    score.finish().ok_or(EncodeError::InvalidInput)
+}
 
 #[path = "joint_refinement.rs"]
 mod joint_refinement;
@@ -2119,6 +2207,27 @@ fn encode_observed(
     if !refinement_log.is_empty() || !baseline_overrides.is_empty() {
         let extended_sizes =
             count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
+        let original = display_rgb::Original {
+            pixels,
+            stride,
+            layout: format,
+        };
+        let extended_quality = score_completed_sync(
+            &mut source_y,
+            &mut source_u,
+            &mut source_v,
+            &reconstructed_y,
+            &reconstructed_u,
+            &reconstructed_v,
+            padded_w,
+            padded_h,
+            width,
+            height,
+            original,
+            &blocks,
+            filter,
+        )?;
+        let mut baseline_quality = None;
         let baseline_sizes = if baseline_overrides.is_empty() {
             None
         } else {
@@ -2158,6 +2267,21 @@ fn encode_observed(
             }
             let sizes =
                 count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
+            baseline_quality = Some(score_completed_sync(
+                &mut source_y,
+                &mut source_u,
+                &mut source_v,
+                &reconstructed_y,
+                &reconstructed_u,
+                &reconstructed_v,
+                padded_w,
+                padded_h,
+                width,
+                height,
+                original,
+                &blocks,
+                filter,
+            )?);
             for item in baseline_overrides.iter().rev() {
                 if let Some(change) = item.baseline {
                     replay_sync_edit(
@@ -2196,30 +2320,50 @@ fn encode_observed(
         }
         let base_sizes =
             count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
+        let base_quality = score_completed_sync(
+            &mut source_y,
+            &mut source_u,
+            &mut source_v,
+            &reconstructed_y,
+            &reconstructed_u,
+            &reconstructed_v,
+            padded_w,
+            padded_h,
+            width,
+            height,
+            original,
+            &blocks,
+            filter,
+        )?;
         let legal = |sizes: (usize, usize)| {
             sizes.0 <= 0x7ffff && 10 + sizes.0 + sizes.1 <= MAX_OUTPUT_BYTES
         };
         let bytes = |sizes: (usize, usize)| 10 + sizes.0 + sizes.1;
-        let choice = if let Some(baseline_sizes) = baseline_sizes {
-            if !refinement_log.is_empty()
-                && legal(extended_sizes)
-                && (!legal(base_sizes) || bytes(extended_sizes) <= bytes(base_sizes))
-            {
-                VariantChoice::Extended
-            } else if legal(baseline_sizes)
-                && (!legal(base_sizes) || bytes(baseline_sizes) <= bytes(base_sizes))
-            {
-                VariantChoice::Baseline
+        let legality = |sizes| {
+            if legal(sizes) {
+                Ok(())
+            } else if sizes.0 > 0x7ffff {
+                Err(Status::PartitionLimit)
             } else {
-                VariantChoice::Base
+                Err(Status::OutputLimit)
             }
-        } else if legal(extended_sizes)
-            && (!legal(base_sizes) || bytes(extended_sizes) <= bytes(base_sizes))
-        {
-            VariantChoice::Extended
-        } else {
-            VariantChoice::Base
         };
+        let choice = choose_scored_variants(
+            (
+                bytes(extended_sizes) as u32,
+                legality(extended_sizes),
+                extended_quality,
+            ),
+            baseline_sizes
+                .zip(baseline_quality)
+                .map(|(sizes, quality)| (bytes(sizes) as u32, legality(sizes), quality)),
+            (bytes(base_sizes) as u32, legality(base_sizes), base_quality),
+        )
+        .map_err(|error| match error {
+            Status::PartitionLimit => EncodeError::OutputLimit,
+            Status::OutputLimit => EncodeError::OutputLimit,
+            _ => EncodeError::InvalidInput,
+        })?;
         if choice != VariantChoice::Base {
             for index in 0..refinement_log.len {
                 replay_edit_state(
@@ -3089,6 +3233,11 @@ enum Stage {
     ApplyBaseline = 38,
     ReverseBaseline = 39,
     ReverseUnchanged = 40,
+    QualityInit = 41,
+    QualityCopy = 42,
+    QualityFilter = 43,
+    QualityMetric = 44,
+    QualityRelease = 53,
 }
 
 struct RefinedCheckpoint {
@@ -3100,27 +3249,41 @@ struct RefinedCheckpoint {
     update_count: u32,
     use_model: bool,
     legality: Result<(), Status>,
+    quality: f64,
 }
 
-fn choose_refined_variant(
-    refined_bytes: u32,
-    refined_legality: Result<(), Status>,
-    base_bytes: u32,
-    base_legality: Result<(), Status>,
-) -> Result<bool, Status> {
-    for legality in [refined_legality, base_legality] {
-        if let Err(error) = legality {
-            if !matches!(error, Status::OutputLimit | Status::PartitionLimit) {
-                return Err(error);
+fn choose_scored_variants(
+    extended: (u32, Result<(), Status>, f64),
+    baseline: Option<(u32, Result<(), Status>, f64)>,
+    base: (u32, Result<(), Status>, f64),
+) -> Result<VariantChoice, Status> {
+    let entries = [
+        (VariantChoice::Extended, Some(extended)),
+        (VariantChoice::Baseline, baseline),
+        (VariantChoice::Base, Some(base)),
+    ];
+    for (_, entry) in entries {
+        if let Some((_, legality, score)) = entry {
+            if !score.is_finite() {
+                return Err(Status::InvalidInput);
+            }
+            if let Err(error) = legality {
+                if !matches!(error, Status::OutputLimit | Status::PartitionLimit) {
+                    return Err(error);
+                }
             }
         }
     }
-    match (refined_legality, base_legality) {
-        (Ok(()), Ok(())) => Ok(refined_bytes <= base_bytes),
-        (Ok(()), Err(_)) => Ok(true),
-        (Err(_), Ok(())) => Ok(false),
-        (Err(_), Err(error)) => Err(error),
+    let mut best = None;
+    for (choice, entry) in entries {
+        if let Some((bytes, Ok(()), score)) = entry {
+            if (base.1.is_err() || bytes <= base.0) && best.is_none_or(|(_, value)| score > value) {
+                best = Some((choice, score));
+            }
+        }
     }
+    best.map(|(choice, _)| choice)
+        .ok_or_else(|| base.1.unwrap_err())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3128,37 +3291,6 @@ enum VariantChoice {
     Extended,
     Baseline,
     Base,
-}
-
-fn choose_three_variants(
-    extended: (u32, Result<(), Status>),
-    baseline: (u32, Result<(), Status>),
-    base: (u32, Result<(), Status>),
-    extended_has_edits: bool,
-) -> Result<VariantChoice, Status> {
-    for legality in [extended.1, baseline.1, base.1] {
-        if let Err(error) = legality {
-            if !matches!(error, Status::OutputLimit | Status::PartitionLimit) {
-                return Err(error);
-            }
-        }
-    }
-    if base.1.is_ok() {
-        if extended_has_edits && extended.1.is_ok() && extended.0 <= base.0 {
-            return Ok(VariantChoice::Extended);
-        }
-        if baseline.1.is_ok() && baseline.0 <= base.0 {
-            return Ok(VariantChoice::Baseline);
-        }
-        return Ok(VariantChoice::Base);
-    }
-    if extended_has_edits && extended.1.is_ok() {
-        return Ok(VariantChoice::Extended);
-    }
-    if baseline.1.is_ok() {
-        return Ok(VariantChoice::Baseline);
-    }
-    Err(base.1.unwrap_err())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3169,9 +3301,11 @@ enum PreviewTrial {
     FinalOriginal,
 }
 
-/// One step initializes at most 64 KiB, converts one YUV row pair, analyzes
-/// one macroblock, codes one macroblock, or assembles at most 64 KiB. The host
-/// owns scheduling and cancellation between calls.
+/// One step initializes or copies at most 64 KiB, converts one YUV row pair,
+/// analyzes or filters one macroblock, scores at most 64 moment blocks, codes
+/// one macroblock, or assembles at most 64 KiB. Quality-cache chunks are
+/// allocated and released at most 64 KiB per step. The host owns scheduling
+/// and cancellation between calls.
 pub(crate) struct FrameEncoder {
     request: Request,
     plan: ResourcePlan,
@@ -3194,6 +3328,11 @@ pub(crate) struct FrameEncoder {
     base_count: bool,
     baseline_count: bool,
     baseline_reapply: bool,
+    quality_variant: VariantChoice,
+    quality_score: Option<display_rgb::CompleteScore>,
+    base_quality: f64,
+    base_legality: Result<(), Status>,
+    quality_copy_plane: usize,
     override_cursor: usize,
     replay_index: usize,
     pending_output_sizes: Option<(u32, u32)>,
@@ -3253,6 +3392,7 @@ const _: () = assert!(
         + 65_536
         + std::mem::size_of::<FrameEncoder>()
         + 1024 * 1024
+        + display_rgb::MAX_QUALITY_CACHE_BYTES
         <= SCRATCH_ALLOWANCE_BYTES as usize
 );
 
@@ -3332,6 +3472,11 @@ impl FrameEncoder {
             base_count: false,
             baseline_count: false,
             baseline_reapply: false,
+            quality_variant: VariantChoice::Extended,
+            quality_score: None,
+            base_quality: 0.0,
+            base_legality: Ok(()),
+            quality_copy_plane: 0,
             override_cursor: 0,
             replay_index: 0,
             pending_output_sizes: None,
@@ -3390,6 +3535,17 @@ impl FrameEncoder {
     }
 
     pub(crate) fn stage(&self) -> u32 {
+        if matches!(
+            self.stage,
+            Stage::QualityInit | Stage::QualityCopy | Stage::QualityFilter | Stage::QualityMetric
+        ) {
+            let variant = match self.quality_variant {
+                VariantChoice::Extended => 0,
+                VariantChoice::Baseline => 1,
+                VariantChoice::Base => 2,
+            };
+            return self.stage as u32 + variant * 4;
+        }
         if self.base_count {
             match self.stage {
                 Stage::CollectStats => return 29,
@@ -3443,6 +3599,31 @@ impl FrameEncoder {
                 (done as u32, (plane_bytes + block_bytes) as u32)
             }
             Stage::Assemble => (self.output.len() as u32, self.plan.frame_bytes),
+            Stage::QualityInit => self.quality_score.as_ref().map_or((0, 1), |score| {
+                let (done, total) = score.initialization_progress();
+                (done as u32, total as u32)
+            }),
+            Stage::QualityCopy => {
+                let previous = match self.quality_copy_plane {
+                    0 => 0,
+                    1 => self.source_y.len(),
+                    2 => self.source_y.len() + self.source_u.len(),
+                    _ => self.plan.yuv_plane_set_bytes as usize,
+                };
+                (
+                    (previous + self.cursor) as u32,
+                    self.plan.yuv_plane_set_bytes,
+                )
+            }
+            Stage::QualityFilter => (self.cursor as u32, blocks),
+            Stage::QualityMetric => self.quality_score.as_ref().map_or((0, 1), |score| {
+                let (done, total) = score.progress();
+                (done as u32, total as u32)
+            }),
+            Stage::QualityRelease => self.quality_score.as_ref().map_or((1, 1), |score| {
+                let (done, total) = score.release_progress();
+                (done as u32, total as u32)
+            }),
             Stage::ReverseRefinements => (
                 (self.refinement_log.len - self.replay_index) as u32,
                 self.refinement_log.len as u32,
@@ -3640,6 +3821,177 @@ impl FrameEncoder {
         self.update_count = 0;
         self.count_header = CountingBoolSink::default();
         self.count_token = CountingBoolSink::default();
+    }
+
+    fn begin_quality(&mut self, variant: VariantChoice) -> Result<(), Status> {
+        self.quality_variant = variant;
+        if let Some(score) = &mut self.quality_score {
+            score.reset();
+        } else {
+            self.quality_score = Some(
+                display_rgb::CompleteScore::new(
+                    self.request.width as usize,
+                    self.request.height as usize,
+                )
+                .ok_or(Status::MemoryAdmission)?,
+            );
+        }
+        self.cursor = 0;
+        self.quality_copy_plane = 0;
+        self.stage = Stage::QualityInit;
+        Ok(())
+    }
+
+    fn quality_one_step(&mut self) -> Result<(), Status> {
+        match self.stage {
+            Stage::QualityInit => {
+                let score = self.quality_score.as_mut().ok_or(Status::InvalidInput)?;
+                if !score.initialized() && !score.initialize_chunk() {
+                    return Err(Status::MemoryAdmission);
+                }
+                if score.initialized() {
+                    self.stage = Stage::QualityCopy;
+                }
+            }
+            Stage::QualityCopy => {
+                let (src, dst) = match self.quality_copy_plane {
+                    0 => (&self.reconstructed_y, &mut self.source_y),
+                    1 => (&self.reconstructed_u, &mut self.source_u),
+                    2 => (&self.reconstructed_v, &mut self.source_v),
+                    _ => return Err(Status::InvalidInput),
+                };
+                let end = (self.cursor + 65_536).min(src.len());
+                dst.get_mut(self.cursor..end)
+                    .ok_or(Status::InvalidInput)?
+                    .copy_from_slice(&src[self.cursor..end]);
+                self.cursor = end;
+                if end == src.len() {
+                    self.quality_copy_plane += 1;
+                    if self.quality_copy_plane == 3 {
+                        self.cursor = 0;
+                        self.stage = Stage::QualityFilter;
+                    } else {
+                        self.cursor = 0;
+                    }
+                }
+            }
+            Stage::QualityFilter => {
+                let count = self.blocks.len();
+                let end = (self.cursor + 1).min(count);
+                for index in self.cursor..end {
+                    filter_completed_one(
+                        &mut self.source_y,
+                        &mut self.source_u,
+                        &mut self.source_v,
+                        self.plan.padded_width as usize,
+                        self.plan.padded_height as usize,
+                        index,
+                        &self.blocks,
+                        self.filter,
+                    )
+                    .map_err(encode_status)?;
+                }
+                self.cursor = end;
+                if end == count {
+                    self.cursor = 0;
+                    self.stage = Stage::QualityMetric;
+                }
+            }
+            Stage::QualityMetric => {
+                let view = display_rgb::CompleteFrame::checked(
+                    self.request.width as usize,
+                    self.request.height as usize,
+                    self.plan.padded_width as usize,
+                    display_rgb::Original {
+                        pixels: &self.input,
+                        stride: self.request.stride as usize,
+                        layout: self.request.layout,
+                    },
+                    &self.source_y,
+                    &self.source_u,
+                    &self.source_v,
+                )
+                .ok_or(Status::InvalidInput)?;
+                let score = self.quality_score.as_mut().ok_or(Status::InvalidInput)?;
+                score.advance(&view);
+                if score.progress().0 == score.progress().1 {
+                    let value = score.finish().ok_or(Status::InvalidInput)?;
+                    self.finish_quality(value)?;
+                }
+            }
+            _ => return Err(Status::InvalidInput),
+        }
+        Ok(())
+    }
+
+    fn finish_quality(&mut self, value: f64) -> Result<(), Status> {
+        match self.quality_variant {
+            VariantChoice::Extended => {
+                self.refined_checkpoint
+                    .as_mut()
+                    .ok_or(Status::InvalidInput)?
+                    .quality = value;
+                self.replay_index = self.refinement_log.len;
+                self.stage = if self.baseline_overrides.is_empty() {
+                    Stage::ReverseRefinements
+                } else {
+                    Stage::ReverseToBaseline
+                };
+            }
+            VariantChoice::Baseline => {
+                self.baseline_checkpoint
+                    .as_mut()
+                    .ok_or(Status::InvalidInput)?
+                    .quality = value;
+                self.override_cursor = self.baseline_overrides.len();
+                self.stage = Stage::ReverseBaseline;
+            }
+            VariantChoice::Base => {
+                self.base_quality = value;
+                self.choose_completed_quality()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn choose_completed_quality(&mut self) -> Result<(), Status> {
+        let refined = self
+            .refined_checkpoint
+            .as_ref()
+            .ok_or(Status::InvalidInput)?;
+        let baseline = self.baseline_checkpoint.as_ref().map(|checkpoint| {
+            (
+                checkpoint.selected_frame_bytes,
+                checkpoint.legality,
+                checkpoint.quality,
+            )
+        });
+        let choice = choose_scored_variants(
+            (
+                refined.selected_frame_bytes,
+                refined.legality,
+                refined.quality,
+            ),
+            baseline,
+            (
+                self.selected_frame_bytes,
+                self.base_legality,
+                self.base_quality,
+            ),
+        )?;
+        match choice {
+            VariantChoice::Extended | VariantChoice::Baseline => {
+                self.baseline_reapply = choice == VariantChoice::Baseline;
+                self.stage = Stage::ReapplyRefinements;
+                self.replay_index = 0;
+            }
+            VariantChoice::Base => {
+                self.refined_checkpoint = None;
+                self.baseline_checkpoint = None;
+                self.begin_refinement_release();
+            }
+        }
+        Ok(())
     }
 
     fn begin_refinement_release(&mut self) {
@@ -4367,13 +4719,9 @@ impl FrameEncoder {
                         update_count: self.update_count,
                         use_model: self.use_model,
                         legality,
+                        quality: 0.0,
                     });
-                    self.replay_index = self.refinement_log.len;
-                    self.stage = if self.baseline_overrides.is_empty() {
-                        Stage::ReverseRefinements
-                    } else {
-                        Stage::ReverseToBaseline
-                    };
+                    self.begin_quality(VariantChoice::Extended)?;
                 } else if self.baseline_count {
                     let legality = match self.plan.with_output_sizes(first, second) {
                         Ok(_) => Ok(()),
@@ -4389,9 +4737,9 @@ impl FrameEncoder {
                         update_count: self.update_count,
                         use_model: self.use_model,
                         legality,
+                        quality: 0.0,
                     });
-                    self.override_cursor = self.baseline_overrides.len();
-                    self.stage = Stage::ReverseBaseline;
+                    self.begin_quality(VariantChoice::Baseline)?;
                 } else {
                     let base_legality = match self.plan.with_output_sizes(first, second) {
                         Ok(_) => Ok(()),
@@ -4399,39 +4747,8 @@ impl FrameEncoder {
                         Err(error) => return Err(error),
                     };
                     self.pending_output_sizes = Some((first, second));
-                    let refined = self
-                        .refined_checkpoint
-                        .as_ref()
-                        .ok_or(Status::InvalidInput)?;
-                    let choice = if let Some(baseline) = &self.baseline_checkpoint {
-                        choose_three_variants(
-                            (refined.selected_frame_bytes, refined.legality),
-                            (baseline.selected_frame_bytes, baseline.legality),
-                            (self.selected_frame_bytes, base_legality),
-                            !self.refinement_log.is_empty(),
-                        )?
-                    } else if choose_refined_variant(
-                        refined.selected_frame_bytes,
-                        refined.legality,
-                        self.selected_frame_bytes,
-                        base_legality,
-                    )? {
-                        VariantChoice::Extended
-                    } else {
-                        VariantChoice::Base
-                    };
-                    match choice {
-                        VariantChoice::Extended | VariantChoice::Baseline => {
-                            self.baseline_reapply = choice == VariantChoice::Baseline;
-                            self.stage = Stage::ReapplyRefinements;
-                            self.replay_index = 0;
-                        }
-                        VariantChoice::Base => {
-                            self.refined_checkpoint = None;
-                            self.baseline_checkpoint = None;
-                            self.begin_refinement_release();
-                        }
-                    }
+                    self.base_legality = base_legality;
+                    self.begin_quality(VariantChoice::Base)?;
                 }
             } else {
                 self.stage = Stage::FinalizeHeader;
@@ -4630,6 +4947,17 @@ impl FrameEncoder {
                 self.stage = Stage::CountBlocks;
             }
             Stage::CountBlocks => self.code_one_step(true)?,
+            Stage::QualityInit
+            | Stage::QualityCopy
+            | Stage::QualityFilter
+            | Stage::QualityMetric => self.quality_one_step()?,
+            Stage::QualityRelease => {
+                let score = self.quality_score.as_mut().ok_or(Status::InvalidInput)?;
+                if score.release_one_chunk() {
+                    self.quality_score = None;
+                    self.stage = Stage::PrepareOutput;
+                }
+            }
             Stage::ReverseRefinements => {
                 self.replay_one_refinement(false)?;
                 if self.replay_index == 0 {
@@ -4665,7 +4993,11 @@ impl FrameEncoder {
                         .take()
                         .ok_or(Status::InvalidInput)?;
                     self.plan = self.plan.with_output_sizes(first, second)?;
-                    self.stage = Stage::PrepareOutput;
+                    self.stage = if self.quality_score.is_some() {
+                        Stage::QualityRelease
+                    } else {
+                        Stage::PrepareOutput
+                    };
                 }
             }
             Stage::PrepareOutput => {
@@ -5067,82 +5399,6 @@ mod tests {
     }
 
     #[test]
-    fn exact_variant_choice_prefers_legal_smaller_or_tied_refinement() {
-        assert_eq!(choose_refined_variant(100, Ok(()), 100, Ok(())), Ok(true));
-        assert_eq!(choose_refined_variant(101, Ok(()), 100, Ok(())), Ok(false));
-        assert_eq!(choose_refined_variant(99, Ok(()), 100, Ok(())), Ok(true));
-        assert_eq!(
-            choose_refined_variant(100, Ok(()), 99, Err(Status::OutputLimit)),
-            Ok(true)
-        );
-        assert_eq!(
-            choose_refined_variant(99, Err(Status::PartitionLimit), 100, Ok(())),
-            Ok(false)
-        );
-        assert_eq!(
-            choose_refined_variant(
-                99,
-                Err(Status::OutputLimit),
-                100,
-                Err(Status::PartitionLimit)
-            ),
-            Err(Status::PartitionLimit)
-        );
-        assert_eq!(
-            choose_refined_variant(99, Err(Status::MemoryAdmission), 100, Ok(())),
-            Err(Status::MemoryAdmission)
-        );
-        assert_eq!(
-            choose_three_variants((100, Ok(())), (99, Ok(())), (100, Ok(())), true),
-            Ok(VariantChoice::Extended)
-        );
-        assert_eq!(
-            choose_three_variants((101, Ok(())), (100, Ok(())), (100, Ok(())), true),
-            Ok(VariantChoice::Baseline)
-        );
-        assert_eq!(
-            choose_three_variants((100, Ok(())), (100, Ok(())), (100, Ok(())), false),
-            Ok(VariantChoice::Baseline)
-        );
-        assert_eq!(
-            choose_three_variants(
-                (99, Err(Status::OutputLimit)),
-                (99, Err(Status::PartitionLimit)),
-                (100, Ok(())),
-                true,
-            ),
-            Ok(VariantChoice::Base)
-        );
-        assert_eq!(
-            choose_three_variants(
-                (100, Ok(())),
-                (90, Ok(())),
-                (110, Err(Status::OutputLimit)),
-                true,
-            ),
-            Ok(VariantChoice::Extended)
-        );
-        assert_eq!(
-            choose_three_variants(
-                (100, Err(Status::OutputLimit)),
-                (90, Ok(())),
-                (110, Err(Status::PartitionLimit)),
-                true,
-            ),
-            Ok(VariantChoice::Baseline)
-        );
-        assert_eq!(
-            choose_three_variants(
-                (100, Err(Status::MemoryAdmission)),
-                (90, Ok(())),
-                (110, Ok(())),
-                true,
-            ),
-            Err(Status::MemoryAdmission)
-        );
-    }
-
-    #[test]
     fn maximum_admitted_geometry_refinement_log_fits_reserved_scratch() {
         let request = Request {
             version: 2,
@@ -5406,6 +5662,7 @@ mod tests {
             let refined = selected.refined_checkpoint.as_ref().unwrap();
             let refined_bytes = refined.selected_frame_bytes;
             let refined_legality = refined.legality;
+            let refined_quality = refined.quality;
             let refined_u = selected.reconstructed_u.clone();
             let refined_v = selected.reconstructed_v.clone();
             let edit = selected.refinement_log.get(0).unwrap();
@@ -5515,13 +5772,17 @@ mod tests {
                         panic!("unexpected base admission {error:?}")
                     }
                 });
-            let expected_refined = choose_refined_variant(
-                refined_bytes,
-                refined_legality,
-                selected.selected_frame_bytes,
-                base_legality,
+            let expected_refined = choose_scored_variants(
+                (refined_bytes, refined_legality, refined_quality),
+                None,
+                (
+                    selected.selected_frame_bytes,
+                    base_legality,
+                    selected.base_quality,
+                ),
             )
-            .unwrap();
+            .unwrap()
+                == VariantChoice::Extended;
             assert_eq!(
                 selected.stage == Stage::ReapplyRefinements,
                 expected_refined
@@ -8359,6 +8620,11 @@ mod tests {
                 let bound = match stage {
                     0 | 13 | 22 => 65_536,
                     4 | 8 | 16 | 20 | 24 | 30 | 32 => 64,
+                    41 | 45 | 49 => 64 * 1024 / (3 * 5 * 8),
+                    42 | 46 | 50 => 65_536,
+                    43 | 47 | 51 => 1,
+                    44 | 48 | 52 => 64,
+                    53 => 64 * 1024 / (3 * 5 * 8),
                     _ => 1,
                 };
                 assert!(after >= before && after - before <= bound, "stage={stage}");
@@ -8367,6 +8633,147 @@ mod tests {
                 return engine;
             }
         }
+    }
+
+    #[test]
+    fn completed_quality_policy_preserves_legality_bytes_and_exact_ties() {
+        let ok = Ok(());
+        let limit = Err(Status::OutputLimit);
+        assert_eq!(
+            choose_scored_variants((99, ok, 0.6), Some((98, ok, 0.8)), (100, ok, 0.7)),
+            Ok(VariantChoice::Baseline)
+        );
+        assert_eq!(
+            choose_scored_variants((100, ok, 0.8), Some((99, ok, 0.8)), (100, ok, 0.8)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((101, ok, 0.9), Some((99, ok, 0.7)), (100, ok, 0.8)),
+            Ok(VariantChoice::Base)
+        );
+        assert_eq!(
+            choose_scored_variants((99, limit, 0.9), Some((98, ok, 0.7)), (100, ok, 0.6)),
+            Ok(VariantChoice::Baseline)
+        );
+        assert_eq!(
+            choose_scored_variants((101, ok, 0.9), Some((99, ok, 0.7)), (100, limit, 0.6)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((101, limit, 0.9), Some((99, limit, 0.7)), (100, limit, 0.6)),
+            Err(Status::OutputLimit)
+        );
+        assert_eq!(
+            choose_scored_variants((99, ok, f64::NAN), None, (100, ok, 0.7)),
+            Err(Status::InvalidInput)
+        );
+        assert_eq!(
+            choose_scored_variants((99, ok, 0.9), None, (100, ok, f64::INFINITY)),
+            Err(Status::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn generated_gradient_q75_prefers_filtered_unrefined_frame() {
+        // The frozen fresh3-gradient source formula; this is an engineering
+        // control for the general selector, not a special-case input path.
+        let width = 373usize;
+        let height = 257usize;
+        let mut input = vec![0u8; width * height * 4];
+        for y in 0..height {
+            for x in 0..width {
+                input[(y * width + x) * 4..][..4].copy_from_slice(&[
+                    (255 * x / (width - 1)) as u8,
+                    (255 * (height - 1 - y) / (height - 1)) as u8,
+                    (255 * (5 * x + 3 * y) / (5 * (width - 1) + 3 * (height - 1))) as u8,
+                    255,
+                ]);
+            }
+        }
+        let request = engine_request(width, height, 0, &input, width * 4);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+        let mut refined_quality = None;
+        while engine.stage != Stage::ReleaseRefinements {
+            assert!(engine.output().is_empty());
+            if engine.stage == Stage::QualityInit && engine.quality_variant == VariantChoice::Base {
+                refined_quality = Some(engine.refined_checkpoint.as_ref().unwrap().quality);
+            }
+            engine.step().unwrap();
+        }
+        assert_eq!(engine.joint_used_total, 127);
+        assert!(engine.base_quality > refined_quality.unwrap());
+        assert!(engine.refined_checkpoint.is_none()); // B0 won the complete filtered score.
+        assert!(engine.baseline_checkpoint.is_none());
+        let engine = run_engine(engine);
+        assert_eq!(engine.output().len(), 1301);
+    }
+
+    #[test]
+    fn staged_filtered_copy_matches_full_reference_for_every_counted_variant() {
+        let (width, height) = (33, 33);
+        let input = frontier_rgb_input(width, height)
+            .into_boxed_slice()
+            .into_vec();
+        let request = engine_request(width, height, 0, &input, width * 4);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+        let mut seen = [false; 3];
+        while engine.stage != Stage::Done {
+            if engine.stage == Stage::QualityMetric {
+                let variant = match engine.quality_variant {
+                    VariantChoice::Extended => 0,
+                    VariantChoice::Baseline => 1,
+                    VariantChoice::Base => 2,
+                };
+                if !seen[variant] {
+                    let mut y = engine.reconstructed_y.clone();
+                    let mut u = engine.reconstructed_u.clone();
+                    let mut v = engine.reconstructed_v.clone();
+                    let padded_w = plan.padded_width as usize;
+                    let padded_h = plan.padded_height as usize;
+                    let mut planes = filter::Planes {
+                        y: filter::Plane {
+                            data: &mut y,
+                            width: padded_w,
+                            height: padded_h,
+                            stride: padded_w,
+                        },
+                        u: filter::Plane {
+                            data: &mut u,
+                            width: padded_w / 2,
+                            height: padded_h / 2,
+                            stride: padded_w / 2,
+                        },
+                        v: filter::Plane {
+                            data: &mut v,
+                            width: padded_w / 2,
+                            height: padded_h / 2,
+                            stride: padded_w / 2,
+                        },
+                    };
+                    let params: Vec<_> = engine
+                        .blocks
+                        .iter()
+                        .map(|block| filter::FilterParams {
+                            level: engine.filter.level,
+                            sharpness: engine.filter.sharpness,
+                            simple: engine.filter.simple,
+                            i4: !block.i16,
+                            has_coefficients: !block.skip(),
+                        })
+                        .collect();
+                    filter::filter_frame(&mut planes, padded_w / 16, padded_h / 16, &params)
+                        .unwrap();
+                    assert_eq!(engine.source_y, y);
+                    assert_eq!(engine.source_u, u);
+                    assert_eq!(engine.source_v, v);
+                    seen[variant] = true;
+                }
+            }
+            engine.step().unwrap();
+        }
+        assert!(seen[0] && seen[2]);
     }
 
     fn textured_checker(low: [u8; 3], high: [u8; 3]) -> Vec<u8> {
