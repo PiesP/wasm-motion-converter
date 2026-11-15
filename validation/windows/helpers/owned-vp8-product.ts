@@ -1219,6 +1219,10 @@ async function measureJob(
     scale: 1,
     smartFrameSkip: 'off',
     wallStart,
+    clickClockMs: timing.clickMs,
+    readyClockMs: timing.readyMs,
+    clickWallUtc: new Date(Math.floor(timing.timeOrigin + timing.clickMs)).toISOString(),
+    readyWallUtc: new Date(Math.ceil(timing.timeOrigin + timing.readyMs)).toISOString(),
     inputSha256: fixtureDigest,
     timeOrigin: timing.timeOrigin,
     contextCacheScope:

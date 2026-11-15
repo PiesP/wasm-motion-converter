@@ -6,7 +6,12 @@ import { lstat, open, readdir, realpath, type FileHandle } from 'node:fs/promise
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { type Distribution, readDistribution, verifyTiming } from './owned-vp8-product-timing.ts';
+import {
+  type Distribution,
+  checkTimingClockBounds,
+  readDistribution,
+  verifyTiming,
+} from './owned-vp8-product-timing.ts';
 
 const SHA = /^[a-f0-9]{64}$/i;
 const SOURCE = /^[a-f0-9]{40}$/;
@@ -576,20 +581,18 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
             times.at(-1)! <= samplerEnd,
           'guest load sampler window invalid'
         );
-        const starts = timingSamples.map((raw) =>
-          Date.parse(object(raw, 'timing sample').wallStart as string)
+        const clockBounds = timingSamples.map((raw, index) =>
+          checkTimingClockBounds(object(raw, 'timing sample'), `timing sample ${index + 1}`, false)
         );
-        const ends = timingSamples.map((raw) => {
-          const sample = object(raw, 'timing sample');
-          return (
-            Date.parse(sample.wallStart as string) + (sample.requestToDownloadReadyMs as number)
-          );
-        });
-        timingLoadCoverage =
-          samplerStart <= Math.min(...starts) &&
-          samplerEnd >= Math.max(...ends) &&
-          times[0]! <= Math.min(...starts) &&
-          times.at(-1)! >= Math.max(...ends);
+        if (clockBounds.every((bounds) => bounds !== null)) {
+          const clicks = clockBounds.map((bounds) => bounds!.clickWallMs);
+          const ready = clockBounds.map((bounds) => bounds!.readyWallMs);
+          timingLoadCoverage =
+            samplerStart <= Math.min(...clicks) &&
+            samplerEnd >= Math.max(...ready) &&
+            times[0]! <= Math.min(...clicks) &&
+            times.at(-1)! >= Math.max(...ready);
+        }
         if (!timingLoadCoverage) allObserved.load = false;
       } else allObserved.load = false;
     } else {
@@ -710,7 +713,8 @@ export async function verifyAttempts(roots: readonly string[], pins: AttemptPins
     numeric.samples.some((sample) =>
       [
         'EXECUTION_UNKNOWN',
-        'WORKER_COMPLETED_ABI_AND_COPY_UNKNOWN',
+        'WORKER_SNAPSHOT_UNAVAILABLE',
+        'LEGACY_WORKER_SNAPSHOT_UNAVAILABLE',
         'LEGACY_EXECUTION_AND_COPY_UNKNOWN',
       ].includes(sample.timingAttestation.status)
     )

@@ -8,6 +8,7 @@ import { test } from 'vite-plus/test';
 
 import {
   checkTimingAttestation,
+  checkTimingClockBounds,
   type Distribution,
   readDistribution,
   verifyTiming,
@@ -19,6 +20,7 @@ function probe(epoch: string, workerId = requestId) {
     epoch,
     epochMatches: true,
     scope: 'main-observed-worker-route-only',
+    workerSnapshotStatus: 'valid',
     ownedInstances: 0,
     successfulBeginCalls: 0,
     stepCalls: 0,
@@ -309,7 +311,15 @@ function makeAttestedReports() {
         attestation.workerObservation.state.retireCalls = 0;
         attestation.workerObservation.state.legacyIndexedCopyEvents = 4;
       }
-      Object.assign(sample, { timingAttestation: attestation });
+      const clickClockMs = Date.parse(sample.wallStart) - sample.timeOrigin + 3000;
+      const readyClockMs = clickClockMs + sample.requestToDownloadReadyMs;
+      Object.assign(sample, {
+        timingAttestation: attestation,
+        clickClockMs,
+        readyClockMs,
+        clickWallUtc: new Date(sample.timeOrigin + clickClockMs).toISOString(),
+        readyWallUtc: new Date(sample.timeOrigin + readyClockMs).toISOString(),
+      });
     }
   }
   return reports;
@@ -323,6 +333,34 @@ test('joins sixty distinct job epochs and worker IDs without promoting numeric P
   assert.equal(result.samples.length, 60);
   assert.equal(result.samples[0]?.timingAttestation.status, 'LEGACY_BOUNDARY_COPIES_OBSERVED');
   assert.equal(result.samples[2]?.timingAttestation.status, 'OWNED_WORKER_OBSERVED');
+  assert.match(result.qualificationReason, /host neighboring load.*post-retire linear retention/);
+  assert.doesNotMatch(result.qualificationReason, /cannot be observed|prevents post-clock/);
+});
+
+test('modern timing samples require actual page clock bounds', () => {
+  const missing = makeAttestedReports();
+  delete (missing[0]!.samples[0]! as unknown as Record<string, unknown>).readyWallUtc;
+  assert.throws(() => verifyFixture(missing), /actual clock bounds are incomplete/);
+  const inconsistent = makeAttestedReports();
+  (inconsistent[0]!.samples[0]! as unknown as Record<string, unknown>).readyClockMs = 50;
+  assert.throws(() => verifyFixture(inconsistent), /page clock order invalid|page clocks differ/);
+});
+
+test('page wall bounds round outward to cover fractional clock milliseconds', () => {
+  const origin = 1_800_000_000_000;
+  const bounds = checkTimingClockBounds(
+    {
+      timeOrigin: origin,
+      clickClockMs: 3000.25,
+      readyClockMs: 4000.75,
+      requestToDownloadReadyMs: 1000.5,
+      clickWallUtc: new Date(origin + 3000).toISOString(),
+      readyWallUtc: new Date(origin + 4001).toISOString(),
+    },
+    'fractional sample',
+    true
+  );
+  assert.deepEqual(bounds, { clickWallMs: origin + 3000, readyWallMs: origin + 4001 });
 });
 
 test('rejects mixed, partial, stale and unsupported attestation receipts', () => {

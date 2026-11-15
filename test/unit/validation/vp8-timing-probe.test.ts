@@ -54,6 +54,29 @@ function realm(extra: Record<string, unknown>) {
   return context;
 }
 
+const requestId = '11111111-2222-4333-8444-555555555555';
+function workerState() {
+  return {
+    epoch: requestId,
+    ownedInstances: 0,
+    successfulBeginCalls: 0,
+    stepCalls: 0,
+    retireCalls: 0,
+    inputCopyBytes: 0,
+    outputCopyBytes: 0,
+    inputCopyEvents: 0,
+    outputCopyEvents: 0,
+    unknownCopyKinds: 0,
+    legacyIndexedCopyEvents: 0,
+    peakLinearCapacityBytes: 0,
+    capacityAtJobEndBytes: 0,
+    workerStarts: 0,
+    workerCompletions: 0,
+    workerErrors: 0,
+    staleWorkerEvents: 0,
+  };
+}
+
 test('validation listener strips fixed worker snapshot before product handler', () => {
   const context = realm({});
   const probe = context.__wmcVp8TimingProbe as {
@@ -63,13 +86,12 @@ test('validation listener strips fixed worker snapshot before product handler', 
   probe.begin('unique-epoch');
   const WorkerClass = context.Worker as typeof FakeWorker;
   const worker = new WorkerClass('worker.js');
-  const requestId = '11111111-2222-4333-8444-555555555555';
   worker.postMessage({ type: 'start', requestId });
   let productMessage: Record<string, unknown> | null = null;
   worker.onmessage = (event) => {
     productMessage = event.data as Record<string, unknown>;
   };
-  const numeric = { epoch: requestId, successfulBeginCalls: 1 };
+  const numeric = { ...workerState(), successfulBeginCalls: 1 };
   worker.emit({
     type: 'complete',
     requestId,
@@ -80,8 +102,73 @@ test('validation listener strips fixed worker snapshot before product handler', 
   assert.equal('__wmcVp8TimingSnapshot' in productMessage, false);
   const observed = probe.snapshot('unique-epoch');
   assert.equal(observed.workerCompletions, 1);
+  assert.equal(observed.workerSnapshotStatus, 'valid');
   assert.equal((observed.workerObservation as { state: typeof numeric }).state.epoch, requestId);
   assert.equal(probe.snapshot('unique-epoch').epochMatches, false);
+});
+
+test('malformed worker metadata never reaches product or receipt', () => {
+  const variants: Array<[string, Record<string, unknown>]> = [
+    ['extra private field', { ...workerState(), privatePixels: [1, 2] }],
+    ['typed array field', { ...workerState(), pixels: new Uint8Array([1, 2]) }],
+    ['nonfinite counter', { ...workerState(), inputCopyBytes: Number.NaN }],
+    ['oversized counter', { ...workerState(), inputCopyBytes: Number.MAX_SAFE_INTEGER + 1 }],
+    ['wrong epoch', { ...workerState(), epoch: 'wrong' }],
+  ];
+  for (const [label, state] of variants) {
+    const context = realm({});
+    const probe = context.__wmcVp8TimingProbe as {
+      begin: (epoch: string) => void;
+      snapshot: (epoch: string) => Record<string, unknown>;
+    };
+    probe.begin('job');
+    const worker = new (context.Worker as typeof FakeWorker)('worker.js');
+    worker.postMessage({ type: 'start', requestId });
+    const outputBuffer = new ArrayBuffer(4);
+    let productMessage: Record<string, unknown> | null = null;
+    worker.onmessage = (event) => {
+      productMessage = event.data as Record<string, unknown>;
+    };
+    worker.emit({ type: 'complete', requestId, outputBuffer, __wmcVp8TimingSnapshot: state });
+    assert(productMessage, label);
+    const delivered = productMessage as Record<string, unknown>;
+    assert.equal(delivered.outputBuffer, outputBuffer, label);
+    assert.equal('__wmcVp8TimingSnapshot' in delivered, false, label);
+    const observed = probe.snapshot('job');
+    assert.equal(observed.workerSnapshotStatus, 'invalid', label);
+    assert.equal(observed.workerObservation, null, label);
+    const receipt = JSON.stringify(observed);
+    assert(!receipt.includes('privatePixels') && !receipt.includes('pixels'), label);
+  }
+});
+
+test('stale and mismatched completions strip reserved metadata before product handler', () => {
+  for (const mode of ['stale', 'mismatched'] as const) {
+    const context = realm({});
+    const probe = context.__wmcVp8TimingProbe as {
+      begin: (epoch: string) => void;
+      snapshot: (epoch: string) => Record<string, unknown>;
+    };
+    probe.begin('first-job');
+    const worker = new (context.Worker as typeof FakeWorker)('worker.js');
+    worker.postMessage({ type: 'start', requestId });
+    if (mode === 'stale') probe.begin('second-job');
+    let productMessage: Record<string, unknown> | null = null;
+    worker.onmessage = (event) => {
+      productMessage = event.data as Record<string, unknown>;
+    };
+    worker.emit({
+      type: 'complete',
+      requestId: mode === 'mismatched' ? 'other-request' : requestId,
+      __wmcVp8TimingSnapshot: workerState(),
+    });
+    assert(productMessage);
+    assert.equal('__wmcVp8TimingSnapshot' in productMessage, false);
+    const observed = probe.snapshot(mode === 'stale' ? 'second-job' : 'first-job');
+    assert.equal(observed.workerObservation, null);
+    assert.equal(observed.workerSnapshotStatus, mode === 'stale' ? 'none' : 'invalid');
+    assert.equal(observed.staleWorkerEvents, mode === 'stale' ? 1 : 0);
+  }
 });
 
 test('worker prefix adds only bounded scalar state to existing completion transfer', () => {

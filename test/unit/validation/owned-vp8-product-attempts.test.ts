@@ -84,6 +84,18 @@ function makeReports(candidateTime = 1010) {
           scale: 1,
           smartFrameSkip: 'off',
           wallStart: new Date(start + buildIndex * 20_000 + conditionIndex * 10_000).toISOString(),
+          clickClockMs: conditionIndex * 10_000 + 3000,
+          readyClockMs: conditionIndex * 10_000 + 3000 + (build === 'prior' ? 1000 : candidateTime),
+          clickWallUtc: new Date(
+            start + buildIndex * 20_000 + conditionIndex * 10_000 + 3000
+          ).toISOString(),
+          readyWallUtc: new Date(
+            start +
+              buildIndex * 20_000 +
+              conditionIndex * 10_000 +
+              3000 +
+              (build === 'prior' ? 1000 : candidateTime)
+          ).toISOString(),
           inputSha256: input,
           timeOrigin: start + buildIndex * 20_000,
           contextCacheScope:
@@ -315,14 +327,10 @@ async function writeTimingEnvironment(root: string) {
     }
   ).scenario;
   const report = JSON.parse(await readFile(join(root, 'output', `${scenario}.json`), 'utf8')) as {
-    samples: Array<{ wallStart: string; requestToDownloadReadyMs: number }>;
+    samples: Array<{ clickWallUtc: string; readyWallUtc: string }>;
   };
-  const first = Math.min(...report.samples.map((sample) => Date.parse(sample.wallStart)));
-  const last = Math.max(
-    ...report.samples.map(
-      (sample) => Date.parse(sample.wallStart) + sample.requestToDownloadReadyMs
-    )
-  );
+  const first = Math.min(...report.samples.map((sample) => Date.parse(sample.clickWallUtc)));
+  const last = Math.max(...report.samples.map((sample) => Date.parse(sample.readyWallUtc)));
   const browser = {
     name: 'msedge.exe',
     pid: 4000,
@@ -419,6 +427,52 @@ test('a partial guest environment cohort stays unverified', async () => {
     assert.ok(result.missing.has('guest neighboring load trace'));
     assert.ok(result.missing.has('selected browser executable fingerprint'));
     assert.ok(result.missing.has('host neighboring load trace'));
+  });
+});
+
+test('guest load ending before actual ready stays unverified despite a delayed click', async () => {
+  await withAttempts(async (roots) => {
+    for (const root of roots) await writeTimingEnvironment(root);
+    const root = roots[0]!;
+    const scenario = (
+      JSON.parse(await readFile(join(root, 'bundle.json'), 'utf8')) as {
+        scenario: string;
+      }
+    ).scenario;
+    const report = JSON.parse(await readFile(join(root, 'output', `${scenario}.json`), 'utf8')) as {
+      samples: Array<{ wallStart: string; readyWallUtc: string; requestToDownloadReadyMs: number }>;
+    };
+    const oldEstimatedEnd = Math.max(
+      ...report.samples.map(
+        (sample) => Date.parse(sample.wallStart) + sample.requestToDownloadReadyMs
+      )
+    );
+    const actualEnd = Math.max(...report.samples.map((sample) => Date.parse(sample.readyWallUtc)));
+    const path = join(root, 'output', `${scenario}-timing-environment.json`);
+    const environment = JSON.parse(await readFile(path, 'utf8')) as {
+      load: { samples: Array<{ utc: string }> };
+    };
+    const completeSamples = [...environment.load.samples];
+    environment.load.samples = environment.load.samples.filter(
+      (sample) => Date.parse(sample.utc) < actualEnd
+    );
+    const truncatedAt = Date.parse(environment.load.samples.at(-1)!.utc);
+    assert(truncatedAt >= oldEstimatedEnd && truncatedAt < actualEnd);
+    await writeFile(path, encode(environment));
+    await refresh(root);
+    const result = await readAttempts(roots, expected);
+    assert(result.missing.has('guest neighboring load trace'));
+    const attempt = result.attempts[0] as { timingGuest: { loadCoverage: string } };
+    assert.equal(attempt.timingGuest.loadCoverage, 'NOT_VERIFIED');
+    environment.load.samples = completeSamples;
+    await writeFile(path, encode(environment));
+    const sample = report.samples[0]! as unknown as Record<string, unknown>;
+    for (const key of ['clickClockMs', 'readyClockMs', 'clickWallUtc', 'readyWallUtc'])
+      delete sample[key];
+    await writeFile(join(root, 'output', `${scenario}.json`), encode(report));
+    await refresh(root);
+    const withoutBounds = await readAttempts(roots, expected);
+    assert(withoutBounds.missing.has('guest neighboring load trace'));
   });
 });
 

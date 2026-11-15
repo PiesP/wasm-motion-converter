@@ -170,7 +170,11 @@ export function checkTimingAttestation(value: unknown, epoch: string, build: Bui
   function checkState(state: Json, name: string, main = false) {
     assert.deepEqual(
       Object.keys(state).sort(),
-      ['epoch', ...fields, ...(main ? ['epochMatches', 'scope', 'workerObservation'] : [])].sort(),
+      [
+        'epoch',
+        ...fields,
+        ...(main ? ['epochMatches', 'scope', 'workerObservation', 'workerSnapshotStatus'] : []),
+      ].sort(),
       `${name} has unsupported fields`
     );
     for (const field of fields) {
@@ -181,6 +185,10 @@ export function checkTimingAttestation(value: unknown, epoch: string, build: Bui
     equal(state.unknownCopyKinds, 0, `${name} unknown copy kind`);
   }
   checkState(probe, epoch, true);
+  assert(
+    ['none', 'valid', 'invalid', 'missing'].includes(probe.workerSnapshotStatus as string),
+    `${epoch} Worker snapshot status invalid`
+  );
   assert(
     (probe.workerCompletions as number) <= (probe.workerStarts as number),
     `${epoch} Worker completed without start`
@@ -196,6 +204,7 @@ export function checkTimingAttestation(value: unknown, epoch: string, build: Bui
   let worker: Json | null = null;
   let workerRequestId: string | null = null;
   if (workerObservation) {
+    equal(probe.workerSnapshotStatus, 'valid', `${epoch} Worker snapshot status`);
     assert.deepEqual(
       Object.keys(workerObservation).sort(),
       ['requestId', 'state'],
@@ -226,6 +235,13 @@ export function checkTimingAttestation(value: unknown, epoch: string, build: Bui
       equal(worker.successfulBeginCalls, 0, `${epoch} prior Worker owned begin`);
     }
     const actual = worker ?? probe;
+    if ((probe.workerCompletions as number) > 0 && !worker)
+      return {
+        status: 'LEGACY_WORKER_SNAPSHOT_UNAVAILABLE' as const,
+        epoch,
+        probe,
+        workerRequestId,
+      };
     if ((actual.legacyIndexedCopyEvents as number) > 0) {
       assert(
         (actual.inputCopyBytes as number) > 0 &&
@@ -243,7 +259,7 @@ export function checkTimingAttestation(value: unknown, epoch: string, build: Bui
     equal(probe.successfulBeginCalls, 0, `${epoch} dual main/Worker encoder`);
     if (!worker)
       return {
-        status: 'WORKER_COMPLETED_ABI_AND_COPY_UNKNOWN' as const,
+        status: 'WORKER_SNAPSHOT_UNAVAILABLE' as const,
         epoch,
         probe,
         workerRequestId,
@@ -277,6 +293,28 @@ export function checkTimingAttestation(value: unknown, epoch: string, build: Bui
     };
   }
   return { status: 'EXECUTION_UNKNOWN' as const, epoch, probe, workerRequestId };
+}
+
+/** Page-observed wall bounds; an old receipt may lack them but cannot cover load. */
+export function checkTimingClockBounds(sample: Json, label: string, required: boolean) {
+  const keys = ['clickClockMs', 'readyClockMs', 'clickWallUtc', 'readyWallUtc'] as const;
+  const present = keys.filter((key) => sample[key] !== undefined).length;
+  if (present === 0 && !required) return null;
+  assert.equal(present, keys.length, `${label} actual clock bounds are incomplete`);
+  const origin = number(sample.timeOrigin, `${label} time origin`, true);
+  const click = number(sample.clickClockMs, `${label} page click clock`);
+  const ready = number(sample.readyClockMs, `${label} page ready clock`);
+  assert(click >= 0 && ready > click, `${label} page clock order invalid`);
+  const elapsed = number(sample.requestToDownloadReadyMs, `${label} ready time`, true);
+  assert(
+    Math.abs(ready - click - elapsed) < 0.001,
+    `${label} page clocks differ from measured interval`
+  );
+  const clickUtc = new Date(Math.floor(origin + click)).toISOString();
+  const readyUtc = new Date(Math.ceil(origin + ready)).toISOString();
+  equal(sample.clickWallUtc, clickUtc, `${label} actual click wall time`);
+  equal(sample.readyWallUtc, readyUtc, `${label} actual ready wall time`);
+  return { clickWallMs: Date.parse(clickUtc), readyWallMs: Date.parse(readyUtc) };
 }
 
 export function verifyTiming(
@@ -315,6 +353,8 @@ export function verifyTiming(
     condition: Condition;
     elapsedMs: number;
     wallStart: string;
+    clickWallUtc: string | null;
+    readyWallUtc: string | null;
     requestToBlobPublicationMs: number;
     documentTimeOrigin: number;
     contextIdentity: string;
@@ -439,6 +479,7 @@ export function verifyTiming(
       equal(sample.navigationCount, 1, `${label} navigation count`);
       number(sample.timeOrigin, `${label} time origin`, true);
       const elapsed = number(sample.requestToDownloadReadyMs, `${label} ready time`, true);
+      const clockBounds = checkTimingClockBounds(sample, label, hasTimingAttestation);
       const publication = number(sample.requestToBlobPublicationMs, `${label} publication time`);
       assert(publication >= 0 && publication <= elapsed, `${label} publication outside timing`);
       const wallStart = sample.wallStart;
@@ -495,6 +536,8 @@ export function verifyTiming(
         condition,
         elapsedMs: elapsed,
         wallStart,
+        clickWallUtc: clockBounds ? (sample.clickWallUtc as string) : null,
+        readyWallUtc: clockBounds ? (sample.readyWallUtc as string) : null,
         requestToBlobPublicationMs: publication,
         documentTimeOrigin: sample.timeOrigin as number,
         contextIdentity: sample.contextIdentity as string,
@@ -602,12 +645,23 @@ export function verifyTiming(
       conditions.push({ quality, condition, prior, candidate, increaseMs, allowanceMs, passed });
     }
   }
+  const observedStatuses = new Set(sampleRecords.map((sample) => sample.timingAttestation.status));
+  const unresolvedStatuses = [...observedStatuses].filter(
+    (status) =>
+      !['OWNED_WORKER_OBSERVED', 'OWNED_MAIN_OBSERVED', 'LEGACY_BOUNDARY_COPIES_OBSERVED'].includes(
+        status
+      )
+  );
+  const probeReason = attestationMode
+    ? unresolvedStatuses.length > 0
+      ? `Per-job timing probes have unresolved status: ${unresolvedStatuses.join(', ')}.`
+      : 'Per-job probes observe owned ABI calls, defined JS/WASM boundary copies, and the pinned legacy indexed-copy loop.'
+    : 'Legacy receipts have no per-job timing attestation.';
   return {
     status: regression ? 'FAIL' : 'NOT_VERIFIED',
     numericGate: regression ? 'FAIL' : 'PASS',
     qualification: 'NOT_VERIFIED',
-    qualificationReason:
-      'Per-job numeric probes are bound to timing epochs where present. Worker termination before timing seals prevents post-clock ABI/copy/capacity snapshots; legacy Emscripten indexed HEAPU8 writes are not observable through the supported copy hooks. CPU/load/browser executable identity and complete main/Worker copy coverage remain unverified.',
+    qualificationReason: `${probeReason} This timing-only verifier has no host neighboring load, guest CPU/browser executable, or post-retire linear retention proof; numeric PASS does not qualify the full program.`,
     identities: {
       prior: priorDist,
       candidate: candidateDist,

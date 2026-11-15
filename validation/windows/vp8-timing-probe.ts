@@ -5,6 +5,32 @@ export function installVp8TimingProbe() {
   const NativeUint8Array = Uint8Array;
   const nativeSet = Uint8Array.prototype.set;
   const nativeGrow = WebAssembly.Memory.prototype.grow;
+  const numericKeys = [
+    'ownedInstances',
+    'successfulBeginCalls',
+    'stepCalls',
+    'retireCalls',
+    'inputCopyBytes',
+    'outputCopyBytes',
+    'inputCopyEvents',
+    'outputCopyEvents',
+    'unknownCopyKinds',
+    'legacyIndexedCopyEvents',
+    'peakLinearCapacityBytes',
+    'capacityAtJobEndBytes',
+    'workerStarts',
+    'workerCompletions',
+    'workerErrors',
+    'staleWorkerEvents',
+  ] as const;
+  // Exact ASCII keys, a 36-byte UUID, and at most 16 decimal digits per safe
+  // counter keep the Worker state below 1024 UTF-8 bytes without serializing it.
+  const maximumEncodedBytes =
+    2 +
+    '"epoch":""'.length +
+    36 +
+    numericKeys.reduce((size, key) => size + 1 + key.length + 3 + 16, 0);
+  if (maximumEncodedBytes > 1024) throw new Error('Timing snapshot schema exceeds byte cap');
   type State = {
     epoch: string | null;
     ownedInstances: number;
@@ -43,6 +69,35 @@ export function installVp8TimingProbe() {
     workerErrors: 0,
     staleWorkerEvents: 0,
   });
+  function admitWorkerState(value: unknown, requestId: string): State | null {
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(requestId)
+    )
+      return null;
+    const keys = Reflect.ownKeys(value);
+    if (
+      keys.length !== numericKeys.length + 1 ||
+      keys.some(
+        (key) =>
+          typeof key !== 'string' ||
+          (key !== 'epoch' && !numericKeys.includes(key as (typeof numericKeys)[number]))
+      )
+    )
+      return null;
+    const epoch = Object.getOwnPropertyDescriptor(value, 'epoch');
+    if (!epoch || !('value' in epoch) || epoch.value !== requestId) return null;
+    const admitted = blank(requestId);
+    for (const key of numericKeys) {
+      const field = Object.getOwnPropertyDescriptor(value, key);
+      if (!field || !('value' in field) || !Number.isSafeInteger(field.value) || field.value < 0)
+        return null;
+      admitted[key] = field.value as number;
+    }
+    return admitted;
+  }
   let current = blank(null);
   const memories: Array<WeakRef<WebAssembly.Memory>> = [];
   const knownMemories = new WeakSet<WebAssembly.Memory>();
@@ -223,6 +278,7 @@ export function installVp8TimingProbe() {
   // keeping a Worker after the product terminates it on complete.
   const NativeWorker = Worker;
   let workerObservation: { requestId: string; state: State } | null = null;
+  let workerSnapshotStatus: 'none' | 'valid' | 'invalid' | 'missing' = 'none';
   globalThis.Worker = class TimingWorker extends NativeWorker {
     private timingEpoch: string | null = null;
     private timingRequestId: string | null = null;
@@ -230,16 +286,27 @@ export function installVp8TimingProbe() {
       super(url, options);
       this.addEventListener('message', (event) => {
         const response = event.data as Record<string, unknown> | null;
+        if (!response || typeof response !== 'object') return;
+        const tagged = Object.getOwnPropertyDescriptor(response, marker);
+        const raw = tagged && 'value' in tagged ? tagged.value : undefined;
+        if (tagged && !Reflect.deleteProperty(response, marker)) {
+          workerSnapshotStatus = 'invalid';
+          event.stopImmediatePropagation();
+          return;
+        }
         if (response?.type !== 'complete' && response?.type !== 'error') return;
         if (this.timingEpoch !== current.epoch || current.epoch === null)
           current.staleWorkerEvents++;
         else if (response.type === 'complete') {
           current.workerCompletions++;
-          const raw = response[marker];
-          if (raw && this.timingRequestId !== null && this.timingRequestId === response.requestId) {
-            workerObservation = { requestId: this.timingRequestId, state: raw as State };
-            delete response[marker];
-          }
+          if (!tagged) workerSnapshotStatus = 'missing';
+          else if (this.timingRequestId !== null && this.timingRequestId === response.requestId) {
+            const admitted = admitWorkerState(raw, this.timingRequestId);
+            if (admitted) {
+              workerObservation = { requestId: this.timingRequestId, state: admitted };
+              workerSnapshotStatus = 'valid';
+            } else workerSnapshotStatus = 'invalid';
+          } else workerSnapshotStatus = 'invalid';
         } else current.workerErrors++;
       });
     }
@@ -258,17 +325,20 @@ export function installVp8TimingProbe() {
     begin(epoch: string) {
       current = blank(epoch);
       workerObservation = null;
+      workerSnapshotStatus = 'none';
     },
     snapshot(epoch: string) {
       const result = {
         ...current,
         epochMatches: current.epoch === epoch,
+        workerSnapshotStatus,
         workerObservation: workerObservation
           ? { ...workerObservation, state: { ...workerObservation.state } }
           : null,
       };
       current = blank(null);
       workerObservation = null;
+      workerSnapshotStatus = 'none';
       return result;
     },
   });
