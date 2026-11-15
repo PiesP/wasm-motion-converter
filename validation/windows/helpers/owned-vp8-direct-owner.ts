@@ -188,7 +188,7 @@ export async function runDirectOwnerCompletion(page: Page, request: DirectOwnerR
   return result;
 }
 
-/** Observe an actual live ABI step, then abort and terminate that exact Worker. */
+/** Poll live ABI steps on 10 ms host tasks, then abort and terminate that exact Worker. */
 export async function runDirectOwnerActiveTermination(page: Page, request: DirectOwnerRequest) {
   validateRequest(request);
   const { workerPath, inputBase64, requestId, config, options } = request;
@@ -313,7 +313,7 @@ export async function runDirectOwnerActiveTermination(page: Page, request: Direc
       if (snapshot?.records.some((record) => record.retireCalls > 0))
         throw new Error('Direct Worker retired before active termination');
       if (snapshot?.records.some((record) => record.stepCalls > 0)) break;
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
     }
     assertDirectOwnerSnapshot(snapshot, requestId, false);
     // Retirement can occur without a terminal response between observations.
