@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vite-plus/test';
 
 import {
   RgbaFrameCollector,
+  readOpenedFile,
+  readStableFile,
   readMetadata,
   declaredOutputs,
   extractVp8Frames,
@@ -66,8 +68,12 @@ describe('saved animation verifier', () => {
     const directory = await mkdtemp(join(tmpdir(), 'wmc-animation-'));
     try {
       const path = join(directory, 'frames.ivf');
-      await writeIvf(path, 2, 1, frames);
+      const identity = await writeIvf(path, 2, 1, frames);
       const ivf = await readFile(path);
+      expect(identity).toEqual({
+        bytes: ivf.length,
+        sha256: '2c797b70a9b70ab8d7f6b3871926ecbc0ee1259d2e3b4a94f1b1daedc74305cd',
+      });
       expect(ivf.toString('ascii', 0, 4)).toBe('DKIF');
       expect(ivf.readUInt32LE(16)).toBe(1000);
       expect(ivf.readUInt32LE(20)).toBe(1);
@@ -80,6 +86,31 @@ describe('saved animation verifier', () => {
       await expect(writeIvf(path, 2, 1, frames)).rejects.toMatchObject({ code: 'EEXIST' });
     } finally {
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects linked evidence and a path replaced after its descriptor was opened', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vp8-file-identity-'));
+    const path = join(root, 'saved.webp');
+    const previous = join(root, 'previous.webp');
+    const linked = join(root, 'linked.webp');
+    try {
+      await writeFile(path, 'content');
+      await symlink(path, linked);
+      await expect(readStableFile(linked, 32, 7, 'Saved output')).rejects.toBeDefined();
+      const handle = await open(path, 'r');
+      try {
+        await rename(path, previous);
+        await writeFile(path, 'content');
+        await expect(readOpenedFile(path, handle, 32, 7, 'Saved output')).rejects.toThrow(
+          /changed identity/
+        );
+      } finally {
+        await handle.close();
+      }
+      await expect(readStableFile(path, 32, 6, 'Saved output')).rejects.toThrow(/size differs/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 

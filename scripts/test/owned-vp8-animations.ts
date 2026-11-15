@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { constants, createWriteStream } from 'node:fs';
 import { lstat, mkdir, open, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -156,8 +156,13 @@ async function writeAll(handle: Awaited<ReturnType<typeof open>>, bytes: Buffer)
 
 /** Exact millisecond timestamps preserve ANMF holds without synthesized frames. */
 export async function writeIvf(path: string, width: number, height: number, frames: Frame[]) {
-  const handle = await open(path, 'wx');
+  const handle = await open(path, 'wx+');
   try {
+    let bytes = 0;
+    const emit = async (part: Buffer) => {
+      await writeAll(handle, part);
+      bytes += part.length;
+    };
     const header = Buffer.alloc(32);
     header.write('DKIF', 0, 'ascii');
     header.writeUInt16LE(0, 4);
@@ -168,14 +173,22 @@ export async function writeIvf(path: string, width: number, height: number, fram
     header.writeUInt32LE(1000, 16);
     header.writeUInt32LE(1, 20);
     header.writeUInt32LE(frames.length, 24);
-    await writeAll(handle, header);
+    await emit(header);
     for (const frame of frames) {
       const entry = Buffer.alloc(12);
       entry.writeUInt32LE(frame.payload.length, 0);
       entry.writeBigUInt64LE(BigInt(frame.timestampMs), 4);
-      await writeAll(handle, entry);
-      await writeAll(handle, frame.payload);
+      await emit(entry);
+      await emit(frame.payload);
     }
+    const written = await readOpenedFile(
+      path,
+      handle,
+      MAX_OUTPUT_BYTES + 32 + 12 * MAX_FRAMES,
+      bytes,
+      'Generated IVF'
+    );
+    return { bytes, sha256: sha256(written) };
   } finally {
     await handle.close();
   }
@@ -348,6 +361,65 @@ export async function readMetadata(path: string) {
   };
 }
 
+/** Read one regular file from its opened descriptor and reject a changed path. */
+export async function readOpenedFile(
+  path: string,
+  handle: Awaited<ReturnType<typeof open>>,
+  maxBytes: number,
+  expectedBytes: number | undefined,
+  label: string
+): Promise<Buffer> {
+  const before = await handle.stat();
+  assert(
+    before.isFile() && before.size <= maxBytes && before.size === (expectedBytes ?? before.size),
+    `${label} is linked or size differs`
+  );
+  const bytes = Buffer.alloc(before.size);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+    assert(bytesRead > 0, `${label} changed while reading`);
+    offset += bytesRead;
+  }
+  const extra = Buffer.alloc(1);
+  assert.equal(
+    (await handle.read(extra, 0, 1, offset)).bytesRead,
+    0,
+    `${label} grew while reading`
+  );
+  const after = await handle.stat();
+  assert(
+    after.isFile() &&
+      after.dev === before.dev &&
+      after.ino === before.ino &&
+      after.size === before.size &&
+      after.mtimeMs === before.mtimeMs &&
+      after.ctimeMs === before.ctimeMs,
+    `${label} changed while reading`
+  );
+  const current = await lstat(path);
+  assert(
+    current.isFile() && current.dev === after.dev && current.ino === after.ino,
+    `${label} changed identity`
+  );
+  return bytes;
+}
+
+export async function readStableFile(
+  path: string,
+  maxBytes: number,
+  expectedBytes: number | undefined,
+  label: string
+): Promise<Buffer> {
+  assert(typeof constants.O_NOFOLLOW === 'number', 'No-follow file open is unavailable');
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    return await readOpenedFile(path, handle, maxBytes, expectedBytes, label);
+  } finally {
+    await handle.close();
+  }
+}
+
 function assertReportName(name: string): void {
   assert(
     /^owned-vp8-product(?:-v8-(?:low|medium|high))?(?:-ba)?\.json$/.test(name),
@@ -446,9 +518,13 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       'Input differs from bundle inventory'
     );
     const pathOnDisk = join(run, 'payload', path);
-    const stat = await lstat(pathOnDisk);
-    assert(stat.isFile() && stat.size === value.bytes, 'Staged input size differs');
-    assert.equal(sha256(await readFile(pathOnDisk)), value.sha256, 'Staged input digest differs');
+    const bytes = await readStableFile(
+      pathOnDisk,
+      MAX_INPUT_BYTES,
+      Number(value.bytes),
+      'Staged input'
+    );
+    assert.equal(sha256(bytes), value.sha256, 'Staged input digest differs');
     inputDigests.add(value.sha256);
     inputs.push({ path, bytes: Number(value.bytes), sha256: value.sha256 });
   }
@@ -465,12 +541,13 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       'Frozen V8 manifest differs from bundle inventory'
     );
     const manifestPath = join(run, 'payload/validation/windows/owned-vp8-v8.json');
-    assert((await lstat(manifestPath)).isFile(), 'Frozen V8 manifest is linked');
-    assert.equal(
-      sha256(await readFile(manifestPath)),
-      frozenManifest,
-      'Frozen V8 manifest differs'
+    const manifest = await readStableFile(
+      manifestPath,
+      MAX_INPUT_BYTES,
+      undefined,
+      'Frozen V8 manifest'
     );
+    assert.equal(sha256(manifest), frozenManifest, 'Frozen V8 manifest differs');
   }
   const records = declaredOutputs(product.value);
   const ffmpegVersion = spawnSync('ffmpeg', ['-version'], {
@@ -550,9 +627,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       assert(/^[0-9a-f]{64}$/.test(saved.sha256), 'Invalid saved digest');
       assertCollected(saved.file, saved.sha256);
       const path = join(sourceOutput, saved.file);
-      const stat = await lstat(path);
-      assert(stat.isFile() && stat.size === saved.bytes, 'Saved output is linked or size differs');
-      const bytes = await readFile(path);
+      const bytes = await readStableFile(path, MAX_OUTPUT_BYTES, saved.bytes, 'Saved output');
       assert.equal(sha256(bytes), saved.sha256, 'Saved output digest differs');
       const { parsed, frames } = extractVp8Frames(bytes);
       if (declared.record.parsed) {
@@ -571,7 +646,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
           assert.deepEqual(declared.record.parsed.icc, parsed.icc, 'Reported ICC differs');
       }
       const ivf = join(output, `${saved.file}.ivf`);
-      await writeIvf(ivf, parsed.canvas.width, parsed.canvas.height, frames);
+      const ivfIdentity = await writeIvf(ivf, parsed.canvas.width, parsed.canvas.height, frames);
       report.activeOutput = {
         origin: declared.origin,
         saved,
@@ -623,8 +698,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
         })),
         ivf: {
           file: basename(ivf),
-          bytes: (await lstat(ivf)).size,
-          sha256: sha256(await readFile(ivf)),
+          ...ivfIdentity,
         },
         decoders: decoded,
       };
