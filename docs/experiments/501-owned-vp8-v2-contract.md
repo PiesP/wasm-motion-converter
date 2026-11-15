@@ -195,15 +195,14 @@ private staging are in `501-owned-vp8-v5-photo-PROVENANCE.md`; the manifest bind
 the pixel hashes, source hashes, decode filters and prior manifest identities.
 
 The existing 15 tuning inputs and all numerical quality, size, performance,
-resource and delivery gates remain unchanged. Only the full corrected-v5
-held-out set can be fresh acceptance; an explicit fixture subset is rejected
-before output creation or codec initialization. All v1-v4 held-out inputs are
-exposed regression evidence and require `--regression`. Use `--cohort
-corrected-v5 --acceptance --fresh-photo PATH --video PATH` for the new source
-identities. Preserve all earlier originals, manifests and outcomes. Once v5 is
-first evaluated, retire its fresh status and require `--regression` for later
-runs. This source-only freeze establishes no codec, browser, Windows or product
-qualification.
+resource and delivery gates remain unchanged. Its first frozen candidate
+evaluation passed 50/54 conditions and was rejected; see
+[the retained result](501-owned-vp8-v5-result.md). All v1-v5 held-out inputs are
+now exposed regression evidence and require `--regression`; no fresh successor
+is currently frozen. Use `--cohort corrected-v5 --regression --fresh-photo PATH
+--video PATH` for the preserved source identities. Preserve all original
+manifests, generators, inputs, thresholds and outcomes. This source-only freeze
+and later regression use establish no browser, Windows or product qualification.
 
 ## Resources and adoption
 

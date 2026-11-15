@@ -236,15 +236,22 @@ describe('owned VP8 prospective cohort isolation', () => {
     }
   });
 
-  it('freezes a distinct full corrected-v5 held-out set and keeps old cohorts exposed', () => {
-    for (const cohort of ['initial-v1', 'corrected-v2', 'corrected-v3', 'corrected-v4'] as const)
+  it('retains the distinct v5 inputs as regressions after their first rejected evaluation', () => {
+    for (const cohort of [
+      'initial-v1',
+      'corrected-v2',
+      'corrected-v3',
+      'corrected-v4',
+      'corrected-v5',
+    ] as const)
       expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
-    const fresh = selectFixtureCohort('held-out', 'corrected-v5');
+    const fresh = selectFixtureCohort('held-out', 'corrected-v5', true);
     expect(fresh).toEqual(V5_HELDOUT);
     expect(fresh).toHaveLength(18);
-    expect(fixtureSelectionIdentity(fresh, 'held-out', false, false)).toMatchObject({
+    expect(fixtureSelectionIdentity(fresh, 'held-out', true, false)).toMatchObject({
       expectedConditionCount: 54,
       completeCohort: true,
+      scope: 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE',
     });
     expect(selectFixtureCohort('tuning', 'corrected-v5')).toHaveLength(15);
     const oldIds = new Set(
