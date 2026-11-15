@@ -288,11 +288,17 @@ remain unchanged. This fixed-pixel result does not qualify product adoption.
 
 The [V10 source freeze](501-owned-vp8-v10-source-freeze.md) and
 [manifest](501-owned-vp8-v10-fixtures.json) bind 20 new held-out inputs at
-q60/75/85 before any V10 codec evaluation. V10 accepts only the full 60-condition
-cohort, with no held-out subset. All V1–V9 held-out cohorts are exposed and
-require `--regression`; the 15 tuning inputs and numeric gates are unchanged.
-This freeze records source provenance and selection, not a quality or product
-result.
+q60/75/85 before any V10 codec evaluation. Before its first evaluation, V10
+accepted only the full 60-condition cohort, with no held-out subset. At that
+point V1–V9 held-out cohorts were exposed and required `--regression`; the
+15 tuning inputs and numeric gates were unchanged. This freeze records source
+provenance and selection, not a quality or product result.
+
+The [first complete V10 result](501-owned-vp8-v10-result.md) rejected candidate
+adoption at 58/60 conditions: `fresh10-tiny-11x1` and `fresh10-photo-detail`
+at q75 missed the unchanged SSIM gate. All V1–V10 held-out inputs now require
+`--regression`; 567 conditions are exposed and no fresh successor is frozen.
+The original V10 generator, manifest and negative result remain intact.
 
 ## Resources and adoption
 

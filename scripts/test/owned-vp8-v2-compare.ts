@@ -51,16 +51,10 @@ export function selectFixtureCohort(
   regression = false,
   fixtureIds?: readonly string[]
 ) {
-  if (
-    fixtureIds !== undefined &&
-    split === 'held-out' &&
-    (cohort === 'corrected-v10' || !regression)
-  )
+  if (fixtureIds !== undefined && split === 'held-out' && !regression)
     throw new Error('Fixture subsets are diagnostic only; acceptance requires the full cohort');
-  if (split === 'held-out' && cohort === 'corrected-v10' && regression)
-    throw new Error('corrected-v10 is prospective; use --acceptance for its full held-out cohort');
-  if (split === 'held-out' && !regression && cohort !== 'corrected-v10')
-    throw new Error(`${cohort} is exposed: use --regression; only corrected-v10 is prospective`);
+  if (split === 'held-out' && !regression)
+    throw new Error(`${cohort} is exposed: use --regression; no fresh successor is frozen`);
   const entries =
     cohort === 'corrected-v10'
       ? [

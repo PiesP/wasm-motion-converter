@@ -5,8 +5,9 @@ before any V10 candidate or comparator encoding. The existing 15 tuning inputs
 and numeric gates are unchanged. All V1–V9 held-out inputs are exposed and
 require `--regression`. The first V9 59/60 failure remains rejected; the
 subsequent source-bound 507-condition regression pass is separate evidence and
-does not reinterpret that first failure. A V10 held-out subset is rejected
-before evidence directory creation or codec initialization.
+does not reinterpret that first failure. At the time of the freeze, a V10
+held-out acceptance subset was rejected before evidence directory creation or
+codec initialization.
 
 The [frozen manifest](501-owned-vp8-v10-fixtures.json) records each input's SHA256,
 geometry, layout and row stride, plus source digests, FFmpeg version and filters,
@@ -48,5 +49,12 @@ both SHA1 and SHA256 against the unchanged source file.
 Candidate PSNR must be at least baseline minus 1 dB, SSIM at least baseline
 minus 0.01, and raw VP8 size at most the greater of baseline × 1.25 or baseline
 plus 128 bytes. This source freeze establishes input provenance and selection
-only. It does not establish V10 quality, encoder adoption, browser behavior,
-animation fidelity or product performance.
+only. At the time of the freeze it established no V10 quality outcome.
+
+The [first complete V10 result](501-owned-vp8-v10-result.md) rejected candidate
+adoption at 58/60 conditions after two q75 SSIM failures. All V1–V10 held-out
+inputs are now exposed regression evidence and require `--regression`; no
+fresh successor is currently frozen. The original generator, manifest, source
+digests, earlier metadata correction and failed result remain intact. Neither
+the freeze nor that fixed-pixel result qualifies browser behavior, animation
+fidelity or product performance.
