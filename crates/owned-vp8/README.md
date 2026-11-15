@@ -19,6 +19,13 @@ The bounded resumable ABI2 core is implemented. Color/preset calibration,
 filter tuning, and browser/product qualification remain unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
 or removal of `wasm-webp`.
 
+The exploratory q75 textured preset retains its finer luma quantizer for a
+frame only when every imported, padded U/V sample is exactly 128. This flag is
+accumulated during the existing bounded RGB-to-YUV conversion. Other textured
+frames use the chromatic q75 preset; q60/q85 are identical in both tables.
+The source color conversion and four segment IDs are unchanged. This allocation
+has no independent qualification claim.
+
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
 sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
 tables are format constants from sections 13.4, 13.5 and 14.1 respectively;
@@ -74,6 +81,13 @@ hidden until arithmetic coding and final assembly finish. Carry scans and finali
 symbols and 64 KiB of carry per step, and then yields through its host. Browser
 cancellation/resource qualification is unfinished. These plans and Node/Rust tests do not establish
 browser/GPU peak, physical zero-copy or product adoption.
+
+Macroblock mode selection reserves the worst-case remaining I16 header syntax,
+all possible coefficient-update literals, and the arithmetic tail against VP8's
+first-partition limit. I4 remains eligible while its exact syntax fits that
+reserve; final byte counting still checks both partitions before allocation.
+This conservative bound may favor I16 on large, complex frames and does not
+establish their quality or timing acceptance.
 
 ## Engineering checks
 

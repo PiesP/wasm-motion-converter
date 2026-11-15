@@ -16,7 +16,7 @@ pub(crate) const CONVERSION_BUDGET_BYTES: u64 = 512 * MIB;
 const SCRATCH_ALLOWANCE_BYTES: u64 = 8 * MIB;
 const MACROBLOCK_RECORD_BYTES: u64 = 832;
 const MACROBLOCK_CONTEXT_BYTES: u64 = 32;
-const MAX_FIRST_PARTITION_BYTES: u64 = 0x7ffff;
+pub(crate) const MAX_FIRST_PARTITION_BYTES: u64 = 0x7ffff;
 
 /// ABI2 request, twelve little-endian fixed-width words in linear memory.
 /// `input_bytes` is the entire copied reservation, including any row padding.

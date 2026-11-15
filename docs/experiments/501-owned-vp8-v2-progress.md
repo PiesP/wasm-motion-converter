@@ -110,3 +110,21 @@ without bypass, and default-branch CI/security and automatic public verification
 passed. The public verification matched29 served files to that source/tree.
 Provider account deployment identity remains separately UNVERIFIED. This landing
 adds the engineering core/adapter, not a production software-route switch.
+
+## Second fixed-pixel candidate rejection and next source freeze
+
+The corrected-v2 candidate `c49ecb80005aa28d9d0f45bf67947ccb8656c582`,
+WASM SHA-256 `8d82889c45a9ed6e65639e767b7ea11cd75235b8ffcdc792332cf91952cb8ce2`,
+passed 36/36 tuning conditions but only **44/45** corrected-v2 held-out
+conditions. The `fresh2-chroma-edge` quality-75 condition missed the unchanged
+SSIM gate: baseline 0.198264, candidate 0.186469, minimum 0.188264. This
+candidate is **REJECTED for adoption**. The original corrected-v2 generator,
+manifest and failed receipt remain intact; that cohort is exposed regression
+evidence, not fresh acceptance.
+
+The separate corrected-v3 source-only generator and manifest freeze 15 new
+held-out inputs / 45 conditions and three broad chroma-edge tuning controls
+before another candidate is measured. The cumulative tuning set is 15 inputs /
+45 conditions. No codec outputs, comparator outputs, browser product results or
+Windows acceptance are claimed by this source freeze. The unchanged M2/M3/M4
+gates still hold the production route switch and M5 runtime removal.
