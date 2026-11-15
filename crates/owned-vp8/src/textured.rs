@@ -1302,7 +1302,11 @@ fn analyze_one(
                 my * 8,
                 mode,
                 uv_steps,
-                (quality == 60).then_some((coeff_contexts, mx, lambda)),
+                (quality == 60 && segment_id == segmentation::TEXTURED).then_some((
+                    coeff_contexts,
+                    mx,
+                    lambda,
+                )),
             )
         })
         .collect();
