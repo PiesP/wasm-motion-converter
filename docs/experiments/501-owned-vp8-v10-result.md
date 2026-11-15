@@ -30,9 +30,11 @@ failures.
 
 All V1–V10 held-out fixtures have now been observed and require `--regression`
 for later use. The known fixed-pixel corpus totals 567 exposed conditions;
-no fresh successor is currently frozen. The 15 tuning inputs remain tuning-only
-controls. A future candidate needs a new prospectively frozen independent
-cohort before fresh quality acceptance. This result does not qualify animation
+at this V10 result checkpoint no fresh successor had been frozen. The later
+[V11 source-only freeze](501-owned-vp8-v11-source-freeze.md) is separate. The 15
+tuning inputs remain tuning-only controls. At the V10 result checkpoint, a
+future candidate needed a new prospectively frozen independent cohort before
+fresh quality acceptance. This result does not qualify animation
 timing or fidelity, live conversion, cancellation, deployment, dependency
 removal or product adoption.
 

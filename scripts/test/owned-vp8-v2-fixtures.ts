@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export type FixtureSplit = 'tuning' | 'held-out';
-export type PixelLayout = 'RGBA' | 'RGBX' | 'BGRA' | 'BGRX';
+export type PixelLayout = 'RGBA' | 'RGBX' | 'BGRA' | 'BGRX' | 'RGB24';
 export type SourcePaths = { photo?: string; video?: string };
 export type FixtureSpec = {
   id: string;

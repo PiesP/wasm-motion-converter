@@ -157,7 +157,7 @@ luma profile preview subsequently passed all 333 known conditions; its
 source/module identities and unchanged fresh gates. Its first evaluation passed
 51/54, with three new tiny-input SSIM failures at q60/75/85; see
 [the rejected result](501-owned-vp8-v7-result.md). V1-v7 are now regression-only,
-and no fresh successor is currently frozen. The expanded known matrix has 387
+and at that v7 checkpoint no fresh successor had been frozen. The expanded known matrix had 387
 conditions. Preserve
 unfiltered reconstruction, input/settings identity, deterministic output,
 resource ceilings and host-task cancellation. New source requires controlled

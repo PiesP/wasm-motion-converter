@@ -297,8 +297,9 @@ provenance and selection, not a quality or product result.
 The [first complete V10 result](501-owned-vp8-v10-result.md) rejected candidate
 adoption at 58/60 conditions: `fresh10-tiny-11x1` and `fresh10-photo-detail`
 at q75 missed the unchanged SSIM gate. All V1–V10 held-out inputs now require
-`--regression`; 567 conditions are exposed and no fresh successor is frozen.
-The original V10 generator, manifest and negative result remain intact.
+`--regression`; 567 conditions are exposed. At that V10 result checkpoint no
+fresh successor had been frozen. The subsequent [V11 source-only freeze](501-owned-vp8-v11-source-freeze.md)
+is separate. The original V10 generator, manifest and negative result remain intact.
 
 ## Resources and adoption
 

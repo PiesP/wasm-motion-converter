@@ -53,8 +53,10 @@ only. At the time of the freeze it established no V10 quality outcome.
 
 The [first complete V10 result](501-owned-vp8-v10-result.md) rejected candidate
 adoption at 58/60 conditions after two q75 SSIM failures. All V1–V10 held-out
-inputs are now exposed regression evidence and require `--regression`; no
-fresh successor is currently frozen. The original generator, manifest, source
+inputs are now exposed regression evidence and require `--regression`; at that
+V10 rejection checkpoint no fresh successor had been frozen. The subsequent
+[V11 source-only freeze](501-owned-vp8-v11-source-freeze.md) is a separate
+prospective input cohort. The original generator, manifest, source
 digests, earlier metadata correction and failed result remain intact. Neither
 the freeze nor that fixed-pixel result qualifies browser behavior, animation
 fidelity or product performance.
