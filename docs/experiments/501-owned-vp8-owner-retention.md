@@ -19,16 +19,30 @@ physical retained bytes. A separate document holds one validation-owned strong
 Instance/Memory reference for the negative control, then drops it and repeats
 the same checkpoint. That reference is never used in acceptance samples.
 
-The product Worker route creates one Worker per request. A validation-only
-Worker bundle prefix observes scalar ABI2 activity and adds a bounded snapshot
-to its existing terminal message. The page observer removes that property
-before the product handler receives the message and records matching request,
-termination and Playwright Worker-close events. For active Stop, the probe reads
-a pre-termination scalar snapshot from the live Worker target; the product may
-terminate it without a terminal response. A close event within five seconds
-confirms isolate disposal, not process memory return. The direct harness Worker
-is excluded. The compiled `WebAssembly.Module` cache may remain live and is
-excluded from mutable Instance/Memory capacity.
+The Worker route uses the actual bundled conversion Worker protocol directly,
+with one Worker and a distinct request ID per attempt. The 96 × 64, four-second
+clustered VP9 fixture is transferred in a `start` request with the frozen direct
+Worker decoder configuration and WebP options. Three requests must complete,
+then an active fourth request must show positive owned ABI step activity in its
+live Playwright Worker target before a direct `abort` and `terminate`. A fifth,
+fresh request must complete in the same page and browser context. This route
+qualifies compiled Worker protocol ownership and termination; it does not claim
+that the WebP UI selected a conversion Worker or that direct termination is the
+UI Stop action. The main UI route separately retains its Stop-to-idle within
+500 ms and no-publication requirements.
+
+A validation-only Worker bundle prefix observes scalar ABI2 activity and adds
+a bounded snapshot to each matching terminal message. The page observer removes
+that property before ordinary handlers receive the message and records matching
+request, termination and Playwright Worker-close events. For direct active
+termination, the probe reads a pre-termination scalar snapshot from the live
+Worker target. A close event within five seconds confirms isolate disposal,
+not process memory return. Missing Worker identity or close capability remains
+`UNVERIFIED`; no post-close zero capacity is inferred without a matched close.
+The compiled `WebAssembly.Module` cache may remain live and is excluded from
+mutable Instance/Memory capacity. Completed output is a real transferred WebP
+buffer, bounded by the 96 MiB product ceiling and the tighter 8 MiB small-fixture
+transport bound; the guest must save, parse and decode its actual bytes.
 
 The prefix requires a `DedicatedWorkerGlobalScope` before it changes
 `WebAssembly.Instance` or installs its message listener. It accepts a `start`
@@ -54,8 +68,8 @@ measure host-neighbor load.
 
 The pure verifier reports `PASS` only for a discriminating negative control,
 complete instance IDs, zero live mutable owners at every main checkpoint,
-matched Worker termination and close for all five Worker attempts, and intact
-192 MiB linear and 96 MiB output bounds. It reports `FAIL` for complete,
+matched direct Worker termination and close for all five Worker attempts, and
+intact 192 MiB linear and 96 MiB output bounds. It reports `FAIL` for complete,
 valid-control evidence with live owners, confirmed late Worker close, or an
 observed bound breach. Missing CDP capability, ambiguous navigation, invalid
 control, incomplete ABI or Worker identity, and missing close capability are
@@ -67,3 +81,16 @@ broker state. The private release path is likewise bound to
 Whole-program #501 status remains `NOT_VERIFIED` until its independent timing,
 functional, platform, host-load, delivery and resource gates have their
 own qualifying evidence. A reachability `PASS` never waives another gate.
+
+## Frozen run 01 and corrected scope
+
+The source-bound run 01 at `261cb630616062e020a1b5c43f64ddadb9a1f0b9`
+remains `UNVERIFIED` with `workerCount: 0` and “Product Worker creation was not
+observed.” Its main-route seven checkpoints and negative control remain retained
+sub-observations; they do not retroactively pass the whole gate. At that source,
+`src/hooks/conversion-handlers/use-perform-conversion.ts` sends WebP to
+`runConversionPipeline` on the main thread, so the original Worker UI premise
+cannot occur. The corrected direct compiled-Worker criterion above must be in
+the protocol before a fresh runtime attempt and its separate receipt. It narrows
+the Worker claim to the actual compiled protocol and preserves the UI Stop
+criterion as a separate main-route observation.
