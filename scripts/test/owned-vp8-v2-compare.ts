@@ -34,6 +34,13 @@ import {
   type V11FixtureSpec,
   type V11PixelFixture,
 } from './owned-vp8-v11-fixtures.ts';
+import {
+  V12_HELDOUT,
+  generateV12Fixture,
+  type V12FixtureSpec,
+  type V12PixelFixture,
+  type V12SourcePaths,
+} from './owned-vp8-v12-fixtures.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ORACLE_HASH = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
@@ -50,7 +57,8 @@ export type FixtureCohort =
   | 'corrected-v8'
   | 'corrected-v9'
   | 'corrected-v10'
-  | 'corrected-v11';
+  | 'corrected-v11'
+  | 'corrected-v12';
 
 export function selectFixtureCohort(
   split: FixtureSplit,
@@ -60,79 +68,86 @@ export function selectFixtureCohort(
 ) {
   if (fixtureIds !== undefined && split === 'held-out' && !regression)
     throw new Error('Fixture subsets are diagnostic only; acceptance requires the full cohort');
-  if (split === 'held-out' && !regression)
+  if (split === 'held-out' && !regression && cohort !== 'corrected-v12')
     throw new Error(`${cohort} is exposed: use --regression; it cannot serve as fresh acceptance`);
   const entries =
-    cohort === 'corrected-v11'
+    cohort === 'corrected-v12'
       ? [
           ...FIXTURES.filter((item) => item.split === 'tuning'),
           ...CORRECTION_TUNING,
           ...V3_TUNING,
-          ...V11_HELDOUT,
+          ...V12_HELDOUT,
         ]
-      : cohort === 'corrected-v10'
+      : cohort === 'corrected-v11'
         ? [
             ...FIXTURES.filter((item) => item.split === 'tuning'),
             ...CORRECTION_TUNING,
             ...V3_TUNING,
-            ...V10_HELDOUT,
+            ...V11_HELDOUT,
           ]
-        : cohort === 'corrected-v9'
+        : cohort === 'corrected-v10'
           ? [
               ...FIXTURES.filter((item) => item.split === 'tuning'),
               ...CORRECTION_TUNING,
               ...V3_TUNING,
-              ...V9_HELDOUT,
+              ...V10_HELDOUT,
             ]
-          : cohort === 'corrected-v8'
+          : cohort === 'corrected-v9'
             ? [
                 ...FIXTURES.filter((item) => item.split === 'tuning'),
                 ...CORRECTION_TUNING,
                 ...V3_TUNING,
-                ...V8_HELDOUT,
+                ...V9_HELDOUT,
               ]
-            : cohort === 'corrected-v7'
+            : cohort === 'corrected-v8'
               ? [
                   ...FIXTURES.filter((item) => item.split === 'tuning'),
                   ...CORRECTION_TUNING,
                   ...V3_TUNING,
-                  ...V7_HELDOUT,
+                  ...V8_HELDOUT,
                 ]
-              : cohort === 'corrected-v6'
+              : cohort === 'corrected-v7'
                 ? [
                     ...FIXTURES.filter((item) => item.split === 'tuning'),
                     ...CORRECTION_TUNING,
                     ...V3_TUNING,
-                    ...V6_HELDOUT,
+                    ...V7_HELDOUT,
                   ]
-                : cohort === 'corrected-v5'
+                : cohort === 'corrected-v6'
                   ? [
                       ...FIXTURES.filter((item) => item.split === 'tuning'),
                       ...CORRECTION_TUNING,
                       ...V3_TUNING,
-                      ...V5_HELDOUT,
+                      ...V6_HELDOUT,
                     ]
-                  : cohort === 'corrected-v4'
+                  : cohort === 'corrected-v5'
                     ? [
                         ...FIXTURES.filter((item) => item.split === 'tuning'),
                         ...CORRECTION_TUNING,
                         ...V3_TUNING,
-                        ...V4_HELDOUT,
+                        ...V5_HELDOUT,
                       ]
-                    : cohort === 'corrected-v3'
+                    : cohort === 'corrected-v4'
                       ? [
                           ...FIXTURES.filter((item) => item.split === 'tuning'),
                           ...CORRECTION_TUNING,
                           ...V3_TUNING,
-                          ...V3_HELDOUT,
+                          ...V4_HELDOUT,
                         ]
-                      : cohort === 'corrected-v2'
+                      : cohort === 'corrected-v3'
                         ? [
                             ...FIXTURES.filter((item) => item.split === 'tuning'),
                             ...CORRECTION_TUNING,
-                            ...CORRECTION_HELDOUT,
+                            ...V3_TUNING,
+                            ...V3_HELDOUT,
                           ]
-                        : FIXTURES;
+                        : cohort === 'corrected-v2'
+                          ? [
+                              ...FIXTURES.filter((item) => item.split === 'tuning'),
+                              ...CORRECTION_TUNING,
+                              ...CORRECTION_HELDOUT,
+                            ]
+                          : FIXTURES;
   const available = entries.filter((item) => item.split === split);
   if (fixtureIds === undefined) return available;
   if (fixtureIds.length === 0) throw new Error('Fixture subset must contain at least one ID');
@@ -161,7 +176,7 @@ export function parseFixtureIds(args: readonly string[]): string[] | undefined {
 }
 
 export function fixtureSelectionIdentity(
-  selected: readonly (FixtureSpec | V11FixtureSpec)[],
+  selected: readonly (FixtureSpec | V11FixtureSpec | V12FixtureSpec)[],
   split: FixtureSplit,
   regression: boolean,
   diagnosticSubset: boolean
@@ -180,7 +195,7 @@ export function fixtureSelectionIdentity(
   };
 }
 
-export function rgbPixels(fixture: PixelFixture | V11PixelFixture): Uint8Array {
+export function rgbPixels(fixture: PixelFixture | V11PixelFixture | V12PixelFixture): Uint8Array {
   const result = new Uint8Array(fixture.width * fixture.height * 3);
   const bgr = fixture.layout === 'BGRA' || fixture.layout === 'BGRX';
   const bytesPerPixel = fixture.layout === 'RGB24' ? 3 : 4;
@@ -330,6 +345,7 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
   const v9ManifestFile = join(ROOT, 'docs/experiments/501-owned-vp8-v9-fixtures.json');
   const v10ManifestFile = join(ROOT, 'docs/experiments/501-owned-vp8-v10-fixtures.json');
   const v11ManifestFile = join(ROOT, 'docs/experiments/501-owned-vp8-v11-fixtures.json');
+  const v12ManifestFile = join(ROOT, 'docs/experiments/501-owned-vp8-v12-fixtures.json');
   if (cohort !== 'initial-v1') {
     const correction = JSON.parse(readFileSync(correctionManifestFile, 'utf8')) as typeof frozen;
     assert.equal(
@@ -347,7 +363,8 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
     cohort === 'corrected-v8' ||
     cohort === 'corrected-v9' ||
     cohort === 'corrected-v10' ||
-    cohort === 'corrected-v11'
+    cohort === 'corrected-v11' ||
+    cohort === 'corrected-v12'
   ) {
     const fresh = JSON.parse(readFileSync(v3ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: { initialV1: string; correctedV2: string };
@@ -371,7 +388,8 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
     cohort === 'corrected-v8' ||
     cohort === 'corrected-v9' ||
     cohort === 'corrected-v10' ||
-    cohort === 'corrected-v11'
+    cohort === 'corrected-v11' ||
+    cohort === 'corrected-v12'
   ) {
     const fresh = JSON.parse(readFileSync(v4ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: { initialV1: string; correctedV2: string; correctedV3: string };
@@ -395,7 +413,8 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
     cohort === 'corrected-v8' ||
     cohort === 'corrected-v9' ||
     cohort === 'corrected-v10' ||
-    cohort === 'corrected-v11'
+    cohort === 'corrected-v11' ||
+    cohort === 'corrected-v12'
   ) {
     const fresh = JSON.parse(readFileSync(v5ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: {
@@ -424,7 +443,8 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
     cohort === 'corrected-v8' ||
     cohort === 'corrected-v9' ||
     cohort === 'corrected-v10' ||
-    cohort === 'corrected-v11'
+    cohort === 'corrected-v11' ||
+    cohort === 'corrected-v12'
   ) {
     const fresh = JSON.parse(readFileSync(v6ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: Record<
@@ -454,7 +474,8 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
     cohort === 'corrected-v8' ||
     cohort === 'corrected-v9' ||
     cohort === 'corrected-v10' ||
-    cohort === 'corrected-v11'
+    cohort === 'corrected-v11' ||
+    cohort === 'corrected-v12'
   ) {
     const fresh = JSON.parse(readFileSync(v7ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: Record<
@@ -484,7 +505,8 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
     cohort === 'corrected-v8' ||
     cohort === 'corrected-v9' ||
     cohort === 'corrected-v10' ||
-    cohort === 'corrected-v11'
+    cohort === 'corrected-v11' ||
+    cohort === 'corrected-v12'
   ) {
     const fresh = JSON.parse(readFileSync(v8ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: Record<
@@ -517,7 +539,12 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
       );
     frozen.fixtures.push(...fresh.fixtures);
   }
-  if (cohort === 'corrected-v9' || cohort === 'corrected-v10' || cohort === 'corrected-v11') {
+  if (
+    cohort === 'corrected-v9' ||
+    cohort === 'corrected-v10' ||
+    cohort === 'corrected-v11' ||
+    cohort === 'corrected-v12'
+  ) {
     const fresh = JSON.parse(readFileSync(v9ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: Record<string, string>;
     };
@@ -538,7 +565,7 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
       assert.equal(fresh.priorManifestSha256[key], digest(readFileSync(file)));
     frozen.fixtures.push(...fresh.fixtures);
   }
-  if (cohort === 'corrected-v10' || cohort === 'corrected-v11') {
+  if (cohort === 'corrected-v10' || cohort === 'corrected-v11' || cohort === 'corrected-v12') {
     const fresh = JSON.parse(readFileSync(v10ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: Record<string, string>;
     };
@@ -560,7 +587,7 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
       assert.equal(fresh.priorManifestSha256[key], digest(readFileSync(file)));
     frozen.fixtures.push(...fresh.fixtures);
   }
-  if (cohort === 'corrected-v11') {
+  if (cohort === 'corrected-v11' || cohort === 'corrected-v12') {
     const fresh = JSON.parse(readFileSync(v11ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: Record<string, string>;
     };
@@ -584,6 +611,31 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
     assert.equal(fresh.fixtures.length, 20, 'V11 acceptance requires exactly 20 frozen inputs');
     frozen.fixtures.push(...fresh.fixtures);
   }
+  if (cohort === 'corrected-v12') {
+    const fresh = JSON.parse(readFileSync(v12ManifestFile, 'utf8')) as typeof frozen & {
+      priorManifestSha256: Record<string, string>;
+    };
+    assert.equal(
+      fresh.generatorSha256,
+      digest(readFileSync(new URL('./owned-vp8-v12-fixtures.ts', import.meta.url)))
+    );
+    for (const [key, file] of Object.entries({
+      initialV1: baselineManifestFile,
+      correctedV2: correctionManifestFile,
+      correctedV3: v3ManifestFile,
+      correctedV4: v4ManifestFile,
+      correctedV5: v5ManifestFile,
+      correctedV6: v6ManifestFile,
+      correctedV7: v7ManifestFile,
+      correctedV8: v8ManifestFile,
+      correctedV9: v9ManifestFile,
+      correctedV10: v10ManifestFile,
+      correctedV11: v11ManifestFile,
+    }))
+      assert.equal(fresh.priorManifestSha256[key], digest(readFileSync(file)));
+    assert.equal(fresh.fixtures.length, 20, 'V12 acceptance requires exactly 20 frozen inputs');
+    frozen.fixtures.push(...fresh.fixtures);
+  }
   assert.equal(new Set(frozen.fixtures.map((entry) => entry.id)).size, frozen.fixtures.length);
   return {
     frozen,
@@ -598,13 +650,14 @@ export function validateFixtureSourcePins(cohort: FixtureCohort) {
     v9ManifestFile,
     v10ManifestFile,
     v11ManifestFile,
+    v12ManifestFile,
   };
 }
 
 export async function compare(options: {
   output: string;
   split: FixtureSplit;
-  sources: V5SourcePaths;
+  sources: V5SourcePaths & V12SourcePaths;
   cohort?: FixtureCohort;
   regression?: boolean;
   fixtureIds?: readonly string[];
@@ -642,6 +695,7 @@ export async function compare(options: {
     v9ManifestFile,
     v10ManifestFile,
     v11ManifestFile,
+    v12ManifestFile,
   } = validateFixtureSourcePins(cohort);
   mkdirSync(output, { recursive: true });
   const wasmFile = join(candidateRoot, 'crates/owned-vp8/owned-vp8.wasm');
@@ -673,25 +727,27 @@ export async function compare(options: {
     correctionManifestSha256:
       cohort !== 'initial-v1' ? digest(readFileSync(correctionManifestFile)) : null,
     freshManifestSha256:
-      cohort === 'corrected-v11'
-        ? digest(readFileSync(v11ManifestFile))
-        : cohort === 'corrected-v10'
-          ? digest(readFileSync(v10ManifestFile))
-          : cohort === 'corrected-v9'
-            ? digest(readFileSync(v9ManifestFile))
-            : cohort === 'corrected-v8'
-              ? digest(readFileSync(v8ManifestFile))
-              : cohort === 'corrected-v7'
-                ? digest(readFileSync(v7ManifestFile))
-                : cohort === 'corrected-v6'
-                  ? digest(readFileSync(v6ManifestFile))
-                  : cohort === 'corrected-v5'
-                    ? digest(readFileSync(v5ManifestFile))
-                    : cohort === 'corrected-v4'
-                      ? digest(readFileSync(v4ManifestFile))
-                      : cohort === 'corrected-v3'
-                        ? digest(readFileSync(v3ManifestFile))
-                        : null,
+      cohort === 'corrected-v12'
+        ? digest(readFileSync(v12ManifestFile))
+        : cohort === 'corrected-v11'
+          ? digest(readFileSync(v11ManifestFile))
+          : cohort === 'corrected-v10'
+            ? digest(readFileSync(v10ManifestFile))
+            : cohort === 'corrected-v9'
+              ? digest(readFileSync(v9ManifestFile))
+              : cohort === 'corrected-v8'
+                ? digest(readFileSync(v8ManifestFile))
+                : cohort === 'corrected-v7'
+                  ? digest(readFileSync(v7ManifestFile))
+                  : cohort === 'corrected-v6'
+                    ? digest(readFileSync(v6ManifestFile))
+                    : cohort === 'corrected-v5'
+                      ? digest(readFileSync(v5ManifestFile))
+                      : cohort === 'corrected-v4'
+                        ? digest(readFileSync(v4ManifestFile))
+                        : cohort === 'corrected-v3'
+                          ? digest(readFileSync(v3ManifestFile))
+                          : null,
     source: execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: candidateRoot,
       encoding: 'utf8',
@@ -743,6 +799,7 @@ export async function compare(options: {
   });
   const results: object[] = [];
   for (const spec of selected) {
+    const freshV12 = V12_HELDOUT.some((entry) => entry.id === spec.id);
     const freshV11 = V11_HELDOUT.some((entry) => entry.id === spec.id);
     const freshV10 = V10_HELDOUT.some((entry) => entry.id === spec.id);
     const freshV9 = V9_HELDOUT.some((entry) => entry.id === spec.id);
@@ -757,27 +814,29 @@ export async function compare(options: {
     const fresh =
       V3_TUNING.some((entry) => entry.id === spec.id) ||
       V3_HELDOUT.some((entry) => entry.id === spec.id);
-    const fixture = freshV11
-      ? generateV11Fixture(spec.id, options.sources)
-      : freshV10
-        ? generateV10Fixture(spec.id, options.sources)
-        : freshV9
-          ? generateV9Fixture(spec.id, options.sources)
-          : freshV8
-            ? generateV8Fixture(spec.id, options.sources)
-            : freshV7
-              ? generateV7Fixture(spec.id, options.sources)
-              : freshV6
-                ? generateV6Fixture(spec.id, options.sources)
-                : freshV5
-                  ? generateV5Fixture(spec.id, options.sources)
-                  : freshV4
-                    ? generateV4Fixture(spec.id, options.sources)
-                    : fresh
-                      ? generateV3Fixture(spec.id, options.sources)
-                      : correction
-                        ? generateCorrectionFixture(spec.id, options.sources)
-                        : generateFixture(spec.id, options.sources);
+    const fixture = freshV12
+      ? generateV12Fixture(spec.id, options.sources)
+      : freshV11
+        ? generateV11Fixture(spec.id, options.sources)
+        : freshV10
+          ? generateV10Fixture(spec.id, options.sources)
+          : freshV9
+            ? generateV9Fixture(spec.id, options.sources)
+            : freshV8
+              ? generateV8Fixture(spec.id, options.sources)
+              : freshV7
+                ? generateV7Fixture(spec.id, options.sources)
+                : freshV6
+                  ? generateV6Fixture(spec.id, options.sources)
+                  : freshV5
+                    ? generateV5Fixture(spec.id, options.sources)
+                    : freshV4
+                      ? generateV4Fixture(spec.id, options.sources)
+                      : fresh
+                        ? generateV3Fixture(spec.id, options.sources)
+                        : correction
+                          ? generateCorrectionFixture(spec.id, options.sources)
+                          : generateFixture(spec.id, options.sources);
     assert.equal(
       digest(fixture.pixels),
       frozen.fixtures.find((entry) => entry.id === spec.id)?.sha256
@@ -874,6 +933,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const freshPhoto = args.includes('--fresh-photo')
     ? args[args.indexOf('--fresh-photo') + 1]
     : undefined;
+  const forestPhoto = args.includes('--forest-photo')
+    ? args[args.indexOf('--forest-photo') + 1]
+    : undefined;
+  const nightPhoto = args.includes('--night-photo')
+    ? args[args.indexOf('--night-photo') + 1]
+    : undefined;
   const cohort = args.includes('--cohort') ? args[args.indexOf('--cohort') + 1] : 'initial-v1';
   if (
     cohort !== 'initial-v1' &&
@@ -886,7 +951,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     cohort !== 'corrected-v8' &&
     cohort !== 'corrected-v9' &&
     cohort !== 'corrected-v10' &&
-    cohort !== 'corrected-v11'
+    cohort !== 'corrected-v11' &&
+    cohort !== 'corrected-v12'
   )
     throw new Error('Unknown fixture cohort');
   if (acceptance && regression) throw new Error('Choose acceptance or exposed regression');
@@ -908,6 +974,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       ...(video ? { video } : {}),
       ...(tuningPhoto ? { tuningPhoto } : {}),
       ...(freshPhoto ? { freshPhoto } : {}),
+      ...(forestPhoto ? { forestPhoto } : {}),
+      ...(nightPhoto ? { nightPhoto } : {}),
     },
     ...(candidateRoot ? { candidateRoot } : {}),
   });

@@ -309,6 +309,11 @@ measurement harness identity and failed result remain intact. At this V11
 result checkpoint, a future candidate requires a newly frozen independent
 cohort for fresh quality acceptance.
 
+The subsequent [V12 source-only freeze](501-owned-vp8-v12-source-freeze.md)
+binds 20 new held-out inputs across two independently sourced CC0 photographs,
+new deterministic synthetic sources and unused video frames. It retains the
+same 60-condition joint gate and does not itself establish a candidate result.
+
 ## Resources and adoption
 
 Preserve 512 MiB conversion, 128 MiB demux reserve, 192 MiB frame reserve and
