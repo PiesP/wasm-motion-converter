@@ -47,6 +47,14 @@ function animation(...frames: Buffer[]): Buffer {
 }
 
 describe('saved animation verifier', () => {
+  it('classifies every independently decoded cluster pixel and exposes a mixed frame', () => {
+    const solid = new RgbaFrameCollector(2, 1, 1, true);
+    solid.accept(Buffer.from([255, 0, 0, 255, 255, 0, 0, 255]));
+    expect(solid.finish()[0]).toMatchObject({ scene: 'red', scenePixelCount: 2, totalPixels: 2 });
+    const mixed = new RgbaFrameCollector(2, 1, 1, true);
+    mixed.accept(Buffer.from([255, 0, 0, 255, 0, 0, 255, 255]));
+    expect(mixed.finish()[0]).toMatchObject({ scenePixelCount: 1, totalPixels: 2 });
+  });
   it('reads PowerShell UTF-8 BOM metadata while preserving its exact receipt digest', async () => {
     const root = await mkdtemp(join(tmpdir(), 'vp8-bom-receipt-'));
     try {

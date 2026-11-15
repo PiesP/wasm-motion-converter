@@ -3799,6 +3799,10 @@ export async function run({
       selectorPath: 'validation/windows/inputs/owned-vp8-product-ba.json',
     },
     {
+      scenario: 'owned-vp8-product-near-cap',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-near-cap.json',
+    },
+    {
       scenario: 'owned-vp8-product-v8-low',
       selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-low.json',
     },

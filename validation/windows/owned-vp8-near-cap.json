@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "source": "Generated opaque VP9 solid-color video; no external media",
+  "generator": "scripts/test/generate-owned-vp8-near-cap.ts",
+  "input": {
+    "path": "validation/windows/owned-vp8-near-cap-inputs/near-cap.webm",
+    "sha256": "7cdc718657b916d30243b53c80db6c72460b15bb37881cca2b4efc34fd6a896e",
+    "bytes": 8885,
+    "codec": "vp9",
+    "width": 4096,
+    "height": 2457,
+    "pixels": 10063872,
+    "frames": 2,
+    "fps": 2,
+    "durationMs": 1000
+  },
+  "settings": {
+    "format": "webp",
+    "quality": "low",
+    "qualityPercent": 60,
+    "targetCadenceFps": 12,
+    "scale": 1,
+    "smartFrameSkip": "off"
+  }
+}

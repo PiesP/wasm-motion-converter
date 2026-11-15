@@ -12,7 +12,10 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { parseAnimatedWebp } from '../../validation/windows/helpers/owned-vp8-product.ts';
+import {
+  assertClusterTimeline,
+  parseAnimatedWebp,
+} from '../../validation/windows/helpers/owned-vp8-product.ts';
 
 const MAX_OUTPUT_BYTES = 96 * 1024 * 1024;
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
@@ -35,7 +38,14 @@ type SourceRecord = {
 };
 type DeclaredRecord = { origin: string; record: SourceRecord };
 type Frame = { payload: Buffer; timestampMs: number; holdMs: number; vp8Sha256: string };
-type PixelFrame = { index: number; sha256: string; centerRgb: [number, number, number] };
+type PixelFrame = {
+  index: number;
+  sha256: string;
+  centerRgb: [number, number, number];
+  scene?: string;
+  scenePixelCount?: number;
+  totalPixels?: number;
+};
 
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -194,14 +204,16 @@ export async function writeIvf(path: string, width: number, height: number, fram
 export class RgbaFrameCollector {
   private readonly current: Buffer;
   private readonly expectedFrames: number;
+  private readonly inspectScenes: boolean;
   private filled = 0;
   readonly frames: PixelFrame[] = [];
 
-  constructor(width: number, height: number, expectedFrames: number) {
+  constructor(width: number, height: number, expectedFrames: number, inspectScenes = false) {
     assert(width > 0 && height > 0 && width <= MAX_AXIS && height <= MAX_AXIS);
     assert(width * height <= MAX_PIXELS);
     assert(expectedFrames > 0 && expectedFrames <= MAX_FRAMES);
     this.expectedFrames = expectedFrames;
+    this.inspectScenes = inspectScenes;
     this.current = Buffer.allocUnsafe(width * height * 4);
     this.centerOffset = (Math.floor(height / 2) * width + Math.floor(width / 2)) * 4;
   }
@@ -218,11 +230,26 @@ export class RgbaFrameCollector {
       at += count;
       if (this.filled === this.current.length) {
         const center = this.current.subarray(this.centerOffset, this.centerOffset + 3);
-        this.frames.push({
+        const frame: PixelFrame = {
           index: this.frames.length,
           sha256: sha256(this.current),
           centerRgb: [center[0]!, center[1]!, center[2]!],
-        });
+        };
+        if (this.inspectScenes) {
+          const counts: Record<string, number> = {};
+          for (let pixel = 0; pixel < this.current.length; pixel += 4) {
+            const scene =
+              this.current[pixel + 3] === 255
+                ? color([this.current[pixel]!, this.current[pixel + 1]!, this.current[pixel + 2]!])
+                : 'unknown';
+            counts[scene] = (counts[scene] ?? 0) + 1;
+          }
+          const [scene, count] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]!;
+          frame.scene = scene;
+          frame.scenePixelCount = count;
+          frame.totalPixels = this.current.length / 4;
+        }
+        this.frames.push(frame);
         this.filled = 0;
       }
     }
@@ -243,10 +270,16 @@ function color([r, g, b]: readonly number[]): string {
   return 'unknown';
 }
 
-function assertClusterOrder(frames: PixelFrame[]): void {
-  const sequence = frames.map((frame) => color(frame.centerRgb));
-  const groups = sequence.filter((name, index) => index === 0 || name !== sequence[index - 1]);
-  assert.deepEqual(groups, ['red', 'lime', 'blue', 'yellow'], 'Cluster scene order differs');
+function assertClusterOrder(frames: PixelFrame[], timeline: Frame[]): void {
+  assert.equal(frames.length, timeline.length);
+  assertClusterTimeline(
+    frames.map((frame, index) => ({
+      scene: frame.scene ?? color(frame.centerRgb),
+      durationMs: timeline[index]!.holdMs,
+      scenePixelCount: frame.scenePixelCount,
+      totalPixels: frame.totalPixels,
+    }))
+  );
 }
 
 /** Reuse the verified IVF buffer; only small borrowed chunks enter stdin. */
@@ -288,7 +321,8 @@ async function decode(
   logPath: string,
   width: number,
   height: number,
-  count: number
+  count: number,
+  inspectScenes = false
 ) {
   const args = command(decoder);
   const child = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
@@ -302,7 +336,7 @@ async function decode(
   void exit.catch(() => child.kill());
   void stdin.catch(() => child.kill());
   void stderr.catch(() => child.kill());
-  const collector = new RgbaFrameCollector(width, height, count);
+  const collector = new RgbaFrameCollector(width, height, count, inspectScenes);
   try {
     for await (const part of child.stdout!) collector.accept(Buffer.from(part));
     const code = await exit;
@@ -434,7 +468,7 @@ export async function readStableFile(
 
 function assertReportName(name: string): void {
   assert(
-    /^owned-vp8-product(?:-v8-(?:low|medium|high))?(?:-ba)?\.json$/.test(name),
+    /^owned-vp8-product(?:-near-cap|-v8-(?:low|medium|high))?(?:-ba)?\.json$/.test(name),
     'Invalid report name'
   );
 }
@@ -512,7 +546,8 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     assert(
       typeof path === 'string' &&
         (/^public\/[A-Za-z0-9._-]+\.(?:mp4|webm)$/.test(path) ||
-          path === 'validation/windows/owned-vp8-inputs/v8.webm'),
+          path === 'validation/windows/owned-vp8-inputs/v8.webm' ||
+          path === 'validation/windows/owned-vp8-near-cap-inputs/near-cap.webm'),
       'Unexpected input path'
     );
     assert(
@@ -560,6 +595,26 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       'Frozen V8 manifest'
     );
     assert.equal(sha256(manifest), frozenManifest, 'Frozen V8 manifest differs');
+  }
+  const nearCapManifest = product.value.nearCapInputManifestSha256;
+  if (nearCapManifest !== undefined) {
+    assert(typeof nearCapManifest === 'string' && /^[0-9a-f]{64}$/.test(nearCapManifest));
+    assert(
+      bundle.value.files.some(
+        (entry: unknown) =>
+          plainObject(entry) &&
+          entry.file === 'validation/windows/owned-vp8-near-cap.json' &&
+          entry.sha256 === nearCapManifest
+      ),
+      'Near-cap manifest differs from bundle inventory'
+    );
+    const bytes = await readStableFile(
+      join(run, 'payload/validation/windows/owned-vp8-near-cap.json'),
+      MAX_INPUT_BYTES,
+      undefined,
+      'Near-cap manifest'
+    );
+    assert.equal(sha256(bytes), nearCapManifest, 'Near-cap manifest digest differs');
   }
   const records = declaredOutputs(product.value);
   const ffmpegVersion = spawnSync('ffmpeg', ['-version'], {
@@ -611,6 +666,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     prior: product.value.prior,
     inputs,
     frozenInputManifestSha256: frozenManifest ?? null,
+    nearCapInputManifestSha256: nearCapManifest ?? null,
     ffmpegVersion: ffmpegVersion.stdout,
     scriptSha256,
     parserSha256,
@@ -688,7 +744,8 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
           join(output, `${saved.file}.${decoder}.log`),
           parsed.canvas.width,
           parsed.canvas.height,
-          frames.length
+          frames.length,
+          declared.record.fixture === 'clusters' || saved.file.includes('direct-worker')
         );
       }
       assert.deepEqual(
@@ -697,7 +754,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
         'Independent VP8 decoders disagree'
       );
       if (declared.record.fixture === 'clusters' || saved.file.includes('direct-worker'))
-        assertClusterOrder(decoded.vp8!.frames);
+        assertClusterOrder(decoded.vp8!.frames, frames);
       const verified = {
         origin: declared.origin,
         saved,

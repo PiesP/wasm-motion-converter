@@ -8,6 +8,11 @@ import type { Page } from '@playwright/test';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import { checkOwnedVp8Inputs } from '../../../scripts/check/owned-vp8-inputs.ts';
+import {
+  NEAR_CAP_COMMAND,
+  verifyNearCapBytes,
+  verifyNearCapManifest,
+} from '../../../scripts/test/generate-owned-vp8-near-cap.ts';
 import { isWorkerRequest } from '../../../src/services/conversion-worker/guards.ts';
 import {
   DIRECT_WORKER_CLUSTER_CONFIG,
@@ -15,6 +20,7 @@ import {
   captureFailure,
   instrumentOwnedInstance,
   parseAnimatedWebp,
+  assertClusterTimeline,
 } from '../../../validation/windows/helpers/owned-vp8-product.ts';
 
 afterEach(() => {
@@ -53,6 +59,24 @@ function animation(...frames: Buffer[]) {
 }
 
 describe('owned VP8 Windows product contract', () => {
+  it('binds the explicit near-cap generator to a frozen source and settings manifest', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'validation/windows/owned-vp8-near-cap.json'), 'utf8')
+    ) as unknown;
+    expect(() => verifyNearCapManifest(manifest)).not.toThrow();
+    verifyNearCapManifest(manifest);
+    expect(manifest.input.width * manifest.input.height).toBe(10_063_872);
+    expect(NEAR_CAP_COMMAND).toContain('+bitexact');
+    expect(() => verifyNearCapBytes(Buffer.alloc(manifest.input.bytes), manifest)).toThrow(
+      /digest differs/
+    );
+    expect(() => verifyNearCapBytes(Buffer.alloc(manifest.input.bytes - 1), manifest)).toThrow(
+      /size differs/
+    );
+    expect(() =>
+      verifyNearCapManifest({ ...manifest, settings: { ...manifest.settings, scale: 0.5 } })
+    ).toThrow();
+  });
   it('retains bounded flat DOM, page errors, and screenshot before closing a failed page', async () => {
     const directory = await mkdtemp(resolve(tmpdir(), 'wmc-vp8-failure-'));
     vi.stubGlobal('document', { documentElement: { outerHTML: 'x'.repeat(40_000) } });
@@ -165,10 +189,60 @@ describe('owned VP8 Windows product contract', () => {
     }
     expect(profile.assets).toContain('validation/windows/owned-vp8-inputs');
     expect(profile.assets).not.toContain('validation/windows/owned-vp8-inputs/v8.webm');
+    const near = profile.preparation.scenarios['owned-vp8-product-near-cap'];
+    expect(profile.preparation.selector_files).toContain('owned-vp8-product-near-cap.json');
+    expect(near?.selector).toBe('owned-vp8-product-near-cap.json');
+    expect(near?.required_inputs).toContain(
+      'validation/windows/owned-vp8-near-cap-inputs/near-cap.webm'
+    );
+    expect(near?.required_inputs).toContain('validation/windows/owned-vp8-near-cap.json');
+    expect(near?.required_inputs).toContain('validation/windows/prior-dist');
+    expect(near?.build_commands).toEqual([
+      ['vp', 'run', 'prepare:owned-vp8-near-cap'],
+      ['vp', 'run', 'build:ci'],
+    ]);
     const buildConfig = readFileSync(resolve(root, 'vite.config.ts'), 'utf8');
     expect(buildConfig).toMatch(
       /'build:ci':\s*\{\s*command:\s*\[\s*'vp run check:owned-vp8-inputs'/
     );
+  });
+
+  it('enforces every generated cluster scene boundary and duplicate hold', () => {
+    const generator = readFileSync(resolve(root, 'scripts/test/generate-e2e-video.ts'), 'utf8');
+    expect(generator).toContain('color=c=black:size=96x64:rate=4:duration=4');
+    for (const [scene, start, end] of [
+      ['red', 0, 3],
+      ['lime', 4, 7],
+      ['blue', 8, 11],
+      ['yellow', 12, 15],
+    ] as const) {
+      expect(generator).toContain(`drawbox=c=${scene}:t=fill:enable='between(n,${start},${end})'`);
+    }
+    const valid = ['red', 'lime', 'blue', 'yellow'].map((scene) => ({
+      scene,
+      durationMs: 1_000,
+      scenePixelCount: 96 * 64,
+      totalPixels: 96 * 64,
+    }));
+    expect(() => assertClusterTimeline(valid)).not.toThrow();
+    expect(() =>
+      assertClusterTimeline([
+        { scene: 'red', durationMs: 500 },
+        { scene: 'red', durationMs: 500 },
+        ...valid.slice(1),
+      ])
+    ).not.toThrow();
+    expect(() =>
+      assertClusterTimeline(
+        valid.map((frame, index) => (index === 1 ? { ...frame, durationMs: 500 } : frame))
+      )
+    ).toThrow(/hold|transition/);
+    expect(() => assertClusterTimeline([valid[1]!, valid[0]!, ...valid.slice(2)])).toThrow(/scene/);
+    expect(() =>
+      assertClusterTimeline(
+        valid.map((frame, index) => (index === 2 ? { ...frame, scenePixelCount: 1 } : frame))
+      )
+    ).toThrow(/unexpected pixels/);
   });
 
   it('parses each RIFF hold in order and rejects an invalid nested geometry', () => {
@@ -206,8 +280,10 @@ describe('owned VP8 Windows product contract', () => {
 
   it('counts only successful ABI2 begin calls from fresh owned instances', () => {
     const statuses = [10, 12, 10];
+    const memory = new WebAssembly.Memory({ initial: 1 });
     class FakeInstance {
       exports = {
+        memory,
         vp8_v2_begin: () => statuses.shift(),
         vp8_v2_step: () => 11,
       };
@@ -231,9 +307,10 @@ describe('owned VP8 Windows product contract', () => {
   it('injects one RuntimeError only after a real step and tracks retirement before a fresh instance', () => {
     const step = vi.fn(() => 10);
     const retire = vi.fn(() => 0);
+    const memory = new WebAssembly.Memory({ initial: 1 });
     class FakeRuntimeError extends Error {}
     class FakeInstance {
-      exports = { vp8_v2_step: step, vp8_v2_retire: retire };
+      exports = { memory, vp8_v2_step: step, vp8_v2_retire: retire };
     }
     vi.stubGlobal('WebAssembly', { Instance: FakeInstance, RuntimeError: FakeRuntimeError });
     instrumentOwnedInstance();
@@ -271,8 +348,22 @@ describe('owned VP8 Windows product contract', () => {
     expect(step).toHaveBeenCalledTimes(2);
     expect(retire).toHaveBeenCalledTimes(2);
     expect(probe.records).toEqual([
-      { id: 1, stepCalls: 1, retireCalls: 1, retireStatus: 0 },
-      { id: 2, stepCalls: 1, retireCalls: 1, retireStatus: 0 },
+      {
+        id: 1,
+        stepCalls: 1,
+        retireCalls: 1,
+        retireStatus: 0,
+        peakCapacityBytes: 65_536,
+        retainedCapacityBytes: 65_536,
+      },
+      {
+        id: 2,
+        stepCalls: 1,
+        retireCalls: 1,
+        retireStatus: 0,
+        peakCapacityBytes: 65_536,
+        retainedCapacityBytes: 65_536,
+      },
     ]);
   });
 

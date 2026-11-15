@@ -31,6 +31,7 @@
       "owned-vp8-native.json",
       "owned-vp8-product.json",
       "owned-vp8-product-ba.json",
+      "owned-vp8-product-near-cap.json",
       "owned-vp8-product-v8-low.json",
       "owned-vp8-product-v8-low-ba.json",
       "owned-vp8-product-v8-medium.json",
@@ -325,6 +326,25 @@
         "build_commands": [["vp", "run", "build:ci"]],
         "unused_full_campaign_assets": ["validation/windows/public-target.json"]
       },
+      "owned-vp8-product-near-cap": {
+        "selector": "owned-vp8-product-near-cap.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "validation/windows/owned-vp8-near-cap-inputs/near-cap.webm",
+          "validation/windows/owned-vp8-near-cap.json",
+          "validation/windows/inputs/owned-vp8-product-near-cap.json"
+        ],
+        "generated_assets": ["dist", "validation/windows/owned-vp8-near-cap-inputs/near-cap.webm"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [
+          ["vp", "run", "prepare:owned-vp8-near-cap"],
+          ["vp", "run", "build:ci"]
+        ],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
       "owned-vp8-product-v8-low": {
         "selector": "owned-vp8-product-v8-low.json",
         "browsers": ["msedge", "chrome"],
@@ -503,6 +523,7 @@
     "validation/windows/gif-quantization-owner-video.json",
     "validation/windows/motion-owner-video.json",
     "validation/windows/owned-vp8-v8.json",
+    "validation/windows/owned-vp8-near-cap.json",
     "validation/windows/owned-vp8-inputs",
     "validation/windows/helpers/owned-vp8-probe.ts",
     "validation/windows/helpers/owned-vp8-product.ts",

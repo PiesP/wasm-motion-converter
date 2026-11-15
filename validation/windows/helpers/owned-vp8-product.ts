@@ -33,6 +33,12 @@ type Fixture = {
   height: number;
   durationMs: number;
 };
+export const CLUSTER_SCENE_TIMELINE = [
+  { scene: 'red', startMs: 0, endMs: 1_000 },
+  { scene: 'lime', startMs: 1_000, endMs: 2_000 },
+  { scene: 'blue', startMs: 2_000, endMs: 3_000 },
+  { scene: 'yellow', startMs: 3_000, endMs: 4_000 },
+] as const;
 type Quality = 'low' | 'medium' | 'high';
 type Sample = {
   build: 'prior' | 'candidate';
@@ -74,6 +80,14 @@ const V8_FIXTURE: Fixture = {
   durationMs: 6_400,
 };
 const V8_SHA256 = 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1';
+const NEAR_CAP_FIXTURE: Fixture = {
+  id: 'near-cap',
+  path: 'validation/windows/owned-vp8-near-cap-inputs/near-cap.webm',
+  mime: 'video/webm',
+  width: 4096,
+  height: 2457,
+  durationMs: 1_000,
+};
 const STOP_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 /** Frozen owned-demux oracle for the generated 96x64 clustered VP9 fixture. */
 export const DIRECT_WORKER_CLUSTER_CONFIG = {
@@ -278,62 +292,143 @@ export function parseAnimatedWebp(bytes: Buffer) {
 }
 
 /** Independent installed-browser decode, after the conversion timing interval. */
-async function decodeWebp(page: Page, bytes: Buffer) {
-  return page.evaluate(async (base64) => {
-    assertDecoder();
-    function assertDecoder() {
-      if (typeof ImageDecoder !== 'function') throw new Error('ImageDecoder unavailable');
-    }
-    const data = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
-    const decoder = new ImageDecoder({ data, type: 'image/webp', preferAnimation: true });
-    try {
-      await decoder.tracks.ready;
-      const track = decoder.tracks.selectedTrack;
-      if (!track || track.frameCount < 1 || track.frameCount > 400)
-        throw new Error('Decoded WebP frame count outside bound');
-      const frames: Array<{
-        width: number;
-        height: number;
-        durationMs: number;
-        centerRgb: number[];
-        pixelSha256: string;
-      }> = [];
-      const canvas = new OffscreenCanvas(16, 16);
-      const context = canvas.getContext('2d');
-      if (!context) throw new Error('ImageDecoder sample canvas unavailable');
-      for (let index = 0; index < track.frameCount; index++) {
-        const result = await decoder.decode({ frameIndex: index, completeFramesOnly: true });
-        const image = result.image;
-        try {
-          if (!result.complete) throw new Error(`Incomplete WebP frame ${index}`);
-          const width = image.displayWidth;
-          const height = image.displayHeight;
-          // Decode every frame at native geometry, then hash a fixed spatial
-          // sample. A full 1080p RGBA copy per frame would add verification
-          // memory and time unrelated to the sealed conversion interval.
-          context.drawImage(image, 0, 0, 16, 16);
-          const pixels = context.getImageData(0, 0, 16, 16).data;
-          const center = (8 * 16 + 8) * 4;
-          const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', pixels));
-          frames.push({
-            width,
-            height,
-            durationMs: (image.duration ?? 0) / 1_000,
-            centerRgb: Array.from(pixels.subarray(center, center + 3)),
-            pixelSha256: Array.from(hash, (value) => value.toString(16).padStart(2, '0')).join(''),
-          });
-        } finally {
-          image.close();
-        }
+async function decodeWebp(page: Page, bytes: Buffer, inspectAllPixels = false) {
+  return page.evaluate(
+    async ({ base64, inspectAllPixels }) => {
+      assertDecoder();
+      function assertDecoder() {
+        if (typeof ImageDecoder !== 'function') throw new Error('ImageDecoder unavailable');
       }
-      return { repetitionCount: track.repetitionCount, frames };
-    } finally {
-      decoder.close();
-    }
-  }, bytes.toString('base64'));
+      const data = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+      const decoder = new ImageDecoder({ data, type: 'image/webp', preferAnimation: true });
+      try {
+        await decoder.tracks.ready;
+        const track = decoder.tracks.selectedTrack;
+        if (!track || track.frameCount < 1 || track.frameCount > 400)
+          throw new Error('Decoded WebP frame count outside bound');
+        if (track.repetitionCount !== Infinity)
+          throw new Error(`Animated WebP must repeat indefinitely, got ${track.repetitionCount}`);
+        const frames: Array<{
+          width: number;
+          height: number;
+          durationMs: number;
+          centerRgb: number[];
+          pixelSha256: string;
+          scene?: string;
+          scenePixelCount?: number;
+          totalPixels?: number;
+        }> = [];
+        const canvas = new OffscreenCanvas(inspectAllPixels ? 96 : 16, inspectAllPixels ? 64 : 16);
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('ImageDecoder sample canvas unavailable');
+        for (let index = 0; index < track.frameCount; index++) {
+          const result = await decoder.decode({ frameIndex: index, completeFramesOnly: true });
+          const image = result.image;
+          try {
+            if (!result.complete) throw new Error(`Incomplete WebP frame ${index}`);
+            const width = image.displayWidth;
+            const height = image.displayHeight;
+            // Decode every frame at native geometry. Hash every pixel for the
+            // small cluster source; larger sources use a fixed spatial sample
+            // to keep post-conversion verification memory bounded.
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+            const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+            const center =
+              (Math.floor(canvas.height / 2) * canvas.width + Math.floor(canvas.width / 2)) * 4;
+            const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', pixels));
+            const frame: (typeof frames)[number] = {
+              width,
+              height,
+              durationMs: (image.duration ?? 0) / 1_000,
+              centerRgb: Array.from(pixels.subarray(center, center + 3)),
+              pixelSha256: Array.from(hash, (value) => value.toString(16).padStart(2, '0')).join(
+                ''
+              ),
+            };
+            if (inspectAllPixels) {
+              const counts: Record<string, number> = {};
+              for (let at = 0; at < pixels.length; at += 4) {
+                const name =
+                  pixels[at + 3] === 255
+                    ? sceneName(pixels[at]!, pixels[at + 1]!, pixels[at + 2]!)
+                    : 'unknown';
+                counts[name] = (counts[name] ?? 0) + 1;
+              }
+              const [scene, count] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]!;
+              frame.scene = scene;
+              frame.scenePixelCount = count;
+              frame.totalPixels = pixels.length / 4;
+            }
+            frames.push(frame);
+          } finally {
+            image.close();
+          }
+        }
+        return { repetitionCount: 'infinite' as const, frames };
+      } finally {
+        decoder.close();
+      }
+      function sceneName(r: number, g: number, b: number): string {
+        if (r > 120 && g < 110 && b < 110) return 'red';
+        if (g > 100 && r < 120 && b < 120) return 'lime';
+        if (b > 110 && r < 120 && g < 120) return 'blue';
+        if (r > 110 && g > 100 && b < 120) return 'yellow';
+        return 'unknown';
+      }
+    },
+    { base64: bytes.toString('base64'), inspectAllPixels }
+  );
 }
 
-function assertClusterSequence(frames: readonly { centerRgb: number[] }[]): void {
+export function assertClusterTimeline(
+  frames: readonly {
+    scene: string;
+    durationMs: number;
+    scenePixelCount?: number | undefined;
+    totalPixels?: number | undefined;
+  }[]
+): void {
+  let elapsedMs = 0;
+  const groups: Array<{ scene: string; startMs: number; endMs: number }> = [];
+  for (const frame of frames) {
+    assert(frame.durationMs > 0, 'Cluster decoded hold is zero');
+    if (frame.totalPixels !== undefined) {
+      assert.equal(
+        frame.scenePixelCount,
+        frame.totalPixels,
+        'Cluster has unexpected pixels outside its source scene'
+      );
+    }
+    const group = groups.at(-1);
+    if (!group || group.scene !== frame.scene)
+      groups.push({ scene: frame.scene, startMs: elapsedMs, endMs: elapsedMs + frame.durationMs });
+    else group.endMs += frame.durationMs;
+    elapsedMs += frame.durationMs;
+  }
+  assert.equal(groups.length, CLUSTER_SCENE_TIMELINE.length, 'Cluster transition count differs');
+  for (const [index, expected] of CLUSTER_SCENE_TIMELINE.entries()) {
+    const actual = groups[index]!;
+    assert.equal(actual.scene, expected.scene, `Cluster scene ${index} differs`);
+    assert(
+      Math.abs(actual.startMs - expected.startMs) <= 250,
+      `Cluster transition ${index} differs by over 250ms`
+    );
+    assert(
+      Math.abs(actual.endMs - expected.endMs) <= 250,
+      `Cluster hold ${index} differs by over 250ms`
+    );
+  }
+}
+
+function assertClusterSequence(
+  frames: readonly {
+    centerRgb: number[];
+    durationMs: number;
+    scene?: string;
+    scenePixelCount?: number;
+    totalPixels?: number;
+  }[]
+): void {
   const color = (rgb: number[]) => {
     const [r, g, b] = rgb;
     if (r! > 120 && g! < 110 && b! < 110) return 'red';
@@ -343,8 +438,14 @@ function assertClusterSequence(frames: readonly { centerRgb: number[] }[]): void
     return 'unknown';
   };
   const sequence = frames.map((frame) => color(frame.centerRgb));
-  const groups = sequence.filter((name, index) => index === 0 || name !== sequence[index - 1]);
-  assert.deepEqual(groups, ['red', 'lime', 'blue', 'yellow'], 'Cluster scene order differs');
+  assertClusterTimeline(
+    frames.map((frame, index) => ({
+      scene: frame.scene ?? sequence[index]!,
+      durationMs: frame.durationMs,
+      scenePixelCount: frame.scenePixelCount,
+      totalPixels: frame.totalPixels,
+    }))
+  );
 }
 
 async function downloadWebp(page: Page): Promise<Buffer> {
@@ -460,6 +561,8 @@ export function instrumentOwnedInstance() {
       stepCalls: number;
       retireCalls: number;
       retireStatus: number | null;
+      peakCapacityBytes: number;
+      retainedCapacityBytes: number | null;
     }>,
   };
   Reflect.set(globalThis, '__wmcVp8AbiProbe', state);
@@ -475,6 +578,8 @@ export function instrumentOwnedInstance() {
         stepCalls: 0,
         retireCalls: 0,
         retireStatus: null as number | null,
+        peakCapacityBytes: 0,
+        retainedCapacityBytes: null as number | null,
       };
       state.records.push(record);
       // WASM export properties are nonconfigurable and nonwritable; a Proxy
@@ -495,6 +600,10 @@ export function instrumentOwnedInstance() {
                   state.stepCalls++;
                   record.stepCalls++;
                   const status = Reflect.apply(value, exported, parameters) as number;
+                  record.peakCapacityBytes = Math.max(
+                    record.peakCapacityBytes,
+                    (exported.memory as WebAssembly.Memory).buffer.byteLength
+                  );
                   state.statusCounts[String(status)] =
                     (state.statusCounts[String(status)] ?? 0) + 1;
                   if (state.injectNextStepTrap) {
@@ -509,6 +618,9 @@ export function instrumentOwnedInstance() {
                     const status = Reflect.apply(value, exported, parameters) as number;
                     record.retireCalls++;
                     record.retireStatus = status;
+                    record.retainedCapacityBytes = (
+                      exported.memory as WebAssembly.Memory
+                    ).buffer.byteLength;
                     return status;
                   }
                 : value,
@@ -645,7 +757,7 @@ async function measureJob(
     Math.abs(parsed.totalDurationMs - fixture.durationMs) <= 250,
     'WebP timeline differs from source by over 250ms'
   );
-  const decoded = await decodeWebp(page, bytes);
+  const decoded = await decodeWebp(page, bytes, fixture.id === 'clusters');
   assert.equal(
     decoded.frames.length,
     parsed.frames.length,
@@ -884,7 +996,7 @@ async function exerciseDirectWorker(
   const parsed = parseAnimatedWebp(bytes);
   assert.deepEqual(parsed.canvas, { width: fixture.width, height: fixture.height });
   assert(Math.abs(parsed.totalDurationMs - fixture.durationMs) <= 250);
-  const decoded = await decodeWebp(page, bytes);
+  const decoded = await decodeWebp(page, bytes, true);
   assert.equal(decoded.frames.length, parsed.frames.length);
   for (const [index, frame] of decoded.frames.entries()) {
     assert.equal(frame.width, fixture.width);
@@ -1356,6 +1468,225 @@ async function candidateFunctional(
   }
 }
 
+async function nearCapFunctional(
+  browser: Browser,
+  bundleRoot: string,
+  output: string,
+  prior: Build,
+  candidate: Build,
+  server: Server,
+  validateBundleFile: (root: string, path: string) => Promise<string>,
+  loadApplication: (page: Page, url: string) => Promise<unknown>,
+  record: (value: unknown) => Promise<void>
+) {
+  const manifestPath = await validateBundleFile(
+    bundleRoot,
+    'validation/windows/owned-vp8-near-cap.json'
+  );
+  const manifestBytes = await readFile(manifestPath);
+  const manifest = JSON.parse(manifestBytes.toString()) as {
+    schemaVersion: number;
+    generator: string;
+    input: {
+      path: string;
+      sha256: string;
+      bytes: number;
+      codec: string;
+      width: number;
+      height: number;
+      pixels: number;
+      frames: number;
+      fps: number;
+      durationMs: number;
+    };
+    settings: {
+      format: string;
+      quality: Quality;
+      qualityPercent: number;
+      targetCadenceFps: number;
+      scale: number;
+      smartFrameSkip: string;
+    };
+  };
+  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.generator, 'scripts/test/generate-owned-vp8-near-cap.ts');
+  assert.deepEqual(manifest.input, {
+    path: NEAR_CAP_FIXTURE.path,
+    sha256: '7cdc718657b916d30243b53c80db6c72460b15bb37881cca2b4efc34fd6a896e',
+    bytes: 8885,
+    codec: 'vp9',
+    width: 4096,
+    height: 2457,
+    pixels: 10_063_872,
+    frames: 2,
+    fps: 2,
+    durationMs: 1_000,
+  });
+  assert.deepEqual(manifest.settings, {
+    format: 'webp',
+    quality: 'low',
+    qualityPercent: 60,
+    targetCadenceFps: 12,
+    scale: 1,
+    smartFrameSkip: 'off',
+  });
+  const inputPath = await validateBundleFile(bundleRoot, NEAR_CAP_FIXTURE.path);
+  const source = await readFile(inputPath);
+  assert.equal(source.length, manifest.input.bytes, 'Near-cap input size differs');
+  assert.equal(digest(source), manifest.input.sha256, 'Near-cap input digest differs');
+  let candidatePassed = false;
+  for (const name of ['prior', 'candidate'] as const) {
+    const build = name === 'prior' ? prior : candidate;
+    await server.setDistribution(build.relativePath);
+    const workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }> =
+      [];
+    const context = await createContext(browser, build, true, true, workerPatches);
+    const fetchedWasm: Array<Promise<{ path: string; bytes: number; sha256: string }>> = [];
+    context.on('response', (response) => {
+      const path = new URL(response.url()).pathname.slice(1);
+      if (/^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(path))
+        fetchedWasm.push(
+          response.body().then((bytes) => ({ path, bytes: bytes.length, sha256: digest(bytes) }))
+        );
+    });
+    try {
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on('pageerror', (error) => {
+        if (errors.length < 32) errors.push(error.message);
+      });
+      try {
+        await loadApplication(page, server.url);
+        const decoderSupport = await page.evaluate(async () => {
+          if (typeof VideoDecoder === 'undefined')
+            return { supported: false, reason: 'VideoDecoder unavailable' };
+          try {
+            const result = await VideoDecoder.isConfigSupported({
+              codec: 'vp09.00.10.08',
+              codedWidth: 4096,
+              codedHeight: 2457,
+            });
+            return {
+              supported: result.supported,
+              reason: result.supported ? null : 'VP9 4096x2457 unsupported',
+            };
+          } catch (error) {
+            return { supported: false, reason: String(error) };
+          }
+        });
+        await record({
+          phase: 'decoder-support',
+          build: name,
+          decoderSupport,
+          input: manifest.input,
+          manifestSha256: digest(manifestBytes),
+          settings: manifest.settings,
+          prior: prior.state.sourceSha,
+          candidate: candidate.state.sourceSha,
+        });
+        assert(
+          decoderSupport.supported,
+          `Near-cap native source decode unsupported: ${decoderSupport.reason}`
+        );
+        await configurePage(page, inputPath, NEAR_CAP_FIXTURE, manifest.settings.quality);
+        const checked = await measureJob(
+          page,
+          NEAR_CAP_FIXTURE,
+          manifest.input.sha256,
+          manifest.settings.quality,
+          name,
+          'first-in-document',
+          output,
+          `owned-vp8-functional-near-cap-${name}`
+        );
+        const probe = (await page.evaluate(() => Reflect.get(globalThis, '__wmcVp8AbiProbe'))) as {
+          instances: number;
+          successfulBeginCalls: number;
+          stepCalls: number;
+          records: Array<{
+            stepCalls: number;
+            retireCalls: number;
+            retireStatus: number | null;
+            peakCapacityBytes: number;
+            retainedCapacityBytes: number | null;
+          }>;
+        };
+        assert(
+          probe.instances > 0 && probe.successfulBeginCalls > 0 && probe.stepCalls > 0,
+          'Near-cap conversion missed owned WASM begin/step'
+        );
+        assert(
+          probe.records.some(
+            (entry) =>
+              entry.stepCalls > 0 &&
+              entry.retireCalls > 0 &&
+              entry.retireStatus === 0 &&
+              entry.peakCapacityBytes > 0 &&
+              entry.peakCapacityBytes <= 192 * 1024 * 1024 &&
+              entry.retainedCapacityBytes !== null &&
+              entry.retainedCapacityBytes >= entry.peakCapacityBytes &&
+              entry.retainedCapacityBytes <= 192 * 1024 * 1024
+          ),
+          'Near-cap retained linear capacity is absent or exceeds admission'
+        );
+        assert(checked.parsed.frames.length > 0, 'Near-cap WebP has no saved frames');
+        const scenes = checked.decoded.frames.map((frame) => {
+          const [r, g, b] = frame.centerRgb;
+          if (r! > 120 && g! < 110 && b! < 110) return 'red';
+          if (b! > 110 && r! < 120 && g! < 120) return 'blue';
+          return 'unknown';
+        });
+        assert.deepEqual(
+          scenes.filter((scene, index) => index === 0 || scene !== scenes[index - 1]),
+          ['red', 'blue'],
+          'Near-cap visible source scenes differ'
+        );
+        const ownedAsset = build.state.files.find((entry) =>
+          /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
+        );
+        assert(ownedAsset, 'Candidate owned WASM inventory entry absent');
+        const wasm = await Promise.all(fetchedWasm);
+        assert(
+          wasm.some(
+            (entry) =>
+              entry.path === ownedAsset.path &&
+              entry.bytes === ownedAsset.size &&
+              entry.sha256 === ownedAsset.sha256
+          ),
+          'Near-cap fetched WASM differs from candidate inventory'
+        );
+        assert.deepEqual(errors, [], 'Near-cap page errors');
+        await record({
+          phase: 'completed',
+          build: name,
+          status: 'passed',
+          route: 'ui-main-near-cap',
+          inputSha256: manifest.input.sha256,
+          manifestSha256: digest(manifestBytes),
+          settings: manifest.settings,
+          decoderSupport,
+          probe,
+          saved: checked.saved,
+          parsed: checked.parsed,
+          decoded: checked.decoded,
+          fetchedWasm: wasm,
+          workerPatches,
+        });
+        if (name === 'candidate') candidatePassed = true;
+      } catch (error) {
+        await captureFailure(page, output, `owned-vp8-functional-near-cap-${name}`, error, errors);
+        await record({ phase: 'failed', build: name, status: 'failed', error: failure(error) });
+        if (name === 'candidate') throw error;
+      } finally {
+        await page.close();
+      }
+    } finally {
+      await context.close();
+    }
+  }
+  assert(candidatePassed, 'Near-cap candidate did not complete');
+}
+
 export async function exerciseOwnedVp8Product({
   browser,
   bundleRoot,
@@ -1378,7 +1709,8 @@ export async function exerciseOwnedVp8Product({
     | 'owned-vp8-product-v8-medium'
     | 'owned-vp8-product-v8-medium-ba'
     | 'owned-vp8-product-v8-high'
-    | 'owned-vp8-product-v8-high-ba';
+    | 'owned-vp8-product-v8-high-ba'
+    | 'owned-vp8-product-near-cap';
   prior: Build;
   candidate: Build;
   server: Server;
@@ -1394,9 +1726,12 @@ export async function exerciseOwnedVp8Product({
     : undefined;
   if (fullVideo) assert(v8Quality, 'V8 scenario has no fixed quality');
   const qualities: readonly Quality[] = v8Quality ? [v8Quality] : ['low', 'medium', 'high'];
-  const order = scenario.endsWith('-ba')
-    ? (['candidate', 'prior'] as const)
-    : (['prior', 'candidate'] as const);
+  const order =
+    scenario === 'owned-vp8-product-near-cap'
+      ? (['prior', 'candidate'] as const)
+      : scenario.endsWith('-ba')
+        ? (['candidate', 'prior'] as const)
+        : (['prior', 'candidate'] as const);
   const report: Record<string, unknown> = {
     schemaVersion: 1,
     scenario,
@@ -1417,23 +1752,67 @@ export async function exerciseOwnedVp8Product({
       manifestSha256: candidate.manifestSha256,
     },
     timingScope:
-      'UI Convert click to matching published WebP Blob download control ready; save, parse and independent decode follow timing',
+      scenario === 'owned-vp8-product-near-cap'
+        ? 'Functional-only conversion; incidental elapsed time is not a performance sample'
+        : 'UI Convert click to matching published WebP Blob download control ready; save, parse and independent decode follow timing',
     timingGate:
-      'After five balanced controller invocations, compare medians for matching workload and condition; candidate regression <= max(5%, 20ms); retain every sample and range/MAD',
+      scenario === 'owned-vp8-product-near-cap'
+        ? null
+        : 'After five balanced controller invocations, compare medians for matching workload and condition; candidate regression <= max(5%, 20ms); retain every sample and range/MAD',
     cacheScope:
-      'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
+      scenario === 'owned-vp8-product-near-cap'
+        ? 'separate browser context and one functional first-in-document attempt per build; no fresh-profile cold claim'
+        : 'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
     softwareInjection:
       'Page OffscreenCanvas.convertToBlob disabled before application code; Worker JS is patched only if loaded, and a patch record alone is not encoding-route proof',
-    functionalScope: fullVideo
-      ? 'After uninstrumented first/warm samples, one additional candidate main-WASM conversion attests successful ABI2 begin calls; emitted ANMF counts are recorded separately. Active Stop and recovery remain in the small selector.'
-      : 'Candidate UI main software recovery and active Stop; separate direct conversion Worker protocol and owned output',
+    functionalScope:
+      scenario === 'owned-vp8-product-near-cap'
+        ? 'Independent prior and candidate generated near-cap UI main-WASM attempts, outside the V8 timing cohort; candidate must pass and prior outcome is retained separately'
+        : fullVideo
+          ? 'After uninstrumented first/warm samples, one additional candidate main-WASM conversion attests successful ABI2 begin calls; emitted ANMF counts are recorded separately. Active Stop and recovery remain in the small selector.'
+          : 'Candidate UI main software recovery and active Stop; separate direct conversion Worker protocol and owned output',
     samples: [] as Sample[],
     functional: [] as unknown[],
+    nearCapPreflights: [] as unknown[],
   };
   const reportPath = join(output, `${scenario}.json`);
   const persist = async () => writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   await persist();
   try {
+    if (scenario === 'owned-vp8-product-near-cap') {
+      await nearCapFunctional(
+        browser,
+        bundleRoot,
+        output,
+        prior,
+        candidate,
+        server,
+        validateBundleFile,
+        loadApplication,
+        async (value) => {
+          const entry = value as {
+            phase: string;
+            build: 'prior' | 'candidate';
+            input?: { path: string; bytes: number; sha256: string };
+            manifestSha256: string;
+            status?: string;
+          };
+          if (entry.phase === 'decoder-support') {
+            (report.nearCapPreflights as unknown[]).push(value);
+            report.inputs = [entry.input];
+            report.nearCapInputManifestSha256 = entry.manifestSha256;
+          } else {
+            (report.functional as unknown[]).push(value);
+            if (entry.build === 'prior') report.nearCapPriorStatus = entry.status;
+            if (entry.build === 'candidate') report.nearCapCandidateStatus = entry.status;
+          }
+          await persist();
+        }
+      );
+      report.status = 'passed';
+      await persist();
+      return { profile: scenario, status: 'passed', report: `${scenario}.json`, samples: 0 };
+    }
     if (fullVideo) {
       const manifestPath = await validateBundleFile(
         bundleRoot,
