@@ -4,6 +4,10 @@ Status: **PARTIAL, before first v6 codec evaluation**. This records a new
 candidate; it does not replace any failed v1-v5 result or authorize runtime
 removal. The production comparator remains the shipped patched wasm-webp.
 
+Historical freeze retained unchanged below. Its first evaluation has now
+completed and rejected the candidate, 53/54; see
+[the result](501-owned-vp8-v6-result.md). V6 is now exposed regression evidence.
+
 ## Source and hypothesis
 
 Coordinator owns `codex/501-vp8-rate-refinement` in the isolated qualification

@@ -142,13 +142,17 @@ override the four quality/size failures.
 The source-only corrected-v5 freeze has 18 new inputs / 54 conditions and an
 independent source review. Its manifest is
 `c8929d67d57c6df20e2c152c85ac4178b9b4a4c9c7184892b62df130de8faf83`.
-Its first evaluation is now exposed and regression-only. Preserve all outcomes;
-no fresh successor is currently frozen. Correct the remaining precision/rate
-failures against the complete 279-condition known matrix before a new freeze.
+Its first evaluation is now exposed and regression-only. Subsequent input-loss
+UV calibration and flat-UV DC tie reduction passed all 279 known conditions.
+The [v6 candidate freeze](501-owned-vp8-v6-candidate-freeze.md) then evaluated
+54 fresh conditions and passed 53, with one q60 chroma SSIM failure; see
+[the retained result](501-owned-vp8-v6-result.md). V1-v6 are now regression-only
+and no fresh successor is currently frozen. Preserve all outcomes and correct
+the remaining precision failure against the expanded 333-condition known matrix.
 
 Bounded UV coefficient rate/distortion decisions and exact-semantic trial-cost
-factorization are now integrated engineering changes. Their current quality
-failures still require correction before fresh evaluation. Preserve
+factorization are now integrated engineering changes. The remaining quality
+failure still requires correction before fresh evaluation. Preserve
 unfiltered reconstruction, input/settings identity, deterministic output,
 resource ceilings and host-task cancellation. New source requires controlled
 evidence; native Canvas output cannot qualify the owned software route.

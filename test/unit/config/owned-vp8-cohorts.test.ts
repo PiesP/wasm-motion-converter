@@ -324,22 +324,23 @@ describe('owned VP8 prospective cohort isolation', () => {
     }
   });
 
-  it('freezes only the complete corrected-v6 held-out set for fresh acceptance', async () => {
+  it('keeps the complete corrected-v6 set exposed after its first evaluation', async () => {
     for (const cohort of [
       'initial-v1',
       'corrected-v2',
       'corrected-v3',
       'corrected-v4',
       'corrected-v5',
+      'corrected-v6',
     ] as const)
       expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
-    const selected = selectFixtureCohort('held-out', 'corrected-v6');
+    const selected = selectFixtureCohort('held-out', 'corrected-v6', true);
     expect(selected).toEqual(V6_HELDOUT);
-    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+    expect(fixtureSelectionIdentity(selected, 'held-out', true, false)).toMatchObject({
       selectedFixtureIds: V6_HELDOUT.map((item) => item.id),
       expectedConditionCount: 54,
       completeCohort: true,
-      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+      scope: 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE',
     });
     expect(selectFixtureCohort('tuning', 'corrected-v6')).toHaveLength(15);
     const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v6-subset-'));

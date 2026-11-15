@@ -218,13 +218,14 @@ duplicate hold of frame 32. [Photo provenance](501-owned-vp8-v6-photo-PROVENANCE
 binds the pinned original; the manifest binds its bytes and decoded pixels,
 the V8 source, decode filters, generator and every earlier manifest hash.
 
-Only the complete `--cohort corrected-v6 --acceptance --fresh-photo PATH --video
-PATH` set may serve prospective fixed-pixel acceptance. Explicit acceptance
-subsets fail before evidence creation or codec initialization. All v1-v5
-held-out inputs require `--regression`; the same 15 tuning inputs and all
-numeric gates remain unchanged. Source-only preparation establishes no codec,
-browser, Windows, or product qualification. An actual candidate must be frozen
-and reviewed before the first v6 evaluation.
+The complete `--cohort corrected-v6 --acceptance` set served the first frozen
+candidate evaluation: 53/54 conditions passed and the candidate was rejected;
+see [the retained result](501-owned-vp8-v6-result.md). Explicit acceptance
+subsets fail before evidence creation or codec initialization. All v1-v6
+held-out inputs now require `--regression`; the same 15 tuning inputs and all
+numeric gates remain unchanged. No fresh successor is currently frozen.
+Preserve the source-only manifest, generator, originals and original gates.
+Fixed-pixel evidence establishes no browser, Windows, or product qualification.
 
 ## Resources and adoption
 
