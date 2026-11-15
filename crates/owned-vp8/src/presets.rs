@@ -6,6 +6,13 @@ use crate::ac_quant::Deltas;
 
 pub(crate) const QINDEX: [usize; 3] = [40, 22, 8];
 pub(crate) const SMOOTH_QINDEX: usize = 6;
+pub(crate) fn smooth_qindex(quality: u32) -> usize {
+    if quality == 60 {
+        7
+    } else {
+        SMOOTH_QINDEX
+    }
+}
 pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [18, 15, 10];
 pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [32, 27, 15];
 pub(crate) const TEXTURED_QINDEX: [usize; 3] = [32, 28, 14];
