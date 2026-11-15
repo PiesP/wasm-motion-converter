@@ -192,6 +192,13 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
 
 ## Discrepancy inventory
 
+- Retained diagnostic-artifact correction: the private task receipt
+  `native-large-diagnostic/RESULT.md` said its per-class coefficient byte totals
+  sum to the final coefficient partition. Its replay code/log omits the four-byte
+  arithmetic finalizer from those class shares (q60:83494 versus83498 total).
+  `native-large-v3-diagnostic/RESULT.md` records this correction and accounts for
+  finalization separately. The original frozen artifact remains unchanged;
+  this attribution wording does not change its emitted bytes or quality result.
 - Fixed after final M2 review: `crates/owned-vp8/README.md` described the ignored
   independent-decoder proof as filtering-disabled only, although
   `src/textured.rs` also tests enabled filtering, including neutral/colored
