@@ -198,11 +198,33 @@ The existing 15 tuning inputs and all numerical quality, size, performance,
 resource and delivery gates remain unchanged. Its first frozen candidate
 evaluation passed 50/54 conditions and was rejected; see
 [the retained result](501-owned-vp8-v5-result.md). All v1-v5 held-out inputs are
-now exposed regression evidence and require `--regression`; no fresh successor
-is currently frozen. Use `--cohort corrected-v5 --regression --fresh-photo PATH
---video PATH` for the preserved source identities. Preserve all original
+now exposed regression evidence and require `--regression`; at that result no
+fresh successor had been frozen. Use
+`--cohort corrected-v5 --regression --fresh-photo PATH --video PATH` for the
+preserved source identities. Preserve all original
 manifests, generators, inputs, thresholds and outcomes. This source-only freeze
 and later regression use establish no browser, Windows or product qualification.
+
+## Prospective corrected-v6 source-only freeze
+
+`501-owned-vp8-v6-fixtures.json` freezes 18 new held-out inputs / 54 conditions
+at q60/75/85 before any corrected-v6 codec output. The source-only generator
+`scripts/test/owned-vp8-v6-fixtures.ts` provides new seeded/formula grayscale,
+gradient, chroma-edge, colored-text and noise pixels; three tiny/odd patterns
+(1 × 9, 3 × 7, 9 × 1), separate one-row and one-column controls, a near-cap
+4080 × 2467 frame, opaque BGRA and RGBX layouts, a new CC0 photograph and
+nonoverlapping detail crop, unobserved V8 frames 32 and 181, and an exact
+duplicate hold of frame 32. [Photo provenance](501-owned-vp8-v6-photo-PROVENANCE.md)
+binds the pinned original; the manifest binds its bytes and decoded pixels,
+the V8 source, decode filters, generator and every earlier manifest hash.
+
+Only the complete `--cohort corrected-v6 --acceptance --fresh-photo PATH --video
+PATH` set may serve prospective fixed-pixel acceptance. Explicit acceptance
+subsets fail before evidence creation or codec initialization. All v1-v5
+held-out inputs require `--regression`; the same 15 tuning inputs and all
+numeric gates remain unchanged. Source-only preparation establishes no codec,
+browser, Windows, or product qualification. An actual candidate must be frozen
+and reviewed before the first v6 evaluation.
 
 ## Resources and adoption
 

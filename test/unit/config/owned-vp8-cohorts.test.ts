@@ -34,6 +34,12 @@ import {
   V5_PHOTO_REGIONS,
   generateV5Fixture,
 } from '../../../scripts/test/owned-vp8-v5-fixtures';
+import {
+  V6_HELDOUT,
+  V6_PHOTO,
+  V6_PHOTO_REGIONS,
+  generateV6Fixture,
+} from '../../../scripts/test/owned-vp8-v6-fixtures';
 
 describe('owned VP8 prospective cohort isolation', () => {
   const root = resolve(import.meta.dirname, '../../..');
@@ -316,5 +322,129 @@ describe('owned VP8 prospective cohort isolation', () => {
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
+  });
+
+  it('freezes only the complete corrected-v6 held-out set for fresh acceptance', async () => {
+    for (const cohort of [
+      'initial-v1',
+      'corrected-v2',
+      'corrected-v3',
+      'corrected-v4',
+      'corrected-v5',
+    ] as const)
+      expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
+    const selected = selectFixtureCohort('held-out', 'corrected-v6');
+    expect(selected).toEqual(V6_HELDOUT);
+    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+      selectedFixtureIds: V6_HELDOUT.map((item) => item.id),
+      expectedConditionCount: 54,
+      completeCohort: true,
+      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+    });
+    expect(selectFixtureCohort('tuning', 'corrected-v6')).toHaveLength(15);
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v6-subset-'));
+    const output = join(parent, 'evidence');
+    try {
+      await expect(
+        compare({
+          output,
+          split: 'held-out',
+          cohort: 'corrected-v6',
+          fixtureIds: ['fresh6-gray'],
+          sources: {},
+          candidateRoot: join(parent, 'missing-candidate'),
+        })
+      ).rejects.toThrow('diagnostic only');
+      expect(existsSync(output)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+    expect(selectFixtureCohort('held-out', 'corrected-v6', true, ['fresh6-gray'])).toHaveLength(1);
+  });
+
+  it('binds corrected-v6 identities, geometry, and unique source-only pixels', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v6-fixtures.json'), 'utf8')
+    ) as {
+      cohort: string;
+      generatorSha256: string;
+      priorManifestSha256: Record<string, string>;
+      fixtures: Array<{
+        id: string;
+        source: string;
+        width: number;
+        height: number;
+        layout: string;
+        stride: number;
+        sha256: string;
+        repeatOf?: string;
+        qualities: number[];
+      }>;
+    };
+    expect(manifest.cohort).toBe('corrected-v6');
+    expect(manifest.generatorSha256).toBe(sha256('scripts/test/owned-vp8-v6-fixtures.ts'));
+    expect(manifest.priorManifestSha256).toEqual({
+      initialV1: sha256('docs/experiments/501-owned-vp8-v2-fixtures.json'),
+      correctedV2: sha256('docs/experiments/501-owned-vp8-v2-correction-fixtures.json'),
+      correctedV3: sha256('docs/experiments/501-owned-vp8-v3-fixtures.json'),
+      correctedV4: sha256('docs/experiments/501-owned-vp8-v4-fixtures.json'),
+      correctedV5: sha256('docs/experiments/501-owned-vp8-v5-fixtures.json'),
+    });
+    const prior = ['v2', 'v2-correction', 'v3', 'v4', 'v5'].flatMap((name) => {
+      const file = `docs/experiments/501-owned-vp8-${name}-fixtures.json`;
+      return (
+        JSON.parse(readFileSync(resolve(root, file), 'utf8')) as {
+          fixtures: Array<{ id: string; sha256: string }>;
+        }
+      ).fixtures;
+    });
+    const priorIds = new Set(prior.map((item) => item.id));
+    const priorHashes = new Set(prior.map((item) => item.sha256));
+    expect(manifest.fixtures).toHaveLength(18);
+    expect(new Set(manifest.fixtures.map((item) => item.id)).size).toBe(18);
+    expect(
+      manifest.fixtures.every(
+        (item) =>
+          !priorIds.has(item.id) &&
+          item.qualities.join(',') === '60,75,85' &&
+          item.stride === item.width * 4
+      )
+    ).toBe(true);
+    expect(manifest.fixtures.every((item) => item.width * item.height <= 10_066_329)).toBe(true);
+    expect(manifest.fixtures.find((item) => item.id === 'fresh6-large-admitted')).toMatchObject({
+      width: 4080,
+      height: 2467,
+    });
+    expect(4080 * 2467).toBe(10_065_360);
+    expect(V6_PHOTO_REGIONS.primary.x + V6_PHOTO_REGIONS.primary.width).toBeLessThan(
+      V6_PHOTO_REGIONS.detail.x
+    );
+    expect(V6_PHOTO.sha256).not.toBe(V5_PHOTO.sha256);
+    const groups = Map.groupBy(manifest.fixtures, (item) => item.sha256);
+    expect(
+      [...groups.values()]
+        .filter((group) => group.length > 1)
+        .map((group) => group.map((item) => item.id))
+    ).toEqual([['fresh6-video-32', 'fresh6-duplicate-hold']]);
+    expect(manifest.fixtures.every((item) => !priorHashes.has(item.sha256))).toBe(true);
+    const oldVideoFrames = new Set(
+      prior.filter((item) => 'frame' in item).map((item) => (item as { frame?: number }).frame)
+    );
+    expect(
+      manifest.fixtures
+        .filter((item) => item.source === 'video')
+        .map((item) => V6_HELDOUT.find((spec) => spec.id === item.id)?.frame)
+    ).toEqual([32, 181, 32]);
+    expect(oldVideoFrames.has(32) || oldVideoFrames.has(181)).toBe(false);
+    for (const item of manifest.fixtures.filter((entry) => entry.source === 'generated')) {
+      const pixels = generateV6Fixture(item.id).pixels;
+      expect(createHash('sha256').update(pixels).digest('hex')).toBe(item.sha256);
+      if (item.layout === 'BGRA')
+        expect(pixels.every((value, index) => index % 4 !== 3 || value === 255)).toBe(true);
+      if (item.layout === 'RGBX')
+        expect(new Set(pixels.filter((_value, index) => index % 4 === 3)).size).toBeGreaterThan(1);
+    }
+    expect(() => generateV6Fixture('fresh6-photo')).toThrow('Missing fresh photo source');
+    expect(() => generateV6Fixture('fresh6-video-32')).toThrow('Missing video source');
   });
 });
