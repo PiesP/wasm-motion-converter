@@ -30,6 +30,7 @@
       "gif-owned-fallback-recovery.json",
       "owned-vp8-native.json",
       "owned-vp8-product.json",
+      "owned-vp8-owner-retention.json",
       "owned-vp8-product-ba.json",
       "owned-vp8-product-near-cap.json",
       "owned-vp8-product-large-admitted.json",
@@ -310,6 +311,24 @@
         "build_commands": [["vp", "run", "build:ci"]],
         "unused_full_campaign_assets": ["validation/windows/public-target.json"]
       },
+      "owned-vp8-owner-retention": {
+        "selector": "owned-vp8-owner-retention.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "public/test-video-ci-high-motion-120fps.mp4",
+          "validation/windows/inputs/owned-vp8-owner-retention.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
       "owned-vp8-product-ba": {
         "selector": "owned-vp8-product-ba.json",
         "browsers": ["msedge", "chrome"],
@@ -548,6 +567,7 @@
     "validation/windows/owned-vp8-inputs",
     "validation/windows/helpers/owned-vp8-probe.ts",
     "validation/windows/helpers/owned-vp8-product.ts",
+    "validation/windows/helpers/owned-vp8-owner-retention.ts",
     "validation/windows/vp8-timing-probe.ts",
     "validation/windows/helpers/vp8-windows-environment.ts",
     "validation/windows/helpers/owned-demux-product.ts",

@@ -41,7 +41,10 @@ import { armGifNativeInitProbe } from './helpers/gif-native-init-probe.ts';
 import { exerciseOwnedDemuxServiceMeasurement } from './helpers/owned-demux-measurement.ts';
 import { exerciseOwnedDemuxProduct } from './helpers/owned-demux-product.ts';
 import { runOwnedVp8NativeProbe } from './helpers/owned-vp8-probe.ts';
-import { exerciseOwnedVp8Product } from './helpers/owned-vp8-product.ts';
+import {
+  exerciseOwnedVp8OwnerRetention,
+  exerciseOwnedVp8Product,
+} from './helpers/owned-vp8-product.ts';
 import { withVp8WindowsEnvironment } from './helpers/vp8-windows-environment.ts';
 import {
   assertUsefulOutput,
@@ -3873,6 +3876,46 @@ export async function run({
       return scenario.includes('-v8')
         ? await withVp8WindowsEnvironment(browser, output, scenario, exercise)
         : await exercise();
+    } finally {
+      await closeServer(started.server);
+    }
+  }
+  const ownerRetentionSelector = resolve(
+    bundleRoot,
+    'validation/windows/inputs/owned-vp8-owner-retention.json'
+  );
+  let ownerRetentionSelectorText: string | undefined;
+  try {
+    ownerRetentionSelectorText = await readFile(ownerRetentionSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (ownerRetentionSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(ownerRetentionSelectorText), {
+      scenario: 'owned-vp8-owner-retention',
+    });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter(
+        (name) => name.endsWith('.json') && name !== 'owned-vp8-owner-retention.json'
+      ),
+      []
+    );
+    const candidate = await readBuild(bundleRoot, 'dist', validateBundleFile, {
+      verifyInventory: true,
+      exactInventory: true,
+    });
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseOwnedVp8OwnerRetention({
+        browser,
+        bundleRoot,
+        output,
+        candidate,
+        server: started,
+        validateBundleFile,
+        loadApplication,
+      });
     } finally {
       await closeServer(started.server);
     }

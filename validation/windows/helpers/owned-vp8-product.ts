@@ -11,6 +11,12 @@ import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/
 
 import { installMotionObserver } from '../motion-signature.ts';
 import { installVp8TimingProbe } from '../vp8-timing-probe.ts';
+import {
+  collectGarbageCheckpoint,
+  installRetainedWorkerProbe,
+  installWorkerLifecycleObserver,
+  verifyOwnerRetention,
+} from './owned-vp8-owner-retention.ts';
 
 type Build = {
   relativePath: string;
@@ -964,6 +970,15 @@ function disableCanvasWebp() {
 
 export function instrumentOwnedInstance() {
   const NativeInstance = WebAssembly.Instance;
+  const weakRecords: Array<{
+    id: number;
+    instance: WeakRef<WebAssembly.Instance>;
+    wrapper: WeakRef<WebAssembly.Instance>;
+    memory: WeakRef<WebAssembly.Memory>;
+  }> = [];
+  const beginCounts: number[] = [];
+  let controlHold: { instance: WebAssembly.Instance; memory: WebAssembly.Memory } | null = null;
+  let retainNextForControl = false;
   const state = {
     instances: 0,
     stepCalls: 0,
@@ -980,6 +995,34 @@ export function instrumentOwnedInstance() {
       peakCapacityBytes: number;
       retainedCapacityBytes: number | null;
     }>,
+    retainNextForControl() {
+      if (controlHold || retainNextForControl) throw new Error('Negative control already armed');
+      retainNextForControl = true;
+    },
+    releaseControl() {
+      controlHold = null;
+    },
+    inventory() {
+      return weakRecords.map((entry) => {
+        // Each dereference is consumed in this expression, never across a GC turn.
+        const instanceLive = entry.instance.deref() !== undefined;
+        const wrapperLive = entry.wrapper.deref() !== undefined;
+        const memoryLive = entry.memory.deref() !== undefined;
+        const record = state.records.find((item) => item.id === entry.id)!;
+        return {
+          id: entry.id,
+          instanceLive,
+          wrapperLive,
+          memoryLive,
+          successfulBeginCalls: beginCounts[entry.id] ?? 0,
+          stepCalls: record.stepCalls,
+          retireCalls: record.retireCalls,
+          retireStatus: record.retireStatus,
+          peakCapacityBytes: record.peakCapacityBytes,
+          retirementTimeCapacityBytes: record.retainedCapacityBytes,
+        };
+      });
+    },
   };
   Reflect.set(globalThis, '__wmcVp8AbiProbe', state);
   WebAssembly.Instance = new Proxy(NativeInstance, {
@@ -998,6 +1041,10 @@ export function instrumentOwnedInstance() {
         retainedCapacityBytes: null as number | null,
       };
       state.records.push(record);
+      beginCounts[record.id] = 0;
+      const memory = exported.memory as WebAssembly.Memory | undefined;
+      if (!memory || !(memory.buffer instanceof ArrayBuffer))
+        throw new Error('Owned ABI probe has no exported Memory');
       // WASM export properties are nonconfigurable and nonwritable; a Proxy
       // cannot substitute one of their values. Copy the namespace instead.
       const wrapped = Object.fromEntries(
@@ -1008,7 +1055,10 @@ export function instrumentOwnedInstance() {
                 const status = Reflect.apply(value, exported, parameters) as number;
                 state.beginStatusCounts[String(status)] =
                   (state.beginStatusCounts[String(status)] ?? 0) + 1;
-                if (status === 10) state.successfulBeginCalls++;
+                if (status === 10) {
+                  state.successfulBeginCalls++;
+                  beginCounts[record.id] = (beginCounts[record.id] ?? 0) + 1;
+                }
                 return status;
               }
             : key === 'vp8_v2_step' && typeof value === 'function'
@@ -1042,11 +1092,22 @@ export function instrumentOwnedInstance() {
                 : value,
         ])
       );
-      return new Proxy(instance, {
+      const wrapper = new Proxy(instance, {
         get(source, key) {
           return key === 'exports' ? wrapped : Reflect.get(source, key);
         },
       });
+      weakRecords.push({
+        id: record.id,
+        instance: new WeakRef(instance),
+        wrapper: new WeakRef(wrapper),
+        memory: new WeakRef(memory),
+      });
+      if (retainNextForControl) {
+        controlHold = { instance, memory };
+        retainNextForControl = false;
+      }
+      return wrapper;
     },
   });
 }
@@ -1246,7 +1307,8 @@ async function createContext(
   main: boolean,
   workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }>,
   timing = false,
-  legacyLoaderPatch?: { path: string; bytes: Uint8Array }
+  legacyLoaderPatch?: { path: string; bytes: Uint8Array },
+  ownerRetentionWorker = false
 ): Promise<BrowserContext> {
   const context = await browser.newContext({
     locale: 'en-US',
@@ -1256,6 +1318,7 @@ async function createContext(
   });
   await context.addInitScript(disableCanvasWebp);
   if (timing) await context.addInitScript(installVp8TimingProbe);
+  if (ownerRetentionWorker) await context.addInitScript(installWorkerLifecycleObserver);
   if (functional) {
     if (main)
       await context.addInitScript(() => {
@@ -1291,7 +1354,8 @@ async function createContext(
     assert.equal(digest(original), file.sha256, 'Served Worker differs from built inventory');
     const patch = Buffer.from(
       "if(typeof OffscreenCanvas!=='undefined')Object.defineProperty(OffscreenCanvas.prototype,'convertToBlob',{configurable:true,value:undefined});\n" +
-        (timing ? `(${installVp8TimingProbe.toString()})();\n` : '')
+        (timing ? `(${installVp8TimingProbe.toString()})();\n` : '') +
+        (ownerRetentionWorker ? `(${installRetainedWorkerProbe.toString()})();\n` : '')
     );
     const modified = Buffer.concat([patch, original]);
     workerPatches.push({ path, originalSha256: file.sha256, patchedSha256: digest(modified) });
@@ -2573,4 +2637,539 @@ export async function exerciseOwnedVp8Product({
     await persist();
     throw error;
   }
+}
+
+/** Separate functional reachability receipt. No timing cohort is modified. */
+export async function exerciseOwnedVp8OwnerRetention({
+  browser,
+  bundleRoot,
+  output,
+  candidate,
+  server,
+  validateBundleFile,
+  loadApplication,
+}: {
+  browser: Browser;
+  bundleRoot: string;
+  output: string;
+  candidate: Build;
+  server: Server;
+  validateBundleFile: (root: string, path: string) => Promise<string>;
+  loadApplication: (page: Page, url: string) => Promise<unknown>;
+}) {
+  await mkdir(output, { recursive: true });
+  const scenario = 'owned-vp8-owner-retention';
+  const ownedAsset = candidate.state.files.filter((entry) =>
+    /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
+  );
+  assert.equal(ownedAsset.length, 1, 'Candidate owned WASM asset is not unique');
+  await validateBundleFile(bundleRoot, `${candidate.relativePath}/${ownedAsset[0]!.path}`);
+  const fixture = FIXTURES[0]!;
+  const fixturePath = await validateBundleFile(bundleRoot, fixture.path);
+  const fixtureDigest = digest(await readFile(fixturePath));
+  const stopFixturePath = await validateBundleFile(bundleRoot, STOP_FIXTURE);
+  const report: Record<string, unknown> = {
+    schemaVersion: 1,
+    scenario,
+    status: 'UNVERIFIED',
+    scope: 'validation-only post-owner reachability; no physical, RSS, GPU or timing claim',
+    candidate: {
+      sourceSha: candidate.state.sourceSha,
+      treeSha: candidate.state.treeSha,
+      coreSha: candidate.state.coreSha,
+      manifestSha256: candidate.manifestSha256,
+      ownedAsset: ownedAsset[0],
+    },
+    fixture: {
+      id: fixture.id,
+      sha256: fixtureDigest,
+      quality: 'medium',
+      scale: 1,
+      smartFrameSkip: 'off',
+    },
+    browserVersion: browser.version(),
+    guestProcessId: process.pid,
+    invocationId: randomUUID(),
+    contextIds: { main: randomUUID(), negativeControl: randomUUID(), worker: randomUUID() },
+    probeSha256: digest(
+      Buffer.from(
+        [
+          instrumentOwnedInstance.toString(),
+          installWorkerLifecycleObserver.toString(),
+          installRetainedWorkerProbe.toString(),
+          collectGarbageCheckpoint.toString(),
+        ].join('\n')
+      )
+    ),
+    ownerReleaseBinding: {
+      main: 'src/services/webp-encoder-service.ts:208-211,273-280; src/services/owned-vp8-core.ts:466-485,624-649',
+      worker:
+        'src/services/conversion-worker/main-thread-proxy.ts:112-123,136-143,188-194,253-270,305-314',
+      observationLimit:
+        'Private broker.release is source-bound, not independently observed by this probe',
+    },
+    compiledModuleCache:
+      'allowed immutable Module; excluded from mutable Instance and Memory capacity',
+    main: [] as unknown[],
+    worker: [] as unknown[],
+    negativeControl: null,
+    errors: [] as string[],
+  };
+  const reportPath = join(output, `${scenario}.json`);
+  const persist = () => writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  await persist();
+  const mainAttempts = report.main as Array<{
+    kind: string;
+    createdCount: number;
+    checkpoint: Awaited<ReturnType<typeof collectGarbageCheckpoint>>;
+    ownerReleased: boolean;
+    outputBytes?: number;
+  }>;
+  const workerAttempts = report.worker as Array<{
+    kind: string;
+    id: number;
+    requestId: string | null;
+    terminalType: string | null;
+    terminatedAtMs: number | null;
+    closeAtMs: number | null;
+    closeObserved: boolean;
+    closeCapability: boolean;
+    openAfterTimeout: boolean | null;
+    snapshot: {
+      requestId: string | null;
+      createdCount: number;
+      records: Array<{
+        id: number;
+        successfulBeginCalls: number;
+        stepCalls: number;
+        retireCalls: number;
+        retireStatus: number | null;
+        peakCapacityBytes: number;
+        retirementTimeCapacityBytes: number | null;
+      }>;
+    } | null;
+    preCloseMutableCapacityBytes: number | null;
+    postCloseReachableCapacityBytes: number | null;
+    outputBytes?: number;
+  }>;
+  try {
+    const mainContext = await createContext(browser, candidate, true, true, []);
+    try {
+      const page = await mainContext.newPage();
+      try {
+        await loadApplication(page, server.url);
+        const documentIdentity = await page.evaluate(() => performance.timeOrigin);
+        await configurePage(page, fixturePath, fixture, 'medium');
+        const mainCheckpoint = async (kind: string, outputBytes?: number) => {
+          const createdCount = await page.evaluate(() => {
+            const probe = Reflect.get(globalThis, '__wmcVp8AbiProbe') as { instances: number };
+            return probe.instances;
+          });
+          const ownerReleased = await page.evaluate(
+            (origin) =>
+              performance.timeOrigin === origin &&
+              !document.querySelector('[data-testid="stop-conversion-button"]')?.getClientRects()
+                .length,
+            documentIdentity
+          );
+          const checkpoint = await collectGarbageCheckpoint(page);
+          mainAttempts.push({
+            kind,
+            createdCount,
+            checkpoint,
+            ownerReleased,
+            ...(outputBytes !== undefined ? { outputBytes } : {}),
+          });
+          await persist();
+        };
+        for (let index = 0; index < 3; index++) {
+          const sample = await measureJob(
+            page,
+            fixture,
+            fixtureDigest,
+            'medium',
+            'candidate',
+            index === 0 ? 'first-in-document' : 'same-document-warm',
+            output,
+            `${scenario}-main-complete-${index + 1}`
+          );
+          await mainCheckpoint(`complete-${index + 1}`, sample.saved.bytes);
+        }
+        await configurePage(
+          page,
+          stopFixturePath,
+          {
+            id: 'active-stop',
+            path: STOP_FIXTURE,
+            mime: 'video/mp4',
+            width: 320,
+            height: 180,
+            durationMs: 3_000,
+          },
+          'high'
+        );
+        await page.evaluate(() =>
+          (Reflect.get(globalThis, '__wmcVp8ProductObserver') as { reset: () => void }).reset()
+        );
+        const beforeStopSteps = await page.evaluate(
+          () => (Reflect.get(globalThis, '__wmcVp8AbiProbe') as { stepCalls: number }).stepCalls
+        );
+        await page.locator('[data-testid="convert-button"]').click();
+        const stopPrompt = page.locator('[data-testid="modal-confirm-button"]');
+        if (await stopPrompt.isVisible()) await stopPrompt.click();
+        await page.waitForFunction(
+          (before) =>
+            (Reflect.get(globalThis, '__wmcVp8AbiProbe') as { stepCalls: number }).stepCalls >
+            before,
+          beforeStopSteps,
+          { timeout: 30_000 }
+        );
+        await page.locator('[data-testid="stop-conversion-button"]').click();
+        await page.waitForFunction(
+          () => {
+            const button = document.querySelector<HTMLButtonElement>(
+              '[data-testid="convert-button"]'
+            );
+            return (
+              !!button &&
+              !button.disabled &&
+              !document.querySelector('[data-testid="stop-conversion-button"]')
+            );
+          },
+          undefined,
+          { timeout: 10_000 }
+        );
+        const mainStopOutcome = await page.evaluate(() => {
+          const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
+            stopMs: number | null;
+            idleMs: number | null;
+            publications: unknown[];
+          };
+          return {
+            stopMs: observed.stopMs,
+            idleMs: observed.idleMs,
+            publications: observed.publications.length,
+            resultVisible: !!document
+              .querySelector('[data-testid="result-section"]')
+              ?.getClientRects().length,
+          };
+        });
+        assert(
+          mainStopOutcome.stopMs !== null &&
+            mainStopOutcome.idleMs !== null &&
+            mainStopOutcome.idleMs >= mainStopOutcome.stopMs &&
+            mainStopOutcome.idleMs - mainStopOutcome.stopMs <= 500 &&
+            mainStopOutcome.publications === 0 &&
+            !mainStopOutcome.resultVisible,
+          'Main Stop did not reach the existing idle/no-publication contract'
+        );
+        report.mainStopOutcome = mainStopOutcome;
+        await mainCheckpoint('stop');
+        await configurePage(page, fixturePath, fixture, 'medium');
+        const afterStop = await measureJob(
+          page,
+          fixture,
+          fixtureDigest,
+          'medium',
+          'candidate',
+          'same-document-warm',
+          output,
+          `${scenario}-main-after-stop`
+        );
+        await mainCheckpoint('after-stop', afterStop.saved.bytes);
+        await page.evaluate(() => {
+          const probe = Reflect.get(globalThis, '__wmcVp8AbiProbe') as {
+            injectNextStepTrap: boolean;
+          };
+          probe.injectNextStepTrap = true;
+        });
+        await page.locator('[data-testid="convert-button"]').click();
+        const trapPrompt = page.locator('[data-testid="modal-confirm-button"]');
+        if (await trapPrompt.isVisible()) await trapPrompt.click();
+        await page
+          .locator('[data-testid="error-display"]')
+          .waitFor({ state: 'visible', timeout: CONVERSION_TIMEOUT_MS });
+        await page
+          .locator('[data-testid="convert-button"]')
+          .waitFor({ state: 'visible', timeout: 10_000 });
+        await mainCheckpoint('post-step-trap');
+        const afterTrap = await measureJob(
+          page,
+          fixture,
+          fixtureDigest,
+          'medium',
+          'candidate',
+          'same-document-warm',
+          output,
+          `${scenario}-main-after-trap`,
+          'retry'
+        );
+        await mainCheckpoint('after-trap', afterTrap.saved.bytes);
+      } finally {
+        await page.close();
+      }
+    } finally {
+      await mainContext.close();
+    }
+
+    const controlContext = await createContext(browser, candidate, true, true, []);
+    try {
+      const page = await controlContext.newPage();
+      try {
+        await loadApplication(page, server.url);
+        await configurePage(page, fixturePath, fixture, 'medium');
+        await page.evaluate(() =>
+          (
+            Reflect.get(globalThis, '__wmcVp8AbiProbe') as { retainNextForControl: () => void }
+          ).retainNextForControl()
+        );
+        await measureJob(
+          page,
+          fixture,
+          fixtureDigest,
+          'medium',
+          'candidate',
+          'first-in-document',
+          output,
+          `${scenario}-negative-control`
+        );
+        const held = await collectGarbageCheckpoint(page);
+        await page.evaluate(() =>
+          (
+            Reflect.get(globalThis, '__wmcVp8AbiProbe') as { releaseControl: () => void }
+          ).releaseControl()
+        );
+        await page.evaluate(() => new Promise<void>((resolve) => setTimeout(resolve, 100)));
+        const released = await collectGarbageCheckpoint(page);
+        report.negativeControl = { held, released };
+        await persist();
+      } finally {
+        await page.close();
+      }
+    } finally {
+      await controlContext.close();
+    }
+
+    const workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }> =
+      [];
+    const workerContext = await createContext(
+      browser,
+      candidate,
+      true,
+      false,
+      workerPatches,
+      false,
+      undefined,
+      true
+    );
+    try {
+      const page = await workerContext.newPage();
+      const browserWorkers: Array<{
+        id: number;
+        closeAtMs: number | null;
+        worker: WeakRef<ReturnType<Page['workers']>[number]>;
+      }> = [];
+      page.on('worker', (worker) => {
+        if (!/^\/assets\/worker-[\w-]+\.js$/.test(new URL(worker.url()).pathname)) return;
+        const entry = {
+          id: browserWorkers.length + 1,
+          closeAtMs: null as number | null,
+          worker: new WeakRef(worker),
+        };
+        browserWorkers.push(entry);
+        worker.on('close', () => {
+          entry.closeAtMs = Date.now();
+        });
+      });
+      const lifecycle = () =>
+        page.evaluate(() => {
+          const probe = Reflect.get(globalThis, '__wmcVp8WorkerLifecycle') as {
+            snapshot: () => Array<{
+              id: number;
+              requestId: string | null;
+              terminalType: string | null;
+              terminalSnapshot: unknown;
+              terminatedAtMs: number | null;
+              invalidSnapshot: boolean;
+            }>;
+          };
+          return { timeOrigin: performance.timeOrigin, records: probe.snapshot() };
+        });
+      const recordWorker = async (kind: string, outputBytes?: number, stopSnapshot?: unknown) => {
+        const current = await lifecycle();
+        const record = current.records.at(-1);
+        if (!record) throw new Error('Product Worker creation was not observed');
+        const matching = browserWorkers.find((entry) => entry.id === record.id);
+        if (matching && record.terminatedAtMs !== null) {
+          const deadline = Date.now() + 5_000;
+          while (matching.closeAtMs === null && Date.now() < deadline)
+            await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        }
+        const openAfterTimeout = (() => {
+          if (!matching || matching.closeAtMs !== null) return null;
+          const target = matching.worker.deref();
+          return target ? page.workers().includes(target) : null;
+        })();
+        const snapshot = (stopSnapshot ??
+          record.terminalSnapshot) as (typeof workerAttempts)[number]['snapshot'];
+        workerAttempts.push({
+          kind,
+          id: record.id,
+          requestId: record.requestId,
+          terminalType: record.terminalType,
+          terminatedAtMs:
+            record.terminatedAtMs === null ? null : current.timeOrigin + record.terminatedAtMs,
+          closeAtMs: matching?.closeAtMs ?? null,
+          closeObserved: matching?.closeAtMs !== null && matching?.closeAtMs !== undefined,
+          closeCapability: !!matching,
+          openAfterTimeout,
+          snapshot,
+          preCloseMutableCapacityBytes:
+            snapshot?.records.reduce(
+              (sum, entry) => sum + (entry.retirementTimeCapacityBytes ?? entry.peakCapacityBytes),
+              0
+            ) ?? null,
+          postCloseReachableCapacityBytes: matching?.closeAtMs === null || !matching ? null : 0,
+          ...(outputBytes !== undefined ? { outputBytes } : {}),
+        });
+        await persist();
+      };
+      try {
+        await loadApplication(page, server.url);
+        await configurePage(page, fixturePath, fixture, 'medium');
+        for (let index = 0; index < 3; index++) {
+          const sample = await measureJob(
+            page,
+            fixture,
+            fixtureDigest,
+            'medium',
+            'candidate',
+            index === 0 ? 'first-in-document' : 'same-document-warm',
+            output,
+            `${scenario}-worker-complete-${index + 1}`
+          );
+          await recordWorker(`complete-${index + 1}`, sample.saved.bytes);
+        }
+        await configurePage(
+          page,
+          stopFixturePath,
+          {
+            id: 'active-stop',
+            path: STOP_FIXTURE,
+            mime: 'video/mp4',
+            width: 320,
+            height: 180,
+            durationMs: 3_000,
+          },
+          'high'
+        );
+        await page.evaluate(() =>
+          (Reflect.get(globalThis, '__wmcVp8ProductObserver') as { reset: () => void }).reset()
+        );
+        const workerCreated = page.waitForEvent('worker', { timeout: 30_000 });
+        await page.locator('[data-testid="convert-button"]').click();
+        const prompt = page.locator('[data-testid="modal-confirm-button"]');
+        if (await prompt.isVisible()) await prompt.click();
+        let activeWorker: Awaited<typeof workerCreated> | undefined = await workerCreated;
+        let stopSnapshot: unknown = null;
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline) {
+          try {
+            stopSnapshot = await activeWorker.evaluate(() => {
+              const probe = Reflect.get(globalThis, '__wmcVp8RetainedWorkerProbe') as
+                | { snapshot: () => { records: Array<{ stepCalls: number }> } }
+                | undefined;
+              return probe?.snapshot() ?? null;
+            });
+          } catch {
+            break;
+          }
+          if (
+            (stopSnapshot as { records?: Array<{ stepCalls: number }> } | null)?.records?.some(
+              (r) => r.stepCalls > 0
+            )
+          )
+            break;
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        }
+        activeWorker = undefined;
+        await page.locator('[data-testid="stop-conversion-button"]').click({ timeout: 10_000 });
+        await page.waitForFunction(
+          () => {
+            const button = document.querySelector<HTMLButtonElement>(
+              '[data-testid="convert-button"]'
+            );
+            return (
+              !!button &&
+              !button.disabled &&
+              !document.querySelector('[data-testid="stop-conversion-button"]')
+            );
+          },
+          undefined,
+          { timeout: 10_000 }
+        );
+        const workerStopOutcome = await page.evaluate(() => {
+          const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
+            stopMs: number | null;
+            idleMs: number | null;
+            publications: unknown[];
+          };
+          return {
+            stopMs: observed.stopMs,
+            idleMs: observed.idleMs,
+            publications: observed.publications.length,
+            resultVisible: !!document
+              .querySelector('[data-testid="result-section"]')
+              ?.getClientRects().length,
+          };
+        });
+        assert(
+          workerStopOutcome.stopMs !== null &&
+            workerStopOutcome.idleMs !== null &&
+            workerStopOutcome.idleMs >= workerStopOutcome.stopMs &&
+            workerStopOutcome.idleMs - workerStopOutcome.stopMs <= 500 &&
+            workerStopOutcome.publications === 0 &&
+            !workerStopOutcome.resultVisible,
+          'Worker Stop did not reach the existing idle/no-publication contract'
+        );
+        report.workerStopOutcome = workerStopOutcome;
+        await recordWorker('stop', undefined, stopSnapshot);
+        await configurePage(page, fixturePath, fixture, 'medium');
+        const recovery = await measureJob(
+          page,
+          fixture,
+          fixtureDigest,
+          'medium',
+          'candidate',
+          'same-document-warm',
+          output,
+          `${scenario}-worker-after-stop`
+        );
+        await recordWorker('after-stop', recovery.saved.bytes);
+        report.workerPatches = workerPatches;
+      } finally {
+        await page.close();
+      }
+    } finally {
+      await workerContext.close();
+    }
+    const decision = verifyOwnerRetention({
+      moduleCacheExcluded: true,
+      negativeControl: report.negativeControl as {
+        held: Awaited<ReturnType<typeof collectGarbageCheckpoint>>;
+        released: Awaited<ReturnType<typeof collectGarbageCheckpoint>>;
+      },
+      main: mainAttempts,
+      worker: workerAttempts,
+    });
+    report.status = decision.status;
+    report.reasons = decision.reasons;
+  } catch (error) {
+    (report.errors as string[]).push(failure(error));
+    report.status = 'UNVERIFIED';
+  }
+  await persist();
+  if (report.status !== 'PASS')
+    throw new Error(`Owner-retention reachability gate ${report.status}; see ${scenario}.json`);
+  return { profile: scenario, status: report.status, report: `${scenario}.json` };
 }
