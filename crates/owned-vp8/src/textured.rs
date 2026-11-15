@@ -149,6 +149,66 @@ fn code_predicted_block(
     (coefficients, reconstructed)
 }
 
+fn reconstructed_patch(coefficients: &[i16; 16], predictor: &[u8; 16], steps: Steps) -> [u8; 16] {
+    let inverse = transform::inverse(&ac_quant::dequantize_block(coefficients, steps));
+    std::array::from_fn(|i| clamp(i32::from(predictor[i]) + i32::from(inverse[i])))
+}
+
+fn patch_error(source: &[u8], stride: usize, x: usize, y: usize, patch: &[u8; 16]) -> u64 {
+    let mut distortion = 0u64;
+    for row in 0..4 {
+        for col in 0..4 {
+            let diff =
+                i32::from(source[(y + row) * stride + x + col]) - i32::from(patch[row * 4 + col]);
+            distortion += (diff * diff) as u64;
+        }
+    }
+    distortion
+}
+
+#[allow(clippy::too_many_arguments)]
+fn optimize_uv_block(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    predictor: &[u8; 16],
+    steps: Steps,
+    context: usize,
+    lambda: u64,
+    baseline: ([i16; 16], [u8; 16]),
+) -> ([i16; 16], [u8; 16]) {
+    let Some(last_ac) = (1..16)
+        .rev()
+        .find(|&position| baseline.0[residual::SCAN[position]] != 0)
+    else {
+        return baseline;
+    };
+    let index = residual::SCAN[last_ac];
+    if baseline.0[index].unsigned_abs() != 1 {
+        return baseline;
+    }
+    let mut alternative = baseline.0;
+    alternative[index] = 0;
+    let mut baseline_rate = RateCounter::default();
+    let mut alternative_rate = RateCounter::default();
+    residual::encode_block(&mut baseline_rate, &baseline.0, 2, context).unwrap();
+    residual::encode_block(&mut alternative_rate, &alternative, 2, context).unwrap();
+    if alternative_rate.cost >= baseline_rate.cost {
+        return baseline;
+    }
+    let alternative_patch = reconstructed_patch(&alternative, predictor, steps);
+    let baseline_score =
+        patch_error(source, stride, x, y, &baseline.1) * 256 + lambda * baseline_rate.cost;
+    let alternative_score = patch_error(source, stride, x, y, &alternative_patch) * 256
+        + lambda * alternative_rate.cost;
+    if alternative_score < baseline_score {
+        (alternative, alternative_patch)
+    } else {
+        baseline
+    }
+}
+
 fn store_patch<const N: usize, const LEN: usize>(
     tile: &mut [u8; LEN],
     bx: usize,
@@ -705,6 +765,7 @@ fn make_uv(
     y: usize,
     mode: u8,
     steps: Steps,
+    rdo: Option<(&CoeffContexts, usize, u64)>,
 ) -> UvCandidate {
     let mut coeffs = [[[0i16; 16]; 4]; 2];
     let mut tiles = [[0u8; 64]; 2];
@@ -713,16 +774,44 @@ fn make_uv(
             .into_iter()
             .enumerate()
     {
+        let (mut local_above, mut local_left) = if let Some((contexts, mx, _)) = rdo {
+            let (above, left) = if index == 0 {
+                (&contexts.u, contexts.left_u)
+            } else {
+                (&contexts.v, contexts.left_v)
+            };
+            ([above[mx * 2], above[mx * 2 + 1]], left)
+        } else {
+            ([false; 2], [false; 2])
+        };
         let (top, left, corner) = edge::<8>(reconstructed, stride, x, y);
         let predicted =
             prediction::predict_uv(&top, &left, corner, y > 0, x > 0, mode_from_u8(mode));
         for by in 0..2 {
             for bx in 0..2 {
                 let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
-                let (coeff, patch) =
+                let baseline =
                     code_predicted_block(source, stride, x + bx * 4, y + by * 4, &predictor, steps);
+                let (coeff, patch) = if let Some((_, _, lambda)) = rdo {
+                    optimize_uv_block(
+                        source,
+                        stride,
+                        x + bx * 4,
+                        y + by * 4,
+                        &predictor,
+                        steps,
+                        usize::from(local_above[bx]) + usize::from(local_left[by]),
+                        lambda,
+                        baseline,
+                    )
+                } else {
+                    baseline
+                };
                 coeffs[index][by * 2 + bx] = coeff;
                 store_patch::<8, 64>(&mut tiles[index], bx, by, &patch);
+                let nonzero = coeff.iter().any(|&coefficient| coefficient != 0);
+                local_above[bx] = nonzero;
+                local_left[by] = nonzero;
             }
         }
     }
@@ -1015,6 +1104,7 @@ fn encode_observed(
                 &mut above_modes,
                 &mut left_modes,
                 lambda,
+                quality,
                 luma_policy,
                 segment_id,
                 segments,
@@ -1052,6 +1142,7 @@ fn analyze_one(
     above_modes: &mut [u8],
     left_modes: &mut [u8; 4],
     lambda: u64,
+    quality: u32,
     luma_policy: u8,
     segment_id: u8,
     segments: SegmentConfig,
@@ -1127,6 +1218,7 @@ fn analyze_one(
                 my * 8,
                 mode,
                 uv_steps,
+                (quality == 60).then_some((coeff_contexts, mx, lambda)),
             )
         })
         .collect();
@@ -2080,6 +2172,7 @@ impl FrameEncoder {
             &mut self.above_modes,
             &mut self.left_modes,
             lambda,
+            self.request.quality,
             0,
             segment_id,
             self.segments,
@@ -2416,6 +2509,172 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn uv_rdo_drops_only_a_profitable_last_unit_ac() {
+        let predictor = [128u8; 16];
+        let steps = Steps { dc: 8, ac: 20 };
+        for sign in [-1, 1] {
+            let mut coefficients = [0i16; 16];
+            coefficients[0] = -2;
+            coefficients[residual::SCAN[3]] = 2;
+            coefficients[residual::SCAN[15]] = sign;
+            let baseline_patch = reconstructed_patch(&coefficients, &predictor, steps);
+            let mut dropped = coefficients;
+            dropped[residual::SCAN[15]] = 0;
+            let ideal = reconstructed_patch(&dropped, &predictor, steps);
+            assert_ne!(baseline_patch, ideal);
+            for context in 0..=2 {
+                let mut before = RateCounter::default();
+                let mut after = RateCounter::default();
+                residual::encode_block(&mut before, &coefficients, 2, context).unwrap();
+                residual::encode_block(&mut after, &dropped, 2, context).unwrap();
+                assert!(after.cost < before.cost);
+                assert_eq!(
+                    optimize_uv_block(
+                        &ideal,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        steps,
+                        context,
+                        1,
+                        (coefficients, baseline_patch),
+                    ),
+                    (dropped, ideal)
+                );
+                assert_eq!(
+                    optimize_uv_block(
+                        &baseline_patch,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        steps,
+                        context,
+                        0,
+                        (coefficients, baseline_patch),
+                    ),
+                    (coefficients, baseline_patch)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn uv_rdo_leaves_empty_dc_only_and_nonunit_ac_blocks_intact() {
+        let predictor = [128u8; 16];
+        let steps = Steps { dc: 8, ac: 20 };
+        for coefficients in [
+            [0i16; 16],
+            std::array::from_fn(|i| if i == 0 { -2 } else { 0 }),
+            std::array::from_fn(|i| if i == residual::SCAN[15] { -2 } else { 0 }),
+        ] {
+            let patch = reconstructed_patch(&coefficients, &predictor, steps);
+            assert_eq!(
+                optimize_uv_block(
+                    &patch,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    0,
+                    100,
+                    (coefficients, patch),
+                ),
+                (coefficients, patch)
+            );
+        }
+    }
+
+    #[test]
+    fn higher_preset_frame_bytes_match_pre_rdo_wasm() {
+        let pixels: Vec<_> = (0..16 * 16 * 4)
+            .map(|i| {
+                if i % 4 == 3 {
+                    255
+                } else {
+                    ((i / 4 * 37 + i / 4 / 16 * 19 + i % 4 * 47) & 255) as u8
+                }
+            })
+            .collect();
+        // FNV-1a fingerprints of the base c901c052 ABI2 WASM output.
+        for (quality, expected_len, expected_hash) in [
+            (75, 243, 0x7670_01a7_a481_756c),
+            (85, 314, 0x1b5b_a600_8fee_5d8d),
+        ] {
+            let bytes = encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap();
+            let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+                (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
+            });
+            assert_eq!((bytes.len(), hash), (expected_len, expected_hash));
+        }
+    }
+
+    #[test]
+    fn q60_uv_mode_trials_keep_neighbor_contexts_isolated() {
+        let mut contexts = CoeffContexts::new(1);
+        contexts.u = vec![true, false];
+        contexts.v = vec![false, true];
+        contexts.left_u = [false, true];
+        contexts.left_v = [true, false];
+        let before = contexts.clone();
+        let reconstructed = [0u8; 64];
+        let steps = ac_quant::steps(34, crate::presets::deltas(60), Plane::UV);
+        let lambda = crate::presets::lambda_for_quality(34, 60);
+        let mut changed = false;
+        for seed in 0..128 {
+            let source: [u8; 64] = std::array::from_fn(|i| {
+                (96 + (i * 37 + i / 8 * 11 + seed * 17 + i * seed * 3) % 65) as u8
+            });
+            for mode in 0..4 {
+                let baseline = make_uv(
+                    &source,
+                    &source,
+                    &reconstructed,
+                    &reconstructed,
+                    8,
+                    0,
+                    0,
+                    mode,
+                    steps,
+                    None,
+                );
+                let trial = make_uv(
+                    &source,
+                    &source,
+                    &reconstructed,
+                    &reconstructed,
+                    8,
+                    0,
+                    0,
+                    mode,
+                    steps,
+                    Some((&contexts, 0, lambda)),
+                );
+                assert_eq!(contexts, before);
+                for (original, selected) in baseline.u.iter().zip(&trial.u) {
+                    if original != selected {
+                        changed = true;
+                        let position = (1..16)
+                            .rev()
+                            .find(|&position| original[residual::SCAN[position]] != 0)
+                            .unwrap();
+                        let mut dropped = *original;
+                        assert_eq!(dropped[residual::SCAN[position]].unsigned_abs(), 1);
+                        dropped[residual::SCAN[position]] = 0;
+                        assert_eq!(*selected, dropped);
+                    }
+                }
+            }
+            if changed {
+                break;
+            }
+        }
+        assert!(changed, "deterministic UV trial must exercise one AC drop");
+    }
 
     #[allow(clippy::too_many_arguments)]
     fn filtered_visible_yuv(
@@ -2803,6 +3062,7 @@ mod tests {
                     &mut above,
                     &mut left,
                     crate::presets::lambda_for_q(23),
+                    75,
                     if mx == 0 { 2 } else { 0 },
                     0,
                     segments,
@@ -4220,6 +4480,7 @@ mod tests {
                 8,
                 3,
                 uv_steps,
+                None,
             );
             (
                 i16.tile,
