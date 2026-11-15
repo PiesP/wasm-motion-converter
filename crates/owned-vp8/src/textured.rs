@@ -772,10 +772,16 @@ fn write_macroblock_header(
     above: &[u8],
     left: &[u8; 4],
     segments: SegmentConfig,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
 ) -> Result<(), EncodeError> {
+    let skipped = block.skip();
+    if skip_probability.is_none() && skipped {
+        return Err(EncodeError::InvalidInput);
+    }
     segments.write_id(sink, block.segment_id)?;
-    sink.write(skip_probability, block.skip())?;
+    if let Some(probability) = skip_probability {
+        sink.write(probability, skipped)?;
+    }
     write_modes(sink, block, mx, above, left)
 }
 
@@ -807,7 +813,7 @@ fn selected_cost(
     let mut header = HeaderRateCounter::default();
     // Mode search precedes frozen frame statistics; its skip rate proposal is
     // the current syntax default, while counting and emission share the final.
-    write_macroblock_header(&mut header, block, mx, above, left, segments, 128)?;
+    write_macroblock_header(&mut header, block, mx, above, left, segments, Some(128))?;
     if block.i16 && header.symbols.count > MAX_I16_HEADER_SYMBOLS {
         return Err(EncodeError::InvalidInput);
     }
@@ -1222,9 +1228,15 @@ fn write_quantizer_delta(sink: &mut impl BoolSink, delta: i8) -> Result<(), Enco
     Ok(())
 }
 
-fn write_header_suffix(sink: &mut impl BoolSink, skip_probability: u8) -> Result<(), EncodeError> {
-    sink.bit(true)?; // Macroblock coefficient skip flags enabled.
-    sink.literal(u32::from(skip_probability), 8)
+fn write_header_suffix(
+    sink: &mut impl BoolSink,
+    skip_probability: Option<u8>,
+) -> Result<(), EncodeError> {
+    sink.bit(skip_probability.is_some())?;
+    if let Some(probability) = skip_probability {
+        sink.literal(u32::from(probability), 8)?;
+    }
+    Ok(())
 }
 
 fn write_updates(
@@ -1285,6 +1297,10 @@ impl SkipStats {
             128
         }
     }
+
+    fn frozen_syntax(self) -> Option<u8> {
+        (self.skipped != 0).then(|| self.frozen_probability())
+    }
 }
 
 // I16 signals at most two segment-map bits, skip, three Y-mode bits and
@@ -1311,7 +1327,7 @@ impl HeaderBudget {
     ) -> Result<Self, EncodeError> {
         let mut fixed = SymbolCounter::default();
         write_header_prefix(&mut fixed, segments, deltas, filter)?;
-        write_header_suffix(&mut fixed, 128)?;
+        write_header_suffix(&mut fixed, Some(128))?;
         // Each of the 1056 update nodes emits one flag and at most eight
         // literal bits. The model is frozen only after mode analysis.
         let fixed_symbols_and_tail = fixed
@@ -1343,7 +1359,7 @@ impl HeaderBudget {
         segments: SegmentConfig,
     ) -> Result<usize, EncodeError> {
         let mut symbols = SymbolCounter::default();
-        write_macroblock_header(&mut symbols, block, mx, above, left, segments, 128)?;
+        write_macroblock_header(&mut symbols, block, mx, above, left, segments, Some(128))?;
         if block.i16 && symbols.count > MAX_I16_HEADER_SYMBOLS {
             return Err(EncodeError::InvalidInput);
         }
@@ -1446,7 +1462,7 @@ fn write_macroblock(
     mx: usize,
     block: &Macroblock,
     segments: SegmentConfig,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
 ) -> Result<(), EncodeError> {
     write_macroblock_header(
         header,
@@ -1563,7 +1579,7 @@ fn model_frozen(
     blocks: &[Macroblock],
     blocks_x: usize,
     blocks_y: usize,
-) -> Result<(Model, u8), EncodeError> {
+) -> Result<(Model, Option<u8>), EncodeError> {
     let mut stats = Statistics::new();
     let mut skips = SkipStats::default();
     let mut contexts = CoeffContexts::new(blocks_x);
@@ -1584,7 +1600,7 @@ fn model_frozen(
             &probability_cost,
         )?;
     }
-    Ok((model, skips.frozen_probability()))
+    Ok((model, skips.frozen_syntax()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1596,7 +1612,7 @@ fn code_partitions(
     deltas: Deltas,
     filter: FilterConfig,
     model: Option<&Model>,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
     header: &mut impl BoolSink,
     token: &mut impl BoolSink,
 ) -> Result<(), EncodeError> {
@@ -1639,7 +1655,7 @@ fn count_partitions(
     deltas: Deltas,
     filter: FilterConfig,
     model: Option<&Model>,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
 ) -> Result<(usize, usize), EncodeError> {
     let mut first = CountingBoolSink::default();
     let mut second = CountingBoolSink::default();
@@ -1708,7 +1724,7 @@ pub(crate) struct FrameEncoder {
     count_token: CountingBoolSink,
     stats: Statistics,
     skip_stats: SkipStats,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
     model: Model,
     model_count_pass: bool,
     use_model: bool,
@@ -1812,7 +1828,7 @@ impl FrameEncoder {
             count_token: CountingBoolSink::default(),
             stats: Statistics::new(),
             skip_stats: SkipStats::default(),
-            skip_probability: 128,
+            skip_probability: Some(128),
             model: Model::new(),
             model_count_pass: false,
             use_model: false,
@@ -2245,7 +2261,7 @@ impl FrameEncoder {
                     .map_err(encode_status)?;
                 self.cursor += 1;
                 if self.cursor == self.blocks.len() {
-                    self.skip_probability = self.skip_stats.frozen_probability();
+                    self.skip_probability = self.skip_stats.frozen_syntax();
                     self.cursor = 0;
                     self.stage = Stage::Optimize;
                 }
@@ -3060,7 +3076,7 @@ mod tests {
             0,
             &block,
             segments,
-            128,
+            Some(128),
         )
         .unwrap();
         assert_eq!(&header.0[..3], &[(128, true), (128, true), (128, true)]);
@@ -3197,6 +3213,9 @@ mod tests {
         assert_eq!(all_skip.frozen_probability(), 1);
         assert_eq!(none_skip.frozen_probability(), 255);
         assert_eq!(mixed.frozen_probability(), 240);
+        assert_eq!(all_skip.frozen_syntax(), Some(1));
+        assert_eq!(none_skip.frozen_syntax(), None);
+        assert_eq!(mixed.frozen_syntax(), Some(240));
         let mut balanced = SkipStats::default();
         balanced.observe(true).unwrap();
         balanced.observe(false).unwrap();
@@ -3209,9 +3228,50 @@ mod tests {
                 Ok(())
             }
         }
+        let mut disabled = Operations(Vec::new());
+        write_header_suffix(&mut disabled, None).unwrap();
+        assert_eq!(disabled.0, [(128, false)]);
+        let mut nonzero = Macroblock::default();
+        nonzero.y[0][0] = 1;
+        let mut disabled_header = Operations(Vec::new());
+        write_macroblock_header(
+            &mut disabled_header,
+            &nonzero,
+            0,
+            &[0; 4],
+            &[0; 4],
+            SegmentConfig::nonsegmented(22),
+            None,
+        )
+        .unwrap();
+        let mut enabled_header = Operations(Vec::new());
+        write_macroblock_header(
+            &mut enabled_header,
+            &nonzero,
+            0,
+            &[0; 4],
+            &[0; 4],
+            SegmentConfig::nonsegmented(22),
+            Some(255),
+        )
+        .unwrap();
+        assert_eq!(enabled_header.0[0], (255, false));
+        assert_eq!(disabled_header.0, enabled_header.0[1..]);
+        assert_eq!(
+            write_macroblock_header(
+                &mut Operations(Vec::new()),
+                &Macroblock::default(),
+                0,
+                &[0; 4],
+                &[0; 4],
+                SegmentConfig::nonsegmented(22),
+                None,
+            ),
+            Err(EncodeError::InvalidInput)
+        );
         for probability in [1, 128, 240, 255] {
             let mut suffix = Operations(Vec::new());
-            write_header_suffix(&mut suffix, probability).unwrap();
+            write_header_suffix(&mut suffix, Some(probability)).unwrap();
             assert_eq!(suffix.0[0], (128, true));
             assert_eq!(suffix.0.len(), 9);
             for shift in (0..8).rev() {
@@ -3226,7 +3286,7 @@ mod tests {
                 &[0; 4],
                 &[0; 4],
                 SegmentConfig::nonsegmented(22),
-                probability,
+                Some(probability),
             )
             .unwrap();
             assert_eq!(header.0[0], (probability, true));
@@ -3245,12 +3305,12 @@ mod tests {
             })
             .collect();
         let segments = SegmentConfig::nonsegmented(22);
-        for expected_probability in [240, 255, 1] {
-            if expected_probability == 255 {
+        for expected_probability in [Some(240), None, Some(1)] {
+            if expected_probability.is_none() {
                 for block in &mut blocks {
                     block.y[0][0] = 1;
                 }
-            } else if expected_probability == 1 {
+            } else if expected_probability == Some(1) {
                 for block in &mut blocks {
                     block.y[0][0] = 0;
                 }
@@ -3265,7 +3325,7 @@ mod tests {
                 Deltas::default(),
                 FilterConfig::DISABLED,
                 None,
-                128,
+                Some(128),
             )
             .unwrap();
             let mut sizes = [(0, 0); 2];
@@ -3317,6 +3377,111 @@ mod tests {
         }
     }
 
+    fn emit_skip_syntax_control(
+        blocks: &[Macroblock],
+        width: usize,
+        height: usize,
+        skip_probability: Option<u8>,
+    ) -> Vec<u8> {
+        let blocks_x = width.div_ceil(16);
+        let blocks_y = height.div_ceil(16);
+        assert_eq!(blocks.len(), blocks_x * blocks_y);
+        let counted = count_partitions(
+            blocks,
+            blocks_x,
+            blocks_y,
+            SegmentConfig::nonsegmented(23),
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            None,
+            skip_probability,
+        )
+        .unwrap();
+        let mut header = BoolWriter::new();
+        let mut token = BoolWriter::new();
+        code_partitions(
+            blocks,
+            blocks_x,
+            blocks_y,
+            SegmentConfig::nonsegmented(23),
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            None,
+            skip_probability,
+            &mut header,
+            &mut token,
+        )
+        .unwrap();
+        let first = header.finish().unwrap();
+        let second = token.finish().unwrap();
+        assert_eq!(counted, (first.len(), second.len()));
+        let mut frame = Vec::with_capacity(10 + first.len() + second.len());
+        frame.extend_from_slice(&(((first.len() as u32) << 5) | 0x10).to_le_bytes()[..3]);
+        frame.extend_from_slice(&[0x9d, 0x01, 0x2a]);
+        frame.extend_from_slice(&(width as u16).to_le_bytes());
+        frame.extend_from_slice(&(height as u16).to_le_bytes());
+        frame.extend_from_slice(&first);
+        frame.extend_from_slice(&second);
+        assert_eq!(frame.len(), 10 + counted.0 + counted.1);
+        frame
+    }
+
+    fn nonzero_skip_syntax_matrix() -> Vec<(usize, usize, Vec<Macroblock>)> {
+        [(1, 1), (2, 1), (1, 2), (2, 2), (3, 2)]
+            .into_iter()
+            .flat_map(|(blocks_x, blocks_y)| {
+                [1i16, -2, 5].into_iter().map(move |coefficient| {
+                    let blocks = (0..blocks_x * blocks_y)
+                        .map(|index| {
+                            let mut block = Macroblock::default();
+                            block.y[index % 16][0] = coefficient;
+                            block
+                        })
+                        .collect();
+                    (blocks_x * 16 - 1, blocks_y * 16 - 1, blocks)
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn disabled_skip_syntax_never_grows_bounded_nonzero_matrix() {
+        for (width, height, blocks) in nonzero_skip_syntax_matrix() {
+            assert!(blocks.iter().all(|block| !block.skip()));
+            let disabled = emit_skip_syntax_control(&blocks, width, height, None);
+            let enabled = emit_skip_syntax_control(&blocks, width, height, Some(255));
+            eprintln!(
+                "skip-syntax-control {width}x{height} disabled={} enabled={}",
+                disabled.len(),
+                enabled.len()
+            );
+            assert!(
+                disabled.len() <= enabled.len(),
+                "{width}x{height}: disabled={} enabled={}",
+                disabled.len(),
+                enabled.len()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_match_disabled_and_enabled_nonzero_skip_controls() {
+        for (width, height, blocks) in nonzero_skip_syntax_matrix()
+            .into_iter()
+            .filter(|(width, height, _)| matches!((width, height), (15, 15) | (31, 15) | (47, 31)))
+        {
+            let disabled = emit_skip_syntax_control(&blocks, width, height, None);
+            let enabled = emit_skip_syntax_control(&blocks, width, height, Some(255));
+            for decoder in ["vp8", "libvpx"] {
+                let disabled_yuv = decode_visible_yuv(&disabled, width, height, decoder);
+                let enabled_yuv = decode_visible_yuv(&enabled, width, height, decoder);
+                assert!(!disabled_yuv.is_empty());
+                assert_eq!(disabled_yuv, enabled_yuv, "{decoder} {width}x{height}");
+            }
+        }
+    }
+
     #[test]
     fn resumable_and_sync_encoders_share_frozen_skip_probability() {
         let width = 128;
@@ -3334,9 +3499,71 @@ mod tests {
         let request = engine_request(width, height, 0, &input, width * 4);
         let plan = ResourcePlan::checked(request).unwrap();
         let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
-        assert_ne!(engine.skip_probability, 128);
+        assert_ne!(engine.skip_probability, Some(128));
         assert_eq!(engine.output(), expected);
         assert_eq!(engine.plan().frame_bytes as usize, expected.len());
+    }
+
+    #[test]
+    fn disabled_skip_syntax_matches_sync_and_resumable_on_tiny_odd_repeated_frames() {
+        for (width, height, quality) in [(2, 5, 60), (17, 19, 75), (33, 17, 85)] {
+            let mut input = [0, 0, 0, 255].repeat(width * height);
+            for y in 0..height {
+                for x in 0..width {
+                    let at = (y * width + x) * 4;
+                    input[at] = (x * 53 + y * 19 + 17) as u8;
+                    input[at + 1] = (x * 71 + y * 37 + 29) as u8;
+                    input[at + 2] = (x * 11 + y * 83 + 43) as u8;
+                }
+            }
+            let expected = encode_textured(
+                &input,
+                width as u32,
+                height as u32,
+                (width * 4) as u32,
+                0,
+                quality,
+            )
+            .unwrap();
+            for frame in [1, 2] {
+                let request = Request {
+                    quality,
+                    frame,
+                    ..engine_request(width, height, 0, &input, width * 4)
+                };
+                let plan = ResourcePlan::checked(request).unwrap();
+                assert!(std::mem::size_of::<Option<u8>>() <= 2);
+                assert!(
+                    std::mem::size_of::<FrameEncoder>() <= plan.scratch_allowance_bytes as usize
+                );
+                let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+                let mut seen_count = false;
+                let mut seen_emit = false;
+                for _ in 0..100_000 {
+                    if engine.stage == Stage::CountPrefix {
+                        assert_eq!(engine.skip_probability, None);
+                        seen_count = true;
+                    }
+                    if engine.stage == Stage::EmitSuffix {
+                        assert_eq!(engine.skip_probability, None);
+                        seen_emit = true;
+                    }
+                    if engine.step().unwrap() {
+                        break;
+                    }
+                    assert!(engine.output().is_empty());
+                }
+                assert!(engine.stage == Stage::Done);
+                assert!(seen_count && seen_emit);
+                assert!(
+                    engine.blocks.iter().all(|block| !block.skip()),
+                    "{width}x{height} q{quality}"
+                );
+                assert_eq!(engine.skip_probability, None);
+                assert_eq!(engine.output(), expected);
+                assert_eq!(engine.plan().frame_bytes as usize, expected.len());
+            }
+        }
     }
 
     #[test]
@@ -3390,7 +3617,7 @@ mod tests {
         )
         .unwrap();
         write_updates(&mut header, Some(&model), 0, NODE_COUNT).unwrap();
-        write_header_suffix(&mut header, 128).unwrap();
+        write_header_suffix(&mut header, Some(128)).unwrap();
         let bytes = header.finish().unwrap();
         let mut value = (u32::from(bytes[0]) << 8) | u32::from(bytes[1]);
         let (mut offset, mut range, mut count) = (2, 255, 0);
@@ -3495,7 +3722,7 @@ mod tests {
                 0,
                 &block,
                 SegmentConfig::nonsegmented(22),
-                128,
+                Some(128),
             )
             .unwrap();
             assert!(header.pending());
@@ -4184,7 +4411,7 @@ mod tests {
             let engine = run_engine(
                 FrameEncoder::new_with_filter(request, pixels.clone(), plan, filter).unwrap(),
             );
-            assert_eq!(engine.skip_probability, selected_probability);
+            assert_eq!(engine.skip_probability, Some(selected_probability));
             assert_eq!(engine.output(), frame);
             assert_decodes(
                 &frame,
@@ -4486,7 +4713,7 @@ mod tests {
         );
     }
 
-    fn assert_decodes(frame: &[u8], width: usize, height: usize, expected: &[u8], label: &str) {
+    fn decode_visible_yuv(frame: &[u8], width: usize, height: usize, decoder: &str) -> Vec<u8> {
         let mut ivf = vec![0u8; 44];
         ivf[..4].copy_from_slice(b"DKIF");
         ivf[6..8].copy_from_slice(&32u16.to_le_bytes());
@@ -4498,40 +4725,45 @@ mod tests {
         ivf[24..28].copy_from_slice(&1u32.to_le_bytes());
         ivf[32..36].copy_from_slice(&(frame.len() as u32).to_le_bytes());
         ivf.extend_from_slice(frame);
+        let mut child = Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-c:v",
+                decoder,
+                "-i",
+                "pipe:0",
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "yuv420p",
+                "pipe:1",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&ivf).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    }
+
+    fn assert_decodes(frame: &[u8], width: usize, height: usize, expected: &[u8], label: &str) {
         for decoder in ["vp8", "libvpx"] {
-            let mut child = Command::new("ffmpeg")
-                .args([
-                    "-v",
-                    "error",
-                    "-c:v",
-                    decoder,
-                    "-i",
-                    "pipe:0",
-                    "-frames:v",
-                    "1",
-                    "-f",
-                    "rawvideo",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "pipe:1",
-                ])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
-            child.stdin.take().unwrap().write_all(&ivf).unwrap();
-            let output = child.wait_with_output().unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let difference = output.stdout.iter().zip(expected).position(|(a, b)| a != b);
-            assert_eq!(output.stdout.len(), expected.len());
+            let decoded = decode_visible_yuv(frame, width, height, decoder);
+            let difference = decoded.iter().zip(expected).position(|(a, b)| a != b);
+            assert_eq!(decoded.len(), expected.len());
             assert!(
                 difference.is_none(),
-                "decoder={decoder} {width}x{height} {label} mismatch={difference:?} actual={:?} expected={:?}", difference.map(|i| &output.stdout[i..(i+8).min(expected.len())]), difference.map(|i| &expected[i..(i+8).min(expected.len())])
+                "decoder={decoder} {width}x{height} {label} mismatch={difference:?} actual={:?} expected={:?}", difference.map(|i| &decoded[i..(i+8).min(expected.len())]), difference.map(|i| &expected[i..(i+8).min(expected.len())])
             );
         }
     }
