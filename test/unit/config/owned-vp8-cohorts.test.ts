@@ -17,6 +17,11 @@ import {
   V3_TUNING,
   generateV3Fixture,
 } from '../../../scripts/test/owned-vp8-v3-fixtures';
+import {
+  V4_HELDOUT,
+  V4_PHOTO,
+  generateV4Fixture,
+} from '../../../scripts/test/owned-vp8-v4-fixtures';
 
 describe('owned VP8 prospective cohort isolation', () => {
   const root = resolve(import.meta.dirname, '../../..');
@@ -95,5 +100,48 @@ describe('owned VP8 prospective cohort isolation', () => {
       const pixels = generateV3Fixture(item.id).pixels;
       expect(createHash('sha256').update(pixels).digest('hex')).toBe(item.sha256);
     }
+  });
+
+  it('keeps all prior held-out cohorts exposed and selects only frozen v4 inputs as fresh', () => {
+    for (const cohort of ['initial-v1', 'corrected-v2', 'corrected-v3'] as const)
+      expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
+    const fresh = selectFixtureCohort('held-out', 'corrected-v4');
+    expect(fresh).toEqual(V4_HELDOUT);
+    expect(fresh).toHaveLength(15);
+    expect(fresh.length * 3).toBe(45);
+    expect(selectFixtureCohort('tuning', 'corrected-v4')).toHaveLength(15);
+    const oldIds = new Set(
+      [...FIXTURES, ...CORRECTION_HELDOUT, ...V3_HELDOUT].map((item) => item.id)
+    );
+    expect(fresh.every((item) => !oldIds.has(item.id))).toBe(true);
+    expect(fresh.find((item) => item.id === 'fresh4-duplicate-hold')?.repeatOf).toBe(
+      'fresh4-video-73'
+    );
+    expect(V4_PHOTO.sha256).not.toBe(V3_PHOTO.sha256);
+  });
+
+  it('binds v4 generated pixels, prior manifests and source requirements without codec output', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v4-fixtures.json'), 'utf8')
+    ) as {
+      cohort: string;
+      generatorSha256: string;
+      priorManifestSha256: { initialV1: string; correctedV2: string; correctedV3: string };
+      fixtures: Array<{ id: string; source: string; sha256: string }>;
+    };
+    expect(manifest.cohort).toBe('corrected-v4');
+    expect(manifest.generatorSha256).toBe(sha256('scripts/test/owned-vp8-v4-fixtures.ts'));
+    expect(manifest.priorManifestSha256).toEqual({
+      initialV1: sha256('docs/experiments/501-owned-vp8-v2-fixtures.json'),
+      correctedV2: sha256('docs/experiments/501-owned-vp8-v2-correction-fixtures.json'),
+      correctedV3: sha256('docs/experiments/501-owned-vp8-v3-fixtures.json'),
+    });
+    expect(manifest.fixtures).toHaveLength(15);
+    for (const item of manifest.fixtures.filter((entry) => entry.source === 'generated'))
+      expect(createHash('sha256').update(generateV4Fixture(item.id).pixels).digest('hex')).toBe(
+        item.sha256
+      );
+    expect(() => generateV4Fixture('fresh4-photo')).toThrow('Missing fresh photo source');
+    expect(() => generateV4Fixture('fresh4-video-73')).toThrow('Missing video source');
   });
 });

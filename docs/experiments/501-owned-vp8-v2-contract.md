@@ -153,7 +153,31 @@ unchanged. Following its rejected evaluation, select `--cohort corrected-v3`
 for tuning or explicit `--regression`; it is no longer fresh acceptance.
 Retain initial-v1 and corrected-v2 as explicit regression cohorts.
 See [the frozen candidate result](501-owned-vp8-v3-result.md). No fresh successor
-cohort is currently frozen; do not relabel any observed condition as fresh.
+cohort had been frozen at that result; do not relabel any observed condition as fresh.
+
+## Prospective corrected-v4 source-only freeze
+
+After corrected-v3 passed 43/45 fresh conditions and failed the q60/q85 size
+gates on its admitted large fixture, the old three held-out cohorts are exposed
+regression inputs. Before any corrected-v4 comparator or candidate output,
+`501-owned-vp8-v4-fixtures.json` froze 15 new held-out inputs / 45 conditions.
+The source-only generator `scripts/test/owned-vp8-v4-fixtures.ts` uses distinct
+formulas, seed and geometry for grayscale, gradient, chroma, text, noise, tiny,
+row, column, near-cap large and X-layout records. It also binds a new CC0
+photograph, two previously unobserved frames 73 and 169 of the pinned V8 video,
+and one exact duplicate hold of frame 73. See
+`501-owned-vp8-v4-photo-PROVENANCE.md` for the original photo license and digest.
+The original source is privately staged outside Git and public assets.
+
+The existing 15 tuning inputs and all numerical quality, size, performance,
+resource and delivery gates are unchanged. `--cohort corrected-v4 --acceptance`
+selects only the new held-out inputs until their first evaluation; the first
+three held-out cohorts require `--regression`. Supply `--fresh-photo PATH` for
+the v4 photograph and `--video PATH` for the pinned video. Preserve the v4
+manifest, generator, input bytes and every outcome after first evaluation;
+subsequent v4 runs become exposed regression evidence and must require the
+explicit regression purpose. Source-only freeze does not qualify any codec,
+browser route, Windows result or product adoption.
 
 ## Resources and adoption
 

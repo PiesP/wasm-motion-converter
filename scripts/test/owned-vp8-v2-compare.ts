@@ -19,41 +19,44 @@ import {
   type FixtureSplit,
   type PixelFixture,
 } from './owned-vp8-v2-fixtures.ts';
-import {
-  V3_HELDOUT,
-  V3_TUNING,
-  generateV3Fixture,
-  type V3SourcePaths,
-} from './owned-vp8-v3-fixtures.ts';
+import { V3_HELDOUT, V3_TUNING, generateV3Fixture } from './owned-vp8-v3-fixtures.ts';
+import { V4_HELDOUT, generateV4Fixture, type V4SourcePaths } from './owned-vp8-v4-fixtures.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ORACLE_HASH = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
-export type FixtureCohort = 'initial-v1' | 'corrected-v2' | 'corrected-v3';
+export type FixtureCohort = 'initial-v1' | 'corrected-v2' | 'corrected-v3' | 'corrected-v4';
 
 export function selectFixtureCohort(
   split: FixtureSplit,
   cohort: FixtureCohort,
   regression = false
 ) {
-  if (split === 'held-out' && !regression)
+  if (split === 'held-out' && !regression && cohort !== 'corrected-v4')
     throw new Error(`${cohort} is exposed: use --regression; no fresh cohort is currently frozen`);
   const entries =
-    cohort === 'corrected-v3'
+    cohort === 'corrected-v4'
       ? [
           ...FIXTURES.filter((item) => item.split === 'tuning'),
           ...CORRECTION_TUNING,
           ...V3_TUNING,
-          ...V3_HELDOUT,
+          ...V4_HELDOUT,
         ]
-      : cohort === 'corrected-v2'
+      : cohort === 'corrected-v3'
         ? [
             ...FIXTURES.filter((item) => item.split === 'tuning'),
             ...CORRECTION_TUNING,
-            ...CORRECTION_HELDOUT,
+            ...V3_TUNING,
+            ...V3_HELDOUT,
           ]
-        : FIXTURES;
+        : cohort === 'corrected-v2'
+          ? [
+              ...FIXTURES.filter((item) => item.split === 'tuning'),
+              ...CORRECTION_TUNING,
+              ...CORRECTION_HELDOUT,
+            ]
+          : FIXTURES;
   return entries.filter((item) => item.split === split);
 }
 
@@ -185,7 +188,7 @@ function decode(file: string, width: number, height: number): Uint8Array {
 export async function compare(options: {
   output: string;
   split: FixtureSplit;
-  sources: V3SourcePaths;
+  sources: V4SourcePaths;
   cohort?: FixtureCohort;
   regression?: boolean;
   candidateRoot?: string;
@@ -236,6 +239,7 @@ export async function compare(options: {
     'docs/experiments/501-owned-vp8-v2-correction-fixtures.json'
   );
   const v3ManifestFile = join(ROOT, 'docs/experiments/501-owned-vp8-v3-fixtures.json');
+  const v4ManifestFile = join(ROOT, 'docs/experiments/501-owned-vp8-v4-fixtures.json');
   if (cohort !== 'initial-v1') {
     const correction = JSON.parse(readFileSync(correctionManifestFile, 'utf8')) as typeof frozen;
     assert.equal(
@@ -244,7 +248,7 @@ export async function compare(options: {
     );
     frozen.fixtures.push(...correction.fixtures);
   }
-  if (cohort === 'corrected-v3') {
+  if (cohort === 'corrected-v3' || cohort === 'corrected-v4') {
     const fresh = JSON.parse(readFileSync(v3ManifestFile, 'utf8')) as typeof frozen & {
       priorManifestSha256: { initialV1: string; correctedV2: string };
     };
@@ -259,13 +263,34 @@ export async function compare(options: {
     );
     frozen.fixtures.push(...fresh.fixtures);
   }
+  if (cohort === 'corrected-v4') {
+    const fresh = JSON.parse(readFileSync(v4ManifestFile, 'utf8')) as typeof frozen & {
+      priorManifestSha256: { initialV1: string; correctedV2: string; correctedV3: string };
+    };
+    assert.equal(
+      fresh.generatorSha256,
+      digest(readFileSync(new URL('./owned-vp8-v4-fixtures.ts', import.meta.url)))
+    );
+    assert.equal(fresh.priorManifestSha256.initialV1, digest(readFileSync(baselineManifestFile)));
+    assert.equal(
+      fresh.priorManifestSha256.correctedV2,
+      digest(readFileSync(correctionManifestFile))
+    );
+    assert.equal(fresh.priorManifestSha256.correctedV3, digest(readFileSync(v3ManifestFile)));
+    frozen.fixtures.push(...fresh.fixtures);
+  }
   assert.equal(new Set(frozen.fixtures.map((entry) => entry.id)).size, frozen.fixtures.length);
   const identities = {
     cohort,
     purpose: options.regression ? 'EXPOSED_REGRESSION_NOT_FRESH_ACCEPTANCE' : options.split,
     correctionManifestSha256:
       cohort !== 'initial-v1' ? digest(readFileSync(correctionManifestFile)) : null,
-    freshManifestSha256: cohort === 'corrected-v3' ? digest(readFileSync(v3ManifestFile)) : null,
+    freshManifestSha256:
+      cohort === 'corrected-v4'
+        ? digest(readFileSync(v4ManifestFile))
+        : cohort === 'corrected-v3'
+          ? digest(readFileSync(v3ManifestFile))
+          : null,
     source: execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: candidateRoot,
       encoding: 'utf8',
@@ -323,17 +348,20 @@ export async function compare(options: {
   });
   const results: object[] = [];
   for (const spec of selected) {
+    const freshV4 = V4_HELDOUT.some((entry) => entry.id === spec.id);
     const correction =
       CORRECTION_TUNING.some((entry) => entry.id === spec.id) ||
       CORRECTION_HELDOUT.some((entry) => entry.id === spec.id);
     const fresh =
       V3_TUNING.some((entry) => entry.id === spec.id) ||
       V3_HELDOUT.some((entry) => entry.id === spec.id);
-    const fixture = fresh
-      ? generateV3Fixture(spec.id, options.sources)
-      : correction
-        ? generateCorrectionFixture(spec.id, options.sources)
-        : generateFixture(spec.id, options.sources);
+    const fixture = freshV4
+      ? generateV4Fixture(spec.id, options.sources)
+      : fresh
+        ? generateV3Fixture(spec.id, options.sources)
+        : correction
+          ? generateCorrectionFixture(spec.id, options.sources)
+          : generateFixture(spec.id, options.sources);
     assert.equal(
       digest(fixture.pixels),
       frozen.fixtures.find((entry) => entry.id === spec.id)?.sha256
@@ -428,7 +456,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     ? args[args.indexOf('--fresh-photo') + 1]
     : undefined;
   const cohort = args.includes('--cohort') ? args[args.indexOf('--cohort') + 1] : 'initial-v1';
-  if (cohort !== 'initial-v1' && cohort !== 'corrected-v2' && cohort !== 'corrected-v3')
+  if (
+    cohort !== 'initial-v1' &&
+    cohort !== 'corrected-v2' &&
+    cohort !== 'corrected-v3' &&
+    cohort !== 'corrected-v4'
+  )
     throw new Error('Unknown fixture cohort');
   if (acceptance && regression) throw new Error('Choose acceptance or exposed regression');
   const candidateRoot = args.includes('--candidate-root')

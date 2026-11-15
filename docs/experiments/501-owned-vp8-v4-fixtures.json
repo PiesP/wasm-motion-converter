@@ -1,0 +1,325 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v4",
+  "purpose": "Prospective source-only fresh held-out inputs after corrected-v3 43/45 rejection; all earlier cohorts remain exposed regression evidence",
+  "tuningBasis": "No new tuning entries; the existing 15 tuning fixtures stay exposed controls",
+  "rejectedCandidate": "c880a6dab6fc38311109968295ac56fa5ca3fecc",
+  "rejectedWasmSha256": "9c5247dc251aaabf79807c930c6300379d7c9e662ddcca08e363f5a9e578167f",
+  "previousOutcome": {
+    "jointPasses": 43,
+    "conditions": 45,
+    "failed": [
+      {
+        "fixture": "fresh3-large-admitted",
+        "quality": 60,
+        "gate": "size",
+        "baseline": 66660,
+        "candidate": 92420,
+        "maximum": 83325
+      },
+      {
+        "fixture": "fresh3-large-admitted",
+        "quality": 85,
+        "gate": "size",
+        "baseline": 106326,
+        "candidate": 138466,
+        "maximum": 132907.5
+      }
+    ]
+  },
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "bounds": {
+    "maxWidth": 16383,
+    "maxHeight": 16383,
+    "maxPixels": 10066329,
+    "photoBytes": 399226,
+    "videoBytes": 3145371
+  },
+  "sources": {
+    "photo": {
+      "name": "Landscape with clouds.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Landscape_with_clouds.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Landscape_with_clouds.jpg&oldid=1048543422",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/8/83/Landscape_with_clouds.jpg",
+      "license": "CC0-1.0",
+      "author": "Aammell",
+      "originalWidth": 4000,
+      "originalHeight": 3000,
+      "bytes": 399226,
+      "sha256": "d266b5bfa1179a6298f1c084e8c539ef81698643f7c45d9adb34d43a30ed2758"
+    },
+    "video": {
+      "name": "V8.webm",
+      "page": "https://commons.wikimedia.org/wiki/File:V8.webm",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/a/a7/V8.webm",
+      "license": "CC0-1.0",
+      "author": "BMKME",
+      "sha256": "c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1",
+      "bytes": 3145371
+    }
+  },
+  "priorManifestSha256": {
+    "initialV1": "75646176a29a6cc6506b07d5ad955401571573df1cd7f2c217f9b7565b7f5918",
+    "correctedV2": "015b9a64af8cdc648f7ac976c14e64ae355a239f343115d21f2269c381afeb81",
+    "correctedV3": "072947742fe4fce1aaf77702f8cfee3d2c7410a79d5715155f047913f00c2d2a"
+  },
+  "generator": "scripts/test/owned-vp8-v4-fixtures.ts; source-only generation, no codec outputs",
+  "generatorSha256": "5203df9f514660c465b9c3c7a1ee6561d2b45d91d38ce6f6c0bb657decc6ae7b",
+  "externalDecode": {
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "command": "ffmpeg -v error -noautorotate -i SOURCE -vf FILTER -frames:v 1 -f rawvideo -pix_fmt rgba pipe:1",
+    "photoFilter": "scale=521:347:flags=bicubic",
+    "videoFilter": "select=eq(n\\,FRAME),scale=504:282:flags=bicubic"
+  },
+  "fixtures": [
+    {
+      "id": "fresh4-gray",
+      "split": "held-out",
+      "class": "grayscale",
+      "width": 491,
+      "height": 307,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1964,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "3686ab0c7a8a8a81ecb66d518258c9b368d64a48e1e2c2b0bba9367be4a570ad"
+    },
+    {
+      "id": "fresh4-gradient",
+      "split": "held-out",
+      "class": "gradient",
+      "width": 383,
+      "height": 271,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1532,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ca69fb61c355cfd98dcbe4de0c76548734a0e5ae9484a68709e95bc94f87f034"
+    },
+    {
+      "id": "fresh4-chroma-edge",
+      "split": "held-out",
+      "class": "chroma",
+      "width": 359,
+      "height": 251,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1436,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "9da6dab088bd82fa2ea14e0b8e146f0217a5be67790f3e02972a6a95f0ad0f74"
+    },
+    {
+      "id": "fresh4-text",
+      "split": "held-out",
+      "class": "text",
+      "width": 409,
+      "height": 293,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1636,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "73a3ed66666454d00baed8a607b3118853dbb8962a65d0a93b5e0e2f8db789b2"
+    },
+    {
+      "id": "fresh4-noise",
+      "split": "held-out",
+      "class": "noise",
+      "width": 307,
+      "height": 191,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1228,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "c84b6ab5c3575e067f4bcff22c77bc1534a74ce8a6f903332e2bb06aa448b044"
+    },
+    {
+      "id": "fresh4-tiny",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 2,
+      "height": 5,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 8,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ceb529a7aa1f2b48a24dfd4042fee3cc5201af556b9f153f722afbff6fd6e378"
+    },
+    {
+      "id": "fresh4-one-column",
+      "split": "held-out",
+      "class": "odd",
+      "width": 1,
+      "height": 307,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "b25f015efae1f7823fbf12bc7b58be12518ed8f37ad345db529bca14f937b262"
+    },
+    {
+      "id": "fresh4-one-row",
+      "split": "held-out",
+      "class": "odd",
+      "width": 313,
+      "height": 1,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1252,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a2134857293b52e469c6c91f458b9faca10f1747526c820d13f226d4cda95353"
+    },
+    {
+      "id": "fresh4-large-admitted",
+      "split": "held-out",
+      "class": "large",
+      "width": 4032,
+      "height": 2496,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 16128,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ebd8be4bf404f0343c69d7b52990c32d0ad40ad73ce3aa5f14c7c6745206a87f"
+    },
+    {
+      "id": "fresh4-bgrx",
+      "split": "held-out",
+      "class": "layout",
+      "width": 281,
+      "height": 149,
+      "layout": "BGRX",
+      "source": "generated",
+      "stride": 1124,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "4d64b36e646fc48cd74299ceeafa3154e5c786f445e7f53f81fbcd283f7c1b73"
+    },
+    {
+      "id": "fresh4-rgbx",
+      "split": "held-out",
+      "class": "layout",
+      "width": 281,
+      "height": 149,
+      "layout": "RGBX",
+      "source": "generated",
+      "stride": 1124,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a6c3481284b2ac829a1a3ccd1993231cd6279495a1ba00745ce55813296ad896"
+    },
+    {
+      "id": "fresh4-photo",
+      "split": "held-out",
+      "class": "photograph",
+      "width": 521,
+      "height": 347,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 2084,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "df1157ac71f6b84a0c72afe98f3b6477c4f9cee3e9a51b30e49d4a3e27345b9f"
+    },
+    {
+      "id": "fresh4-video-73",
+      "split": "held-out",
+      "class": "video",
+      "width": 504,
+      "height": 282,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 73,
+      "stride": 2016,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "44b4e62e0fe0bff37e692736c7f94c3218a682a55d9f40c7947180e1ff4290af"
+    },
+    {
+      "id": "fresh4-video-169",
+      "split": "held-out",
+      "class": "video",
+      "width": 504,
+      "height": 282,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 169,
+      "stride": 2016,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "54becf0b6aa0f6c5440cdc0b2db49011e0eb79c8e3dd57564bb7216ef04679b9"
+    },
+    {
+      "id": "fresh4-duplicate-hold",
+      "split": "held-out",
+      "class": "duplicate-hold",
+      "width": 504,
+      "height": 282,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 73,
+      "repeatOf": "fresh4-video-73",
+      "stride": 2016,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "44b4e62e0fe0bff37e692736c7f94c3218a682a55d9f40c7947180e1ff4290af"
+    }
+  ]
+}
