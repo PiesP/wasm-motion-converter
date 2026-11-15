@@ -30,6 +30,11 @@ confirms isolate disposal, not process memory return. The direct harness Worker
 is excluded. The compiled `WebAssembly.Module` cache may remain live and is
 excluded from mutable Instance/Memory capacity.
 
+The guest reads the direct child installed browser process and executable
+digest before and after the functional session. An unavailable or changed
+identity leaves the reachability receipt unverified. This observation does not
+measure host-neighbor load.
+
 The pure verifier reports `PASS` only for a discriminating negative control,
 complete instance IDs, zero live mutable owners at every main checkpoint,
 matched Worker termination and close for all five Worker attempts, and intact

@@ -17,6 +17,7 @@ import {
   installWorkerLifecycleObserver,
   verifyOwnerRetention,
 } from './owned-vp8-owner-retention.ts';
+import { readVp8WindowsBrowserIdentity } from './vp8-windows-environment.ts';
 
 type Build = {
   relativePath: string;
@@ -2753,6 +2754,9 @@ export async function exerciseOwnedVp8OwnerRetention({
     outputBytes?: number;
   }>;
   try {
+    const browserIdentityBefore = await readVp8WindowsBrowserIdentity(browser);
+    report.browserIdentityBefore = browserIdentityBefore;
+    await persist();
     const mainContext = await createContext(browser, candidate, true, true, []);
     try {
       const page = await mainContext.newPage();
@@ -3153,6 +3157,13 @@ export async function exerciseOwnedVp8OwnerRetention({
     } finally {
       await workerContext.close();
     }
+    const browserIdentityAfter = await readVp8WindowsBrowserIdentity(browser);
+    report.browserIdentityAfter = browserIdentityAfter;
+    assert.deepEqual(
+      browserIdentityAfter.browser,
+      browserIdentityBefore.browser,
+      'Installed browser executable or process changed during retained-owner session'
+    );
     const decision = verifyOwnerRetention({
       moduleCacheExcluded: true,
       negativeControl: report.negativeControl as {

@@ -77,6 +77,13 @@ async function snapshot(browser: Browser) {
   };
 }
 
+/** Bind a functional receipt to the installed browser process and executable. */
+export async function readVp8WindowsBrowserIdentity(browser: Browser) {
+  if (process.platform !== 'win32')
+    throw new Error('Installed Windows browser identity unavailable');
+  return snapshot(browser);
+}
+
 /** Always reaps the owned sampler; failures become explicit missing evidence. */
 export async function withVp8WindowsEnvironment<T>(
   browser: Browser,
