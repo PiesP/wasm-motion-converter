@@ -2,8 +2,8 @@
 
 This cohort freezes 20 new held-out pixel inputs at q60/75/85: 60 joint
 conditions. The existing 15 tuning controls and numeric gates remain unchanged.
-All V1–V11 held-out inputs are exposed regression evidence (627 conditions) and
-require `--regression`. This document and the [manifest](501-owned-vp8-v12-fixtures.json)
+The 627 prior conditions include 45 tuning and 582 exposed held-out conditions.
+V1–V11 held-out inputs require `--regression`. This document and the [manifest](501-owned-vp8-v12-fixtures.json)
 were prepared before candidate or primary encoding on V12 inputs. No codec
 output, decoded result, quality metric or candidate selection informed these
 inputs. The freeze is source evidence, not a codec or product result.
