@@ -72,6 +72,17 @@ export function declaredOutputs(report: Record<string, unknown>): DeclaredRecord
     add(`functional[${index}].valid`, value.valid);
     if (plainObject(value.activeStop))
       add(`functional[${index}].activeStop.recovery`, value.activeStop.recovery);
+    if ('injectedTrap' in value) {
+      assert(plainObject(value.injectedTrap), 'Malformed controlled trap record');
+      assert(
+        savedRecord(value.injectedTrap.explicitUserRetry),
+        'Controlled trap retry has no saved identity'
+      );
+      add(
+        `functional[${index}].injectedTrap.explicitUserRetry`,
+        value.injectedTrap.explicitUserRetry
+      );
+    }
   });
   assert(found.length > 0, 'Report declares no saved outputs');
   const byFile = new Map<string, DeclaredRecord>();

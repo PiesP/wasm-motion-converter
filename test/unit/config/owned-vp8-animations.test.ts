@@ -102,12 +102,43 @@ describe('saved animation verifier', () => {
     const saved = { file: 'one.webp', bytes: 10, sha256: 'a'.repeat(64) };
     const report = {
       samples: [{ saved, build: 'prior' }],
-      functional: [{ valid: { saved }, activeStop: { recovery: { saved: { ...saved } } } }],
+      functional: [
+        {
+          valid: { saved },
+          activeStop: { recovery: { saved: { ...saved } } },
+          injectedTrap: { explicitUserRetry: { saved: { ...saved } } },
+        },
+      ],
       unrelated: { saved: { file: 'ignored.webp', bytes: 1, sha256: 'b'.repeat(64) } },
     };
     expect(declaredOutputs(report)).toHaveLength(1);
     expect(() =>
       declaredOutputs({ ...report, samples: [{ saved: { ...saved, bytes: 11 } }] })
     ).toThrow(/Repeated saved identity differs/);
+    expect(() =>
+      declaredOutputs({
+        ...report,
+        functional: [{ injectedTrap: { explicitUserRetry: { saved: { ...saved, bytes: 11 } } } }],
+      })
+    ).toThrow(/Repeated saved identity differs/);
+  });
+
+  it('includes only the explicit controlled retry site and rejects a missing saved identity', () => {
+    const saved = { file: 'sample.webp', bytes: 10, sha256: 'a'.repeat(64) };
+    const retry = { file: 'retry.webp', bytes: 12, sha256: 'b'.repeat(64) };
+    const report = {
+      samples: [{ saved }],
+      functional: [{ injectedTrap: { explicitUserRetry: { saved: retry } } }],
+      unrelated: { saved: { file: 'ignored.webp', bytes: 1, sha256: 'c'.repeat(64) } },
+    };
+    expect(
+      declaredOutputs(report).map(({ origin, record }) => [origin, record.saved.file])
+    ).toEqual([
+      ['samples[0]', 'sample.webp'],
+      ['functional[0].injectedTrap.explicitUserRetry', 'retry.webp'],
+    ]);
+    expect(() =>
+      declaredOutputs({ ...report, functional: [{ injectedTrap: { explicitUserRetry: {} } }] })
+    ).toThrow(/Controlled trap retry has no saved identity/);
   });
 });
