@@ -32,6 +32,7 @@ type Decoder = (typeof DECODERS)[number];
 type Saved = { file: string; bytes: number; sha256: string };
 type SourceRecord = {
   build?: string;
+  status?: string;
   fixture?: string;
   quality?: string;
   condition?: string;
@@ -127,6 +128,19 @@ export function assertNearCapSavedRecords(
       records.every(({ record }) => record.fixture === 'near-cap'),
     'Near-cap saved output omitted its source scene contract'
   );
+  assertFunctionalSavedStatuses(report, records, 'nearCap');
+}
+
+function assertFunctionalSavedStatuses(
+  report: Record<string, unknown>,
+  records: readonly DeclaredRecord[],
+  prefix: 'nearCap' | 'largeAdmitted'
+): void {
+  for (const { record } of records) {
+    assert(record.build === 'prior' || record.build === 'candidate', 'Saved build is absent');
+    const expected = report[`${prefix}${record.build === 'prior' ? 'Prior' : 'Candidate'}Status`];
+    assert.equal(record.status, expected, 'Saved output requirement status differs from report');
+  }
 }
 
 export function assertLargeAdmittedSavedRecords(
@@ -147,10 +161,12 @@ export function assertLargeAdmittedSavedRecords(
       records.every(({ record }) => record.fixture === 'large-admitted'),
     'Large admitted saved output omitted its source scene contract'
   );
+  assertFunctionalSavedStatuses(report, records, 'largeAdmitted');
   for (const { record } of records)
-    assertLargeAdmittedDecodedFrames(
-      record.decodedFrameProbe as Parameters<typeof assertLargeAdmittedDecodedFrames>[0]
-    );
+    if (record.status === 'passed')
+      assertLargeAdmittedDecodedFrames(
+        record.decodedFrameProbe as Parameters<typeof assertLargeAdmittedDecodedFrames>[0]
+      );
 }
 
 /** Structural parsing is shared; this pass extracts only bounded opaque VP8 payloads. */
@@ -534,9 +550,11 @@ export async function readStableFile(
   }
 }
 
-function assertReportName(name: string): void {
+export function assertReportName(name: string): void {
   assert(
-    /^owned-vp8-product(?:-near-cap|-v8-(?:low|medium|high))?(?:-ba)?\.json$/.test(name),
+    /^(?:owned-vp8-product(?:-near-cap|-v8-(?:low|medium|high))?(?:-ba)?|owned-vp8-product-large-admitted)\.json$/.test(
+      name
+    ),
     'Invalid report name'
   );
 }
@@ -754,6 +772,18 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     status: 'running',
     scope:
       'Saved owned-software animation decode; no conversion timing, perceptual quality, or peak-memory claim',
+    sourceRequirementOutcomes:
+      product.value.scenario === 'owned-vp8-product-near-cap'
+        ? {
+            prior: product.value.nearCapPriorStatus,
+            candidate: product.value.nearCapCandidateStatus,
+          }
+        : product.value.scenario === 'owned-vp8-product-large-admitted'
+          ? {
+              prior: product.value.largeAdmittedPriorStatus,
+              candidate: product.value.largeAdmittedCandidateStatus,
+            }
+          : null,
     sourceRun: run,
     expectedSource,
     sourceReport: selectedReport,
@@ -871,6 +901,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
         origin: declared.origin,
         saved,
         build: declared.record.build ?? null,
+        sourceRequirementStatus: declared.record.status ?? null,
         fixture: declared.record.fixture ?? null,
         quality: declared.record.quality ?? null,
         condition: declared.record.condition ?? null,

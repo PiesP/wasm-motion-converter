@@ -28,6 +28,8 @@ import {
   captureNearCapConsole,
   assertLargeAdmittedDecodedFrames,
   assertLargeAdmittedTimeline,
+  assertFunctionalBackendEvidence,
+  functionalFailureRecord,
   instrumentNearCapDecodedFrames,
   instrumentOwnedInstance,
   parseAnimatedWebp,
@@ -72,6 +74,80 @@ function animation(...frames: Buffer[]) {
 }
 
 describe('owned VP8 Windows product contract', () => {
+  it('attests the pinned prior legacy module without owned work and the candidate owned module', () => {
+    const legacy = {
+      path: 'assets/webp-wasm-DhoM6Y9t.wasm',
+      size: 482_273,
+      sha256: '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22',
+    };
+    const owned = { path: 'assets/owned-vp8-Cjb2SJa5.wasm', size: 190_087, sha256: 'a'.repeat(64) };
+    const noOwned = { instances: 0, successfulBeginCalls: 0, stepCalls: 0, records: [] };
+    const ownedProbe = {
+      instances: 1,
+      successfulBeginCalls: 2,
+      stepCalls: 3,
+      records: [
+        {
+          stepCalls: 3,
+          retireCalls: 1,
+          retireStatus: 0,
+          peakCapacityBytes: 92_667_904,
+          retainedCapacityBytes: 92_667_904,
+        },
+      ],
+    };
+    const inventory = [legacy, owned];
+    const fetched = [
+      { path: legacy.path, bytes: legacy.size, sha256: legacy.sha256 },
+      { path: owned.path, bytes: owned.size, sha256: owned.sha256 },
+    ];
+    expect(assertFunctionalBackendEvidence('prior', noOwned, [fetched[0]!], inventory)).toEqual(
+      legacy
+    );
+    expect(
+      assertFunctionalBackendEvidence('candidate', ownedProbe, [fetched[1]!], inventory)
+    ).toEqual(owned);
+    expect(() =>
+      assertFunctionalBackendEvidence('candidate', noOwned, [fetched[0]!], inventory)
+    ).toThrow(/missed owned WASM/);
+    expect(() =>
+      assertFunctionalBackendEvidence('candidate', ownedProbe, [fetched[0]!], inventory)
+    ).toThrow(/fetched owned WASM/);
+    expect(() => assertFunctionalBackendEvidence('prior', ownedProbe, fetched, inventory)).toThrow(
+      /unexpectedly executed owned/
+    );
+    expect(() =>
+      assertFunctionalBackendEvidence(
+        'prior',
+        noOwned,
+        [{ ...fetched[0]!, sha256: 'b'.repeat(64) }],
+        inventory
+      )
+    ).toThrow(/pinned legacy/);
+  });
+
+  it('retains a saved prior output while marking a later backend gate failed', () => {
+    const saved = { file: 'prior.webp', bytes: 35_578, sha256: 'c'.repeat(64) };
+    const record = functionalFailureRecord('prior', new Error('legacy fetch differs'), {
+      checked: {
+        fixture: 'large-admitted',
+        inputSha256: 'd'.repeat(64),
+        saved,
+        parsed: { canvas: { width: 4032, height: 2457 } },
+        decoded: { frames: [] },
+      } as unknown as NonNullable<Parameters<typeof functionalFailureRecord>[2]['checked']>,
+      probe: { instances: 0, successfulBeginCalls: 0, stepCalls: 0, records: [] },
+    });
+    expect(record).toMatchObject({
+      phase: 'failed',
+      build: 'prior',
+      status: 'failed',
+      error: 'Error: legacy fetch differs',
+      saved,
+      fixture: 'large-admitted',
+    });
+  });
+
   it('freezes a distinct large admitted source without changing near-cap generation', () => {
     const manifest = JSON.parse(
       readFileSync(resolve(root, 'validation/windows/owned-vp8-large-admitted.json'), 'utf8')

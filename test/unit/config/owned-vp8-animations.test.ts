@@ -15,6 +15,7 @@ import {
   readMetadata,
   declaredOutputs,
   assertLargeAdmittedSavedRecords,
+  assertReportName,
   assertNearCapSavedRecords,
   extractVp8Frames,
   writeIvf,
@@ -49,6 +50,15 @@ function animation(...frames: Buffer[]): Buffer {
 }
 
 describe('saved animation verifier', () => {
+  it('accepts only the exact large admitted report basename', () => {
+    expect(() => assertReportName('owned-vp8-product-large-admitted.json')).not.toThrow();
+    for (const name of [
+      'owned-vp8-product-large-admitted-ba.json',
+      '../owned-vp8-product-large-admitted.json',
+      'owned-vp8-product-large-admitted.json/other',
+    ])
+      expect(() => assertReportName(name)).toThrow(/Invalid report name/);
+  });
   it('requires a separate large admitted candidate output and prior outcome', () => {
     const saved = { file: 'large-candidate.webp', bytes: 8, sha256: 'a'.repeat(64) };
     const decodedFrameProbe = {
@@ -58,7 +68,15 @@ describe('saved animation verifier', () => {
     };
     const report = {
       samples: [],
-      functional: [{ build: 'candidate', fixture: 'large-admitted', saved, decodedFrameProbe }],
+      functional: [
+        {
+          build: 'candidate',
+          status: 'passed',
+          fixture: 'large-admitted',
+          saved,
+          decodedFrameProbe,
+        },
+      ],
       largeAdmittedCandidateStatus: 'passed',
       largeAdmittedPriorStatus: 'failed',
     };
@@ -69,23 +87,48 @@ describe('saved animation verifier', () => {
         declaredOutputs(report)
       )
     ).toThrow(/candidate did not pass/);
-    const wrong = { ...report, functional: [{ build: 'candidate', fixture: 'near-cap', saved }] };
+    const wrong = {
+      ...report,
+      functional: [{ build: 'candidate', status: 'passed', fixture: 'near-cap', saved }],
+    };
     expect(() => assertLargeAdmittedSavedRecords(wrong, declaredOutputs(wrong))).toThrow(
       /scene contract/
     );
     const missingProbe = {
       ...report,
-      functional: [{ build: 'candidate', fixture: 'large-admitted', saved }],
+      functional: [{ build: 'candidate', status: 'passed', fixture: 'large-admitted', saved }],
     };
     expect(() =>
       assertLargeAdmittedSavedRecords(missingProbe, declaredOutputs(missingProbe))
     ).toThrow(/observer is absent/);
+    const failedPrior = {
+      ...report,
+      functional: [
+        {
+          build: 'prior',
+          status: 'failed',
+          fixture: 'large-admitted',
+          saved: { ...saved, file: 'prior.webp' },
+        },
+        report.functional[0]!,
+      ],
+    };
+    expect(() =>
+      assertLargeAdmittedSavedRecords(failedPrior, declaredOutputs(failedPrior))
+    ).not.toThrow();
+    const relabeled = {
+      ...failedPrior,
+      functional: [{ ...failedPrior.functional[0]!, status: 'passed' }, report.functional[0]!],
+    };
+    expect(() => assertLargeAdmittedSavedRecords(relabeled, declaredOutputs(relabeled))).toThrow(
+      /requirement status differs/
+    );
   });
   it('requires near-cap candidate output and its full-scene fixture marker', () => {
     const saved = { file: 'candidate.webp', bytes: 8, sha256: 'a'.repeat(64) };
     const report = {
       samples: [],
-      functional: [{ build: 'candidate', fixture: 'near-cap', saved }],
+      functional: [{ build: 'candidate', status: 'passed', fixture: 'near-cap', saved }],
       nearCapCandidateStatus: 'passed',
       nearCapPriorStatus: 'failed',
     };

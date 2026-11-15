@@ -101,6 +101,8 @@ const LARGE_ADMITTED_FIXTURE: Fixture = {
   durationMs: 1_000,
 };
 const MAX_ADMITTED_FRAME_PIXELS = 10_066_329;
+const PINNED_PRIOR_LEGACY_WASM_SHA256 =
+  '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
 const STOP_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 /** Frozen owned-demux oracle for the generated 96x64 clustered VP9 fixture. */
 export const DIRECT_WORKER_CLUSTER_CONFIG = {
@@ -279,6 +281,118 @@ export function assertLargeAdmittedDecodedFrames(value: {
     assert.equal(frame.displayWidth, LARGE_ADMITTED_FIXTURE.width);
     assert.equal(frame.displayHeight, LARGE_ADMITTED_FIXTURE.height);
   }
+}
+
+type FunctionalAbiProbe = {
+  instances: number;
+  successfulBeginCalls: number;
+  stepCalls: number;
+  records: Array<{
+    stepCalls: number;
+    retireCalls: number;
+    retireStatus: number | null;
+    peakCapacityBytes: number;
+    retainedCapacityBytes: number | null;
+  }>;
+};
+type FetchedWasm = { path: string; bytes: number; sha256: string };
+type WasmInventoryEntry = { path: string; size: number; sha256: string };
+
+export function assertFunctionalBackendEvidence(
+  build: 'prior' | 'candidate',
+  probe: FunctionalAbiProbe,
+  fetched: readonly FetchedWasm[],
+  inventory: readonly WasmInventoryEntry[]
+): WasmInventoryEntry {
+  if (build === 'prior') {
+    assert(
+      probe.instances === 0 &&
+        probe.successfulBeginCalls === 0 &&
+        probe.stepCalls === 0 &&
+        probe.records.length === 0,
+      'Prior unexpectedly executed owned VP8 ABI'
+    );
+    const legacy = inventory.filter((entry) =>
+      /^assets\/webp-wasm[-.][\w-]{8}\.wasm$/.test(entry.path)
+    );
+    assert.equal(legacy.length, 1, 'Prior legacy WebP WASM inventory is not unique');
+    const asset = legacy[0]!;
+    assert.equal(
+      asset.sha256,
+      PINNED_PRIOR_LEGACY_WASM_SHA256,
+      'Prior legacy WebP WASM is not pinned'
+    );
+    assert(
+      fetched.some(
+        (entry) =>
+          entry.path === asset.path && entry.bytes === asset.size && entry.sha256 === asset.sha256
+      ),
+      'Prior did not fetch the pinned legacy WebP WASM bytes'
+    );
+    return asset;
+  }
+  assert(
+    probe.instances > 0 && probe.successfulBeginCalls > 0 && probe.stepCalls > 0,
+    'Candidate conversion missed owned WASM begin/step'
+  );
+  assert(
+    probe.records.some(
+      (entry) =>
+        entry.stepCalls > 0 &&
+        entry.retireCalls > 0 &&
+        entry.retireStatus === 0 &&
+        entry.peakCapacityBytes > 0 &&
+        entry.peakCapacityBytes <= 192 * 1024 * 1024 &&
+        entry.retainedCapacityBytes !== null &&
+        entry.retainedCapacityBytes >= entry.peakCapacityBytes &&
+        entry.retainedCapacityBytes <= 192 * 1024 * 1024
+    ),
+    'Candidate retained owned linear capacity is absent or exceeds admission'
+  );
+  const owned = inventory.filter((entry) =>
+    /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
+  );
+  assert.equal(owned.length, 1, 'Candidate owned WASM inventory is not unique');
+  const asset = owned[0]!;
+  assert(
+    fetched.some(
+      (entry) =>
+        entry.path === asset.path && entry.bytes === asset.size && entry.sha256 === asset.sha256
+    ),
+    'Candidate fetched owned WASM differs from inventory'
+  );
+  return asset;
+}
+
+export function functionalFailureRecord(
+  build: 'prior' | 'candidate',
+  error: unknown,
+  evidence: {
+    checked?:
+      | Pick<
+          Awaited<ReturnType<typeof measureJob>>,
+          'fixture' | 'inputSha256' | 'saved' | 'parsed' | 'decoded'
+        >
+      | undefined;
+    probe?: FunctionalAbiProbe | undefined;
+    decodedFrameProbe?: unknown;
+    fetchedWasm?: FetchedWasm[] | undefined;
+  }
+) {
+  return {
+    phase: 'failed' as const,
+    build,
+    status: 'failed' as const,
+    error: failure(error),
+    fixture: evidence.checked?.fixture,
+    inputSha256: evidence.checked?.inputSha256,
+    saved: evidence.checked?.saved,
+    parsed: evidence.checked?.parsed,
+    decoded: evidence.checked?.decoded,
+    probe: evidence.probe,
+    decodedFrameProbe: evidence.decodedFrameProbe,
+    fetchedWasm: evidence.fetchedWasm,
+  };
 }
 
 function digest(bytes: Uint8Array): string {
@@ -1833,10 +1947,10 @@ async function nearCapFunctional(
     const workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }> =
       [];
     const context = await createContext(browser, build, true, true, workerPatches);
-    const fetchedWasm: Array<Promise<{ path: string; bytes: number; sha256: string }>> = [];
+    const fetchedWasm: Array<Promise<FetchedWasm>> = [];
     context.on('response', (response) => {
       const path = new URL(response.url()).pathname.slice(1);
-      if (/^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(path))
+      if (/^assets\/(?:owned-vp8|webp-wasm)[-.][\w-]{8}\.wasm$/.test(path))
         fetchedWasm.push(
           response.body().then((bytes) => ({ path, bytes: bytes.length, sha256: digest(bytes) }))
         );
@@ -1849,6 +1963,10 @@ async function nearCapFunctional(
         if (errors.length < 32) errors.push(error.message);
       });
       const consoleCapture = captureNearCapConsole(page);
+      let checked: Awaited<ReturnType<typeof measureJob>> | undefined;
+      let decodedFrameProbe: unknown;
+      let probe: FunctionalAbiProbe | undefined;
+      let wasm: FetchedWasm[] | undefined;
       try {
         await loadApplication(page, server.url);
         const decoderSupport = await page.evaluate(
@@ -1886,7 +2004,7 @@ async function nearCapFunctional(
           `${mode} native source decode unsupported: ${decoderSupport.reason}`
         );
         await configurePage(page, inputPath, fixture, manifest.settings.quality);
-        const checked = await measureJob(
+        checked = await measureJob(
           page,
           fixture,
           manifest.input.sha256,
@@ -1896,40 +2014,16 @@ async function nearCapFunctional(
           output,
           `owned-vp8-functional-${mode}-${name}`
         );
-        const decodedFrameProbe = largeAdmitted
+        decodedFrameProbe = largeAdmitted
           ? await page.evaluate(() => Reflect.get(globalThis, '__wmcNearCapDecodedFrames'))
           : null;
-        if (largeAdmitted) assertLargeAdmittedDecodedFrames(decodedFrameProbe);
-        const probe = (await page.evaluate(() => Reflect.get(globalThis, '__wmcVp8AbiProbe'))) as {
-          instances: number;
-          successfulBeginCalls: number;
-          stepCalls: number;
-          records: Array<{
-            stepCalls: number;
-            retireCalls: number;
-            retireStatus: number | null;
-            peakCapacityBytes: number;
-            retainedCapacityBytes: number | null;
-          }>;
-        };
-        assert(
-          probe.instances > 0 && probe.successfulBeginCalls > 0 && probe.stepCalls > 0,
-          `${mode} conversion missed owned WASM begin/step`
-        );
-        assert(
-          probe.records.some(
-            (entry) =>
-              entry.stepCalls > 0 &&
-              entry.retireCalls > 0 &&
-              entry.retireStatus === 0 &&
-              entry.peakCapacityBytes > 0 &&
-              entry.peakCapacityBytes <= 192 * 1024 * 1024 &&
-              entry.retainedCapacityBytes !== null &&
-              entry.retainedCapacityBytes >= entry.peakCapacityBytes &&
-              entry.retainedCapacityBytes <= 192 * 1024 * 1024
-          ),
-          `${mode} retained linear capacity is absent or exceeds admission`
-        );
+        if (largeAdmitted)
+          assertLargeAdmittedDecodedFrames(
+            decodedFrameProbe as Parameters<typeof assertLargeAdmittedDecodedFrames>[0]
+          );
+        probe = (await page.evaluate(() =>
+          Reflect.get(globalThis, '__wmcVp8AbiProbe')
+        )) as FunctionalAbiProbe;
         assert(checked.parsed.frames.length > 0, `${mode} WebP has no saved frames`);
         const scenes = checked.decoded.frames.map((frame) => {
           const [r, g, b] = frame.centerRgb;
@@ -1949,20 +2043,8 @@ async function nearCapFunctional(
               durationMs: frame.durationMs,
             }))
           );
-        const ownedAsset = build.state.files.find((entry) =>
-          /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(entry.path)
-        );
-        assert(ownedAsset, 'Candidate owned WASM inventory entry absent');
-        const wasm = await Promise.all(fetchedWasm);
-        assert(
-          wasm.some(
-            (entry) =>
-              entry.path === ownedAsset.path &&
-              entry.bytes === ownedAsset.size &&
-              entry.sha256 === ownedAsset.sha256
-          ),
-          `${mode} fetched WASM differs from candidate inventory`
-        );
+        wasm = await Promise.all(fetchedWasm);
+        const backendAsset = assertFunctionalBackendEvidence(name, probe, wasm, build.state.files);
         assert.deepEqual(errors, [], `${mode} page errors`);
         await record({
           phase: 'completed',
@@ -1976,6 +2058,8 @@ async function nearCapFunctional(
           decoderSupport,
           probe,
           decodedFrameProbe,
+          backend: name === 'prior' ? 'legacy-wasm-webp' : 'owned-vp8',
+          backendAsset,
           saved: checked.saved,
           parsed: checked.parsed,
           decoded: checked.decoded,
@@ -1992,7 +2076,14 @@ async function nearCapFunctional(
           errors,
           consoleCapture.snapshot()
         );
-        await record({ phase: 'failed', build: name, status: 'failed', error: failure(error) });
+        await record(
+          functionalFailureRecord(name, error, {
+            checked,
+            probe,
+            decodedFrameProbe,
+            fetchedWasm: wasm,
+          })
+        );
         if (name === 'candidate') throw error;
       } finally {
         consoleCapture.detach();
@@ -2083,7 +2174,7 @@ export async function exerciseOwnedVp8Product({
     softwareInjection:
       'Page OffscreenCanvas.convertToBlob disabled before application code; Worker JS is patched only if loaded, and a patch record alone is not encoding-route proof',
     functionalScope: functionalOnly
-      ? `Independent prior and candidate generated ${largeAdmitted ? 'large admitted' : 'near-cap'} UI main-WASM attempts, outside the V8 timing cohort; candidate must pass and prior outcome is retained separately`
+      ? `Independent pinned-prior legacy wasm-webp and candidate owned-VP8 ${largeAdmitted ? 'large admitted' : 'near-cap'} UI attempts, outside the V8 timing cohort; candidate must pass and prior outcome is retained separately`
       : fullVideo
         ? 'After uninstrumented first/warm samples, one additional candidate main-WASM conversion attests successful ABI2 begin calls; emitted ANMF counts are recorded separately. Active Stop and recovery remain in the small selector.'
         : 'Candidate UI main software recovery and active Stop; separate direct conversion Worker protocol and owned output',
