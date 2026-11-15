@@ -11,6 +11,9 @@ const PRIOR_SOURCE = 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4';
 const PRIOR_WASM = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
 const PRIOR_LOADER = '15cd582651f78831babe9b54012388f22614c48b39c899fa2772e62b037dae47';
 const PRIOR_LOADER_PATCH = '125b2d4ee079151de879afa1315e10e98425f146d4c6b86fbc2f051e3879ec4a';
+const PRIOR_MAIN_LOADER_PATH = 'assets/wasm-webp.Wg4Zhl1L.js';
+const PRIOR_MAIN_LOADER = '591bd59ee5da2104693bf7e5bec2b8c1dc85527d3ca21d7b05231c2b1c25499b';
+const PRIOR_MAIN_LOADER_PATCH = '9e4c697fbeb764eb8e57e98193c4387a133581022fa73a31bbeb34582a16a97f';
 const INPUT = 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1';
 const CACHE_SCOPE =
   'new browser context for this build; first is first-in-document, not proven fresh-profile cold';
@@ -390,6 +393,32 @@ export function verifyTiming(
       equal(patch.originalSha256, PRIOR_LOADER, 'prior loader original digest');
       equal(patch.patchedSha256, PRIOR_LOADER_PATCH, 'prior loader patched digest');
       equal(patch.instrumentation, 'post-loop-actual-iteration-count', 'prior loader patch kind');
+      if (report.priorLegacyMainLoaderPatch !== undefined) {
+        const mainPatch = object(
+          report.priorLegacyMainLoaderPatch,
+          'prior main legacy loader patch'
+        );
+        equal(mainPatch.path, PRIOR_MAIN_LOADER_PATH, 'prior main loader path');
+        equal(mainPatch.originalSha256, PRIOR_MAIN_LOADER, 'prior main loader original digest');
+        equal(mainPatch.patchedSha256, PRIOR_MAIN_LOADER_PATCH, 'prior main loader patched digest');
+        equal(
+          mainPatch.instrumentation,
+          'post-loop-actual-iteration-count',
+          'prior main loader patch kind'
+        );
+        const served = array(report.priorLegacyLoaderServedPaths, 'prior legacy served paths');
+        assert(
+          served.includes(PRIOR_MAIN_LOADER_PATH) &&
+            served.every((path) => path === PRIOR_MAIN_LOADER_PATH || path === patch.path),
+          'prior main loader was not served through the pinned patch'
+        );
+      } else {
+        assert.equal(
+          report.priorLegacyLoaderServedPaths,
+          undefined,
+          'prior main loader served paths lack a pinned patch'
+        );
+      }
     }
     const controllerReceiptSha256 = sha(receiptDigests[index], 'controller receipt digest');
     const receiptHash = digest(Buffer.from(JSON.stringify(raw)));
@@ -508,6 +537,27 @@ export function verifyTiming(
         attestationEpochs.add(epoch);
       }
       const timingAttestation = checkTimingAttestation(sample.timingAttestation, epoch, build);
+      if (build === 'prior' && report.priorLegacyMainLoaderPatch !== undefined) {
+        assert.equal(
+          timingAttestation.status,
+          'LEGACY_BOUNDARY_COPIES_OBSERVED',
+          `${label} prior main copy observation absent`
+        );
+        assert('probe' in timingAttestation, `${label} prior main probe absent`);
+        equal(timingAttestation.probe.workerStarts, 0, `${label} prior main Worker starts`);
+        equal(
+          timingAttestation.probe.workerCompletions,
+          0,
+          `${label} prior main Worker completions`
+        );
+      } else if (
+        build === 'prior' &&
+        'probe' in timingAttestation &&
+        timingAttestation.probe.workerStarts === 0 &&
+        timingAttestation.status === 'LEGACY_BOUNDARY_COPIES_OBSERVED'
+      ) {
+        throw new Error(`${label} prior main copy claim lacks source-bound patch`);
+      }
       if ('probe' in timingAttestation)
         receiptAttestations.push({
           build,

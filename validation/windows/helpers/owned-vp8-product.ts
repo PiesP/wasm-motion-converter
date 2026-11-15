@@ -113,20 +113,49 @@ const PINNED_PRIOR_LEGACY_WASM_SHA256 =
   '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
 const PINNED_PRIOR_LEGACY_LOADER_SHA256 =
   '15cd582651f78831babe9b54012388f22614c48b39c899fa2772e62b037dae47';
+const PINNED_PRIOR_LEGACY_MAIN_LOADER_SHA256 =
+  '591bd59ee5da2104693bf7e5bec2b8c1dc85527d3ca21d7b05231c2b1c25499b';
 const LEGACY_COPY_LOOP = 'else for(var s=0;s<r;++s)b[o+s]=t[s];return e!==null';
 const LEGACY_OBSERVED_COPY_LOOP =
   'else{for(var s=0;s<r;++s)b[o+s]=t[s];globalThis.__wmcVp8LegacyCopy?.(b,oe,o,s,t)}return e!==null';
+const LEGACY_MAIN_COPY_LOOP = 'else for(var s=0;s<r;++s)x[o+s]=t[s];return e!==null';
+const LEGACY_MAIN_OBSERVED_COPY_LOOP =
+  'else{for(var s=0;s<r;++s)x[o+s]=t[s];globalThis.__wmcVp8LegacyCopy?.(x,v,o,s,t)}return e!==null';
 
-export function patchPinnedLegacyLoader(original: Uint8Array) {
+function patchPinnedLegacyLoaderRole(
+  original: Uint8Array,
+  expectedSha256: string,
+  loop: string,
+  observedLoop: string,
+  role: string
+) {
   assert.equal(
     digest(original),
-    PINNED_PRIOR_LEGACY_LOADER_SHA256,
-    'Prior loader is not the frozen compiled source'
+    expectedSha256,
+    `Prior ${role} loader is not the frozen compiled source`
   );
   const source = Buffer.from(original).toString('utf8');
-  assert.equal(source.split(LEGACY_COPY_LOOP).length, 2, 'Prior loader copy loop is not unique');
-  const patched = Buffer.from(source.replace(LEGACY_COPY_LOOP, LEGACY_OBSERVED_COPY_LOOP));
+  assert.equal(source.split(loop).length, 2, `Prior ${role} loader copy loop is not unique`);
+  const patched = Buffer.from(source.replace(loop, observedLoop));
   return { bytes: patched, sha256: digest(patched) };
+}
+export function patchPinnedLegacyLoader(original: Uint8Array) {
+  return patchPinnedLegacyLoaderRole(
+    original,
+    PINNED_PRIOR_LEGACY_LOADER_SHA256,
+    LEGACY_COPY_LOOP,
+    LEGACY_OBSERVED_COPY_LOOP,
+    'Worker'
+  );
+}
+export function patchPinnedLegacyMainLoader(original: Uint8Array) {
+  return patchPinnedLegacyLoaderRole(
+    original,
+    PINNED_PRIOR_LEGACY_MAIN_LOADER_SHA256,
+    LEGACY_MAIN_COPY_LOOP,
+    LEGACY_MAIN_OBSERVED_COPY_LOOP,
+    'main'
+  );
 }
 const STOP_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 /** Frozen owned-demux oracle for the generated 96x64 clustered VP9 fixture. */
@@ -1308,7 +1337,8 @@ async function createContext(
   main: boolean,
   workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }>,
   timing = false,
-  legacyLoaderPatch?: { path: string; bytes: Uint8Array },
+  legacyLoaderPatches: Array<{ path: string; originalSha256: string; bytes: Uint8Array }> = [],
+  observedLegacyLoaderPaths: string[] = [],
   ownerRetentionWorker = false
 ): Promise<BrowserContext> {
   const context = await browser.newContext({
@@ -1336,12 +1366,20 @@ async function createContext(
     if (main) await context.addInitScript(instrumentOwnedInstance);
   }
   await context.addInitScript(installProductObserver);
-  if (legacyLoaderPatch) {
-    await context.route(`**/${legacyLoaderPatch.path}`, async (route) => {
+  for (const patch of legacyLoaderPatches) {
+    await context.route(`**/${patch.path}`, async (route) => {
+      const response = await route.fetch();
+      assert.equal(response.status(), 200, `Prior loader ${patch.path} was not served`);
+      assert.equal(
+        digest(await response.body()),
+        patch.originalSha256,
+        `Served prior loader ${patch.path} differs from pinned source`
+      );
       await route.fulfill({
-        body: Buffer.from(legacyLoaderPatch.bytes),
-        contentType: 'text/javascript',
+        response,
+        body: Buffer.from(patch.bytes),
       });
+      observedLegacyLoaderPaths.push(patch.path);
     });
   }
   await context.route('**/assets/worker-*.js', async (route) => {
@@ -2296,7 +2334,7 @@ export async function exerciseOwnedVp8Product({
       ? 'separate browser context and one functional first-in-document attempt per build; no fresh-profile cold claim'
       : 'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
     softwareInjection:
-      'Page OffscreenCanvas.convertToBlob disabled before application code; timed V8 Worker has numeric ABI/copy probe and pinned prior loader has post-loop copy callback; a patch record alone is not encoding-route proof',
+      'Page OffscreenCanvas.convertToBlob disabled before application code; page and conversion Worker have numeric ABI/copy probes and both pinned prior main and Worker loaders have post-loop copy callbacks; served-asset and per-job observations establish the route',
     functionalScope: functionalOnly
       ? `Independent pinned-prior legacy wasm-webp and candidate owned-VP8 ${largeAdmitted ? 'large admitted' : 'near-cap'} UI attempts, outside the V8 timing cohort; candidate must pass and prior outcome is retained separately`
       : fullVideo
@@ -2307,7 +2345,11 @@ export async function exerciseOwnedVp8Product({
     nearCapPreflights: [] as unknown[],
     largeAdmittedPreflights: [] as unknown[],
   };
-  let legacyLoaderPatch: { path: string; bytes: Uint8Array } | undefined;
+  const legacyLoaderPatches: Array<{
+    path: string;
+    originalSha256: string;
+    bytes: Uint8Array;
+  }> = [];
   if (fullVideo) {
     assert.equal(
       prior.state.sourceSha,
@@ -2334,11 +2376,41 @@ export async function exerciseOwnedVp8Product({
     const original = await readFile(loaderPath);
     assert.equal(original.length, file.size, 'Prior loader inventory size differs');
     const patched = patchPinnedLegacyLoader(original);
-    legacyLoaderPatch = { path: file.path, bytes: patched.bytes };
+    legacyLoaderPatches.push({
+      path: file.path,
+      originalSha256: file.sha256,
+      bytes: patched.bytes,
+    });
     report.priorLegacyLoaderPatch = {
       path: file.path,
       originalSha256: file.sha256,
       patchedSha256: patched.sha256,
+      instrumentation: 'post-loop-actual-iteration-count',
+    };
+    const mainLoader = prior.state.files.filter((entry) =>
+      /^assets\/wasm-webp[-.][\w-]{8}\.js$/.test(entry.path)
+    );
+    assert.equal(mainLoader.length, 1, 'Prior main WebP loader is not unique');
+    const mainFile = mainLoader[0]!;
+    assert.equal(
+      mainFile.sha256,
+      PINNED_PRIOR_LEGACY_MAIN_LOADER_SHA256,
+      'V8 prior main loader changed'
+    );
+    assert(mainFile.size > 0 && mainFile.size < 1024 * 1024, 'Prior main loader size is invalid');
+    const mainPath = await validateBundleFile(bundleRoot, `${prior.relativePath}/${mainFile.path}`);
+    const mainOriginal = await readFile(mainPath);
+    assert.equal(mainOriginal.length, mainFile.size, 'Prior main loader inventory size differs');
+    const mainPatched = patchPinnedLegacyMainLoader(mainOriginal);
+    legacyLoaderPatches.push({
+      path: mainFile.path,
+      originalSha256: mainFile.sha256,
+      bytes: mainPatched.bytes,
+    });
+    report.priorLegacyMainLoaderPatch = {
+      path: mainFile.path,
+      originalSha256: mainFile.sha256,
+      patchedSha256: mainPatched.sha256,
       instrumentation: 'post-loop-actual-iteration-count',
     };
   }
@@ -2475,6 +2547,7 @@ export async function exerciseOwnedVp8Product({
       await server.setDistribution(build.relativePath);
       const workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }> =
         [];
+      const observedLegacyLoaderPaths: string[] = [];
       const context = await createContext(
         browser,
         build,
@@ -2482,7 +2555,8 @@ export async function exerciseOwnedVp8Product({
         false,
         workerPatches,
         fullVideo,
-        name === 'prior' ? legacyLoaderPatch : undefined
+        name === 'prior' ? legacyLoaderPatches : [],
+        observedLegacyLoaderPaths
       );
       try {
         for (const { fixture, path, sha256 } of inputs) {
@@ -2511,6 +2585,32 @@ export async function exerciseOwnedVp8Product({
                   'convert',
                   report.timingInvocationId as string | undefined
                 );
+                if (fullVideo && name === 'prior') {
+                  const observed = sample.timingAttestation as
+                    | {
+                        workerStarts: number;
+                        workerCompletions: number;
+                        legacyIndexedCopyEvents: number;
+                        inputCopyBytes: number;
+                        outputCopyBytes: number;
+                        peakLinearCapacityBytes: number;
+                        capacityAtJobEndBytes: number;
+                        unknownCopyKinds: number;
+                      }
+                    | undefined;
+                  assert(observed, 'Prior V8 timing probe is absent');
+                  assert.equal(observed.workerStarts, 0, 'Prior V8 left the observed main route');
+                  assert.equal(observed.workerCompletions, 0, 'Prior V8 completed in a Worker');
+                  assert(
+                    observed.legacyIndexedCopyEvents > 0 &&
+                      observed.inputCopyBytes > 0 &&
+                      observed.outputCopyBytes > 0 &&
+                      observed.capacityAtJobEndBytes > 0 &&
+                      observed.peakLinearCapacityBytes >= observed.capacityAtJobEndBytes &&
+                      observed.unknownCopyKinds === 0,
+                    'Prior V8 main loader did not observe bounded legacy copies and capacity'
+                  );
+                }
                 sample.contextIdentity = `${scenario}:${name}`;
                 sample.pageIdentity = `${fixture.id}:${quality}`;
                 if (condition === 'first-in-document') firstDocumentTimeOrigin = sample.timeOrigin;
@@ -2580,6 +2680,13 @@ export async function exerciseOwnedVp8Product({
           }
         }
         report[`${name}WorkerPatches`] = workerPatches;
+        if (fullVideo && name === 'prior') {
+          assert(
+            observedLegacyLoaderPaths.includes(legacyLoaderPatches[1]!.path),
+            'Prior main loader was not served through the pinned patch'
+          );
+          report.priorLegacyLoaderServedPaths = observedLegacyLoaderPaths;
+        }
       } finally {
         await context.close();
       }
@@ -2963,7 +3070,8 @@ export async function exerciseOwnedVp8OwnerRetention({
       false,
       workerPatches,
       false,
-      undefined,
+      [],
+      [],
       true
     );
     try {

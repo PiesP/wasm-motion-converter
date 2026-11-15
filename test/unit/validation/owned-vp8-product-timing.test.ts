@@ -273,7 +273,12 @@ function verifyFixture(reports: ReturnType<typeof makeReports>, pins = expected)
 }
 
 function makeAttestedReports() {
-  const reports = makeReports();
+  const reports: Array<
+    ReturnType<typeof makeReports>[number] & {
+      priorLegacyMainLoaderPatch?: Record<string, unknown>;
+      priorLegacyLoaderServedPaths?: string[];
+    }
+  > = makeReports();
   for (const [attempt, report] of reports.entries()) {
     const invocationId = `11111111-2222-4333-8444-${(attempt + 1).toString(16).padStart(12, '0')}`;
     Object.assign(report, {
@@ -284,6 +289,13 @@ function makeAttestedReports() {
         patchedSha256: '125b2d4ee079151de879afa1315e10e98425f146d4c6b86fbc2f051e3879ec4a',
         instrumentation: 'post-loop-actual-iteration-count',
       },
+      priorLegacyMainLoaderPatch: {
+        path: 'assets/wasm-webp.Wg4Zhl1L.js',
+        originalSha256: '591bd59ee5da2104693bf7e5bec2b8c1dc85527d3ca21d7b05231c2b1c25499b',
+        patchedSha256: '9e4c697fbeb764eb8e57e98193c4387a133581022fa73a31bbeb34582a16a97f',
+        instrumentation: 'post-loop-actual-iteration-count',
+      },
+      priorLegacyLoaderServedPaths: ['assets/wasm-webp.Wg4Zhl1L.js'],
       priorWorkerPatches: [
         {
           path: 'assets/worker-ABCDEFGH.js',
@@ -305,11 +317,19 @@ function makeAttestedReports() {
       const workerId = `aaaaaaaa-bbbb-4ccc-8ddd-${(attempt * 4 + index + 1).toString(16).padStart(12, '0')}`;
       const attestation = probe(epoch, workerId);
       if (sample.build === 'prior') {
-        attestation.workerObservation.state.ownedInstances = 0;
-        attestation.workerObservation.state.successfulBeginCalls = 0;
-        attestation.workerObservation.state.stepCalls = 0;
-        attestation.workerObservation.state.retireCalls = 0;
-        attestation.workerObservation.state.legacyIndexedCopyEvents = 4;
+        Object.assign(attestation, {
+          workerStarts: 0,
+          workerCompletions: 0,
+          workerSnapshotStatus: 'none',
+          workerObservation: null,
+          inputCopyBytes: 192,
+          outputCopyBytes: 32,
+          inputCopyEvents: 4,
+          outputCopyEvents: 4,
+          legacyIndexedCopyEvents: 4,
+          peakLinearCapacityBytes: 65536,
+          capacityAtJobEndBytes: 65536,
+        });
       }
       const clickClockMs = Date.parse(sample.wallStart) - sample.timeOrigin + 3000;
       const readyClockMs = clickClockMs + sample.requestToDownloadReadyMs;
@@ -335,6 +355,59 @@ test('joins sixty distinct job epochs and worker IDs without promoting numeric P
   assert.equal(result.samples[2]?.timingAttestation.status, 'OWNED_WORKER_OBSERVED');
   assert.match(result.qualificationReason, /host neighboring load.*post-retire linear retention/);
   assert.doesNotMatch(result.qualificationReason, /cannot be observed|prevents post-clock/);
+});
+
+test('main legacy copy claims require the pinned main loader and observed serve path', () => {
+  const wrongSource = makeAttestedReports();
+  (wrongSource[0]!.priorLegacyMainLoaderPatch as Record<string, unknown>).originalSha256 =
+    '0'.repeat(64);
+  assert.throws(() => verifyFixture(wrongSource), /prior main loader original digest/);
+
+  const wrongPatch = makeAttestedReports();
+  (wrongPatch[0]!.priorLegacyMainLoaderPatch as Record<string, unknown>).patchedSha256 = '0'.repeat(
+    64
+  );
+  assert.throws(() => verifyFixture(wrongPatch), /prior main loader patched digest/);
+
+  const notServed = makeAttestedReports();
+  notServed[0]!.priorLegacyLoaderServedPaths = [];
+  assert.throws(() => verifyFixture(notServed), /prior main loader was not served/);
+
+  const noMainPatch = makeAttestedReports();
+  delete noMainPatch[0]!.priorLegacyMainLoaderPatch;
+  delete noMainPatch[0]!.priorLegacyLoaderServedPaths;
+  assert.throws(() => verifyFixture(noMainPatch), /prior main copy claim lacks source-bound patch/);
+
+  const noCopies = makeAttestedReports();
+  const prior = (noCopies[0]!.samples[0]! as unknown as Record<string, unknown>)
+    .timingAttestation as Record<string, unknown>;
+  prior.legacyIndexedCopyEvents = 0;
+  assert.throws(() => verifyFixture(noCopies), /prior main copy observation absent/);
+});
+
+test('old worker-only patch receipts retain UNKNOWN prior main execution', () => {
+  const reports = makeAttestedReports();
+  for (const report of reports) {
+    delete report.priorLegacyMainLoaderPatch;
+    delete report.priorLegacyLoaderServedPaths;
+    for (const sample of report.samples.filter((entry) => entry.build === 'prior')) {
+      const timing = (sample as unknown as Record<string, unknown>).timingAttestation as Record<
+        string,
+        unknown
+      >;
+      timing.legacyIndexedCopyEvents = 0;
+      timing.inputCopyBytes = 0;
+      timing.inputCopyEvents = 0;
+      timing.outputCopyBytes = 0;
+      timing.outputCopyEvents = 0;
+      timing.peakLinearCapacityBytes = 0;
+      timing.capacityAtJobEndBytes = 0;
+    }
+  }
+  const result = verifyFixture(reports);
+  assert.equal(result.samples[0]?.timingAttestation.status, 'LEGACY_EXECUTION_AND_COPY_UNKNOWN');
+  assert.match(result.qualificationReason, /LEGACY_EXECUTION_AND_COPY_UNKNOWN/);
+  assert.equal(result.qualification, 'NOT_VERIFIED');
 });
 
 test('modern timing samples require actual page clock bounds', () => {
@@ -380,15 +453,15 @@ test('rejects mixed, partial, stale and unsupported attestation receipts', () =>
   observed.unknownCopyKinds = 1;
   assert.throws(() => verifyFixture(unsupported), /unknown copy kind/);
   const duplicateWorker = makeAttestedReports();
-  const first = (duplicateWorker[0]!.samples[0]! as unknown as Record<string, unknown>)
+  const first = (duplicateWorker[0]!.samples[2]! as unknown as Record<string, unknown>)
     .timingAttestation as { workerObservation: { requestId: string; state: { epoch: string } } };
-  const second = (duplicateWorker[0]!.samples[1]! as unknown as Record<string, unknown>)
+  const second = (duplicateWorker[0]!.samples[3]! as unknown as Record<string, unknown>)
     .timingAttestation as { workerObservation: { requestId: string; state: { epoch: string } } };
   second.workerObservation.requestId = first.workerObservation.requestId;
   second.workerObservation.state.epoch = first.workerObservation.requestId;
   assert.throws(() => verifyFixture(duplicateWorker), /duplicate Worker request ID/);
   const missingWorkerPatch = makeAttestedReports();
-  Object.assign(missingWorkerPatch[0]!, { priorWorkerPatches: [] });
+  Object.assign(missingWorkerPatch[0]!, { candidateWorkerPatches: [] });
   assert.throws(
     () => verifyFixture(missingWorkerPatch),
     /Worker completed without source-bound patch/
