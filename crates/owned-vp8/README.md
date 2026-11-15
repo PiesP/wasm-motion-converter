@@ -21,6 +21,11 @@ in the [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-
 Browser/product performance and lifecycle qualification remain unfinished; these
 codec results do not qualify runtime removal of `wasm-webp`.
 
+The release profile uses `opt-level = 3` as a throughput candidate. The
+[one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
+defines the comparison with the retained `opt-level = "s"` module. This build
+setting alone does not establish faster conversion or product acceptance.
+
 Textured allocation uses a per-frame flag that is true only when every imported,
 padded U/V sample is exactly 128, accumulated during bounded RGB-to-YUV conversion.
 The current exploratory colored and neutral qindices are defined in `src/presets.rs`.

@@ -41,7 +41,7 @@ const maximumGzipBytes = 184_377;
 const rustflags =
   '-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd -C link-arg=--max-memory=201326592';
 const pathRemapping = { checkout: '/wmc', rustLibrary: `/rustc/${compilerCommit}` };
-const manifestSha = '1d4289b067f623bd5fe2ac55c5360b3b54bc2e098b371d810418c02d152b5b3d';
+const manifestSha = '0b9f8a75056059850501e50ff5f71023f0cea2217e376e39e6d99e013fc96d12';
 const lockSha = 'cc03cead7fdcd8a393696571a65db032193f1a9c4a6fd0102f1307c2ffda44b0';
 const requiredExports = [
   'vp8_v2_abi_version',
