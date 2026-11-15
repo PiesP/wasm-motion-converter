@@ -113,13 +113,38 @@ All raw outcomes remain under `m2-uv-rdo-30-*` and
 `m2-uv-texture-rdo-31-*`. Further work should inspect selected residual changes
 and actual distortion before another prospective correction.
 
+## Visible coefficient price and first v5 evaluation
+
+Source `187dd82e` separates the coefficient price from macroblock mode cost:
+divide by 64 for a full UV patch and scale by its visible sample count out of
+16. Padding-only patches retain nearest coefficients. The copied source-bound
+candidate31 trace showed that its previous price accepted all eligible chroma
+proposals; the new formula was fixed prospectively before measurements. It
+does not select an exception by fixture or dimensions.
+
+The corrected source passed all 225 known conditions, full Rust 94/94 including
+12 independent-decoder tests, fmt/Clippy, compiled ABI2, reproducible WASM and
+maintained verify 9/9. Its module is
+`cc08cc7dba6c8325581d765e058c91b6886c9b77bf482822921db70b2d2090cf`,
+179,706 raw / 37,500 gzip bytes. A tiny boundary regression matches the retained
+pre-RDO 86-byte payload and synchronous/ABI2 execution. Independent source review
+found no actionable defect.
+
+Freeze source `6b1f848b` then ran the first complete v5 evaluation: 50/54 pass,
+with two q60 SSIM and two q75/q85 large-size failures. See the
+[retained rejected result](501-owned-vp8-v5-result.md). Every candidate frame
+independently decodes to the same YUV through native VP8 and libvpx; all duplicate
+input/preset groups are deterministic. Those correctness observations do not
+override the four quality/size failures.
+
 ## Next qualifying work
 
 The source-only corrected-v5 freeze has 18 new inputs / 54 conditions and an
 independent source review. Its manifest is
 `c8929d67d57c6df20e2c152c85ac4178b9b4a4c9c7184892b62df130de8faf83`.
-No v5 codec outputs have been generated at this checkpoint. Complete correctable
-rate decisions before freezing an exact candidate for the first full evaluation.
+Its first evaluation is now exposed and regression-only. Preserve all outcomes;
+no fresh successor is currently frozen. Correct the remaining precision/rate
+failures against the complete 279-condition known matrix before a new freeze.
 
 Bounded UV coefficient rate/distortion decisions and exact-semantic trial-cost
 factorization are now integrated engineering changes. Their current quality
