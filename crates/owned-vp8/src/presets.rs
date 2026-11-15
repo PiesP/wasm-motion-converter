@@ -13,8 +13,8 @@ pub(crate) fn smooth_qindex(quality: u32) -> usize {
         SMOOTH_QINDEX
     }
 }
-pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [19, 15, 10];
-pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [33, 27, 15];
+pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [18, 15, 10];
+pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [32, 27, 15];
 pub(crate) const TEXTURED_QINDEX: [usize; 3] = [33, 28, 14];
 pub(crate) const TEXTURED_MONO_QINDEX: [usize; 3] = [35, 27, 14];
 pub(crate) const UV_DC_DELTA: [i8; 3] = [-5, -9, -4];
