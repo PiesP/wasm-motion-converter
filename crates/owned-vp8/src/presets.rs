@@ -15,6 +15,7 @@ pub(crate) const UV_AC_DELTA: [i8; 3] = [-11, -9, -4];
 pub(crate) const FILTER_LEVEL: [u8; 3] = [6, 4, 4];
 pub(crate) const LAMBDA_NUMERATOR: u64 = 1;
 pub(crate) const LAMBDA_DENOMINATOR: u64 = 1;
+pub(crate) const UV_COEFFICIENT_RATE_DIVISOR: u64 = 64;
 pub(crate) fn qindex(quality: u32) -> usize {
     QINDEX[match quality {
         60 => 0,

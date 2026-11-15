@@ -787,6 +787,28 @@ fn make_i4(
         distortion: squared_error::<16, 256>(source, stride, mx * 16, my * 16, &tile),
     }
 }
+#[derive(Clone, Copy)]
+struct UvRdo<'a> {
+    contexts: &'a CoeffContexts,
+    mx: usize,
+    lambda: u64,
+    visible_width: usize,
+    visible_height: usize,
+}
+
+impl UvRdo<'_> {
+    fn block_lambda(self, x: usize, y: usize) -> Option<u64> {
+        let width = self.visible_width.saturating_sub(x).min(4);
+        let height = self.visible_height.saturating_sub(y).min(4);
+        let samples = width * height;
+        // Padded samples do not receive their own rate allowance. Keep hidden
+        // patches unchanged because filtering can couple them to visible edges.
+        (samples > 0).then_some(
+            self.lambda * samples as u64 / (16 * crate::presets::UV_COEFFICIENT_RATE_DIVISOR),
+        )
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn make_uv(
     source_u: &[u8],
@@ -798,7 +820,7 @@ fn make_uv(
     y: usize,
     mode: u8,
     steps: Steps,
-    rdo: Option<(&CoeffContexts, usize, u64)>,
+    rdo: Option<UvRdo<'_>>,
 ) -> UvCandidate {
     let mut coeffs = [[[0i16; 16]; 4]; 2];
     let mut tiles = [[0u8; 64]; 2];
@@ -807,7 +829,7 @@ fn make_uv(
             .into_iter()
             .enumerate()
     {
-        let (mut local_above, mut local_left) = if let Some((contexts, mx, _)) = rdo {
+        let (mut local_above, mut local_left) = if let Some(UvRdo { contexts, mx, .. }) = rdo {
             let (above, left) = if index == 0 {
                 (&contexts.u, contexts.left_u)
             } else {
@@ -825,7 +847,9 @@ fn make_uv(
                 let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
                 let baseline =
                     code_predicted_block(source, stride, x + bx * 4, y + by * 4, &predictor, steps);
-                let (coeff, patch) = if let Some((_, _, lambda)) = rdo {
+                let (coeff, patch) = if let Some(lambda) =
+                    rdo.and_then(|rdo| rdo.block_lambda(x + bx * 4, y + by * 4))
+                {
                     optimize_uv_block(
                         source,
                         stride,
@@ -1189,6 +1213,8 @@ fn encode_observed(
                 &mut left_modes,
                 lambda,
                 quality,
+                width,
+                height,
                 luma_policy,
                 segment_id,
                 segments,
@@ -1227,6 +1253,8 @@ fn analyze_one(
     left_modes: &mut [u8; 4],
     lambda: u64,
     quality: u32,
+    visible_width: usize,
+    visible_height: usize,
     luma_policy: u8,
     segment_id: u8,
     segments: SegmentConfig,
@@ -1302,11 +1330,13 @@ fn analyze_one(
                 my * 8,
                 mode,
                 uv_steps,
-                (quality == 60 && segment_id == segmentation::TEXTURED).then_some((
-                    coeff_contexts,
+                (quality == 60 && segment_id == segmentation::TEXTURED).then_some(UvRdo {
+                    contexts: coeff_contexts,
                     mx,
                     lambda,
-                )),
+                    visible_width: visible_width.div_ceil(2),
+                    visible_height: visible_height.div_ceil(2),
+                }),
             )
         })
         .collect();
@@ -2265,6 +2295,8 @@ impl FrameEncoder {
             &mut self.left_modes,
             lambda,
             self.request.quality,
+            self.request.width as usize,
+            self.request.height as usize,
             0,
             segment_id,
             self.segments,
@@ -2706,6 +2738,52 @@ mod tests {
     }
 
     #[test]
+    fn partial_uv_rate_allowance_preserves_tiny_sync_and_abi2_frames() {
+        let input: Vec<u8> = [
+            [53u8, 178, 89],
+            [124, 201, 150],
+            [72, 215, 106],
+            [143, 238, 167],
+            [91, 252, 123],
+            [162, 19, 184],
+            [110, 33, 140],
+            [181, 56, 201],
+            [129, 70, 157],
+            [200, 93, 218],
+        ]
+        .into_iter()
+        .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
+        .collect();
+        let contexts = CoeffContexts::new(1);
+        let rdo = UvRdo {
+            contexts: &contexts,
+            mx: 0,
+            lambda: 480,
+            visible_width: 1,
+            visible_height: 3,
+        };
+        assert_eq!(rdo.block_lambda(0, 0), Some(1));
+        assert_eq!(rdo.block_lambda(0, 4), None);
+        assert_eq!(rdo.block_lambda(4, 0), None);
+        let sync = encode_textured(&input, 2, 5, 8, 0, 60).unwrap();
+        // Retained c901c052 VP8 payload, before the rejected coefficient trials.
+        let fingerprint = sync.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
+        });
+        assert_eq!((sync.len(), fingerprint), (86, 0x2ba7_7544_8b00_1ee3));
+        for frame in [1, 2] {
+            let request = Request {
+                quality: 60,
+                frame,
+                ..engine_request(2, 5, 0, &input, 8)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            assert_eq!(engine.output(), sync);
+        }
+    }
+
+    #[test]
     fn q60_uv_mode_trials_keep_neighbor_contexts_isolated() {
         let mut contexts = CoeffContexts::new(1);
         contexts.u = vec![true, false];
@@ -2744,7 +2822,13 @@ mod tests {
                     0,
                     mode,
                     steps,
-                    Some((&contexts, 0, lambda)),
+                    Some(UvRdo {
+                        contexts: &contexts,
+                        mx: 0,
+                        lambda,
+                        visible_width: 8,
+                        visible_height: 8,
+                    }),
                 );
                 assert_eq!(contexts, before);
                 for (original, selected) in baseline.u.iter().zip(&trial.u) {
@@ -3356,6 +3440,8 @@ mod tests {
                     &mut left,
                     crate::presets::lambda_for_q(23),
                     75,
+                    32,
+                    16,
                     if mx == 0 { 2 } else { 0 },
                     0,
                     segments,
