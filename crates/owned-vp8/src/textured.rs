@@ -582,24 +582,78 @@ impl Macroblock {
 struct LumaCandidate {
     block: Macroblock,
     tile: [u8; 256],
-    distortion: u64,
 }
 struct AnalyzedBlock {
     block: Macroblock,
     visible_error: u64,
 }
 
+#[derive(Clone, Copy)]
+struct SourceFrameRgb<'a> {
+    pixels: &'a [u8],
+    stride: usize,
+    layout: u32,
+}
+
+impl SourceFrameRgb<'_> {
+    #[inline]
+    fn pixel(self, x: usize, y: usize) -> [u8; 3] {
+        let bpp = if self.layout == 4 { 3 } else { 4 };
+        let at = y * self.stride + x * bpp;
+        if matches!(self.layout, 0 | 2 | 4) {
+            [self.pixels[at], self.pixels[at + 1], self.pixels[at + 2]]
+        } else {
+            [self.pixels[at + 2], self.pixels[at + 1], self.pixels[at]]
+        }
+    }
+}
+
+// One macroblock contributes at most 256 * 3 * 255^2, before the /3
+// per-channel normalization. Hidden samples have no quality weight.
+#[allow(clippy::too_many_arguments)]
+fn visible_rgb_error(
+    source: SourceFrameRgb<'_>,
+    mx: usize,
+    my: usize,
+    visible_width: usize,
+    visible_height: usize,
+    y_tile: &[u8; 256],
+    u_tile: &[u8; 64],
+    v_tile: &[u8; 64],
+) -> u64 {
+    let x = mx * 16;
+    let y = my * 16;
+    let mut result = 0u64;
+    for row in 0..visible_height.saturating_sub(y).min(16) {
+        for col in 0..visible_width.saturating_sub(x).min(16) {
+            let uv = (row / 2) * 8 + col / 2;
+            let output =
+                crate::color::reconstructed_rgb(y_tile[row * 16 + col], u_tile[uv], v_tile[uv]);
+            for (actual, reconstructed) in source.pixel(x + col, y + row).into_iter().zip(output) {
+                let difference = i32::from(actual) - i32::from(reconstructed);
+                result += (difference * difference) as u64;
+            }
+        }
+    }
+    result
+}
+
+#[inline]
+fn normalized_rgb_distortion(rgb_sse: u64) -> u64 {
+    rgb_sse * 256 / 3
+}
+
 #[derive(Default)]
 struct ProfileComparison {
-    visible_error: u64,
+    normalized_distortion: u64,
     weighted_rate: u64,
 }
 
 impl ProfileComparison {
     fn observe(&mut self, analyzed: &AnalyzedBlock) -> Result<(), EncodeError> {
-        self.visible_error = self
-            .visible_error
-            .checked_add(analyzed.visible_error)
+        self.normalized_distortion = self
+            .normalized_distortion
+            .checked_add(normalized_rgb_distortion(analyzed.visible_error))
             .ok_or(EncodeError::OutputLimit)?;
         Ok(())
     }
@@ -629,9 +683,8 @@ impl ProfileComparison {
         let weighted_header = crate::presets::lambda_for_quality(original_base_qindex, quality)
             .checked_mul(header_rate)
             .ok_or(EncodeError::OutputLimit)?;
-        self.visible_error
-            .checked_mul(256)
-            .and_then(|error| error.checked_add(self.weighted_rate))
+        self.normalized_distortion
+            .checked_add(self.weighted_rate)
             .and_then(|score| score.checked_add(weighted_header))
             .ok_or(EncodeError::OutputLimit)
     }
@@ -691,45 +744,6 @@ struct UvCandidate {
     v: [[i16; 16]; 4],
     u_tile: [u8; 64],
     v_tile: [u8; 64],
-    distortion: u64,
-}
-
-fn squared_error<const N: usize, const LEN: usize>(
-    source: &[u8],
-    stride: usize,
-    x: usize,
-    y: usize,
-    tile: &[u8; LEN],
-) -> u64 {
-    let mut result = 0u64;
-    for row in 0..N {
-        for col in 0..N {
-            let diff =
-                i32::from(source[(y + row) * stride + x + col]) - i32::from(tile[row * N + col]);
-            result += (diff * diff) as u64;
-        }
-    }
-    result
-}
-
-fn visible_error<const N: usize, const LEN: usize>(
-    source: &[u8],
-    stride: usize,
-    x: usize,
-    y: usize,
-    visible_width: usize,
-    visible_height: usize,
-    tile: &[u8; LEN],
-) -> u64 {
-    let mut result = 0u64;
-    for row in 0..visible_height.saturating_sub(y).min(N) {
-        for col in 0..visible_width.saturating_sub(x).min(N) {
-            let diff =
-                i32::from(source[(y + row) * stride + x + col]) - i32::from(tile[row * N + col]);
-            result += (diff * diff) as u64;
-        }
-    }
-    result
 }
 fn commit_tile<const N: usize, const LEN: usize>(
     destination: &mut [u8],
@@ -801,11 +815,7 @@ fn make_i16(
             }
         }
     }
-    LumaCandidate {
-        block,
-        tile,
-        distortion: squared_error::<16, 256>(source, stride, x, y, &tile),
-    }
+    LumaCandidate { block, tile }
 }
 
 fn i4_edge(
@@ -932,11 +942,7 @@ fn make_i4(
             local_left[by] = nonzero;
         }
     }
-    LumaCandidate {
-        block,
-        tile,
-        distortion: squared_error::<16, 256>(source, stride, mx * 16, my * 16, &tile),
-    }
+    LumaCandidate { block, tile }
 }
 #[derive(Clone, Copy)]
 enum UvRatePolicy {
@@ -1043,14 +1049,11 @@ fn make_uv(
             }
         }
     }
-    let distortion = squared_error::<8, 64>(source_u, stride, x, y, &tiles[0])
-        + squared_error::<8, 64>(source_v, stride, x, y, &tiles[1]);
     UvCandidate {
         u: coeffs[0],
         v: coeffs[1],
         u_tile: tiles[0],
         v_tile: tiles[1],
-        distortion,
     }
 }
 fn write_modes(
@@ -1164,7 +1167,7 @@ fn selected_cost(
         y + uv
     };
     let cost = header.rate.cost + coefficient_cost;
-    Ok(Some(distortion * 256 + lambda * cost))
+    Ok(Some(normalized_rgb_distortion(distortion) + lambda * cost))
 }
 
 #[cfg(test)]
@@ -1189,7 +1192,7 @@ fn selected_cost_reference(
         return Ok(None);
     }
     let cost = header.rate.cost + contexts.measure(block, mx)?;
-    Ok(Some(distortion * 256 + lambda * cost))
+    Ok(Some(normalized_rgb_distortion(distortion) + lambda * cost))
 }
 fn update_modes(block: &Macroblock, mx: usize, above: &mut [u8], left: &mut [u8; 4]) {
     for (row, left_mode) in left.iter_mut().enumerate() {
@@ -1396,6 +1399,11 @@ fn encode_observed(
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
                 let lambda = crate::presets::lambda_for_quality(qindex, quality);
                 let analyzed = analyze_one(
+                    SourceFrameRgb {
+                        pixels,
+                        stride,
+                        layout: format,
+                    },
                     &source_y,
                     &source_u,
                     &source_v,
@@ -1514,6 +1522,7 @@ fn encode_observed(
 
 #[allow(clippy::too_many_arguments)]
 fn analyze_one(
+    source_rgb: SourceFrameRgb<'_>,
     source_y: &[u8],
     source_u: &[u8],
     source_v: &[u8],
@@ -1642,7 +1651,16 @@ fn analyze_one(
                 u: uv_candidate.u,
                 v: uv_candidate.v,
             };
-            let distortion = luma_candidate.distortion + uv_candidate.distortion;
+            let distortion = visible_rgb_error(
+                source_rgb,
+                mx,
+                my,
+                visible_width,
+                visible_height,
+                &luma_candidate.tile,
+                &uv_candidate.u_tile,
+                &uv_candidate.v_tile,
+            );
             let Some(score) = selected_cost(
                 &candidate,
                 mx,
@@ -1669,32 +1687,15 @@ fn analyze_one(
     let (_, li, ui) = best.ok_or(EncodeError::OutputLimit)?;
     let selected_luma = &luma[li];
     let selected_uv = &uv[ui];
-    let visible_uv_width = visible_width.div_ceil(2);
-    let visible_uv_height = visible_height.div_ceil(2);
     let visible_error = if score_visible {
-        visible_error::<16, 256>(
-            source_y,
-            padded_w,
-            x,
-            y,
+        visible_rgb_error(
+            source_rgb,
+            mx,
+            my,
             visible_width,
             visible_height,
             &selected_luma.tile,
-        ) + visible_error::<8, 64>(
-            source_u,
-            uv_w,
-            mx * 8,
-            my * 8,
-            visible_uv_width,
-            visible_uv_height,
             &selected_uv.u_tile,
-        ) + visible_error::<8, 64>(
-            source_v,
-            uv_w,
-            mx * 8,
-            my * 8,
-            visible_uv_width,
-            visible_uv_height,
             &selected_uv.v_tile,
         )
     } else {
@@ -2791,6 +2792,11 @@ impl FrameEncoder {
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
         let lambda = crate::presets::lambda_for_quality(qindex, self.request.quality);
         let analyzed = analyze_one(
+            SourceFrameRgb {
+                pixels: &self.input,
+                stride: self.request.stride as usize,
+                layout: self.request.layout,
+            },
             &self.source_y,
             &self.source_u,
             &self.source_v,
@@ -3268,36 +3274,10 @@ mod tests {
     use std::process::{Command, Stdio};
 
     #[test]
-    fn preview_comparison_uses_visible_support_and_strict_improvement() {
+    fn preview_comparison_normalizes_rgb_channels_and_requires_strict_improvement() {
         assert!(!reduced_profile_wins(7, 7));
         assert!(!reduced_profile_wins(7, 8));
         assert!(reduced_profile_wins(7, 6));
-
-        let source_y = [0u8; 256];
-        let mut tile_y = [0u8; 256];
-        tile_y[15 * 16 + 15] = 255;
-        assert_eq!(
-            visible_error::<16, 256>(&source_y, 16, 0, 0, 3, 7, &tile_y),
-            0
-        );
-        tile_y[6 * 16 + 2] = 3;
-        assert_eq!(
-            visible_error::<16, 256>(&source_y, 16, 0, 0, 3, 7, &tile_y),
-            9
-        );
-
-        let source_uv = [0u8; 64];
-        let mut tile_uv = [0u8; 64];
-        tile_uv[4 * 8 + 1] = 255;
-        assert_eq!(
-            visible_error::<8, 64>(&source_uv, 8, 0, 0, 2, 4, &tile_uv),
-            0
-        );
-        tile_uv[3 * 8 + 1] = 2;
-        assert_eq!(
-            visible_error::<8, 64>(&source_uv, 8, 0, 0, 2, 4, &tile_uv),
-            4
-        );
 
         let analyzed = AnalyzedBlock {
             block: Macroblock::default(),
@@ -3306,7 +3286,9 @@ mod tests {
         let mut comparison = ProfileComparison::default();
         comparison.observe(&analyzed).unwrap();
         comparison.add_rate(10, 32, 60).unwrap();
-        assert_eq!(comparison.score(7, 32, 60).unwrap(), 9 * 256 + 17 * 480);
+        assert_eq!(comparison.score(7, 32, 60).unwrap(), 9 * 256 / 3 + 17 * 480);
+        comparison.normalized_distortion = u64::MAX;
+        assert!(comparison.score(7, 32, 60).is_err());
     }
 
     #[test]
@@ -3514,7 +3496,7 @@ mod tests {
     }
 
     #[test]
-    fn higher_preset_frame_bytes_match_pre_rdo_wasm() {
+    fn higher_preset_frame_bytes_are_deterministic_with_rgb_objective() {
         let pixels: Vec<_> = (0..16 * 16 * 4)
             .map(|i| {
                 if i % 4 == 3 {
@@ -3524,17 +3506,56 @@ mod tests {
                 }
             })
             .collect();
-        // FNV-1a fingerprints of the base c901c052 ABI2 WASM output.
-        for (quality, expected_len, expected_hash) in [
-            (75, 243, 0x7670_01a7_a481_756c),
-            (85, 314, 0x1b5b_a600_8fee_5d8d),
-        ] {
-            let bytes = encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap();
-            let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
-                (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
-            });
-            assert_eq!((bytes.len(), hash), (expected_len, expected_hash));
+        for quality in [75, 85] {
+            let first = encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap();
+            let second = encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap();
+            assert_eq!(first, second);
         }
+    }
+
+    #[test]
+    fn visible_rgb_objective_can_reverse_imported_plane_sse_order() {
+        let source_y = [100u8; 256];
+        let source_u = [128u8; 64];
+        let source_v = [128u8; 64];
+        let mut red_y = [82u8; 256];
+        let mut red_u = [90u8; 64];
+        let mut red_v = [240u8; 64];
+        let red = [255, 0, 0];
+        let source = SourceFrameRgb {
+            pixels: &red,
+            stride: 3,
+            layout: 4,
+        };
+        let plane_sse = |y: u8, u: u8, v: u8| {
+            u64::from(y.abs_diff(100)).pow(2)
+                + u64::from(u.abs_diff(128)).pow(2)
+                + u64::from(v.abs_diff(128)).pow(2)
+        };
+        assert!(plane_sse(100, 128, 128) < plane_sse(82, 90, 240));
+        assert!(
+            visible_rgb_error(source, 0, 0, 1, 1, &red_y, &red_u, &red_v)
+                < visible_rgb_error(source, 0, 0, 1, 1, &source_y, &source_u, &source_v)
+        );
+        // Hidden reconstruction, including chroma at UV index 1, is ignored.
+        red_y[1] = 0;
+        red_u[1] = 0;
+        red_v[1] = 0;
+        assert_eq!(
+            visible_rgb_error(source, 0, 0, 1, 1, &red_y, &red_u, &red_v),
+            visible_rgb_error(source, 0, 0, 1, 1, &[82; 256], &[90; 64], &[240; 64])
+        );
+        let rgbx = [255, 0, 0, 0, 9, 9, 9, 9];
+        let rgbx_source = SourceFrameRgb {
+            pixels: &rgbx,
+            stride: 8,
+            layout: 2,
+        };
+        assert_eq!(
+            visible_rgb_error(source, 0, 0, 1, 1, &red_y, &red_u, &red_v),
+            visible_rgb_error(rgbx_source, 0, 0, 1, 1, &red_y, &red_u, &red_v)
+        );
+        assert_eq!(normalized_rgb_distortion(3), 256);
     }
 
     #[test]
@@ -4204,6 +4225,7 @@ mod tests {
             HeaderBudget,
             usize,
         ) {
+            let rgb: Vec<u8> = source_y.iter().flat_map(|&y| [y, y, y, 255]).collect();
             let mut reconstructed_y = vec![0; 32 * 16];
             let mut reconstructed_u = vec![0; 16 * 8];
             let mut reconstructed_v = vec![0; 16 * 8];
@@ -4224,6 +4246,11 @@ mod tests {
             let mut first_symbols = 0;
             for mx in 0..2 {
                 let block = analyze_one(
+                    SourceFrameRgb {
+                        pixels: &rgb,
+                        stride: 32 * 4,
+                        layout: 0,
+                    },
                     source_y,
                     source_uv,
                     source_uv,

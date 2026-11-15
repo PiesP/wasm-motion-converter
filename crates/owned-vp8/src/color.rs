@@ -40,25 +40,32 @@ pub(crate) fn nearest_chroma_rgb_error(
     visible_height: usize,
 ) -> u64 {
     debug_assert!(visible_width <= 2 && visible_height <= 2);
-    let d = i32::from(u) - 128;
-    let e = i32::from(v) - 128;
     let mut sum = 0u64;
     for dy in 0..visible_height {
         for dx in 0..visible_width {
             let index = dy * 2 + dx;
-            let c = i32::from(luma[index]) - 16;
-            let predicted = [
-                ((298 * c + 409 * e + 128) >> 8).clamp(0, 255),
-                ((298 * c - 100 * d - 208 * e + 128) >> 8).clamp(0, 255),
-                ((298 * c + 516 * d + 128) >> 8).clamp(0, 255),
-            ];
+            let predicted = reconstructed_rgb(luma[index], u, v);
             for (source, output) in rgb[index].into_iter().zip(predicted) {
-                let difference = i32::from(source) - output;
+                let difference = i32::from(source) - i32::from(output);
                 sum += (difference * difference) as u64;
             }
         }
     }
     sum
+}
+
+/// Fixed limited-range, nearest-chroma inverse used for the visible RGB RDO
+/// proxy. This does not model the decoder's loop filter or fancy upsampling.
+#[inline]
+pub(crate) fn reconstructed_rgb(y: u8, u: u8, v: u8) -> [u8; 3] {
+    let c = i32::from(y) - 16;
+    let d = i32::from(u) - 128;
+    let e = i32::from(v) - 128;
+    [
+        ((298 * c + 409 * e + 128) >> 8).clamp(0, 255) as u8,
+        ((298 * c - 100 * d - 208 * e + 128) >> 8).clamp(0, 255) as u8,
+        ((298 * c + 516 * d + 128) >> 8).clamp(0, 255) as u8,
+    ]
 }
 
 #[inline]

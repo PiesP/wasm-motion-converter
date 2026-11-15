@@ -7,8 +7,12 @@ historical DC-only result and receipts remain in `497-owned-vp8-result.md`.
 
 The residual path now codes all sixteen coefficients using B_PRED/B_DC prediction,
 plus a separately exercised I16/DC and Y2/WHT path. The default experimental
-entrypoint now selects bounded I16/I4/UV modes using distortion and estimated
-mode/coefficient/skip bit costs. Trials isolate reconstruction and contexts.
+entrypoint now selects bounded I16/I4/UV combinations using visible source-RGB
+error and estimated mode/coefficient/skip bit costs. RGB error uses the fixed
+limited-range nearest-chroma inverse and is normalized per channel; it does not
+model loop filtering or fancy chroma upsampling. The existing greedy I4 and
+local UV coefficient trials still use their plane-local objectives, so this is
+not a globally RGB-optimal search. Trials isolate reconstruction and contexts.
 Per-frame coefficient statistics follow frozen mode/coefficient decisions. A
 bounded optimizer proposes updates, and exact whole-frame counting includes
 update flags and literals. The encoder adopts updates only when the complete
