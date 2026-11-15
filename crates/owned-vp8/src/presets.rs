@@ -5,7 +5,7 @@ use crate::ac_quant::Deltas;
 
 pub(crate) const QINDEX: [usize; 3] = [40, 22, 8];
 pub(crate) const SMOOTH_QINDEX: usize = 6;
-pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [8, 15, 8];
+pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [14, 15, 10];
 pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [28, 27, 15];
 pub(crate) const TEXTURED_QINDEX: [usize; 3] = [34, 28, 14];
 pub(crate) const TEXTURED_MONO_QINDEX: [usize; 3] = [34, 27, 14];
