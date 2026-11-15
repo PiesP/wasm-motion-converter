@@ -95,13 +95,13 @@ describe('saved animation verifier', () => {
     const previous = join(root, 'previous.webp');
     const linked = join(root, 'linked.webp');
     try {
-      await writeFile(path, 'content');
+      await writeFile(path, 'content', { flag: 'wx', mode: 0o600 });
       await symlink(path, linked);
       await expect(readStableFile(linked, 32, 7, 'Saved output')).rejects.toBeDefined();
       const handle = await open(path, 'r');
       try {
         await rename(path, previous);
-        await writeFile(path, 'content');
+        await writeFile(path, 'content', { flag: 'wx', mode: 0o600 });
         await expect(readOpenedFile(path, handle, 32, 7, 'Saved output')).rejects.toThrow(
           /changed identity/
         );
