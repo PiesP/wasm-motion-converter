@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { expect, test } from '@playwright/test';
-import type { Page, Response } from '@playwright/test';
+import type { Page, Response, TestInfo } from '@playwright/test';
 
 import type { OwnedVp8FixtureRequest } from '../../src/test-helpers';
 import type {} from './fixtures/test-helpers';
@@ -21,6 +21,24 @@ const fixtures: OwnedVp8FixtureRequest[] = [
 
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+async function retainKernelEvidence(
+  testInfo: TestInfo,
+  name: string,
+  evidence: object
+): Promise<void> {
+  const record = {
+    scope: 'MANAGED_ENGINE_SDK_ONLY_NOT_PRODUCT_ACCEPTANCE',
+    ciSourceSha: process.env.GITHUB_SHA ?? null,
+    ciRunId: process.env.GITHUB_RUN_ID ?? null,
+    ...evidence,
+  };
+  const json = JSON.stringify(record);
+  // Successful test attachments are not uploaded by the failure-only CI artifact step.
+  // Retain these generated-fixture identities in the exact run's ordinary logs too.
+  console.info(`[owned-vp8-kernel-evidence] ${name} ${json}`);
+  await testInfo.attach(name, { body: Buffer.from(json), contentType: 'application/json' });
 }
 
 function asIvf(raw: readonly number[], width: number, height: number): Buffer {
@@ -146,17 +164,12 @@ test('compiled owned VP8 encodes tiny and odd frames deterministically without V
   expect(fresh.rawFrames[0]).toEqual(oddFrame);
   await assertModuleResponses(wasmResponses);
   expect(browserErrors).toEqual([]);
-  await testInfo.attach('owned-vp8-engine-identity', {
-    body: Buffer.from(
-      JSON.stringify({
-        engine: browserName,
-        browserVersion: browser.version(),
-        moduleSha256: wasmSha256,
-        moduleBytes: wasmBytes.length,
-        observations,
-      })
-    ),
-    contentType: 'application/json',
+  await retainKernelEvidence(testInfo, 'owned-vp8-engine-identity', {
+    engine: browserName,
+    browserVersion: browser.version(),
+    moduleSha256: wasmSha256,
+    moduleBytes: wasmBytes.length,
+    observations,
   });
 });
 
@@ -207,17 +220,12 @@ test('active compiled-step cancellation retires the job and a fresh same-documen
   const decodedSha256 = independentlyDecode(recovered.rawFrames[0]!, request.width, request.height);
   await assertModuleResponses(wasmResponses);
   expect(browserErrors).toEqual([]);
-  await testInfo.attach('owned-vp8-cancel-recovery', {
-    body: Buffer.from(
-      JSON.stringify({
-        engine: browserName,
-        browserVersion: browser.version(),
-        moduleSha256: wasmSha256,
-        cancelled,
-        recoveredRawSha256: sha256(Buffer.from(recovered.rawFrames[0]!)),
-        decodedSha256,
-      })
-    ),
-    contentType: 'application/json',
+  await retainKernelEvidence(testInfo, 'owned-vp8-cancel-recovery', {
+    engine: browserName,
+    browserVersion: browser.version(),
+    moduleSha256: wasmSha256,
+    cancelled,
+    recoveredRawSha256: sha256(Buffer.from(recovered.rawFrames[0]!)),
+    decodedSha256,
   });
 });
