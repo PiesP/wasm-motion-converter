@@ -154,8 +154,11 @@ codec evaluation. Preserve all outcomes and correct the remaining precision
 failure against the expanded 333-condition known matrix.
 
 Bounded UV coefficient rate/distortion decisions and exact-semantic trial-cost
-factorization are now integrated engineering changes. The remaining quality
-failure still requires correction before fresh evaluation. Preserve
+factorization are now integrated engineering changes. A bounded content-dependent
+luma profile preview subsequently passed all 333 known conditions; its
+[prospective v7 freeze](501-owned-vp8-v7-candidate-freeze.md) records actual
+source/module identities and unchanged fresh gates. Fresh qualification remains
+pending. Preserve
 unfiltered reconstruction, input/settings identity, deterministic output,
 resource ceilings and host-task cancellation. New source requires controlled
 evidence; native Canvas output cannot qualify the owned software route.
