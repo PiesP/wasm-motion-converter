@@ -1124,6 +1124,7 @@ fn encode_observed(
     let mut reconstructed_u = allocated(uv_size)?;
     let mut reconstructed_v = allocated(uv_size)?;
     let mut neutral_chroma = true;
+    let mut rgb_error_sum = 0u64;
     for cy in 0..padded_h / 2 {
         for cx in 0..uv_w {
             let mut rgb = [[0u8; 3]; 4];
@@ -1142,6 +1143,16 @@ fn encode_observed(
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
             neutral_chroma &= u == 128 && v == 128;
+            if quality == 60 {
+                rgb_error_sum += crate::color::nearest_chroma_rgb_error(
+                    rgb,
+                    luma,
+                    u,
+                    v,
+                    width.saturating_sub(cx * 2).min(2),
+                    height.saturating_sub(cy * 2).min(2),
+                );
+            }
             for dy in 0..2 {
                 for dx in 0..2 {
                     source_y[(cy * 2 + dy) * padded_w + cx * 2 + dx] = luma[dy * 2 + dx];
@@ -1173,7 +1184,7 @@ fn encode_observed(
         }
     }
     let segments = SegmentConfig::from_counts(quality, class_counts, count, neutral_chroma);
-    let deltas = crate::presets::deltas(quality);
+    let deltas = crate::presets::frame_deltas(quality, rgb_error_sum, width as u32, height as u32);
     let mut header_budget = HeaderBudget::new(
         count,
         segments,
@@ -1929,6 +1940,8 @@ pub(crate) struct FrameEncoder {
     blocks: Vec<Macroblock>,
     class_counts: [usize; 4],
     neutral_chroma: bool,
+    rgb_error_sum: u64,
+    deltas: Deltas,
     segments: SegmentConfig,
     header_budget: HeaderBudget,
     contexts: CoeffContexts,
@@ -2026,6 +2039,8 @@ impl FrameEncoder {
             blocks,
             class_counts: [0; 4],
             neutral_chroma: true,
+            rgb_error_sum: 0,
+            deltas: crate::presets::deltas(request.quality),
             segments: SegmentConfig::nonsegmented(crate::presets::qindex(request.quality)),
             header_budget: HeaderBudget::new(
                 plan.macroblock_count as usize,
@@ -2199,6 +2214,16 @@ impl FrameEncoder {
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
             self.neutral_chroma &= u == 128 && v == 128;
+            if self.request.quality == 60 {
+                self.rgb_error_sum += crate::color::nearest_chroma_rgb_error(
+                    rgb,
+                    luma,
+                    u,
+                    v,
+                    width.saturating_sub(cx * 2).min(2),
+                    height.saturating_sub(cy * 2).min(2),
+                );
+            }
             for dy in 0..2 {
                 for dx in 0..2 {
                     self.source_y[(cy * 2 + dy) * y_stride + cx * 2 + dx] = luma[dy * 2 + dx];
@@ -2209,6 +2234,12 @@ impl FrameEncoder {
         }
         self.cursor += 1;
         if self.cursor == self.plan.padded_height as usize / 2 {
+            self.deltas = crate::presets::frame_deltas(
+                self.request.quality,
+                self.rgb_error_sum,
+                self.request.width,
+                self.request.height,
+            );
             self.cursor = 0;
             self.stage = Stage::Classify;
         }
@@ -2250,7 +2281,7 @@ impl FrameEncoder {
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
                 self.segments,
-                crate::presets::deltas(self.request.quality),
+                self.deltas,
                 self.filter,
                 MAX_FIRST_PARTITION_BYTES as usize,
             )
@@ -2271,7 +2302,7 @@ impl FrameEncoder {
         }
         let segment_id = self.blocks[self.cursor].segment_id;
         let qindex = self.segments.qindex_for(segment_id);
-        let deltas = crate::presets::deltas(self.request.quality);
+        let deltas = self.deltas;
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
@@ -2498,7 +2529,7 @@ impl FrameEncoder {
                 write_header_prefix(
                     &mut self.count_header,
                     self.segments,
-                    crate::presets::deltas(self.request.quality),
+                    self.deltas,
                     self.filter,
                 )
                 .map_err(encode_status)?;
@@ -2543,7 +2574,7 @@ impl FrameEncoder {
                 write_header_prefix(
                     &mut self.pending_header,
                     self.segments,
-                    crate::presets::deltas(self.request.quality),
+                    self.deltas,
                     self.filter,
                 )
                 .map_err(encode_status)?;
@@ -4698,6 +4729,105 @@ mod tests {
                 assert_eq!(engine.output(), expected);
             }
         }
+    }
+
+    #[test]
+    fn q60_chroma_loss_profile_matches_sync_across_layouts_and_frames() {
+        let (width, height) = (5, 3);
+        let colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255; 3]];
+        let mut rgba = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                let [r, g, b] = colors[(y % 2) * 2 + x % 2];
+                rgba.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        let expected = encode_textured(
+            &rgba,
+            width as u32,
+            height as u32,
+            (width * 4) as u32,
+            0,
+            60,
+        )
+        .unwrap();
+        for layout in 0..=4 {
+            let bpp = if layout == 4 { 3 } else { 4 };
+            let stride = width * bpp + 3;
+            let mut input = Vec::new();
+            for y in 0..height {
+                for x in 0..width {
+                    let at = (y * width + x) * 4;
+                    let [r, g, b, _] = rgba[at..at + 4].try_into().unwrap();
+                    match layout {
+                        0 | 2 => {
+                            input.extend_from_slice(&[r, g, b, if layout == 0 { 255 } else { 7 }])
+                        }
+                        1 | 3 => {
+                            input.extend_from_slice(&[b, g, r, if layout == 1 { 255 } else { 7 }])
+                        }
+                        _ => input.extend_from_slice(&[r, g, b]),
+                    }
+                }
+                input.extend_from_slice(&[42; 3]);
+            }
+            let request = Request {
+                quality: 60,
+                ..engine_request(width, height, layout, &input, stride)
+            };
+            for frame in 1..=2 {
+                let request = Request { frame, ..request };
+                let plan = ResourcePlan::checked(request).unwrap();
+                let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+                assert!(engine.rgb_error_sum > 4096 * 3 * (width * height) as u64);
+                assert_eq!(
+                    (engine.deltas.uv_dc, engine.deltas.uv_ac),
+                    crate::presets::HIGH_CHROMA_LOSS_PROFILES
+                        [crate::presets::ACTIVE_HIGH_CHROMA_LOSS_PROFILE]
+                );
+                assert_eq!(engine.output(), expected, "layout={layout} frame={frame}");
+            }
+        }
+        let neutral = [128, 128, 128, 255].repeat(16 * 16);
+        let request = Request {
+            quality: 60,
+            ..engine_request(16, 16, 0, &neutral, 64)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, neutral, plan).unwrap());
+        assert_eq!(engine.deltas, crate::presets::deltas(60));
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn q60_high_chroma_loss_decodes_independently() {
+        let colors = [
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+            [0, 0, 255, 255],
+            [255; 4],
+        ];
+        let mut input = Vec::new();
+        for y in 0..16 {
+            for x in 0..16 {
+                input.extend_from_slice(&colors[(y % 2) * 2 + x % 2]);
+            }
+        }
+        let request = Request {
+            quality: 60,
+            ..engine_request(16, 16, 0, &input, 64)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert_eq!(
+            (engine.deltas.uv_dc, engine.deltas.uv_ac),
+            crate::presets::HIGH_CHROMA_LOSS_PROFILES
+                [crate::presets::ACTIVE_HIGH_CHROMA_LOSS_PROFILE]
+        );
+        let (y, u, v, padded_width) = engine.reconstruction();
+        let expected =
+            filtered_visible_yuv(y, u, v, padded_width, 16, 16, &engine.blocks, engine.filter);
+        assert_decodes(engine.output(), 16, 16, &expected, "q60 high chroma loss");
     }
 
     #[test]

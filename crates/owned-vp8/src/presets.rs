@@ -12,6 +12,9 @@ pub(crate) const TEXTURED_QINDEX: [usize; 3] = [32, 28, 14];
 pub(crate) const TEXTURED_MONO_QINDEX: [usize; 3] = [34, 27, 14];
 pub(crate) const UV_DC_DELTA: [i8; 3] = [-4, -9, -4];
 pub(crate) const UV_AC_DELTA: [i8; 3] = [-11, -9, -4];
+pub(crate) const HIGH_CHROMA_LOSS_PROFILES: [(i8, i8); 2] = [(-13, -4), (-13, 0)];
+pub(crate) const ACTIVE_HIGH_CHROMA_LOSS_PROFILE: usize = 0;
+const CHROMA_LOSS_THRESHOLD_PER_RGB_CHANNEL: u64 = 4096;
 pub(crate) const FILTER_LEVEL: [u8; 3] = [6, 4, 4];
 pub(crate) const LAMBDA_NUMERATOR: u64 = 1;
 pub(crate) const LAMBDA_DENOMINATOR: u64 = 1;
@@ -61,6 +64,20 @@ pub(crate) fn deltas(quality: u32) -> Deltas {
         ..Deltas::default()
     }
 }
+
+pub(crate) fn frame_deltas(quality: u32, rgb_error_sum: u64, width: u32, height: u32) -> Deltas {
+    let mut selected = deltas(quality);
+    // ResourcePlan admits at most 10_066_329 visible pixels, well below u64
+    // for both this threshold and the maximum 195_075 error per pixel.
+    let threshold = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|pixels| pixels.checked_mul(3 * CHROMA_LOSS_THRESHOLD_PER_RGB_CHANNEL));
+    if quality == 60 && threshold.is_some_and(|limit| rgb_error_sum > limit) {
+        (selected.uv_dc, selected.uv_ac) =
+            HIGH_CHROMA_LOSS_PROFILES[ACTIVE_HIGH_CHROMA_LOSS_PROFILE];
+    }
+    selected
+}
 pub(crate) fn filter_level(quality: u32) -> u8 {
     FILTER_LEVEL[match quality {
         60 => 0,
@@ -79,5 +96,25 @@ pub(crate) fn lambda_for_quality(qindex: usize, quality: u32) -> u64 {
         base * 6 / 5
     } else {
         base
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_profile_uses_strict_visible_pixel_threshold_only_at_q60() {
+        let threshold = 4096 * 3 * 5 * 3;
+        assert_eq!(frame_deltas(60, threshold, 5, 3), deltas(60));
+        let selected = frame_deltas(60, threshold + 1, 5, 3);
+        assert_eq!(
+            (selected.uv_dc, selected.uv_ac),
+            HIGH_CHROMA_LOSS_PROFILES[ACTIVE_HIGH_CHROMA_LOSS_PROFILE]
+        );
+        for quality in [75, 85] {
+            assert_eq!(frame_deltas(quality, u64::MAX, 5, 3), deltas(quality));
+        }
+        assert_eq!(frame_deltas(60, u64::MAX, u32::MAX, u32::MAX), deltas(60));
     }
 }
