@@ -2931,7 +2931,9 @@ mod tests {
                 let rgb = if x < 16 {
                     [80 + x as u8 + y as u8; 3]
                 } else if x < 32 {
-                    [40, 80, 120]
+                    // One-level variation exercises flat, rather than constant/fine, tiles.
+                    let step = u8::from(x >= 24);
+                    [40 + step, 80 + step, 120 + step]
                 } else if x < 48 {
                     let ramp = (x - 32 + y) as u8;
                     [40 + ramp, 80 + ramp, 120 + ramp]
@@ -3002,11 +3004,11 @@ mod tests {
         let chromatic_engine = run_engine(
             FrameEncoder::new(chromatic_request, chromatic.clone(), chromatic_plan).unwrap(),
         );
-        assert_eq!(chromatic_engine.class_counts, [0, 1, 0, 0]);
+        assert_eq!(chromatic_engine.class_counts, [1, 0, 0, 0]);
         assert!(!chromatic_engine.segments.enabled);
         assert_eq!(
             chromatic_engine.segments.base_qindex,
-            crate::presets::chromatic_flat_qindex(chromatic_request.quality)
+            crate::presets::SMOOTH_QINDEX
         );
         assert_eq!(
             chromatic_engine.output(),
@@ -3888,7 +3890,7 @@ mod tests {
                 .map(|block| block.segment_id)
                 .collect::<Vec<_>>(),
             [
-                segmentation::NEUTRAL_SMOOTH,
+                segmentation::FINE_SMOOTH,
                 segmentation::CHROMATIC_FLAT,
                 segmentation::CHROMATIC_RAMP,
                 segmentation::TEXTURED

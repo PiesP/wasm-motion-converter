@@ -24,6 +24,11 @@ frames use the chromatic q75 preset; q60/q85 are identical in both tables.
 The source color conversion and four segment IDs are unchanged. This allocation
 has no independent qualification claim.
 
+The finest smooth segment also preserves DC precision when all three imported
+Y/U/V tile ranges are exactly zero. Smooth colored tiles with a one-level range
+retain the separate flat-class rate allocation. This uses bounded per-tile range
+scans and the existing four IDs; no geometry-specific rule or extra segment is used.
+
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
 sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
 tables are format constants from sections 13.4, 13.5 and 14.1 respectively;
