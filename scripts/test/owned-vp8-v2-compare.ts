@@ -33,8 +33,10 @@ export function selectFixtureCohort(
   cohort: FixtureCohort,
   regression = false
 ) {
-  if (split === 'held-out' && !regression && cohort !== 'corrected-v4')
-    throw new Error(`${cohort} is exposed: use --regression or the fresh corrected-v4 cohort`);
+  if (split === 'held-out' && !regression)
+    throw new Error(
+      `${cohort} is exposed: use --regression; no fresh successor is currently frozen`
+    );
   const entries =
     cohort === 'corrected-v4'
       ? [

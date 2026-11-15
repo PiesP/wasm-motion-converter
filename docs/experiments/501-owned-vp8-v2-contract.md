@@ -170,9 +170,10 @@ and one exact duplicate hold of frame 73. See
 The original source is privately staged outside Git and public assets.
 
 The existing 15 tuning inputs and all numerical quality, size, performance,
-resource and delivery gates are unchanged. `--cohort corrected-v4 --acceptance`
-selects only the new held-out inputs until their first evaluation; the first
-three held-out cohorts require `--regression`. Supply `--fresh-photo PATH` for
+resource and delivery gates are unchanged. Its first frozen evaluation rejected
+the candidate at44/45; see [the result](501-owned-vp8-v4-result.md).
+All four observed held-out cohorts now require `--regression`; no fresh successor
+is currently frozen. Supply `--fresh-photo PATH` for
 the v4 photograph and `--video PATH` for the pinned video. Preserve the v4
 manifest, generator, input bytes and every outcome after first evaluation;
 subsequent v4 runs become exposed regression evidence and must require the

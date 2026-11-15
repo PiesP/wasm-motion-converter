@@ -102,10 +102,10 @@ describe('owned VP8 prospective cohort isolation', () => {
     }
   });
 
-  it('keeps all prior held-out cohorts exposed and selects only frozen v4 inputs as fresh', () => {
-    for (const cohort of ['initial-v1', 'corrected-v2', 'corrected-v3'] as const)
+  it('requires regression purpose for all observed cohorts and preserves the v4 split', () => {
+    for (const cohort of ['initial-v1', 'corrected-v2', 'corrected-v3', 'corrected-v4'] as const)
       expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
-    const fresh = selectFixtureCohort('held-out', 'corrected-v4');
+    const fresh = selectFixtureCohort('held-out', 'corrected-v4', true);
     expect(fresh).toEqual(V4_HELDOUT);
     expect(fresh).toHaveLength(15);
     expect(fresh.length * 3).toBe(45);
