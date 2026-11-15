@@ -319,27 +319,120 @@ export async function runDirectOwnerActiveTermination(page: Page, request: Direc
     // Retirement can occur without a terminal response between observations.
     const latest = await readLiveSnapshot();
     assertDirectOwnerSnapshot(latest, requestId, false);
-    const progressCount = await page.evaluate((id) => {
+    const observation = await page.evaluate(
+      (id) =>
+        new Promise<{ progressCount: number; snapshot: DirectOwnerSnapshot | null }>(
+          (resolve, reject) => {
+            const active = Reflect.get(globalThis, '__wmcVp8DirectOwnerActiveWorker') as
+              | {
+                  worker: Worker;
+                  requestId: string;
+                  progressCount: number;
+                  terminalType: string | null;
+                }
+              | undefined;
+            if (active?.requestId !== id) {
+              reject(new Error('Direct Worker active handle missing'));
+              return;
+            }
+            const lifecycle = Reflect.get(globalThis, '__wmcVp8WorkerLifecycle') as {
+              snapshot: () => Array<{ requestId: string | null; terminalType: string | null }>;
+            };
+            const stillActive = () => {
+              const record = lifecycle.snapshot().at(-1);
+              return (
+                record?.requestId === id &&
+                record.terminalType === null &&
+                active.terminalType === null
+              );
+            };
+            if (!stillActive()) {
+              reject(new Error('Direct Worker was no longer active before abort'));
+              return;
+            }
+            let settled = false;
+            const timer = setTimeout(
+              () => finish(new Error('Direct Worker abort observation timed out')),
+              5_000
+            );
+            const onMessage = ({ data }: MessageEvent<unknown>) => {
+              if (!data || typeof data !== 'object') return;
+              const message = data as Record<string, unknown>;
+              if (message.type === '__wmcVp8OwnerAbortObservation') {
+                if (message.requestId !== id || !('snapshot' in message)) {
+                  finish(new Error('Direct Worker abort observation identity or payload mismatch'));
+                  return;
+                }
+                finish(undefined, {
+                  progressCount: active.progressCount,
+                  snapshot: message.snapshot as DirectOwnerSnapshot | null,
+                });
+              } else if (
+                message.requestId === id &&
+                (message.type === 'complete' || message.type === 'error')
+              ) {
+                finish(new Error(`Direct Worker reached ${message.type} before abort observation`));
+              }
+            };
+            const onError = () =>
+              finish(new Error('Direct Worker failed before abort observation'));
+            const onMessageError = () =>
+              finish(new Error('Direct Worker message error before abort observation'));
+            function finish(
+              error?: Error,
+              value?: { progressCount: number; snapshot: DirectOwnerSnapshot | null }
+            ) {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              active.worker.removeEventListener('message', onMessage);
+              active.worker.removeEventListener('error', onError);
+              active.worker.removeEventListener('messageerror', onMessageError);
+              if (error) reject(error);
+              else if (value) resolve(value);
+              else reject(new Error('Direct Worker abort observation missing'));
+            }
+            active.worker.addEventListener('message', onMessage);
+            active.worker.addEventListener('error', onError);
+            active.worker.addEventListener('messageerror', onMessageError);
+            if (!stillActive()) {
+              finish(new Error('Direct Worker terminated before abort dispatch'));
+              return;
+            }
+            try {
+              active.worker.postMessage({ type: 'abort', requestId: id });
+            } catch (error) {
+              finish(new Error(`Direct Worker abort dispatch failed: ${String(error)}`));
+            }
+          }
+        ),
+      requestId
+    );
+    // The prefix captures this during the real abort event, before the product
+    // abort handler. A later cleanup retirement is allowed after this boundary.
+    assertDirectOwnerSnapshot(observation.snapshot, requestId, false);
+    await page.evaluate((id) => {
       const active = Reflect.get(globalThis, '__wmcVp8DirectOwnerActiveWorker') as
-        | { worker: Worker; requestId: string; progressCount: number; terminalType: string | null }
+        | { worker: Worker; requestId: string }
         | undefined;
-      if (active?.requestId !== id) throw new Error('Direct Worker active handle missing');
+      if (active?.requestId !== id)
+        throw new Error('Direct Worker active handle missing at termination');
       const lifecycle = Reflect.get(globalThis, '__wmcVp8WorkerLifecycle') as {
-        snapshot: () => Array<{ requestId: string | null; terminalType: string | null }>;
+        snapshot: () => Array<{ requestId: string | null }>;
       };
-      const record = lifecycle.snapshot().at(-1);
-      if (record?.requestId !== id || record.terminalType !== null || active.terminalType !== null)
-        throw new Error('Direct Worker was no longer active before termination');
-      active.worker.postMessage({ type: 'abort', requestId: id });
+      if (lifecycle.snapshot().at(-1)?.requestId !== id)
+        throw new Error('Direct Worker identity changed before termination');
       active.worker.terminate();
       Reflect.deleteProperty(globalThis, '__wmcVp8DirectOwnerActiveWorker');
-      return active.progressCount;
     }, requestId);
     return {
       requestId,
-      progressCount,
-      observedStepCalls: latest!.records.reduce((sum, record) => sum + record.stepCalls, 0),
-      snapshot: latest!,
+      progressCount: observation.progressCount,
+      observedStepCalls: observation.snapshot.records.reduce(
+        (sum, record) => sum + record.stepCalls,
+        0
+      ),
+      snapshot: observation.snapshot,
     };
   } finally {
     await page

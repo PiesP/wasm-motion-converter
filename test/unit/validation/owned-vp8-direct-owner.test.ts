@@ -42,18 +42,22 @@ describe('direct compiled Worker ABI evidence', () => {
       Reflect.deleteProperty(globalThis, key);
   });
 
-  function activeHarness(mode: 'live' | 'retired' | 'terminal') {
+  function activeHarness(
+    mode: 'live' | 'retired' | 'terminal' | 'retired-between' | 'cleanup-retire' | 'stale-ack'
+  ) {
     const messages: Array<Record<string, unknown>> = [];
     const terminated: boolean[] = [];
     const record = { requestId: null as string | null, terminalType: null as string | null };
     Reflect.set(globalThis, '__wmcVp8WorkerLifecycle', { snapshot: () => [{ ...record }] });
     let reads = 0;
+    let retireAtAbort = false;
+    let cleanupRetired = false;
     Reflect.set(globalThis, '__wmcVp8RetainedWorkerProbe', {
       snapshot: () => {
         reads++;
         const result = snapshot();
         result.records[0]!.stepCalls = reads === 1 ? 0 : 1;
-        if (mode === 'retired' && reads >= 2) {
+        if ((mode === 'retired' && reads >= 2) || retireAtAbort || cleanupRetired) {
           result.records[0]!.retireCalls = 1;
         } else {
           result.records[0]!.retireCalls = 0;
@@ -90,6 +94,27 @@ describe('direct compiled Worker ABI evidence', () => {
       postMessage(message: Record<string, unknown>) {
         messages.push(message);
         if (message.type === 'start') record.requestId = message.requestId as string;
+        if (message.type === 'abort') {
+          if (mode === 'retired-between') retireAtAbort = true;
+          queueMicrotask(() => {
+            const probe = Reflect.get(globalThis, '__wmcVp8RetainedWorkerProbe') as {
+              snapshot: () => DirectOwnerSnapshot;
+            };
+            const atAbort = probe.snapshot();
+            this.emit({
+              type: '__wmcVp8OwnerAbortObservation',
+              requestId: mode === 'stale-ack' ? 'other' : message.requestId,
+              snapshot: atAbort,
+            });
+            if (mode === 'cleanup-retire') cleanupRetired = true;
+          });
+        }
+      }
+      removeEventListener(type: string, listener: (event: { data: unknown }) => void) {
+        this.listeners.set(
+          type,
+          (this.listeners.get(type) ?? []).filter((entry) => entry !== listener)
+        );
       }
       terminate() {
         terminated.push(true);
@@ -132,6 +157,32 @@ describe('direct compiled Worker ABI evidence', () => {
       expect(harness.terminated).toHaveLength(1);
     }
   );
+
+  it('rejects retirement between the last live sample and the actual abort receipt', async () => {
+    const harness = activeHarness('retired-between');
+    await expect(runDirectOwnerActiveTermination(harness.page, harness.request)).rejects.toThrow(
+      'retired before active termination'
+    );
+    expect(harness.messages.map((message) => message.type)).toEqual(['start', 'abort']);
+    expect(harness.terminated).toHaveLength(1);
+  });
+
+  it('accepts pre-retirement abort evidence even when cancellation cleanup retires later', async () => {
+    const harness = activeHarness('cleanup-retire');
+    const result = await runDirectOwnerActiveTermination(harness.page, harness.request);
+    expect(result.snapshot.records[0]!.retireCalls).toBe(0);
+    expect(result.observedStepCalls).toBe(1);
+    expect(harness.messages.map((message) => message.type)).toEqual(['start', 'abort']);
+    expect(harness.terminated).toHaveLength(1);
+  });
+
+  it('rejects an abort receipt from another request', async () => {
+    const harness = activeHarness('stale-ack');
+    await expect(runDirectOwnerActiveTermination(harness.page, harness.request)).rejects.toThrow(
+      'identity or payload mismatch'
+    );
+    expect(harness.terminated).toHaveLength(1);
+  });
 
   it('sends a transferred start to one bundled Worker and returns its actual output', async () => {
     const sent: Array<{ message: Record<string, unknown>; transfer: Transferable[] | undefined }> =
