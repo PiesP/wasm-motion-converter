@@ -58,8 +58,16 @@ to unchanged engine9c; they are not newly executed product browser checks.
 
 ## Remaining gates
 
-Fresh V9 source-only inputs are being prepared separately; no V9 codec result
-is claimed here. Before adoption, qualify the final clean product source through
+Fresh V9 inputs were being prepared at the engineering checkpoint above.
+The subsequent first fixed-pixel evaluation at engine9c and harness39852d52
+completed59/60 and rejected this candidate for adoption: chroma-edge407x277q60
+SSIM-.074856 missed the unchanged-.072949 floor; PSNR and size passed.
+Summary SHA256 is
+`c2881b591466e910d1aab65e6ac313767250b19eb02ed302592b0912492ff468`.
+All V9 inputs are now exposed, bringing known conditions to507. The failure and
+prior447-pass result remain separate; no product acceptance is inferred.
+Controlled existing-profile diagnosis continues before a general correction.
+Before adoption, qualify the final clean product source through
 the maintained guarded Windows main/Worker paths, independent full-animation
 checks, actual active Stop/recovery, large admitted inputs, balanced whole-product
 first/warm timing, resources and current browser coverage. Preserve the exact

@@ -20,4 +20,4 @@ For each quality and condition it reports all five values per build, median, ran
 
 To close this gap in a later authorized change, retain an outside-timing per-job route/ABI attestation for both builds and source-bound copy/capacity accounting, plus browser engine/machine/controller identity in each maintained receipt. Do not move parsing, independent decoding, or instrumentation inside the timed interval. A future campaign must still apply any stricter applicable timing or resource gate and separately assess output correctness and functional acceptance.
 
-Pure verifier tests run with `node --experimental-strip-types --test test/unit/validation/owned-vp8-product-timing.test.ts`. Their fabricated receipt objects test rejection and arithmetic only; they are not performance evidence.
+Pure verifier tests run with `vp test run --project unit test/unit/validation/owned-vp8-product-timing.test.ts`, using the repository's maintained unit runner. Their fabricated receipt objects test rejection and arithmetic only; they are not performance evidence.
