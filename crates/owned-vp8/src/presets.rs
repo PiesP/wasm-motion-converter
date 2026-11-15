@@ -71,3 +71,12 @@ pub(crate) fn lambda_for_q(qindex: usize) -> u64 {
     let q = qindex as u64 + 8;
     (q * q / 4) * LAMBDA_NUMERATOR / LAMBDA_DENOMINATOR
 }
+
+pub(crate) fn lambda_for_quality(qindex: usize, quality: u32) -> u64 {
+    let base = lambda_for_q(qindex);
+    if quality == 60 {
+        base * 11 / 10
+    } else {
+        base
+    }
+}

@@ -990,7 +990,7 @@ fn encode_observed(
             let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
             let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
             let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-            let lambda = crate::presets::lambda_for_q(qindex);
+            let lambda = crate::presets::lambda_for_quality(qindex, quality);
             blocks.push(analyze_one(
                 &source_y,
                 &source_u,
@@ -2045,7 +2045,7 @@ impl FrameEncoder {
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-        let lambda = crate::presets::lambda_for_q(qindex);
+        let lambda = crate::presets::lambda_for_quality(qindex, self.request.quality);
         let block = analyze_one(
             &self.source_y,
             &self.source_u,
