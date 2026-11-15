@@ -3274,10 +3274,25 @@ fn choose_scored_variants(
             }
         }
     }
+    let mut best_within_base: Option<f64> = None;
+    if base.1.is_ok() {
+        for (_, entry) in entries {
+            if let Some((bytes, Ok(()), score)) = entry {
+                if bytes <= base.0 && best_within_base.is_none_or(|best| score > best) {
+                    best_within_base = Some(score);
+                }
+            }
+        }
+    }
     let mut best = None;
     for (choice, entry) in entries {
         if let Some((bytes, Ok(()), score)) = entry {
-            if (base.1.is_err() || bytes <= base.0) && best.is_none_or(|(_, value)| score > value) {
+            let eligible = base.1.is_err()
+                || bytes <= base.0
+                || (choice != VariantChoice::Base
+                    && u64::from(bytes) == u64::from(base.0) + 1
+                    && best_within_base.is_some_and(|within| score > within));
+            if eligible && best.is_none_or(|(_, value)| score > value) {
                 best = Some((choice, score));
             }
         }
@@ -5323,7 +5338,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(candidate.output(), sync);
-            assert!(candidate.output().len() <= base.output().len());
+            assert!(candidate.output().len() <= base.output().len() + 1);
             assert_ne!(
                 candidate.output(),
                 base.output(),
@@ -5339,10 +5354,9 @@ mod tests {
             );
             if (width, height) == (2, 9) {
                 assert_eq!(candidate_edits, 3);
-                assert_eq!(candidate.output(), baseline_only.output());
-            } else {
-                assert_ne!(candidate.output(), baseline_only.output());
+                assert_eq!(baseline_only.output().len(), 98);
             }
+            assert_ne!(candidate.output(), baseline_only.output());
         }
     }
 
@@ -5392,9 +5406,9 @@ mod tests {
         while candidate.stage != Stage::ReapplyRefinements {
             candidate.step().unwrap();
         }
-        assert!(candidate.baseline_reapply);
+        assert!(!candidate.baseline_reapply);
         let candidate = run_engine(candidate);
-        assert_eq!(candidate.output().len(), 98);
+        assert_eq!(candidate.output().len(), 99);
         assert_ne!(candidate.output(), run_engine(base).output());
     }
 
@@ -8649,7 +8663,7 @@ mod tests {
         );
         assert_eq!(
             choose_scored_variants((101, ok, 0.9), Some((99, ok, 0.7)), (100, ok, 0.8)),
-            Ok(VariantChoice::Base)
+            Ok(VariantChoice::Extended)
         );
         assert_eq!(
             choose_scored_variants((99, limit, 0.9), Some((98, ok, 0.7)), (100, ok, 0.6)),
@@ -8671,6 +8685,89 @@ mod tests {
             choose_scored_variants((99, ok, 0.9), None, (100, ok, f64::INFINITY)),
             Err(Status::InvalidInput)
         );
+    }
+
+    #[test]
+    fn completed_quality_one_byte_window_requires_strict_gain_over_best_within_base() {
+        let ok = Ok(());
+        assert_eq!(
+            choose_scored_variants((101, ok, 0.9), Some((100, ok, 0.8)), (100, ok, 0.7)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((101, ok, 0.8), Some((100, ok, 0.8)), (100, ok, 0.7)),
+            Ok(VariantChoice::Baseline)
+        );
+        assert_eq!(
+            choose_scored_variants((101, ok, 0.79), Some((100, ok, 0.8)), (100, ok, 0.7)),
+            Ok(VariantChoice::Baseline)
+        );
+        assert_eq!(
+            choose_scored_variants((102, ok, 0.99), Some((101, ok, 0.9)), (100, ok, 0.8)),
+            Ok(VariantChoice::Baseline)
+        );
+        assert_eq!(
+            choose_scored_variants((102, ok, 0.99), Some((100, ok, 0.8)), (100, ok, 0.7)),
+            Ok(VariantChoice::Baseline)
+        );
+        assert_eq!(
+            choose_scored_variants((101, ok, -0.1), Some((100, ok, -0.2)), (100, ok, -0.3)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((u32::MAX, ok, 0.9), None, (u32::MAX - 1, ok, 0.8)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((u32::MAX, ok, 0.9), None, (u32::MAX, ok, 0.8)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((u32::MAX, ok, 0.9), None, (u32::MAX - 2, ok, 0.8)),
+            Ok(VariantChoice::Base)
+        );
+        assert_eq!(
+            choose_scored_variants((101, Err(Status::InvalidInput), 0.9), None, (100, ok, 0.8)),
+            Err(Status::InvalidInput)
+        );
+        assert_eq!(
+            choose_scored_variants((102, ok, f64::NAN), None, (100, ok, 0.8)),
+            Err(Status::InvalidInput)
+        );
+        assert_eq!(
+            choose_scored_variants((101, ok, 0.8), None, (100, Err(Status::OutputLimit), 0.7)),
+            Ok(VariantChoice::Extended)
+        );
+    }
+
+    #[test]
+    fn tiny_chroma_one_byte_gain_selects_existing_extended_payload() {
+        // Public synthetic 7x1 control, frozen independently of encoder output.
+        let pixels = [
+            244, 29, 171, 255, 89, 61, 239, 255, 89, 61, 239, 255, 89, 61, 239, 255, 244, 29, 171,
+            255, 89, 61, 239, 255, 89, 61, 239, 255,
+        ];
+        let expected = [
+            240, 1, 0, 157, 1, 42, 7, 0, 1, 0, 1, 0, 28, 41, 164, 2, 117, 42, 192, 65, 55, 97, 200,
+            252, 0, 254, 241, 170, 137, 67, 161, 120, 232, 63, 40, 191, 254, 67, 13, 136, 162, 223,
+            255, 250, 56, 223, 255, 200, 92, 92, 75, 63, 255, 163, 141, 255, 199, 111, 191, 221,
+            39, 3, 254, 98, 226, 184, 189, 0, 0,
+        ];
+        let request = Request {
+            quality: 85,
+            ..engine_request(7, 1, 0, &pixels, 28)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut staged = FrameEncoder::new(request, pixels.to_vec(), plan).unwrap();
+        while staged.stage != Stage::PrepareOutput {
+            staged.step().unwrap();
+            assert!(staged.output().is_empty());
+        }
+        assert_eq!(staged.selected_frame_bytes, expected.len() as u32);
+        assert_eq!(staged.plan.frame_bytes, expected.len() as u32);
+        let staged = run_engine(staged);
+        assert_eq!(staged.output(), expected);
+        assert_eq!(encode_textured(&pixels, 7, 1, 28, 0, 85).unwrap(), expected);
     }
 
     #[test]

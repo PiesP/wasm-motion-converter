@@ -91,10 +91,14 @@ choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction
 into the former source YUV slots, applies the signaled loop filter in raster
 order, and scores visible RGB with streaming SSIM moments. With legal unrefined
-output, it selects the highest finite score among legal variants no larger than
-that output. If unrefined output is illegal, it selects the highest finite score
-among legal refined variants or returns the unrefined limit error. Exact score
-ties prefer extended, then captured mandatory, then unrefined. The RGB view
+output, it first finds the best finite score among legal variants no larger than
+that output. A legal refined variant exactly one byte larger is eligible only
+when its score strictly exceeds that best score. It then selects the highest
+finite score among eligible variants; variants two or more bytes larger remain
+ineligible. This one-byte admission window does not raise the output or
+partition safety limits. If unrefined output is illegal, it selects the highest
+finite score among legal refined variants or returns the unrefined limit error.
+Exact score ties prefer extended, then captured mandatory, then unrefined. The RGB view
 approximates decoder conversion and cannot replace external quality gates.
 A bounded coefficient log and
 captured-choice overrides reverse and reapply reconstruction between counts;

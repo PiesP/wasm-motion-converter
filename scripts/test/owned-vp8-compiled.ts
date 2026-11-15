@@ -372,11 +372,45 @@ try {
         (stage) => refinementStages.add(stage)
       );
     }
+    // Synthetic 7x1 control: the already-counted extended frame earns one byte.
+    const tinyChroma = Uint8Array.from([
+      244, 29, 171, 255, 89, 61, 239, 255, 89, 61, 239, 255, 89, 61, 239, 255, 244, 29, 171, 255,
+      89, 61, 239, 255, 89, 61, 239, 255,
+    ]);
+    assert.equal(
+      sha(tinyChroma),
+      '98327a8e2b199892e85c2ff74865b026c6b4e478c3711a015a19590e02cf1c0e'
+    );
+    await check(tinyChroma, 7, 1, 28, 0, 85, 'synthetic-tiny-chroma-7x1');
+    const tinyChromaResult = results.at(-1) as { rawBytes: number; sha256: string };
+    assert.equal(tinyChromaResult.rawBytes, 69);
+    assert.equal(
+      tinyChromaResult.sha256,
+      '44311bcce84a2fc6aa42ee2c56b586672ccb7ed66edca1d4f8faf8a9b4d676fa'
+    );
+    for (const decoder of ['vp8', 'libvpx']) {
+      const yuv = execFileSync('ffmpeg', [
+        '-v',
+        'error',
+        '-c:v',
+        decoder,
+        '-i',
+        join(root, 'synthetic-tiny-chroma-7x1-q85.ivf'),
+        '-frames:v',
+        '1',
+        '-f',
+        'rawvideo',
+        '-pix_fmt',
+        'yuv420p',
+        'pipe:1',
+      ]);
+      assert.equal(sha(yuv), '4f072056a8e663df2a1614af55583af59e6cb88b8aec9ad13f9c41b5f674f70b');
+    }
     assert.deepEqual(
       results
         .filter((entry) => (entry as { id: string }).id.startsWith('fresh7-tiny-'))
         .map((entry) => (entry as { rawBytes: number }).rawBytes),
-      [98, 81, 92]
+      [99, 81, 92]
     );
     for (const stage of [36, 37, 38, 39, 40, 27, 28, 29, 35, 42, 44, 46, 48, 50, 52, 53])
       assert.ok(refinementStages.has(stage), `Compiled ABI2 must reach refinement stage ${stage}`);
