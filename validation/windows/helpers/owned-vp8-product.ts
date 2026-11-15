@@ -148,6 +148,95 @@ export function captureNearCapConsole(page: Page) {
   };
 }
 
+export function instrumentNearCapDecodedFrames() {
+  const state = {
+    installed: false,
+    outputCount: 0,
+    records: [] as Array<{
+      codedWidth: number;
+      codedHeight: number;
+      displayWidth: number;
+      displayHeight: number;
+      format: string | null;
+      allocationSizeBytes: number | null;
+      allocationSizeStatus: 'available' | 'unavailable' | 'threw' | 'invalid';
+    }>,
+  };
+  Reflect.set(globalThis, '__wmcNearCapDecodedFrames', state);
+  const NativeDecoder = globalThis.VideoDecoder;
+  if (typeof NativeDecoder !== 'function') return;
+  state.installed = Reflect.set(
+    globalThis,
+    'VideoDecoder',
+    new Proxy(NativeDecoder, {
+      get(target, key, receiver) {
+        const value = Reflect.get(target, key, receiver);
+        return key === 'isConfigSupported' && typeof value === 'function'
+          ? value.bind(target)
+          : value;
+      },
+      construct(target, args, newTarget) {
+        const init = args[0] as VideoDecoderInit | undefined;
+        let observedInit: VideoDecoderInit | undefined;
+        try {
+          const output = init?.output;
+          if (typeof output === 'function') {
+            observedInit = Object.create(init!) as VideoDecoderInit;
+            Object.defineProperty(observedInit, 'output', {
+              value: function (this: unknown, ...outputArgs: unknown[]) {
+                try {
+                  state.outputCount++;
+                  const frame = outputArgs[0] as VideoFrame;
+                  const frameFormat = frame.format;
+                  const format = frameFormat == null ? null : String(frameFormat).slice(0, 32);
+                  const record = {
+                    codedWidth: frame.codedWidth,
+                    codedHeight: frame.codedHeight,
+                    displayWidth: frame.displayWidth,
+                    displayHeight: frame.displayHeight,
+                    format,
+                    allocationSizeBytes: null as number | null,
+                    allocationSizeStatus: 'unavailable' as
+                      | 'available'
+                      | 'unavailable'
+                      | 'threw'
+                      | 'invalid',
+                  };
+                  const allocationSize = frame.allocationSize;
+                  if (format !== null && typeof allocationSize === 'function') {
+                    try {
+                      const size = Reflect.apply(allocationSize, frame, []) as number;
+                      if (Number.isSafeInteger(size) && size >= 0) {
+                        record.allocationSizeBytes = size;
+                        record.allocationSizeStatus = 'available';
+                      } else record.allocationSizeStatus = 'invalid';
+                    } catch {
+                      record.allocationSizeStatus = 'threw';
+                    }
+                  }
+                  if (state.records.length === 8) state.records.shift();
+                  state.records.push(record);
+                } catch {
+                  // Frame metadata observation must not replace the native output callback.
+                }
+                return Reflect.apply(output, this, outputArgs);
+              },
+            });
+          }
+        } catch {
+          // Constructor observation must not replace the native construction outcome.
+          return Reflect.construct(target, args, newTarget);
+        }
+        return Reflect.construct(
+          target,
+          observedInit ? [observedInit, ...args.slice(1)] : args,
+          newTarget
+        );
+      },
+    })
+  );
+}
+
 function digest(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
@@ -206,6 +295,21 @@ export async function captureFailure(
             const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as
               | { publicationCount: number; publications: Array<{ size: number; atMs: number }> }
               | undefined;
+            const decodedFrames = Reflect.get(globalThis, '__wmcNearCapDecodedFrames') as
+              | {
+                  installed: boolean;
+                  outputCount: number;
+                  records: Array<{
+                    codedWidth: number;
+                    codedHeight: number;
+                    displayWidth: number;
+                    displayHeight: number;
+                    format: string | null;
+                    allocationSizeBytes: number | null;
+                    allocationSizeStatus: string;
+                  }>;
+                }
+              | undefined;
             return {
               abi: abi
                 ? {
@@ -224,6 +328,13 @@ export async function captureFailure(
                       size,
                       atMs,
                     })),
+                  }
+                : null,
+              decodedFrames: decodedFrames
+                ? {
+                    outputCount: decodedFrames.outputCount,
+                    installed: decodedFrames.installed,
+                    records: decodedFrames.records.slice(-8).map((record) => ({ ...record })),
                   }
                 : null,
               fallbackResourceCount: performance
@@ -1670,6 +1781,7 @@ async function nearCapFunctional(
         );
     });
     try {
+      await context.addInitScript(instrumentNearCapDecodedFrames);
       const page = await context.newPage();
       const errors: string[] = [];
       page.on('pageerror', (error) => {

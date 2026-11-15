@@ -20,6 +20,7 @@ import {
   DIRECT_WORKER_OPTIONS,
   captureFailure,
   captureNearCapConsole,
+  instrumentNearCapDecodedFrames,
   instrumentOwnedInstance,
   parseAnimatedWebp,
   assertClusterTimeline,
@@ -29,6 +30,7 @@ import {
 afterEach(() => {
   vi.unstubAllGlobals();
   Reflect.deleteProperty(globalThis, '__wmcVp8AbiProbe');
+  Reflect.deleteProperty(globalThis, '__wmcNearCapDecodedFrames');
 });
 
 const root = resolve(import.meta.dirname, '../../..');
@@ -62,6 +64,71 @@ function animation(...frames: Buffer[]) {
 }
 
 describe('owned VP8 Windows product contract', () => {
+  it('observes bounded decoder output metadata while preserving construction and callbacks', async () => {
+    class FakeDecoder {
+      static isConfigSupported = vi.fn(async function (this: unknown, config: VideoDecoderConfig) {
+        if (this !== FakeDecoder) throw new Error('static receiver changed');
+        return { supported: true, config };
+      });
+      constructor(readonly init: VideoDecoderInit) {}
+      emit(frame: VideoFrame) {
+        this.init.output.call(this, frame);
+      }
+    }
+    vi.stubGlobal('VideoDecoder', FakeDecoder);
+    instrumentNearCapDecodedFrames();
+    const Wrapped = globalThis.VideoDecoder;
+    const onError = vi.fn();
+    let callbackThis: unknown;
+    const output = vi.fn(function (this: unknown) {
+      callbackThis = this;
+    });
+    const decoder = new Wrapped({ output, error: onError }) as unknown as FakeDecoder;
+    expect(decoder).toBeInstanceOf(FakeDecoder);
+    expect(decoder.init.error).toBe(onError);
+    expect((await Wrapped.isConfigSupported({ codec: 'vp09.00.10.08' })).supported).toBe(true);
+    class DerivedDecoder extends (Wrapped as unknown as typeof FakeDecoder) {}
+    expect(new DerivedDecoder({ output, error: onError })).toBeInstanceOf(DerivedDecoder);
+    for (let index = 0; index < 10; index++) {
+      decoder.emit({
+        codedWidth: 4096 + index,
+        codedHeight: 2457,
+        displayWidth: 4096,
+        displayHeight: 2457,
+        format: 'I420',
+        allocationSize: () => {
+          if (index === 9) throw new Error('layout unavailable');
+          return 15_000_000;
+        },
+      } as unknown as VideoFrame);
+    }
+    expect(output).toHaveBeenCalledTimes(10);
+    expect(callbackThis).toBe(decoder);
+    const probe = Reflect.get(globalThis, '__wmcNearCapDecodedFrames') as {
+      installed: boolean;
+      outputCount: number;
+      records: Array<{ codedWidth: number; allocationSizeStatus: string }>;
+    };
+    expect(probe.installed).toBe(true);
+    expect(probe.outputCount).toBe(10);
+    expect(probe.records).toHaveLength(8);
+    expect(probe.records[0]?.codedWidth).toBe(4098);
+    expect(probe.records[7]?.allocationSizeStatus).toBe('threw');
+    const originalError = new Error('original output failure');
+    output.mockImplementationOnce(() => {
+      throw originalError;
+    });
+    expect(() =>
+      decoder.emit({
+        get format() {
+          throw new Error('probe failed');
+        },
+      } as unknown as VideoFrame)
+    ).toThrow(originalError);
+    expect(probe.outputCount).toBe(11);
+    expect(probe.records).toHaveLength(8);
+  });
+
   it('retains only the last bounded warning/error lines per page and detaches the listener', () => {
     const page = new EventEmitter() as Page & EventEmitter;
     const capture = captureNearCapConsole(page);
@@ -103,6 +170,21 @@ describe('owned VP8 Windows product contract', () => {
       publicationCount: 0,
       publications: [],
     });
+    Reflect.set(globalThis, '__wmcNearCapDecodedFrames', {
+      installed: true,
+      outputCount: 1,
+      records: [
+        {
+          codedWidth: 4096,
+          codedHeight: 2464,
+          displayWidth: 4096,
+          displayHeight: 2457,
+          format: 'I420',
+          allocationSizeBytes: 15_000_000,
+          allocationSizeStatus: 'available',
+        },
+      ],
+    });
     const page = {
       url: () => 'http://127.0.0.1/',
       evaluate: async (callback: () => unknown) => callback(),
@@ -126,10 +208,13 @@ describe('owned VP8 Windows product contract', () => {
       ]);
       expect(report.nearCapState.abi.beginStatusCounts).toEqual({ '3': 1 });
       expect(report.nearCapState.publication).toEqual({ count: 0, recent: [] });
+      expect(report.nearCapState.decodedFrames.records[0].codedHeight).toBe(2464);
+      expect(report.nearCapState.decodedFrames.installed).toBe(true);
       expect(report.nearCapState.fallbackResourceCount).toBe(0);
     } finally {
       Reflect.deleteProperty(globalThis, '__wmcVp8AbiProbe');
       Reflect.deleteProperty(globalThis, '__wmcVp8ProductObserver');
+      Reflect.deleteProperty(globalThis, '__wmcNearCapDecodedFrames');
       await rm(directory, { recursive: true, force: true });
     }
   });
