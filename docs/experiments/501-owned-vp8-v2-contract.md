@@ -223,9 +223,31 @@ candidate evaluation: 53/54 conditions passed and the candidate was rejected;
 see [the retained result](501-owned-vp8-v6-result.md). Explicit acceptance
 subsets fail before evidence creation or codec initialization. All v1-v6
 held-out inputs now require `--regression`; the same 15 tuning inputs and all
-numeric gates remain unchanged. No fresh successor is currently frozen.
+numeric gates remain unchanged. At that result no fresh successor had been frozen.
 Preserve the source-only manifest, generator, originals and original gates.
 Fixed-pixel evidence establishes no browser, Windows, or product qualification.
+
+## Prospective corrected-v7 source-only freeze
+
+`501-owned-vp8-v7-fixtures.json` freezes 18 new held-out inputs / 54 conditions
+at q60/75/85 before any corrected-v7 codec output. The independent source-only
+generator `scripts/test/owned-vp8-v7-fixtures.ts` uses a new seed, formulas and
+geometry for grayscale, gradient, chroma edges, colored text, noise, three
+tiny/odd controls (2 × 9, 5 × 1, 1 × 11), separate one-row and one-column
+controls, an admitted 4110 × 2449 near-cap frame, opaque BGRA and RGBX layouts,
+a new CC0 photograph with a nonoverlapping detail crop, previously unselected
+V8 frames 47 and 184, and an exact duplicate hold of frame 47. The
+[photo provenance](501-owned-vp8-v7-photo-PROVENANCE.md) binds its pinned
+original; the manifest binds source bytes, decoded pixels, FFmpeg filters,
+generator and every previous manifest hash.
+
+Only the complete `--cohort corrected-v7 --acceptance --fresh-photo PATH --video
+PATH` set may serve prospective fixed-pixel acceptance. Explicit acceptance
+subsets fail before evidence creation or codec initialization. All v1-v6
+held-out inputs require `--regression`. The same 15 tuning inputs and every
+numeric gate remain unchanged. A candidate must be frozen and reviewed before
+the first v7 evaluation. Source-only preparation does not qualify a codec,
+browser, Windows environment, or product route.
 
 ## Resources and adoption
 
