@@ -64,6 +64,17 @@ function validEvidence(): OwnerRetentionEvidence {
       terminalType: index === 3 ? null : 'complete',
       terminatedAtMs: 1000,
       closeAtMs: 1100,
+      closeProof: {
+        clock: 'page-performance-now',
+        workerId: index + 1,
+        requestId: `request-${index + 1}`,
+        requestTimeOrigin: 100,
+        terminationTimeOrigin: 100,
+        closeTimeOrigin: 100,
+        terminatedAtMs: 900,
+        postCloseReadAtMs: 1000,
+        upperBoundMs: 100,
+      },
       closeObserved: true,
       closeCapability: true,
       snapshot: {
@@ -112,7 +123,38 @@ describe('owned VP8 post-owner reachability decision', () => {
     expect(verifyOwnerRetention(cdp).status).toBe('UNVERIFIED');
   });
 
-  it('distinguishes unavailable close signal from confirmed late close', () => {
+  it('accepts reversed forensic wall clocks when same-page close bound is valid', () => {
+    const evidence = validEvidence();
+    evidence.worker[0]!.closeAtMs = 998;
+    expect(verifyOwnerRetention(evidence)).toEqual({ status: 'PASS', reasons: [] });
+  });
+
+  it('keeps missing or invalid same-clock proof unverified', () => {
+    const missing = validEvidence();
+    missing.worker[0]!.closeProof = null;
+    expect(verifyOwnerRetention(missing).status).toBe('UNVERIFIED');
+    const negative = validEvidence();
+    negative.worker[0]!.closeProof!.postCloseReadAtMs = 899;
+    negative.worker[0]!.closeProof!.upperBoundMs = -1;
+    expect(verifyOwnerRetention(negative).status).toBe('UNVERIFIED');
+    const nonfinite = validEvidence();
+    nonfinite.worker[0]!.closeProof!.upperBoundMs = Number.NaN;
+    expect(verifyOwnerRetention(nonfinite).status).toBe('UNVERIFIED');
+    const mismatchedWorker = validEvidence();
+    mismatchedWorker.worker[0]!.closeProof!.workerId = 2;
+    expect(verifyOwnerRetention(mismatchedWorker).status).toBe('UNVERIFIED');
+    const mismatchedRequest = validEvidence();
+    mismatchedRequest.worker[0]!.closeProof!.requestId = 'other';
+    expect(verifyOwnerRetention(mismatchedRequest).status).toBe('UNVERIFIED');
+    const mismatchedOrigin = validEvidence();
+    mismatchedOrigin.worker[0]!.closeProof!.closeTimeOrigin = 101;
+    expect(verifyOwnerRetention(mismatchedOrigin).status).toBe('UNVERIFIED');
+    const invalidWorker = validEvidence();
+    invalidWorker.worker[0]!.id = 0;
+    expect(verifyOwnerRetention(invalidWorker).status).toBe('UNVERIFIED');
+  });
+
+  it('distinguishes unavailable close signal from confirmed open Worker', () => {
     const unavailable = validEvidence();
     unavailable.worker[0]!.closeCapability = false;
     expect(verifyOwnerRetention(unavailable).status).toBe('UNVERIFIED');
@@ -124,11 +166,16 @@ describe('owned VP8 post-owner reachability decision', () => {
     const stillOpen = validEvidence();
     stillOpen.worker[0]!.closeObserved = false;
     stillOpen.worker[0]!.closeAtMs = null;
+    stillOpen.worker[0]!.closeProof = null;
     stillOpen.worker[0]!.openAfterTimeout = true;
     expect(verifyOwnerRetention(stillOpen).status).toBe('FAIL');
+    const closedAfterObservedOpen = validEvidence();
+    closedAfterObservedOpen.worker[0]!.openAfterTimeout = true;
+    expect(verifyOwnerRetention(closedAfterObservedOpen).status).toBe('FAIL');
     const late = validEvidence();
-    late.worker[0]!.closeAtMs = 6001;
-    expect(verifyOwnerRetention(late).status).toBe('FAIL');
+    late.worker[0]!.closeProof!.postCloseReadAtMs = 6001;
+    late.worker[0]!.closeProof!.upperBoundMs = 5101;
+    expect(verifyOwnerRetention(late).status).toBe('UNVERIFIED');
   });
 
   it('excludes immutable Module cache only when that scope is explicit', () => {

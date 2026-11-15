@@ -311,6 +311,17 @@ type WorkerAttempt = {
   terminalType: string | null;
   terminatedAtMs: number | null;
   closeAtMs: number | null;
+  closeProof: {
+    clock: 'page-performance-now';
+    workerId: number;
+    requestId: string;
+    requestTimeOrigin: number;
+    terminationTimeOrigin: number;
+    closeTimeOrigin: number;
+    terminatedAtMs: number;
+    postCloseReadAtMs: number;
+    upperBoundMs: number;
+  } | null;
   closeObserved: boolean;
   closeCapability: boolean;
   openAfterTimeout?: boolean | null;
@@ -447,7 +458,13 @@ export function verifyOwnerRetention(evidence: OwnerRetentionEvidence): {
   const seenWorkers = new Set<number>();
   for (const [index, attempt] of evidence.worker.entries()) {
     const label = `worker ${index + 1} ${attempt.kind}`;
-    if (!attempt.requestId || seenRequests.has(attempt.requestId) || seenWorkers.has(attempt.id))
+    if (
+      !Number.isSafeInteger(attempt.id) ||
+      attempt.id < 1 ||
+      !attempt.requestId ||
+      seenRequests.has(attempt.requestId) ||
+      seenWorkers.has(attempt.id)
+    )
       unknown.push(`${label}: Worker or request identity missing or duplicate`);
     if (attempt.requestId) seenRequests.add(attempt.requestId);
     seenWorkers.add(attempt.id);
@@ -474,21 +491,42 @@ export function verifyOwnerRetention(evidence: OwnerRetentionEvidence): {
       )
         unknown.push(`${label}: begin, step, or retirement missing`);
     }
-    if (!attempt.terminatedAtMs) unknown.push(`${label}: observed termination missing`);
+    if (attempt.terminatedAtMs === null || !Number.isFinite(attempt.terminatedAtMs))
+      unknown.push(`${label}: observed termination missing`);
     if (attempt.kind !== 'stop' && attempt.terminalType !== 'complete')
       unknown.push(`${label}: completion response missing`);
     if (!attempt.closeCapability) unknown.push(`${label}: Worker close capability unavailable`);
-    else if (!attempt.closeObserved && attempt.openAfterTimeout === true)
+    else if (attempt.openAfterTimeout === true)
       failed.push(`${label}: Worker remained open beyond 5 seconds`);
     else if (!attempt.closeObserved) unknown.push(`${label}: Worker close signal unavailable`);
-    else if (
-      attempt.closeAtMs === null ||
-      attempt.terminatedAtMs === null ||
-      attempt.closeAtMs < attempt.terminatedAtMs
-    )
-      unknown.push(`${label}: Worker close cannot be bound to termination`);
-    else if (attempt.closeAtMs - attempt.terminatedAtMs > 5_000)
-      failed.push(`${label}: Worker close exceeded 5 seconds`);
+    else {
+      const proof = attempt.closeProof;
+      if (
+        attempt.closeAtMs === null ||
+        !Number.isFinite(attempt.closeAtMs) ||
+        attempt.terminatedAtMs === null ||
+        !Number.isFinite(attempt.terminatedAtMs) ||
+        !proof ||
+        proof.clock !== 'page-performance-now' ||
+        proof.workerId !== attempt.id ||
+        proof.requestId !== attempt.requestId ||
+        !Number.isFinite(proof.requestTimeOrigin) ||
+        !Number.isFinite(proof.terminationTimeOrigin) ||
+        !Number.isFinite(proof.closeTimeOrigin) ||
+        proof.requestTimeOrigin !== proof.terminationTimeOrigin ||
+        proof.terminationTimeOrigin !== proof.closeTimeOrigin ||
+        !Number.isFinite(proof.terminatedAtMs) ||
+        !Number.isFinite(proof.postCloseReadAtMs) ||
+        !Number.isFinite(proof.upperBoundMs) ||
+        proof.terminatedAtMs < 0 ||
+        proof.postCloseReadAtMs < proof.terminatedAtMs ||
+        proof.upperBoundMs !== proof.postCloseReadAtMs - proof.terminatedAtMs ||
+        attempt.terminatedAtMs !== proof.terminationTimeOrigin + proof.terminatedAtMs
+      )
+        unknown.push(`${label}: Worker close cannot be bound to same-page-clock termination`);
+      else if (proof.upperBoundMs > 5_000)
+        unknown.push(`${label}: termination-to-post-close-read bound exceeds 5 seconds`);
+    }
     if (attempt.outputBytes !== undefined && attempt.outputBytes > 96 * 1024 * 1024)
       failed.push(`${label}: 96 MiB output ceiling`);
   }

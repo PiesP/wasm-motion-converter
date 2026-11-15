@@ -6,6 +6,7 @@ import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/test';
 
@@ -2846,6 +2847,17 @@ export async function exerciseOwnedVp8OwnerRetention({
     terminalType: string | null;
     terminatedAtMs: number | null;
     closeAtMs: number | null;
+    closeProof: {
+      clock: 'page-performance-now';
+      workerId: number;
+      requestId: string;
+      requestTimeOrigin: number;
+      terminationTimeOrigin: number;
+      closeTimeOrigin: number;
+      terminatedAtMs: number;
+      postCloseReadAtMs: number;
+      upperBoundMs: number;
+    } | null;
     closeObserved: boolean;
     closeCapability: boolean;
     openAfterTimeout: boolean | null;
@@ -3085,6 +3097,8 @@ export async function exerciseOwnedVp8OwnerRetention({
       const browserWorkers: Array<{
         id: number;
         closeAtMs: number | null;
+        closeMonotonicAtMs: number | null;
+        postClosePageRead: Promise<{ timeOrigin: number; atMs: number } | null> | null;
         worker: WeakRef<ReturnType<Page['workers']>[number]>;
       }> = [];
       page.on('worker', (worker) => {
@@ -3092,11 +3106,25 @@ export async function exerciseOwnedVp8OwnerRetention({
         const entry = {
           id: browserWorkers.length + 1,
           closeAtMs: null as number | null,
+          closeMonotonicAtMs: null as number | null,
+          postClosePageRead: null as Promise<{ timeOrigin: number; atMs: number } | null> | null,
           worker: new WeakRef(worker),
         };
         browserWorkers.push(entry);
         worker.on('close', () => {
+          entry.closeMonotonicAtMs = performance.now();
           entry.closeAtMs = Date.now();
+          // This page-clock read happens after the actual Worker close event.
+          const read = page
+            .evaluate(() => ({ timeOrigin: performance.timeOrigin, atMs: performance.now() }))
+            .catch(() => null);
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          entry.postClosePageRead = Promise.race([
+            read,
+            new Promise<null>((resolve) => {
+              timeout = setTimeout(() => resolve(null), 5_000);
+            }),
+          ]).finally(() => clearTimeout(timeout));
         });
       });
       const lifecycle = () =>
@@ -3113,22 +3141,53 @@ export async function exerciseOwnedVp8OwnerRetention({
           };
           return { timeOrigin: performance.timeOrigin, records: probe.snapshot() };
         });
-      const recordWorker = async (kind: string, outputBytes?: number, stopSnapshot?: unknown) => {
+      const recordWorker = async (
+        kind: string,
+        requestId: string,
+        expectedWorkerId: number,
+        requestTimeOrigin: number,
+        outputBytes?: number,
+        stopSnapshot?: unknown
+      ) => {
         const current = await lifecycle();
         const record = current.records.at(-1);
         if (!record) throw new Error('Direct compiled Worker creation was not observed');
         assert(!record.invalidSnapshot, 'Direct Worker terminal snapshot is invalid');
         const matching = browserWorkers.find((entry) => entry.id === record.id);
         if (matching && record.terminatedAtMs !== null) {
-          const deadline = Date.now() + 5_000;
-          while (matching.closeAtMs === null && Date.now() < deadline)
+          const deadline = performance.now() + 5_000;
+          while (matching.closeMonotonicAtMs === null && performance.now() < deadline)
             await new Promise<void>((resolve) => setTimeout(resolve, 50));
         }
         const openAfterTimeout = (() => {
-          if (!matching || matching.closeAtMs !== null) return null;
+          if (!matching || matching.closeMonotonicAtMs !== null || record.terminatedAtMs === null)
+            return null;
           const target = matching.worker.deref();
           return target ? page.workers().includes(target) : null;
         })();
+        const postClosePageRead = await matching?.postClosePageRead;
+        // The read starts after Playwright observes close. In the unchanged page clock,
+        // its distance from the observed terminate call upper-bounds actual close latency.
+        const closeProof =
+          matching?.closeMonotonicAtMs !== null &&
+          matching?.closeMonotonicAtMs !== undefined &&
+          matching.id === expectedWorkerId &&
+          record.requestId === requestId &&
+          record.terminatedAtMs !== null &&
+          requestTimeOrigin === current.timeOrigin &&
+          postClosePageRead?.timeOrigin === current.timeOrigin
+            ? {
+                clock: 'page-performance-now' as const,
+                workerId: expectedWorkerId,
+                requestId,
+                requestTimeOrigin,
+                terminationTimeOrigin: current.timeOrigin,
+                closeTimeOrigin: postClosePageRead.timeOrigin,
+                terminatedAtMs: record.terminatedAtMs,
+                postCloseReadAtMs: postClosePageRead.atMs,
+                upperBoundMs: postClosePageRead.atMs - record.terminatedAtMs,
+              }
+            : null;
         const snapshot = (stopSnapshot ??
           record.terminalSnapshot) as (typeof workerAttempts)[number]['snapshot'];
         workerAttempts.push({
@@ -3139,6 +3198,7 @@ export async function exerciseOwnedVp8OwnerRetention({
           terminatedAtMs:
             record.terminatedAtMs === null ? null : current.timeOrigin + record.terminatedAtMs,
           closeAtMs: matching?.closeAtMs ?? null,
+          closeProof,
           closeObserved: matching?.closeAtMs !== null && matching?.closeAtMs !== undefined,
           closeCapability: !!matching,
           openAfterTimeout,
@@ -3173,6 +3233,8 @@ export async function exerciseOwnedVp8OwnerRetention({
         });
         const complete = async (kind: string) => {
           const asked = request(kind);
+          const requestTimeOrigin = await page.evaluate(() => performance.timeOrigin);
+          const expectedWorkerId = browserWorkers.length + 1;
           const result = await runDirectOwnerCompletion(page, asked);
           const current = await lifecycle();
           assertDirectOwnerSnapshot(
@@ -3183,6 +3245,13 @@ export async function exerciseOwnedVp8OwnerRetention({
             true
           );
           const bytes = Buffer.from(result.output);
+          await recordWorker(
+            kind,
+            asked.requestId,
+            expectedWorkerId,
+            requestTimeOrigin,
+            bytes.length
+          );
           const file = `${scenario}-direct-worker-${kind}.webp`;
           await writeFile(join(output, file), bytes);
           const parsed = parseAnimatedWebp(bytes);
@@ -3209,22 +3278,32 @@ export async function exerciseOwnedVp8OwnerRetention({
             parsed,
             decoded,
           });
-          await recordWorker(kind, bytes.length);
         };
         report.workerRoute =
           'direct-compiled-conversion-worker; validation-owned lifecycle; not UI Stop or main-thread-proxy';
         report.workerAsset = workerAssets[0];
         report.workerFixture = { ...workerFixture, sha256: workerInputDigest };
         for (let index = 0; index < 3; index++) await complete(`complete-${index + 1}`);
-        const stopped = await runDirectOwnerActiveTermination(page, request('stop'));
+        const stopRequest = request('stop');
+        const stopRequestTimeOrigin = await page.evaluate(() => performance.timeOrigin);
+        const expectedStopWorkerId = browserWorkers.length + 1;
+        const stopped = await runDirectOwnerActiveTermination(page, stopRequest);
         report.directWorkerCancellation = {
           requestId: stopped.requestId,
           progressCount: stopped.progressCount,
           observedStepCalls: stopped.observedStepCalls,
+          terminalBeforeAck: stopped.terminalBeforeAck,
           liveSnapshotPollIntervalMs: 10,
           kind: 'validation-owned protocol abort and termination after observed ABI steps; no UI Stop timing claim',
         };
-        await recordWorker('stop', undefined, stopped.snapshot);
+        await recordWorker(
+          'stop',
+          stopRequest.requestId,
+          expectedStopWorkerId,
+          stopRequestTimeOrigin,
+          undefined,
+          stopped.snapshot
+        );
         await complete('after-stop');
         report.workerPatches = workerPatches;
       } finally {
