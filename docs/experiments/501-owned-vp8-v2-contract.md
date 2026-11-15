@@ -245,10 +245,20 @@ The complete set served its first frozen candidate evaluation: 51/54 conditions
 passed and the candidate was rejected; see
 [the retained result](501-owned-vp8-v7-result.md). Explicit acceptance subsets
 fail before evidence creation or codec initialization. All v1-v7 held-out inputs
-now require `--regression`; no fresh successor is currently frozen. The same
-15 tuning inputs and every numeric gate remain unchanged. Preserve the original
-source-only freeze, candidate, inputs and failed results. Fixed-pixel evidence
-does not qualify a browser, Windows environment, or product route.
+now require `--regression`; at that result, no fresh successor had been frozen.
+The same 15 tuning inputs and every numeric gate remain unchanged. Preserve the
+original source-only freeze, candidate, inputs and failed results. Fixed-pixel
+evidence does not qualify a browser, Windows environment, or product route.
+
+## Prospective corrected-v8 source-only freeze
+
+The [corrected-v8 source freeze](501-owned-vp8-v8-source-freeze.md) binds 20 new
+held-out pixel inputs / 60 q60/75/85 conditions before their first codec output.
+Its manifest records source and input digests, independent photo crops, selected
+video frames, geometry, channel layouts and stride. V1-V7 held-out inputs remain
+exposed regression controls; the same 15 tuning inputs and numeric gates remain
+unchanged. This source-only freeze is not an acceptance result or product
+qualification.
 
 ## Resources and adoption
 
