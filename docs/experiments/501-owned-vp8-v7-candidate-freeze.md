@@ -3,6 +3,10 @@
 Status: **PARTIAL, before the first v7 codec evaluation**. Production retains
 wasm-webp. Preserve all earlier rejected candidates, cohorts and receipts.
 
+Historical freeze retained below. Its first full evaluation has now completed
+and rejected the candidate, 51/54; see
+[the result](501-owned-vp8-v7-result.md). V7 is now exposed regression evidence.
+
 ## Candidate and bounded correction
 
 Coordinator owns `codex/501-vp8-rate-refinement`. Refreshed master baseline is

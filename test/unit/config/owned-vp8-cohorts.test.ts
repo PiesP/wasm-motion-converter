@@ -455,7 +455,7 @@ describe('owned VP8 prospective cohort isolation', () => {
     expect(() => generateV6Fixture('fresh6-video-32')).toThrow('Missing video source');
   });
 
-  it('allows only the complete corrected-v7 cohort for fresh acceptance', async () => {
+  it('keeps corrected-v7 exposed after its first complete evaluation', async () => {
     for (const cohort of [
       'initial-v1',
       'corrected-v2',
@@ -463,15 +463,16 @@ describe('owned VP8 prospective cohort isolation', () => {
       'corrected-v4',
       'corrected-v5',
       'corrected-v6',
+      'corrected-v7',
     ] as const)
       expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
-    const selected = selectFixtureCohort('held-out', 'corrected-v7');
+    const selected = selectFixtureCohort('held-out', 'corrected-v7', true);
     expect(selected).toEqual(V7_HELDOUT);
-    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+    expect(fixtureSelectionIdentity(selected, 'held-out', true, false)).toMatchObject({
       selectedFixtureIds: V7_HELDOUT.map((item) => item.id),
       expectedConditionCount: 54,
       completeCohort: true,
-      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+      scope: 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE',
     });
     expect(selectFixtureCohort('tuning', 'corrected-v7')).toHaveLength(15);
     const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v7-subset-'));

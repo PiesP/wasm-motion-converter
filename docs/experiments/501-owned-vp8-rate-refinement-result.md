@@ -146,19 +146,19 @@ Its first evaluation is now exposed and regression-only. Subsequent input-loss
 UV calibration and flat-UV DC tie reduction passed all 279 known conditions.
 The [v6 candidate freeze](501-owned-vp8-v6-candidate-freeze.md) then evaluated
 54 fresh conditions and passed 53, with one q60 chroma SSIM failure; see
-[the retained result](501-owned-vp8-v6-result.md). V1-v6 are now regression-only.
-No successor had been frozen at that result; the source-only v7 successor is
-now prepared under the [current contract](501-owned-vp8-v2-contract.md).
-An actual candidate still requires prospective registration before any v7
-codec evaluation. Preserve all outcomes and correct the remaining precision
-failure against the expanded 333-condition known matrix.
+[the retained result](501-owned-vp8-v6-result.md). That remaining precision
+failure motivated the content-dependent luma work below. Preserve the frozen
+cohorts and every outcome under the [current contract](501-owned-vp8-v2-contract.md).
 
 Bounded UV coefficient rate/distortion decisions and exact-semantic trial-cost
 factorization are now integrated engineering changes. A bounded content-dependent
 luma profile preview subsequently passed all 333 known conditions; its
 [prospective v7 freeze](501-owned-vp8-v7-candidate-freeze.md) records actual
-source/module identities and unchanged fresh gates. Fresh qualification remains
-pending. Preserve
+source/module identities and unchanged fresh gates. Its first evaluation passed
+51/54, with three new tiny-input SSIM failures at q60/75/85; see
+[the rejected result](501-owned-vp8-v7-result.md). V1-v7 are now regression-only,
+and no fresh successor is currently frozen. The expanded known matrix has 387
+conditions. Preserve
 unfiltered reconstruction, input/settings identity, deterministic output,
 resource ceilings and host-task cancellation. New source requires controlled
 evidence; native Canvas output cannot qualify the owned software route.

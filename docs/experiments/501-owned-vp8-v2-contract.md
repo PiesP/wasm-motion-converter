@@ -241,13 +241,14 @@ V8 frames 47 and 184, and an exact duplicate hold of frame 47. The
 original; the manifest binds source bytes, decoded pixels, FFmpeg filters,
 generator and every previous manifest hash.
 
-Only the complete `--cohort corrected-v7 --acceptance --fresh-photo PATH --video
-PATH` set may serve prospective fixed-pixel acceptance. Explicit acceptance
-subsets fail before evidence creation or codec initialization. All v1-v6
-held-out inputs require `--regression`. The same 15 tuning inputs and every
-numeric gate remain unchanged. A candidate must be frozen and reviewed before
-the first v7 evaluation. Source-only preparation does not qualify a codec,
-browser, Windows environment, or product route.
+The complete set served its first frozen candidate evaluation: 51/54 conditions
+passed and the candidate was rejected; see
+[the retained result](501-owned-vp8-v7-result.md). Explicit acceptance subsets
+fail before evidence creation or codec initialization. All v1-v7 held-out inputs
+now require `--regression`; no fresh successor is currently frozen. The same
+15 tuning inputs and every numeric gate remain unchanged. Preserve the original
+source-only freeze, candidate, inputs and failed results. Fixed-pixel evidence
+does not qualify a browser, Windows environment, or product route.
 
 ## Resources and adoption
 
