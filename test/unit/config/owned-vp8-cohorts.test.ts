@@ -28,6 +28,12 @@ import {
   V4_PHOTO,
   generateV4Fixture,
 } from '../../../scripts/test/owned-vp8-v4-fixtures';
+import {
+  V5_HELDOUT,
+  V5_PHOTO,
+  V5_PHOTO_REGIONS,
+  generateV5Fixture,
+} from '../../../scripts/test/owned-vp8-v5-fixtures';
 
 describe('owned VP8 prospective cohort isolation', () => {
   const root = resolve(import.meta.dirname, '../../..');
@@ -220,6 +226,81 @@ describe('owned VP8 prospective cohort isolation', () => {
           split: 'held-out',
           cohort: 'corrected-v4',
           fixtureIds: ['fresh4-tiny'],
+          sources: {},
+          candidateRoot: join(parent, 'missing-candidate'),
+        })
+      ).rejects.toThrow('diagnostic only');
+      expect(existsSync(output)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('freezes a distinct full corrected-v5 held-out set and keeps old cohorts exposed', () => {
+    for (const cohort of ['initial-v1', 'corrected-v2', 'corrected-v3', 'corrected-v4'] as const)
+      expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
+    const fresh = selectFixtureCohort('held-out', 'corrected-v5');
+    expect(fresh).toEqual(V5_HELDOUT);
+    expect(fresh).toHaveLength(18);
+    expect(fixtureSelectionIdentity(fresh, 'held-out', false, false)).toMatchObject({
+      expectedConditionCount: 54,
+      completeCohort: true,
+    });
+    expect(selectFixtureCohort('tuning', 'corrected-v5')).toHaveLength(15);
+    const oldIds = new Set(
+      [...FIXTURES, ...CORRECTION_HELDOUT, ...V3_HELDOUT, ...V4_HELDOUT].map((item) => item.id)
+    );
+    expect(fresh.every((item) => !oldIds.has(item.id))).toBe(true);
+    expect(fresh.find((item) => item.id === 'fresh5-duplicate-hold')?.repeatOf).toBe(
+      'fresh5-video-24'
+    );
+    expect(V5_PHOTO.sha256).not.toBe(V4_PHOTO.sha256);
+    expect(V5_PHOTO_REGIONS.primary.x + V5_PHOTO_REGIONS.primary.width).toBeLessThan(
+      V5_PHOTO_REGIONS.detail.x
+    );
+    expect(() => selectFixtureCohort('held-out', 'corrected-v5', false, ['fresh5-gray'])).toThrow(
+      'diagnostic only'
+    );
+    expect(selectFixtureCohort('held-out', 'corrected-v5', true, ['fresh5-gray'])).toHaveLength(1);
+  });
+
+  it('binds v5 generated pixels, prior manifests, and source requirements', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v5-fixtures.json'), 'utf8')
+    ) as {
+      cohort: string;
+      generatorSha256: string;
+      priorManifestSha256: Record<string, string>;
+      fixtures: Array<{ id: string; source: string; sha256: string; qualities: number[] }>;
+    };
+    expect(manifest.cohort).toBe('corrected-v5');
+    expect(manifest.generatorSha256).toBe(sha256('scripts/test/owned-vp8-v5-fixtures.ts'));
+    expect(manifest.priorManifestSha256).toEqual({
+      initialV1: sha256('docs/experiments/501-owned-vp8-v2-fixtures.json'),
+      correctedV2: sha256('docs/experiments/501-owned-vp8-v2-correction-fixtures.json'),
+      correctedV3: sha256('docs/experiments/501-owned-vp8-v3-fixtures.json'),
+      correctedV4: sha256('docs/experiments/501-owned-vp8-v4-fixtures.json'),
+    });
+    expect(manifest.fixtures).toHaveLength(18);
+    expect(manifest.fixtures.every((entry) => entry.qualities.join(',') === '60,75,85')).toBe(true);
+    for (const item of manifest.fixtures.filter((entry) => entry.source === 'generated'))
+      expect(createHash('sha256').update(generateV5Fixture(item.id).pixels).digest('hex')).toBe(
+        item.sha256
+      );
+    expect(() => generateV5Fixture('fresh5-photo')).toThrow('Missing fresh photo source');
+    expect(() => generateV5Fixture('fresh5-video-24')).toThrow('Missing video source');
+  });
+
+  it('rejects a v5 acceptance subset before creating output or initializing a codec', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v5-subset-'));
+    const output = join(parent, 'evidence');
+    try {
+      await expect(
+        compare({
+          output,
+          split: 'held-out',
+          cohort: 'corrected-v5',
+          fixtureIds: ['fresh5-tiny-2x7'],
           sources: {},
           candidateRoot: join(parent, 'missing-candidate'),
         })

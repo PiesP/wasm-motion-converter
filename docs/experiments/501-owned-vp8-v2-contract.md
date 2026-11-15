@@ -172,13 +172,38 @@ The original source is privately staged outside Git and public assets.
 The existing 15 tuning inputs and all numerical quality, size, performance,
 resource and delivery gates are unchanged. Its first frozen evaluation rejected
 the candidate at44/45; see [the result](501-owned-vp8-v4-result.md).
-All four observed held-out cohorts now require `--regression`; no fresh successor
-is currently frozen. Supply `--fresh-photo PATH` for
+All four observed held-out cohorts now require `--regression`; at that result no
+fresh successor had been frozen. Supply `--fresh-photo PATH` for
 the v4 photograph and `--video PATH` for the pinned video. Preserve the v4
 manifest, generator, input bytes and every outcome after first evaluation;
 subsequent v4 runs become exposed regression evidence and must require the
 explicit regression purpose. Source-only freeze does not qualify any codec,
 browser route, Windows result or product adoption.
+
+## Prospective corrected-v5 source-only freeze
+
+Following the corrected-v4 44/45 rejection at the q60 SSIM gate on its tiny
+fixture, `501-owned-vp8-v5-fixtures.json` freezes 18 new held-out inputs and
+54 conditions before any corrected-v5 codec output. Its source-only generator
+`scripts/test/owned-vp8-v5-fixtures.ts` binds distinct grayscale, gradient,
+chroma, text, noise, three independent tiny color patterns (2 × 7, 5 × 3,
+7 × 2), one-row and one-column patterns, a near-cap large frame, opaque BGRA
+and RGBX layouts, a new CC0 photograph and its nonoverlapping detail region,
+two previously unobserved frames 24 and 137 of the pinned V8 video, and an
+exact duplicate hold of frame 24. The photo's original identity, license and
+private staging are in `501-owned-vp8-v5-photo-PROVENANCE.md`; the manifest binds
+the pixel hashes, source hashes, decode filters and prior manifest identities.
+
+The existing 15 tuning inputs and all numerical quality, size, performance,
+resource and delivery gates remain unchanged. Only the full corrected-v5
+held-out set can be fresh acceptance; an explicit fixture subset is rejected
+before output creation or codec initialization. All v1-v4 held-out inputs are
+exposed regression evidence and require `--regression`. Use `--cohort
+corrected-v5 --acceptance --fresh-photo PATH --video PATH` for the new source
+identities. Preserve all earlier originals, manifests and outcomes. Once v5 is
+first evaluated, retire its fresh status and require `--regression` for later
+runs. This source-only freeze establishes no codec, browser, Windows or product
+qualification.
 
 ## Resources and adoption
 
