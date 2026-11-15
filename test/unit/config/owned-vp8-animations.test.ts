@@ -1,11 +1,15 @@
-import { mkdtemp, open, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable, Writable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import { describe, expect, it } from 'vite-plus/test';
 
 import {
   RgbaFrameCollector,
+  createPrivateOutputDirectory,
+  ivfChunks,
   readOpenedFile,
   readStableFile,
   readMetadata,
@@ -68,8 +72,9 @@ describe('saved animation verifier', () => {
     const directory = await mkdtemp(join(tmpdir(), 'wmc-animation-'));
     try {
       const path = join(directory, 'frames.ivf');
-      const identity = await writeIvf(path, 2, 1, frames);
+      const { buffer, ...identity } = await writeIvf(path, 2, 1, frames);
       const ivf = await readFile(path);
+      expect(buffer.equals(ivf)).toBe(true);
       expect(identity).toEqual({
         bytes: ivf.length,
         sha256: '2c797b70a9b70ab8d7f6b3871926ecbc0ee1259d2e3b4a94f1b1daedc74305cd',
@@ -83,9 +88,44 @@ describe('saved animation verifier', () => {
       expect(ivf.readUInt32LE(55)).toBe(11);
       expect(ivf.readBigUInt64LE(59)).toBe(83n);
       expect(ivf.length).toBe(78);
+      if (process.platform !== 'win32') expect((await stat(path)).mode & 0o777).toBe(0o600);
       await expect(writeIvf(path, 2, 1, frames)).rejects.toMatchObject({ code: 'EEXIST' });
     } finally {
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps decoder stdin bound to verified IVF bytes after its file path changes', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'wmc-private-verifier-'));
+    const directory = join(parent, 'new-output');
+    try {
+      await createPrivateOutputDirectory(directory);
+      if (process.platform !== 'win32') expect((await stat(directory)).mode & 0o777).toBe(0o700);
+      await expect(createPrivateOutputDirectory(directory)).rejects.toMatchObject({
+        code: 'EEXIST',
+      });
+      const path = join(directory, 'frames.ivf');
+      const { buffer, sha256 } = await writeIvf(
+        path,
+        2,
+        1,
+        extractVp8Frames(animation(frame(83))).frames
+      );
+      await rename(path, join(directory, 'original.ivf'));
+      await writeFile(path, 'replacement', { flag: 'wx', mode: 0o600 });
+      const delivered: Buffer[] = [];
+      const sink = new Writable({
+        write(part: Buffer, _encoding, done) {
+          delivered.push(Buffer.from(part));
+          done();
+        },
+      });
+      await pipeline(Readable.from(ivfChunks(buffer)), sink);
+      expect(Buffer.concat(delivered).equals(buffer)).toBe(true);
+      expect(buffer.equals(await readFile(path))).toBe(false);
+      expect(sha256).toBe('87e686ea97fd333b49bf1a03e584d12ed5ac79f14db0f36f8b97becb2432c766');
+    } finally {
+      await rm(parent, { recursive: true, force: true });
     }
   });
 

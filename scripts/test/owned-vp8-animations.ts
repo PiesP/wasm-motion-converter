@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { constants, createWriteStream } from 'node:fs';
 import { lstat, mkdir, open, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute, join, resolve, sep } from 'node:path';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -16,6 +17,7 @@ import { parseAnimatedWebp } from '../../validation/windows/helpers/owned-vp8-pr
 const MAX_OUTPUT_BYTES = 96 * 1024 * 1024;
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_FRAMES = 400;
+const MAX_IVF_BYTES = MAX_OUTPUT_BYTES + 32 + 12 * MAX_FRAMES;
 const MAX_PIXELS = 10_066_329;
 const MAX_AXIS = 16_383;
 const DECODERS = ['vp8', 'libvpx'] as const;
@@ -156,7 +158,7 @@ async function writeAll(handle: Awaited<ReturnType<typeof open>>, bytes: Buffer)
 
 /** Exact millisecond timestamps preserve ANMF holds without synthesized frames. */
 export async function writeIvf(path: string, width: number, height: number, frames: Frame[]) {
-  const handle = await open(path, 'wx+');
+  const handle = await open(path, 'wx+', 0o600);
   try {
     let bytes = 0;
     const emit = async (part: Buffer) => {
@@ -181,14 +183,8 @@ export async function writeIvf(path: string, width: number, height: number, fram
       await emit(entry);
       await emit(frame.payload);
     }
-    const written = await readOpenedFile(
-      path,
-      handle,
-      MAX_OUTPUT_BYTES + 32 + 12 * MAX_FRAMES,
-      bytes,
-      'Generated IVF'
-    );
-    return { bytes, sha256: sha256(written) };
+    const buffer = await readOpenedFile(path, handle, MAX_IVF_BYTES, bytes, 'Generated IVF');
+    return { bytes, sha256: sha256(buffer), buffer };
   } finally {
     await handle.close();
   }
@@ -253,7 +249,13 @@ function assertClusterOrder(frames: PixelFrame[]): void {
   assert.deepEqual(groups, ['red', 'lime', 'blue', 'yellow'], 'Cluster scene order differs');
 }
 
-function command(decoder: Decoder, ivfPath: string) {
+/** Reuse the verified IVF buffer; only small borrowed chunks enter stdin. */
+export function* ivfChunks(bytes: Buffer): Generator<Buffer> {
+  assert(bytes.length <= MAX_IVF_BYTES, 'Generated IVF exceeds byte bound');
+  for (let at = 0; at < bytes.length; at += 64 * 1024) yield bytes.subarray(at, at + 64 * 1024);
+}
+
+function command(decoder: Decoder) {
   return [
     '-nostdin',
     '-hide_banner',
@@ -266,7 +268,7 @@ function command(decoder: Decoder, ivfPath: string) {
     '-c:v',
     decoder,
     '-i',
-    ivfPath,
+    'pipe:0',
     '-an',
     '-sn',
     '-dn',
@@ -282,24 +284,29 @@ function command(decoder: Decoder, ivfPath: string) {
 
 async function decode(
   decoder: Decoder,
-  ivfPath: string,
+  ivfBytes: Buffer,
   logPath: string,
   width: number,
   height: number,
   count: number
 ) {
-  const args = command(decoder, ivfPath);
-  const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const args = command(decoder);
+  const child = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
   const exit = new Promise<number>((done, reject) => {
     child.once('error', reject);
     child.once('close', (code) => done(code ?? -1));
   });
-  const stderr = pipeline(child.stderr!, createWriteStream(logPath, { flags: 'wx' }));
+  const stdin = pipeline(Readable.from(ivfChunks(ivfBytes)), child.stdin!);
+  const stderr = pipeline(child.stderr!, createWriteStream(logPath, { flags: 'wx', mode: 0o600 }));
+  // Settle pipe failures promptly so a blocked decoder cannot outlive them.
+  void exit.catch(() => child.kill());
+  void stdin.catch(() => child.kill());
+  void stderr.catch(() => child.kill());
   const collector = new RgbaFrameCollector(width, height, count);
   try {
     for await (const part of child.stdout!) collector.accept(Buffer.from(part));
     const code = await exit;
-    await stderr;
+    await Promise.all([stdin, stderr]);
     assert.equal(code, 0, `${decoder} decoder failed; inspect ${logPath}`);
     return {
       command: ['ffmpeg', ...args],
@@ -309,7 +316,7 @@ async function decode(
     };
   } catch (error) {
     child.kill();
-    await Promise.allSettled([exit, stderr]);
+    await Promise.allSettled([exit, stdin, stderr]);
     throw error;
   }
 }
@@ -349,6 +356,11 @@ function parseArgs(argv: string[]) {
     output,
     report: options['--report'],
   };
+}
+
+/** The caller owns a new directory; never change permissions on an existing path. */
+export async function createPrivateOutputDirectory(path: string): Promise<void> {
+  await mkdir(path, { mode: 0o700 });
 }
 
 export async function readMetadata(path: string) {
@@ -607,7 +619,9 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     iccPairs: [] as unknown[],
   };
   const persist = () =>
-    writeFile(join(output, 'verification.json'), `${JSON.stringify(report, null, 2)}\n`);
+    writeFile(join(output, 'verification.json'), `${JSON.stringify(report, null, 2)}\n`, {
+      mode: 0o600,
+    });
   await persist();
   try {
     const identities = new Map<string, { declared: DeclaredRecord; icc: unknown }>();
@@ -646,7 +660,12 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
           assert.deepEqual(declared.record.parsed.icc, parsed.icc, 'Reported ICC differs');
       }
       const ivf = join(output, `${saved.file}.ivf`);
-      const ivfIdentity = await writeIvf(ivf, parsed.canvas.width, parsed.canvas.height, frames);
+      const { buffer: ivfBytes, ...ivfIdentity } = await writeIvf(
+        ivf,
+        parsed.canvas.width,
+        parsed.canvas.height,
+        frames
+      );
       report.activeOutput = {
         origin: declared.origin,
         saved,
@@ -659,13 +678,13 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       for (const decoder of DECODERS) {
         report.activeDecoder = {
           decoder,
-          command: ['ffmpeg', ...command(decoder, ivf)],
+          command: ['ffmpeg', ...command(decoder)],
           log: `${saved.file}.${decoder}.log`,
         };
         await persist();
         decoded[decoder] = await decode(
           decoder,
-          ivf,
+          ivfBytes,
           join(output, `${saved.file}.${decoder}.log`),
           parsed.canvas.width,
           parsed.canvas.height,
@@ -749,7 +768,7 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const main = async () => {
     const args = parseArgs(process.argv.slice(2));
-    await mkdir(args.output);
+    await createPrivateOutputDirectory(args.output);
     try {
       await verifyRun(args.run, args.source, args.output, args.report);
     } catch (error) {
@@ -758,7 +777,7 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
         await writeFile(
           join(args.output, 'verification.json'),
           `${JSON.stringify({ status: 'failed', sourceRun: args.run, expectedSource: args.source, error: String(error) }, null, 2)}\n`,
-          { flag: 'wx' }
+          { flag: 'wx', mode: 0o600 }
         );
       } catch {
         // Keep the more detailed report already written by verifyRun.
