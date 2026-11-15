@@ -13,6 +13,7 @@ pub(crate) const TEXTURED_MONO_QINDEX: [usize; 3] = [34, 27, 14];
 pub(crate) const UV_DC_DELTA: [i8; 3] = [-4, -9, -4];
 pub(crate) const UV_AC_DELTA: [i8; 3] = [-11, -9, -4];
 pub(crate) const HIGH_CHROMA_LOSS_QINDEX_REDUCTION: usize = 4;
+pub(crate) const HIGH_CHROMA_LOSS_ORIGINAL_UV_DELTAS: (i8, i8) = (-13, 0);
 pub(crate) const HIGH_CHROMA_LOSS_UV_DELTAS: (i8, i8) = (-9, 4);
 const CHROMA_LOSS_THRESHOLD_PER_RGB_CHANNEL: u64 = 4096;
 pub(crate) const FILTER_LEVEL: [u8; 3] = [6, 4, 4];
@@ -71,6 +72,14 @@ pub(crate) fn frame_deltas(quality: u32, rgb_error_sum: u64, width: u32, height:
         (selected.uv_dc, selected.uv_ac) = HIGH_CHROMA_LOSS_UV_DELTAS;
     }
     selected
+}
+
+pub(crate) fn original_high_chroma_loss_deltas() -> Deltas {
+    Deltas {
+        uv_dc: HIGH_CHROMA_LOSS_ORIGINAL_UV_DELTAS.0,
+        uv_ac: HIGH_CHROMA_LOSS_ORIGINAL_UV_DELTAS.1,
+        ..Deltas::default()
+    }
 }
 
 pub(crate) fn high_chroma_loss(quality: u32, rgb_error_sum: u64, width: u32, height: u32) -> bool {

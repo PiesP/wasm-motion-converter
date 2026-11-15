@@ -11,8 +11,9 @@ pub(crate) const NODE_COUNT: usize = DEFAULT_COEFF_PROBS.len();
 pub(crate) const MAX_NODES_PER_STEP: usize = 64;
 const _: [(); NODE_COUNT] = [(); COEFF_UPDATE_PROBS.len()];
 
-/// Counts only the selected, frozen frame's emitted coefficient tree branches.
-/// Trial candidates must not call `observe`. A new frame starts with `new()`.
+/// Counts coefficient branches for one frozen analysis. Mode/coefficient trials
+/// must not mutate its committed counts. Frame-profile previews use private
+/// statistics and discard them before another profile; each starts with `new()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Statistics {
     counts: [[u32; 2]; NODE_COUNT],
