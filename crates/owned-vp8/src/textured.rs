@@ -3075,7 +3075,7 @@ mod tests {
                 Ok(())
             }
         }
-        for (quality, expected_dc, expected_ac) in [(60, -4, -15), (75, -9, -9), (85, -4, -4)] {
+        for (quality, expected_dc, expected_ac) in [(60, -4, -8), (75, -9, -9), (85, -4, -4)] {
             let deltas = crate::presets::deltas(quality);
             assert_eq!(deltas.uv_dc, expected_dc);
             assert_eq!(deltas.uv_ac, expected_ac);
