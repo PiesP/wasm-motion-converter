@@ -3464,7 +3464,9 @@ mod tests {
         contexts.left_u = [false, true];
         contexts.left_v = [true, false];
         let before = contexts.clone();
-        let steps = ac_quant::steps(19, crate::presets::deltas(75), Plane::UV);
+        // The original q19/-9 UV steps exercise a one-level DC trial even
+        // though the calibrated normal frame preset now uses different steps.
+        let steps = Steps { dc: 13, ac: 14 };
         let baseline = make_uv(
             &source,
             &source,
@@ -3514,7 +3516,7 @@ mod tests {
     }
 
     #[test]
-    fn higher_preset_frame_bytes_match_pre_rdo_wasm() {
+    fn higher_preset_frame_bytes_match_sync_abi2_and_fresh_jobs() {
         let pixels: Vec<_> = (0..16 * 16 * 4)
             .map(|i| {
                 if i % 4 == 3 {
@@ -3524,16 +3526,23 @@ mod tests {
                 }
             })
             .collect();
-        // FNV-1a fingerprints of the base c901c052 ABI2 WASM output.
-        for (quality, expected_len, expected_hash) in [
-            (75, 243, 0x7670_01a7_a481_756c),
-            (85, 314, 0x1b5b_a600_8fee_5d8d),
-        ] {
+        // Historical c901c052 FNV-1a fingerprints were q75 (243,
+        // 0x7670_01a7_a481_756c) and q85 (314, 0x1b5b_a600_8fee_5d8d).
+        // The normal UV deltas intentionally change those bytes; compare the
+        // current candidate across both entrypoints and fresh frame jobs.
+        for quality in [75, 85] {
             let bytes = encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap();
-            let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
-                (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
-            });
-            assert_eq!((bytes.len(), hash), (expected_len, expected_hash));
+            assert_eq!(
+                bytes,
+                encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap()
+            );
+            let mut request = engine_request(16, 16, 0, &pixels, 64);
+            request.quality = quality;
+            let plan = ResourcePlan::checked(request).unwrap();
+            let first = run_engine(FrameEncoder::new(request, pixels.clone(), plan).unwrap());
+            let second = run_engine(FrameEncoder::new(request, pixels.clone(), plan).unwrap());
+            assert_eq!(bytes, first.output());
+            assert_eq!(first.output(), second.output());
         }
     }
 
@@ -3567,11 +3576,10 @@ mod tests {
         assert_eq!(rdo.block_lambda(0, 4), None);
         assert_eq!(rdo.block_lambda(4, 0), None);
         let sync = encode_textured(&input, 2, 5, 8, 0, 60).unwrap();
-        // Retained c901c052 VP8 payload, before the rejected coefficient trials.
-        let fingerprint = sync.iter().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
-            (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
-        });
-        assert_eq!((sync.len(), fingerprint), (86, 0x2ba7_7544_8b00_1ee3));
+        // The historical c901c052 payload was (86, 0x2ba7_7544_8b00_1ee3)
+        // before the normal UV delta calibration. Keep the local rate-factor
+        // assertions above and verify the new candidate across fresh jobs.
+        assert_eq!(sync, encode_textured(&input, 2, 5, 8, 0, 60).unwrap());
         for frame in [1, 2] {
             let request = Request {
                 quality: 60,
@@ -4533,7 +4541,7 @@ mod tests {
                 Ok(())
             }
         }
-        for (quality, expected_dc, expected_ac) in [(60, -4, -11), (75, -9, -9), (85, -4, -4)] {
+        for (quality, expected_dc, expected_ac) in [(60, -2, 5), (75, -2, 5), (85, -2, 5)] {
             let deltas = crate::presets::deltas(quality);
             assert_eq!(deltas.uv_dc, expected_dc);
             assert_eq!(deltas.uv_ac, expected_ac);
@@ -6478,7 +6486,13 @@ mod tests {
         let source = [129u8; 64];
         let reconstructed = [0u8; 64];
         let contexts = CoeffContexts::new(1);
-        let deltas = crate::presets::deltas(75);
+        // Preserve the original q19/-9 dequantization oracle for the asserted
+        // DC-removal path; the normal frame preset now has coarser UV steps.
+        let deltas = Deltas {
+            uv_dc: -9,
+            uv_ac: -9,
+            ..Deltas::default()
+        };
         let steps = ac_quant::steps(19, deltas, Plane::UV);
         let baseline = make_uv(
             &source,

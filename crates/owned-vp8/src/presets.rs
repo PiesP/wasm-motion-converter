@@ -10,8 +10,8 @@ pub(crate) const CHROMATIC_FLAT_QINDEX: [usize; 3] = [18, 19, 15];
 pub(crate) const CHROMATIC_RAMP_QINDEX: [usize; 3] = [32, 27, 15];
 pub(crate) const TEXTURED_QINDEX: [usize; 3] = [32, 28, 14];
 pub(crate) const TEXTURED_MONO_QINDEX: [usize; 3] = [34, 27, 14];
-pub(crate) const UV_DC_DELTA: [i8; 3] = [-4, -9, -4];
-pub(crate) const UV_AC_DELTA: [i8; 3] = [-11, -9, -4];
+pub(crate) const UV_DC_DELTA: [i8; 3] = [-2, -2, -2];
+pub(crate) const UV_AC_DELTA: [i8; 3] = [5, 5, 5];
 pub(crate) const HIGH_CHROMA_LOSS_QINDEX_REDUCTION: usize = 4;
 pub(crate) const HIGH_CHROMA_LOSS_ORIGINAL_UV_DELTAS: (i8, i8) = (-13, 0);
 pub(crate) const HIGH_CHROMA_LOSS_UV_DELTAS: (i8, i8) = (-9, 4);
@@ -114,6 +114,25 @@ pub(crate) fn lambda_for_quality(qindex: usize, quality: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normal_uv_deltas_are_calibrated_without_changing_high_loss_profiles() {
+        assert_eq!(HIGH_CHROMA_LOSS_ORIGINAL_UV_DELTAS, (-13, 0));
+        assert_eq!(HIGH_CHROMA_LOSS_UV_DELTAS, (-9, 4));
+        for quality in [60, 75, 85] {
+            let normal = deltas(quality);
+            assert_eq!((normal.uv_dc, normal.uv_ac), (-2, 5));
+        }
+        assert_eq!(
+            (
+                original_high_chroma_loss_deltas().uv_dc,
+                original_high_chroma_loss_deltas().uv_ac
+            ),
+            HIGH_CHROMA_LOSS_ORIGINAL_UV_DELTAS
+        );
+        let reduced = frame_deltas(60, 4096 * 3 + 1, 1, 1);
+        assert_eq!((reduced.uv_dc, reduced.uv_ac), HIGH_CHROMA_LOSS_UV_DELTAS);
+    }
 
     #[test]
     fn frame_profile_uses_strict_visible_pixel_threshold_only_at_q60() {
