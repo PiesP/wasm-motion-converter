@@ -48,10 +48,24 @@ a bounded snapshot to each matching terminal message. The page observer removes
 that property before ordinary handlers receive the message and records matching
 request, termination and Playwright Worker-close events. For direct active
 termination, the probe reads a pre-termination scalar snapshot from the live
-Worker target. A close event within five seconds confirms isolate disposal,
-not process memory return. Missing Worker identity or close capability remains
-`UNVERIFIED`; no post-close zero capacity is inferred without a matched close.
-The compiled `WebAssembly.Module` cache may remain live and is excluded from
+Worker target. A matched close event confirms isolate disposal, not process
+memory return. For the five-second bound, the collector records the page
+`performance.timeOrigin` before each direct request. The page lifecycle observer
+records `performance.now()` at the actual matching `terminate()` call.
+Immediately after Playwright receives that Worker's `close` event, the collector
+reads `performance.now()` from the same page and requires all three time origins
+to match. The post-close read is later than the actual close, so its difference
+from the observed termination is a conservative upper bound. Only a finite,
+nonnegative bound of at most five seconds qualifies. The asynchronous post-close
+read is bounded to five seconds; failure, navigation, or an unavailable read
+leaves the attempt `UNVERIFIED`. The receipt retains page wall termination and
+Node wall close timestamps for forensics but never subtracts them to qualify
+the close. The five-second open-Worker check uses Node's monotonic clock and
+reports `FAIL` only when a matched Worker is still present after the full wait.
+A larger upper bound with an observed close is `UNVERIFIED`, since collector
+latency may account for the excess. Missing Worker identity or close capability
+remains `UNVERIFIED`; no post-close zero capacity is inferred without a matched
+close. The compiled `WebAssembly.Module` cache may remain live and is excluded from
 mutable Instance/Memory capacity. Completed output is a real transferred WebP
 buffer, bounded by the 96 MiB product ceiling and the tighter 8 MiB small-fixture
 transport bound; the guest must save, parse and decode its actual bytes.
@@ -82,9 +96,10 @@ The pure verifier reports `PASS` only for a discriminating negative control,
 complete instance IDs, zero live mutable owners at every main checkpoint,
 matched direct Worker termination and close for all five Worker attempts, and
 intact 192 MiB linear and 96 MiB output bounds. It reports `FAIL` for complete,
-valid-control evidence with live owners, confirmed late Worker close, or an
-observed bound breach. Missing CDP capability, ambiguous navigation, invalid
-control, incomplete ABI or Worker identity, and missing close capability are
+valid-control evidence with live owners, a Worker still open after five seconds,
+or an observed capacity bound breach. Missing CDP capability, ambiguous
+navigation, invalid control, incomplete ABI or Worker identity, and missing
+close capability are
 `UNVERIFIED`. The existing 512 MiB aggregate accounting is source-bound in the
 unchanged product code; this probe does not independently read its private
 broker state. The private release path is likewise bound to
@@ -106,3 +121,13 @@ cannot occur. The corrected direct compiled-Worker criterion above must be in
 the protocol before a fresh runtime attempt and its separate receipt. It narrows
 the Worker claim to the actual compiled protocol and preserves the UI Stop
 criterion as a separate main-route observation.
+
+The later source-bound Edge run at `1c34348f5f31db1fb87b9ae14fb8f20f7d9f4f80`
+also remains `UNVERIFIED`. It retained three completed direct Worker attempts,
+including an observed close whose Node wall timestamp preceded the page-derived
+wall termination timestamp by about 1.7 ms. Those timestamps use different
+clocks and cannot establish a negative close latency. The run then stopped at
+`Direct Worker reached error before abort observation` during the separate
+active-cancellation attempt, so it cannot qualify the whole gate. Its original
+receipt remains unchanged; the same-page-clock proof above applies only to
+future runs.
