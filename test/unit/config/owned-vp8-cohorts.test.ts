@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -602,7 +603,7 @@ describe('owned VP8 prospective cohort isolation', () => {
     expect(() => generateV7Fixture('fresh7-video-47')).toThrow('Missing video source');
   });
 
-  it('selects exactly the fresh V8 conditions and keeps all previous held-out cohorts exposed', () => {
+  it('retires V8 freshness after the first complete evaluation', async () => {
     for (const cohort of [
       'initial-v1',
       'corrected-v2',
@@ -611,20 +612,70 @@ describe('owned VP8 prospective cohort isolation', () => {
       'corrected-v5',
       'corrected-v6',
       'corrected-v7',
+      'corrected-v8',
     ] as const)
       expect(() => selectFixtureCohort('held-out', cohort)).toThrow('exposed');
-    const selected = selectFixtureCohort('held-out', 'corrected-v8');
+    const selected = selectFixtureCohort('held-out', 'corrected-v8', true);
     expect(selected).toEqual(V8_HELDOUT);
-    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+    expect(fixtureSelectionIdentity(selected, 'held-out', true, false)).toMatchObject({
       expectedConditionCount: 60,
       completeCohort: true,
-      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+      scope: 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE',
     });
     expect(selectFixtureCohort('tuning', 'corrected-v8')).toHaveLength(15);
     expect(() => selectFixtureCohort('held-out', 'corrected-v8', false, ['fresh8-gray'])).toThrow(
       'diagnostic only'
     );
     expect(selectFixtureCohort('held-out', 'corrected-v8', true, ['fresh8-gray'])).toHaveLength(1);
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v8-exposed-'));
+    const output = join(parent, 'evidence');
+    try {
+      for (const fixtureIds of [undefined, ['fresh8-gray']]) {
+        await expect(
+          compare({
+            output,
+            split: 'held-out',
+            cohort: 'corrected-v8',
+            ...(fixtureIds ? { fixtureIds } : {}),
+            sources: {},
+            candidateRoot: join(parent, 'missing-candidate'),
+          })
+        ).rejects.toThrow(fixtureIds ? 'diagnostic only' : 'exposed');
+        expect(existsSync(output)).toBe(false);
+      }
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects V8 CLI acceptance before evidence creation or codec initialization', () => {
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v8-cli-exposed-'));
+    const output = join(parent, 'evidence');
+    try {
+      for (const subset of [false, true]) {
+        const run = spawnSync(
+          process.execPath,
+          [
+            '--experimental-strip-types',
+            resolve(root, 'scripts/test/owned-vp8-v2-compare.ts'),
+            '--cohort',
+            'corrected-v8',
+            '--acceptance',
+            '--candidate-root',
+            join(parent, 'missing-candidate'),
+            '--output',
+            output,
+            ...(subset ? ['--fixture', 'fresh8-gray'] : []),
+          ],
+          { cwd: root, encoding: 'utf8' }
+        );
+        expect(run.status).not.toBe(0);
+        expect(run.stderr).toContain(subset ? 'diagnostic only' : 'exposed');
+        expect(existsSync(output)).toBe(false);
+      }
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 
   it('binds prospective V8 source identities, input pixels, and admission geometry', () => {

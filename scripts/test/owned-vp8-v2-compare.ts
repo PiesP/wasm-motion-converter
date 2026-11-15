@@ -49,8 +49,10 @@ export function selectFixtureCohort(
 ) {
   if (fixtureIds !== undefined && split === 'held-out' && !regression)
     throw new Error('Fixture subsets are diagnostic only; acceptance requires the full cohort');
-  if (split === 'held-out' && !regression && cohort !== 'corrected-v8')
-    throw new Error(`${cohort} is exposed: use --regression for prior cohorts`);
+  if (split === 'held-out' && !regression)
+    throw new Error(
+      `${cohort} is exposed: use --regression; no fresh successor is currently frozen`
+    );
   const entries =
     cohort === 'corrected-v8'
       ? [

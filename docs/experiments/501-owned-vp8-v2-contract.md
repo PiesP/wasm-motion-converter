@@ -260,6 +260,12 @@ exposed regression controls; the same 15 tuning inputs and numeric gates remain
 unchanged. This source-only freeze is not an acceptance result or product
 qualification.
 
+The [first complete V8 result](501-owned-vp8-v8-result.md) rejected candidate
+adoption at 59/60 conditions: only `fresh8-tiny-7x1` at q85 missed the unchanged
+SSIM gate. All v1-v8 held-out inputs now require `--regression`, and no fresh
+successor is currently frozen. Preserve the prospective source manifest and
+failed receipt; neither the old tuning set nor the numeric gates changed.
+
 ## Resources and adoption
 
 Preserve 512 MiB conversion, 128 MiB demux reserve, 192 MiB frame reserve and
