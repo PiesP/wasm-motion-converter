@@ -214,6 +214,10 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
 
 ## Discrepancy inventory
 
+- Fixed during the corrected-v4 freeze: the cohort selector's exposed-input
+  diagnostic still said no fresh cohort was frozen after it began admitting the
+  new v4 cohort. `scripts/test/owned-vp8-v2-compare.ts` now names that fresh cohort;
+  older observed cohorts continue to require explicit regression purpose.
 - Fixed after final M2 review: `crates/owned-vp8/README.md` described the ignored
   independent-decoder proof as filtering-disabled only, although
   `src/textured.rs` also tests enabled filtering, including neutral/colored
