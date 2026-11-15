@@ -457,7 +457,7 @@ export function verifyOwnerRetention(evidence: OwnerRetentionEvidence): {
       )
         unknown.push(`${label}: begin, step, or retirement missing`);
     }
-    if (!attempt.terminatedAtMs) unknown.push(`${label}: product termination missing`);
+    if (!attempt.terminatedAtMs) unknown.push(`${label}: observed termination missing`);
     if (attempt.kind !== 'stop' && attempt.terminalType !== 'complete')
       unknown.push(`${label}: completion response missing`);
     if (!attempt.closeCapability) unknown.push(`${label}: Worker close capability unavailable`);
