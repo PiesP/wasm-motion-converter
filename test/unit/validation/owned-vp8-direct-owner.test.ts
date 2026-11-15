@@ -33,6 +33,7 @@ function snapshot(): DirectOwnerSnapshot {
 
 describe('direct compiled Worker ABI evidence', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     for (const key of [
       '__wmcVp8DirectOwnerActiveWorker',
@@ -43,7 +44,17 @@ describe('direct compiled Worker ABI evidence', () => {
   });
 
   function activeHarness(
-    mode: 'live' | 'retired' | 'terminal' | 'retired-between' | 'cleanup-retire' | 'stale-ack'
+    mode:
+      | 'live'
+      | 'retired'
+      | 'terminal'
+      | 'retired-between'
+      | 'cleanup-retire'
+      | 'stale-ack'
+      | 'cancelled-first'
+      | 'wrong-error'
+      | 'complete-first'
+      | 'cancelled-no-ack'
   ) {
     const messages: Array<Record<string, unknown>> = [];
     const terminated: boolean[] = [];
@@ -97,6 +108,14 @@ describe('direct compiled Worker ABI evidence', () => {
         if (message.type === 'abort') {
           if (mode === 'retired-between') retireAtAbort = true;
           queueMicrotask(() => {
+            if (mode === 'cancelled-first' || mode === 'cancelled-no-ack') {
+              this.emit({ type: 'error', requestId: message.requestId, code: 'CANCELLED' });
+            } else if (mode === 'wrong-error') {
+              this.emit({ type: 'error', requestId: message.requestId, code: 'DECODER_ERROR' });
+            } else if (mode === 'complete-first') {
+              this.emit({ type: 'complete', requestId: message.requestId });
+            }
+            if (mode === 'cancelled-no-ack') return;
             const probe = Reflect.get(globalThis, '__wmcVp8RetainedWorkerProbe') as {
               snapshot: () => DirectOwnerSnapshot;
             };
@@ -120,6 +139,9 @@ describe('direct compiled Worker ABI evidence', () => {
         terminated.push(true);
       }
       private emit(data: unknown) {
+        const response = data as { type?: string };
+        if (response.type === 'complete' || response.type === 'error')
+          record.terminalType = response.type;
         for (const listener of this.listeners.get('message') ?? []) listener({ data });
       }
     }
@@ -142,6 +164,7 @@ describe('direct compiled Worker ABI evidence', () => {
     const harness = activeHarness('live');
     const result = await runDirectOwnerActiveTermination(harness.page, harness.request);
     expect(result).toMatchObject({ requestId: 'direct-1', progressCount: 0, observedStepCalls: 1 });
+    expect(result.terminalBeforeAck).toBeNull();
     expect(harness.messages.map((message) => message.type)).toEqual(['start', 'abort']);
     expect(harness.terminated).toHaveLength(1);
   });
@@ -181,6 +204,47 @@ describe('direct compiled Worker ABI evidence', () => {
     await expect(runDirectOwnerActiveTermination(harness.page, harness.request)).rejects.toThrow(
       'identity or payload mismatch'
     );
+    expect(harness.terminated).toHaveLength(1);
+  });
+
+  it('accepts a matching CANCELLED terminal that arrives before a valid abort receipt', async () => {
+    const harness = activeHarness('cancelled-first');
+    const result = await runDirectOwnerActiveTermination(harness.page, harness.request);
+    expect(result.terminalBeforeAck).toEqual({
+      type: 'error',
+      requestId: 'direct-1',
+      code: 'CANCELLED',
+    });
+    expect(result.snapshot.records[0]!.retireCalls).toBe(0);
+    expect(harness.messages.map((message) => message.type)).toEqual(['start', 'abort']);
+    expect(harness.terminated).toHaveLength(1);
+  });
+
+  it.each(['wrong-error', 'complete-first'] as const)(
+    'rejects a %s response before abort receipt',
+    async (mode) => {
+      const harness = activeHarness(mode);
+      await expect(
+        runDirectOwnerActiveTermination(harness.page, harness.request)
+      ).rejects.toThrow();
+      expect(harness.terminated).toHaveLength(1);
+    }
+  );
+
+  it('rejects a CANCELLED response without the bounded private abort receipt', async () => {
+    vi.useFakeTimers();
+    const harness = activeHarness('cancelled-no-ack');
+    const pending = runDirectOwnerActiveTermination(harness.page, harness.request);
+    for (
+      let index = 0;
+      index < 5 && !harness.messages.some((message) => message.type === 'abort');
+      index++
+    )
+      await vi.advanceTimersByTimeAsync(10);
+    expect(harness.messages.map((message) => message.type)).toContain('abort');
+    const rejected = expect(pending).rejects.toThrow('abort observation timed out');
+    await vi.advanceTimersByTimeAsync(5_001);
+    await rejected;
     expect(harness.terminated).toHaveLength(1);
   });
 

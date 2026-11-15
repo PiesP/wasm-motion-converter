@@ -321,92 +321,110 @@ export async function runDirectOwnerActiveTermination(page: Page, request: Direc
     assertDirectOwnerSnapshot(latest, requestId, false);
     const observation = await page.evaluate(
       (id) =>
-        new Promise<{ progressCount: number; snapshot: DirectOwnerSnapshot | null }>(
-          (resolve, reject) => {
-            const active = Reflect.get(globalThis, '__wmcVp8DirectOwnerActiveWorker') as
-              | {
-                  worker: Worker;
-                  requestId: string;
-                  progressCount: number;
-                  terminalType: string | null;
-                }
-              | undefined;
-            if (active?.requestId !== id) {
-              reject(new Error('Direct Worker active handle missing'));
-              return;
-            }
-            const ownedWorker = active.worker;
-            const lifecycle = Reflect.get(globalThis, '__wmcVp8WorkerLifecycle') as {
-              snapshot: () => Array<{ requestId: string | null; terminalType: string | null }>;
-            };
-            const stillActive = () => {
-              const record = lifecycle.snapshot().at(-1);
-              return (
-                record?.requestId === id &&
-                record.terminalType === null &&
-                active.terminalType === null
-              );
-            };
-            if (!stillActive()) {
-              reject(new Error('Direct Worker was no longer active before abort'));
-              return;
-            }
-            let settled = false;
-            const timer = setTimeout(
-              () => finish(new Error('Direct Worker abort observation timed out')),
-              5_000
-            );
-            const onMessage = ({ data }: MessageEvent<unknown>) => {
-              if (!data || typeof data !== 'object') return;
-              const message = data as Record<string, unknown>;
-              if (message.type === '__wmcVp8OwnerAbortObservation') {
-                if (message.requestId !== id || !('snapshot' in message)) {
-                  finish(new Error('Direct Worker abort observation identity or payload mismatch'));
-                  return;
-                }
-                finish(undefined, {
-                  progressCount: active.progressCount,
-                  snapshot: message.snapshot as DirectOwnerSnapshot | null,
-                });
-              } else if (
-                message.requestId === id &&
-                (message.type === 'complete' || message.type === 'error')
-              ) {
-                finish(new Error(`Direct Worker reached ${message.type} before abort observation`));
+        new Promise<{
+          progressCount: number;
+          snapshot: DirectOwnerSnapshot | null;
+          terminalBeforeAck: { type: 'error'; requestId: string; code: 'CANCELLED' } | null;
+        }>((resolve, reject) => {
+          const active = Reflect.get(globalThis, '__wmcVp8DirectOwnerActiveWorker') as
+            | {
+                worker: Worker;
+                requestId: string;
+                progressCount: number;
+                terminalType: string | null;
               }
-            };
-            const onError = () =>
-              finish(new Error('Direct Worker failed before abort observation'));
-            const onMessageError = () =>
-              finish(new Error('Direct Worker message error before abort observation'));
-            function finish(
-              error?: Error,
-              value?: { progressCount: number; snapshot: DirectOwnerSnapshot | null }
-            ) {
-              if (settled) return;
-              settled = true;
-              clearTimeout(timer);
-              ownedWorker.removeEventListener('message', onMessage);
-              ownedWorker.removeEventListener('error', onError);
-              ownedWorker.removeEventListener('messageerror', onMessageError);
-              if (error) reject(error);
-              else if (value) resolve(value);
-              else reject(new Error('Direct Worker abort observation missing'));
-            }
-            active.worker.addEventListener('message', onMessage);
-            active.worker.addEventListener('error', onError);
-            active.worker.addEventListener('messageerror', onMessageError);
-            if (!stillActive()) {
-              finish(new Error('Direct Worker terminated before abort dispatch'));
-              return;
-            }
-            try {
-              active.worker.postMessage({ type: 'abort', requestId: id });
-            } catch (error) {
-              finish(new Error(`Direct Worker abort dispatch failed: ${String(error)}`));
-            }
+            | undefined;
+          if (active?.requestId !== id) {
+            reject(new Error('Direct Worker active handle missing'));
+            return;
           }
-        ),
+          const ownedWorker = active.worker;
+          const lifecycle = Reflect.get(globalThis, '__wmcVp8WorkerLifecycle') as {
+            snapshot: () => Array<{ requestId: string | null; terminalType: string | null }>;
+          };
+          const stillActive = () => {
+            const record = lifecycle.snapshot().at(-1);
+            return (
+              record?.requestId === id &&
+              record.terminalType === null &&
+              active.terminalType === null
+            );
+          };
+          if (!stillActive()) {
+            reject(new Error('Direct Worker was no longer active before abort'));
+            return;
+          }
+          let settled = false;
+          let terminalBeforeAck: {
+            type: 'error';
+            requestId: string;
+            code: 'CANCELLED';
+          } | null = null;
+          const timer = setTimeout(
+            () => finish(new Error('Direct Worker abort observation timed out')),
+            5_000
+          );
+          const onMessage = ({ data }: MessageEvent<unknown>) => {
+            if (!data || typeof data !== 'object') return;
+            const message = data as Record<string, unknown>;
+            if (message.type === '__wmcVp8OwnerAbortObservation') {
+              if (message.requestId !== id || !('snapshot' in message)) {
+                finish(new Error('Direct Worker abort observation identity or payload mismatch'));
+                return;
+              }
+              finish(undefined, {
+                progressCount: active.progressCount,
+                snapshot: message.snapshot as DirectOwnerSnapshot | null,
+                terminalBeforeAck,
+              });
+            } else if (message.requestId === id && message.type === 'error') {
+              if (message.code === 'CANCELLED' && terminalBeforeAck === null) {
+                // The production abort handler can complete cancellation in a
+                // microtask before this page receives the validation ack.
+                terminalBeforeAck = { type: 'error', requestId: id, code: 'CANCELLED' };
+              } else {
+                finish(
+                  new Error('Direct Worker returned unexpected error before abort observation')
+                );
+              }
+            } else if (message.requestId === id && message.type === 'complete') {
+              finish(new Error('Direct Worker completed before abort observation'));
+            }
+          };
+          const onError = () => finish(new Error('Direct Worker failed before abort observation'));
+          const onMessageError = () =>
+            finish(new Error('Direct Worker message error before abort observation'));
+          function finish(
+            error?: Error,
+            value?: {
+              progressCount: number;
+              snapshot: DirectOwnerSnapshot | null;
+              terminalBeforeAck: { type: 'error'; requestId: string; code: 'CANCELLED' } | null;
+            }
+          ) {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            ownedWorker.removeEventListener('message', onMessage);
+            ownedWorker.removeEventListener('error', onError);
+            ownedWorker.removeEventListener('messageerror', onMessageError);
+            if (error) reject(error);
+            else if (value) resolve(value);
+            else reject(new Error('Direct Worker abort observation missing'));
+          }
+          active.worker.addEventListener('message', onMessage);
+          active.worker.addEventListener('error', onError);
+          active.worker.addEventListener('messageerror', onMessageError);
+          if (!stillActive()) {
+            finish(new Error('Direct Worker terminated before abort dispatch'));
+            return;
+          }
+          try {
+            active.worker.postMessage({ type: 'abort', requestId: id });
+          } catch (error) {
+            finish(new Error(`Direct Worker abort dispatch failed: ${String(error)}`));
+          }
+        }),
       requestId
     );
     // The prefix captures this during the real abort event, before the product
@@ -429,6 +447,7 @@ export async function runDirectOwnerActiveTermination(page: Page, request: Direc
     return {
       requestId,
       progressCount: observation.progressCount,
+      terminalBeforeAck: observation.terminalBeforeAck,
       observedStepCalls: observation.snapshot.records.reduce(
         (sum, record) => sum + record.stepCalls,
         0
