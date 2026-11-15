@@ -186,6 +186,9 @@ export interface OwnedVp8CancellationResult {
   abiVersion: number;
   realSteps: number;
   firstStepStatus: number;
+  hostTaskRan: boolean;
+  taskObservedActive: boolean;
+  outputPublished: boolean;
   errorName: string;
   releases: number;
 }
@@ -381,15 +384,19 @@ const getResultValidation = (): {
   };
 };
 
-function ownedVp8Pixels(request: OwnedVp8FixtureRequest): Uint8Array {
+function ownedVp8Pixels(
+  request: OwnedVp8FixtureRequest,
+  maxWidth = 64,
+  maxHeight = 64
+): Uint8Array {
   const { width, height, seed } = request;
   if (
     !Number.isInteger(width) ||
     !Number.isInteger(height) ||
     width < 1 ||
     height < 1 ||
-    width > 64 ||
-    height > 64 ||
+    width > maxWidth ||
+    height > maxHeight ||
     !Number.isInteger(seed) ||
     seed < 0 ||
     seed > 255
@@ -473,7 +480,7 @@ const encodeOwnedVp8Fixture = async (
 const cancelOwnedVp8AfterStep = async (
   request: OwnedVp8FixtureRequest
 ): Promise<OwnedVp8CancellationResult> => {
-  const pixels = ownedVp8Pixels(request);
+  const pixels = ownedVp8Pixels(request, 512, 384);
   const sdk = await import('@services/owned-vp8-core');
   const assetUrl = new URL('../crates/owned-vp8/owned-vp8.wasm', import.meta.url);
   const response = await fetch(assetUrl, { redirect: 'error', credentials: 'same-origin' });
@@ -500,6 +507,11 @@ const cancelOwnedVp8AfterStep = async (
   const controller = new AbortController();
   let realSteps = 0;
   let firstStepStatus = -1;
+  let hostTaskRan = false;
+  let taskObservedActive = false;
+  let outputPublished = false;
+  let encodingActive = false;
+  let cancelTimer: ReturnType<typeof setTimeout> | undefined;
   // WASM export properties are immutable; copy values before wrapping one real call.
   const wrappedExports = {
     ...instance.exports,
@@ -508,7 +520,11 @@ const cancelOwnedVp8AfterStep = async (
       realSteps++;
       if (realSteps === 1) {
         firstStepStatus = status;
-        controller.abort('after a compiled VP8 step');
+        cancelTimer = setTimeout(() => {
+          hostTaskRan = true;
+          taskObservedActive = encodingActive;
+          controller.abort('host task after a compiled VP8 step');
+        }, 0);
       }
       return status;
     },
@@ -527,23 +543,36 @@ const cancelOwnedVp8AfterStep = async (
     initialCapacity
   );
   let errorName = '';
+  encodingActive = true;
   try {
     await encoder.encode(pixels, ownedVp8Settings(request, pixels.byteLength), () => {
-      throw new Error('Cancelled VP8 output must not be consumed');
+      outputPublished = true;
     });
   } catch (error) {
     if (!(error instanceof sdk.OwnedVp8CancelledError)) throw error;
     errorName = error.name;
   } finally {
+    encodingActive = false;
+    if (cancelTimer !== undefined) clearTimeout(cancelTimer);
     encoder.retire();
   }
-  if (realSteps < 1 || firstStepStatus < 0 || !errorName)
-    throw new Error('Owned VP8 cancellation did not follow a compiled step');
+  if (
+    realSteps < 1 ||
+    firstStepStatus < 0 ||
+    !hostTaskRan ||
+    !taskObservedActive ||
+    outputPublished ||
+    !errorName
+  )
+    throw new Error('Owned VP8 host-task cancellation did not interrupt active compiled work');
   return {
     moduleSha256,
     abiVersion,
     realSteps,
     firstStepStatus,
+    hostTaskRan,
+    taskObservedActive,
+    outputPublished,
     errorName,
     releases: ledger.releases(),
   };

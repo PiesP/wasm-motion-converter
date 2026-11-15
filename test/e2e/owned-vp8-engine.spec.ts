@@ -173,14 +173,23 @@ test('active compiled-step cancellation retires the job and a fresh same-documen
   );
   expect(before.releases).toBe(1);
   expect(before.stats[0]?.steps).toBeGreaterThan(0);
+  const cancellationRequest: OwnedVp8FixtureRequest = {
+    width: 512,
+    height: 384,
+    quality: 85,
+    seed: 83,
+  };
   const cancelled = await page.evaluate(
     (fixture) => window.__TEST_HELPERS__!.cancelOwnedVp8AfterStep(fixture),
-    request
+    cancellationRequest
   );
   expect(cancelled.moduleSha256).toBe(wasmSha256);
   expect(cancelled.abiVersion).toBe(2);
-  expect(cancelled.realSteps).toBe(1);
+  expect(cancelled.realSteps).toBeGreaterThan(0);
   expect([10, 11]).toContain(cancelled.firstStepStatus);
+  expect(cancelled.hostTaskRan).toBe(true);
+  expect(cancelled.taskObservedActive).toBe(true);
+  expect(cancelled.outputPublished).toBe(false);
   expect(cancelled.errorName).toBe('OwnedVp8CancelledError');
   expect(cancelled.releases).toBe(1);
 
