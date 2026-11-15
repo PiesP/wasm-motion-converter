@@ -22,10 +22,9 @@ or removal of `wasm-webp`.
 Textured allocation uses a per-frame flag that is true only when every imported,
 padded U/V sample is exactly 128, accumulated during bounded RGB-to-YUV conversion.
 The colored and neutral tables for every quality are canonical in `presets.rs`.
-High-input-chroma-loss q60 frames compare original and refined luma profiles
-using visible YUV error and frozen modeled rate. One working state is reused;
-resets and probability/rate analysis are bounded stages. Strict improvement
-selects refinement, otherwise original analysis is retained or reconstructed.
+High-input-chroma-loss q60 profile decisions use the completed RGB and rate
+objective described below. One working state is reused; resets and analysis
+remain bounded stages.
 The source import, four segment IDs and resource ceilings are unchanged.
 These engineering decisions have no independent product qualification claim.
 
@@ -68,6 +67,18 @@ remains owned Rust; these adapted arithmetic/table portions retain attribution. 
 and candidate binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
 
+The q75 engineering calibration applies only when every admitted macroblock is
+Textured and the visible source RGB error from nearest-chroma import is at most
+4,096 per channel. It lowers every base and segment luma qindex by two, including
+unused classes and neutral inputs. UV DC and AC deltas increase by two so scalar
+UV quantizer steps remain unchanged, including clamping; mode and coefficient
+rate weights use original qindices. Other q75 frames retain the previous q75
+quantizers and rate weights. Mode choices and UV reconstruction may still change.
+The condition reuses the q60 import-error reference but does not change q60/q85,
+geometry, cadence or acceptance thresholds. This source candidate requires a
+new compiled artifact, all exposed regressions and a new held-out cohort before
+adoption.
+
 ## ABI2 and resources
 
 The module exports only `vp8_v2_*`; ABI1 FFI exports are retired. The synchronous
@@ -108,11 +119,13 @@ choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction
 into the former source YUV slots, applies the signaled loop filter in raster
 order, and scores visible RGB with streaming SSIM moments. With legal unrefined
-output, it first finds the best finite score among legal variants no larger than
-that output. A legal refined variant exactly one byte larger is eligible only
-when its score strictly exceeds that best score. It then selects the highest
-finite score among eligible variants; variants two or more bytes larger remain
-ineligible. This one-byte admission window does not raise the output or
+output, it first finds the best finite score among legal variants whose
+word-aligned RIFF payload cost is no greater than that output's cost. A legal
+refined variant costing exactly one additional two-byte RIFF word is eligible
+only when its score strictly exceeds that best score. It then selects the
+highest finite score among eligible variants; larger aligned costs remain
+ineligible. Alignment uses widened arithmetic and includes the odd-byte padding
+required by the existing animation mux. This admission window does not raise the output or
 partition safety limits. If unrefined output is illegal, it selects the highest
 finite score among legal refined variants or returns the unrefined limit error.
 Exact score ties prefer extended, then captured mandatory, then unrefined. The RGB view

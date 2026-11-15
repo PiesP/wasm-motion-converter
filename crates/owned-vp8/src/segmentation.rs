@@ -38,7 +38,7 @@ impl Config {
     ) -> Self {
         debug_assert_eq!(counts.iter().sum::<usize>(), total);
         let qindex = [
-            presets::SMOOTH_QINDEX,
+            presets::smooth_qindex(quality),
             presets::chromatic_flat_qindex(quality),
             presets::chromatic_ramp_qindex(quality),
             presets::textured_qindex(quality, neutral_chroma),
@@ -85,6 +85,15 @@ impl Config {
                     .checked_sub(reduction)
                     .expect("q60 segment presets are at least four")
             });
+        }
+        self
+    }
+
+    pub(crate) fn with_medium_textured_luma(mut self, selected: bool) -> Self {
+        if selected {
+            let reduction = presets::medium_luma_reduction();
+            self.base_qindex -= reduction;
+            self.qindex = self.qindex.map(|qindex| qindex - reduction);
         }
         self
     }
@@ -228,7 +237,7 @@ mod tests {
         for (quality, flat, ramp, textured) in
             [(60, 18, 32, 32), (75, 19, 27, 28), (85, 15, 15, 14)]
         {
-            for (id, qindex) in [presets::SMOOTH_QINDEX, flat, ramp, textured]
+            for (id, qindex) in [presets::smooth_qindex(quality), flat, ramp, textured]
                 .into_iter()
                 .enumerate()
             {
@@ -240,7 +249,10 @@ mod tests {
             }
             let mixed = Config::from_counts(quality, [1, 1, 1, 1], 4, false);
             assert!(mixed.enabled);
-            assert_eq!(mixed.qindex, [presets::SMOOTH_QINDEX, flat, ramp, textured]);
+            assert_eq!(
+                mixed.qindex,
+                [presets::smooth_qindex(quality), flat, ramp, textured]
+            );
             assert_eq!(mixed.map_probabilities, [128, 128, 128]);
         }
     }
@@ -304,6 +316,43 @@ mod tests {
                 if counts == [0, 0, 0, 4] && !neutral {
                     assert!(!selected.enabled);
                     assert_eq!(selected.base_qindex, 28);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn medium_textured_shift_preserves_all_segment_uv_steps_and_map() {
+        use crate::ac_quant::{self, Plane};
+
+        for neutral in [false, true] {
+            for counts in [
+                [1, 1, 1, 1],
+                [4, 0, 0, 0],
+                [0, 4, 0, 0],
+                [0, 0, 4, 0],
+                [0, 0, 0, 4],
+            ] {
+                let original = Config::from_counts(75, counts, 4, neutral);
+                let selected = original.with_medium_textured_luma(true);
+                assert_eq!(selected.base_qindex, original.base_qindex - 2);
+                assert_eq!(selected.qindex, original.qindex.map(|qindex| qindex - 2));
+                assert_eq!(selected.enabled, original.enabled);
+                assert_eq!(selected.active, original.active);
+                assert_eq!(selected.map_probabilities, original.map_probabilities);
+                assert_eq!(
+                    original.with_medium_textured_luma(false).qindex,
+                    original.qindex
+                );
+                for id in 0..4 {
+                    assert_eq!(
+                        ac_quant::steps(
+                            selected.qindex[id] as u8,
+                            presets::medium_textured_deltas(presets::deltas(75)),
+                            Plane::UV
+                        ),
+                        ac_quant::steps(original.qindex[id] as u8, presets::deltas(75), Plane::UV)
+                    );
                 }
             }
         }

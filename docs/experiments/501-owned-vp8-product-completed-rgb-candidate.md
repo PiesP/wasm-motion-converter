@@ -1,6 +1,6 @@
-# Product completed-RGB profile candidate: final acceptance pending
+# Product completed-RGB profile engineering checkpoint
 
-This experimental refresh imports engine
+This page records the experimental product import of engine
 `04b1248022fcd2558653a88ab92b90164db4658d` after the historical
 [byte-window product point](501-owned-vp8-product-byte-window-candidate.md).
 Production master retains wasm-webp; this is not runtime adoption or removal.
@@ -32,7 +32,10 @@ recomputed every PSNR/SSIM/size decision. Summary hashes:
 
 All V1–V9 inputs are exposed regression. Parent9c's first freshV9 remains
 rejected59/60; new04b's regression pass does not erase it. V10 is a separate
-prospective source freeze; no V10 outcome is claimed here. Rust126 default plus
+prospective source freeze at that checkpoint. Its subsequent first evaluation
+rejected58/60; that result and the later conditional-luma source preparation are
+tracked in [#501](https://github.com/PiesP/wasm-motion-converter/issues/501).
+The tables and hashes on this page retain engine04b identity. Rust126 default plus
 15 explicit independent decoder cases, fmt/Clippy, reproducible WASM, compiled
 ABI48 and final source/resource reviews are bound to engine04b. Product focused
 host/memory/build/contract/cohort/animation tests passed77 cases after import.
