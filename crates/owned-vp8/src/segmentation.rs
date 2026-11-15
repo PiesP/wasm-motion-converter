@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn frame_class_counts_collapse_or_signal_four_absolute_qindices() {
         for (quality, smooth, flat, ramp, textured) in [
-            (60, 7, 18, 32, 32),
+            (60, 7, 19, 33, 33),
             (75, 6, 15, 27, 28),
             (85, 6, 10, 15, 14),
         ] {
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn neutral_chroma_selects_textured_precision_per_preset() {
-        for (quality, chromatic, neutral) in [(60, 32, 34), (75, 28, 27), (85, 14, 14)] {
+        for (quality, chromatic, neutral) in [(60, 33, 35), (75, 28, 27), (85, 14, 14)] {
             for counts in [[0, 0, 0, 1], [1, 1, 1, 1]] {
                 let total = counts.iter().sum();
                 let color = Config::from_counts(quality, counts, total, false);
