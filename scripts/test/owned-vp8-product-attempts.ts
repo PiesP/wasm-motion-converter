@@ -1,8 +1,9 @@
 /** Join retained Windows controller attempts to the existing V8 timing arithmetic. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { type Distribution, readDistribution, verifyTiming } from './owned-vp8-product-timing.ts';
@@ -10,11 +11,15 @@ import { type Distribution, readDistribution, verifyTiming } from './owned-vp8-p
 const SHA = /^[a-f0-9]{64}$/i;
 const SOURCE = /^[a-f0-9]{40}$/;
 const GUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
-const FILE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/;
+const OUTPUT_FILE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/;
+const PAYLOAD_PART = /^[A-Za-z0-9._@+-]{1,160}$/;
 const SELECTOR = /^owned-vp8-product-v8-(low|medium|high)(-ba)?$/;
 const JSON_LIMIT = 2 * 1024 * 1024;
 const FILE_LIMIT = 64 * 1024 * 1024;
 const TOTAL_LIMIT = 256 * 1024 * 1024;
+const PAYLOAD_FILE_LIMIT = 256 * 1024 * 1024;
+const PAYLOAD_TOTAL_LIMIT = 512 * 1024 * 1024;
+const PAYLOAD_FILE_COUNT = 4096;
 type RecordJson = Record<string, unknown>;
 
 function object(value: unknown, label: string): RecordJson {
@@ -42,7 +47,18 @@ function stable(value: unknown): string {
   return JSON.stringify(value);
 }
 function safeName(value: unknown, label: string): string {
-  assert(typeof value === 'string' && FILE.test(value), `${label} is unsafe`);
+  assert(typeof value === 'string' && OUTPUT_FILE.test(value), `${label} is unsafe`);
+  return value;
+}
+function safePayloadPath(value: unknown): string {
+  assert(
+    typeof value === 'string' &&
+      value.length <= 1024 &&
+      !value.includes('\\') &&
+      !value.includes(':') &&
+      value.split('/').every((part) => part !== '.' && part !== '..' && PAYLOAD_PART.test(part)),
+    'bundle file path is unsafe'
+  );
   return value;
 }
 
@@ -75,10 +91,73 @@ async function json(
   limit = JSON_LIMIT
 ): Promise<{ value: unknown; sha256: string }> {
   const bytes = await regular(path, label, limit);
-  return {
-    value: JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')) as unknown,
-    sha256: hash(bytes),
+  try {
+    return {
+      value: JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')) as unknown,
+      sha256: hash(bytes),
+    };
+  } catch {
+    throw new Error(`${label} is malformed JSON`);
+  }
+}
+
+/** Rehash the exact producer payload, including the copied bundle manifest. */
+export async function verifyPayload(root: string, bundleSha256: string, files: readonly unknown[]) {
+  const payload = join(root, 'payload');
+  const expected = new Map<string, string>([['bundle.json', bundleSha256]]);
+  for (const raw of files) {
+    const item = object(raw, 'bundle file');
+    const name = safePayloadPath(item.file);
+    assert(!expected.has(name), 'duplicate bundle file path');
+    expected.set(name, hex(item.sha256, 'bundle file digest'));
+  }
+  assert(
+    expected.size > 1 && expected.size <= PAYLOAD_FILE_COUNT + 1,
+    'bundle inventory count is invalid'
+  );
+  const observed = new Set<string>();
+  let total = 0;
+  let visited = 0;
+  const walk = async (directoryPath: string, prefix: string, depth: number): Promise<void> => {
+    assert(depth <= 16, 'payload nesting exceeds limit');
+    await directory(directoryPath, 'payload directory');
+    for (const child of await readdir(directoryPath, { withFileTypes: true })) {
+      visited++;
+      assert(visited <= PAYLOAD_FILE_COUNT * 2, 'payload entry count exceeds limit');
+      const relative = safePayloadPath(prefix ? `${prefix}/${child.name}` : child.name);
+      const path = join(directoryPath, child.name);
+      const stat = await lstat(path);
+      assert(!stat.isSymbolicLink(), 'payload contains a linked entry');
+      const canonical = await realpath(path);
+      assert(canonical.startsWith(`${payload}${sep}`), 'payload path escapes root');
+      if (stat.isDirectory()) {
+        await walk(path, relative, depth + 1);
+        continue;
+      }
+      assert(stat.isFile(), 'payload contains a non-file entry');
+      assert(stat.size <= PAYLOAD_FILE_LIMIT, 'payload file exceeds byte limit');
+      total += stat.size;
+      assert(total <= PAYLOAD_TOTAL_LIMIT, 'payload aggregate exceeds byte limit');
+      const expectedSha = expected.get(relative);
+      assert(expectedSha, 'payload has an unlisted file');
+      const digest = createHash('sha256');
+      for await (const chunk of createReadStream(path)) digest.update(chunk as Buffer);
+      const after = await lstat(path);
+      assert(
+        after.isFile() &&
+          !after.isSymbolicLink() &&
+          after.dev === stat.dev &&
+          after.ino === stat.ino &&
+          after.size === stat.size &&
+          after.mtimeMs === stat.mtimeMs,
+        'payload file changed while hashing'
+      );
+      same(digest.digest('hex'), expectedSha, 'payload file digest');
+      observed.add(relative);
+    }
   };
+  await walk(payload, '', 0);
+  same(observed, new Set(expected.keys()), 'payload file inventory');
 }
 function entry(entries: readonly unknown[], name: string, label: string): RecordJson {
   const matches = entries.map((item) => object(item, label)).filter((item) => item.file === name);
@@ -96,7 +175,8 @@ export type AttemptPins = {
   candidateDistribution: Distribution;
 };
 
-export async function verifyAttempts(roots: readonly string[], pins: AttemptPins) {
+/** Chain-only evidence for focused validation; the numeric verdict is in verifyAttempts. */
+export async function readAttempts(roots: readonly string[], pins: AttemptPins) {
   same(roots.length, 15, 'attempt root count');
   assert(SOURCE.test(pins.candidateSourceSha), 'candidate source pin is invalid');
   hex(pins.candidateModuleSha256, 'candidate module pin');
@@ -153,63 +233,20 @@ export async function verifyAttempts(roots: readonly string[], pins: AttemptPins
       'transport completion'
     );
     const bundleFiles = list(bundle.files, 'bundle inventory');
-    assert(
-      bundleFiles.length > 0 && bundleFiles.length <= 4096,
-      'bundle inventory count is invalid'
+    await verifyPayload(root, bundleFile.sha256, bundleFiles);
+    const priorPayload = await readDistribution(
+      join(root, 'payload/validation/windows/prior-dist'),
+      'prior'
     );
-    const bundleNames = new Set<string>();
-    for (const raw of bundleFiles) {
-      const name = object(raw, 'bundle file').file;
-      assert(
-        typeof name === 'string' && name.split('/').every((part) => FILE.test(part)),
-        'bundle file path is unsafe'
-      );
-      assert(!bundleNames.has(name), 'duplicate bundle file path');
-      bundleNames.add(name);
-    }
+    const candidatePayload = await readDistribution(join(root, 'payload/dist'), 'candidate');
+    same(priorPayload, pins.priorDistribution, 'prior payload distribution');
+    same(candidatePayload, pins.candidateDistribution, 'candidate payload distribution');
     const selectorPath = `validation/windows/inputs/${bundle.scenario}.json`;
     const profile = payloadEntry(bundleFiles, 'validation/windows/profile.json');
     const selector = payloadEntry(bundleFiles, selectorPath);
     const guest = payloadEntry(bundleFiles, 'guest.mjs');
-    for (const [name, record] of [
-      ['validation/windows/profile.json', profile],
-      [selectorPath, selector],
-      ['guest.mjs', guest],
-    ] as const) {
-      const parts = name.split('/');
-      let current = join(root, 'payload');
-      for (const part of parts.slice(0, -1)) {
-        current = join(current, part);
-        await directory(current, 'payload component');
-      }
-      same(
-        hash(await regular(join(current, parts.at(-1)!), `payload ${name}`, JSON_LIMIT)),
-        hex(record.sha256, `payload ${name}`),
-        `payload ${name} digest`
-      );
-    }
-    for (const [prefix, distribution] of [
-      ['validation/windows/prior-dist', pins.priorDistribution],
-      ['dist', pins.candidateDistribution],
-    ] as const) {
-      const name = `${prefix}/${distribution.module.path}`;
-      const record = payloadEntry(bundleFiles, name);
-      same(
-        hex(record.sha256, `bundle ${name}`),
-        distribution.module.sha256,
-        `bundle ${name} module`
-      );
-    }
-    const selectorBytes = await regular(
-      join(root, 'payload', selectorPath),
-      'selector',
-      JSON_LIMIT
-    );
-    same(
-      JSON.parse(selectorBytes.toString('utf8')),
-      { scenario: bundle.scenario },
-      'selector content'
-    );
+    const selectorFile = await json(join(root, 'payload', selectorPath), 'selector');
+    same(selectorFile.value, { scenario: bundle.scenario }, 'selector content');
     same(
       hash(await regular(join(root, 'run.ps1'), 'controller script', JSON_LIMIT)),
       hex(bundle.controller_sha256, 'controller identity'),
@@ -387,6 +424,11 @@ export async function verifyAttempts(roots: readonly string[], pins: AttemptPins
         'Candidate ABI begin calls are in a separate conversion after timed samples; forced Canvas unavailable and same build support route correlation, not a per-timed-job execution proof.',
     });
   }
+  return { reports, receiptHashes, attempts, common, missing };
+}
+
+export async function verifyAttempts(roots: readonly string[], pins: AttemptPins) {
+  const { reports, receiptHashes, attempts, common, missing } = await readAttempts(roots, pins);
   const numeric = verifyTiming(reports, pins, receiptHashes);
   return {
     ...numeric,
@@ -459,6 +501,30 @@ async function main(args: readonly string[]) {
   });
 }
 
+function publicFailure(error: unknown): string {
+  if (!(error instanceof Error)) return 'Evidence admission failed';
+  const message = error.message;
+  for (const label of [
+    'bundle',
+    'transport',
+    'collection',
+    'result',
+    'environment',
+    'timing receipt',
+    'selector',
+  ])
+    if (message === `${label} is malformed JSON`) return message;
+  if (/payload|bundle file/.test(message)) return 'Payload inventory or file admission failed';
+  if (/distribution|compiled source|app entry|HTML|service.worker/.test(message))
+    return 'Distribution source or file admission failed';
+  if (/collection|collected|artifact/.test(message)) return 'Collected artifact admission failed';
+  if (/readiness|drift|VM GUID|environment/.test(message))
+    return 'Environment identity or readiness failed';
+  if (/timing|sample|receipt|numeric|candidate|prior/.test(message))
+    return 'Timing receipt or pin admission failed';
+  return 'Controller attempt admission failed';
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   main(process.argv.slice(2)).then(
     (result) => {
@@ -466,10 +532,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
       if (result.status !== 'PASS') process.exitCode = result.status === 'FAIL' ? 1 : 2;
     },
     (error: unknown) => {
-      const reason =
-        error instanceof Error
-          ? error.message.split('\n')[0]!.replace(/(?:[A-Za-z]:\\|\/)[^\s'"]+/g, '[path]')
-          : 'Unrecognized verification failure';
+      const reason = publicFailure(error);
       process.stdout.write(
         `${JSON.stringify({ status: 'NOT_VERIFIED', numericGate: 'NOT_VERIFIED', reason })}\n`
       );
