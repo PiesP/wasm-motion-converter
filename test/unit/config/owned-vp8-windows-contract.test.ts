@@ -108,6 +108,9 @@ describe('owned VP8 Windows product contract', () => {
       assertFunctionalBackendEvidence('candidate', ownedProbe, [fetched[1]!], inventory)
     ).toEqual(owned);
     expect(() =>
+      assertFunctionalBackendEvidence('candidate', ownedProbe, fetched, inventory)
+    ).toThrow(/fetched legacy WebP WASM/);
+    expect(() =>
       assertFunctionalBackendEvidence('candidate', noOwned, [fetched[0]!], inventory)
     ).toThrow(/missed owned WASM/);
     expect(() =>

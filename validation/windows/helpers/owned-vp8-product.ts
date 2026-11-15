@@ -361,6 +361,10 @@ export function assertFunctionalBackendEvidence(
     ),
     'Candidate fetched owned WASM differs from inventory'
   );
+  assert(
+    !fetched.some((entry) => /^assets\/webp-wasm[-.][\w-]{8}\.wasm$/.test(entry.path)),
+    'Candidate fetched legacy WebP WASM'
+  );
   return asset;
 }
 
