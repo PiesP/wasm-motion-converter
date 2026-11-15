@@ -370,12 +370,14 @@ function installProductObserver() {
     stopMs: null as number | null,
     idleMs: null as number | null,
     publications: [] as Array<{ url: string; size: number; atMs: number }>,
+    publicationCount: 0,
     reset() {
       this.clickMs = null;
       this.readyMs = null;
       this.stopMs = null;
       this.idleMs = null;
       this.publications = [];
+      this.publicationCount = 0;
     },
   };
   Reflect.set(globalThis, '__wmcVp8ProductObserver', observed);
@@ -383,6 +385,8 @@ function installProductObserver() {
   URL.createObjectURL = function (object: Blob | MediaSource) {
     const url = original.call(URL, object);
     if (object instanceof Blob && object.type === 'image/webp') {
+      observed.publicationCount++;
+      if (observed.publications.length === 16) observed.publications.shift();
       observed.publications.push({ url, size: object.size, atMs: performance.now() });
       check();
     }
@@ -422,7 +426,9 @@ function installProductObserver() {
     'click',
     (event) => {
       if (!(event.target instanceof Element)) return;
-      if (event.target.closest('[data-testid="convert-button"]'))
+      if (
+        event.target.closest('[data-testid="convert-button"], [data-testid="error-retry-button"]')
+      )
         observed.clickMs = performance.now();
       if (event.target.closest('[data-testid="stop-conversion-button"]'))
         observed.stopMs = performance.now();
@@ -447,6 +453,14 @@ export function instrumentOwnedInstance() {
     statusCounts: {} as Record<string, number>,
     successfulBeginCalls: 0,
     beginStatusCounts: {} as Record<string, number>,
+    injectNextStepTrap: false,
+    injectedErrorCount: 0,
+    records: [] as Array<{
+      id: number;
+      stepCalls: number;
+      retireCalls: number;
+      retireStatus: number | null;
+    }>,
   };
   Reflect.set(globalThis, '__wmcVp8AbiProbe', state);
   WebAssembly.Instance = new Proxy(NativeInstance, {
@@ -455,6 +469,14 @@ export function instrumentOwnedInstance() {
       const exported = instance.exports as Record<string, unknown>;
       if (typeof exported.vp8_v2_step !== 'function') return instance;
       state.instances++;
+      if (state.records.length >= 32) throw new Error('Owned ABI probe instance bound exceeded');
+      const record = {
+        id: state.instances,
+        stepCalls: 0,
+        retireCalls: 0,
+        retireStatus: null as number | null,
+      };
+      state.records.push(record);
       // WASM export properties are nonconfigurable and nonwritable; a Proxy
       // cannot substitute one of their values. Copy the namespace instead.
       const wrapped = Object.fromEntries(
@@ -471,12 +493,25 @@ export function instrumentOwnedInstance() {
             : key === 'vp8_v2_step' && typeof value === 'function'
               ? (...parameters: unknown[]) => {
                   state.stepCalls++;
+                  record.stepCalls++;
                   const status = Reflect.apply(value, exported, parameters) as number;
                   state.statusCounts[String(status)] =
                     (state.statusCounts[String(status)] ?? 0) + 1;
+                  if (state.injectNextStepTrap) {
+                    state.injectNextStepTrap = false;
+                    state.injectedErrorCount++;
+                    throw new WebAssembly.RuntimeError('Controlled post-step ABI2 trap injection');
+                  }
                   return status;
                 }
-              : value,
+              : key === 'vp8_v2_retire' && typeof value === 'function'
+                ? (...parameters: unknown[]) => {
+                    const status = Reflect.apply(value, exported, parameters) as number;
+                    record.retireCalls++;
+                    record.retireStatus = status;
+                    return status;
+                  }
+                : value,
         ])
       );
       return new Proxy(instance, {
@@ -525,7 +560,8 @@ async function measureJob(
   build: 'prior' | 'candidate',
   condition: 'first-in-document' | 'same-document-warm',
   output: string,
-  caseId: string
+  caseId: string,
+  action: 'convert' | 'retry' = 'convert'
 ) {
   const before = await page.evaluate(() => {
     const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as { reset: () => void };
@@ -536,7 +572,15 @@ async function measureJob(
     };
   });
   const wallStart = new Date().toISOString();
-  await page.locator('[data-testid="convert-button"]').click();
+  await page
+    .locator(
+      action === 'retry' ? '[data-testid="error-retry-button"]' : '[data-testid="convert-button"]'
+    )
+    .click();
+  if (action === 'retry')
+    await page
+      .locator('[data-testid="error-display"]')
+      .waitFor({ state: 'hidden', timeout: 30_000 });
   const prompt = page.locator('[data-testid="modal-confirm-button"]');
   if (await prompt.isVisible()) await prompt.click();
   await page.waitForFunction(
@@ -873,7 +917,9 @@ async function exerciseActiveStop(
 ) {
   const page = await context.newPage();
   const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('pageerror', (error) => {
+    if (errors.length < 32) errors.push(error.message);
+  });
   try {
     await loadApplication(page, server.url);
     const documentIdentity = await page.evaluate(() => performance.timeOrigin);
@@ -965,6 +1011,196 @@ async function exerciseActiveStop(
   }
 }
 
+async function exerciseInjectedTrap(
+  page: Page,
+  fixture: Fixture,
+  fixturePath: string,
+  fixtureDigest: string,
+  output: string,
+  pageErrors: string[]
+) {
+  const consoleWarnings: string[] = [];
+  const consoleErrors: string[] = [];
+  const onConsole = (message: { type: () => string; text: () => string }) => {
+    const selected =
+      message.type() === 'warning'
+        ? consoleWarnings
+        : message.type() === 'error'
+          ? consoleErrors
+          : null;
+    if (selected && selected.length < 32) selected.push(message.text().slice(0, 512));
+  };
+  page.on('console', onConsole);
+  const snapshot = () =>
+    page.evaluate(() => {
+      const abi = Reflect.get(globalThis, '__wmcVp8AbiProbe') as {
+        instances: number;
+        stepCalls: number;
+        injectedErrorCount: number;
+        records: Array<{
+          id: number;
+          stepCalls: number;
+          retireCalls: number;
+          retireStatus: number | null;
+        }>;
+      };
+      const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as {
+        publications: unknown[];
+      };
+      const error = document.querySelector<HTMLElement>('[data-testid="error-display"]');
+      return {
+        timeOrigin: performance.timeOrigin,
+        navigationCount: performance.getEntriesByType('navigation').length,
+        instances: abi.instances,
+        stepCalls: abi.stepCalls,
+        injectedErrorCount: abi.injectedErrorCount,
+        records: abi.records.map((record) => ({ ...record })),
+        publications: observed.publications.length,
+        fallbackResourceCount: performance
+          .getEntriesByType('resource')
+          .filter((entry) =>
+            /\/(?:webp-wasm|wasm-webp)[\w.-]*\.(?:wasm|js)$/.test(new URL(entry.name).pathname)
+          ).length,
+        errorText: error?.getClientRects().length ? (error.textContent?.trim() ?? '') : null,
+      };
+    });
+  try {
+    const before = await page.evaluate(() => {
+      const abi = Reflect.get(globalThis, '__wmcVp8AbiProbe') as {
+        injectNextStepTrap: boolean;
+        injectedErrorCount: number;
+      };
+      const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as { reset: () => void };
+      if (abi.injectNextStepTrap) throw new Error('ABI2 trap injection is already armed');
+      observed.reset();
+      abi.injectNextStepTrap = true;
+      return { timeOrigin: performance.timeOrigin, injectedErrorCount: abi.injectedErrorCount };
+    });
+    const armed = await snapshot();
+    await page.locator('[data-testid="convert-button"]').click();
+    const prompt = page.locator('[data-testid="modal-confirm-button"]');
+    if (await prompt.isVisible()) await prompt.click();
+    await page
+      .locator('[data-testid="error-display"]')
+      .waitFor({ state: 'visible', timeout: CONVERSION_TIMEOUT_MS });
+    await page
+      .locator('[data-testid="convert-button"]')
+      .waitFor({ state: 'visible', timeout: 10_000 });
+    assert.equal(await page.locator('[data-testid="convert-button"]').isEnabled(), true);
+    assert.equal(await page.locator('[data-testid="stop-conversion-button"]').isVisible(), false);
+    const failed = await snapshot();
+    assert.equal(failed.timeOrigin, before.timeOrigin, 'Injected failure changed document');
+    assert.equal(failed.navigationCount, armed.navigationCount, 'Injected failure navigated');
+    assert.equal(
+      failed.instances,
+      armed.instances + 1,
+      'Injected failure did not create one owned instance'
+    );
+    assert(
+      failed.stepCalls > armed.stepCalls,
+      'Injected failure did not execute an actual ABI2 step'
+    );
+    assert.equal(
+      failed.injectedErrorCount,
+      before.injectedErrorCount + 1,
+      'Controlled trap did not fire once'
+    );
+    assert(
+      failed.errorText?.includes('Owned VP8 WASM trapped'),
+      'Controlled trap error is not visible'
+    );
+    assert.equal(failed.publications, 0, 'Controlled trap published output');
+    assert.equal(
+      failed.fallbackResourceCount,
+      armed.fallbackResourceCount,
+      'Controlled trap fetched legacy backend'
+    );
+    const failedRecord = failed.records.find((record) => record.id === failed.instances);
+    assert(
+      failedRecord &&
+        failedRecord.stepCalls > 0 &&
+        failedRecord.retireCalls > 0 &&
+        failedRecord.retireStatus === 0,
+      'Trapped instance was not retired'
+    );
+    assert.deepEqual(pageErrors, [], 'Controlled trap emitted an uncaught page error');
+    // Give the settled error UI a bounded task window in which an unintended
+    // automatic retry would create an instance or publish a result.
+    await page.waitForTimeout(150);
+    const guarded = await snapshot();
+    assert.equal(guarded.instances, failed.instances, 'Backend retried without user action');
+    assert.equal(guarded.stepCalls, failed.stepCalls, 'Backend continued after controlled trap');
+    assert.equal(guarded.publications, 0, 'Backend published after controlled trap');
+    assert.equal(
+      guarded.fallbackResourceCount,
+      armed.fallbackResourceCount,
+      'Backend fetched legacy fallback'
+    );
+    assert(guarded.errorText, 'Failure UI disappeared without user action');
+    assert.deepEqual(pageErrors, [], 'Guard interval emitted an uncaught page error');
+    assert(
+      (await page.locator('[data-testid="video-metadata"]').textContent())?.includes(
+        fixturePath.split(/[\\/]/).at(-1)!
+      ),
+      'Explicit retry lost the selected source file'
+    );
+    const retry = await measureJob(
+      page,
+      fixture,
+      fixtureDigest,
+      'medium',
+      'candidate',
+      'same-document-warm',
+      output,
+      'owned-vp8-functional-main-after-injected-trap',
+      'retry'
+    );
+    const recovered = await snapshot();
+    assert.equal(recovered.timeOrigin, before.timeOrigin, 'Explicit retry changed document');
+    assert.equal(recovered.navigationCount, armed.navigationCount, 'Explicit retry navigated');
+    assert.equal(
+      recovered.instances,
+      failed.instances + 1,
+      'Explicit retry did not create one fresh owned instance'
+    );
+    assert(recovered.stepCalls > failed.stepCalls, 'Explicit retry executed no owned ABI2 step');
+    assert.equal(
+      recovered.injectedErrorCount,
+      failed.injectedErrorCount,
+      'Trap injection was not one-shot'
+    );
+    assert.equal(recovered.publications, 1, 'Explicit retry did not publish exactly one WebP');
+    assert.equal(
+      recovered.fallbackResourceCount,
+      armed.fallbackResourceCount,
+      'Explicit retry fetched legacy backend'
+    );
+    const recoveredRecord = recovered.records.find((record) => record.id === recovered.instances);
+    assert(
+      recoveredRecord &&
+        recoveredRecord.stepCalls > 0 &&
+        recoveredRecord.retireCalls > 0 &&
+        recoveredRecord.retireStatus === 0,
+      'Retry instance did not complete and retire'
+    );
+    assert.deepEqual(pageErrors, [], 'Explicit retry emitted an uncaught page error');
+    return {
+      kind: 'controlled-post-step-runtime-error-injection',
+      sourceFixture: fixturePath,
+      inputSha256: fixtureDigest,
+      before: armed,
+      failed,
+      guarded,
+      explicitUserRetry: { ...retry, abi: recovered },
+      consoleWarnings,
+      consoleErrors,
+      pageErrors: [...pageErrors],
+    };
+  } finally {
+    page.off('console', onConsole);
+  }
+}
+
 async function candidateFunctional(
   browser: Browser,
   build: Build,
@@ -995,7 +1231,9 @@ async function candidateFunctional(
     try {
       const page = await context.newPage();
       const errors: string[] = [];
-      page.on('pageerror', (error) => errors.push(error.message));
+      page.on('pageerror', (error) => {
+        if (errors.length < 32) errors.push(error.message);
+      });
       try {
         await loadApplication(page, server.url);
         if (!main) {
@@ -1071,6 +1309,14 @@ async function candidateFunctional(
           'Main route did not call compiled VP8 ABI step'
         );
         recovery.abi = abi;
+        recovery.injectedTrap = await exerciseInjectedTrap(
+          page,
+          fixture,
+          fixturePath,
+          fixtureDigest,
+          output,
+          errors
+        );
         recovery.activeStop = await exerciseActiveStop(
           context,
           server,
@@ -1282,7 +1528,9 @@ export async function exerciseOwnedVp8Product({
             const page = await context.newPage();
             const errors: string[] = [];
             let activeCase = `owned-vp8-${scenario}-${name}-${fixture.id}-${quality}-prepare`;
-            page.on('pageerror', (error) => errors.push(error.message));
+            page.on('pageerror', (error) => {
+              if (errors.length < 32) errors.push(error.message);
+            });
             try {
               await loadApplication(page, server.url);
               await configurePage(page, path, fixture, quality);

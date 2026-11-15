@@ -17,7 +17,10 @@ import {
   parseAnimatedWebp,
 } from '../../../validation/windows/helpers/owned-vp8-product.ts';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  Reflect.deleteProperty(globalThis, '__wmcVp8AbiProbe');
+});
 
 const root = resolve(import.meta.dirname, '../../..');
 
@@ -223,7 +226,54 @@ describe('owned VP8 Windows product contract', () => {
       beginStatusCounts: { '10': 2, '12': 1 },
       stepCalls: 1,
     });
-    Reflect.deleteProperty(globalThis, '__wmcVp8AbiProbe');
+  });
+
+  it('injects one RuntimeError only after a real step and tracks retirement before a fresh instance', () => {
+    const step = vi.fn(() => 10);
+    const retire = vi.fn(() => 0);
+    class FakeRuntimeError extends Error {}
+    class FakeInstance {
+      exports = { vp8_v2_step: step, vp8_v2_retire: retire };
+    }
+    vi.stubGlobal('WebAssembly', { Instance: FakeInstance, RuntimeError: FakeRuntimeError });
+    instrumentOwnedInstance();
+    const probe = Reflect.get(globalThis, '__wmcVp8AbiProbe') as {
+      injectNextStepTrap: boolean;
+      injectedErrorCount: number;
+      instances: number;
+      records: Array<{
+        id: number;
+        stepCalls: number;
+        retireCalls: number;
+        retireStatus: number | null;
+      }>;
+    };
+    const first = new WebAssembly.Instance({} as WebAssembly.Module).exports as {
+      vp8_v2_step: () => number;
+      vp8_v2_retire: () => number;
+    };
+    probe.injectNextStepTrap = true;
+    expect(() => first.vp8_v2_step()).toThrow(FakeRuntimeError);
+    expect(step).toHaveBeenCalledTimes(1);
+    expect(probe).toMatchObject({
+      instances: 1,
+      injectedErrorCount: 1,
+      injectNextStepTrap: false,
+      records: [{ id: 1, stepCalls: 1, retireCalls: 0, retireStatus: null }],
+    });
+    expect(first.vp8_v2_retire()).toBe(0);
+    const second = new WebAssembly.Instance({} as WebAssembly.Module).exports as {
+      vp8_v2_step: () => number;
+      vp8_v2_retire: () => number;
+    };
+    expect(second.vp8_v2_step()).toBe(10);
+    expect(second.vp8_v2_retire()).toBe(0);
+    expect(step).toHaveBeenCalledTimes(2);
+    expect(retire).toHaveBeenCalledTimes(2);
+    expect(probe.records).toEqual([
+      { id: 1, stepCalls: 1, retireCalls: 1, retireStatus: 0 },
+      { id: 2, stepCalls: 1, retireCalls: 1, retireStatus: 0 },
+    ]);
   });
 
   it('admits a README-only normal build and rejects extra, linked, or wrong V8 media', async () => {
