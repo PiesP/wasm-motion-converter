@@ -75,3 +75,56 @@ active Stop/recovery and installed browser engines under the prepared Windows
 lease. Real Safari/mobile coverage remains UNVERIFIED. Only after the required
 M2/M3/M4 gates pass may M5 remove wasm-webp imports, assets and runtime-only glue.
 Delivery/provider source and served bytes must be reconciled separately.
+
+## First complete preset candidate rejection
+
+Candidate `7e4bcb4c`, WASM SHA-256
+`e48c2e1be8f2b20bdda9c9d18c755063f872db344681c9a776c191cb27cc4f15`,
+used three generic segments, precise gamma import and calibrated provisional UV
+DC/AC deltas. It passed 27/27 tuning conditions but **31/45 held-out conditions**.
+Adoption is rejected for that candidate; wasm-webp remains the production runtime.
+
+| Exposed initial-v1 fixture | Failing presets | Failed gate |
+| --- | --- | --- |
+| held-gradient | 60,75,85 | Size for all; PSNR/SSIM also at60 |
+| held-large-admitted | 60,75,85 | Size |
+| held-photo | 60,75 | Size |
+| held-video-frame-10 | 60,75 | Size |
+| held-video-frame-60 | 60,75 | Size |
+| held-video-duplicate-hold | 60,75 | Size |
+
+The candidate artifact was 170624 raw / 32928 gzip-9 bytes with the unchanged
+192 MiB declared maximum. Rust57 tests including independent native VP8/libvpx
+reconstruction, fmt/Clippy, isolated bounded rebuild and actual compiled40-condition
+checks passed. These correctness passes do not override the quality/size failure.
+
+The original cohort is now exposed regression evidence. The prospectively frozen
+correction manifest introduces 15 fresh acceptance inputs and three additional
+tuning inputs before corrected candidate measurements. The engine's missing six
+I4 predictors and loop-filter support are implementation work; their corrected
+source must pass the unchanged gates on controlled new evidence. Preserve all
+historical qcurve, segment and UV probe receipts, including not-run sweep variants.
+
+PR #503 subsequently landed as `103058d7`; exact-head required CI/security passed
+without bypass, and default-branch CI/security and automatic public verification
+passed. The public verification matched29 served files to that source/tree.
+Provider account deployment identity remains separately UNVERIFIED. This landing
+adds the engineering core/adapter, not a production software-route switch.
+
+## Second fixed-pixel candidate rejection and next source freeze
+
+The corrected-v2 candidate `c49ecb80005aa28d9d0f45bf67947ccb8656c582`,
+WASM SHA-256 `8d82889c45a9ed6e65639e767b7ea11cd75235b8ffcdc792332cf91952cb8ce2`,
+passed 36/36 tuning conditions but only **44/45** corrected-v2 held-out
+conditions. The `fresh2-chroma-edge` quality-75 condition missed the unchanged
+SSIM gate: baseline 0.198264, candidate 0.186469, minimum 0.188264. This
+candidate is **REJECTED for adoption**. The original corrected-v2 generator,
+manifest and failed receipt remain intact; that cohort is exposed regression
+evidence, not fresh acceptance.
+
+The separate corrected-v3 source-only generator and manifest freeze 15 new
+held-out inputs / 45 conditions and three broad chroma-edge tuning controls
+before another candidate is measured. The cumulative tuning set is 15 inputs /
+45 conditions. No codec outputs, comparator outputs, browser product results or
+Windows acceptance are claimed by this source freeze. The unchanged M2/M3/M4
+gates still hold the production route switch and M5 runtime removal.

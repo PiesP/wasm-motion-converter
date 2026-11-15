@@ -1,0 +1,342 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v2",
+  "purpose": "Fresh held-out acceptance after initial-v1 candidate rejection; initial-v1 remains exposed regression evidence",
+  "rejectedCandidate": "7e4bcb4ce96579072da4887aaa93f8ae48a8215d",
+  "rejectedWasmSha256": "e48c2e1be8f2b20bdda9c9d18c755063f872db344681c9a776c191cb27cc4f15",
+  "initialOutcome": {
+    "jointPasses": 31,
+    "conditions": 45
+  },
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "sources": {
+    "photo": {
+      "page": "https://commons.wikimedia.org/wiki/File:Random_landscape_photo_I_took.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Random_landscape_photo_I_took.jpg&oldid=1200107837",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/f/f0/Random_landscape_photo_I_took.jpg",
+      "license": "CC0-1.0",
+      "author": "Philsacor",
+      "sha256": "65d727e89ee6aae0ae1ce9e1b79429495c3a7b993cc53333fffb76e176ffecf8"
+    },
+    "video": {
+      "name": "V8.webm",
+      "page": "https://commons.wikimedia.org/wiki/File:V8.webm",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/a/a7/V8.webm",
+      "license": "CC0-1.0",
+      "author": "BMKME",
+      "sha256": "c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1"
+    },
+    "tuningPhoto": {
+      "name": "Landscape, road, clouds.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Landscape,_road,_clouds.jpg",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/e/ee/Landscape%2C_road%2C_clouds.jpg",
+      "license": "CC0-1.0",
+      "author": "Digitura",
+      "originalSha256": "d3950b277f47453e4bfcbda3028b445cb00b6c64e8b2a9362c512a2ff39fefca",
+      "decodedSha256": "0c752d698e82232c286fc24c210ba7ae08a88318d2ceee607743f5d4817a2255",
+      "decodedPath": "test/fixtures/owned-vp8/tuning-photo-rgba.base64",
+      "decodedBytes": 49152
+    }
+  },
+  "generator": "Source-only generation; no candidate or comparator outputs are read",
+  "generatorSha256": "e8ef0b3aafd33505cc8f215a8e1337257311c7bdc2a2ef6d6ab31b1ff70e26a9",
+  "fixtures": [
+    {
+      "id": "tune-broad-gradient",
+      "split": "tuning",
+      "class": "gradient",
+      "width": 256,
+      "height": 160,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1024,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "69ddc9018a6b54617de3865ea7261ee89fa5b66125602eeb825df29a5b6f6284"
+    },
+    {
+      "id": "tune-diagonal-strokes",
+      "split": "tuning",
+      "class": "text",
+      "width": 192,
+      "height": 128,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 768,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "5dbaf77127056ea5e9dafdaae4b7255f8c3ce33ccdf49c000cf04235c7baba51"
+    },
+    {
+      "id": "tune-photo-detail",
+      "split": "tuning",
+      "class": "photograph",
+      "width": 384,
+      "height": 288,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1536,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ddf2ea6c1f4eb0247f7b51ac853bce37d6fe07d699662a9b407d228711c9606a"
+    },
+    {
+      "id": "fresh2-gray",
+      "split": "held-out",
+      "class": "grayscale",
+      "width": 509,
+      "height": 263,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2036,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "abeb73adf1a7834deb9900066ed602faf31345d8ec39afe9afbf47e7a8a181f7"
+    },
+    {
+      "id": "fresh2-gradient",
+      "split": "held-out",
+      "class": "gradient",
+      "width": 389,
+      "height": 251,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1556,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ad910f8580e2a9cd3e447953c1228bc57a7e9287e67688d2bdd1148bc7799b82"
+    },
+    {
+      "id": "fresh2-chroma-edge",
+      "split": "held-out",
+      "class": "chroma",
+      "width": 337,
+      "height": 247,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1348,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "1039a18027460597b3d4e2682f058bc0de965909ff3731aa59e51987c9fb6022"
+    },
+    {
+      "id": "fresh2-text",
+      "split": "held-out",
+      "class": "text",
+      "width": 421,
+      "height": 269,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1684,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ddf995397e50f404943e08d3c7a0ca6be0fcbfcf1754e0f7f3c8e455adb47627"
+    },
+    {
+      "id": "fresh2-noise",
+      "split": "held-out",
+      "class": "noise",
+      "width": 271,
+      "height": 197,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1084,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "eaab7a54685b0f9f420e1643bbeec09a0b914eaafb96d9fe9d301f49a73a7340"
+    },
+    {
+      "id": "fresh2-tiny",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 2,
+      "height": 3,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 8,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "e5cec00fdd3084994b34bac7beff1e71a1c1942bd78f3a7e6c476e1658a2978e"
+    },
+    {
+      "id": "fresh2-one-column",
+      "split": "held-out",
+      "class": "odd",
+      "width": 1,
+      "height": 263,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "8ebef56af8c3029abdf3ae5a34737285cf1c62cbbb79a91812cfa9299bd81e31"
+    },
+    {
+      "id": "fresh2-one-row",
+      "split": "held-out",
+      "class": "odd",
+      "width": 263,
+      "height": 1,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1052,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "838d44df06fa9623fbbb4181ae1a3b18835a3cae16b5a84318a4962bf7ee4161"
+    },
+    {
+      "id": "fresh2-large-admitted",
+      "split": "held-out",
+      "class": "large",
+      "width": 4080,
+      "height": 2467,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 16320,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "05fb1ee77b5319c3ce708551cd2fb8c1389ba3880b4f6187eb865f17d48d2b31"
+    },
+    {
+      "id": "fresh2-bgra",
+      "split": "held-out",
+      "class": "layout",
+      "width": 263,
+      "height": 131,
+      "layout": "BGRA",
+      "source": "generated",
+      "stride": 1052,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "591baa776b5a7ebc29161fef44a628256529c4f2ab14285b004a687a1edb62bc"
+    },
+    {
+      "id": "fresh2-rgbx",
+      "split": "held-out",
+      "class": "layout",
+      "width": 263,
+      "height": 131,
+      "layout": "RGBX",
+      "source": "generated",
+      "stride": 1052,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "fbc99ef91a891832974b7eebcc4ebd5c552f2297ed94a6142fbbf98d1c99f26e"
+    },
+    {
+      "id": "fresh2-photo",
+      "split": "held-out",
+      "class": "photograph",
+      "width": 503,
+      "height": 377,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 2012,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "7aeab53b39fe9e012f8a382a6784c28c9cb4f3d0c0e1fc4f7bc15b76d76a2380"
+    },
+    {
+      "id": "fresh2-video-90",
+      "split": "held-out",
+      "class": "video",
+      "width": 496,
+      "height": 280,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 90,
+      "stride": 1984,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "01e88488babbd9dac5210bcec4008370fab12acf9af4cc0f9b2b9146211640df"
+    },
+    {
+      "id": "fresh2-video-150",
+      "split": "held-out",
+      "class": "video",
+      "width": 496,
+      "height": 280,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 150,
+      "stride": 1984,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "5854e8fec8e55b22be81788602e1dffd74c86ca1987aff68bc7d191094b9a6aa"
+    },
+    {
+      "id": "fresh2-duplicate-hold",
+      "split": "held-out",
+      "class": "duplicate-hold",
+      "width": 496,
+      "height": 280,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 90,
+      "repeatOf": "fresh2-video-90",
+      "stride": 1984,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "01e88488babbd9dac5210bcec4008370fab12acf9af4cc0f9b2b9146211640df"
+    }
+  ]
+}

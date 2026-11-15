@@ -130,6 +130,25 @@ mod tests {
             .dc,
             4
         );
+        let negative_uv = Deltas {
+            uv_dc: -7,
+            uv_ac: -7,
+            ..Deltas::default()
+        };
+        assert_eq!(
+            steps(23, negative_uv, Plane::UV),
+            Steps {
+                dc: DC_QUANT[16],
+                ac: AC_QUANT[16]
+            }
+        );
+        assert_eq!(
+            steps(0, negative_uv, Plane::UV),
+            Steps {
+                dc: DC_QUANT[0],
+                ac: AC_QUANT[0]
+            }
+        );
     }
 
     #[test]

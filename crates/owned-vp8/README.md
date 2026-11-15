@@ -17,6 +17,13 @@ The bounded resumable ABI2 core is implemented. Color/preset calibration,
 filter tuning, and browser/product qualification remain unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
 or removal of `wasm-webp`.
 
+The exploratory q75 textured preset retains its finer luma quantizer for a
+frame only when every imported, padded U/V sample is exactly 128. This flag is
+accumulated during the existing bounded RGB-to-YUV conversion. Other textured
+frames use the chromatic q75 preset; q60/q85 are identical in both tables.
+The source color conversion and four segment IDs are unchanged. This allocation
+has no independent qualification claim.
+
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
 sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
 tables are format constants from sections 13.4, 13.5 and 14.1 respectively;
@@ -28,7 +35,11 @@ defines raw `EncodedVideoChunk` keyframe bytes; browser support must be probed.
 
 Forward DCT/WHT arithmetic is adapted from pinned libwebp v1.3.2
 `src/dsp/enc.c`; it is not represented as independently originated arithmetic.
-The rest of this experimental encoder is owned Rust. Retain
+The color import coefficients and gamma tables in `src/color.rs` derive from
+libwebp commit `6c484cbf92e81a5673b24485ac02d211f69be5b7`, a diagnostic source
+counterpart of the published wrapper tag. Its native import oracle does not prove
+the shipped comparator WASM was built from that commit. The encoder implementation
+remains owned Rust; these adapted arithmetic/table portions retain attribution. Retain
 [LICENSE.libwebp](LICENSE.libwebp) and [PATENTS.libwebp](PATENTS.libwebp) with source
 and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
@@ -69,6 +80,13 @@ symbols and 64 KiB of carry per step, and then yields through its host. Browser
 cancellation/resource qualification is unfinished. These plans and Node/Rust tests do not establish
 browser/GPU peak, physical zero-copy or product adoption.
 
+Macroblock mode selection reserves the worst-case remaining I16 header syntax,
+all possible coefficient-update literals, and the arithmetic tail against VP8's
+first-partition limit. I4 remains eligible while its exact syntax fits that
+reserve; final byte counting still checks both partitions before allocation.
+This conservative bound may favor I16 on large, complex frames and does not
+establish their quality or timing acceptance.
+
 ## Engineering checks
 
 Run from this crate with the pinned Rust toolchain:
@@ -100,8 +118,9 @@ Cargo development output without that declaration does not qualify delivery.
 
 Ignored tests explicitly require FFmpeg's native `vp8` and separate `libvpx`
 decoders. They compare every visible YUV byte against encoder reconstruction
-with filtering disabled, including all modulo-16 remainders and synthetic signed
-coefficient categories, zero runs, skips and Y2/B_PRED contexts. They establish
+with explicit disabled and enabled filtering cases, including modulo-16
+remainders, synthetic signed coefficient categories, zero runs, skips and
+Y2/B_PRED contexts. They establish
 engineering correctness only. They do not measure preset fidelity, product
 performance, cancellation or animation/browser acceptance. Forward transform
 vectors also use separately executed pinned C arithmetic; that check alone is

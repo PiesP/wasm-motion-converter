@@ -103,6 +103,20 @@ impl BoolSink for RateCounter {
     }
 }
 
+/// An arithmetic write renormalizes at most eight times, so it can emit at
+/// most one byte. The finalizer contributes at most four additional bytes.
+#[derive(Default)]
+pub(crate) struct SymbolCounter {
+    pub count: usize,
+}
+
+impl BoolSink for SymbolCounter {
+    fn write(&mut self, _probability_of_zero: u8, _bit: bool) -> Result<(), EncodeError> {
+        self.count = self.count.checked_add(1).ok_or(EncodeError::OutputLimit)?;
+        Ok(())
+    }
+}
+
 /// Mirrors byte emission and termination without storing encoded bytes. Carry
 /// changes earlier byte values but never the number of bytes emitted.
 pub(crate) struct CountingBoolSink {
