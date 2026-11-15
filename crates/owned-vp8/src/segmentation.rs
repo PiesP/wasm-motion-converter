@@ -98,6 +98,21 @@ impl Config {
         self
     }
 
+    pub(crate) fn with_photo_q60_rebase(mut self, selected: bool) -> Self {
+        if selected {
+            self.base_qindex = self
+                .base_qindex
+                .checked_sub(4)
+                .expect("q60 base preset is at least four");
+            self.qindex = self.qindex.map(|qindex| {
+                qindex
+                    .checked_sub(4)
+                    .expect("q60 segment presets are at least four")
+            });
+        }
+        self
+    }
+
     pub(crate) fn write_header(
         self,
         sink: &mut impl BoolSink,
@@ -274,6 +289,38 @@ mod tests {
                 assert_eq!(color.map_probabilities, mono.map_probabilities);
             }
         }
+    }
+
+    #[test]
+    fn photo_rebase_signals_active_quantizers_and_retains_original_rate_reference() {
+        use crate::ac_quant::{self, Plane};
+        let original = Config::from_counts(60, [0, 0, 0, 4], 4, false);
+        let selected = original.with_photo_q60_rebase(true);
+        let deltas = presets::photo_allocation_deltas(presets::deltas(60), true, false);
+        assert!(!selected.enabled);
+        assert_eq!(selected.base_qindex, 28);
+        assert_eq!(selected.qindex, original.qindex.map(|q| q - 4));
+        assert_eq!(selected.map_probabilities, original.map_probabilities);
+        assert_eq!(selected.active, original.active);
+        assert_eq!(
+            original.with_photo_q60_rebase(false).qindex,
+            original.qindex
+        );
+        let q = selected.qindex_for(TEXTURED) as u8;
+        assert_eq!(ac_quant::steps(q, deltas, Plane::Y1).dc, 29);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::Y1).ac, 32);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::Y2).dc, 58);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::Y2).ac, 55);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::UV).dc, 16);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::UV).ac, 25);
+        assert_eq!(
+            presets::lambda_for_quality(original.qindex_for(TEXTURED), 60),
+            480
+        );
+        assert_eq!(
+            presets::lambda_for_quality(selected.qindex_for(TEXTURED), 60),
+            388
+        );
     }
 
     #[test]

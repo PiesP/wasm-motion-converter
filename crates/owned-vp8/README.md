@@ -26,6 +26,13 @@ intent without actual per-preset comparison against the shipped baseline.
 The source color conversion and four segment IDs are unchanged. This allocation
 has no independent qualification claim.
 
+For normal q60 frames with non-neutral imported chroma and exclusively Textured
+source macroblocks, the photo allocation lowers the coding base and all segment
+qindices by four. It signals Y1 DC, Y2 DC and Y2 AC deltas of +4 and UV DC/AC
+deltas of -15/-7. The original qindices remain the mode-rate reference. Y1 AC
+also becomes finer because VP8 has no separate Y1 AC delta. Neutral, mixed-map
+and high-chroma-loss q60 frames keep their prior allocation.
+
 At q60, the existing source-derived high-chroma-loss predicate compares the
 Original and Reduced profiles. Each completed trial is filtered after its
 analysis and rate statistics are finished. Its visible owned-renderer RGB
@@ -69,11 +76,13 @@ The q75 engineering calibration applies only when every admitted macroblock is
 Textured and the visible source RGB error from nearest-chroma import is at most
 4,096 per channel. It lowers every base and segment luma qindex by two, including
 unused classes and neutral inputs. UV DC and AC deltas increase by two so scalar
-UV quantizer steps remain unchanged, including clamping; mode and coefficient
-rate weights use original qindices. Other q75 frames retain the previous q75
-quantizers and rate weights. Mode choices and UV reconstruction may still change.
-The condition reuses the q60 import-error reference but does not change q60/q85,
-geometry, cadence or acceptance thresholds. This source candidate requires a
+UV quantizer steps remain unchanged for neutral inputs, including clamping. For
+non-neutral inputs satisfying that same policy, UV DC delta then decreases by
+four, to -11; UV AC remains -7. Mode and coefficient rate weights use original
+qindices. Other q75 frames retain the previous q75 quantizers and rate weights.
+Mode choices and UV reconstruction may still change. The condition reuses the
+q60 import-error reference and does not change q85, geometry, cadence or
+acceptance thresholds. This source candidate requires a
 new compiled artifact, all exposed regressions and a new held-out cohort before
 adoption.
 
