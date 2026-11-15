@@ -72,9 +72,12 @@ async function withRegularFile<T>(
   try {
     const entry = await lstat(path);
     assert(entry.isFile() && !entry.isSymbolicLink(), `${label} is missing or linked`);
-    // O_NOFOLLOW prevents a final-component link swap on POSIX. Windows Node
-    // lacks an equivalent flag; compare the opened handle with both path stats.
-    const flags = constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW);
+    // POSIX flags reject a swapped leaf link and avoid blocking if it becomes
+    // a FIFO. Windows Node lacks O_NOFOLLOW; compare the opened handle with
+    // both path stats there.
+    const flags =
+      constants.O_RDONLY |
+      (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const handle = await open(path, flags);
     try {
       const before = await handle.stat();
@@ -143,12 +146,13 @@ async function json(
   path: string,
   label: string,
   limit = JSON_LIMIT
-): Promise<{ value: unknown; sha256: string }> {
+): Promise<{ value: unknown; sha256: string; byteLength: number }> {
   const bytes = await regular(path, label, limit);
   try {
     return {
       value: JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')) as unknown,
       sha256: hash(bytes),
+      byteLength: bytes.length,
     };
   } catch {
     throw new Error(`${label} is malformed JSON`);
@@ -395,9 +399,15 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
       'guest artifact inventory'
     );
     const name = `${bundle.scenario}.json`;
-    entry(collection, name, 'collection');
+    const receiptEntry = entry(collection, name, 'collection');
     entry(artifactEntries, name, 'result artifact');
     const receiptFile = await json(join(root, 'output', name), 'timing receipt', FILE_LIMIT);
+    same(
+      receiptFile.sha256,
+      hex(receiptEntry.sha256, 'timing receipt collection digest'),
+      'timing receipt collection digest'
+    );
+    same(receiptFile.byteLength, collectedSizes.get(name), 'timing receipt collected byte count');
     const report = object(receiptFile.value, 'timing receipt');
     same(report.scenario, bundle.scenario, 'timing scenario');
     same(report.browserVersion, result.browser_version, 'browser version');
