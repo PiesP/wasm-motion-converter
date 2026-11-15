@@ -19,9 +19,9 @@ or removal of `wasm-webp`.
 
 Textured allocation uses a per-frame flag that is true only when every imported,
 padded U/V sample is exactly 128, accumulated during bounded RGB-to-YUV conversion.
-Exploratory colored/neutral qindices are28/34 at q60,28/27 at q75 and14/14 at q85.
-The q60 colored allocation refines both luma and chroma; the neutral allocation
-preserves the earlier grayscale control. These values do not establish quality
+The current exploratory colored and neutral qindices are defined in `src/presets.rs`.
+The q60 colored allocation is being screened for luma and chroma precision;
+the neutral allocation preserves the earlier grayscale control. These values do not establish quality
 intent without actual per-preset comparison against the shipped baseline.
 The source color conversion and four segment IDs are unchanged. This allocation
 has no independent qualification claim.
