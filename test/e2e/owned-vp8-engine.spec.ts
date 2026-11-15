@@ -186,7 +186,11 @@ test('active compiled-step cancellation retires the job and a fresh same-documen
   expect(cancelled.moduleSha256).toBe(wasmSha256);
   expect(cancelled.abiVersion).toBe(2);
   expect(cancelled.realSteps).toBeGreaterThan(0);
-  expect([10, 11]).toContain(cancelled.firstStepStatus);
+  expect(cancelled.observedAnalysisSteps).toBeGreaterThan(0);
+  expect(cancelled.cancellationStage).toBe(2);
+  expect(cancelled.analyzedMacroblocks).toBeGreaterThan(0);
+  expect(cancelled.analyzedMacroblocks).toBeLessThanOrEqual(cancelled.totalMacroblocks);
+  expect(cancelled.totalMacroblocks).toBe(32 * 24);
   expect(cancelled.hostTaskRan).toBe(true);
   expect(cancelled.taskObservedActive).toBe(true);
   expect(cancelled.outputPublished).toBe(false);

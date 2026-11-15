@@ -185,7 +185,10 @@ export interface OwnedVp8CancellationResult {
   moduleSha256: string;
   abiVersion: number;
   realSteps: number;
-  firstStepStatus: number;
+  observedAnalysisSteps: number;
+  cancellationStage: number;
+  analyzedMacroblocks: number;
+  totalMacroblocks: number;
   hostTaskRan: boolean;
   taskObservedActive: boolean;
   outputPublished: boolean;
@@ -501,29 +504,66 @@ const cancelOwnedVp8AfterStep = async (
   const api = instance.exports as unknown as {
     memory: WebAssembly.Memory;
     vp8_v2_abi_version(): number;
+    vp8_v2_response_ptr(): number;
     vp8_v2_step(generation: number, frame: number): number;
   };
   const abiVersion = api.vp8_v2_abi_version();
   const controller = new AbortController();
   let realSteps = 0;
-  let firstStepStatus = -1;
+  let observedAnalysisSteps = 0;
+  let cancellationStage = -1;
+  let analyzedMacroblocks = 0;
+  let totalMacroblocks = 0;
   let hostTaskRan = false;
   let taskObservedActive = false;
   let outputPublished = false;
   let encodingActive = false;
   let cancelTimer: ReturnType<typeof setTimeout> | undefined;
+  const readResponse = (generation: number, frame: number) => {
+    const buffer = api.memory.buffer;
+    const pointer = api.vp8_v2_response_ptr();
+    if (!Number.isSafeInteger(pointer) || pointer <= 0 || pointer + 96 > buffer.byteLength)
+      throw new Error('Owned VP8 test response lies outside linear memory');
+    const words = new DataView(buffer, pointer, 96);
+    const word = (index: number): number => words.getUint32(index * 4, true);
+    const stage = word(12);
+    const done = word(13);
+    const total = word(14);
+    if (
+      word(0) !== 2 ||
+      ![10, 11].includes(word(1)) ||
+      word(2) > 6 ||
+      word(3) !== generation ||
+      word(4) !== frame ||
+      word(9) !== buffer.byteLength ||
+      stage > 18 ||
+      total === 0 ||
+      done > total ||
+      (stage === 2 && total !== word(17)) ||
+      [20, 21, 22, 23].some((index) => word(index) !== 0)
+    )
+      throw new Error('Owned VP8 test response is inconsistent');
+    return { stage, done, total };
+  };
   // WASM export properties are immutable; copy values before wrapping one real call.
   const wrappedExports = {
     ...instance.exports,
     vp8_v2_step(generation: number, frame: number): number {
+      const before = cancelTimer === undefined ? readResponse(generation, frame) : undefined;
       const status = api.vp8_v2_step(generation, frame);
       realSteps++;
-      if (realSteps === 1) {
-        firstStepStatus = status;
+      if (before?.stage === 2 && cancelTimer === undefined) {
+        const after = readResponse(generation, frame);
+        if (status !== 10 || after.stage !== 2 || after.done !== before.done + 1)
+          throw new Error('Owned VP8 Analyze step did not complete one macroblock');
+        observedAnalysisSteps++;
+        cancellationStage = before.stage;
+        analyzedMacroblocks = after.done;
+        totalMacroblocks = after.total;
         cancelTimer = setTimeout(() => {
           hostTaskRan = true;
           taskObservedActive = encodingActive;
-          controller.abort('host task after a compiled VP8 step');
+          controller.abort('host task after a compiled VP8 Analyze step');
         }, 0);
       }
       return status;
@@ -558,7 +598,10 @@ const cancelOwnedVp8AfterStep = async (
   }
   if (
     realSteps < 1 ||
-    firstStepStatus < 0 ||
+    observedAnalysisSteps < 1 ||
+    cancellationStage !== 2 ||
+    analyzedMacroblocks < 1 ||
+    analyzedMacroblocks > totalMacroblocks ||
     !hostTaskRan ||
     !taskObservedActive ||
     outputPublished ||
@@ -569,7 +612,10 @@ const cancelOwnedVp8AfterStep = async (
     moduleSha256,
     abiVersion,
     realSteps,
-    firstStepStatus,
+    observedAnalysisSteps,
+    cancellationStage,
+    analyzedMacroblocks,
+    totalMacroblocks,
     hostTaskRan,
     taskObservedActive,
     outputPublished,
