@@ -1,8 +1,8 @@
 /** Join retained Windows controller attempts to the existing V8 timing arithmetic. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, readdir, realpath, type FileHandle } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -62,18 +62,72 @@ function safePayloadPath(value: unknown): string {
   return value;
 }
 
-/** Never follow a link in a caller-supplied attempt or in its admitted files. */
-async function regular(path: string, label: string, limit: number): Promise<Buffer> {
+/** Read the opened file, not a pathname checked before a second open. */
+async function withRegularFile<T>(
+  path: string,
+  label: string,
+  limit: number,
+  consume: (handle: FileHandle, size: number) => Promise<T>
+): Promise<T> {
   try {
-    const stat = await lstat(path);
-    assert(stat.isFile() && !stat.isSymbolicLink(), `${label} is missing or linked`);
-    assert(stat.size <= limit, `${label} exceeds byte limit`);
-    return await readFile(path);
+    const entry = await lstat(path);
+    assert(entry.isFile() && !entry.isSymbolicLink(), `${label} is missing or linked`);
+    // O_NOFOLLOW prevents a final-component link swap on POSIX. Windows Node
+    // lacks an equivalent flag; compare the opened handle with both path stats.
+    const flags = constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW);
+    const handle = await open(path, flags);
+    try {
+      const before = await handle.stat();
+      assert(
+        before.isFile() && before.dev === entry.dev && before.ino === entry.ino,
+        `${label} changed while opening`
+      );
+      assert(
+        Number.isSafeInteger(before.size) && before.size <= limit,
+        `${label} exceeds byte limit`
+      );
+      const value = await consume(handle, before.size);
+      const [after, pathAfter] = await Promise.all([handle.stat(), lstat(path)]);
+      assert(
+        after.isFile() &&
+          pathAfter.isFile() &&
+          !pathAfter.isSymbolicLink() &&
+          after.dev === before.dev &&
+          after.ino === before.ino &&
+          pathAfter.dev === before.dev &&
+          pathAfter.ino === before.ino &&
+          after.size === before.size &&
+          after.mtimeMs === before.mtimeMs,
+        `${label} changed while reading`
+      );
+      return value;
+    } finally {
+      await handle.close();
+    }
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code !== 'ERR_ASSERTION')
       throw new Error(`${label} is missing or unreadable`);
     throw error;
   }
+}
+async function regular(path: string, label: string, limit: number): Promise<Buffer> {
+  return withRegularFile(path, label, limit, async (handle, size) => {
+    const bytes = Buffer.alloc(size);
+    let offset = 0;
+    while (offset < size) {
+      const { bytesRead } = await handle.read(
+        bytes,
+        offset,
+        Math.min(size - offset, 64 * 1024),
+        offset
+      );
+      assert(bytesRead > 0, `${label} changed while reading`);
+      offset += bytesRead;
+    }
+    const { bytesRead } = await handle.read(Buffer.alloc(1), 0, 1, size);
+    assert(bytesRead === 0, `${label} changed while reading`);
+    return bytes;
+  });
 }
 async function directory(path: string, label: string): Promise<void> {
   try {
@@ -135,24 +189,27 @@ export async function verifyPayload(root: string, bundleSha256: string, files: r
         continue;
       }
       assert(stat.isFile(), 'payload contains a non-file entry');
-      assert(stat.size <= PAYLOAD_FILE_LIMIT, 'payload file exceeds byte limit');
-      total += stat.size;
-      assert(total <= PAYLOAD_TOTAL_LIMIT, 'payload aggregate exceeds byte limit');
       const expectedSha = expected.get(relative);
       assert(expectedSha, 'payload has an unlisted file');
-      const digest = createHash('sha256');
-      for await (const chunk of createReadStream(path)) digest.update(chunk as Buffer);
-      const after = await lstat(path);
-      assert(
-        after.isFile() &&
-          !after.isSymbolicLink() &&
-          after.dev === stat.dev &&
-          after.ino === stat.ino &&
-          after.size === stat.size &&
-          after.mtimeMs === stat.mtimeMs,
-        'payload file changed while hashing'
+      const digest = await withRegularFile(
+        path,
+        'payload file',
+        PAYLOAD_FILE_LIMIT,
+        async (handle, size) => {
+          assert(total + size <= PAYLOAD_TOTAL_LIMIT, 'payload aggregate exceeds byte limit');
+          const hasher = createHash('sha256');
+          let bytes = 0;
+          for await (const chunk of handle.createReadStream({ autoClose: false })) {
+            bytes += chunk.length;
+            assert(bytes <= PAYLOAD_FILE_LIMIT, 'payload file exceeds byte limit');
+            hasher.update(chunk as Buffer);
+          }
+          total += bytes;
+          assert(total <= PAYLOAD_TOTAL_LIMIT, 'payload aggregate exceeds byte limit');
+          return hasher.digest('hex');
+        }
       );
-      same(digest.digest('hex'), expectedSha, 'payload file digest');
+      same(digest, expectedSha, 'payload file digest');
       observed.add(relative);
     }
   };
@@ -260,6 +317,7 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
       'build log digest'
     );
     const collected = new Set<string>();
+    const collectedSizes = new Map<string, number>();
     const limit = bundle.browser === 'msedge' ? 128 : 64;
     assert(
       collection.length > 0 && collection.length <= limit,
@@ -272,6 +330,7 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
       assert(!collected.has(name), 'duplicate collected file name');
       collected.add(name);
       const bytes = await regular(join(root, 'output', name), `collected ${name}`, FILE_LIMIT);
+      collectedSizes.set(name, bytes.length);
       total += bytes.length;
       assert(total <= TOTAL_LIMIT, 'collection exceeds controller aggregate limit');
       same(hash(bytes), hex(item.sha256, `collected ${name}`), `collected ${name} digest`);
@@ -326,8 +385,7 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
         hex(record.sha256, `collected ${name}`),
         `artifact ${name} digest`
       );
-      const size = (await lstat(join(root, 'output', name))).size;
-      same(artifact.bytes, size, `artifact ${name} size`);
+      same(artifact.bytes, collectedSizes.get(name), `artifact ${name} size`);
     }
     same(
       artifactNames,

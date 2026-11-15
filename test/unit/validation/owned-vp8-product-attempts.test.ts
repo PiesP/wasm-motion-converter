@@ -414,13 +414,22 @@ test('rejects linked collected files and missing output inventory', async () => 
   await withAttempts(async (roots) => {
     const root = roots[0]!;
     const target = join(root, 'output/stdout.txt');
+    const copy = join(root, 'stdout-copy.txt');
+    await writeFile(copy, await readFile(target));
     await rm(target);
-    await symlink(join(root, 'output/stderr.txt'), target);
+    await symlink(copy, target);
     await assert.rejects(verifyAttempts(roots, expected), /linked/);
   });
   await withAttempts(async (roots) => {
     await writeFile(join(roots[0]!, 'output/extra.txt'), 'uncollected');
     await assert.rejects(verifyAttempts(roots, expected), /output file inventory/);
+  });
+});
+
+test('rejects an oversized physical manifest before parsing it', async () => {
+  await withAttempts(async (roots) => {
+    await writeFile(join(roots[0]!, 'bundle.json'), Buffer.alloc(2 * 1024 * 1024 + 1, 32));
+    await assert.rejects(readAttempts(roots, expected), /bundle exceeds byte limit/);
   });
 });
 
