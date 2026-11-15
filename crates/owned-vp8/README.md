@@ -17,10 +17,12 @@ The bounded resumable ABI2 core is implemented. Color/preset calibration,
 filter tuning, and browser/product qualification remain unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
 or removal of `wasm-webp`.
 
-The exploratory q75 textured preset retains its finer luma quantizer for a
-frame only when every imported, padded U/V sample is exactly 128. This flag is
-accumulated during the existing bounded RGB-to-YUV conversion. Other textured
-frames use the chromatic q75 preset; q60/q85 are identical in both tables.
+Textured allocation uses a per-frame flag that is true only when every imported,
+padded U/V sample is exactly 128, accumulated during bounded RGB-to-YUV conversion.
+Exploratory colored/neutral qindices are28/34 at q60,28/27 at q75 and14/14 at q85.
+The q60 colored allocation refines both luma and chroma; the neutral allocation
+preserves the earlier grayscale control. These values do not establish quality
+intent without actual per-preset comparison against the shipped baseline.
 The source color conversion and four segment IDs are unchanged. This allocation
 has no independent qualification claim.
 
