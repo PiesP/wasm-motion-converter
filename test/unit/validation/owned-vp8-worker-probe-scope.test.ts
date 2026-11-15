@@ -129,4 +129,34 @@ describe('retained Worker probe scope and parent channel', () => {
     expect(sent[0]!.message).toBe(unmatched);
     expect(sent[0]!.transfer).toBeUndefined();
   });
+
+  it('captures the actual parent abort before the later product handler retires ABI2', () => {
+    const { context, install, listeners, sent } = realm('dedicated');
+    install();
+    const wasm = context.WebAssembly as { Instance: typeof FakeInstance };
+    const instance = new wasm.Instance();
+    instance.exports.vp8_v2_begin();
+    instance.exports.vp8_v2_step();
+    listeners[0]!({ source: null, data: { type: 'start', requestId: 'direct-1' } });
+    listeners.push((event) => {
+      if ((event.data as { type?: string }).type === 'abort') instance.exports.vp8_v2_retire();
+    });
+    for (const listener of listeners)
+      listener({ source: null, data: { type: 'abort', requestId: 'direct-1' } });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.message).toMatchObject({
+      type: '__wmcVp8OwnerAbortObservation',
+      requestId: 'direct-1',
+      snapshot: {
+        requestId: 'direct-1',
+        records: [{ successfulBeginCalls: 1, stepCalls: 1, retireCalls: 0 }],
+      },
+    });
+    const probe = context.__wmcVp8RetainedWorkerProbe as {
+      snapshot: () => { records: Array<{ retireCalls: number }> };
+    };
+    expect(probe.snapshot().records[0]!.retireCalls).toBe(1);
+    listeners[0]!({ source: null, data: { type: 'abort', requestId: 'other' } });
+    expect(sent).toHaveLength(1);
+  });
 });

@@ -11,6 +11,7 @@ export function installRetainedWorkerProbe() {
   if (typeof DedicatedScope !== 'function' || !(globalThis instanceof DedicatedScope))
     throw new Error('Retained Worker probe requires a dedicated Worker scope');
   const marker = '__wmcVp8RetainedWorkerSnapshot';
+  const abortObservationType = '__wmcVp8OwnerAbortObservation';
   const NativeInstance = WebAssembly.Instance;
   let requestId: string | null = null;
   const records: Array<{
@@ -22,6 +23,16 @@ export function installRetainedWorkerProbe() {
     peakCapacityBytes: number;
     retirementTimeCapacityBytes: number | null;
   }> = [];
+  const worker = globalThis as unknown as {
+    postMessage: (message: unknown, transfer?: Transferable[]) => void;
+  };
+  const nativePostMessage = worker.postMessage;
+  const snapshot = () => ({
+    requestId,
+    createdCount: records.length,
+    records: records.map((record) => ({ ...record })),
+  });
+  let abortObserved = false;
   WebAssembly.Instance = new Proxy(NativeInstance, {
     construct(target, args, newTarget) {
       const instance = Reflect.construct(target, args, newTarget);
@@ -81,20 +92,27 @@ export function installRetainedWorkerProbe() {
     // Worker.postMessage uses the dedicated Worker's implicit port, which has no source.
     if (event.source !== null) return;
     const message = event.data as { type?: unknown; requestId?: unknown } | null;
-    if (message?.type === 'start' && typeof message.requestId === 'string')
+    if (message?.type === 'start' && typeof message.requestId === 'string' && requestId === null)
       requestId = message.requestId;
+    if (
+      message?.type === 'abort' &&
+      requestId !== null &&
+      message.requestId === requestId &&
+      !abortObserved
+    ) {
+      abortObserved = true;
+      // This prefix listener was registered before the bundled Worker's onmessage.
+      // Capture before its abort handler or later encoding cleanup can retire ABI2.
+      nativePostMessage.call(worker, {
+        type: abortObservationType,
+        requestId,
+        snapshot: snapshot(),
+      });
+    }
   });
   Reflect.set(globalThis, '__wmcVp8RetainedWorkerProbe', {
-    snapshot: () => ({
-      requestId,
-      createdCount: records.length,
-      records: records.map((r) => ({ ...r })),
-    }),
+    snapshot,
   });
-  const worker = globalThis as unknown as {
-    postMessage: (message: unknown, transfer?: Transferable[]) => void;
-  };
-  const nativePostMessage = worker.postMessage;
   worker.postMessage = function (message: unknown, transfer?: Transferable[]) {
     const response = message as { type?: unknown; requestId?: unknown } | null;
     if (
@@ -105,11 +123,7 @@ export function installRetainedWorkerProbe() {
         worker,
         {
           ...response,
-          [marker]: {
-            requestId,
-            createdCount: records.length,
-            records: records.map((r) => ({ ...r })),
-          },
+          [marker]: snapshot(),
         },
         transfer
       );
