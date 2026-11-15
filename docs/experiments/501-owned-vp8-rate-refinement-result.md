@@ -73,6 +73,46 @@ the new candidate's source-bound tests, fresh held-out evaluation or product
 qualification. The skip lane's final 75 default and 11 explicit independent-
 decoder Rust tests, fmt/Clippy and reproducible-WASM checks passed.
 
+## Bounded UV coefficient decisions and cost reuse
+
+`a0f5768f` integrates the UV coefficient decision from `081fdce3`, and
+`057bc7c3` integrates exact-semantic cost factorization from `68ac0e27`.
+For q60 UV blocks, the residual trial considers one alternative: remove the
+last nonzero scanned AC coefficient when its magnitude is one. DC remains.
+The decision compares actual clamped reconstructed-pixel SSE and plane-2 token
+cost under isolated local contexts. An alternative needs both lower estimated
+rate and lower SSE-times-256 plus lambda-times-rate. Global state changes only
+when the macroblock mode wins. The later textured-only restriction retains
+nearest coefficients for existing fine-smooth, flat and ramp segments.
+
+Cost factorization caches luma and UV token costs in fixed stack arrays while
+preserving per-pair header admission, iteration/tie order and winner-only state
+changes. An all-zero pair emits no tokens; a single zero fragment still pays
+for its EOB tokens when the other fragment is nonzero. No heap, ABI, preset or
+resource ceiling changed. Independent reviews found no actionable defect.
+
+The combined source `057bc7c3` passed 92 Rust tests including 11 independent
+decoder tests, fmt/Clippy, compiled ABI2 and reproducible-WASM checks.
+`776158aa` then added a test that asserts a real signed unit-AC removal on both
+U and V before independently checking visible YUV with native VP8 and libvpx.
+That additional test passed; rebuilt executable bytes were unchanged. The
+redundant same-emitter byte assertion from the factorization lane was removed;
+its differential score/error/selection and trial-isolation assertions remain.
+
+| Candidate | Actual tested source / WASM SHA256 | Complete result |
+| --- | --- | --- |
+| 30, all q60 segments | `776158aa` / `cf6533d22ef1957d233f338443da141e494c4a65098aa111fcfd8bf1c029bdac` | 44/45 tuning; gradient PSNR 33.096804 < 35.955451 and SSIM 0.885645 < 0.951394; exposed cohorts not run |
+| 31, existing TEXTURED segment only | `76654d8a` / `d3547c503f30c690c0e510b0d69a95963bce67940446c4627f19af87af3cb994` | 223/225 known conditions; every size gate passes, two SSIM failures remain |
+
+Candidate31 fails q60 v2 chroma SSIM 0.178890 < 0.180282 and v4 tiny SSIM
+0.541997 < 0.549910. Its v4 text is 2,290 bytes against the unchanged
+2,365-byte ceiling, versus candidate26's 2,388 bytes. Candidate31's artifact is
+179,536 raw / 37,371 gzip bytes with unchanged 192-MiB linear maximum. This
+is an observed rate improvement on that control, not an adoption result.
+All raw outcomes remain under `m2-uv-rdo-30-*` and
+`m2-uv-texture-rdo-31-*`. Further work should inspect selected residual changes
+and actual distortion before another prospective correction.
+
 ## Next qualifying work
 
 The source-only corrected-v5 freeze has 18 new inputs / 54 conditions and an
@@ -82,8 +122,8 @@ No v5 codec outputs have been generated at this checkpoint. Complete correctable
 rate decisions before freezing an exact candidate for the first full evaluation.
 
 Bounded UV coefficient rate/distortion decisions and exact-semantic trial-cost
-factorization are independent implementation lanes. Their results must be
-reviewed and integrated before making new quality or speed claims. Preserve
+factorization are now integrated engineering changes. Their current quality
+failures still require correction before fresh evaluation. Preserve
 unfiltered reconstruction, input/settings identity, deterministic output,
 resource ceilings and host-task cancellation. New source requires controlled
 evidence; native Canvas output cannot qualify the owned software route.
