@@ -251,10 +251,13 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
   const attempts: RecordJson[] = [];
   const common = new Map<string, string>();
   const missing = new Set<string>([
-    'CPU model and core count',
-    'neighbor load trace',
-    'browser executable fingerprint',
+    'guest CPU model and core count',
+    'guest neighboring load trace',
+    'selected browser executable fingerprint',
+    'host neighboring load trace',
+    'post-retire linear retention',
   ]);
+  const allObserved = { cpu: true, browser: true, load: true };
   for (const [attemptIndex, supplied] of roots.entries()) {
     const root = resolve(supplied);
     await directory(root, 'attempt root');
@@ -415,6 +418,185 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
     const report = object(receiptFile.value, 'timing receipt');
     same(report.scenario, bundle.scenario, 'timing scenario');
     same(report.browserVersion, result.browser_version, 'browser version');
+    const patch = report.priorLegacyLoaderPatch;
+    if (patch !== undefined) {
+      const loaderPatch = object(patch, 'prior loader patch');
+      assert(
+        typeof loaderPatch.path === 'string' &&
+          /^assets\/webp-wasm[-.][\w-]{8}\.js$/.test(loaderPatch.path),
+        'prior loader patch path invalid'
+      );
+      const inventory = payloadEntry(
+        bundleFiles,
+        `validation/windows/prior-dist/${loaderPatch.path}`
+      );
+      same(
+        loaderPatch.originalSha256,
+        inventory.sha256,
+        'prior loader patch differs from payload inventory'
+      );
+      for (const [build, prefix] of [
+        ['prior', 'validation/windows/prior-dist'],
+        ['candidate', 'dist'],
+      ] as const) {
+        const patches = list(report[`${build}WorkerPatches`], `${build} Worker patches`);
+        for (const raw of patches) {
+          const workerPatch = object(raw, `${build} Worker patch`);
+          assert(
+            typeof workerPatch.path === 'string' &&
+              /^assets\/worker[-.][\w-]{8}\.js$/.test(workerPatch.path),
+            `${build} Worker patch path invalid`
+          );
+          const source = payloadEntry(bundleFiles, `${prefix}/${workerPatch.path}`);
+          same(
+            workerPatch.originalSha256,
+            source.sha256,
+            `${build} Worker patch differs from payload inventory`
+          );
+        }
+      }
+    }
+    const timingEnvironmentName = `${bundle.scenario}-timing-environment.json`;
+    let timingEnvironmentSha256: string | null = null;
+    let timingBrowser: RecordJson | null = null;
+    let timingCpu: unknown = null;
+    let timingLoadCoverage = false;
+    if (collected.has(timingEnvironmentName)) {
+      const timingFile = await json(
+        join(root, 'output', timingEnvironmentName),
+        'timing environment',
+        JSON_LIMIT
+      );
+      timingEnvironmentSha256 = timingFile.sha256;
+      same(
+        timingFile.sha256,
+        hex(
+          entry(collection, timingEnvironmentName, 'collection').sha256,
+          'timing environment digest'
+        ),
+        'timing environment collection digest'
+      );
+      const observed = object(timingFile.value, 'timing environment');
+      same(observed.schemaVersion, 1, 'timing environment schema');
+      same(observed.scope, 'guest', 'timing environment scope');
+      same(observed.hostNeighborLoad, 'UNOBSERVED', 'host neighbor scope');
+      if (observed.before !== null && observed.after !== null) {
+        const beforeTiming = object(observed.before, 'timing environment before');
+        const afterTiming = object(observed.after, 'timing environment after');
+        const beforeCpu = list(beforeTiming.cpu, 'guest CPU');
+        assert(
+          Number.isSafeInteger(beforeTiming.guestNodePid) &&
+            (beforeTiming.guestNodePid as number) > 0,
+          'guest Node PID invalid'
+        );
+        same(afterTiming.guestNodePid, beforeTiming.guestNodePid, 'before/after guest Node PID');
+        assert(beforeCpu.length > 0 && beforeCpu.length <= 8, 'guest CPU inventory invalid');
+        for (const cpu of beforeCpu) {
+          const item = object(cpu, 'guest CPU');
+          assert(
+            typeof item.model === 'string' && item.model.length > 0 && item.model.length <= 256,
+            'guest CPU model invalid'
+          );
+          for (const field of ['cores', 'logicalProcessors'])
+            assert(
+              Number.isSafeInteger(item[field]) && (item[field] as number) > 0,
+              `guest CPU ${field} invalid`
+            );
+        }
+        same(afterTiming.cpu, beforeTiming.cpu, 'before/after guest CPU');
+        const beforeBrowser = object(beforeTiming.browser, 'selected browser before');
+        const afterBrowser = object(afterTiming.browser, 'selected browser after');
+        assert(
+          beforeBrowser.name === 'msedge.exe' || beforeBrowser.name === 'chrome.exe',
+          'selected browser name invalid'
+        );
+        assert(
+          Number.isSafeInteger(beforeBrowser.pid) && (beforeBrowser.pid as number) > 0,
+          'selected browser PID invalid'
+        );
+        same(beforeBrowser.parentPid, beforeTiming.guestNodePid, 'selected browser parent PID');
+        hex(beforeBrowser.sha256, 'selected browser executable');
+        assert(
+          Number.isSafeInteger(beforeBrowser.bytes) && (beforeBrowser.bytes as number) > 0,
+          'selected browser executable size invalid'
+        );
+        same(beforeBrowser.version, result.browser_version, 'selected browser version');
+        same(afterBrowser, beforeBrowser, 'before/after selected browser executable');
+        timingBrowser = beforeBrowser;
+        timingCpu = beforeCpu;
+        for (const [field, value] of [
+          ['guestCpu', beforeCpu],
+          ['browserExecutableSha256', beforeBrowser.sha256],
+          ['browserExecutableName', beforeBrowser.name],
+        ] as Array<[string, unknown]>) {
+          const serialized = stable(value);
+          if (common.has(field)) same(serialized, common.get(field), `cross-attempt ${field}`);
+          else common.set(field, serialized);
+        }
+      } else {
+        allObserved.cpu = false;
+        allObserved.browser = false;
+      }
+      const load = object(observed.load, 'guest load trace');
+      same(load.scope, 'guest-total-processor', 'guest load scope');
+      same(load.truncated, false, 'guest load trace truncation');
+      same(load.samplerError, false, 'guest load sampler');
+      same(load.reaped, true, 'guest load sampler cleanup');
+      const samples = list(load.samples, 'guest load samples');
+      if (samples.length >= 2) {
+        const times = samples.map((raw) => {
+          const item = object(raw, 'guest load sample');
+          assert(
+            typeof item.utc === 'string' && Number.isFinite(Date.parse(item.utc)),
+            'guest load timestamp invalid'
+          );
+          assert(
+            typeof item.guestTotalCpuPercent === 'number' &&
+              Number.isFinite(item.guestTotalCpuPercent) &&
+              item.guestTotalCpuPercent >= 0 &&
+              item.guestTotalCpuPercent <= 100,
+            'guest load percentage invalid'
+          );
+          return Date.parse(item.utc);
+        });
+        assert(
+          times.every(
+            (time, index) =>
+              index === 0 || (time > times[index - 1]! && time - times[index - 1]! <= 6_000)
+          ),
+          'guest load samples have a gap or reversal'
+        );
+        const timingSamples = list(report.samples, 'timing samples');
+        const samplerStart = Date.parse(load.startedUtc as string);
+        const samplerEnd = Date.parse(load.endedUtc as string);
+        assert(
+          Number.isFinite(samplerStart) &&
+            Number.isFinite(samplerEnd) &&
+            samplerStart <= times[0]! &&
+            times.at(-1)! <= samplerEnd,
+          'guest load sampler window invalid'
+        );
+        const starts = timingSamples.map((raw) =>
+          Date.parse(object(raw, 'timing sample').wallStart as string)
+        );
+        const ends = timingSamples.map((raw) => {
+          const sample = object(raw, 'timing sample');
+          return (
+            Date.parse(sample.wallStart as string) + (sample.requestToDownloadReadyMs as number)
+          );
+        });
+        timingLoadCoverage =
+          samplerStart <= Math.min(...starts) &&
+          samplerEnd >= Math.max(...ends) &&
+          times[0]! <= Math.min(...starts) &&
+          times.at(-1)! >= Math.max(...ends);
+        if (!timingLoadCoverage) allObserved.load = false;
+      } else allObserved.load = false;
+    } else {
+      allObserved.cpu = false;
+      allObserved.browser = false;
+      allObserved.load = false;
+    }
     const before = object(environment.before, 'environment before');
     const after = object(environment.after, 'environment after');
     same(environment.readiness, 'passed', 'environment readiness');
@@ -472,6 +654,7 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
         result: resultFile.sha256,
         environment: environmentFile.sha256,
         timingReceipt: receiptFile.sha256,
+        timingEnvironment: timingEnvironmentSha256,
       },
       collectedFiles: collection.map((raw) => {
         const item = object(raw, 'collection entry');
@@ -489,26 +672,57 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
       selectorSha256: hex(selector.sha256, 'selector digest'),
       buildLogSha256: hex(bundle.build_log_sha256, 'build log digest'),
       browserVersion: result.browser_version,
+      timingGuest: {
+        environmentSha256: timingEnvironmentSha256,
+        cpu: timingCpu,
+        browser: timingBrowser
+          ? {
+              name: timingBrowser.name,
+              pid: timingBrowser.pid,
+              version: timingBrowser.version,
+              executableSha256: timingBrowser.sha256,
+              executableBytes: timingBrowser.bytes,
+            }
+          : null,
+        loadScope: timingEnvironmentSha256 ? 'guest-total-processor' : null,
+        loadCoverage: timingLoadCoverage ? 'complete' : 'NOT_VERIFIED',
+        hostNeighborLoad: 'UNOBSERVED',
+      },
       vmGuid: before.vm_id,
       readiness: environment.readiness,
       drift: environment.drift,
       functionalCorroboration:
-        'Candidate ABI begin calls are in a separate conversion after timed samples; forced Canvas unavailable and same build support route correlation, not a per-timed-job execution proof.',
+        'The separate candidate cadence conversion corroborates output frame work; per-job timing probe status is checked independently.',
     });
   }
+  if (allObserved.cpu) missing.delete('guest CPU model and core count');
+  if (allObserved.browser) missing.delete('selected browser executable fingerprint');
+  if (allObserved.load) missing.delete('guest neighboring load trace');
   return { reports, receiptHashes, attempts, common, missing };
 }
 
 export async function verifyAttempts(roots: readonly string[], pins: AttemptPins) {
   const { reports, receiptHashes, attempts, common, missing } = await readAttempts(roots, pins);
   const numeric = verifyTiming(reports, pins, receiptHashes);
+  if (numeric.samples.some((sample) => sample.timingAttestation.status === 'MISSING'))
+    missing.add('per-job timing attestation');
+  if (
+    numeric.samples.some((sample) =>
+      [
+        'EXECUTION_UNKNOWN',
+        'WORKER_COMPLETED_ABI_AND_COPY_UNKNOWN',
+        'LEGACY_EXECUTION_AND_COPY_UNKNOWN',
+      ].includes(sample.timingAttestation.status)
+    )
+  )
+    missing.add('per-job encoder/copy execution');
   return {
     ...numeric,
     qualification: 'NOT_VERIFIED',
     qualificationReason:
-      'The validated attempt chain binds maintained controller and product receipts. Separate candidate ABI execution corroborates the forced software route, but timed jobs lack direct execution proof; production copied bytes, relevant retained capacity, CPU/neighbor load and executable fingerprint remain unverified. Numeric PASS alone does not qualify the program.',
+      'The collected chain binds per-job timing probes and available guest CPU/browser/load observations. Host neighboring load is not observed by the guest profile, and incomplete probes or environment fields cannot qualify the full program. Numeric PASS alone is not qualification.',
     evidenceScope:
-      'maintained Windows controller attempt metadata and byte hashes; Chromium engine follows the Playwright channel launcher route, not an independent executable fingerprint',
+      'maintained Windows controller attempt metadata and byte hashes; guest process executable identity is separately observed when available, while host neighboring load is unobserved',
     controller: {
       channel: JSON.parse(common.get('browser')!) as string,
       engine: 'Chromium (launcher-route inference)',
@@ -535,6 +749,12 @@ export async function verifyAttempts(roots: readonly string[], pins: AttemptPins
           'native_high_contrast',
         ].map((key) => [key, JSON.parse(common.get(key)!)])
       ),
+      comparableGuestCpu: missing.has('guest CPU model and core count')
+        ? null
+        : JSON.parse(common.get('guestCpu')!),
+      selectedBrowserExecutableSha256: missing.has('selected browser executable fingerprint')
+        ? null
+        : JSON.parse(common.get('browserExecutableSha256')!),
       missingObservations: [...missing],
     },
     attempts,

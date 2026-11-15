@@ -548,6 +548,8 @@
     "validation/windows/owned-vp8-inputs",
     "validation/windows/helpers/owned-vp8-probe.ts",
     "validation/windows/helpers/owned-vp8-product.ts",
+    "validation/windows/vp8-timing-probe.ts",
+    "validation/windows/helpers/vp8-windows-environment.ts",
     "validation/windows/helpers/owned-demux-product.ts",
     "validation/windows/helpers/owned-demux-measurement.ts",
     "test/fixtures/owned-demux"

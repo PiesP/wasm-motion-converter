@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -249,8 +249,12 @@ async function refresh(root: string) {
   const bundle = await readFile(join(root, 'bundle.json'));
   await writeFile(join(root, 'payload/bundle.json'), bundle);
   const reportName = (JSON.parse(bundle.toString()) as { scenario: string }).scenario + '.json';
+  const timingEnvironment = (await readdir(output)).filter((file) =>
+    file.endsWith('-timing-environment.json')
+  );
+  const artifactsToCollect = [reportName, 'environment.json', ...timingEnvironment];
   const artifacts = await Promise.all(
-    [reportName, 'environment.json'].map(async (file) => {
+    artifactsToCollect.map(async (file) => {
       const bytes = await readFile(join(output, file));
       return { file, bytes: bytes.length, sha256: sha(bytes) };
     })
@@ -281,12 +285,10 @@ async function refresh(root: string) {
   };
   await writeFile(join(output, 'result.json'), encode(result));
   const collection = await Promise.all(
-    [reportName, 'environment.json', 'stdout.txt', 'stderr.txt', 'result.json'].map(
-      async (file) => ({
-        file,
-        sha256: sha(await readFile(join(output, file))),
-      })
-    )
+    [...artifactsToCollect, 'stdout.txt', 'stderr.txt', 'result.json'].map(async (file) => ({
+      file,
+      sha256: sha(await readFile(join(output, file))),
+    }))
   );
   await writeFile(join(root, 'collection.json'), encode(collection));
 }
@@ -306,6 +308,120 @@ async function withAttempts(run: (roots: string[]) => Promise<void>) {
   }
 }
 
+async function writeTimingEnvironment(root: string) {
+  const scenario = (
+    JSON.parse(await readFile(join(root, 'bundle.json'), 'utf8')) as {
+      scenario: string;
+    }
+  ).scenario;
+  const report = JSON.parse(await readFile(join(root, 'output', `${scenario}.json`), 'utf8')) as {
+    samples: Array<{ wallStart: string; requestToDownloadReadyMs: number }>;
+  };
+  const first = Math.min(...report.samples.map((sample) => Date.parse(sample.wallStart)));
+  const last = Math.max(
+    ...report.samples.map(
+      (sample) => Date.parse(sample.wallStart) + sample.requestToDownloadReadyMs
+    )
+  );
+  const browser = {
+    name: 'msedge.exe',
+    pid: 4000,
+    parentPid: 3000,
+    version: '123.0',
+    sha256: 'a'.repeat(64),
+    bytes: 2000,
+  };
+  const snapshot = {
+    scope: 'guest',
+    guestNodePid: 3000,
+    cpu: [{ model: 'Test CPU', cores: 4, logicalProcessors: 8 }],
+    browser,
+  };
+  const samples = Array.from(
+    { length: Math.ceil((last - first + 4000) / 2000) + 1 },
+    (_, index) => ({
+      utc: new Date(first - 2000 + index * 2000).toISOString(),
+      guestTotalCpuPercent: 10,
+    })
+  );
+  const environment = {
+    schemaVersion: 1,
+    scope: 'guest',
+    hostNeighborLoad: 'UNOBSERVED',
+    before: snapshot,
+    after: structuredClone(snapshot),
+    load: {
+      scope: 'guest-total-processor',
+      startedUtc: new Date(first - 4000).toISOString(),
+      endedUtc: new Date(last + 4000).toISOString(),
+      truncated: false,
+      samplerError: false,
+      reaped: true,
+      samples,
+    },
+  };
+  await writeFile(join(root, 'output', `${scenario}-timing-environment.json`), encode(environment));
+  await refresh(root);
+}
+
+test('collected guest CPU, browser executable and bounded load join across attempts', async () => {
+  await withAttempts(async (roots) => {
+    for (const root of roots) await writeTimingEnvironment(root);
+    const result = await readAttempts(roots, expected);
+    assert.deepEqual(
+      [...result.missing],
+      ['host neighboring load trace', 'post-retire linear retention']
+    );
+    assert.equal(result.attempts.length, 15);
+    assert.equal(typeof result.attempts[0]?.hashes, 'object');
+    const scenario = (
+      JSON.parse(await readFile(join(roots[0]!, 'bundle.json'), 'utf8')) as {
+        scenario: string;
+      }
+    ).scenario;
+    const name = `${scenario}-timing-environment.json`;
+    const path = join(roots[0]!, 'output', name);
+    const environment = JSON.parse(await readFile(path, 'utf8')) as {
+      before: { browser: { sha256: string } };
+      after: { cpu: Array<{ model: string }>; browser: { sha256: string } };
+      load: { samples: unknown[] };
+    };
+    environment.after.cpu[0]!.model = 'Drifted CPU';
+    await writeFile(path, encode(environment));
+    await refresh(roots[0]!);
+    await assert.rejects(readAttempts(roots, expected), /before\/after guest CPU/);
+    environment.after.cpu[0]!.model = 'Test CPU';
+    environment.before.browser.sha256 = 'b'.repeat(64);
+    environment.after.browser.sha256 = 'b'.repeat(64);
+    await writeFile(path, encode(environment));
+    await refresh(roots[0]!);
+    await assert.rejects(readAttempts(roots, expected), /cross-attempt browserExecutableSha256/);
+    environment.before.browser.sha256 = 'a'.repeat(64);
+    environment.after.browser.sha256 = 'a'.repeat(64);
+    const continuousSamples = [...environment.load.samples];
+    environment.load.samples.splice(4, 4);
+    await writeFile(path, encode(environment));
+    await refresh(roots[0]!);
+    await assert.rejects(readAttempts(roots, expected), /guest load samples have a gap/);
+    environment.load.samples = continuousSamples;
+    (environment.load as { reaped?: boolean }).reaped = false;
+    await writeFile(path, encode(environment));
+    await refresh(roots[0]!);
+    await assert.rejects(readAttempts(roots, expected), /guest load sampler cleanup/);
+  });
+});
+
+test('a partial guest environment cohort stays unverified', async () => {
+  await withAttempts(async (roots) => {
+    for (const root of roots.slice(0, 14)) await writeTimingEnvironment(root);
+    const result = await readAttempts(roots, expected);
+    assert.ok(result.missing.has('guest CPU model and core count'));
+    assert.ok(result.missing.has('guest neighboring load trace'));
+    assert.ok(result.missing.has('selected browser executable fingerprint'));
+    assert.ok(result.missing.has('host neighboring load trace'));
+  });
+});
+
 test('joins fifteen complete physical attempt payloads and retains their metadata scope', async () => {
   await withAttempts(async (roots) => {
     const result = await readAttempts(roots, expected);
@@ -313,7 +429,7 @@ test('joins fifteen complete physical attempt payloads and retains their metadat
     assert.equal(result.attempts.length, 15);
     assert.equal(result.common.get('browser'), '"msedge"');
     assert.equal(result.common.get('vm_id'), `"${vmGuid}"`);
-    assert.ok(result.missing.has('neighbor load trace'));
+    assert.ok(result.missing.has('host neighboring load trace'));
     assert.ok(!JSON.stringify(result).includes(roots[0]!));
     await assert.rejects(verifyAttempts(roots, expected), /frozen prior module/);
   });

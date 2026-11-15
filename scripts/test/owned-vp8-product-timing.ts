@@ -9,6 +9,8 @@ import { readBuild } from '../../validation/windows/app-update.ts';
 
 const PRIOR_SOURCE = 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4';
 const PRIOR_WASM = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
+const PRIOR_LOADER = '15cd582651f78831babe9b54012388f22614c48b39c899fa2772e62b037dae47';
+const PRIOR_LOADER_PATCH = '125b2d4ee079151de879afa1315e10e98425f146d4c6b86fbc2f051e3879ec4a';
 const INPUT = 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1';
 const CACHE_SCOPE =
   'new browser context for this build; first is first-in-document, not proven fresh-profile cold';
@@ -140,6 +142,140 @@ function checkResource(sample: Json, modulePath: string, label: string) {
   return resourceIds;
 }
 
+/** Admit a numeric probe only for the exact UI job that produced this sample. */
+export function checkTimingAttestation(value: unknown, epoch: string, build: Build) {
+  if (value === undefined) return { status: 'MISSING' as const, epoch };
+  const probe = object(value, `${epoch} timing attestation`);
+  equal(probe.epoch, epoch, `${epoch} attestation epoch`);
+  equal(probe.epochMatches, true, `${epoch} active epoch`);
+  equal(probe.scope, 'main-observed-worker-route-only', `${epoch} probe scope`);
+  const fields = [
+    'ownedInstances',
+    'successfulBeginCalls',
+    'stepCalls',
+    'retireCalls',
+    'inputCopyBytes',
+    'outputCopyBytes',
+    'inputCopyEvents',
+    'outputCopyEvents',
+    'unknownCopyKinds',
+    'peakLinearCapacityBytes',
+    'capacityAtJobEndBytes',
+    'workerStarts',
+    'workerCompletions',
+    'workerErrors',
+    'staleWorkerEvents',
+    'legacyIndexedCopyEvents',
+  ] as const;
+  function checkState(state: Json, name: string, main = false) {
+    assert.deepEqual(
+      Object.keys(state).sort(),
+      ['epoch', ...fields, ...(main ? ['epochMatches', 'scope', 'workerObservation'] : [])].sort(),
+      `${name} has unsupported fields`
+    );
+    for (const field of fields) {
+      const observed = number(state[field], `${name} ${field}`);
+      assert(Number.isSafeInteger(observed) && observed >= 0, `${name} ${field} is invalid`);
+    }
+    equal(state.staleWorkerEvents, 0, `${name} stale Worker events`);
+    equal(state.unknownCopyKinds, 0, `${name} unknown copy kind`);
+  }
+  checkState(probe, epoch, true);
+  assert(
+    (probe.workerCompletions as number) <= (probe.workerStarts as number),
+    `${epoch} Worker completed without start`
+  );
+  assert(
+    (probe.workerErrors as number) <= (probe.workerStarts as number),
+    `${epoch} Worker errored without start`
+  );
+  const workerObservation =
+    probe.workerObservation === null
+      ? null
+      : object(probe.workerObservation, `${epoch} Worker observation`);
+  let worker: Json | null = null;
+  let workerRequestId: string | null = null;
+  if (workerObservation) {
+    assert.deepEqual(
+      Object.keys(workerObservation).sort(),
+      ['requestId', 'state'],
+      `${epoch} Worker observation has unsupported fields`
+    );
+    equal(probe.workerStarts, 1, `${epoch} Worker start count`);
+    equal(probe.workerCompletions, 1, `${epoch} Worker completion count`);
+    equal(probe.workerErrors, 0, `${epoch} Worker error count`);
+    workerRequestId = workerObservation.requestId as string;
+    assert(
+      typeof workerRequestId === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(workerRequestId),
+      `${epoch} Worker request ID invalid`
+    );
+    worker = object(workerObservation.state, `${epoch} Worker state`);
+    equal(worker.epoch, workerRequestId, `${epoch} Worker epoch`);
+    checkState(worker, `${epoch} Worker`);
+    assert(JSON.stringify(worker).length <= 1024, `${epoch} Worker snapshot exceeds bound`);
+  }
+  if (build === 'prior') {
+    equal(probe.ownedInstances, 0, `${epoch} prior owned instance`);
+    equal(probe.successfulBeginCalls, 0, `${epoch} prior owned begin`);
+    if (worker) {
+      equal(worker.ownedInstances, 0, `${epoch} prior Worker owned instance`);
+      equal(worker.successfulBeginCalls, 0, `${epoch} prior Worker owned begin`);
+    }
+    const actual = worker ?? probe;
+    if ((actual.legacyIndexedCopyEvents as number) > 0) {
+      assert(
+        (actual.inputCopyBytes as number) > 0 &&
+          (actual.outputCopyBytes as number) > 0 &&
+          (actual.peakLinearCapacityBytes as number) >= (actual.capacityAtJobEndBytes as number) &&
+          (actual.capacityAtJobEndBytes as number) > 0,
+        `${epoch} legacy copy/capacity evidence incomplete`
+      );
+      return { status: 'LEGACY_BOUNDARY_COPIES_OBSERVED' as const, epoch, probe, workerRequestId };
+    }
+    return { status: 'LEGACY_EXECUTION_AND_COPY_UNKNOWN' as const, epoch, probe, workerRequestId };
+  }
+  const execution = worker ?? probe;
+  if ((probe.workerCompletions as number) > 0) {
+    equal(probe.successfulBeginCalls, 0, `${epoch} dual main/Worker encoder`);
+    if (!worker)
+      return {
+        status: 'WORKER_COMPLETED_ABI_AND_COPY_UNKNOWN' as const,
+        epoch,
+        probe,
+        workerRequestId,
+      };
+  }
+  if ((execution.successfulBeginCalls as number) > 0) {
+    assert(
+      (execution.ownedInstances as number) > 0 &&
+        (execution.stepCalls as number) > 0 &&
+        (execution.retireCalls as number) > 0,
+      `${epoch} incomplete owned ABI execution`
+    );
+    assert(
+      (execution.inputCopyBytes as number) > 0 &&
+        (execution.outputCopyBytes as number) > 0 &&
+        (execution.inputCopyEvents as number) > 0 &&
+        (execution.outputCopyEvents as number) > 0,
+      `${epoch} observed copy events absent`
+    );
+    assert(
+      (execution.peakLinearCapacityBytes as number) >=
+        (execution.capacityAtJobEndBytes as number) &&
+        (execution.capacityAtJobEndBytes as number) > 0,
+      `${epoch} linear capacity invalid`
+    );
+    return {
+      status: worker ? ('OWNED_WORKER_OBSERVED' as const) : ('OWNED_MAIN_OBSERVED' as const),
+      epoch,
+      probe,
+      workerRequestId,
+    };
+  }
+  return { status: 'EXECUTION_UNKNOWN' as const, epoch, probe, workerRequestId };
+}
+
 export function verifyTiming(
   reports: readonly unknown[],
   expected: {
@@ -162,6 +298,9 @@ export function verifyTiming(
   equal(candidateDist.module.sha256, expected.candidateModuleSha256, 'candidate module');
   const seenReceipts = new Set<string>();
   const invocationKeys = new Set<string>();
+  const attestationEpochs = new Set<string>();
+  const workerRequestIds = new Set<string>();
+  let attestationMode: boolean | undefined;
   const common = new Map<string, string>();
   const orders = new Map<Quality, string[]>();
   const measured = new Map<string, number[]>();
@@ -180,9 +319,35 @@ export function verifyTiming(
     navigationCount: number;
     contextCacheScope: string;
     wasmResources: Array<{ path: string; transferSize: number; encodedBodySize: number }>;
+    timingAttestation: ReturnType<typeof checkTimingAttestation>;
   }> = [];
   for (const [index, raw] of reports.entries()) {
     const report = object(raw, 'controller receipt');
+    const invocationId = report.timingInvocationId;
+    if (invocationId !== undefined)
+      assert(
+        typeof invocationId === 'string' &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(invocationId),
+        'timing invocation ID is invalid'
+      );
+    const hasTimingAttestation =
+      Array.isArray(report.samples) &&
+      report.samples.some(
+        (sample) => sample !== null && typeof sample === 'object' && 'timingAttestation' in sample
+      );
+    if (attestationMode === undefined) attestationMode = hasTimingAttestation;
+    else equal(hasTimingAttestation, attestationMode, 'mixed attestation receipt mode');
+    if (hasTimingAttestation) {
+      assert(invocationId, 'timing invocation ID absent');
+      const patch = object(report.priorLegacyLoaderPatch, 'prior legacy loader patch');
+      assert(
+        typeof patch.path === 'string' && /^assets\/webp-wasm[-.][\w-]{8}\.js$/.test(patch.path),
+        'prior loader path invalid'
+      );
+      equal(patch.originalSha256, PRIOR_LOADER, 'prior loader original digest');
+      equal(patch.patchedSha256, PRIOR_LOADER_PATCH, 'prior loader patched digest');
+      equal(patch.instrumentation, 'post-loop-actual-iteration-count', 'prior loader patch kind');
+    }
     const controllerReceiptSha256 = sha(receiptDigests[index], 'controller receipt digest');
     const receiptHash = digest(Buffer.from(JSON.stringify(raw)));
     assert(!seenReceipts.has(receiptHash), 'duplicate controller receipt');
@@ -238,7 +403,15 @@ export function verifyTiming(
     }
     const samples = array(report.samples, 'timing samples');
     equal(samples.length, 4, 'timing sample count');
+    if (hasTimingAttestation)
+      assert(
+        samples.every(
+          (sample) => sample !== null && typeof sample === 'object' && 'timingAttestation' in sample
+        ),
+        'partial timing attestation receipt'
+      );
     const cells = new Map<string, Json>();
+    const receiptAttestations: Array<{ build: Build; workerCompletions: number }> = [];
     for (const rawSample of samples) {
       const sample = object(rawSample, 'timing sample');
       const build = sample.build;
@@ -284,6 +457,29 @@ export function verifyTiming(
         (build === 'prior' ? priorDist : candidateDist).module.path,
         label
       );
+      const caseId = `owned-vp8-${report.scenario}-${build}-v8-full-${quality}-${condition}`;
+      const epoch: string = typeof invocationId === 'string' ? `${invocationId}:${caseId}` : caseId;
+      if (invocationId) {
+        assert(!attestationEpochs.has(epoch), `${label} duplicate attestation epoch`);
+        attestationEpochs.add(epoch);
+      }
+      const timingAttestation = checkTimingAttestation(sample.timingAttestation, epoch, build);
+      if ('probe' in timingAttestation)
+        receiptAttestations.push({
+          build,
+          workerCompletions: timingAttestation.probe.workerCompletions as number,
+        });
+      if (sample.timingAttestation !== undefined)
+        assert(invocationId, `${label} invocation ID absent`);
+      if (hasTimingAttestation)
+        assert(sample.timingAttestation !== undefined, `${label} timing attestation absent`);
+      if ('workerRequestId' in timingAttestation && timingAttestation.workerRequestId) {
+        assert(
+          !workerRequestIds.has(timingAttestation.workerRequestId),
+          `${label} duplicate Worker request ID`
+        );
+        workerRequestIds.add(timingAttestation.workerRequestId);
+      }
       const bucket = `${quality}/${condition}/${build}`;
       const values = measured.get(bucket) ?? [];
       values.push(elapsed);
@@ -303,7 +499,29 @@ export function verifyTiming(
         navigationCount: sample.navigationCount as number,
         contextCacheScope: sample.contextCacheScope as string,
         wasmResources,
+        timingAttestation,
       });
+    }
+    if (hasTimingAttestation) {
+      for (const build of ['prior', 'candidate'] as const) {
+        const patches = array(report[`${build}WorkerPatches`], `${build} Worker patches`);
+        assert(patches.length <= 16, `${build} Worker patch count exceeds bound`);
+        if (receiptAttestations.some((item) => item.build === build && item.workerCompletions > 0))
+          assert(patches.length > 0, `${build} Worker completed without source-bound patch`);
+        let identity: string | null = null;
+        for (const raw of patches) {
+          const patch = object(raw, `${build} Worker patch`);
+          assert(
+            typeof patch.path === 'string' && /^assets\/worker[-.][\w-]{8}\.js$/.test(patch.path),
+            `${build} Worker patch path invalid`
+          );
+          const original = sha(patch.originalSha256, `${build} Worker original digest`);
+          const patched = sha(patch.patchedSha256, `${build} Worker patched digest`);
+          const serialized = `${patch.path}/${original}/${patched}`;
+          if (identity !== null) equal(serialized, identity, `${build} mixed Worker patch`);
+          else identity = serialized;
+        }
+      }
     }
     for (const build of ['prior', 'candidate'] as const) {
       const first = cells.get(`${build}/first-in-document`)!;
@@ -386,7 +604,7 @@ export function verifyTiming(
     numericGate: regression ? 'FAIL' : 'PASS',
     qualification: 'NOT_VERIFIED',
     qualificationReason:
-      'Timed samples attest a fetched WASM resource, but the maintained V8 receipt does not attest the executed encoder route for each timed conversion or copied bytes and retained capacity. Separate candidate cadence instrumentation is outside timing; prior execution is not independently instrumented.',
+      'Per-job numeric probes are bound to timing epochs where present. Worker termination before timing seals prevents post-clock ABI/copy/capacity snapshots; legacy Emscripten indexed HEAPU8 writes are not observable through the supported copy hooks. CPU/load/browser executable identity and complete main/Worker copy coverage remain unverified.',
     identities: {
       prior: priorDist,
       candidate: candidateDist,

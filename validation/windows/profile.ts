@@ -42,6 +42,7 @@ import { exerciseOwnedDemuxServiceMeasurement } from './helpers/owned-demux-meas
 import { exerciseOwnedDemuxProduct } from './helpers/owned-demux-product.ts';
 import { runOwnedVp8NativeProbe } from './helpers/owned-vp8-probe.ts';
 import { exerciseOwnedVp8Product } from './helpers/owned-vp8-product.ts';
+import { withVp8WindowsEnvironment } from './helpers/vp8-windows-environment.ts';
 import {
   assertUsefulOutput,
   classifyWasmWarmCache,
@@ -3857,17 +3858,21 @@ export async function run({
     ]);
     const started = await startStaticServer(bundleRoot);
     try {
-      return await exerciseOwnedVp8Product({
-        browser,
-        bundleRoot,
-        output,
-        scenario,
-        prior,
-        candidate,
-        server: started,
-        validateBundleFile,
-        loadApplication,
-      });
+      const exercise = () =>
+        exerciseOwnedVp8Product({
+          browser,
+          bundleRoot,
+          output,
+          scenario,
+          prior,
+          candidate,
+          server: started,
+          validateBundleFile,
+          loadApplication,
+        });
+      return scenario.includes('-v8')
+        ? await withVp8WindowsEnvironment(browser, output, scenario, exercise)
+        : await exercise();
     } finally {
       await closeServer(started.server);
     }

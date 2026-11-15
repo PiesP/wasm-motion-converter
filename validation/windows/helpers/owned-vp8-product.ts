@@ -3,13 +3,14 @@
 
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/test';
 
 import { installMotionObserver } from '../motion-signature.ts';
+import { installVp8TimingProbe } from '../vp8-timing-probe.ts';
 
 type Build = {
   relativePath: string;
@@ -103,6 +104,23 @@ const LARGE_ADMITTED_FIXTURE: Fixture = {
 const MAX_ADMITTED_FRAME_PIXELS = 10_066_329;
 const PINNED_PRIOR_LEGACY_WASM_SHA256 =
   '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
+const PINNED_PRIOR_LEGACY_LOADER_SHA256 =
+  '15cd582651f78831babe9b54012388f22614c48b39c899fa2772e62b037dae47';
+const LEGACY_COPY_LOOP = 'else for(var s=0;s<r;++s)b[o+s]=t[s];return e!==null';
+const LEGACY_OBSERVED_COPY_LOOP =
+  'else{for(var s=0;s<r;++s)b[o+s]=t[s];globalThis.__wmcVp8LegacyCopy?.(b,oe,o,s,t)}return e!==null';
+
+export function patchPinnedLegacyLoader(original: Uint8Array) {
+  assert.equal(
+    digest(original),
+    PINNED_PRIOR_LEGACY_LOADER_SHA256,
+    'Prior loader is not the frozen compiled source'
+  );
+  const source = Buffer.from(original).toString('utf8');
+  assert.equal(source.split(LEGACY_COPY_LOOP).length, 2, 'Prior loader copy loop is not unique');
+  const patched = Buffer.from(source.replace(LEGACY_COPY_LOOP, LEGACY_OBSERVED_COPY_LOOP));
+  return { bytes: patched, sha256: digest(patched) };
+}
 const STOP_FIXTURE = 'public/test-video-ci-high-motion-120fps.mp4';
 /** Frozen owned-demux oracle for the generated 96x64 clustered VP9 fixture. */
 export const DIRECT_WORKER_CLUSTER_CONFIG = {
@@ -1071,8 +1089,10 @@ async function measureJob(
   condition: 'first-in-document' | 'same-document-warm',
   output: string,
   caseId: string,
-  action: 'convert' | 'retry' = 'convert'
+  action: 'convert' | 'retry' = 'convert',
+  timingInvocationId?: string
 ) {
+  const timingEpoch = timingInvocationId ? `${timingInvocationId}:${caseId}` : caseId;
   const before = await page.evaluate(() => {
     const observed = Reflect.get(globalThis, '__wmcVp8ProductObserver') as { reset: () => void };
     observed.reset();
@@ -1081,6 +1101,15 @@ async function measureJob(
       navigation: performance.getEntriesByType('navigation').length,
     };
   });
+  const timingProbeInstalled = timingInvocationId
+    ? await page.evaluate((epoch) => {
+        const probe = Reflect.get(globalThis, '__wmcVp8TimingProbe') as
+          | { begin: (value: string) => void }
+          | undefined;
+        probe?.begin(epoch);
+        return probe !== undefined;
+      }, timingEpoch)
+    : false;
   const wallStart = new Date().toISOString();
   await page
     .locator(
@@ -1141,6 +1170,14 @@ async function measureJob(
     timing.publications[0]!.atMs >= timing.clickMs && timing.publications[0]!.atMs <= timing.readyMs
   );
   // Timing is sealed before browser transfer, filesystem writes, parsing or decoding.
+  const timingAttestation = timingProbeInstalled
+    ? await page.evaluate((epoch) => {
+        const probe = Reflect.get(globalThis, '__wmcVp8TimingProbe') as {
+          snapshot: (value: string) => Record<string, unknown>;
+        };
+        return { epoch, scope: 'main-observed-worker-route-only', ...probe.snapshot(epoch) };
+      }, timingEpoch)
+    : undefined;
   const bytes = await downloadWebp(page);
   assert.equal(
     bytes.length,
@@ -1190,6 +1227,7 @@ async function measureJob(
     requestToDownloadReadyMs: timing.readyMs - timing.clickMs,
     requestToBlobPublicationMs: timing.publications[0]!.atMs - timing.clickMs,
     wasmResources: timing.resourceEntries,
+    ...(timingAttestation ? { timingAttestation } : {}),
     emittedAnmfCount: parsed.frames.length,
     saved: { file, bytes: bytes.length, sha256: digest(bytes) },
     parsed,
@@ -1202,7 +1240,9 @@ async function createContext(
   build: Build,
   functional: boolean,
   main: boolean,
-  workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }>
+  workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }>,
+  timing = false,
+  legacyLoaderPatch?: { path: string; bytes: Uint8Array }
 ): Promise<BrowserContext> {
   const context = await browser.newContext({
     locale: 'en-US',
@@ -1211,6 +1251,7 @@ async function createContext(
     viewport: { width: 1280, height: 800 },
   });
   await context.addInitScript(disableCanvasWebp);
+  if (timing) await context.addInitScript(installVp8TimingProbe);
   if (functional) {
     if (main)
       await context.addInitScript(() => {
@@ -1227,6 +1268,14 @@ async function createContext(
     if (main) await context.addInitScript(instrumentOwnedInstance);
   }
   await context.addInitScript(installProductObserver);
+  if (legacyLoaderPatch) {
+    await context.route(`**/${legacyLoaderPatch.path}`, async (route) => {
+      await route.fulfill({
+        body: Buffer.from(legacyLoaderPatch.bytes),
+        contentType: 'text/javascript',
+      });
+    });
+  }
   await context.route('**/assets/worker-*.js', async (route) => {
     const path = new URL(route.request().url()).pathname.slice(1);
     if (!/^assets\/worker-[\w-]+\.js$/.test(path)) return route.continue();
@@ -1237,7 +1286,8 @@ async function createContext(
     const original = Buffer.from(await response.body());
     assert.equal(digest(original), file.sha256, 'Served Worker differs from built inventory');
     const patch = Buffer.from(
-      "if(typeof OffscreenCanvas!=='undefined')Object.defineProperty(OffscreenCanvas.prototype,'convertToBlob',{configurable:true,value:undefined});\n"
+      "if(typeof OffscreenCanvas!=='undefined')Object.defineProperty(OffscreenCanvas.prototype,'convertToBlob',{configurable:true,value:undefined});\n" +
+        (timing ? `(${installVp8TimingProbe.toString()})();\n` : '')
     );
     const modified = Buffer.concat([patch, original]);
     workerPatches.push({ path, originalSha256: file.sha256, patchedSha256: digest(modified) });
@@ -2150,6 +2200,7 @@ export async function exerciseOwnedVp8Product({
   const report: Record<string, unknown> = {
     schemaVersion: 1,
     scenario,
+    ...(fullVideo ? { timingInvocationId: randomUUID() } : {}),
     fixedQuality: v8Quality ?? null,
     status: 'running',
     browserVersion: browser.version(),
@@ -2176,17 +2227,52 @@ export async function exerciseOwnedVp8Product({
       ? 'separate browser context and one functional first-in-document attempt per build; no fresh-profile cold claim'
       : 'separate browser contexts per build, same document first/warm within each fixture-quality page; no fresh-profile cold claim',
     softwareInjection:
-      'Page OffscreenCanvas.convertToBlob disabled before application code; Worker JS is patched only if loaded, and a patch record alone is not encoding-route proof',
+      'Page OffscreenCanvas.convertToBlob disabled before application code; timed V8 Worker has numeric ABI/copy probe and pinned prior loader has post-loop copy callback; a patch record alone is not encoding-route proof',
     functionalScope: functionalOnly
       ? `Independent pinned-prior legacy wasm-webp and candidate owned-VP8 ${largeAdmitted ? 'large admitted' : 'near-cap'} UI attempts, outside the V8 timing cohort; candidate must pass and prior outcome is retained separately`
       : fullVideo
-        ? 'After uninstrumented first/warm samples, one additional candidate main-WASM conversion attests successful ABI2 begin calls; emitted ANMF counts are recorded separately. Active Stop and recovery remain in the small selector.'
+        ? 'After first/warm timing samples with bounded numeric probes, one additional candidate main-WASM conversion independently checks ABI2 begin calls; emitted ANMF counts are recorded separately. Active Stop and recovery remain in the small selector.'
         : 'Candidate UI main software recovery and active Stop; separate direct conversion Worker protocol and owned output',
     samples: [] as Sample[],
     functional: [] as unknown[],
     nearCapPreflights: [] as unknown[],
     largeAdmittedPreflights: [] as unknown[],
   };
+  let legacyLoaderPatch: { path: string; bytes: Uint8Array } | undefined;
+  if (fullVideo) {
+    assert.equal(
+      prior.state.sourceSha,
+      'be35f5fa89a60189475fe2ef7fd446e9fa18cef4',
+      'V8 prior compiled source changed'
+    );
+    const legacyWasm = prior.state.files.filter((file) =>
+      /^assets\/webp-wasm[-.][\w-]{8}\.wasm$/.test(file.path)
+    );
+    assert.equal(legacyWasm.length, 1, 'Prior WebP WASM is not unique');
+    assert.equal(
+      legacyWasm[0]!.sha256,
+      PINNED_PRIOR_LEGACY_WASM_SHA256,
+      'V8 prior WebP WASM changed'
+    );
+    const loader = prior.state.files.filter((file) =>
+      /^assets\/webp-wasm[-.][\w-]{8}\.js$/.test(file.path)
+    );
+    assert.equal(loader.length, 1, 'Prior WebP loader is not unique');
+    const file = loader[0]!;
+    assert.equal(file.sha256, PINNED_PRIOR_LEGACY_LOADER_SHA256, 'V8 prior loader changed');
+    assert(file.size > 0 && file.size < 1024 * 1024, 'Prior loader size is invalid');
+    const loaderPath = await validateBundleFile(bundleRoot, `${prior.relativePath}/${file.path}`);
+    const original = await readFile(loaderPath);
+    assert.equal(original.length, file.size, 'Prior loader inventory size differs');
+    const patched = patchPinnedLegacyLoader(original);
+    legacyLoaderPatch = { path: file.path, bytes: patched.bytes };
+    report.priorLegacyLoaderPatch = {
+      path: file.path,
+      originalSha256: file.sha256,
+      patchedSha256: patched.sha256,
+      instrumentation: 'post-loop-actual-iteration-count',
+    };
+  }
   const reportPath = join(output, `${scenario}.json`);
   const persist = async () => writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   await persist();
@@ -2320,7 +2406,15 @@ export async function exerciseOwnedVp8Product({
       await server.setDistribution(build.relativePath);
       const workerPatches: Array<{ path: string; originalSha256: string; patchedSha256: string }> =
         [];
-      const context = await createContext(browser, build, false, false, workerPatches);
+      const context = await createContext(
+        browser,
+        build,
+        false,
+        false,
+        workerPatches,
+        fullVideo,
+        name === 'prior' ? legacyLoaderPatch : undefined
+      );
       try {
         for (const { fixture, path, sha256 } of inputs) {
           for (const quality of qualities) {
@@ -2344,7 +2438,9 @@ export async function exerciseOwnedVp8Product({
                   name,
                   condition,
                   output,
-                  activeCase
+                  activeCase,
+                  'convert',
+                  report.timingInvocationId as string | undefined
                 );
                 sample.contextIdentity = `${scenario}:${name}`;
                 sample.pageIdentity = `${fixture.id}:${quality}`;

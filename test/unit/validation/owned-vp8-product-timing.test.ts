@@ -7,10 +7,134 @@ import { join } from 'node:path';
 import { test } from 'vite-plus/test';
 
 import {
+  checkTimingAttestation,
   type Distribution,
   readDistribution,
   verifyTiming,
 } from '../../../scripts/test/owned-vp8-product-timing.ts';
+
+const requestId = '11111111-2222-4333-8444-555555555555';
+function probe(epoch: string, workerId = requestId) {
+  return {
+    epoch,
+    epochMatches: true,
+    scope: 'main-observed-worker-route-only',
+    ownedInstances: 0,
+    successfulBeginCalls: 0,
+    stepCalls: 0,
+    retireCalls: 0,
+    inputCopyBytes: 0,
+    outputCopyBytes: 0,
+    inputCopyEvents: 0,
+    outputCopyEvents: 0,
+    unknownCopyKinds: 0,
+    legacyIndexedCopyEvents: 0,
+    peakLinearCapacityBytes: 0,
+    capacityAtJobEndBytes: 0,
+    workerStarts: 1,
+    workerCompletions: 1,
+    workerErrors: 0,
+    staleWorkerEvents: 0,
+    workerObservation: {
+      requestId: workerId,
+      state: {
+        epoch: workerId,
+        ownedInstances: 1,
+        successfulBeginCalls: 4,
+        stepCalls: 8,
+        retireCalls: 1,
+        inputCopyBytes: 192,
+        outputCopyBytes: 32,
+        inputCopyEvents: 4,
+        outputCopyEvents: 4,
+        unknownCopyKinds: 0,
+        legacyIndexedCopyEvents: 0,
+        peakLinearCapacityBytes: 65536,
+        capacityAtJobEndBytes: 65536,
+        workerStarts: 0,
+        workerCompletions: 0,
+        workerErrors: 0,
+        staleWorkerEvents: 0,
+      },
+    },
+  };
+}
+
+test('per-job Worker attestation checks epoch, actual copies, capacity and unsupported kinds', () => {
+  const epoch = 'attempt:sample';
+  const valid = probe(epoch);
+  assert.equal(checkTimingAttestation(valid, epoch, 'candidate').status, 'OWNED_WORKER_OBSERVED');
+  assert.equal(checkTimingAttestation(undefined, epoch, 'candidate').status, 'MISSING');
+  assert.throws(
+    () => checkTimingAttestation({ ...valid, epoch: 'stale' }, epoch, 'candidate'),
+    /attestation epoch/
+  );
+  assert.throws(
+    () => checkTimingAttestation({ ...valid, unknownCopyKinds: 1 }, epoch, 'candidate'),
+    /unknown copy kind/
+  );
+  assert.throws(
+    () => checkTimingAttestation({ ...valid, rawPixels: [1, 2] }, epoch, 'candidate'),
+    /unsupported fields/
+  );
+  assert.throws(
+    () => checkTimingAttestation({ ...valid, staleWorkerEvents: 1 }, epoch, 'candidate'),
+    /stale Worker/
+  );
+  assert.throws(
+    () => checkTimingAttestation({ ...valid, workerCompletions: 0 }, epoch, 'candidate'),
+    /Worker completion count/
+  );
+  assert.throws(
+    () =>
+      checkTimingAttestation(
+        {
+          ...valid,
+          workerObservation: {
+            ...valid.workerObservation,
+            state: { ...valid.workerObservation.state, inputCopyBytes: 0 },
+          },
+        },
+        epoch,
+        'candidate'
+      ),
+    /observed copy events absent/
+  );
+  assert.throws(
+    () =>
+      checkTimingAttestation(
+        {
+          ...valid,
+          workerObservation: {
+            ...valid.workerObservation,
+            state: { ...valid.workerObservation.state, capacityAtJobEndBytes: 131072 },
+          },
+        },
+        epoch,
+        'candidate'
+      ),
+    /linear capacity invalid/
+  );
+});
+
+test('legacy indexed writes count only as bounded copy evidence', () => {
+  const epoch = 'attempt:legacy';
+  const prior = probe(epoch);
+  prior.workerObservation.state.ownedInstances = 0;
+  prior.workerObservation.state.successfulBeginCalls = 0;
+  prior.workerObservation.state.stepCalls = 0;
+  prior.workerObservation.state.retireCalls = 0;
+  prior.workerObservation.state.legacyIndexedCopyEvents = 4;
+  assert.equal(
+    checkTimingAttestation(prior, epoch, 'prior').status,
+    'LEGACY_BOUNDARY_COPIES_OBSERVED'
+  );
+  prior.workerObservation.state.outputCopyBytes = 0;
+  assert.throws(
+    () => checkTimingAttestation(prior, epoch, 'prior'),
+    /legacy copy\/capacity evidence incomplete/
+  );
+});
 
 const input = 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1';
 const priorSource = 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4';
@@ -139,6 +263,93 @@ function verifyFixture(reports: ReturnType<typeof makeReports>, pins = expected)
     reports.map((report) => createHash('sha256').update(JSON.stringify(report)).digest('hex'))
   );
 }
+
+function makeAttestedReports() {
+  const reports = makeReports();
+  for (const [attempt, report] of reports.entries()) {
+    const invocationId = `11111111-2222-4333-8444-${(attempt + 1).toString(16).padStart(12, '0')}`;
+    Object.assign(report, {
+      timingInvocationId: invocationId,
+      priorLegacyLoaderPatch: {
+        path: 'assets/webp-wasm-ABCDEFGH.js',
+        originalSha256: '15cd582651f78831babe9b54012388f22614c48b39c899fa2772e62b037dae47',
+        patchedSha256: '125b2d4ee079151de879afa1315e10e98425f146d4c6b86fbc2f051e3879ec4a',
+        instrumentation: 'post-loop-actual-iteration-count',
+      },
+      priorWorkerPatches: [
+        {
+          path: 'assets/worker-ABCDEFGH.js',
+          originalSha256: '4'.repeat(64),
+          patchedSha256: '5'.repeat(64),
+        },
+      ],
+      candidateWorkerPatches: [
+        {
+          path: 'assets/worker-ABCDEFGH.js',
+          originalSha256: '6'.repeat(64),
+          patchedSha256: '7'.repeat(64),
+        },
+      ],
+    });
+    for (const [index, sample] of report.samples.entries()) {
+      const caseId = `owned-vp8-${report.scenario}-${sample.build}-v8-full-${sample.quality}-${sample.condition}`;
+      const epoch = `${invocationId}:${caseId}`;
+      const workerId = `aaaaaaaa-bbbb-4ccc-8ddd-${(attempt * 4 + index + 1).toString(16).padStart(12, '0')}`;
+      const attestation = probe(epoch, workerId);
+      if (sample.build === 'prior') {
+        attestation.workerObservation.state.ownedInstances = 0;
+        attestation.workerObservation.state.successfulBeginCalls = 0;
+        attestation.workerObservation.state.stepCalls = 0;
+        attestation.workerObservation.state.retireCalls = 0;
+        attestation.workerObservation.state.legacyIndexedCopyEvents = 4;
+      }
+      Object.assign(sample, { timingAttestation: attestation });
+    }
+  }
+  return reports;
+}
+
+test('joins sixty distinct job epochs and worker IDs without promoting numeric PASS', () => {
+  const reports = makeAttestedReports();
+  const result = verifyFixture(reports);
+  assert.equal(result.numericGate, 'PASS');
+  assert.equal(result.qualification, 'NOT_VERIFIED');
+  assert.equal(result.samples.length, 60);
+  assert.equal(result.samples[0]?.timingAttestation.status, 'LEGACY_BOUNDARY_COPIES_OBSERVED');
+  assert.equal(result.samples[2]?.timingAttestation.status, 'OWNED_WORKER_OBSERVED');
+});
+
+test('rejects mixed, partial, stale and unsupported attestation receipts', () => {
+  const mixed = makeAttestedReports();
+  mixed[14] = makeReports()[14]!;
+  assert.throws(() => verifyFixture(mixed), /mixed attestation receipt mode/);
+  const partial = makeAttestedReports();
+  delete (partial[0]!.samples[0]! as unknown as Record<string, unknown>).timingAttestation;
+  assert.throws(() => verifyFixture(partial), /partial timing attestation receipt/);
+  const stale = makeAttestedReports();
+  const sample = stale[0]!.samples[0]! as unknown as Record<string, unknown>;
+  (sample.timingAttestation as Record<string, unknown>).epoch = 'wrong';
+  assert.throws(() => verifyFixture(stale), /attestation epoch/);
+  const unsupported = makeAttestedReports();
+  const observed = (unsupported[0]!.samples[0]! as unknown as Record<string, unknown>)
+    .timingAttestation as Record<string, unknown>;
+  observed.unknownCopyKinds = 1;
+  assert.throws(() => verifyFixture(unsupported), /unknown copy kind/);
+  const duplicateWorker = makeAttestedReports();
+  const first = (duplicateWorker[0]!.samples[0]! as unknown as Record<string, unknown>)
+    .timingAttestation as { workerObservation: { requestId: string; state: { epoch: string } } };
+  const second = (duplicateWorker[0]!.samples[1]! as unknown as Record<string, unknown>)
+    .timingAttestation as { workerObservation: { requestId: string; state: { epoch: string } } };
+  second.workerObservation.requestId = first.workerObservation.requestId;
+  second.workerObservation.state.epoch = first.workerObservation.requestId;
+  assert.throws(() => verifyFixture(duplicateWorker), /duplicate Worker request ID/);
+  const missingWorkerPatch = makeAttestedReports();
+  Object.assign(missingWorkerPatch[0]!, { priorWorkerPatches: [] });
+  assert.throws(
+    () => verifyFixture(missingWorkerPatch),
+    /Worker completed without source-bound patch/
+  );
+});
 
 test('five balanced receipts per quality retain first and warm cohorts without claiming qualification', () => {
   const reports = makeReports();
