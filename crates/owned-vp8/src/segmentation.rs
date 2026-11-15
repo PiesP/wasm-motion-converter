@@ -89,6 +89,15 @@ impl Config {
         self
     }
 
+    pub(crate) fn with_medium_textured_luma(mut self, selected: bool) -> Self {
+        if selected {
+            let reduction = presets::medium_luma_reduction();
+            self.base_qindex -= reduction;
+            self.qindex = self.qindex.map(|qindex| qindex - reduction);
+        }
+        self
+    }
+
     pub(crate) fn write_header(
         self,
         sink: &mut impl BoolSink,
@@ -226,7 +235,7 @@ mod tests {
     #[test]
     fn frame_class_counts_collapse_or_signal_four_absolute_qindices() {
         for (quality, flat, ramp, textured) in
-            [(60, 18, 32, 32), (75, 17, 25, 26), (85, 15, 15, 14)]
+            [(60, 18, 32, 32), (75, 19, 27, 28), (85, 15, 15, 14)]
         {
             for (id, qindex) in [presets::smooth_qindex(quality), flat, ramp, textured]
                 .into_iter()
@@ -250,7 +259,7 @@ mod tests {
 
     #[test]
     fn neutral_chroma_selects_textured_precision_per_preset() {
-        for (quality, chromatic, neutral) in [(60, 32, 34), (75, 26, 25), (85, 14, 14)] {
+        for (quality, chromatic, neutral) in [(60, 32, 34), (75, 28, 27), (85, 14, 14)] {
             for counts in [[0, 0, 0, 1], [1, 1, 1, 1]] {
                 let total = counts.iter().sum();
                 let color = Config::from_counts(quality, counts, total, false);
@@ -307,6 +316,43 @@ mod tests {
                 if counts == [0, 0, 0, 4] && !neutral {
                     assert!(!selected.enabled);
                     assert_eq!(selected.base_qindex, 28);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn medium_textured_shift_preserves_all_segment_uv_steps_and_map() {
+        use crate::ac_quant::{self, Plane};
+
+        for neutral in [false, true] {
+            for counts in [
+                [1, 1, 1, 1],
+                [4, 0, 0, 0],
+                [0, 4, 0, 0],
+                [0, 0, 4, 0],
+                [0, 0, 0, 4],
+            ] {
+                let original = Config::from_counts(75, counts, 4, neutral);
+                let selected = original.with_medium_textured_luma(true);
+                assert_eq!(selected.base_qindex, original.base_qindex - 2);
+                assert_eq!(selected.qindex, original.qindex.map(|qindex| qindex - 2));
+                assert_eq!(selected.enabled, original.enabled);
+                assert_eq!(selected.active, original.active);
+                assert_eq!(selected.map_probabilities, original.map_probabilities);
+                assert_eq!(
+                    original.with_medium_textured_luma(false).qindex,
+                    original.qindex
+                );
+                for id in 0..4 {
+                    assert_eq!(
+                        ac_quant::steps(
+                            selected.qindex[id] as u8,
+                            presets::medium_textured_deltas(presets::deltas(75)),
+                            Plane::UV
+                        ),
+                        ac_quant::steps(original.qindex[id] as u8, presets::deltas(75), Plane::UV)
+                    );
                 }
             }
         }

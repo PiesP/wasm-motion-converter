@@ -1859,7 +1859,7 @@ fn encode_observed(
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
             neutral_chroma &= u == 128 && v == 128;
-            if quality == 60 {
+            if quality == 60 || quality == 75 {
                 rgb_error_sum += crate::color::nearest_chroma_rgb_error(
                     rgb,
                     luma,
@@ -1903,6 +1903,14 @@ fn encode_observed(
         crate::presets::high_chroma_loss(quality, rgb_error_sum, width as u32, height as u32);
     let original_segments =
         SegmentConfig::from_counts(quality, class_counts, count, neutral_chroma);
+    let medium_textured_luma = crate::presets::medium_textured_luma(
+        quality,
+        class_counts,
+        count,
+        rgb_error_sum,
+        width as u32,
+        height as u32,
+    );
     let original_deltas = if high_chroma_loss {
         crate::presets::original_high_chroma_loss_deltas()
     } else {
@@ -1944,7 +1952,12 @@ fn encode_observed(
                 let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
                 let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-                let lambda = crate::presets::lambda_for_quality(qindex, quality);
+                let rate_qindex = if medium_textured_luma {
+                    original_segments.qindex_for(segment_id)
+                } else {
+                    qindex
+                };
+                let lambda = crate::presets::lambda_for_quality(rate_qindex, quality);
                 if !high_chroma_loss {
                     refinement_log
                         .reserve_one(count + 128)
@@ -2186,8 +2199,12 @@ fn encode_observed(
             quality,
         )
     };
-    let mut segments = original_segments;
-    let mut deltas = original_deltas;
+    let mut segments = original_segments.with_medium_textured_luma(medium_textured_luma);
+    let mut deltas = if medium_textured_luma {
+        crate::presets::medium_textured_deltas(original_deltas)
+    } else {
+        original_deltas
+    };
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
         let reduced_segments = original_segments.with_high_chroma_loss_luma(true);
@@ -2202,7 +2219,7 @@ fn encode_observed(
             run_profile(original_segments, original_deltas, false)?;
         }
     } else {
-        run_profile(original_segments, original_deltas, false)?;
+        run_profile(segments, deltas, false)?;
     }
     drop(run_profile);
     if !refinement_log.is_empty() || !baseline_overrides.is_empty() {
@@ -3337,6 +3354,7 @@ pub(crate) struct FrameEncoder {
     neutral_chroma: bool,
     rgb_error_sum: u64,
     high_chroma_loss: bool,
+    medium_textured_luma: bool,
     preview_trial: PreviewTrial,
     preview_comparison: ProfileComparison,
     preview_header_rate: RateCounter,
@@ -3481,6 +3499,7 @@ impl FrameEncoder {
             neutral_chroma: true,
             rgb_error_sum: 0,
             high_chroma_loss: false,
+            medium_textured_luma: false,
             preview_trial: PreviewTrial::None,
             preview_comparison: ProfileComparison::default(),
             preview_header_rate: RateCounter::default(),
@@ -3768,7 +3787,7 @@ impl FrameEncoder {
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
             self.neutral_chroma &= u == 128 && v == 128;
-            if self.request.quality == 60 {
+            if self.request.quality == 60 || self.request.quality == 75 {
                 self.rgb_error_sum += crate::color::nearest_chroma_rgb_error(
                     rgb,
                     luma,
@@ -4282,12 +4301,24 @@ impl FrameEncoder {
         });
         self.cursor += 1;
         if self.cursor == self.plan.macroblock_count as usize {
+            self.medium_textured_luma = crate::presets::medium_textured_luma(
+                self.request.quality,
+                self.class_counts,
+                self.blocks.len(),
+                self.rgb_error_sum,
+                self.request.width,
+                self.request.height,
+            );
             self.segments = SegmentConfig::from_counts(
                 self.request.quality,
                 self.class_counts,
                 self.blocks.len(),
                 self.neutral_chroma,
-            );
+            )
+            .with_medium_textured_luma(self.medium_textured_luma);
+            if self.medium_textured_luma {
+                self.deltas = crate::presets::medium_textured_deltas(self.deltas);
+            }
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
                 self.segments,
@@ -4323,7 +4354,12 @@ impl FrameEncoder {
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-        let lambda = crate::presets::lambda_for_quality(qindex, self.request.quality);
+        let rate_qindex = if self.medium_textured_luma {
+            qindex + crate::presets::medium_luma_reduction()
+        } else {
+            qindex
+        };
+        let lambda = crate::presets::lambda_for_quality(rate_qindex, self.request.quality);
         let original_rgb = Some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
@@ -7844,6 +7880,8 @@ mod tests {
         let first = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
         assert!(first.segments.enabled);
         assert_eq!(first.class_counts, [1, 1, 1, 1]);
+        assert!(!first.medium_textured_luma);
+        assert_eq!(first.deltas, crate::presets::deltas(75));
         assert_eq!(
             first.segments.qindex,
             [
@@ -7964,7 +8002,7 @@ mod tests {
                 Ok(())
             }
         }
-        for (quality, expected_dc, expected_ac) in [(60, -4, -11), (75, -7, -7), (85, -4, -4)] {
+        for (quality, expected_dc, expected_ac) in [(60, -4, -11), (75, -9, -9), (85, -4, -4)] {
             let deltas = crate::presets::deltas(quality);
             assert_eq!(deltas.uv_dc, expected_dc);
             assert_eq!(deltas.uv_ac, expected_ac);
@@ -8818,11 +8856,13 @@ mod tests {
             engine.step().unwrap();
         }
         assert!(engine.joint_used_total > 0 && engine.joint_used_total <= 128);
+        assert!(!engine.medium_textured_luma);
+        assert_eq!(engine.deltas, crate::presets::deltas(75));
         assert!(engine.base_quality > refined_quality.unwrap());
         assert!(engine.refined_checkpoint.is_none()); // B0 won the complete filtered score.
         assert!(engine.baseline_checkpoint.is_none());
         let engine = run_engine(engine);
-        assert_eq!(engine.output().len(), 1281);
+        assert_eq!(engine.output().len(), 1301);
     }
 
     #[test]
@@ -8939,7 +8979,7 @@ mod tests {
         let mut first_gray = None;
         for (index, (input, expected_neutral, expected_q)) in [
             (&gray, true, 25),
-            (&colored, false, 26),
+            (&colored, false, 28),
             (&near_low, false, 26),
             (&near_high, false, 26),
             (&gray, true, 25),
@@ -8952,6 +8992,15 @@ mod tests {
             let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
             assert_eq!(engine.class_counts, [0, 0, 0, 1]);
             assert_eq!(engine.neutral_chroma, expected_neutral);
+            assert_eq!(engine.medium_textured_luma, index != 1);
+            assert_eq!(
+                engine.deltas,
+                if engine.medium_textured_luma {
+                    crate::presets::medium_textured_deltas(crate::presets::deltas(75))
+                } else {
+                    crate::presets::deltas(75)
+                }
+            );
             assert_eq!(
                 engine.segments.qindex_for(segmentation::TEXTURED),
                 expected_q
@@ -9009,7 +9058,7 @@ mod tests {
     fn neutral_and_colored_texture_decode_with_both_filter_modes() {
         for (input, expected_q) in [
             (textured_checker([64; 3], [192; 3]), 25),
-            (textured_checker([7, 239, 117], [248, 18, 184]), 26),
+            (textured_checker([7, 239, 117], [248, 18, 184]), 28),
         ] {
             let request = engine_request(16, 16, 0, &input, 64);
             let plan = ResourcePlan::checked(request).unwrap();

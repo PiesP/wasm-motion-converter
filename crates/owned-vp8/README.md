@@ -65,13 +65,17 @@ remains owned Rust; these adapted arithmetic/table portions retain attribution. 
 and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
 
-The q75 engineering calibration lowers every base and segment luma qindex by
-two relative to the previous tuning, including smooth and neutral inputs. UV DC
-and AC deltas increase by two so scalar UV quantizer steps remain unchanged,
-including clamping; rate weights use the previous qindex. Mode choices and UV
-reconstruction may still change. This fixed calibration does not change q60/q85,
-geometry, cadence or acceptance thresholds, and requires a new compiled candidate,
-all exposed regressions and a new held-out cohort before adoption.
+The q75 engineering calibration applies only when every admitted macroblock is
+Textured and the visible source RGB error from nearest-chroma import is at most
+4,096 per channel. It lowers every base and segment luma qindex by two, including
+unused classes and neutral inputs. UV DC and AC deltas increase by two so scalar
+UV quantizer steps remain unchanged, including clamping; mode and coefficient
+rate weights use original qindices. Other q75 frames retain the previous q75
+quantizers and rate weights. Mode choices and UV reconstruction may still change.
+The condition reuses the q60 import-error reference but does not change q60/q85,
+geometry, cadence or acceptance thresholds. This source candidate requires a
+new compiled artifact, all exposed regressions and a new held-out cohort before
+adoption.
 
 ## ABI2 and resources
 
