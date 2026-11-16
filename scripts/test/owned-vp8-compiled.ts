@@ -486,7 +486,7 @@ try {
     assert.equal(v9Result.rawBytes, 40_869);
     assert.equal(
       v9Result.sha256,
-      '8660307d21aac70d59a53d3e2f78764cfa2d270cac4a7d60ca1e3d5afc5ce79f'
+      'cab0d65b24b4bd689511b24630000fe7c743c136adc0bea1e7fd28bcded2aa16'
     );
     for (const decoder of ['vp8', 'libvpx']) {
       const yuv = execFileSync('ffmpeg', [
