@@ -4,10 +4,13 @@
 
 use crate::limits::{Request, ResourcePlan, Status, ABI_VERSION};
 use crate::textured::FrameEncoder;
+#[cfg(test)]
+use std::cell::Cell;
 use std::sync::Mutex;
 
 const WORKING: u32 = 10;
 const OUTPUT_READY: u32 = 11;
+const MAX_INTERNAL_UNITS_PER_EXPORT: usize = 16;
 const REQUEST_WORDS: usize = 12;
 const RESPONSE_WORDS: usize = 24;
 static ZERO_CHUNK: [u8; 65_536] = [0; 65_536];
@@ -36,6 +39,8 @@ struct State {
     job: Option<FrameEncoder>,
     cancelled: bool,
     retire_requested: bool,
+    #[cfg(test)]
+    capacity_checks: Cell<usize>,
 }
 
 impl State {
@@ -52,6 +57,8 @@ impl State {
             job: None,
             cancelled: false,
             retire_requested: false,
+            #[cfg(test)]
+            capacity_checks: Cell::new(0),
         }
     }
 
@@ -124,6 +131,8 @@ impl State {
     }
 
     fn checked_capacity(&self) -> Result<(), Status> {
+        #[cfg(test)]
+        self.capacity_checks.set(self.capacity_checks.get() + 1);
         let capacity = memory_capacity();
         if capacity != 0 {
             self.plan
@@ -224,6 +233,15 @@ impl State {
     }
 
     fn step(&mut self, generation: u32, frame: u32) -> Result<u32, Status> {
+        self.step_with_limit(generation, frame, MAX_INTERNAL_UNITS_PER_EXPORT)
+    }
+
+    fn step_with_limit(
+        &mut self,
+        generation: u32,
+        frame: u32,
+        max_units: usize,
+    ) -> Result<u32, Status> {
         self.current(generation, frame)?;
         if self.cancelled {
             return Err(Status::Cancelled);
@@ -231,25 +249,38 @@ impl State {
         if self.phase != Phase::Encoding {
             return Err(Status::BusyLease);
         }
-        let job = self.job.as_mut().ok_or(Status::AbiMismatch)?;
-        let done = match job.step() {
-            Ok(done) => done,
-            Err(status) => {
+        debug_assert!((1..=MAX_INTERNAL_UNITS_PER_EXPORT).contains(&max_units));
+        for _ in 0..max_units.min(MAX_INTERNAL_UNITS_PER_EXPORT) {
+            let Some(job) = self.job.as_ref() else {
+                self.retire();
+                return Err(Status::AbiMismatch);
+            };
+            let before = (job.internal_stage(), job.stage(), job.plan());
+            let done = match self.job.as_mut().expect("checked above").step() {
+                Ok(done) => done,
+                Err(status) => {
+                    self.retire();
+                    return Err(status);
+                }
+            };
+            let job = self.job.as_ref().expect("step does not remove its job");
+            let after = (job.internal_stage(), job.stage(), job.plan());
+            self.plan = Some(after.2);
+            if let Err(status) = self.checked_capacity() {
                 self.retire();
                 return Err(status);
             }
-        };
-        self.plan = Some(self.job.as_ref().ok_or(Status::AbiMismatch)?.plan());
-        if let Err(status) = self.checked_capacity() {
-            self.retire();
-            return Err(status);
+            if done {
+                self.phase = Phase::OutputLease;
+                return Ok(OUTPUT_READY);
+            }
+            if after != before {
+                // A new stage or resource plan must be visible to the host
+                // before another internal unit can run.
+                return Ok(WORKING);
+            }
         }
-        if done {
-            self.phase = Phase::OutputLease;
-            Ok(OUTPUT_READY)
-        } else {
-            Ok(WORKING)
-        }
+        Ok(WORKING)
     }
 
     fn release_input(&mut self, generation: u32, frame: u32) -> Result<u32, Status> {
@@ -523,6 +554,91 @@ mod tests {
             assert_eq!(status, WORKING);
         }
         panic!("tiny frame did not finish within the stage bound");
+    }
+
+    #[test]
+    fn batched_exports_match_single_unit_output_and_admission_boundaries() {
+        let prepare = || {
+            let mut state = planned(1024);
+            reserve(&mut state);
+            for (index, pixel) in state.input.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let value = (index * 37 % 181) as u8;
+                *pixel = [value, value.wrapping_add(29), value.wrapping_add(61), 255];
+            }
+            assert_eq!(state.begin(41, 1), Ok(WORKING));
+            state
+        };
+        let mut single = prepare();
+        let mut batched = prepare();
+        let mut full_batches = 0;
+        let mut plan_changes = 0;
+        let mut stage_changes = 0;
+        for _ in 0..20_000 {
+            let capacity_checks_before = batched.capacity_checks.get();
+            assert_eq!(batched.step(41, 2), Err(Status::StaleTicket));
+            assert_eq!(batched.capacity_checks.get(), capacity_checks_before);
+            let before = single.job.as_ref().unwrap();
+            let boundary = (before.internal_stage(), before.stage(), before.plan());
+            let batched_status = batched.step(41, 1).unwrap();
+            let mut units = 0;
+            let single_status = loop {
+                units += 1;
+                let status = single.step_with_limit(41, 1, 1).unwrap();
+                let after = single.job.as_ref().unwrap();
+                let current = (after.internal_stage(), after.stage(), after.plan());
+                if status == OUTPUT_READY
+                    || current != boundary
+                    || units == MAX_INTERNAL_UNITS_PER_EXPORT
+                {
+                    if current.0 != boundary.0 || current.1 != boundary.1 {
+                        stage_changes += 1;
+                    }
+                    if current.2 != boundary.2 {
+                        plan_changes += 1;
+                        assert_eq!(current.0, 17, "plan change must stop at PrepareOutput");
+                        assert!(after.output().is_empty());
+                        assert!(current
+                            .2
+                            .admit_actual_capacity(current.2.linear_capacity_bytes)
+                            .is_ok());
+                    }
+                    break status;
+                }
+            };
+            if units == MAX_INTERNAL_UNITS_PER_EXPORT {
+                full_batches += 1;
+            }
+            assert!((1..=MAX_INTERNAL_UNITS_PER_EXPORT).contains(&units));
+            assert_eq!(
+                batched.capacity_checks.get() - capacity_checks_before,
+                units
+            );
+            assert_eq!(batched_status, single_status);
+            assert_eq!(batched.phase, single.phase);
+            assert_eq!(batched.plan, single.plan);
+            let batch_job = batched.job.as_ref().unwrap();
+            let single_job = single.job.as_ref().unwrap();
+            assert_eq!(batch_job.internal_stage(), single_job.internal_stage());
+            assert_eq!(batch_job.stage(), single_job.stage());
+            assert_eq!(batch_job.progress(), single_job.progress());
+            assert_eq!(batch_job.plan(), single_job.plan());
+            if batch_job.internal_stage() == 17 {
+                assert!(batch_job.output().is_empty());
+                assert_eq!(batched.phase, Phase::Encoding);
+            }
+            if batched_status == OUTPUT_READY {
+                assert_eq!(batch_job.output(), single_job.output());
+                assert!(!batch_job.output().is_empty());
+                assert_eq!(batched.step(41, 1), Err(Status::BusyLease));
+                assert_eq!(batched.release_output(41, 1), Ok(0));
+                assert_eq!(single.release_output(41, 1), Ok(0));
+                assert!(full_batches > 0);
+                assert!(stage_changes > 0);
+                assert!(plan_changes > 0);
+                return;
+            }
+        }
+        panic!("batched and single-unit runs did not finish within the export bound");
     }
 
     #[test]

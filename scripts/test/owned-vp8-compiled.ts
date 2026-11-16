@@ -14,6 +14,8 @@ import { generateV7Fixture } from './owned-vp8-v7-fixtures.ts';
 const wasmPath = resolve('crates/owned-vp8/owned-vp8.wasm');
 const compiled = compileVp8(readFileSync(wasmPath));
 const root = mkdtempSync(join(tmpdir(), 'owned-vp8-abi2-'));
+// Independent ABI2 export-work contract; keep per-unit stage bounds below.
+const MAX_INTERNAL_UNITS_PER_EXPORT = 16;
 const results: object[] = [];
 let succeeded = false;
 const sha = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
@@ -69,7 +71,7 @@ async function check(
         assert.equal(record.outputPointer, 0, 'Refinement stages cannot lease output');
       }
       if (record.stage === previousStage && record.stage >= 41 && record.stage <= 57) {
-        const bound = [42, 46, 50].includes(record.stage)
+        const perUnitBound = [42, 46, 50].includes(record.stage)
           ? 65_536
           : [43, 47, 51, 54, 56].includes(record.stage)
             ? 1
@@ -79,8 +81,9 @@ async function check(
                 ? 64
                 : 546;
         assert.ok(
-          record.done >= previousDone && record.done - previousDone <= bound,
-          `Quality stage ${record.stage} must progress within its work bound`
+          record.done >= previousDone &&
+            record.done - previousDone <= perUnitBound * MAX_INTERNAL_UNITS_PER_EXPORT,
+          `Quality stage ${record.stage} must progress within its export work bound`
         );
       }
       previousStage = record.stage;

@@ -129,7 +129,7 @@ The filtered trial reconstruction is discarded through the bounded reset, and
 that third analysis restores the selected unfiltered records and prediction
 state before counting or emission. The ABI reports distinct Original and
 Reduced filter/RGB stages and charges one filter macroblock or at most 1,024
-RGB pixels per step without another full-frame buffer. This policy
+RGB pixels per internal unit without another full-frame buffer. This policy
 does not change ordinary filtered-SSIM refinement or qualify product fidelity.
 
 The finest smooth segment also preserves DC precision when all three imported
@@ -179,12 +179,18 @@ and are not the ABI2 execution route. `src/abi.rs` defines the twelve-word reque
 twenty-four-word response and ticket/lease state machine. `src/limits.rs` defines
 status values, geometry, checked byte plans and aggregate admission.
 
-Use plan -> bounded reserve steps -> input lease -> begin -> bounded encode steps
+Use plan -> bounded reserve steps -> input lease -> begin -> bounded encode exports
 -> output lease -> release. `begin` acknowledges that the physical input write
 settled. Abort/retire invalidates publication but retains pending leased storage
 until explicit release. A stale or unsuccessful operation publishes no pointer.
 Each conversion owns one instance, reused for its frames; compiled code may be
 cached separately. Retired/trapped instances are never reused.
+Each encode export performs at most 16 internal units. It checks the current
+ticket, cancellation and phase before work, synchronizes the resource plan and
+checks capacity after every unit, and returns on completion or any internal
+stage, reported stage or plan change. A changed plan reaches the host before
+`PrepareOutput` can allocate on the next export. Host tasks and cancellation
+run between exports; this fixed count does not establish a 500 ms Stop bound.
 
 ABI2 accepts checked RGBA/BGRA/RGBX/BGRX and packed RGB, including padded stride.
 Only visible alpha bytes in alpha-bearing layouts must be opaque. It supports
@@ -225,16 +231,18 @@ approximates decoder conversion and cannot replace external quality gates.
 A bounded coefficient log and
 captured-choice overrides reverse and reapply reconstruction between counts;
 the unfiltered reconstruction remains intact for replay. One macroblock of
-filtering, 64 KiB of copying, or 64 four-by-four metric blocks run per ABI step.
+filtering, 64 KiB of copying, or 64 four-by-four metric blocks run per internal
+unit. An encode export may perform up to 16 such units without crossing a stage
+or resource-plan barrier.
 The two-row moment cache is capped at 1 MiB inside the unchanged 8 MiB scratch
-charge and releases at most 64 KiB per step. Metadata is released before the
+charge and releases at most 64 KiB per internal unit. Metadata is released before the
 single output allocation. Finalized sizes
 are published at a separate preparation barrier after selection, so the host
-can reserve the new plan before advancing;
+can reserve the new plan before the next export advances;
 first-partition overflow is separate from total output overflow. Output remains
 hidden until arithmetic coding and final assembly finish. Carry scans and finalization resume in bounded units; emission retains at most
 8192 two-byte operations per partition for one macroblock, drains at most 1024
-symbols and 64 KiB of carry per step, and then yields through its host. Browser
+symbols and 64 KiB of carry per internal unit, and then yields through its host. Browser
 cancellation/resource qualification is unfinished. These plans and Node/Rust tests do not establish
 browser/GPU peak, physical zero-copy or product adoption.
 

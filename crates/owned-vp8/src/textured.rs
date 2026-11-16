@@ -3604,8 +3604,8 @@ enum PreviewTrial {
 /// analyzes or filters one macroblock, scores at most 1,024 profile pixels
 /// or 64 moment blocks, codes
 /// one macroblock, or assembles at most 64 KiB. Quality-cache chunks are
-/// allocated and released at most 64 KiB per step. The host owns scheduling
-/// and cancellation between calls.
+/// allocated and released at most 64 KiB per internal step. The ABI host owns
+/// scheduling and cancellation between exports, each of which may batch steps.
 pub(crate) struct FrameEncoder {
     request: Request,
     plan: ResourcePlan,
@@ -3882,6 +3882,10 @@ impl FrameEncoder {
                 _ => {}
             }
         }
+        self.stage as u32
+    }
+
+    pub(crate) fn internal_stage(&self) -> u32 {
         self.stage as u32
     }
 

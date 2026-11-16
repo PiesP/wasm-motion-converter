@@ -551,9 +551,10 @@ const cancelOwnedVp8AfterStep = async (
       word(3) !== generation ||
       word(4) !== frame ||
       word(9) !== buffer.byteLength ||
-      stage > 18 ||
+      stage > 57 ||
       total === 0 ||
       done > total ||
+      (stage === 2 && (word(1) !== 10 || word(2) !== 4)) ||
       (stage === 2 && total !== word(17)) ||
       [20, 21, 22, 23].some((index) => word(index) !== 0)
     )
@@ -569,22 +570,30 @@ const cancelOwnedVp8AfterStep = async (
       realSteps++;
       if (before?.stage === 2 && cancelTask === undefined) {
         const after = readResponse(generation, frame);
-        if (status !== 10 || after.stage !== 2 || after.done !== before.done + 1)
-          throw new Error('Owned VP8 Analyze step did not complete one macroblock');
-        observedAnalysisSteps++;
-        cancellationStage = before.stage;
-        analyzedMacroblocks = after.done;
-        totalMacroblocks = after.total;
-        cancelTask = schedulerPostTask(
-          () => {
-            hostTaskRan = true;
-            taskObservedActive = encodingActive;
-            controller.abort('host task after a compiled VP8 Analyze step');
-          },
-          { priority: 'user-blocking', signal: taskController.signal }
-        ).catch((error: unknown) => {
-          if (!taskController.signal.aborted) cancelTaskError = error;
-        });
+        if (status !== 10) throw new Error('Owned VP8 Analyze export did not remain active');
+        if (after.stage === 2) {
+          if (
+            after.total !== before.total ||
+            after.done <= before.done ||
+            after.done - before.done > 16 ||
+            after.done >= after.total
+          )
+            throw new Error('Owned VP8 Analyze export exceeded its bounded progress');
+          observedAnalysisSteps++;
+          cancellationStage = after.stage;
+          analyzedMacroblocks = after.done;
+          totalMacroblocks = after.total;
+          cancelTask = schedulerPostTask(
+            () => {
+              hostTaskRan = true;
+              taskObservedActive = encodingActive;
+              controller.abort('host task after a compiled VP8 Analyze export');
+            },
+            { priority: 'user-blocking', signal: taskController.signal }
+          ).catch((error: unknown) => {
+            if (!taskController.signal.aborted) cancelTaskError = error;
+          });
+        }
       }
       return status;
     },
