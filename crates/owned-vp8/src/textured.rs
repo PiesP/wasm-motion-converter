@@ -225,7 +225,7 @@ fn quantize_y1_zero_bin(transformed: &[i32; 16], steps: Steps, enabled: bool) ->
     if enabled {
         // Only marginal Y1 AC units change. Wide products also admit i32::MIN
         // fixture values without overflowing their unsigned magnitude.
-        let threshold = 5 * u64::try_from(steps.ac).expect("positive Y1 AC step");
+        let threshold = 6 * u64::try_from(steps.ac).expect("positive Y1 AC step");
         for index in 1..16 {
             if coefficients[index].unsigned_abs() == 1
                 && 8 * u64::from(transformed[index].unsigned_abs()) < threshold
@@ -5529,22 +5529,22 @@ mod tests {
     use std::process::{Command, Stdio};
 
     #[test]
-    fn y1_zero_bin_uses_exact_five_eighths_boundary_for_both_signs() {
+    fn y1_zero_bin_uses_strict_six_eighths_boundary_for_both_signs() {
         let deltas = crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true);
-        for (qindex, expected_step, first_nonzero) in
-            [(10u8, 14i32, 9i32), (22, 26, 17), (36, 40, 25)]
-        {
+        for (qindex, expected_step, old_first_retained, first_retained) in [
+            (10u8, 14i32, 9i32, 11i32),
+            (22, 26, 17, 20),
+            (36, 40, 25, 30),
+        ] {
             let steps = ac_quant::steps(qindex, deltas, Plane::Y1);
             assert_eq!(steps.ac, expected_step);
+            assert!(8 * (first_retained - 1) < 6 * expected_step);
+            assert!(8 * first_retained >= 6 * expected_step);
             for sign in [-1i32, 1] {
-                for magnitude in [
-                    0,
-                    expected_step / 2,
-                    first_nonzero - 1,
-                    first_nonzero,
-                    first_nonzero + 1,
-                    expected_step * 2,
-                ] {
+                for magnitude in [0, expected_step / 2, expected_step * 2]
+                    .into_iter()
+                    .chain(old_first_retained - 1..=first_retained + 1)
+                {
                     let mut transformed = [0i32; 16];
                     transformed[0] = 37;
                     transformed[1] = sign * magnitude;
@@ -5555,8 +5555,11 @@ mod tests {
                     let chosen = quantize_y1_zero_bin(&transformed, steps, true);
                     assert_eq!(chosen[0], canonical[0]);
                     assert_eq!(chosen[2..], canonical[2..]);
-                    if magnitude < first_nonzero {
+                    if magnitude < first_retained {
                         assert_eq!(chosen[1], 0);
+                        if magnitude >= old_first_retained {
+                            assert_eq!(canonical[1].unsigned_abs(), 1);
+                        }
                     } else {
                         assert_eq!(chosen[1], canonical[1]);
                         assert_ne!(chosen[1], 0);
@@ -5566,11 +5569,11 @@ mod tests {
         }
         let steps = ac_quant::steps(36, deltas, Plane::Y1);
         let mut transformed = [0i32; 16];
-        transformed[1] = 24;
+        transformed[1] = 29;
         assert_eq!(quantize_y1_zero_bin(&transformed, steps, true)[1], 0);
-        transformed[1] = 25; // Exact 5/8 equality retains the canonical +1.
+        transformed[1] = 30; // Exact 6/8 equality retains the canonical +1.
         assert_eq!(quantize_y1_zero_bin(&transformed, steps, true)[1], 1);
-        transformed[1] = -25;
+        transformed[1] = -30;
         assert_eq!(quantize_y1_zero_bin(&transformed, steps, true)[1], -1);
     }
 

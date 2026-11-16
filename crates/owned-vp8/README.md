@@ -77,7 +77,7 @@ passed, but actual row 38 exceeded the raw VP8 size cap by 1,069.5 bytes.
 This point is rejected; the full exposed and product gates remain unrun.
 This README result update requires a provenance refresh before the current
 checkout's manifest can be treated as verified.
-The current [eligible Y1 AC zero-bin candidate](../../docs/experiments/501-owned-vp8-y1-ac-zero-bin-candidate.md)
+The historical [eligible Y1 AC zero-bin candidate](../../docs/experiments/501-owned-vp8-y1-ac-zero-bin-candidate.md)
 adds one fixed encoder-side `5/8` zero threshold only for marginal Y1 AC
 levels in the existing mixed q60 profile. Canonical nearest quantization and
 all signaled decoder steps remain unchanged elsewhere. Its signed measured
@@ -88,6 +88,12 @@ and the 687-condition exposed regression (45 current rows reused, 642 newly
 run). This is exposed codec evidence only; fresh media, full animation,
 physical resource, browser product, performance, and delivery gates remain
 open. The patched `wasm-webp` runtime stays primary pending qualification.
+
+The current [Y1/UV rate-allocation candidate](../../docs/experiments/501-owned-vp8-y1-uv-rate-allocation.md)
+uses a strict `6/8` threshold for marginal Y1 AC units in the same eligible
+mixed q60 profile while retaining its finer UV DC setting. The linked result
+record owns this source's measurements and qualification status; the older
+`5/8` receipts above do not qualify this calibration point.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
