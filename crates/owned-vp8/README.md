@@ -15,6 +15,16 @@ Separate component timing ratios must not be multiplied. Browser capability,
 product performance, physical resource peaks, and delivery remain unqualified.
 Changes to this README require a provenance refresh before prebuilt verification.
 
+The current `codex/501-vp8-refinement-header-cache` work branch adds a
+[UV refinement header-cache trial](../../docs/experiments/501-owned-vp8-refinement-header-cache.md)
+on top of `9698e01371fce297cf8ff15a44ae050f81d11320`. It reuses only the
+skip-keyed header rate and symbol count within one macroblock refinement. The
+signed `e0211406` combined source, measured `bd170496` module and their retained
+timings above are historical baselines for this new trial. Its generated module
+`49b5820dda386a0fbeb5f0d568d97e93517568c4c67852f69f88b5d8500abff4`
+passes source-bound rebuild/prebuilt checks and 48 compiled ABI2 cases. Direct
+output identity and performance comparisons remain unrun.
+
 Execution and acceptance are governed by [issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
 and the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
 The candidate main and conversion Worker software routes import this crate's
