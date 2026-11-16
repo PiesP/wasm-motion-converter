@@ -67,6 +67,34 @@ The module is `39c9a6b72520e81c19d1740060749393d3a14f5fc17487237bf49028f4dfbf76`
 and the artifact were independently rehashed. Provenance SHA-256:
 `ae3afd2bdec94a81c52e35d79ef6c217e3e189d155fd11048e21b2498aa48ad8`.
 
-Quality, size, performance, browser acceptance and delivery remain **NOT_RUN**
-for this candidate. Freeze the clean signed source and exact module before
-the one diagnostic screen. Production wasm-webp remains the runtime encoder.
+The diagnostic quality and size screen below was frozen and executed at signed
+source `3c6a163c71e9dabe71c962877846fa520eb766d6`. Product performance, browser
+acceptance and delivery remain NOT_RUN for this point.
+
+## Frozen screen: rejected diagnostic point
+
+All 45 tuning conditions passed PSNR, SSIM and raw-size gates. All five
+actual-input quality gates passed, but frame38 raw size was 33,469 bytes
+against a 33,402.5-byte limit, and frame76 was 12,014 against 10,815 bytes.
+Thus 48/50 exposed rows passed all three gates; the two size failures remain.
+
+Separate original-reference frame76 PSNR was 41.511394 dB versus primary
+42.701327 dB, a -1.189932 dB delta. That improves by about 0.51458 dB over
+the preceding guard point but still fails the unchanged -1 dB floor. All
+five original-reference SSIM gates and the other four PSNR gates passed.
+No result establishes the cause of the earlier error or permits adoption.
+
+All five controls matched native VP8 and libvpx decoders. The saved45 screen
+completed one additional 90-stream/180-child independent decoder verification
+without reencoding; every RGB hash matched the retained metric RGB.
+Private receipts under `mixed-uv-dc-precision-01/quality-preparation`:
+
+- Frozen five lock: `5993468ae8f76c4953b768bb71364061498740a83f437da3071418528b39e510`.
+- New45 results: `341e1313f8262ebe08097b341e9042d55e1d7d60f866814e13662defe1974880`.
+- Paired decoder summary: `e1770358e47ec2861cf780ced38f3f1cc379abb5fb0dd25399b101462728e061`.
+- Root result audit: `97c3c2056423340ed210f1cd3c01e02690558cda6b0c1b5ce9a35445ceb8c618`.
+
+Disposition: REJECTED_DIAGNOSTIC_POINT / RETAIN_CURRENT. No unchanged rerun
+or full77/687/freshV13/product performance/resource/delivery run follows
+this rejected point. Continue correction in a separate source candidate,
+without changing thresholds or discarding failures. Production wasm-webp remains.
