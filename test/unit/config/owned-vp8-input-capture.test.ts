@@ -15,12 +15,13 @@ import {
   V8_CAPTURE_CHUNK,
   V8_CAPTURE_INDICES,
   V8_RGB_BYTES,
+  V8_LEGACY_COPY_BYTES,
   installV8PixelCapture,
   type CapturedPixel,
 } from '../../../validation/windows/helpers/owned-vp8-input-capture.ts';
 
 const valid = () => ({
-  successfulEncodes: 77,
+  observedInputs: 77,
   selected: V8_CAPTURE_INDICES.map((index) => ({ index, ticket: index + 1, bytes: V8_RGB_BYTES })),
   retainedBytes: V8_CAPTURE_INDICES.length * V8_RGB_BYTES,
   error: null as string | null,
@@ -36,7 +37,7 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
     assert.throws(() => assertV8CaptureBuild(source, '0'.repeat(64)), /WASM digest differs/);
   });
 
-  it('selects five successful encode ordinals within a 32 MiB per-context budget', () => {
+  it('selects five observed input ordinals within a 32 MiB per-context budget', () => {
     assert.deepEqual(
       Array.from({ length: 77 }, (_, index) => index).filter(captureIndex),
       [0, 19, 38, 57, 76]
@@ -49,8 +50,8 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
 
   it('rejects missing work, stale tickets, wrong extents and retained copies', () => {
     const missing = valid();
-    missing.successfulEncodes = 76;
-    assert.throws(() => assertCaptureInventory(missing), /successful encode count/);
+    missing.observedInputs = 76;
+    assert.throws(() => assertCaptureInventory(missing), /observed input count/);
     const stale = valid();
     stale.selected[2]!.ticket = 38;
     assert.throws(() => assertCaptureInventory(stale), /frame ticket is stale/);
@@ -88,7 +89,7 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
     const sandbox = { Uint8Array, btoa, WebAssembly: { Instance: class {}, Memory: class {} } };
     runInNewContext(`(${installV8PixelCapture.toString()})('prior')`, sandbox);
     const state = Reflect.get(sandbox, '__wmcV8PixelCapture') as {
-      snapshot: () => { successfulEncodes: number; retainedBytes: number };
+      snapshot: () => { observedInputs: number; retainedBytes: number };
       chunk: (index: number, offset: number, length: number) => string;
       release: (index: number) => void;
     };
@@ -96,18 +97,24 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
       heap: Uint8Array,
       unused: unknown,
       offset: number,
-      count: number
+      count: number,
+      source: Uint8Array
     ) => void;
-    const heap = new Uint8Array(V8_RGB_BYTES + 20);
+    const heap = new Uint8Array(V8_LEGACY_COPY_BYTES + 20);
+    const source = new Uint8Array(V8_LEGACY_COPY_BYTES);
     heap.fill(41, 10);
-    callback(heap, null, 10, V8_RGB_BYTES - 1);
-    assert.equal(state.snapshot().successfulEncodes, 0);
-    callback(heap, null, 10, V8_RGB_BYTES);
+    callback(heap, null, 10, V8_LEGACY_COPY_BYTES, source);
+    assert.equal(state.snapshot().observedInputs, 1);
+    assert.equal(state.snapshot().retainedBytes, V8_RGB_BYTES);
     heap[10] = 99;
     assert.equal(Buffer.from(state.chunk(0, 0, 1), 'base64')[0], 41);
     assert.throws(() => state.chunk(0, 0, V8_CAPTURE_CHUNK + 1), /invalid pixel stream extent/);
     state.release(0);
     assert.equal(state.snapshot().retainedBytes, 0);
+    assert.throws(
+      () => callback(heap, null, 10, V8_RGB_BYTES, source),
+      /legacy RGB destination is invalid/
+    );
   });
 
   it('reads candidate ABI input after writes and before successful begin mutates memory', () => {
@@ -141,7 +148,7 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
     runInNewContext(`(${installV8PixelCapture.toString()})('candidate')`, sandbox);
     const instance = new sandbox.WebAssembly.Instance();
     const state = Reflect.get(sandbox, '__wmcV8PixelCapture') as {
-      snapshot: () => { successfulEncodes: number; retainedBytes: number };
+      snapshot: () => { observedInputs: number; retainedBytes: number };
       chunk: (index: number, offset: number, length: number) => string;
       release: (index: number) => void;
     };
@@ -154,14 +161,14 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
       if (frame === 1) {
         beginStatus = 2;
         assert.equal(instance.exports.vp8_v2_begin(1, frame), 2);
-        assert.equal(state.snapshot().successfulEncodes, 0);
+        assert.equal(state.snapshot().observedInputs, 0);
         assert.equal(state.snapshot().retainedBytes, 0);
         beginStatus = 10;
         new Uint8Array(memory.buffer)[inputAt] = 41;
       }
       assert.equal(instance.exports.vp8_v2_begin(1, frame), 10);
     }
-    assert.equal(state.snapshot().successfulEncodes, 77);
+    assert.equal(state.snapshot().observedInputs, 77);
     assert.equal(Buffer.from(state.chunk(0, 0, 1), 'base64')[0], 41);
     assert.equal(state.snapshot().retainedBytes, 5 * V8_RGB_BYTES);
     for (const index of V8_CAPTURE_INDICES) state.release(index);

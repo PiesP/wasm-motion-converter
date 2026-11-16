@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 
 export const V8_RGB_BYTES = 1920 * 1080 * 3;
+export const V8_LEGACY_COPY_BYTES = 8 * 1024 * 1024;
 export const V8_CAPTURE_INDICES = [0, 19, 38, 57, 76] as const;
 export const V8_CAPTURE_BUDGET = 32 * 1024 * 1024;
 export const V8_CAPTURE_CHUNK = 64 * 1024;
@@ -29,19 +30,19 @@ export function captureIndex(ordinal: number): boolean {
   return V8_CAPTURE_INDICES.includes(ordinal as (typeof V8_CAPTURE_INDICES)[number]);
 }
 
-/** Pure contract for the complete successful-encode stream, independent of ANMF coalescing. */
+/** Pure contract for the complete observed-input stream, independent of ANMF coalescing. */
 export function assertCaptureInventory(snapshot: {
-  successfulEncodes: number;
+  observedInputs: number;
   selected: Array<{ index: number; ticket: number; bytes: number }>;
   retainedBytes: number;
   error: string | null;
 }): void {
   assert.equal(snapshot.error, null, `Pixel capture failed: ${snapshot.error}`);
-  assert.equal(snapshot.successfulEncodes, EXPECTED_ENCODES, 'V8 successful encode count differs');
+  assert.equal(snapshot.observedInputs, EXPECTED_ENCODES, 'V8 observed input count differs');
   assert.deepEqual(
     snapshot.selected.map((entry) => entry.index),
     V8_CAPTURE_INDICES,
-    'Selected successful encode ordinals differ'
+    'Selected observed input ordinals differ'
   );
   for (const entry of snapshot.selected) {
     assert.equal(entry.ticket, entry.index + 1, 'Selected frame ticket is stale');
@@ -57,10 +58,11 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
   const height = 1080;
   const stride = width * 3;
   const pixelBytes = stride * height;
+  const legacyCopyBytes = 8 * 1024 * 1024;
   const selected = [0, 19, 38, 57, 76];
   const budget = 32 * 1024 * 1024;
   const frames = new Map<number, { ticket: number; bytes: Uint8Array }>();
-  let successfulEncodes = 0;
+  let observedInputs = 0;
   let retainedBytes = 0;
   let error: string | null = null;
   let generation: number | null = null;
@@ -83,7 +85,7 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
     snapshot() {
       return {
         mode,
-        successfulEncodes,
+        observedInputs,
         selected: [...frames]
           .sort(([a], [b]) => a - b)
           .map(([index, frame]) => ({
@@ -126,19 +128,21 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
     Reflect.set(
       globalThis,
       '__wmcVp8LegacyCopy',
-      (heap: Uint8Array, _unused: unknown, offset: number, count: number) => {
+      (heap: Uint8Array, _unused: unknown, offset: number, count: number, source: Uint8Array) => {
         // The pinned main loader calls this *after* its actual indexed copy loop.
-        // Different-sized heap copies do not advance the frame ordinal.
-        if (count !== pixelBytes) return;
+        // be35 passes its full power-of-two RGB pool view through std::string.
         if (
           !(heap instanceof Uint8Array) ||
+          !(source instanceof Uint8Array) ||
+          source.byteLength !== legacyCopyBytes ||
+          count !== legacyCopyBytes ||
           !Number.isSafeInteger(offset) ||
           offset < 0 ||
           offset + count > heap.byteLength
         )
           fail('legacy RGB destination is invalid');
-        const index = successfulEncodes++;
-        save(index, index + 1, heap.subarray(offset, offset + count));
+        const index = observedInputs++;
+        save(index, index + 1, heap.subarray(offset, offset + pixelBytes));
       }
     );
     return;
@@ -177,7 +181,7 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
                 const request = new DataView(buffer, requestAt, 48);
                 const rw = (index: number) => response.getUint32(index * 4, true);
                 const qw = (index: number) => request.getUint32(index * 4, true);
-                const ticket = successfulEncodes + 1;
+                const ticket = observedInputs + 1;
                 if (
                   rw(0) !== 2 ||
                   rw(1) !== 0 ||
@@ -205,14 +209,14 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
                   );
                 if (generation === null) generation = rw(3);
                 else if (generation !== rw(3)) return fail('owned generation changed');
-                const index = successfulEncodes;
+                const index = observedInputs;
                 // Copy before begin mutates phase/lease. Publish only after success.
                 const pending = selected.includes(index)
                   ? new Uint8Array(new Uint8Array(buffer, rw(5), pixelBytes))
                   : null;
                 const status = Reflect.apply(value, exported, parameters) as number;
                 if (status !== 10) return status;
-                successfulEncodes++;
+                observedInputs++;
                 if (pending) save(index, ticket, pending, true);
                 return status;
               }

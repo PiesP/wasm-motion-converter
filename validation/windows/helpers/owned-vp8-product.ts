@@ -24,6 +24,7 @@ import {
   streamCapturedRgb,
   V8_CAPTURE_INDICES,
   V8_RGB_BYTES,
+  V8_LEGACY_COPY_BYTES,
   type CapturedPixel,
 } from './owned-vp8-input-capture.ts';
 import {
@@ -3465,9 +3466,10 @@ export async function exerciseOwnedVp8V8PixelInputs({
       stride: 5760,
       bytesPerFrame: V8_RGB_BYTES,
     },
-    selectedSuccessfulEncodeIndices: V8_CAPTURE_INDICES,
-    expectedSuccessfulEncodes: 77,
+    selectedInputIndices: V8_CAPTURE_INDICES,
+    expectedObservedInputs: 77,
     maxRetainedPageCopiesPerContextBytes: 32 * 1024 * 1024,
+    priorIndexedCopyBytesPerFrame: V8_LEGACY_COPY_BYTES,
     streamChunkBytes: 64 * 1024,
     prior: {
       sourceSha: prior.state.sourceSha,
@@ -3553,7 +3555,7 @@ export async function exerciseOwnedVp8V8PixelInputs({
           assert.equal(completed.parsed.frames.length, 77, `${name} output ANMF count differs`);
           (report.captures as unknown[]).push({
             build: name,
-            successfulEncodes: 77,
+            observedInputs: 77,
             emittedAnmfCount: completed.parsed.frames.length,
             pixels,
             webp: completed.saved,
