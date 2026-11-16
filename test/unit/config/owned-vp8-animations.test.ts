@@ -17,6 +17,8 @@ import {
   assertLargeAdmittedSavedRecords,
   assertReportName,
   assertNearCapSavedRecords,
+  assertV8InputCaptureReport,
+  assertV8CapturedOutputTimeline,
   extractVp8Frames,
   writeIvf,
 } from '../../../scripts/test/owned-vp8-animations.ts';
@@ -50,6 +52,125 @@ function animation(...frames: Buffer[]): Buffer {
 }
 
 describe('saved animation verifier', () => {
+  it('admits only two complete, matching V8 input streams with five retained RGB controls', () => {
+    const digest = 'a'.repeat(64);
+    const rows = Array.from({ length: 77 }, (_, index) => ({
+      index,
+      frameNum: index + 1,
+      startUs: index * 80_000,
+      endUs: Math.min(6_400_000, (index + 1) * 80_000),
+      logicalRgbBytes: 6_220_800,
+      chunks: 95,
+      sha256: digest,
+    }));
+    const indices = [0, 19, 38, 57, 76];
+    const capture = (build: 'prior' | 'candidate') => ({
+      build,
+      observedInputs: 77,
+      emittedAnmfCount: 77,
+      route: 'actual UI main software',
+      webp: { file: `${build}.webp`, bytes: 100, sha256: digest },
+      streamedHashes: rows.map((row) => ({ ...row })),
+      streamedInputRowsFile: `owned-vp8-v8-all-input-${build}.jsonl`,
+      pixels: indices.map((index) => ({
+        index,
+        bytes: 6_220_800,
+        sha256: digest,
+        file: `owned-vp8-v8-low-input-${build}-${String(index).padStart(2, '0')}.rgb`,
+      })),
+      parsed: {
+        canvas: { width: 1920, height: 1080 },
+        totalDurationMs: 6400,
+        frames: Array.from({ length: 77 }, () => ({})),
+      },
+    });
+    const report = {
+      scenario: 'owned-vp8-product-v8-low-inputs',
+      status: 'passed',
+      selectedInputIndices: indices,
+      expectedObservedInputs: 77,
+      fixture: {
+        path: 'validation/windows/owned-vp8-inputs/v8.webm',
+        bytes: 3_145_371,
+        sha256: 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1',
+        manifestSha256: digest,
+      },
+      settings: {
+        quality: 'low',
+        qualityPercent: 60,
+        cadenceFps: 12,
+        scale: 1,
+        smartFrameSkip: 'off',
+      },
+      layout: {
+        format: 'RGB',
+        channels: 3,
+        opaque: true,
+        width: 1920,
+        height: 1080,
+        stride: 5760,
+        bytesPerFrame: 6_220_800,
+      },
+      prior: {
+        sourceSha: 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4',
+        legacyWasm: { sha256: '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22' },
+      },
+      candidate: {
+        ownedAsset: { sha256: 'bd170496ba1f2574bd095effdc55b7cd102b203dcc347a472141fcfbd9284b0e' },
+      },
+      captures: [capture('prior'), capture('candidate')],
+      allInputComparison: rows.map((row) => ({
+        index: row.index,
+        priorSha256: digest,
+        candidateSha256: digest,
+        samePixels: true,
+        sameFrameNum: true,
+        samePresentation: true,
+      })),
+      comparison: indices.map((index) => ({
+        index,
+        priorSha256: digest,
+        candidateSha256: digest,
+        same: true,
+      })),
+    };
+    expect(() => assertReportName('owned-vp8-product-v8-low-inputs.json')).not.toThrow();
+    expect(assertV8InputCaptureReport(report).map(({ record }) => record.build)).toEqual([
+      'prior',
+      'candidate',
+    ]);
+    const timeline = rows.map((row, index) => ({
+      timestampMs: row.startUs / 1000,
+      holdMs: index === 76 ? 320 : 80,
+    }));
+    expect(() => assertV8CapturedOutputTimeline(rows, timeline)).not.toThrow();
+    const shifted = structuredClone(timeline);
+    shifted[38]!.holdMs += 1;
+    expect(() => assertV8CapturedOutputTimeline(rows, shifted)).toThrow(/output hold differs/);
+    const compressed = structuredClone(timeline);
+    compressed[42]!.timestampMs += 1;
+    expect(() => assertV8CapturedOutputTimeline(rows, compressed)).toThrow(
+      /output timestamp differs/
+    );
+    expect(() =>
+      assertV8InputCaptureReport({ ...report, captures: [...report.captures].reverse() })
+    ).toThrow(/prior V8 capture/);
+    const wrongPixels = structuredClone(report);
+    wrongPixels.captures[1]!.streamedHashes[19]!.sha256 = 'b'.repeat(64);
+    expect(() => assertV8InputCaptureReport(wrongPixels)).toThrow(/selected RGB hash differs/);
+    const wrongPresentation = structuredClone(report);
+    wrongPresentation.captures[1]!.streamedHashes[37]!.startUs += 1;
+    expect(() => assertV8InputCaptureReport(wrongPresentation)).toThrow(/V8 start mismatch/);
+    const missing = structuredClone(report);
+    missing.captures[0]!.streamedHashes.pop();
+    expect(() => assertV8InputCaptureReport(missing)).toThrow(/input count differs/);
+    const aliased = structuredClone(report);
+    aliased.captures[1]!.pixels[1]!.file = aliased.captures[0]!.pixels[1]!.file;
+    expect(() => assertV8InputCaptureReport(aliased)).toThrow(/selected RGB path differs/);
+    const duplicate = structuredClone(report);
+    duplicate.captures[0]!.pixels[1]!.file = duplicate.captures[0]!.pixels[0]!.file;
+    expect(() => assertV8InputCaptureReport(duplicate)).toThrow(/selected RGB path differs/);
+  });
   it('accepts only the exact large admitted report basename', () => {
     expect(() => assertReportName('owned-vp8-product-large-admitted.json')).not.toThrow();
     for (const name of [
