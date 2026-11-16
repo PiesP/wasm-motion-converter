@@ -1787,6 +1787,7 @@ fn refine_selected_uv(
     left_modes: &[u8; 4],
     segments: SegmentConfig,
     budget: &HeaderBudget,
+    guard_rgb_ssd: bool,
 ) -> Result<Option<(RefinementChange, f64)>, EncodeError> {
     let mut luma_cost = None;
     let mut uv_cost = None;
@@ -1927,7 +1928,15 @@ fn refine_selected_uv(
                             by,
                             patch: &patch,
                         };
-                        let gain = cache.score(&frame, change, bounds);
+                        let gain = if guard_rgb_ssd {
+                            let score = cache.score_with_ssd(&frame, change, bounds, true);
+                            let Some(gain) = score.allowed_gain(true) else {
+                                continue;
+                            };
+                            gain
+                        } else {
+                            cache.score(&frame, change, bounds)
+                        };
                         if gain > best_gain {
                             best_gain = gain;
                             best = Some((plane, index, coefficient_index, old, level, patch));
@@ -2318,10 +2327,10 @@ fn encode_observed(
                         analyzed
                             .refinement
                             .map(|change| (change, analyzed.refinement_gain)),
-                        &reconstructed_u,
-                        &reconstructed_v,
+                        [reconstructed_u.as_slice(), reconstructed_v.as_slice()],
                         uv_steps,
                         quota,
+                        mixed_y1_ac,
                     )? {
                         if baseline_overrides.capacity() == 0 {
                             baseline_overrides
@@ -2932,6 +2941,7 @@ fn analyze_one(
                 left_modes,
                 segments,
                 header_budget,
+                mixed_y1_ac,
             )?;
             if let Some((change, gain)) = selected {
                 refinement = Some(change);
@@ -4767,10 +4777,13 @@ impl FrameEncoder {
                 analyzed
                     .refinement
                     .map(|change| (change, analyzed.refinement_gain)),
-                &self.reconstructed_u,
-                &self.reconstructed_v,
+                [
+                    self.reconstructed_u.as_slice(),
+                    self.reconstructed_v.as_slice(),
+                ],
                 uv_steps,
                 quota,
+                self.mixed_y1_ac,
             )
             .map_err(encode_status)?
             {
@@ -7970,6 +7983,7 @@ mod tests {
             &left,
             segments,
             &budget,
+            false,
         )
         .unwrap();
         let after = selected_cost(
@@ -8046,6 +8060,7 @@ mod tests {
             &left,
             segments,
             &budget,
+            false,
         )
         .unwrap();
         let baseline_frame = display_rgb::Frame {
@@ -8126,6 +8141,7 @@ mod tests {
             &left,
             segments,
             &budget,
+            false,
         )
         .unwrap();
         assert_eq!(tie_block.u[0][0], 1);
@@ -8203,10 +8219,204 @@ mod tests {
             &left,
             segments,
             &budget,
+            false,
         )
         .unwrap();
         assert_eq!(zero_block.u[0][0], 0);
         assert_eq!(zero_uv.u_tile, neutral_uv);
+    }
+
+    #[test]
+    fn mixed_uv_single_selector_rejects_an_ssim_gain_with_higher_sampled_rgb_ssd() {
+        let source_y = [128u8; 256];
+        let source_uv = [128u8; 64];
+        let reconstructed_y = [0u8; 256];
+        let reconstructed_uv = [0u8; 64];
+        let y_tile = [128u8; 256];
+        let neutral_uv = [128u8; 64];
+        let base_uv = UvCandidate {
+            u: [[0; 16]; 4],
+            v: [[0; 16]; 4],
+            u_tile: neutral_uv,
+            v_tile: neutral_uv,
+            distortion: 0,
+        };
+        let mut base_block = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        base_block.y2[0] = 1; // Preserve the whole-macroblock skip syntax.
+        let contexts = CoeffContexts::new(1);
+        let contexts_before = contexts.clone();
+        let above = [0u8; 4];
+        let left = [0u8; 4];
+        let segments = SegmentConfig::nonsegmented(0);
+        let budget = HeaderBudget::new(
+            1,
+            segments,
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .unwrap();
+        let budget_before = budget.clone();
+        let mut target = [0u8; 16 * 16 * 4];
+
+        // A contrast-bearing UV patch can improve SSIM while overshooting a
+        // source only partway toward it. Search at most 4 * 7 fixed blends;
+        // no encoder parameter or frame-wide production search is changed.
+        for dc in [256, 384, 512, 768] {
+            let steps = Steps { dc, ac: dc };
+            let mut coefficients = [0i16; 16];
+            coefficients[0] = 1;
+            let patch = reconstructed_patch(&coefficients, &[128u8; 16], steps);
+            let mut trial_u = neutral_uv;
+            store_patch::<8, 64>(&mut trial_u, 0, 0, &patch);
+            let neutral_frame = display_rgb::Frame {
+                width: 16,
+                height: 16,
+                stride_y: 16,
+                original: display_rgb::Original {
+                    pixels: &[],
+                    stride: 0,
+                    layout: 0,
+                },
+                source_y: &source_y,
+                source_u: &source_uv,
+                source_v: &source_uv,
+                reconstructed_y: &reconstructed_y,
+                reconstructed_u: &reconstructed_uv,
+                reconstructed_v: &reconstructed_uv,
+                tile_y: &y_tile,
+                tile_u: &neutral_uv,
+                tile_v: &neutral_uv,
+                mx: 0,
+                my: 0,
+            };
+            let trial_frame = display_rgb::Frame {
+                tile_u: &trial_u,
+                ..neutral_frame
+            };
+            for blend in 1i32..=7 {
+                for y in 0..16 {
+                    for x in 0..16 {
+                        let before = neutral_frame.rendered(x, y, None);
+                        let after = trial_frame.rendered(x, y, None);
+                        let at = (y * 16 + x) * 4;
+                        for channel in 0..3 {
+                            target[at + channel] = ((i32::from(before[channel]) * (16 - blend)
+                                + i32::from(after[channel]) * blend
+                                + 8)
+                                / 16) as u8;
+                        }
+                        target[at + 3] = 255;
+                    }
+                }
+                let original = display_rgb::Original {
+                    pixels: &target,
+                    stride: 64,
+                    layout: 0,
+                };
+                let frame = display_rgb::Frame {
+                    original,
+                    ..neutral_frame
+                };
+                let select = |guard_rgb_ssd| {
+                    let mut block = base_block;
+                    let mut uv = base_uv.clone();
+                    let result = refine_selected_uv(
+                        &mut block,
+                        &mut uv,
+                        &y_tile,
+                        original,
+                        &source_y,
+                        &source_uv,
+                        &source_uv,
+                        &reconstructed_y,
+                        &reconstructed_uv,
+                        &reconstructed_uv,
+                        16,
+                        16,
+                        16,
+                        0,
+                        0,
+                        steps,
+                        &contexts,
+                        &above,
+                        &left,
+                        segments,
+                        &budget,
+                        guard_rgb_ssd,
+                    )
+                    .unwrap();
+                    (block, uv, result)
+                };
+                let (plain_block, plain_uv, plain_result) = select(false);
+                let Some((plain_change, plain_gain)) = plain_result else {
+                    continue;
+                };
+                let cache = display_rgb::LocalCache::new(&frame);
+                let plain_score =
+                    cache.score_tiles_with_ssd(&frame, &plain_uv.u_tile, &plain_uv.v_tile, true);
+                if plain_score.rgb_ssd_delta <= 0 {
+                    continue;
+                }
+                assert!(plain_gain > 0.0);
+                assert!(plain_score.gain > 0.0);
+                assert!((plain_gain - plain_score.gain).abs() < 1e-9);
+                assert_ne!(plain_block, base_block);
+                assert_eq!(plain_change.old, 0);
+
+                let (guarded_block, guarded_uv, guarded_result) = select(true);
+                let guarded_score = cache.score_tiles_with_ssd(
+                    &frame,
+                    &guarded_uv.u_tile,
+                    &guarded_uv.v_tile,
+                    true,
+                );
+                assert!(guarded_score.rgb_ssd_delta <= 0);
+                assert_ne!(guarded_block, plain_block);
+                assert_eq!(contexts, contexts_before);
+                assert_eq!(budget, budget_before);
+                assert_eq!(reconstructed_y, [0; 256]);
+                assert_eq!(reconstructed_uv, [0; 64]);
+
+                let mut expected_block = base_block;
+                let mut expected_uv = base_uv.clone();
+                if let Some((change, gain)) = guarded_result {
+                    assert!(gain > 0.0);
+                    assert!((gain - guarded_score.gain).abs() < 1e-9);
+                    let plane = usize::from(change.plane);
+                    let index = usize::from(change.patch);
+                    let coefficient = usize::from(change.coefficient);
+                    let coefficients = if plane == 0 {
+                        &mut expected_block.u[index]
+                    } else {
+                        &mut expected_block.v[index]
+                    };
+                    assert_eq!(coefficients[coefficient], change.old);
+                    coefficients[coefficient] = change.new;
+                    let patch = reconstructed_patch(coefficients, &[128u8; 16], steps);
+                    if plane == 0 {
+                        expected_uv.u[index][coefficient] = change.new;
+                        store_patch::<8, 64>(&mut expected_uv.u_tile, index % 2, index / 2, &patch);
+                    } else {
+                        expected_uv.v[index][coefficient] = change.new;
+                        store_patch::<8, 64>(&mut expected_uv.v_tile, index % 2, index / 2, &patch);
+                    }
+                } else {
+                    assert_eq!(guarded_score.gain, 0.0);
+                }
+                assert_eq!(guarded_block, expected_block);
+                assert_eq!(guarded_uv.u, expected_uv.u);
+                assert_eq!(guarded_uv.v, expected_uv.v);
+                assert_eq!(guarded_uv.u_tile, expected_uv.u_tile);
+                assert_eq!(guarded_uv.v_tile, expected_uv.v_tile);
+                assert_eq!(guarded_uv.distortion, expected_uv.distortion);
+                return;
+            }
+        }
+        panic!("no SSIM-favorable, RGB-SSD-increasing single UV selection in 28 fixed blends");
     }
 
     #[test]
@@ -9485,8 +9695,25 @@ mod tests {
                     ..engine_request(width, 16, 0, input, width * 4)
                 };
                 let plan = ResourcePlan::checked(request).unwrap();
-                let engine =
-                    run_engine(FrameEncoder::new(request, (*input).clone(), plan).unwrap());
+                let mut engine = FrameEncoder::new(request, (*input).clone(), plan).unwrap();
+                let mut saw_joint = false;
+                while engine.stage != Stage::CollectStats {
+                    engine.step().unwrap();
+                    if engine.stage == Stage::JointRefine {
+                        saw_joint = true;
+                        assert_eq!(
+                            engine.joint_search[0].rgb_ssd_guard_enabled_for_test(),
+                            expected_profile
+                        );
+                    }
+                }
+                if expected_profile {
+                    assert!(
+                        saw_joint,
+                        "eligible profile must reach the guarded joint path"
+                    );
+                }
+                let engine = run_engine(engine);
                 assert_eq!(engine.mixed_y1_ac, expected_profile);
                 if expected_profile {
                     assert!(engine.segments.enabled);

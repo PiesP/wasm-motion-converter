@@ -698,6 +698,31 @@ pub(super) struct LocalCache {
     baseline: [[Moment; 3]; 7 * 7],
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct TrialScore {
+    pub gain: f64,
+    // One contribution per changed metric pixel and RGB channel, never per
+    // overlapping SSIM window. This is sampled proxy SSD, not decoded PSNR.
+    pub rgb_ssd_delta: i64,
+}
+
+impl TrialScore {
+    pub(super) fn allowed_gain(self, guard_rgb_ssd: bool) -> Option<f64> {
+        (!guard_rgb_ssd || self.rgb_ssd_delta <= 0).then_some(self.gain)
+    }
+}
+
+fn rgb_ssd_delta(original: [u8; 3], before: [u8; 3], after: [u8; 3]) -> i64 {
+    // At most 32x32 cached samples * 3 channels * 255^2 per trial.
+    let mut delta = 0;
+    for channel in 0..3 {
+        let old = i64::from(original[channel]) - i64::from(before[channel]);
+        let new = i64::from(original[channel]) - i64::from(after[channel]);
+        delta += new * new - old * old;
+    }
+    delta
+}
+
 const _: () = assert!(
     std::mem::size_of::<LocalCache>() + std::mem::size_of::<[[Moment; 3]; 7 * 7]>() <= 64 * 1024
 );
@@ -792,8 +817,21 @@ impl LocalCache {
         change: Change<'_>,
         bounds: (usize, usize, usize, usize),
     ) -> f64 {
+        self.score_with_ssd(frame, change, bounds, false).gain
+    }
+
+    pub(super) fn score_with_ssd(
+        &self,
+        frame: &Frame<'_>,
+        change: Change<'_>,
+        bounds: (usize, usize, usize, usize),
+        measure_ssd: bool,
+    ) -> TrialScore {
         let Some(windows) = intersecting_windows(frame, bounds) else {
-            return 0.0;
+            return TrialScore {
+                gain: 0.0,
+                rgb_ssd_delta: 0,
+            };
         };
         let (left, right, top, bottom) = metric_bounds(frame, bounds);
         // The final incomplete metric tail has no window and is absent from
@@ -803,6 +841,7 @@ impl LocalCache {
         let top = top.max(windows.y0 * 4);
         let bottom = bottom.min((windows.y1 - 1) * 4 + 8);
         let mut trial = self.baseline;
+        let mut ssd_delta = 0;
         for y in top..bottom {
             for x in left..right {
                 let pixel = self.pixels[(y - self.y0) * 32 + x - self.x0];
@@ -823,6 +862,9 @@ impl LocalCache {
                 if updated == pixel.baseline {
                     continue;
                 }
+                if measure_ssd {
+                    ssd_delta += rgb_ssd_delta(pixel.original, pixel.baseline, updated);
+                }
                 let wx0 = x.saturating_sub(7).div_ceil(4).max(windows.x0);
                 let wx1 = (x / 4 + 1).min(windows.x1);
                 let wy0 = y.saturating_sub(7).div_ceil(4).max(windows.y0);
@@ -850,12 +892,25 @@ impl LocalCache {
                 }
             }
         }
-        gain
+        TrialScore {
+            gain,
+            rgb_ssd_delta: ssd_delta,
+        }
     }
 
     // Score the complete U/V trial jointly. Replacing the baseline moments
     // once per rendered pixel retains chroma coupling and overlapping windows.
     pub(super) fn score_tiles(&self, frame: &Frame<'_>, u: &[u8; 64], v: &[u8; 64]) -> f64 {
+        self.score_tiles_with_ssd(frame, u, v, false).gain
+    }
+
+    pub(super) fn score_tiles_with_ssd(
+        &self,
+        frame: &Frame<'_>,
+        u: &[u8; 64],
+        v: &[u8; 64],
+        measure_ssd: bool,
+    ) -> TrialScore {
         let bounds = (
             (frame.mx * 16).saturating_sub(4),
             (frame.mx * 16 + 20).min(frame.width),
@@ -863,11 +918,15 @@ impl LocalCache {
             (frame.my * 16 + 20).min(frame.height),
         );
         let Some(windows) = intersecting_windows(frame, bounds) else {
-            return 0.0;
+            return TrialScore {
+                gain: 0.0,
+                rgb_ssd_delta: 0,
+            };
         };
         let right = (windows.x1 - 1) * 4 + 8;
         let bottom = (windows.y1 - 1) * 4 + 8;
         let mut trial = self.baseline;
+        let mut ssd_delta = 0;
         for y in self.y0..bottom {
             for x in self.x0..right {
                 let pixel = self.pixels[(y - self.y0) * 32 + x - self.x0];
@@ -879,6 +938,9 @@ impl LocalCache {
                 if updated == pixel.baseline {
                     continue;
                 }
+                if measure_ssd {
+                    ssd_delta += rgb_ssd_delta(pixel.original, pixel.baseline, updated);
+                }
                 let wx0 = x.saturating_sub(7).div_ceil(4).max(windows.x0);
                 let wx1 = (x / 4 + 1).min(windows.x1);
                 let wy0 = y.saturating_sub(7).div_ceil(4).max(windows.y0);
@@ -906,7 +968,10 @@ impl LocalCache {
                 }
             }
         }
-        gain
+        TrialScore {
+            gain,
+            rgb_ssd_delta: ssd_delta,
+        }
     }
 }
 
@@ -1099,6 +1164,72 @@ mod tests {
             |x, y| frame.original.at(x, y),
             |x, y| frame.rendered(x, y, change),
         )
+    }
+
+    fn direct_metric_rgb_ssd_delta(
+        frame: &Frame<'_>,
+        mut after: impl FnMut(usize, usize) -> [u8; 3],
+    ) -> i64 {
+        // The final metric tail is outside every complete SSIM window.
+        let covered_x = ((frame.width.max(8) >> 2) - 2) * 4 + 8;
+        let covered_y = ((frame.height.max(8) >> 2) - 2) * 4 + 8;
+        let mut baseline_ssd = 0i64;
+        let mut trial_ssd = 0i64;
+        for y in 0..covered_y {
+            for x in 0..covered_x {
+                let px = metric_sample(x, frame.width);
+                let py = metric_sample(y, frame.height);
+                let source = frame.original.at(px, py);
+                let before = frame.rendered(px, py, None);
+                let after = after(px, py);
+                for channel in 0..3 {
+                    baseline_ssd +=
+                        (i64::from(source[channel]) - i64::from(before[channel])).pow(2);
+                    trial_ssd += (i64::from(source[channel]) - i64::from(after[channel])).pow(2);
+                }
+            }
+        }
+        trial_ssd - baseline_ssd
+    }
+
+    #[test]
+    fn uv_trial_requires_nonincreasing_sampled_rgb_ssd_only_when_guarded() {
+        // One metric window: shifting mostly-dark pixels by +10 has lower
+        // SSD, while a mean-preserving contrast loss scores higher in SSIM.
+        let mut before = Moment::default();
+        let mut after = Moment::default();
+        let mut before_ssd = 0i64;
+        let mut after_ssd = 0i64;
+        for pixel in 0..64 {
+            let source = if pixel < 4 { 255 } else { 0 };
+            let baseline = if pixel < 4 { 255 } else { 10 };
+            let trial = if pixel < 4 { 207 } else { 4 };
+            before.add(source, baseline);
+            after.add(source, trial);
+            before_ssd += (i64::from(source) - i64::from(baseline)).pow(2);
+            after_ssd += (i64::from(source) - i64::from(trial)).pow(2);
+        }
+        let ssim_favorable_but_worse = TrialScore {
+            gain: after.ssim() - before.ssim(),
+            rgb_ssd_delta: after_ssd - before_ssd,
+        };
+        assert!(ssim_favorable_but_worse.gain > 0.0);
+        assert!(ssim_favorable_but_worse.rgb_ssd_delta > 0);
+        assert_eq!(ssim_favorable_but_worse.allowed_gain(true), None);
+        assert_eq!(
+            ssim_favorable_but_worse.allowed_gain(false),
+            Some(ssim_favorable_but_worse.gain)
+        );
+        for delta in [-1, 0] {
+            assert_eq!(
+                TrialScore {
+                    gain: 0.01,
+                    rgb_ssd_delta: delta,
+                }
+                .allowed_gain(true),
+                Some(0.01)
+            );
+        }
     }
 
     #[test]
@@ -1592,6 +1723,24 @@ mod tests {
                                 .to_bits(),
                             "joint score {width}x{height} layout={layout} MB={mx},{my}"
                         );
+                        let joint_guarded =
+                            cache.score_tiles_with_ssd(&frame, &trial_u, &trial_v, true);
+                        assert_eq!(
+                            joint_guarded.gain.to_bits(),
+                            cache.score_tiles(&frame, &trial_u, &trial_v).to_bits()
+                        );
+                        let trial_frame = Frame {
+                            tile_u: &trial_u,
+                            tile_v: &trial_v,
+                            ..frame
+                        };
+                        assert_eq!(
+                            joint_guarded.rgb_ssd_delta,
+                            direct_metric_rgb_ssd_delta(&frame, |x, y| {
+                                trial_frame.rendered(x, y, None)
+                            }),
+                            "joint SSD {width}x{height} layout={layout} MB={mx},{my}"
+                        );
                         let patch = [42u8; 16];
                         for plane in 0..2 {
                             for by in 0..2 {
@@ -1610,6 +1759,19 @@ mod tests {
                                         cache.score(&frame, change, bounds).to_bits(),
                                         scalar_cache.score(&frame, change, bounds).to_bits(),
                                         "patch score {width}x{height} layout={layout} MB={mx},{my} plane={plane} patch={bx},{by}"
+                                    );
+                                    let guarded =
+                                        cache.score_with_ssd(&frame, change, bounds, true);
+                                    assert_eq!(
+                                        guarded.gain.to_bits(),
+                                        cache.score(&frame, change, bounds).to_bits()
+                                    );
+                                    assert_eq!(
+                                        guarded.rgb_ssd_delta,
+                                        direct_metric_rgb_ssd_delta(&frame, |x, y| {
+                                            frame.rendered(x, y, Some(change))
+                                        }),
+                                        "patch SSD {width}x{height} layout={layout} MB={mx},{my} plane={plane} patch={bx},{by}"
                                     );
                                 }
                             }

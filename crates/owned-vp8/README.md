@@ -15,6 +15,14 @@ Separate component timing ratios must not be multiplied. Browser capability,
 product performance, physical resource peaks, and delivery remain unqualified.
 Changes to this README require a provenance refresh before prebuilt verification.
 
+The current UV quality trial adds a
+[sampled RGB SSD guard](../../docs/experiments/501-owned-vp8-uv-rgb-ssd-guard.md)
+to single and joint UV refinements in the existing mixed-Y1 q60 profile.
+It retains the SSIM objective while rejecting increased squared error over
+its cached metric samples. The linked experiment owns the source identities,
+check results and measured outcome. This is a calibration trial; adoption
+remains governed by the global quality, performance and resource gates.
+
 Execution and acceptance are governed by [issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
 and the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
 The candidate main and conversion Worker software routes import this crate's
