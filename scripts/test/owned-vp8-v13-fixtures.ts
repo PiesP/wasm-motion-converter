@@ -352,6 +352,13 @@ export function assertV13Shape(manifest: V13Manifest): void {
   }
 }
 
+function readFfmpegVersion(): string {
+  const firstLine = execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0];
+  assert.ok(firstLine, 'V13 FFmpeg version output is empty');
+  assert.ok(firstLine.trim(), 'V13 FFmpeg version output is blank');
+  return firstLine;
+}
+
 /** Run before candidate prebuilt verification, oracle loading, output creation or encoding. */
 export function validateV13SourcePins(
   manifest: V13Manifest,
@@ -365,7 +372,7 @@ export function validateV13SourcePins(
     sha256(readFileSync(fileURLToPath(import.meta.url))),
     'V13 generator pin changed'
   );
-  const ffmpegVersion = execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0];
+  const ffmpegVersion = readFfmpegVersion();
   assert.equal(manifest.ffmpegVersion, ffmpegVersion, 'V13 FFmpeg decoder pin changed');
   const priorInputIds = new Set<string>();
   const priorInputHashes = new Set<string>();
@@ -475,7 +482,7 @@ export function prepareV13Manifest(
   const filled: V13Manifest = {
     ...manifest,
     generatorSha256: sha256(readFileSync(fileURLToPath(import.meta.url))),
-    ffmpegVersion: execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0],
+    ffmpegVersion: readFfmpegVersion(),
     fixtures: manifest.fixtures.map((row) => ({
       ...row,
       sha256: sha256(generateV13Fixture(row.id, paths, manifest).pixels),
