@@ -73,6 +73,32 @@ The module is `ae9061262e23e19ad3d859425211f6b4ef610a5f09392b8b16d389a56c404d3c`
 and the artifact were independently rehashed. Provenance SHA-256:
 `f17847f0c9e4b248e32588426d25e2aa2f31bcb444ceb53329142eea4e4a89c7`.
 
-Quality, size, product performance/resource, browser acceptance and delivery
-remain NOT_RUN for this point. Freeze a clean signed source and exact module
-before the diagnostic screen. Production wasm-webp remains.
+The diagnostic quality and size screen below ran at signed source
+`423584a075df6b27e14757d18276830169176e87`. Product performance/resource,
+browser acceptance and delivery remain NOT_RUN for this point.
+
+## Frozen screen: rejected diagnostic point
+
+All 45 tuning rows passed PSNR, SSIM and raw-size gates. Four of five actual
+controls passed all gates. Frame38 size is now 32,934 bytes, below its
+33,402.5-byte limit, but frame76 remains 11,060 bytes above its 10,815-byte
+limit. Thus 49/50 exposed rows pass all gates.
+
+The separate original-reference frame76 PSNR delta is -1.702031 dB relative
+to the primary, below the unchanged -1 dB floor. All other original-reference
+PSNR and all SSIM gates pass. The local imported-YUV SSE/rate admission did
+not preserve the previous -9 point's original-reference improvement. It does
+not qualify adoption. Both decoder implementations agree for the five controls
+and all 90 saved tuning streams (180 additional decoder children).
+
+Private `mixed-dc-zero-01/quality-preparation` receipts:
+
+- Frozen five lock: `aa86f7b9846ca46963de5f113462ce2f82c5d58ce3cadb2250700f9550083859`.
+- New45 results: `52acacb1a3600e5e5b7b3ccad1133d1a1a5719425e85cc2531aaf01b4532c236`.
+- Paired decoder summary: `27890e6b8b0d0093f422e2e074d979f22ee393f24b80b8b7e1fb313db6fab338`.
+- Root result audit: `a841f1198dbe9a6394d1c48678c6258bdc2f1489fad89598092cef9becb0def2`.
+
+Disposition: REJECTED_DIAGNOSTIC_POINT / RETAIN_CURRENT. Preserve failures
+and thresholds. No unchanged rerun, full77/687, freshV13 or product acceptance
+execution follows this point. Continue with a separately justified correction.
+Production wasm-webp remains.
