@@ -4,7 +4,7 @@
   "status": "FROZEN_UNEXECUTED",
   "freezeId": "vp8-v13-first-heldout-20261116-01",
   "attemptBudget": 1,
-  "generatorSha256": "24a8851bb802cd857049fcb4fbdfce5de67197c602bd080253b48a0c0eaf6411",
+  "generatorSha256": "7207b4b112f7fba5b07c51899459bdd4628d64c0e497c25eddf3006cbd9c5141",
   "ffmpegVersion": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
   "purpose": "Prospective source-only 20-input/60-condition fixed-pixel cohort; V1-V12 are exposed regression evidence",
   "thresholds": {

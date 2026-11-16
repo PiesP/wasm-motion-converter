@@ -71,7 +71,17 @@ source draft **only** in its 20 pixel SHA-256 fields. That output remained
 `PROSPECTIVE_UNFROZEN` and was then promoted to the source freeze by changing
 only the three status/ID/budget fields and relocating five V8-V12 prior-manifest
 paths to byte-identical tracked data. Source pixel hashes, source identities,
-crop regions, generator, decoder, and criteria remain identical.
+crop regions, decoder, and criteria remain identical.
+
+The source-only generation attempt used generator SHA-256
+`24a8851bb802cd857049fcb4fbdfce5de67197c602bd080253b48a0c0eaf6411`.
+A later typecheck exposed an unchecked `ffmpeg -version` first-line result. The
+current generator validates that the line is present and nonblank before
+returning the same line for valid output; its SHA-256 is
+`7207b4b112f7fba5b07c51899459bdd4628d64c0e497c25eddf3006cbd9c5141`.
+This revision changes no pixel recipe, source, crop, decoder command, or
+criterion. The retained generation receipt remains bound to the original SHA;
+the current revision has not run source generation.
 
 ## Freeze and execution boundary
 
