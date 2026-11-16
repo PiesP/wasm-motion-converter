@@ -1086,9 +1086,9 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     if (v8InputCapture) {
       for (const declared of records) {
         const build = declared.record.build!;
-        const capture = (product.value.captures as Record<string, unknown>[])[
-          build === 'prior' ? 0 : 1
-        ]!;
+        const capture: Record<string, unknown> = (
+          product.value.captures as Record<string, unknown>[]
+        )[build === 'prior' ? 0 : 1]!;
         const rowFile = `owned-vp8-v8-all-input-${build}.jsonl`;
         const rowBytes = await readStableFile(
           join(sourceOutput, rowFile),
@@ -1150,8 +1150,8 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
         'V8 capture lock schema differs'
       );
       for (const build of ['prior', 'candidate'] as const) {
-        const reportBuild = product.value[build];
-        const lockedBuild = lockValue[build];
+        const reportBuild: unknown = product.value[build];
+        const lockedBuild: unknown = lockValue[build];
         assert(
           plainObject(reportBuild) && plainObject(lockedBuild),
           `${build} V8 capture lock build is missing`
