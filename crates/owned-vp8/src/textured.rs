@@ -1476,10 +1476,24 @@ fn make_i4_with_pruning<const PRUNE: bool>(
         selected_score,
     )
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UvRatePolicy {
     TexturedAcTail,
     FlatDcZero,
+    MixedDcZero { textured_ac_tail: bool },
+}
+
+fn uv_rate_policy(quality: u32, segment_id: u8, mixed_y1_ac: bool) -> Option<UvRatePolicy> {
+    if quality == 60 && mixed_y1_ac {
+        return Some(UvRatePolicy::MixedDcZero {
+            textured_ac_tail: segment_id == segmentation::TEXTURED,
+        });
+    }
+    match (quality, segment_id) {
+        (60, segmentation::TEXTURED) => Some(UvRatePolicy::TexturedAcTail),
+        (75, segmentation::CHROMATIC_FLAT) => Some(UvRatePolicy::FlatDcZero),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1576,6 +1590,32 @@ fn make_uv(
                             context,
                             baseline,
                         ),
+                        UvRatePolicy::MixedDcZero { textured_ac_tail } => {
+                            let candidate = if textured_ac_tail {
+                                optimize_uv_block(
+                                    source,
+                                    stride,
+                                    x + bx * 4,
+                                    y + by * 4,
+                                    &predictor,
+                                    steps,
+                                    context,
+                                    lambda,
+                                    baseline,
+                                )
+                            } else {
+                                baseline
+                            };
+                            optimize_uv_dc_zero(
+                                source,
+                                stride,
+                                x + bx * 4,
+                                y + by * 4,
+                                &predictor,
+                                context,
+                                candidate,
+                            )
+                        }
                     }
                 } else {
                     baseline
@@ -2833,11 +2873,7 @@ fn analyze_one(
             mixed_y1_ac,
         )]
     };
-    let uv_policy = match (quality, segment_id) {
-        (60, segmentation::TEXTURED) => Some(UvRatePolicy::TexturedAcTail),
-        (75, segmentation::CHROMATIC_FLAT) => Some(UvRatePolicy::FlatDcZero),
-        _ => None,
-    };
+    let uv_policy = uv_rate_policy(quality, segment_id, mixed_y1_ac);
     let uv: Vec<_> = (0..4)
         .map(|mode| {
             make_uv(
@@ -8645,6 +8681,106 @@ mod tests {
         assert_eq!(partial.u[1..], baseline.u[1..]);
         assert_eq!(partial.v[1..], baseline.v[1..]);
         assert_eq!(contexts, before);
+    }
+
+    #[test]
+    fn mixed_uv_dc_zero_removes_a_unit_dc_without_extra_uv_error_or_context_mutation() {
+        assert_eq!(
+            uv_rate_policy(60, segmentation::CHROMATIC_FLAT, false),
+            None
+        );
+        assert_eq!(
+            uv_rate_policy(60, segmentation::TEXTURED, false),
+            Some(UvRatePolicy::TexturedAcTail)
+        );
+        assert_eq!(
+            uv_rate_policy(75, segmentation::CHROMATIC_FLAT, false),
+            Some(UvRatePolicy::FlatDcZero)
+        );
+        assert_eq!(
+            uv_rate_policy(60, segmentation::TEXTURED, true),
+            Some(UvRatePolicy::MixedDcZero {
+                textured_ac_tail: true
+            })
+        );
+        let policy = uv_rate_policy(60, segmentation::CHROMATIC_FLAT, true).unwrap();
+        assert_eq!(
+            policy,
+            UvRatePolicy::MixedDcZero {
+                textured_ac_tail: false
+            }
+        );
+
+        let source = [129u8; 64];
+        let reconstructed = [0u8; 64];
+        let mut contexts = CoeffContexts::new(1);
+        contexts.u = vec![true, false];
+        contexts.v = vec![false, true];
+        contexts.left_u = [false, true];
+        contexts.left_v = [true, false];
+        let before_contexts = contexts.clone();
+        let steps = ac_quant::steps(
+            22,
+            crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true),
+            Plane::UV,
+        );
+        assert_eq!(steps.dc, 16);
+        let baseline = make_uv(
+            &source,
+            &source,
+            &reconstructed,
+            &reconstructed,
+            8,
+            0,
+            0,
+            0,
+            steps,
+            None,
+        );
+        assert_eq!(baseline.u[0][0], 1);
+        assert_eq!(baseline.u[0][1..], [0; 15]);
+        let trial = |visible_width, visible_height| {
+            make_uv(
+                &source,
+                &source,
+                &reconstructed,
+                &reconstructed,
+                8,
+                0,
+                0,
+                0,
+                steps,
+                Some(UvRdo {
+                    contexts: &contexts,
+                    mx: 0,
+                    lambda: 1,
+                    visible_width,
+                    visible_height,
+                    policy,
+                }),
+            )
+        };
+        let chosen = trial(8, 8);
+        assert_eq!(chosen.u[0], [0; 16]);
+        assert_eq!(chosen.v[0], [0; 16]);
+        let baseline_patch = prediction_patch::<8, 64>(&baseline.u_tile, 0, 0);
+        let chosen_patch = prediction_patch::<8, 64>(&chosen.u_tile, 0, 0);
+        assert!(
+            patch_error(&source, 8, 0, 0, &chosen_patch)
+                <= patch_error(&source, 8, 0, 0, &baseline_patch)
+        );
+        let context = usize::from(before_contexts.u[0]) + usize::from(before_contexts.left_u[0]);
+        let mut before_rate = RateCounter::default();
+        let mut after_rate = RateCounter::default();
+        residual::encode_block(&mut before_rate, &baseline.u[0], 2, context).unwrap();
+        residual::encode_block(&mut after_rate, &chosen.u[0], 2, context).unwrap();
+        assert!(after_rate.cost < before_rate.cost);
+        let partial = trial(1, 1);
+        assert_eq!(partial.u[0], [0; 16]);
+        assert_eq!(partial.v[0], [0; 16]);
+        assert_eq!(partial.u[1..], baseline.u[1..]);
+        assert_eq!(partial.v[1..], baseline.v[1..]);
+        assert_eq!(contexts, before_contexts);
     }
 
     #[test]
