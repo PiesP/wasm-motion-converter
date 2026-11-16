@@ -15,9 +15,13 @@ Per-frame coefficient statistics follow frozen mode/coefficient decisions. A
 bounded optimizer proposes updates, and exact whole-frame counting includes
 update flags and literals. The encoder adopts updates only when the complete
 frame is strictly smaller; count and emission use the same frozen model.
-The bounded resumable ABI2 core is implemented. The exact Rust/module candidate
-passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as recorded
-in the [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
+The bounded resumable ABI2 core is implemented. An earlier candidate at source
+`a83f5b694a37db7770c3b0daae4c8376a88b955d` and module
+`e918f3016451b60f04dfa551e5ae57820bcbc65c8c8834f01c8426b72355e584`
+passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as
+recorded in the [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
+Those results do not requalify subsequent Rust or module revisions, including
+the [paired display chroma candidate](../../docs/experiments/501-owned-vp8-paired-display-chroma.md).
 Browser/product performance and lifecycle qualification remain unfinished; these
 codec results do not qualify runtime removal of `wasm-webp`.
 
