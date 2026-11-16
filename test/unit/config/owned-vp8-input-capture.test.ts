@@ -8,6 +8,7 @@ import { describe, it } from 'vite-plus/test';
 
 import {
   assertCaptureInventory,
+  assertV8CaptureBuild,
   captureIndex,
   compareCapturedPixels,
   V8_CAPTURE_BUDGET,
@@ -26,6 +27,15 @@ const valid = () => ({
 });
 
 describe('V8 post-Canvas packed RGB capture contract', () => {
+  it('binds the module digest separately from the candidate Git source', () => {
+    const source = 'ee86865e30ee9395ee2c2c26041a197debf0114c';
+    const module = 'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186';
+    assert.doesNotThrow(() => assertV8CaptureBuild(source, module));
+    assert.throws(() => assertV8CaptureBuild(module, module), /Git source SHA/);
+    assert.throws(() => assertV8CaptureBuild(source, source), /WASM digest differs/);
+    assert.throws(() => assertV8CaptureBuild(source, '0'.repeat(64)), /WASM digest differs/);
+  });
+
   it('selects five successful encode ordinals within a 32 MiB per-context budget', () => {
     assert.deepEqual(
       Array.from({ length: 77 }, (_, index) => index).filter(captureIndex),

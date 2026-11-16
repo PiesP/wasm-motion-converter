@@ -15,6 +15,16 @@ export const V8_CAPTURE_BUDGET = 32 * 1024 * 1024;
 export const V8_CAPTURE_CHUNK = 64 * 1024;
 const EXPECTED_ENCODES = 77;
 
+/** Git provenance and compiled module identity are distinct build fields. */
+export function assertV8CaptureBuild(sourceSha: string, moduleSha256: string): void {
+  assert.match(sourceSha, /^[0-9a-f]{40}$/, 'Candidate Git source SHA is invalid');
+  assert.equal(
+    moduleSha256,
+    'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186',
+    'Candidate owned WASM digest differs'
+  );
+}
+
 export function captureIndex(ordinal: number): boolean {
   return V8_CAPTURE_INDICES.includes(ordinal as (typeof V8_CAPTURE_INDICES)[number]);
 }

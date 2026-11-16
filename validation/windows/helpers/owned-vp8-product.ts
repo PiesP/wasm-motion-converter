@@ -18,6 +18,7 @@ import {
   runDirectOwnerCompletion,
 } from './owned-vp8-direct-owner.ts';
 import {
+  assertV8CaptureBuild,
   compareCapturedPixels,
   installV8PixelCapture,
   streamCapturedRgb,
@@ -3415,14 +3416,11 @@ export async function exerciseOwnedVp8V8PixelInputs({
   assert.equal(fixtureBytes.length, 3_145_371, 'V8 source byte length differs');
   assert.equal(digest(fixtureBytes), V8_SHA256, 'V8 source digest differs');
   assert.equal(prior.state.sourceSha, 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4');
-  assert.equal(
-    candidate.state.sourceSha,
-    'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186'
-  );
   const ownedAsset = candidate.state.files.filter((file) =>
     /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(file.path)
   );
   assert.equal(ownedAsset.length, 1, 'Candidate owned WASM asset is not unique');
+  assertV8CaptureBuild(candidate.state.sourceSha, ownedAsset[0]!.sha256);
   const legacyWasm = prior.state.files.filter((file) =>
     /^assets\/webp-wasm[-.][\w-]{8}\.wasm$/.test(file.path)
   );
