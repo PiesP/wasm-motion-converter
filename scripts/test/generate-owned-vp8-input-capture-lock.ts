@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { constants, type Stats } from 'node:fs';
+import { lstat, mkdir, open, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,6 +19,56 @@ import {
 import { applicationSourceSha } from '../build/deployment-state.ts';
 
 const SOURCE_ROOT = fileURLToPath(new URL('../..', import.meta.url));
+const MAX_CAPTURE_LOCK_BYTES = 8 * 1024;
+
+function sameLockSnapshot(left: Stats, right: Stats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+/** Read only the bounded opened file and reject replaced paths. */
+async function assertExistingLock(path: string, expected: Buffer): Promise<void> {
+  assert(
+    typeof constants.O_NOFOLLOW === 'number' && typeof constants.O_NONBLOCK === 'number',
+    'Existing V8 capture lock reuse requires no-follow and nonblocking file support'
+  );
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const initial = await file.stat();
+    const named = await lstat(path);
+    assert(
+      initial.isFile() &&
+        named.isFile() &&
+        !named.isSymbolicLink() &&
+        sameLockSnapshot(initial, named),
+      'Existing V8 capture lock is not an unchanged regular file'
+    );
+    assert(
+      initial.size <= MAX_CAPTURE_LOCK_BYTES && initial.size === expected.length,
+      'Existing V8 capture lock extent differs'
+    );
+    const actual = Buffer.alloc(expected.length);
+    for (let offset = 0; offset < actual.length;) {
+      const { bytesRead } = await file.read(actual, offset, actual.length - offset, offset);
+      assert(bytesRead > 0, 'Existing V8 capture lock is truncated');
+      offset += bytesRead;
+    }
+    const { bytesRead } = await file.read(Buffer.alloc(1), 0, 1, actual.length);
+    assert.equal(bytesRead, 0, 'Existing V8 capture lock exceeds its frozen extent');
+    assert(
+      sameLockSnapshot(initial, await file.stat()) && sameLockSnapshot(initial, await lstat(path)),
+      'Existing V8 capture lock changed while reading'
+    );
+    assert(actual.equals(expected), 'Existing V8 capture lock differs');
+  } finally {
+    await file.close();
+  }
+}
 
 function git(root: string, ...arguments_: string[]): string {
   return execFileSync('git', arguments_, { cwd: root, encoding: 'utf8' }).trimEnd();
@@ -46,20 +97,16 @@ export async function writeOwnedVp8InputCaptureLock(
   bytes: Uint8Array
 ): Promise<'new' | 'reused'> {
   assert(
-    bytes.byteLength > 0 && bytes.byteLength <= 8 * 1024,
+    bytes.byteLength > 0 && bytes.byteLength <= MAX_CAPTURE_LOCK_BYTES,
     'V8 capture lock byte bound differs'
   );
+  const expected = Buffer.from(bytes);
   try {
-    await writeFile(path, bytes, { flag: 'wx' });
+    await writeFile(path, expected, { flag: 'wx', mode: 0o600 });
     return 'new';
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') throw error;
-    const info = await lstat(path);
-    assert(
-      info.isFile() && !info.isSymbolicLink(),
-      'Existing V8 capture lock is not a regular file'
-    );
-    assert.deepEqual(await readFile(path), Buffer.from(bytes), 'Existing V8 capture lock differs');
+    await assertExistingLock(path, expected);
     return 'reused';
   }
 }
