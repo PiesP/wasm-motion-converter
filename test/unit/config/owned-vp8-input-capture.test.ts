@@ -3,7 +3,8 @@
 
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
-import { describe, it } from 'vitest';
+
+import { describe, it } from 'vite-plus/test';
 
 import {
   assertCaptureInventory,
@@ -14,6 +15,7 @@ import {
   V8_CAPTURE_INDICES,
   V8_RGB_BYTES,
   installV8PixelCapture,
+  type CapturedPixel,
 } from '../../../validation/windows/helpers/owned-vp8-input-capture.ts';
 
 const valid = () => ({
@@ -27,7 +29,7 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
   it('selects five successful encode ordinals within a 32 MiB per-context budget', () => {
     assert.deepEqual(
       Array.from({ length: 77 }, (_, index) => index).filter(captureIndex),
-      [0, 19, 38, 57, 76],
+      [0, 19, 38, 57, 76]
     );
     assert.equal(V8_RGB_BYTES, 6_220_800);
     assert(V8_CAPTURE_INDICES.length * V8_RGB_BYTES <= V8_CAPTURE_BUDGET);
@@ -54,13 +56,20 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
   });
 
   it('keeps same-index RGB digest differences as diagnostic mismatches', () => {
-    const prior = V8_CAPTURE_INDICES.map((index) => ({
-      index, ticket: index + 1, bytes: V8_RGB_BYTES, file: `prior-${index}.rgb`, sha256: 'a'.repeat(64),
+    const prior: CapturedPixel[] = V8_CAPTURE_INDICES.map((index) => ({
+      index,
+      ticket: index + 1,
+      bytes: V8_RGB_BYTES,
+      file: `prior-${index}.rgb`,
+      sha256: 'a'.repeat(64),
     }));
     const candidate = prior.map((entry) => ({ ...entry, file: `candidate-${entry.index}.rgb` }));
     candidate[2]!.sha256 = 'b'.repeat(64);
     const comparison = compareCapturedPixels(prior, candidate);
-    assert.deepEqual(comparison.map((entry) => entry.same), [true, true, false, true, true]);
+    assert.deepEqual(
+      comparison.map((entry) => entry.same),
+      [true, true, false, true, true]
+    );
     candidate[2]!.index = 39;
     assert.throws(() => compareCapturedPixels(prior, candidate), /selected pixel indices differ/);
   });
@@ -77,7 +86,7 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
       heap: Uint8Array,
       unused: unknown,
       offset: number,
-      count: number,
+      count: number
     ) => void;
     const heap = new Uint8Array(V8_RGB_BYTES + 20);
     heap.fill(41, 10);

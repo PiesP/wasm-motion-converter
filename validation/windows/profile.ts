@@ -3795,7 +3795,10 @@ export async function run({
 
   const bundleRoot = await realpath(resolve(root));
   const pixelScenario = 'owned-vp8-product-v8-low-inputs';
-  const pixelSelector = resolve(bundleRoot, `validation/windows/inputs/${pixelScenario}.json`);
+  const pixelSelector = resolve(
+    bundleRoot,
+    'validation/windows/inputs/owned-vp8-product-v8-low-inputs.json'
+  );
   let pixelSelectorText: string | undefined;
   try {
     pixelSelectorText = await readFile(pixelSelector, 'utf8');
@@ -3822,8 +3825,14 @@ export async function run({
     const started = await startStaticServer(bundleRoot);
     try {
       return await exerciseOwnedVp8V8PixelInputs({
-        browser, bundleRoot, output, prior, candidate, server: started,
-        validateBundleFile, loadApplication,
+        browser,
+        bundleRoot,
+        output,
+        prior,
+        candidate,
+        server: started,
+        validateBundleFile,
+        loadApplication,
       });
     } finally {
       await closeServer(started.server);

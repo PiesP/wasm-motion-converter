@@ -31,7 +31,7 @@ export function assertCaptureInventory(snapshot: {
   assert.deepEqual(
     snapshot.selected.map((entry) => entry.index),
     V8_CAPTURE_INDICES,
-    'Selected successful encode ordinals differ',
+    'Selected successful encode ordinals differ'
   );
   for (const entry of snapshot.selected) {
     assert.equal(entry.ticket, entry.index + 1, 'Selected frame ticket is stale');
@@ -97,7 +97,7 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
         offset + length > frame.bytes.byteLength
       )
         return fail('invalid pixel stream extent');
-      // Transfer at most 64 KiB per Playwright message. No whole-frame JSON or base64.
+      // At most 64 KiB raw becomes 87,384 base64 characters, plus the RPC envelope.
       const bytes = frame.bytes.subarray(offset, offset + length);
       let binary = '';
       for (let at = 0; at < bytes.length; at += 8192)
@@ -118,7 +118,7 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
       '__wmcVp8LegacyCopy',
       (heap: Uint8Array, _unused: unknown, offset: number, count: number) => {
         // The pinned main loader calls this *after* its actual indexed copy loop.
-      // Different-sized heap copies do not advance the frame ordinal.
+        // Different-sized heap copies do not advance the frame ordinal.
         if (count !== pixelBytes) return;
         if (
           !(heap instanceof Uint8Array) ||
@@ -129,7 +129,7 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
           fail('legacy RGB destination is invalid');
         const index = successfulEncodes++;
         save(index, index + 1, heap.subarray(offset, offset + count));
-      },
+      }
     );
     return;
   }
@@ -191,7 +191,7 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
                   rw(9) !== buffer.byteLength
                 )
                   return fail(
-                    'owned input lease, request or ticket differs from frozen RGB contract',
+                    'owned input lease, request or ticket differs from frozen RGB contract'
                   );
                 if (generation === null) generation = rw(3);
                 else if (generation !== rw(3)) return fail('owned generation changed');
@@ -207,7 +207,7 @@ export function installV8PixelCapture(mode: 'prior' | 'candidate') {
                 return status;
               }
             : value,
-        ]),
+        ])
       );
       return new Proxy(instance, {
         get(source, key) {
@@ -251,7 +251,7 @@ export function compareCapturedPixels(
 export async function streamCapturedRgb(
   page: Page,
   output: string,
-  build: 'prior' | 'candidate',
+  build: 'prior' | 'candidate'
 ): Promise<CapturedPixel[]> {
   const snapshot = (await page.evaluate(() => {
     const state = Reflect.get(globalThis, '__wmcV8PixelCapture') as {
@@ -275,9 +275,13 @@ export async function streamCapturedRgb(
             };
             return state.chunk(index, offset, length);
           },
-          { index, offset, length },
+          { index, offset, length }
         );
         const bytes = Buffer.from(base64, 'base64');
+        assert(
+          base64.length <= 4 * Math.ceil(length / 3) && bytes.toString('base64') === base64,
+          'Pixel stream encoding is noncanonical or exceeds its encoded bound'
+        );
         assert.equal(bytes.length, length, 'Pixel stream chunk changed size');
         const written = await handle.write(bytes, 0, bytes.length, offset);
         assert.equal(written.bytesWritten, length, 'Pixel stream write was short');
@@ -296,7 +300,7 @@ export async function streamCapturedRgb(
     assert.equal(
       savedHash.digest('hex'),
       expectedSha256,
-      'Saved RGB digest differs from page stream',
+      'Saved RGB digest differs from page stream'
     );
     result.push({ index, ticket: index + 1, file, bytes: V8_RGB_BYTES, sha256: expectedSha256 });
     await page.evaluate((index) => {

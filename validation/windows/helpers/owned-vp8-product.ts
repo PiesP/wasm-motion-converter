@@ -18,13 +18,6 @@ import {
   runDirectOwnerCompletion,
 } from './owned-vp8-direct-owner.ts';
 import {
-  collectGarbageCheckpoint,
-  installRetainedWorkerProbe,
-  installWorkerLifecycleObserver,
-  verifyOwnerRetention,
-} from './owned-vp8-owner-retention.ts';
-import { readVp8WindowsBrowserIdentity } from './vp8-windows-environment.ts';
-import {
   compareCapturedPixels,
   installV8PixelCapture,
   streamCapturedRgb,
@@ -32,6 +25,13 @@ import {
   V8_RGB_BYTES,
   type CapturedPixel,
 } from './owned-vp8-input-capture.ts';
+import {
+  collectGarbageCheckpoint,
+  installRetainedWorkerProbe,
+  installWorkerLifecycleObserver,
+  verifyOwnerRetention,
+} from './owned-vp8-owner-retention.ts';
+import { readVp8WindowsBrowserIdentity } from './vp8-windows-environment.ts';
 
 type Build = {
   relativePath: string;
@@ -1366,15 +1366,15 @@ async function createContext(
   if (ownerRetentionWorker) await context.addInitScript(installWorkerLifecycleObserver);
   if (main)
     await context.addInitScript(() => {
-        const NativeWorker = Worker;
-        globalThis.Worker = class DisabledConversionWorker extends NativeWorker {
-          constructor(url: string | URL, options?: WorkerOptions) {
-            if (/^\/assets\/worker-[\w-]+\.js$/.test(new URL(String(url), location.href).pathname))
-              throw new DOMException('Controlled conversion Worker failure', 'NotSupportedError');
-            super(url, options);
-          }
-        };
-      });
+      const NativeWorker = Worker;
+      globalThis.Worker = class DisabledConversionWorker extends NativeWorker {
+        constructor(url: string | URL, options?: WorkerOptions) {
+          if (/^\/assets\/worker-[\w-]+\.js$/.test(new URL(String(url), location.href).pathname))
+            throw new DOMException('Controlled conversion Worker failure', 'NotSupportedError');
+          super(url, options);
+        }
+      };
+    });
   if (functional) {
     if (!main) await context.addInitScript(installMotionObserver);
     if (main) await context.addInitScript(instrumentOwnedInstance);
@@ -3417,25 +3417,25 @@ export async function exerciseOwnedVp8V8PixelInputs({
   assert.equal(prior.state.sourceSha, 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4');
   assert.equal(
     candidate.state.sourceSha,
-    'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186',
+    'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186'
   );
   const ownedAsset = candidate.state.files.filter((file) =>
-    /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(file.path),
+    /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(file.path)
   );
   assert.equal(ownedAsset.length, 1, 'Candidate owned WASM asset is not unique');
   const legacyWasm = prior.state.files.filter((file) =>
-    /^assets\/webp-wasm[-.][\w-]{8}\.wasm$/.test(file.path),
+    /^assets\/webp-wasm[-.][\w-]{8}\.wasm$/.test(file.path)
   );
   assert.equal(legacyWasm.length, 1, 'Prior WebP WASM asset is not unique');
   assert.equal(legacyWasm[0]!.sha256, PINNED_PRIOR_LEGACY_WASM_SHA256);
   const mainLoader = prior.state.files.filter((file) =>
-    /^assets\/wasm-webp[-.][\w-]{8}\.js$/.test(file.path),
+    /^assets\/wasm-webp[-.][\w-]{8}\.js$/.test(file.path)
   );
   assert.equal(mainLoader.length, 1, 'Prior main loader is not unique');
   assert.equal(mainLoader[0]!.sha256, PINNED_PRIOR_LEGACY_MAIN_LOADER_SHA256);
   const loaderPath = await validateBundleFile(
     bundleRoot,
-    `${prior.relativePath}/${mainLoader[0]!.path}`,
+    `${prior.relativePath}/${mainLoader[0]!.path}`
   );
   const patch = patchPinnedLegacyMainLoader(await readFile(loaderPath));
   const report: Record<string, unknown> = {
@@ -3516,7 +3516,7 @@ export async function exerciseOwnedVp8V8PixelInputs({
               },
             ]
           : [],
-        observedLegacyLoaderPaths,
+        observedLegacyLoaderPaths
       );
       // The capture wraps only the selected real main route, before app initialization.
       await context.addInitScript(installV8PixelCapture, name);
@@ -3537,16 +3537,20 @@ export async function exerciseOwnedVp8V8PixelInputs({
             name,
             'first-in-document',
             output,
-            `${scenario}-${name}`,
+            `${scenario}-${name}`
           );
-          report.inProgressOutput = { build: name, webp: completed.saved, parsed: completed.parsed };
+          report.inProgressOutput = {
+            build: name,
+            webp: completed.saved,
+            parsed: completed.parsed,
+          };
           await persist();
           const pixels = await streamCapturedRgb(page, output, name);
           assert.deepEqual(pageErrors, [], `${name} page errors`);
           if (name === 'prior')
             assert(
               observedLegacyLoaderPaths.includes(mainLoader[0]!.path),
-              'Pinned prior main loader was not served',
+              'Pinned prior main loader was not served'
             );
           assert.equal(completed.parsed.frames.length, 77, `${name} output ANMF count differs`);
           (report.captures as unknown[]).push({
