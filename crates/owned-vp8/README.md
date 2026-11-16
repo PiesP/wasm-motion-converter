@@ -1,5 +1,20 @@
 # Owned VP8 v2 candidate implementation
 
+The [combined M2 and strict compiler candidate](../../docs/experiments/501-owned-vp8-combined-m2-simd-candidate.md)
+combines the qualified exposed Y1 source with exact paired chroma sampling and
+strict compiler SIMD permission. At signed source
+`e0211406bff52db7258b0679c3698fb083971df0`, its generated and checked
+module is `bd170496ba1f2574bd095effdc55b7cd102b203dcc347a472141fcfbd9284b0e`.
+The combined candidate passed direct 20-condition and full 687-condition raw
+VP8 identity against the immediate scalar Y1 control. The 687 new encodings
+reuse the scalar Y1 decoder and metric evidence only after all raw payloads
+matched; no new VP8 decode, metric score, or primary wasm-webp reencode was run.
+The independent audit and Node-only timing results are recorded in the
+[combined candidate result](../../docs/experiments/501-owned-vp8-combined-m2-simd-candidate.md).
+Separate component timing ratios must not be multiplied. Browser capability,
+product performance, physical resource peaks, and delivery remain unqualified.
+Changes to this README require a provenance refresh before prebuilt verification.
+
 Execution and acceptance are governed by [issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
 and the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
 The candidate main and conversion Worker software routes import this crate's
