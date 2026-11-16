@@ -543,9 +543,16 @@ describe('owned VP8 Windows product contract', () => {
       'validation/windows/prior-dist',
       'validation/windows/owned-vp8-inputs',
       'validation/windows/owned-vp8-v8.json',
+      'dist-validation/owned-vp8-v8-input-capture-lock.json',
       'validation/windows/inputs/owned-vp8-product-v8-low-inputs.json',
     ]);
-    expect(pixelDiagnostic?.build_commands).toEqual([['vp', 'run', 'build:ci']]);
+    expect(pixelDiagnostic?.generated_assets).toEqual([
+      'dist-validation/owned-vp8-v8-input-capture-lock.json',
+    ]);
+    expect(pixelDiagnostic?.build_commands).toEqual([
+      ['vp', 'run', 'build:ci'],
+      ['vp', 'run', 'prepare:owned-vp8-input-capture-lock'],
+    ]);
     expect(profile.assets).toContain('validation/windows/helpers/owned-vp8-input-capture.ts');
     expect(profile.assets).not.toContain('validation/windows/owned-vp8-inputs/v8.webm');
     const near = profile.preparation.scenarios['owned-vp8-product-near-cap'];
@@ -585,6 +592,9 @@ describe('owned VP8 Windows product contract', () => {
       scripts: Record<string, string>;
     };
     expect(packageScripts.scripts['build:ci']).toBe('vp run build:ci:native');
+    expect(packageScripts.scripts['prepare:owned-vp8-input-capture-lock']).toBe(
+      'node --experimental-strip-types scripts/test/generate-owned-vp8-input-capture-lock.ts'
+    );
     expect([...nativeCommands!.matchAll(/'([^']+)'/g)].map((match) => match[1])).toEqual([
       'vp run check:owned-vp8-inputs',
       'vp run build:owned-wasm',
@@ -598,6 +608,7 @@ describe('owned VP8 Windows product contract', () => {
     const ignores = readFileSync(resolve(root, '.gitignore'), 'utf8');
     expect(ignores).toContain('/dist-validation/owned-vp8-near-cap.webm');
     expect(ignores).toContain('/dist-validation/owned-vp8-large-admitted.webm');
+    expect(ignores).toContain('/dist-validation/owned-vp8-v8-input-capture-lock.json');
     expect(ignores).toContain('/validation/windows/inputs/owned-vp8-product-large-admitted.json');
     expect(ignores).toContain('/validation/windows/inputs/owned-vp8-product-v8-low-inputs.json');
     expect(ignores).toContain('/dist-validation/.owned-vp8-near-cap-attempt-*/');

@@ -53,6 +53,7 @@
     "prepare:e2e:fixture": "node --experimental-strip-types scripts/test/generate-e2e-video.ts",
     "prepare:owned-vp8-near-cap": "node --experimental-strip-types scripts/test/generate-owned-vp8-near-cap.ts",
     "prepare:owned-vp8-large-admitted": "node --experimental-strip-types scripts/test/generate-owned-vp8-large-admitted.ts",
+    "prepare:owned-vp8-input-capture-lock": "node --experimental-strip-types scripts/test/generate-owned-vp8-input-capture-lock.ts",
     "pretest:e2e:ci": "vp run build:owned-wasm && vp run prepare:e2e:fixture",
     "test:e2e:ci": "node --experimental-strip-types scripts/test/run-playwright.ts ci",
     "pretest:e2e:resource": "vp run build:owned-wasm && node --experimental-strip-types scripts/test/prepare-resource-fixtures.ts",
