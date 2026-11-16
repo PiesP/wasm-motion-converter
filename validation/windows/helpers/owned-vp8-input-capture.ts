@@ -232,6 +232,8 @@ export function installV8AllInputHashCapture(): void {
 export class V8IncrementalHashReceiver {
   private readonly rows: V8StreamedHashRow[] = [];
   private receiving = false;
+  private readonly output: string;
+  private readonly build: V8CaptureBuild;
   private active: {
     index: number;
     frameNum: number;
@@ -242,10 +244,10 @@ export class V8IncrementalHashReceiver {
     hash: ReturnType<typeof createHash>;
   } | null = null;
 
-  constructor(
-    private readonly output: string,
-    private readonly build: V8CaptureBuild
-  ) {}
+  constructor(output: string, build: V8CaptureBuild) {
+    this.output = output;
+    this.build = build;
+  }
 
   async consume(message: V8HashMessage): Promise<void> {
     assert(!this.receiving, 'V8 streamed binding calls overlap');
