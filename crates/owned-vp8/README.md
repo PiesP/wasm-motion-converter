@@ -1,5 +1,13 @@
 # Owned VP8 v2 candidate implementation
 
+The [combined M2 and strict compiler candidate](../../docs/experiments/501-owned-vp8-combined-m2-simd-candidate.md)
+combines the qualified exposed Y1 source with exact paired chroma sampling and
+strict compiler SIMD permission. This is a new unqualified source combination.
+Separate component results do not qualify its output, browser capability or
+product performance, and their timing ratios must not be multiplied. Its module
+and provenance must be generated and checked against this combined source
+before use; those engineering checks do not qualify product adoption.
+
 Execution and acceptance are governed by [issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
 and the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
 The candidate main and conversion Worker software routes import this crate's

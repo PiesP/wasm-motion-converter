@@ -39,7 +39,7 @@ const maxLinearBytes = 192 * 1024 * 1024;
 const maximumRawBytes = 482_273;
 const maximumGzipBytes = 184_377;
 const rustflags =
-  '-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd -C link-arg=--max-memory=201326592';
+  '-C link-arg=--export-memory -C target-feature=+simd128,-relaxed-simd -C link-arg=--max-memory=201326592';
 const pathRemapping = { checkout: '/wmc', rustLibrary: `/rustc/${compilerCommit}` };
 const manifestSha = '0b9f8a75056059850501e50ff5f71023f0cea2217e376e39e6d99e013fc96d12';
 const lockSha = 'cc03cead7fdcd8a393696571a65db032193f1a9c4a6fd0102f1307c2ffda44b0';
