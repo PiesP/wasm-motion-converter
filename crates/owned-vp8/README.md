@@ -57,9 +57,14 @@ checkout's manifest can be treated as verified.
 The current [eligible Y1 AC zero-bin candidate](../../docs/experiments/501-owned-vp8-y1-ac-zero-bin-candidate.md)
 adds one fixed encoder-side `5/8` zero threshold only for marginal Y1 AC
 levels in the existing mixed q60 profile. Canonical nearest quantization and
-all signaled decoder steps remain unchanged elsewhere. It has no codec or
-product result; the selected-mode AC-neighbor failure does not qualify it.
-Regenerate its source-bound module and provenance before measurement.
+all signaled decoder steps remain unchanged elsewhere. Its signed measured
+source `1e80f53b` and module
+`fc13fa5fcc7b07a7922e64489220d9e1073588947216d3dba9fbca498eb64347`
+passed the frozen 50-condition screen, the 45-condition paired decoder audit,
+and the 687-condition exposed regression (45 current rows reused, 642 newly
+run). This is exposed codec evidence only; fresh media, full animation,
+physical resource, browser product, performance, and delivery gates remain
+open. The patched `wasm-webp` runtime stays primary pending qualification.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)

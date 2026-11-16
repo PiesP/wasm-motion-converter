@@ -1,4 +1,4 @@
-# #501 eligible Y1 AC zero-bin candidate: unmeasured
+# #501 eligible Y1 AC zero-bin candidate: exposed regression passed
 
 ## Retained control and one calibration
 
@@ -65,9 +65,10 @@ delivery remain separate gates.
 
 Row 76 of the rejected control had only about 0.411 dB PSNR margin and 42
 bytes of size headroom. This zero-bin candidate can alter entropy context
-and visible RGB quality; no integrated activation frequency or acceptance
-result is claimed before source-bound measurement. All previous failed and
-successful receipts retain their own source identity.
+and visible RGB quality. The bounded test below proves activation in one
+source fixture; the exposed screen does not measure integrated activation
+frequency. All previous failed and successful receipts retain their own
+source identity.
 
 ## Focused engineering validation
 
@@ -115,8 +116,68 @@ exit, input snapshot, and parent-artifact receipts are retained under the
 `y1-ac-zero-bin-01/wasm-engineering-01` evidence directory.
 
 These checks establish the candidate artifact's engineering identity and ABI
-behavior. The frozen codec screen, paired decoder audit for this candidate,
-full exposed regression, fresh media, browser product, performance, and
-delivery gates remain unrun. Earlier native decoder evidence retains its
-actual preceding source identity; neither it nor this engineering pass is a
-codec quality result.
+behavior. Earlier native decoder evidence retains its actual preceding source
+identity; neither it nor this engineering pass is a codec quality result.
+The exposed codec results follow. Fresh media, browser product, performance,
+and delivery gates remain separate.
+
+## Frozen 50-condition screen and paired decoder audit
+
+The measured source is signed commit
+`1e80f53be8b94eafeb43586fa919a03c0404f668`, with the WASM SHA-256
+recorded above. All 45 tuning rows and five exposed actual-browser-RGB rows
+passed the unchanged PSNR, RGB SSIM, and raw VP8 size gates: **50/50**. The
+45 rows were explicit-ID diagnostic runs; the coordinator checked their
+ordered input identity against the retained frozen set. The screen summary
+SHA-256 is
+`0ff30fde6d5d4fd07095927eb822d02f13b0665b8194958390bcf7bf13ea5ed6`.
+
+| Actual row | Raw VP8 bytes | Size headroom (bytes) | PSNR delta (dB) | RGB SSIM delta | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 0 | 35,968 | 4,857 | -0.249819 | +0.001586 | Pass |
+| 19 | 29,854 | 3,981 | -0.628164 | +0.000362 | Pass |
+| 38 | 32,626 | 776.5 | -0.546396 | +0.000032 | Pass |
+| 57 | 34,636 | 2,851.5 | -0.455944 | +0.000263 | Pass |
+| 76 | 10,760 | 55 | -0.590548 | +0.001023 | Pass |
+
+The saved 45-condition paired audit matched 90 retained baseline/candidate
+raw VP8 streams to 180 independent native `vp8`/`libvpx` RGB decodes and
+retained RGB hashes. Its summary SHA-256 is
+`3b393c0790ea19884a9a78fee4cb9e9f279222c4e2669fd8efe27331f8c756e7`.
+The coordinator also rehashed the 90 retained RGB files, 180 decoder RGB
+files, 90 raw streams extracted from IVF, and 20 actual-row decoded RGB
+files. These are source-bound exposed results, not fresh acceptance.
+
+## Larger exposed regression: 687/687
+
+The same measured source and module passed all 687 exposed conditions. The
+campaign reused the 45 current source-bound tuning rows and ran 642 new
+conditions, with no reruns or timeouts. Its terminal summary SHA-256 is
+`680a30dded1c47d069ef3eb771a21df07ad2a103d2172b8a6a8e52c582e7f193`.
+The coordinator's independent read-only artifact audit SHA-256 is
+`80abccb974ec097733e797e49cdd1c3624bee5bd1120fcf70e378177caa261db`.
+It read 1,374 raw VP8 outputs and 1,374 decoded RGB files, recomputed 1,374
+PSNR values, and rechecked 2,061 threshold gates. It found 36 duplicate
+quality conditions among the 687. The worst observed primary-relative PSNR
+delta was -0.9914273265 dB, the worst RGB SSIM delta was -0.009427, and the
+smallest raw VP8 size headroom was 7.5 bytes. The audit reused the existing
+FFmpeg SSIM values rather than recomputing SSIM.
+
+Maximum retained capacity was 104,923,136 bytes, maximum steps 531,225,
+and maximum Node step time 23.073 ms in this exposed campaign. These are
+engineering observations; they do not establish browser cancellation stop
+time, physical memory peak or a product performance benchmark. The exposed
+pass does not establish fresh media, full animation, Windows/browser product
+acceptance, lifecycle, physical-resource, performance, platform or delivery
+qualification. The patched `wasm-webp` runtime remains primary.
+
+The README result update refreshed the 28-input provenance manifest without
+changing `textured.rs` or the measured WASM bytes. Prebuilt verification and
+an independent current-input/byte comparison passed. The measured commit's
+manifest SHA-256 remains
+`60598c6dee25303eec204dd00ee480183e921aa78b7a637efec866e9c53d6741`;
+the result-metadata manifest SHA-256 is
+`bc9d9edd1c6a9381a8c6899bf59fce180c841093c9d395aae986060fab42ef4b`.
+This metadata update is not a new codec measurement. The initial formatting,
+test-fixture context, and Clippy failures remain preserved with their later
+corrections and source identities.
