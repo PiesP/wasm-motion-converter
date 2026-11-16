@@ -1165,6 +1165,11 @@ struct I4TailChoice {
     token_rate: u64,
 }
 
+fn i4_ac_tail_within_ssd_budget(trial: u64, baseline: u64) -> bool {
+    // A 4x4 u8 patch has SSD at most 16 * 255^2, so both products fit u64.
+    10 * trial <= 11 * baseline
+}
+
 #[allow(clippy::too_many_arguments)]
 fn choose_i4_ac_tail(
     source: &[u8],
@@ -1210,7 +1215,7 @@ fn choose_i4_ac_tail(
     }
     let trial_patch = reconstructed_patch(&trial, predictor, steps);
     let trial_distortion = patch_error(source, stride, x, y, &trial_patch);
-    if trial_distortion <= baseline.distortion
+    if i4_ac_tail_within_ssd_budget(trial_distortion, baseline.distortion)
         && trial_distortion * 256 + lambda * trial_rate.cost
             < baseline.distortion * 256 + lambda * baseline.token_rate
     {
@@ -5551,7 +5556,75 @@ mod tests {
     }
 
     #[test]
-    fn i4_ac_tail_retains_a_rate_favored_tail_that_increases_source_y_ssd() {
+    fn i4_ac_tail_ssd_budget_has_exact_inclusive_and_zero_boundaries() {
+        assert!(i4_ac_tail_within_ssd_budget(0, 0));
+        assert!(!i4_ac_tail_within_ssd_budget(1, 0));
+        assert!(i4_ac_tail_within_ssd_budget(10, 10));
+        assert!(i4_ac_tail_within_ssd_budget(11, 10));
+        assert!(!i4_ac_tail_within_ssd_budget(12, 10));
+        assert!(i4_ac_tail_within_ssd_budget(1_040_400, 1_040_400));
+    }
+
+    #[test]
+    fn i4_ac_tail_accepts_a_production_weight_trial_with_bounded_ssd_increase() {
+        let steps = ac_quant::steps(
+            22,
+            crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true),
+            Plane::Y1,
+        );
+        assert_eq!(steps, Steps { dc: 20, ac: 26 });
+        let predictor = [128u8; 16];
+        let source = [
+            145, 142, 146, 143, 142, 150, 139, 146, 146, 139, 149, 142, 143, 146, 142, 145,
+        ];
+        let mut coefficients = [0i16; 16];
+        coefficients[0] = 2;
+        coefficients[residual::SCAN[15]] = 1;
+        let mut shortened = coefficients;
+        shortened[residual::SCAN[15]] = 0;
+        let baseline_patch = reconstructed_patch(&coefficients, &predictor, steps);
+        let shorter_patch = reconstructed_patch(&shortened, &predictor, steps);
+        assert_eq!(
+            baseline_patch,
+            [134, 131, 135, 132, 131, 139, 128, 135, 135, 128, 138, 131, 132, 135, 131, 134]
+        );
+        assert_eq!(shorter_patch, [133; 16]);
+        let baseline_ssd = patch_error(&source, 4, 0, 0, &baseline_patch);
+        let trial_ssd = patch_error(&source, 4, 0, 0, &shorter_patch);
+        assert_eq!((baseline_ssd, trial_ssd), (1936, 2105));
+        assert!(trial_ssd > baseline_ssd); // The rejected hard guard retained it.
+        assert!(i4_ac_tail_within_ssd_budget(trial_ssd, baseline_ssd));
+        let mut baseline_rate = RateCounter::default();
+        let mut trial_rate = RateCounter::default();
+        residual::encode_block(&mut baseline_rate, &coefficients, 3, 0).unwrap();
+        residual::encode_block(&mut trial_rate, &shortened, 3, 0).unwrap();
+        assert_eq!((baseline_rate.cost, trial_rate.cost), (6130, 2372));
+        let trial_lambda = crate::presets::lambda_for_quality(18, 60) / 2;
+        assert_eq!(trial_lambda, 101);
+        assert!(
+            trial_ssd * 256 + trial_lambda * trial_rate.cost
+                < baseline_ssd * 256 + trial_lambda * baseline_rate.cost
+        );
+        let choice = choose_i4_ac_tail(
+            &source,
+            4,
+            0,
+            0,
+            &predictor,
+            steps,
+            0,
+            trial_lambda,
+            coefficients,
+            baseline_patch,
+        );
+        assert_eq!(choice.coefficients, shortened);
+        assert_eq!(choice.patch, shorter_patch);
+        assert_eq!(choice.distortion, trial_ssd);
+        assert_eq!(choice.token_rate, trial_rate.cost);
+    }
+
+    #[test]
+    fn i4_ac_tail_retains_a_rate_favored_tail_beyond_the_ssd_budget() {
         let steps = ac_quant::steps(
             22,
             crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true),
@@ -5570,34 +5643,38 @@ mod tests {
                 let mut shortened = coefficients;
                 shortened[residual::SCAN[15]] = 0;
                 let shorter_patch = reconstructed_patch(&shortened, &predictor, steps);
-                let trial_ssd = patch_error(&baseline_patch, 4, 0, 0, &shorter_patch);
-                assert!(trial_ssd > 0);
                 let mut baseline_rate = RateCounter::default();
                 let mut shorter_rate = RateCounter::default();
                 residual::encode_block(&mut baseline_rate, &coefficients, 3, context).unwrap();
                 residual::encode_block(&mut shorter_rate, &shortened, 3, context).unwrap();
                 assert!(shorter_rate.cost < baseline_rate.cost);
-                assert!(
-                    trial_ssd * 256 + trial_lambda * shorter_rate.cost
-                        < trial_lambda * baseline_rate.cost,
-                    "context={context} sign={sign}"
-                );
-                let choice = choose_i4_ac_tail(
-                    &baseline_patch,
-                    4,
-                    0,
-                    0,
-                    &predictor,
-                    steps,
-                    context,
-                    trial_lambda,
-                    coefficients,
-                    baseline_patch,
-                );
-                assert_eq!(choice.coefficients, coefficients);
-                assert_eq!(choice.patch, baseline_patch);
-                assert_eq!(choice.distortion, 0);
-                assert_eq!(choice.token_rate, baseline_rate.cost);
+                for source in [baseline_patch, baseline_patch.map(|value| value + 1)] {
+                    let baseline_ssd = patch_error(&source, 4, 0, 0, &baseline_patch);
+                    let trial_ssd = patch_error(&source, 4, 0, 0, &shorter_patch);
+                    assert!(trial_ssd > baseline_ssd);
+                    assert!(!i4_ac_tail_within_ssd_budget(trial_ssd, baseline_ssd));
+                    assert!(
+                        trial_ssd * 256 + trial_lambda * shorter_rate.cost
+                            < baseline_ssd * 256 + trial_lambda * baseline_rate.cost,
+                        "context={context} sign={sign} baseline_ssd={baseline_ssd}"
+                    );
+                    let choice = choose_i4_ac_tail(
+                        &source,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        steps,
+                        context,
+                        trial_lambda,
+                        coefficients,
+                        baseline_patch,
+                    );
+                    assert_eq!(choice.coefficients, coefficients);
+                    assert_eq!(choice.patch, baseline_patch);
+                    assert_eq!(choice.distortion, baseline_ssd);
+                    assert_eq!(choice.token_rate, baseline_rate.cost);
+                }
             }
         }
     }
@@ -5692,7 +5769,8 @@ mod tests {
             baseline_patch,
         );
         // The historical full-weight RD decision removed this coefficient.
-        // The new source-Y SSD ceiling retains it at either weight.
+        // Both the old no-increase guard and the current 10% cap retain it.
+        assert!(!i4_ac_tail_within_ssd_budget(shorter_ssd, baseline_ssd));
         assert_eq!(full_choice.coefficients, coefficients);
         assert_eq!(full_choice.patch, baseline_patch);
         assert_eq!(full_choice.token_rate, baseline_rate.cost);
