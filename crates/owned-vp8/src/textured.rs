@@ -1978,6 +1978,13 @@ fn encode_observed(
         high_chroma_loss,
         curvature.within_cutoff(count),
     );
+    let mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
+        quality,
+        class_counts,
+        neutral_chroma,
+        high_chroma_loss,
+        curvature.within_cutoff(count),
+    );
     let photo_q75 = medium_textured_luma && !neutral_chroma;
     let original_deltas = if high_chroma_loss {
         crate::presets::original_high_chroma_loss_deltas()
@@ -2020,7 +2027,7 @@ fn encode_observed(
                 let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
                 let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-                let rate_qindex = if medium_textured_luma || photo_q60 {
+                let rate_qindex = if medium_textured_luma || photo_q60 || mixed_y1_ac {
                     original_segments.qindex_for(segment_id)
                 } else {
                     qindex
@@ -2269,13 +2276,15 @@ fn encode_observed(
     };
     let mut segments = original_segments
         .with_medium_textured_luma(medium_textured_luma)
-        .with_photo_q60_rebase(photo_q60);
+        .with_photo_q60_rebase(photo_q60)
+        .with_mixed_y1_ac_allocation(mixed_y1_ac);
     let mut deltas = if medium_textured_luma {
         crate::presets::medium_textured_deltas(original_deltas)
     } else {
         original_deltas
     };
     deltas = crate::presets::photo_allocation_deltas(deltas, photo_q60, photo_q75);
+    deltas = crate::presets::mixed_y1_ac_deltas(deltas, mixed_y1_ac);
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
         let reduced_segments = original_segments.with_high_chroma_loss_luma(true);
@@ -3424,6 +3433,7 @@ pub(crate) struct FrameEncoder {
     class_counts: [usize; 4],
     curvature: segmentation::CurvatureTotals,
     photo_q60: bool,
+    mixed_y1_ac: bool,
     neutral_chroma: bool,
     rgb_error_sum: u64,
     high_chroma_loss: bool,
@@ -3571,6 +3581,7 @@ impl FrameEncoder {
             class_counts: [0; 4],
             curvature: segmentation::CurvatureTotals::default(),
             photo_q60: false,
+            mixed_y1_ac: false,
             neutral_chroma: true,
             rgb_error_sum: 0,
             high_chroma_loss: false,
@@ -4400,7 +4411,17 @@ impl FrameEncoder {
                 self.high_chroma_loss,
                 self.curvature.within_cutoff(self.blocks.len()),
             );
-            self.segments = self.segments.with_photo_q60_rebase(self.photo_q60);
+            self.mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
+                self.request.quality,
+                self.class_counts,
+                self.neutral_chroma,
+                self.high_chroma_loss,
+                self.curvature.within_cutoff(self.blocks.len()),
+            );
+            self.segments = self
+                .segments
+                .with_photo_q60_rebase(self.photo_q60)
+                .with_mixed_y1_ac_allocation(self.mixed_y1_ac);
             if self.medium_textured_luma {
                 self.deltas = crate::presets::medium_textured_deltas(self.deltas);
             }
@@ -4409,6 +4430,7 @@ impl FrameEncoder {
                 self.photo_q60,
                 self.medium_textured_luma && !self.neutral_chroma,
             );
+            self.deltas = crate::presets::mixed_y1_ac_deltas(self.deltas, self.mixed_y1_ac);
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
                 self.segments,
@@ -4444,7 +4466,7 @@ impl FrameEncoder {
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-        let rate_qindex = if self.medium_textured_luma || self.photo_q60 {
+        let rate_qindex = if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
             self.original_segments().qindex_for(segment_id)
         } else {
             qindex
@@ -8043,6 +8065,93 @@ mod tests {
         pixels
     }
 
+    fn mixed_low_curvature_input() -> Vec<u8> {
+        let mut pixels = Vec::with_capacity(32 * 16 * 4);
+        for _y in 0..16 {
+            for x in 0usize..32 {
+                let step = x.saturating_sub(16) as u8;
+                pixels.extend_from_slice(&[40 + step, 80 + step, 120 + step, 255]);
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn mixed_y1_ac_profile_matches_sync_resumable_and_repeated_frames() {
+        let mixed = mixed_low_curvature_input();
+        let textured = mixed_segment_input();
+        let photo = low_curvature_photo_input();
+        let neutral = [128, 128, 128, 255].repeat(32 * 16);
+        let mut first_mixed = None;
+        for (input, width, quality, expected_profile) in [
+            (&mixed, 32, 60, true),
+            (&textured, 64, 60, false),
+            (&mixed, 32, 75, false),
+            (&mixed, 32, 85, false),
+            (&neutral, 32, 60, false),
+            (&photo, 16, 60, false),
+            (&mixed, 32, 60, true),
+        ] {
+            for frame in 1..=2 {
+                let request = Request {
+                    quality,
+                    frame,
+                    ..engine_request(width, 16, 0, input, width * 4)
+                };
+                let plan = ResourcePlan::checked(request).unwrap();
+                let engine =
+                    run_engine(FrameEncoder::new(request, (*input).clone(), plan).unwrap());
+                assert_eq!(engine.mixed_y1_ac, expected_profile);
+                if expected_profile {
+                    assert!(engine.segments.enabled);
+                    assert!(
+                        !engine.photo_q60 && !engine.high_chroma_loss && !engine.neutral_chroma
+                    );
+                    assert!(engine.curvature.within_cutoff(engine.blocks.len()));
+                    assert_eq!(engine.segments.qindex, [10, 22, 36, 36]);
+                    assert_eq!(engine.segments.base_qindex, 10);
+                    assert_eq!(engine.original_segments().qindex, [6, 18, 32, 32]);
+                    assert_eq!(
+                        engine.deltas,
+                        crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true)
+                    );
+                    assert_eq!(engine.filter.level, 6);
+                }
+                let sync = encode_textured(input, width as u32, 16, (width * 4) as u32, 0, quality)
+                    .unwrap();
+                assert_eq!(
+                    engine.output(),
+                    sync,
+                    "width={width} quality={quality} frame={frame}"
+                );
+                if expected_profile {
+                    if let Some(first) = &first_mixed {
+                        assert_eq!(&sync, first);
+                    } else {
+                        first_mixed = Some(sync);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_reconstruct_mixed_y1_ac_allocation() {
+        let input = mixed_low_curvature_input();
+        let request = Request {
+            quality: 60,
+            ..engine_request(32, 16, 0, &input, 128)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert!(engine.mixed_y1_ac);
+        let (y, u, v, padded_w) = engine.reconstruction();
+        let expected =
+            filtered_visible_yuv(y, u, v, padded_w, 32, 16, &engine.blocks, engine.filter);
+        assert_decodes(engine.output(), 32, 16, &expected, "mixed Y1 AC allocation");
+    }
+
     #[test]
     fn mixed_segment_map_and_fresh_frames_are_deterministic() {
         let input = mixed_segment_input();
@@ -8212,6 +8321,58 @@ mod tests {
         assert_eq!(
             write_quantizer_delta(&mut positive, -16),
             Err(EncodeError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn mixed_y1_ac_header_admits_three_signed_y_deltas() {
+        let original = SegmentConfig::from_counts(60, [1, 0, 1, 0], 2, false);
+        let selected = original.with_mixed_y1_ac_allocation(true);
+        let before_deltas = crate::presets::deltas(60);
+        let after_deltas = crate::presets::mixed_y1_ac_deltas(before_deltas, true);
+        let filter = FilterConfig::for_quality(60);
+        let before = HeaderBudget::new(
+            2,
+            original,
+            before_deltas,
+            filter,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .unwrap();
+        let after = HeaderBudget::new(
+            2,
+            selected,
+            after_deltas,
+            filter,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .unwrap();
+        assert_eq!(
+            after.fixed_symbols_and_tail,
+            before.fixed_symbols_and_tail + 15
+        );
+        struct Bits(Vec<bool>);
+        impl BoolSink for Bits {
+            fn write(&mut self, _probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push(bit);
+                Ok(())
+            }
+        }
+        let mut baseline_header = Bits(Vec::new());
+        let mut selected_header = Bits(Vec::new());
+        write_header_prefix(&mut baseline_header, original, before_deltas, filter).unwrap();
+        write_header_prefix(&mut selected_header, selected, after_deltas, filter).unwrap();
+        assert_eq!(selected_header.0.len(), baseline_header.0.len() + 15);
+        assert_eq!(
+            &selected_header.0[selected_header.0.len() - 31..],
+            &[
+                true, false, true, false, false, true, // Y1 DC -4.
+                true, false, true, false, false, true, // Y2 DC -4.
+                true, false, true, false, false, true, // Y2 AC -4.
+                true, true, false, false, false, true, // UV DC -8.
+                true, true, true, true, true, true,  // UV AC -15.
+                false, // Entropy updates are not retained.
+            ]
         );
     }
 

@@ -15,11 +15,13 @@ Per-frame coefficient statistics follow frozen mode/coefficient decisions. A
 bounded optimizer proposes updates, and exact whole-frame counting includes
 update flags and literals. The encoder adopts updates only when the complete
 frame is strictly smaller; count and emission use the same frozen model.
-The bounded resumable ABI2 core is implemented. The exact Rust/module candidate
-passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as recorded
-in the [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
-Browser/product performance and lifecycle qualification remain unfinished; these
-codec results do not qualify runtime removal of `wasm-webp`.
+The bounded resumable ABI2 core is implemented. The earlier low-curvature module
+`e918f3016451b60f04dfa551e5ae57820bcbc65c8c8834f01c8426b72355e584`
+passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as
+recorded in its [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
+The current [mixed Y1 AC allocation candidate](../../docs/experiments/501-owned-vp8-mixed-y1-ac-allocation-candidate.md)
+has not passed its codec quality/size or product gates. The earlier results do
+not qualify this module or runtime removal of `wasm-webp`.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
@@ -51,8 +53,10 @@ qindices by four. It signals Y1 DC, Y2 DC and Y2 AC deltas of +4 and UV DC/AC
 deltas of -15/-7. The original qindices remain the mode-rate reference. Y1 AC
 also becomes finer because VP8 has no separate Y1 AC delta. Neutral, mixed-map
 and high-chroma-loss q60 frames, or frames above the per-plane mean cutoff,
-keep their prior allocation. Padded edge replication can dilute the measured
-mean for narrow or odd inputs; this candidate does not assert visible-only parity.
+do not receive this photo allocation. Eligible mixed-map q60 frames use the
+separate Y1 AC allocation linked above. Padded edge replication can dilute
+the measured mean for narrow or odd inputs; this candidate does not assert
+visible-only parity.
 
 At q60, the existing source-derived high-chroma-loss predicate compares the
 Original and Reduced profiles. Each completed trial is filtered after its

@@ -131,6 +131,16 @@ impl Config {
         self
     }
 
+    pub(crate) fn with_mixed_y1_ac_allocation(mut self, selected: bool) -> Self {
+        if selected {
+            self.base_qindex += presets::MIXED_Y1_AC_QINDEX_INCREASE;
+            self.qindex = self
+                .qindex
+                .map(|qindex| qindex + presets::MIXED_Y1_AC_QINDEX_INCREASE);
+        }
+        self
+    }
+
     pub(crate) fn write_header(
         self,
         sink: &mut impl BoolSink,
@@ -336,6 +346,28 @@ pub(crate) fn classify_with_curvature(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mixed_y1_ac_allocation_shifts_base_and_all_absolute_segment_indices() {
+        let original = Config::from_counts(60, [1, 1, 1, 1], 4, false);
+        let selected = original.with_mixed_y1_ac_allocation(true);
+        assert!(selected.enabled);
+        assert_eq!(original.base_qindex, 6);
+        assert_eq!(original.qindex, [6, 18, 32, 32]);
+        assert_eq!(selected.base_qindex, 10);
+        assert_eq!(selected.qindex, [10, 22, 36, 36]);
+        assert_eq!(selected.map_probabilities, original.map_probabilities);
+        assert_eq!(selected.active, original.active);
+        assert_eq!(
+            original.with_mixed_y1_ac_allocation(false).qindex,
+            original.qindex
+        );
+        let mut before = crate::rate::SymbolCounter::default();
+        let mut after = crate::rate::SymbolCounter::default();
+        original.write_header(&mut before, 6).unwrap();
+        selected.write_header(&mut after, 6).unwrap();
+        assert_eq!(after.count, before.count);
+    }
 
     #[test]
     fn frame_mean_curvature_uses_each_plane_and_inclusive_cutoff() {
