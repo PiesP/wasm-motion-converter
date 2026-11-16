@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-/** Rebuild the development-only owned VP8 ABI2 module from a closed source set. */
+/** Rebuild the candidate product-owned VP8 ABI2 module from a closed source set. */
 import { deepStrictEqual } from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -41,7 +41,7 @@ const maximumGzipBytes = 184_377;
 const rustflags =
   '-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd -C link-arg=--max-memory=201326592';
 const pathRemapping = { checkout: '/wmc', rustLibrary: `/rustc/${compilerCommit}` };
-const manifestSha = '1d4289b067f623bd5fe2ac55c5360b3b54bc2e098b371d810418c02d152b5b3d';
+const manifestSha = '0b9f8a75056059850501e50ff5f71023f0cea2217e376e39e6d99e013fc96d12';
 const lockSha = 'cc03cead7fdcd8a393696571a65db032193f1a9c4a6fd0102f1307c2ffda44b0';
 const requiredExports = [
   'vp8_v2_abi_version',
@@ -250,7 +250,7 @@ export function inspectOwnedVp8Wasm(bytes: Buffer): object {
 function expected(bytes: Buffer): object {
   return {
     schemaVersion: 1,
-    role: 'development-only owned VP8 ABI2 candidate; no product build graph or production asset',
+    role: 'candidate product-owned VP8 ABI2 module; imported by candidate routes, not yet qualified for master delivery',
     compiler,
     compilerCommit,
     target,

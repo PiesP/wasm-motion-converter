@@ -155,7 +155,8 @@ export class Vp8TestJob {
   async encode(
     pixels: Uint8Array,
     request: Vp8Request,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onStep?: (record: Vp8Record) => void
   ): Promise<{ bytes: Uint8Array; capacity: number; steps: number; maxStepMs: number }> {
     if (this.retired || this.frame === 0xffff_ffff) throw new Error('VP8 instance is retired');
     this.frame++;
@@ -219,6 +220,7 @@ export class Vp8TestJob {
         const status = this.api.vp8_v2_step(this.generation, frame);
         maxStepMs = Math.max(maxStepMs, performance.now() - start);
         output = this.checked(status, [10, 11]);
+        onStep?.(output);
         if (++steps > 1_000_000) throw new Error('VP8 step protocol did not terminate');
         if (status === 11) break;
         await tick();

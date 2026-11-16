@@ -23,9 +23,11 @@ The common Windows acceptance runner reads
 including production `dist/`, deterministic media, output contracts, and
 playback helpers.
 
-The profile also requires two generated, ignored evidence inputs before
-packaging. `validation/windows/prior-dist/` must contain the complete production
-distribution built from the recorded prior source SHA, including `_headers`,
+The default full profile also requires two generated, ignored evidence inputs
+before packaging. Focused scenarios use their own `required_inputs` in
+`profile.json`; for example, `owned-vp8-product` requires `prior-dist/` but not
+`public-target.json`. `validation/windows/prior-dist/` must contain the complete
+production distribution built from the recorded prior source SHA, including `_headers`,
 `service-worker.js`, `index.html`, and `assets/`. Keep its file hashes in the
 external campaign receipt. `validation/windows/public-target.json` has this
 schema when public testing is not authorized or no exact deployment is ready:

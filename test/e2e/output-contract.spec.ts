@@ -134,7 +134,7 @@ test.describe('fractional pressure cadence through UI routing', () => {
     'gif-main',
     'webp-parallel',
     'webp-serial',
-    'webp-wasm',
+    'webp-owned-vp8',
   ] as const) {
     test(`${route} admits fifteen of twenty-one decoded frames under critical pressure`, async ({
       page,
@@ -164,7 +164,7 @@ test.describe('fractional pressure cadence through UI routing', () => {
               },
             });
           }
-          if (backend === 'webp-wasm') {
+          if (backend === 'webp-owned-vp8') {
             Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
               configurable: true,
               value: undefined,
@@ -483,7 +483,7 @@ test.describe('conversion Worker fallback boundary', () => {
       contract: webpContract,
       warning: null,
       encoder: 'WASM WebP',
-      route: 'webp-wasm',
+      route: 'webp-owned-vp8',
       disableNativeWebp: true,
     },
   ];
@@ -660,10 +660,10 @@ declare global {
   var __wmcIdentitySizedVideoFrameDraws: number;
 }
 
-test.describe('built WASM initialization recovery', () => {
+test.describe('built owned VP8 load recovery', () => {
   test.use({ locale: 'en-US' });
-  for (const mode of ['factory', 'import', 'cancelled-factory'] as const) {
-    test(`recovers through explicit reload after ${mode} failure`, async ({ page, baseURL }) => {
+  for (const mode of ['http-failure', 'invalid-module', 'cancelled-load'] as const) {
+    test(`recovers in the same document after ${mode}`, async ({ page, baseURL }) => {
       const contract = cases.find((entry) => entry.id === 'vfr-par-webp')!;
       await exerciseWebpInitialization(
         page,

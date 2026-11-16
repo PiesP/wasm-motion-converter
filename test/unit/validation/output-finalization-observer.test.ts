@@ -15,6 +15,7 @@ test('production WebP branch messages identify the actual encoder', () => {
   expect(classifyWebpRoute('  ├─ Branch: WebP encoder (OffscreenCanvas convertToBlob + mux)')).toBe(
     'webp-serial-canvas'
   );
+  expect(classifyWebpRoute('  ├─ Branch: WebP encoder (owned VP8 + mux)')).toBe('webp-owned-vp8');
   expect(classifyWebpRoute('  ├─ Branch: WebP encoder (streaming encodeRGB + mux)')).toBe(
     'webp-wasm'
   );

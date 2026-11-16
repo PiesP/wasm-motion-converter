@@ -5,10 +5,28 @@
 
 use crate::{presets, rate::BoolSink, EncodeError};
 
-pub(crate) const NEUTRAL_SMOOTH: u8 = 0;
+pub(crate) const FINE_SMOOTH: u8 = 0;
 pub(crate) const CHROMATIC_FLAT: u8 = 1;
 pub(crate) const CHROMATIC_RAMP: u8 = 2;
 pub(crate) const TEXTURED: u8 = 3;
+pub(crate) const CURVATURE_CUTOFF: u64 = 2;
+const Y_DIFFERENCES_PER_BLOCK: u64 = 448;
+const UV_DIFFERENCES_PER_BLOCK: u64 = 96;
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(crate) struct CurvatureTotals {
+    pub sums: [u64; 3],
+}
+
+impl CurvatureTotals {
+    pub(crate) fn within_cutoff(self, blocks: usize) -> bool {
+        let blocks = blocks as u64;
+        blocks > 0
+            && self.sums[0] <= CURVATURE_CUTOFF * Y_DIFFERENCES_PER_BLOCK * blocks
+            && self.sums[1] <= CURVATURE_CUTOFF * UV_DIFFERENCES_PER_BLOCK * blocks
+            && self.sums[2] <= CURVATURE_CUTOFF * UV_DIFFERENCES_PER_BLOCK * blocks
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Config {
@@ -38,7 +56,7 @@ impl Config {
     ) -> Self {
         debug_assert_eq!(counts.iter().sum::<usize>(), total);
         let qindex = [
-            presets::SMOOTH_QINDEX,
+            presets::smooth_qindex(quality),
             presets::chromatic_flat_qindex(quality),
             presets::chromatic_ramp_qindex(quality),
             presets::textured_qindex(quality, neutral_chroma),
@@ -71,6 +89,46 @@ impl Config {
 
     pub(crate) fn qindex_for(self, id: u8) -> usize {
         self.qindex[id as usize]
+    }
+
+    pub(crate) fn with_high_chroma_loss_luma(mut self, high_loss: bool) -> Self {
+        if high_loss {
+            let reduction = presets::HIGH_CHROMA_LOSS_QINDEX_REDUCTION;
+            self.base_qindex = self
+                .base_qindex
+                .checked_sub(reduction)
+                .expect("q60 base preset is at least four");
+            self.qindex = self.qindex.map(|qindex| {
+                qindex
+                    .checked_sub(reduction)
+                    .expect("q60 segment presets are at least four")
+            });
+        }
+        self
+    }
+
+    pub(crate) fn with_medium_textured_luma(mut self, selected: bool) -> Self {
+        if selected {
+            let reduction = presets::medium_luma_reduction();
+            self.base_qindex -= reduction;
+            self.qindex = self.qindex.map(|qindex| qindex - reduction);
+        }
+        self
+    }
+
+    pub(crate) fn with_photo_q60_rebase(mut self, selected: bool) -> Self {
+        if selected {
+            self.base_qindex = self
+                .base_qindex
+                .checked_sub(4)
+                .expect("q60 base preset is at least four");
+            self.qindex = self.qindex.map(|qindex| {
+                qindex
+                    .checked_sub(4)
+                    .expect("q60 segment presets are at least four")
+            });
+        }
+        self
     }
 
     pub(crate) fn write_header(
@@ -128,19 +186,45 @@ impl Config {
     }
 }
 
-/// Curvature selects smooth tiles. Chroma neutrality selects the finest class;
-/// otherwise each plane's range separates flat colors from ramps. Tile
+/// Curvature selects smooth tiles. Chroma neutrality or three constant planes
+/// select the finest class; otherwise range separates flat colors from ramps. Tile
 /// boundaries are excluded so padding cannot create edges.
+#[cfg(test)]
 pub(crate) fn classify(y: &[u8], u: &[u8], v: &[u8], y_stride: usize, mx: usize, my: usize) -> u8 {
-    fn smooth_tile(plane: &[u8], stride: usize, x: usize, y: usize, size: usize) -> bool {
+    classify_with_curvature(y, u, v, y_stride, mx, my, None)
+}
+
+pub(crate) fn classify_with_curvature(
+    y: &[u8],
+    u: &[u8],
+    v: &[u8],
+    y_stride: usize,
+    mx: usize,
+    my: usize,
+    totals: Option<&mut CurvatureTotals>,
+) -> u8 {
+    fn smooth_tile(
+        plane: &[u8],
+        stride: usize,
+        x: usize,
+        y: usize,
+        size: usize,
+        sum: Option<&mut u64>,
+    ) -> bool {
+        let mut tile_sum = 0u64;
+        let mut smooth = true;
         for row in 0..size {
             for col in 1..size - 1 {
                 let at = (y + row) * stride + x + col;
                 let curvature =
                     i32::from(plane[at - 1]) - 2 * i32::from(plane[at]) + i32::from(plane[at + 1]);
-                if curvature.abs() > 2 {
-                    return false;
+                if curvature.unsigned_abs() as u64 > CURVATURE_CUTOFF {
+                    smooth = false;
+                    if sum.is_none() {
+                        return false;
+                    }
                 }
+                tile_sum += u64::from(curvature.unsigned_abs());
             }
         }
         for row in 1..size - 1 {
@@ -148,14 +232,24 @@ pub(crate) fn classify(y: &[u8], u: &[u8], v: &[u8], y_stride: usize, mx: usize,
                 let at = (y + row) * stride + x + col;
                 let curvature = i32::from(plane[at - stride]) - 2 * i32::from(plane[at])
                     + i32::from(plane[at + stride]);
-                if curvature.abs() > 2 {
-                    return false;
+                if curvature.unsigned_abs() as u64 > CURVATURE_CUTOFF {
+                    smooth = false;
+                    if sum.is_none() {
+                        return false;
+                    }
                 }
+                tile_sum += u64::from(curvature.unsigned_abs());
             }
         }
-        true
+        if let Some(sum) = sum {
+            // At most 448 terms for Y or 96 for U/V, each at most 510.
+            // The owned path's MAX_DIMENSION=16,383 bounds a frame to
+            // 1,024^2 macroblocks, keeping each u64 frame sum below 2^38.
+            *sum += tile_sum;
+        }
+        smooth
     }
-    fn flat_tile(plane: &[u8], stride: usize, x: usize, y: usize, size: usize) -> bool {
+    fn tile_range(plane: &[u8], stride: usize, x: usize, y: usize, size: usize) -> u8 {
         let mut minimum = u8::MAX;
         let mut maximum = u8::MIN;
         for row in 0..size {
@@ -165,12 +259,48 @@ pub(crate) fn classify(y: &[u8], u: &[u8], v: &[u8], y_stride: usize, mx: usize,
                 maximum = maximum.max(value);
             }
         }
-        maximum - minimum <= 1
+        maximum - minimum
     }
-    if smooth_tile(y, y_stride, mx * 16, my * 16, 16)
-        && smooth_tile(u, y_stride / 2, mx * 8, my * 8, 8)
-        && smooth_tile(v, y_stride / 2, mx * 8, my * 8, 8)
-    {
+    let mut sums = [0u64; 3];
+    let collecting = totals.is_some();
+    let y_smooth = smooth_tile(
+        y,
+        y_stride,
+        mx * 16,
+        my * 16,
+        16,
+        collecting.then_some(&mut sums[0]),
+    );
+    let u_smooth = if collecting || y_smooth {
+        smooth_tile(
+            u,
+            y_stride / 2,
+            mx * 8,
+            my * 8,
+            8,
+            collecting.then_some(&mut sums[1]),
+        )
+    } else {
+        false
+    };
+    let v_smooth = if collecting || (y_smooth && u_smooth) {
+        smooth_tile(
+            v,
+            y_stride / 2,
+            mx * 8,
+            my * 8,
+            8,
+            collecting.then_some(&mut sums[2]),
+        )
+    } else {
+        false
+    };
+    if let Some(totals) = totals {
+        for (frame, tile) in totals.sums.iter_mut().zip(sums) {
+            *frame += tile;
+        }
+    }
+    if y_smooth && u_smooth && v_smooth {
         let uv_stride = y_stride / 2;
         let mut neutral = true;
         'chroma: for row in 0..8 {
@@ -183,14 +313,20 @@ pub(crate) fn classify(y: &[u8], u: &[u8], v: &[u8], y_stride: usize, mx: usize,
             }
         }
         if neutral {
-            NEUTRAL_SMOOTH
-        } else if flat_tile(y, y_stride, mx * 16, my * 16, 16)
-            && flat_tile(u, uv_stride, mx * 8, my * 8, 8)
-            && flat_tile(v, uv_stride, mx * 8, my * 8, 8)
-        {
-            CHROMATIC_FLAT
+            FINE_SMOOTH
         } else {
-            CHROMATIC_RAMP
+            let ranges = [
+                tile_range(y, y_stride, mx * 16, my * 16, 16),
+                tile_range(u, uv_stride, mx * 8, my * 8, 8),
+                tile_range(v, uv_stride, mx * 8, my * 8, 8),
+            ];
+            if ranges == [0; 3] {
+                FINE_SMOOTH
+            } else if ranges.iter().all(|&range| range <= 1) {
+                CHROMATIC_FLAT
+            } else {
+                CHROMATIC_RAMP
+            }
         }
     } else {
         TEXTURED
@@ -202,10 +338,81 @@ mod tests {
     use super::*;
 
     #[test]
+    fn frame_mean_curvature_uses_each_plane_and_inclusive_cutoff() {
+        let mut y = vec![0; 16 * 16];
+        let mut u = vec![0; 8 * 8];
+        let mut v = vec![0; 8 * 8];
+        for row in 0..16 {
+            for col in 0..16 {
+                y[row * 16 + col] = ((row + col) % 2) as u8;
+            }
+        }
+        for row in 0..8 {
+            for col in 0..8 {
+                u[row * 8 + col] = ((row + col) % 2) as u8;
+                v[row * 8 + col] = ((row + col) % 2) as u8;
+            }
+        }
+        let mut totals = CurvatureTotals::default();
+        let class = classify_with_curvature(&y, &u, &v, 16, 0, 0, Some(&mut totals));
+        assert_eq!(class, classify(&y, &u, &v, 16, 0, 0));
+        assert_eq!(totals.sums, [896, 192, 192]);
+        assert!(totals.within_cutoff(1));
+        for plane in 0..3 {
+            let mut changed = [y.clone(), u.clone(), v.clone()];
+            let size = if plane == 0 { 16 } else { 8 };
+            changed[plane][3 * size + 4] += 1;
+            let mut above = CurvatureTotals::default();
+            let id = classify_with_curvature(
+                &changed[0],
+                &changed[1],
+                &changed[2],
+                16,
+                0,
+                0,
+                Some(&mut above),
+            );
+            assert_eq!(
+                id,
+                classify(&changed[0], &changed[1], &changed[2], 16, 0, 0)
+            );
+            assert!(above.sums[plane] > totals.sums[plane]);
+            assert!(!above.within_cutoff(1));
+        }
+    }
+
+    #[test]
+    fn curvature_accounts_for_maximum_second_difference_across_blocks() {
+        let mut y = vec![0; 32 * 16];
+        let uv = vec![0; 16 * 8];
+        for x in [0, 16] {
+            y[3 * 32 + x + 3] = 255;
+        }
+        let mut totals = CurvatureTotals::default();
+        for mx in 0..2 {
+            assert_eq!(
+                classify_with_curvature(&y, &uv, &uv, 32, mx, 0, Some(&mut totals)),
+                classify(&y, &uv, &uv, 32, mx, 0),
+            );
+        }
+        // Each isolated spike contributes two 510 center terms and four 255 neighbors.
+        assert_eq!(totals.sums, [4080, 0, 0]);
+        assert!(!totals.within_cutoff(2));
+        let at_cutoff = [1792, 384, 384];
+        assert!(CurvatureTotals { sums: at_cutoff }.within_cutoff(2));
+        for plane in 0..3 {
+            let mut above = at_cutoff;
+            above[plane] += 1;
+            assert!(!CurvatureTotals { sums: above }.within_cutoff(2));
+        }
+    }
+
+    #[test]
     fn frame_class_counts_collapse_or_signal_four_absolute_qindices() {
-        for (quality, flat, ramp, textured) in [(60, 8, 28, 34), (75, 15, 27, 28), (85, 8, 15, 14)]
+        for (quality, flat, ramp, textured) in
+            [(60, 18, 32, 32), (75, 19, 27, 28), (85, 15, 15, 14)]
         {
-            for (id, qindex) in [presets::SMOOTH_QINDEX, flat, ramp, textured]
+            for (id, qindex) in [presets::smooth_qindex(quality), flat, ramp, textured]
                 .into_iter()
                 .enumerate()
             {
@@ -217,14 +424,17 @@ mod tests {
             }
             let mixed = Config::from_counts(quality, [1, 1, 1, 1], 4, false);
             assert!(mixed.enabled);
-            assert_eq!(mixed.qindex, [presets::SMOOTH_QINDEX, flat, ramp, textured]);
+            assert_eq!(
+                mixed.qindex,
+                [presets::smooth_qindex(quality), flat, ramp, textured]
+            );
             assert_eq!(mixed.map_probabilities, [128, 128, 128]);
         }
     }
 
     #[test]
-    fn neutral_chroma_changes_only_medium_textured_qindex() {
-        for (quality, chromatic, neutral) in [(60, 34, 34), (75, 28, 27), (85, 14, 14)] {
+    fn neutral_chroma_selects_textured_precision_per_preset() {
+        for (quality, chromatic, neutral) in [(60, 32, 34), (75, 28, 27), (85, 14, 14)] {
             for counts in [[0, 0, 0, 1], [1, 1, 1, 1]] {
                 let total = counts.iter().sum();
                 let color = Config::from_counts(quality, counts, total, false);
@@ -242,21 +452,132 @@ mod tests {
     }
 
     #[test]
+    fn photo_rebase_signals_active_quantizers_and_retains_original_rate_reference() {
+        use crate::ac_quant::{self, Plane};
+        let original = Config::from_counts(60, [0, 0, 0, 4], 4, false);
+        let selected = original.with_photo_q60_rebase(true);
+        let deltas = presets::photo_allocation_deltas(presets::deltas(60), true, false);
+        assert!(!selected.enabled);
+        assert_eq!(selected.base_qindex, 28);
+        assert_eq!(selected.qindex, original.qindex.map(|q| q - 4));
+        assert_eq!(selected.map_probabilities, original.map_probabilities);
+        assert_eq!(selected.active, original.active);
+        assert_eq!(
+            original.with_photo_q60_rebase(false).qindex,
+            original.qindex
+        );
+        let q = selected.qindex_for(TEXTURED) as u8;
+        assert_eq!(ac_quant::steps(q, deltas, Plane::Y1).dc, 29);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::Y1).ac, 32);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::Y2).dc, 58);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::Y2).ac, 55);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::UV).dc, 16);
+        assert_eq!(ac_quant::steps(q, deltas, Plane::UV).ac, 25);
+        assert_eq!(
+            presets::lambda_for_quality(original.qindex_for(TEXTURED), 60),
+            480
+        );
+        assert_eq!(
+            presets::lambda_for_quality(selected.qindex_for(TEXTURED), 60),
+            388
+        );
+    }
+
+    #[test]
+    fn high_loss_luma_shift_preserves_segment_map_and_uv_steps() {
+        use crate::ac_quant::{self, Deltas, Plane};
+
+        for neutral in [false, true] {
+            for counts in [
+                [1, 1, 1, 1],
+                [4, 0, 0, 0],
+                [0, 4, 0, 0],
+                [0, 0, 4, 0],
+                [0, 0, 0, 4],
+            ] {
+                let original = Config::from_counts(60, counts, 4, neutral);
+                let selected = original.with_high_chroma_loss_luma(true);
+                assert!(original.qindex.iter().all(|&qindex| qindex >= 6));
+                assert_eq!(selected.base_qindex, original.base_qindex - 4);
+                assert_eq!(selected.qindex, original.qindex.map(|qindex| qindex - 4));
+                assert_eq!(selected.map_probabilities, original.map_probabilities);
+                assert_eq!(selected.enabled, original.enabled);
+                assert_eq!(selected.active, original.active);
+                assert_eq!(
+                    original.with_high_chroma_loss_luma(false).qindex,
+                    original.qindex
+                );
+                let old_deltas = Deltas {
+                    uv_dc: -13,
+                    uv_ac: 0,
+                    ..Deltas::default()
+                };
+                let new_deltas = crate::presets::frame_deltas(60, 4096 * 3 * 5 * 3 + 1, 5, 3);
+                for id in 0..4 {
+                    let original_steps =
+                        ac_quant::steps(original.qindex[id] as u8, old_deltas, Plane::UV);
+                    let selected_steps =
+                        ac_quant::steps(selected.qindex[id] as u8, new_deltas, Plane::UV);
+                    assert_eq!(original_steps, selected_steps);
+                }
+                if counts == [0, 0, 0, 4] && !neutral {
+                    assert!(!selected.enabled);
+                    assert_eq!(selected.base_qindex, 28);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn medium_textured_shift_preserves_all_segment_uv_steps_and_map() {
+        use crate::ac_quant::{self, Plane};
+
+        for neutral in [false, true] {
+            for counts in [
+                [1, 1, 1, 1],
+                [4, 0, 0, 0],
+                [0, 4, 0, 0],
+                [0, 0, 4, 0],
+                [0, 0, 0, 4],
+            ] {
+                let original = Config::from_counts(75, counts, 4, neutral);
+                let selected = original.with_medium_textured_luma(true);
+                assert_eq!(selected.base_qindex, original.base_qindex - 2);
+                assert_eq!(selected.qindex, original.qindex.map(|qindex| qindex - 2));
+                assert_eq!(selected.enabled, original.enabled);
+                assert_eq!(selected.active, original.active);
+                assert_eq!(selected.map_probabilities, original.map_probabilities);
+                assert_eq!(
+                    original.with_medium_textured_luma(false).qindex,
+                    original.qindex
+                );
+                for id in 0..4 {
+                    assert_eq!(
+                        ac_quant::steps(
+                            selected.qindex[id] as u8,
+                            presets::medium_textured_deltas(presets::deltas(75)),
+                            Plane::UV
+                        ),
+                        ac_quant::steps(original.qindex[id] as u8, presets::deltas(75), Plane::UV)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn smoothness_uses_curvature_of_all_three_source_planes() {
         let y: Vec<_> = (0..16)
             .flat_map(|row| (0..32).map(move |col| (80 + row + col) as u8))
             .collect();
         let uv = vec![128; 16 * 8];
-        assert_eq!(classify(&y, &uv, &uv, 32, 0, 0), NEUTRAL_SMOOTH);
+        assert_eq!(classify(&y, &uv, &uv, 32, 0, 0), FINE_SMOOTH);
         let chromatic_u = vec![126; 16 * 8];
         assert_eq!(classify(&y, &chromatic_u, &uv, 32, 0, 0), CHROMATIC_RAMP);
         let chromatic_v = vec![130; 16 * 8];
         assert_eq!(classify(&y, &uv, &chromatic_v, 32, 0, 0), CHROMATIC_RAMP);
         let flat_y = vec![80; 32 * 16];
-        assert_eq!(
-            classify(&flat_y, &chromatic_u, &uv, 32, 0, 0),
-            CHROMATIC_FLAT
-        );
+        assert_eq!(classify(&flat_y, &chromatic_u, &uv, 32, 0, 0), FINE_SMOOTH);
         let mut chromatic_ramp_u = chromatic_u.clone();
         for row in 0..8 {
             chromatic_ramp_u[row * 16..row * 16 + 8].fill(126 + row as u8);
@@ -277,6 +598,34 @@ mod tests {
     }
 
     #[test]
+    fn constant_color_uses_fine_segment_but_one_level_variation_remains_flat() {
+        let y = vec![80; 32 * 16];
+        let u = vec![96; 16 * 8];
+        let v = vec![160; 16 * 8];
+        assert_eq!(classify(&y, &u, &v, 32, 0, 0), FINE_SMOOTH);
+        for plane in 0..3 {
+            let mut varied_y = y.clone();
+            let mut varied_u = u.clone();
+            let mut varied_v = v.clone();
+            match plane {
+                0 => varied_y[8 * 32 + 8] += 1,
+                1 => varied_u[4 * 16 + 4] += 1,
+                _ => varied_v[4 * 16 + 4] += 1,
+            }
+            assert_eq!(
+                classify(&varied_y, &varied_u, &varied_v, 32, 0, 0),
+                CHROMATIC_FLAT
+            );
+            // Neighboring tile and repeated calls do not inherit another tile's range.
+            assert_eq!(
+                classify(&varied_y, &varied_u, &varied_v, 32, 1, 0),
+                FINE_SMOOTH
+            );
+            assert_eq!(classify(&y, &u, &v, 32, 0, 0), FINE_SMOOTH);
+        }
+    }
+
+    #[test]
     fn all_four_ids_use_the_signaled_map_tree() {
         struct Operations(Vec<(u8, bool)>);
         impl BoolSink for Operations {
@@ -287,7 +636,7 @@ mod tests {
         }
         let config = Config::from_counts(75, [1, 1, 1, 1], 4, false);
         for (id, expected) in [
-            (NEUTRAL_SMOOTH, [(128, false), (128, false)]),
+            (FINE_SMOOTH, [(128, false), (128, false)]),
             (CHROMATIC_FLAT, [(128, false), (128, true)]),
             (CHROMATIC_RAMP, [(128, true), (128, false)]),
             (TEXTURED, [(128, true), (128, true)]),

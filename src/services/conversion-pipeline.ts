@@ -60,7 +60,7 @@ import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { resolveOutputLimits } from './output-limits';
 import { createStreamingWebpEncoder, type StreamingWebpEncoder } from './parallel-webp-encoder';
 import { probeCanvasWebpCapability } from './webp-capability';
-import { encodeWebp } from './webp-encoder-service';
+import { encodeWebpOwned } from './webp-encoder-service';
 import { createWorkerPool, disposeWorkerPool, WebpWorkerPool } from './worker-pool';
 
 /** Device/environment check — isolated to this module-level constant */
@@ -422,7 +422,7 @@ async function _runPipelineInner(
       );
 
       // Use the parallel Worker-based encoder when its complete resource model fits.
-      // Falls back to main-thread OffscreenCanvas encoder, then wasm-webp.
+      // Selects main-thread OffscreenCanvas or conversion-owned VP8 software.
       // Size the pool against the shared source/task/canvas budget before any
       // Worker is created. A zero capacity selects the serial fallback below.
       const w = Math.max(1, Math.floor(codedWidth * request.scale));
@@ -622,8 +622,8 @@ async function _runPipelineInner(
           outputBytes: output.byteLength,
         };
       } else {
-        profiler?.setEncoderRoute('webp-wasm');
-        logger.info('conversion', '  ├─ Branch: WebP encoder (streaming encodeRGB + mux)', {
+        profiler?.setEncoderRoute('webp-owned-vp8');
+        logger.info('conversion', '  ├─ Branch: WebP encoder (owned VP8 + mux)', {
           codec: demuxResult.config.codec,
           codedWidth: demuxResult.config.codedWidth,
           codedHeight: demuxResult.config.codedHeight,
@@ -635,7 +635,7 @@ async function _runPipelineInner(
         const onEncodeProgress = createEncodeProgressCb();
         const encoded = await scheduleTask(
           () =>
-            encodeWebp(
+            encodeWebpOwned(
               demuxResult,
               {
                 width: codedWidth,
@@ -647,6 +647,7 @@ async function _runPipelineInner(
                 pressureCadenceRatio: webpCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
                 decimationMemoryCheck,
+                assertOwnedVp8AdditionalMemoryBytes: assertMemoryBudget,
                 onEncodingComplete: recordCompletedFrameCounts,
                 profileOperation,
                 profileCopyPath,

@@ -55,6 +55,7 @@ export class BufferPool {
   private totalPooledBytes: number = 0;
   private activeAllocations = new WeakMap<ArrayBuffer, number>();
   private totalActiveBytes = 0;
+  private beforeGrowth: ((nextRetainedBytes: number) => void) | null = null;
 
   /**
    * @param maxPerBucket - Max buffers to retain per size bucket (default: 4)
@@ -78,9 +79,19 @@ export class BufferPool {
       this.trackActive(buf);
       return buf;
     }
+    if (bucket > 0) this.beforeGrowth?.(this.totalRetainedMemory + bucket);
     const buf = new Uint8Array(bucket);
     this.trackActive(buf);
     return buf;
+  }
+
+  /** An optional conversion owner checks new allocations before pool bytes grow. */
+  installGrowthGuard(guard: (nextRetainedBytes: number) => void): () => void {
+    if (this.beforeGrowth) throw new Error('Buffer pool growth guard already installed');
+    this.beforeGrowth = guard;
+    return () => {
+      if (this.beforeGrowth === guard) this.beforeGrowth = null;
+    };
   }
 
   /**
@@ -90,6 +101,7 @@ export class BufferPool {
    * it is silently discarded (GC will reclaim it).
    */
   release(buf: Uint8Array): void {
+    const retainedBeforeRelease = this.totalRetainedMemory;
     this.releaseActive(buf.buffer);
     if (buf.byteLength === 0 || (buf.byteLength & (buf.byteLength - 1)) !== 0) {
       return;
@@ -101,11 +113,13 @@ export class BufferPool {
       return;
     }
     let pool = this.pools.get(buf.byteLength);
-    if (!pool) {
-      pool = [];
-      this.pools.set(buf.byteLength, pool);
-    }
-    if (pool.length < this.maxPerBucket) {
+    if ((pool?.length ?? 0) < this.maxPerBucket) {
+      const nextRetainedBytes = this.totalRetainedMemory + buf.byteLength;
+      if (nextRetainedBytes > retainedBeforeRelease) this.beforeGrowth?.(nextRetainedBytes);
+      if (!pool) {
+        pool = [];
+        this.pools.set(buf.byteLength, pool);
+      }
       pool.push(buf);
       this.totalPooledBytes += buf.byteLength;
     }

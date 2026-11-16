@@ -36,7 +36,7 @@ const demuxResult = {
   totalFrames: 30,
 };
 vi.mock('@services/gif-encoder-service', () => ({ encodeGif: mocks.encodeGif }));
-vi.mock('@services/webp-encoder-service', () => ({ encodeWebp: mocks.encodeWebp }));
+vi.mock('@services/webp-encoder-service', () => ({ encodeWebpOwned: mocks.encodeWebp }));
 vi.mock('@services/offscreen-webp-encoder', () => ({
   encodeWebpOffscreen: mocks.encodeWebpOffscreen,
 }));
@@ -111,7 +111,7 @@ describe('main conversion pipeline encoder options', () => {
     expect(mocks.demuxVideo.mock.calls[1]?.[1]).toBeUndefined();
   });
 
-  it.each(['gif', 'webp-wasm', 'webp-canvas'] as const)(
+  it.each(['gif', 'webp-owned-vp8', 'webp-canvas'] as const)(
     'forwards independent normal, pressure, and explicit-gap policies to %s',
     async (route) => {
       if (route === 'webp-canvas') {
@@ -184,13 +184,13 @@ describe('main conversion pipeline encoder options', () => {
     }
   });
 
-  it.each(['gif-main', 'webp-serial-canvas', 'webp-wasm'] as const)(
+  it.each(['gif-main', 'webp-serial-canvas', 'webp-owned-vp8'] as const)(
     'reports finite decode rates and exact terminal counters on %s',
     async (route) => {
       if (route === 'webp-serial-canvas') {
         stubCanvasWebpSupport();
         vi.stubGlobal('Worker', undefined);
-      } else if (route === 'webp-wasm') {
+      } else if (route === 'webp-owned-vp8') {
         vi.stubGlobal('OffscreenCanvas', undefined);
         vi.stubGlobal('Worker', undefined);
       }

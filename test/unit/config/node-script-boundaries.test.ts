@@ -222,6 +222,51 @@ describe('direct Node script boundaries', () => {
     }
   });
 
+  it('keeps owned VP8 MIT, libwebp and RFC attribution without wasm-webp', () => {
+    const { root, run } = fixture();
+    mkdirSync(join(root, 'node_modules/sample'), { recursive: true });
+    mkdirSync(join(root, 'crates/owned-vp8'), { recursive: true });
+    mkdirSync(join(root, 'public'));
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        type: 'module',
+        dependencies: { sample: '1.0.0' },
+        scripts: { 'build:vp8-wasm': 'build owned VP8' },
+      })
+    );
+    writeFileSync(
+      join(root, 'node_modules/sample/package.json'),
+      '{"version":"1.0.0","license":"MIT"}'
+    );
+    writeFileSync(join(root, 'node_modules/sample/LICENSE'), 'Sample MIT notice\n');
+    writeFileSync(join(root, 'LICENSE'), 'Owned MIT notice\n');
+    writeFileSync(
+      join(root, 'crates/owned-vp8/Cargo.toml'),
+      '[package]\nname = "owned-vp8"\nversion = "0.1.0"\nlicense = "MIT AND BSD-3-Clause"\n'
+    );
+    writeFileSync(join(root, 'crates/owned-vp8/LICENSE.libwebp'), 'Pinned libwebp BSD notice\n');
+    writeFileSync(join(root, 'crates/owned-vp8/PATENTS.libwebp'), 'Pinned libwebp patent grant\n');
+
+    const output = join(root, 'public/LICENSES.md');
+    const result = run('scripts/build/generate-licenses.ts');
+    expect(result.status, result.stderr).toBe(0);
+    const notices = readFileSync(output, 'utf8');
+    expect(notices).toContain('## Owned VP8 source attribution');
+    expect(notices).toContain('**License:** MIT AND BSD-3-Clause');
+    expect(notices).toContain('Owned MIT notice');
+    expect(notices).toContain('Pinned libwebp BSD notice');
+    expect(notices).toContain('Pinned libwebp patent grant');
+    expect(notices).toContain('RFC 6386');
+    expect(notices).not.toContain('## wasm-webp');
+
+    unlinkSync(join(root, 'crates/owned-vp8/PATENTS.libwebp'));
+    const missingGrant = run('scripts/build/generate-licenses.ts');
+    expect(missingGrant.status).toBe(1);
+    expect(missingGrant.stderr).toContain('PATENTS.libwebp');
+    expect(readFileSync(output, 'utf8')).toBe(notices);
+  });
+
   it('retains gifenc MIT text and its source-pinned PNN attribution', () => {
     const { root, run } = fixture();
     mkdirSync(join(root, 'node_modules/gifenc/src'), { recursive: true });

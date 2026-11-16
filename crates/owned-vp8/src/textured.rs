@@ -7,16 +7,112 @@ use super::{BoolWriter, EncodeError, MAX_OUTPUT_BYTES};
 use crate::ac_quant::{self, Deltas, Plane, Steps};
 use crate::{
     bmode_probs::BMODE_PROBS,
-    limits::{Request, ResourcePlan, Status, MAX_FIRST_PARTITION_BYTES},
+    display_rgb, filter,
+    limits::{
+        Request, ResourcePlan, Status, MAX_DIMENSION, MAX_FIRST_PARTITION_BYTES,
+        REFINEMENT_LOG_BUDGET_BYTES, SCRATCH_ALLOWANCE_BYTES,
+    },
     prediction::{self, LargeMode, SmallMode},
-    probability::{Model, Statistics, NODE_COUNT},
+    probability::{EmissionModel, Model, Statistics, NODE_COUNT},
     rate::{probability_cost, BoolSink, CountingBoolSink, OpBuffer, RateCounter, SymbolCounter},
     residual,
     segmentation::{self, Config as SegmentConfig},
     transform,
 };
 
-#[derive(Default)]
+#[allow(clippy::too_many_arguments)]
+fn filter_completed_one(
+    y: &mut [u8],
+    u: &mut [u8],
+    v: &mut [u8],
+    padded_w: usize,
+    padded_h: usize,
+    index: usize,
+    blocks: &[Macroblock],
+    config: FilterConfig,
+) -> Result<(), EncodeError> {
+    let block = blocks.get(index).ok_or(EncodeError::InvalidInput)?;
+    let mut planes = filter::Planes {
+        y: filter::Plane {
+            data: y,
+            width: padded_w,
+            height: padded_h,
+            stride: padded_w,
+        },
+        u: filter::Plane {
+            data: u,
+            width: padded_w / 2,
+            height: padded_h / 2,
+            stride: padded_w / 2,
+        },
+        v: filter::Plane {
+            data: v,
+            width: padded_w / 2,
+            height: padded_h / 2,
+            stride: padded_w / 2,
+        },
+    };
+    filter::filter_macroblock(
+        &mut planes,
+        index % (padded_w / 16),
+        index / (padded_w / 16),
+        filter::FilterParams {
+            level: config.level,
+            sharpness: config.sharpness,
+            simple: config.simple,
+            i4: !block.i16,
+            has_coefficients: !block.skip(),
+        },
+    )
+    .map_err(|_| EncodeError::InvalidInput)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn score_completed_sync(
+    work_y: &mut [u8],
+    work_u: &mut [u8],
+    work_v: &mut [u8],
+    reconstructed_y: &[u8],
+    reconstructed_u: &[u8],
+    reconstructed_v: &[u8],
+    padded_w: usize,
+    padded_h: usize,
+    width: usize,
+    height: usize,
+    original: display_rgb::Original<'_>,
+    blocks: &[Macroblock],
+    config: FilterConfig,
+) -> Result<f64, EncodeError> {
+    work_y.copy_from_slice(reconstructed_y);
+    work_u.copy_from_slice(reconstructed_u);
+    work_v.copy_from_slice(reconstructed_v);
+    for index in 0..blocks.len() {
+        filter_completed_one(
+            work_y, work_u, work_v, padded_w, padded_h, index, blocks, config,
+        )?;
+    }
+    let view = display_rgb::CompleteFrame::checked(
+        width, height, padded_w, original, work_y, work_u, work_v,
+    )
+    .ok_or(EncodeError::InvalidInput)?;
+    let mut score =
+        display_rgb::CompleteScore::new(width, height).ok_or(EncodeError::OutputLimit)?;
+    while !score.initialized() {
+        if !score.initialize_chunk() {
+            return Err(EncodeError::OutputLimit);
+        }
+    }
+    while score.progress().0 < score.progress().1 {
+        score.advance(&view);
+    }
+    score.finish().ok_or(EncodeError::InvalidInput)
+}
+
+#[path = "joint_refinement.rs"]
+mod joint_refinement;
+use joint_refinement::{extra_quota, JointSearch};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Macroblock {
     y: [[i16; 16]; 16],
     y2: [i16; 16],
@@ -147,6 +243,95 @@ fn code_predicted_block(
         reconstructed[i] = clamp(i32::from(predictor[i]) + i32::from(inverse[i]));
     }
     (coefficients, reconstructed)
+}
+
+fn reconstructed_patch(coefficients: &[i16; 16], predictor: &[u8; 16], steps: Steps) -> [u8; 16] {
+    let inverse = transform::inverse(&ac_quant::dequantize_block(coefficients, steps));
+    std::array::from_fn(|i| clamp(i32::from(predictor[i]) + i32::from(inverse[i])))
+}
+
+fn patch_error(source: &[u8], stride: usize, x: usize, y: usize, patch: &[u8; 16]) -> u64 {
+    let mut distortion = 0u64;
+    for row in 0..4 {
+        for col in 0..4 {
+            let diff =
+                i32::from(source[(y + row) * stride + x + col]) - i32::from(patch[row * 4 + col]);
+            distortion += (diff * diff) as u64;
+        }
+    }
+    distortion
+}
+
+#[allow(clippy::too_many_arguments)]
+fn optimize_uv_block(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    predictor: &[u8; 16],
+    steps: Steps,
+    context: usize,
+    lambda: u64,
+    baseline: ([i16; 16], [u8; 16]),
+) -> ([i16; 16], [u8; 16]) {
+    let Some(last_ac) = (1..16)
+        .rev()
+        .find(|&position| baseline.0[residual::SCAN[position]] != 0)
+    else {
+        return baseline;
+    };
+    let index = residual::SCAN[last_ac];
+    if baseline.0[index].unsigned_abs() != 1 {
+        return baseline;
+    }
+    let mut alternative = baseline.0;
+    alternative[index] = 0;
+    let mut baseline_rate = RateCounter::default();
+    let mut alternative_rate = RateCounter::default();
+    residual::encode_block(&mut baseline_rate, &baseline.0, 2, context).unwrap();
+    residual::encode_block(&mut alternative_rate, &alternative, 2, context).unwrap();
+    if alternative_rate.cost >= baseline_rate.cost {
+        return baseline;
+    }
+    let alternative_patch = reconstructed_patch(&alternative, predictor, steps);
+    let baseline_score =
+        patch_error(source, stride, x, y, &baseline.1) * 256 + lambda * baseline_rate.cost;
+    let alternative_score = patch_error(source, stride, x, y, &alternative_patch) * 256
+        + lambda * alternative_rate.cost;
+    if alternative_score < baseline_score {
+        (alternative, alternative_patch)
+    } else {
+        baseline
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn optimize_uv_dc_zero(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    predictor: &[u8; 16],
+    context: usize,
+    baseline: ([i16; 16], [u8; 16]),
+) -> ([i16; 16], [u8; 16]) {
+    if baseline.0[0].unsigned_abs() != 1 || baseline.0[1..].iter().any(|&value| value != 0) {
+        return baseline;
+    }
+    if patch_error(source, stride, x, y, predictor) > patch_error(source, stride, x, y, &baseline.1)
+    {
+        return baseline;
+    }
+    let zero = [0i16; 16];
+    let mut baseline_rate = RateCounter::default();
+    let mut zero_rate = RateCounter::default();
+    residual::encode_block(&mut baseline_rate, &baseline.0, 2, context).unwrap();
+    residual::encode_block(&mut zero_rate, &zero, 2, context).unwrap();
+    if zero_rate.cost < baseline_rate.cost {
+        (zero, *predictor)
+    } else {
+        baseline
+    }
 }
 
 fn store_patch<const N: usize, const LEN: usize>(
@@ -401,6 +586,7 @@ impl CoeffContexts {
         self.left_u.fill(false);
         self.left_v.fill(false);
     }
+    #[cfg(test)]
     fn measure(&self, block: &Macroblock, mx: usize) -> Result<u64, EncodeError> {
         let mut y2 = [self.y2[mx]];
         let mut y = [false; 4];
@@ -425,6 +611,38 @@ impl CoeffContexts {
         };
         let mut rate = RateCounter::default();
         window.encode_coefficients(&mut rate, block, 0)?;
+        Ok(rate.cost)
+    }
+    fn measure_luma(&self, block: &Macroblock, mx: usize) -> Result<u64, EncodeError> {
+        let mut rate = RateCounter::default();
+        if block.i16 {
+            let context = usize::from(self.y2[mx]) + usize::from(self.left_y2);
+            residual::encode_block(&mut rate, &block.y2, 1, context)?;
+        }
+        let mut y = [false; 4];
+        y.copy_from_slice(&self.y[mx * 4..mx * 4 + 4]);
+        let mut left_y = self.left_y;
+        encode_macroblock_coeffs(
+            &mut rate,
+            &block.y,
+            if block.i16 { 0 } else { 3 },
+            &mut y,
+            &mut left_y,
+            0,
+            4,
+        )?;
+        Ok(rate.cost)
+    }
+    fn measure_uv(&self, block: &Macroblock, mx: usize) -> Result<u64, EncodeError> {
+        let mut rate = RateCounter::default();
+        let mut u = [false; 2];
+        u.copy_from_slice(&self.u[mx * 2..mx * 2 + 2]);
+        let mut v = [false; 2];
+        v.copy_from_slice(&self.v[mx * 2..mx * 2 + 2]);
+        let mut left_u = self.left_u;
+        let mut left_v = self.left_v;
+        encode_macroblock_coeffs(&mut rate, &block.u, 2, &mut u, &mut left_u, 0, 2)?;
+        encode_macroblock_coeffs(&mut rate, &block.v, 2, &mut v, &mut left_v, 0, 2)?;
         Ok(rate.cost)
     }
     fn encode_coefficients(
@@ -462,6 +680,311 @@ struct LumaCandidate {
     tile: [u8; 256],
     distortion: u64,
 }
+struct AnalyzedBlock {
+    block: Macroblock,
+    refinement: Option<RefinementChange>,
+    refinement_gain: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RefinementChange {
+    plane: u8,
+    patch: u8,
+    coefficient: u8,
+    old: i16,
+    new: i16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RefinementEdit {
+    block: u32,
+    change: RefinementChange,
+}
+
+#[derive(Clone, Copy)]
+struct BaselineOverride {
+    block: u32,
+    start: u32,
+    len: u8,
+    baseline: Option<RefinementChange>,
+}
+
+const BASELINE_OVERRIDE_BUDGET_BYTES: usize = 8 * 1024;
+const _: () =
+    assert!(128 * std::mem::size_of::<BaselineOverride>() <= BASELINE_OVERRIDE_BUDGET_BYTES);
+
+const REFINEMENT_SLAB_LEN: usize = 256;
+const _: () = assert!(std::mem::size_of::<RefinementEdit>() <= 12);
+
+/// Bounded slabs avoid a frame-sized relocation during an ABI work unit.
+#[derive(Default)]
+struct RefinementLog {
+    slabs: Vec<Vec<RefinementEdit>>,
+    len: usize,
+}
+
+fn is_overridden(
+    overrides: &[BaselineOverride],
+    edit: RefinementEdit,
+    index: usize,
+) -> Result<bool, Status> {
+    let Ok(position) = overrides.binary_search_by_key(&edit.block, |item| item.block) else {
+        return Ok(false);
+    };
+    let item = overrides[position];
+    if index < item.start as usize || index >= item.start as usize + usize::from(item.len) {
+        return Err(Status::InvalidInput);
+    }
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_edit_state(
+    blocks: &mut [Macroblock],
+    reconstructed_u: &mut [u8],
+    reconstructed_v: &mut [u8],
+    padded_w: usize,
+    segments: SegmentConfig,
+    deltas: Deltas,
+    edit: RefinementEdit,
+    forward: bool,
+) -> Result<(), Status> {
+    let blocks_x = padded_w / 16;
+    let mx = edit.block as usize % blocks_x;
+    let my = edit.block as usize / blocks_x;
+    let block = blocks
+        .get_mut(edit.block as usize)
+        .ok_or(Status::InvalidInput)?;
+    let change = edit.change;
+    let patch_index = usize::from(change.patch);
+    let coefficient_index = usize::from(change.coefficient);
+    if patch_index >= 4 || coefficient_index >= 16 {
+        return Err(Status::InvalidInput);
+    }
+    let (coefficients, reconstructed) = match change.plane {
+        0 => (&mut block.u[patch_index], reconstructed_u),
+        1 => (&mut block.v[patch_index], reconstructed_v),
+        _ => return Err(Status::InvalidInput),
+    };
+    let (expected, replacement) = if forward {
+        (change.old, change.new)
+    } else {
+        (change.new, change.old)
+    };
+    if coefficients[coefficient_index] != expected {
+        return Err(Status::InvalidInput);
+    }
+    let stride = padded_w / 2;
+    let x = mx * 8;
+    let y = my * 8;
+    let (top, left, corner) = edge::<8>(reconstructed, stride, x, y);
+    let predicted = prediction::predict_uv(
+        &top,
+        &left,
+        corner,
+        y > 0,
+        x > 0,
+        mode_from_u8(block.uv_mode),
+    );
+    let bx = patch_index % 2;
+    let by = patch_index / 2;
+    let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
+    let qindex = segments.qindex_for(block.segment_id);
+    let steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
+    let expected_patch = reconstructed_patch(coefficients, &predictor, steps);
+    for row in 0..4 {
+        let at = (y + by * 4 + row) * stride + x + bx * 4;
+        if reconstructed[at..at + 4] != expected_patch[row * 4..row * 4 + 4] {
+            return Err(Status::InvalidInput);
+        }
+    }
+    let mut changed = *coefficients;
+    changed[coefficient_index] = replacement;
+    let patch = reconstructed_patch(&changed, &predictor, steps);
+    *coefficients = changed;
+    for row in 0..4 {
+        let at = (y + by * 4 + row) * stride + x + bx * 4;
+        reconstructed[at..at + 4].copy_from_slice(&patch[row * 4..row * 4 + 4]);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_sync_edit(
+    blocks: &mut [Macroblock],
+    u: &mut [u8],
+    v: &mut [u8],
+    padded_w: usize,
+    segments: SegmentConfig,
+    deltas: Deltas,
+    edit: RefinementEdit,
+    forward: bool,
+) -> Result<(), EncodeError> {
+    replay_edit_state(blocks, u, v, padded_w, segments, deltas, edit, forward)
+        .map_err(|_| EncodeError::InvalidInput)
+}
+
+impl RefinementLog {
+    fn reserve_one(&mut self, max_edits: usize) -> Result<(), Status> {
+        self.reserve_additional(1, max_edits)
+    }
+
+    fn reserve_additional(&mut self, additional: usize, max_edits: usize) -> Result<(), Status> {
+        let target = self
+            .len
+            .checked_add(additional)
+            .ok_or(Status::MemoryAdmission)?;
+        if target > max_edits {
+            return Err(Status::MemoryAdmission);
+        }
+        while self.slabs.len() < target.div_ceil(REFINEMENT_SLAB_LEN) {
+            if self.slabs.is_empty() {
+                self.slabs
+                    .try_reserve_exact(max_edits.div_ceil(REFINEMENT_SLAB_LEN))
+                    .map_err(|_| Status::MemoryAdmission)?;
+            }
+            let mut slab = Vec::new();
+            slab.try_reserve_exact(REFINEMENT_SLAB_LEN)
+                .map_err(|_| Status::MemoryAdmission)?;
+            self.slabs.push(slab);
+        }
+        if self.capacity_bytes() > REFINEMENT_LOG_BUDGET_BYTES {
+            return Err(Status::MemoryAdmission);
+        }
+        Ok(())
+    }
+
+    fn pop_last(&mut self) -> Option<RefinementEdit> {
+        let last = self.len.checked_sub(1)?;
+        let edit = self.slabs.get_mut(last / REFINEMENT_SLAB_LEN)?.pop()?;
+        self.len = last;
+        Some(edit)
+    }
+
+    fn capacity_bytes(&self) -> usize {
+        self.slabs.capacity() * std::mem::size_of::<Vec<RefinementEdit>>()
+            + self
+                .slabs
+                .iter()
+                .map(|slab| slab.capacity() * std::mem::size_of::<RefinementEdit>())
+                .sum::<usize>()
+    }
+
+    fn push_reserved(&mut self, edit: RefinementEdit) -> Result<(), Status> {
+        let slab = self
+            .slabs
+            .get_mut(self.len / REFINEMENT_SLAB_LEN)
+            .ok_or(Status::MemoryAdmission)?;
+        if slab.len() == slab.capacity() {
+            return Err(Status::MemoryAdmission);
+        }
+        slab.push(edit);
+        self.len += 1;
+        Ok(())
+    }
+
+    fn get(&self, index: usize) -> Option<RefinementEdit> {
+        self.slabs
+            .get(index / REFINEMENT_SLAB_LEN)?
+            .get(index % REFINEMENT_SLAB_LEN)
+            .copied()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+#[derive(Default)]
+struct ProfileComparison {
+    visible_error: u64,
+    weighted_rate: u64,
+}
+
+impl ProfileComparison {
+    fn add_rate(
+        &mut self,
+        rate: u64,
+        original_qindex: usize,
+        quality: u32,
+    ) -> Result<(), EncodeError> {
+        let weighted = crate::presets::lambda_for_quality(original_qindex, quality)
+            .checked_mul(rate)
+            .ok_or(EncodeError::OutputLimit)?;
+        self.weighted_rate = self
+            .weighted_rate
+            .checked_add(weighted)
+            .ok_or(EncodeError::OutputLimit)?;
+        Ok(())
+    }
+
+    fn score(
+        &self,
+        header_rate: u64,
+        original_base_qindex: usize,
+        quality: u32,
+    ) -> Result<u64, EncodeError> {
+        let weighted_header = crate::presets::lambda_for_quality(original_base_qindex, quality)
+            .checked_mul(header_rate)
+            .ok_or(EncodeError::OutputLimit)?;
+        self.visible_error
+            .checked_mul(256)
+            .and_then(|error| error.checked_add(self.weighted_rate))
+            .and_then(|score| score.checked_add(weighted_header))
+            .ok_or(EncodeError::OutputLimit)
+    }
+}
+
+fn reduced_profile_wins(original: u64, reduced: u64) -> bool {
+    reduced < original
+}
+
+fn estimated_profile_header_rate(
+    segments: SegmentConfig,
+    deltas: Deltas,
+    filter: FilterConfig,
+    model: &Model,
+    skip_probability: Option<u8>,
+) -> Result<u64, EncodeError> {
+    let mut rate = RateCounter::default();
+    write_header_prefix(&mut rate, segments, deltas, filter)?;
+    for start in (0..NODE_COUNT).step_by(64) {
+        write_updates(&mut rate, Some(model), start, (start + 64).min(NODE_COUNT))?;
+    }
+    write_header_suffix(&mut rate, skip_probability)?;
+    Ok(rate.cost)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn estimated_block_rate(
+    block: &Macroblock,
+    mx: usize,
+    contexts: &mut CoeffContexts,
+    above_modes: &mut [u8],
+    left_modes: &mut [u8; 4],
+    segments: SegmentConfig,
+    model: &Model,
+    skip_probability: Option<u8>,
+) -> Result<u64, EncodeError> {
+    let mut header = RateCounter::default();
+    let mut token = RateCounter::default();
+    write_macroblock(
+        &mut header,
+        &mut ModelSink {
+            inner: &mut token,
+            model: Some(model),
+        },
+        contexts,
+        above_modes,
+        left_modes,
+        mx,
+        block,
+        segments,
+        skip_probability,
+    )?;
+    Ok(header.cost + token.cost)
+}
+#[derive(Clone)]
 struct UvCandidate {
     u: [[i16; 16]; 4],
     v: [[i16; 16]; 4],
@@ -487,6 +1010,7 @@ fn squared_error<const N: usize, const LEN: usize>(
     }
     result
 }
+
 fn commit_tile<const N: usize, const LEN: usize>(
     destination: &mut [u8],
     stride: usize,
@@ -498,6 +1022,20 @@ fn commit_tile<const N: usize, const LEN: usize>(
         destination[(y + row) * stride + x..(y + row) * stride + x + N]
             .copy_from_slice(&tile[row * N..row * N + N]);
     }
+}
+
+fn read_tile<const N: usize, const LEN: usize>(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+) -> [u8; LEN] {
+    let mut tile = [0; LEN];
+    for row in 0..N {
+        tile[row * N..row * N + N]
+            .copy_from_slice(&source[(y + row) * stride + x..(y + row) * stride + x + N]);
+    }
+    tile
 }
 
 // Keep plane and tile coordinates explicit while trials borrow committed state.
@@ -631,8 +1169,37 @@ fn make_i4(
     contexts: &CoeffContexts,
     lambda: u64,
 ) -> LumaCandidate {
+    make_i4_with_pruning::<true>(
+        source,
+        reconstructed,
+        stride,
+        mx,
+        my,
+        y_steps,
+        above_modes,
+        left_modes,
+        contexts,
+        lambda,
+    )
+    .0
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_i4_with_pruning<const PRUNE: bool>(
+    source: &[u8],
+    reconstructed: &[u8],
+    stride: usize,
+    mx: usize,
+    my: usize,
+    y_steps: Steps,
+    above_modes: &[u8],
+    left_modes: &[u8; 4],
+    contexts: &CoeffContexts,
+    lambda: u64,
+) -> (LumaCandidate, u64) {
     let mut tile = [0u8; 256];
     let mut block = Macroblock::default();
+    let mut selected_score = 0u64;
     let mut local_above = [false; 4];
     local_above.copy_from_slice(&contexts.y[mx * 4..mx * 4 + 4]);
     let mut local_left = contexts.left_y;
@@ -654,18 +1221,21 @@ fn make_i4(
             };
             let mut best: Option<([i16; 16], [u8; 16], u8, u64)> = None;
             for mode in 0..10u8 {
+                let mut trial = RateCounter::default();
+                write_bmode(&mut trial, above, left_mode, mode).unwrap();
+                let mode_cost = trial.cost;
+                // Distortion and residual token costs cannot lower this score.
+                // A tie retains the earlier mode under the strict comparison.
+                if PRUNE
+                    && best
+                        .as_ref()
+                        .is_some_and(|last| lambda * mode_cost >= last.3)
+                {
+                    continue;
+                }
                 let predicted = prediction::predict_i4(&top, &left, corner, bmode_from_u8(mode));
                 let (coeff, patch) =
                     code_predicted_block(source, stride, x, y, &predicted, y_steps);
-                let mut trial = RateCounter::default();
-                write_bmode(&mut trial, above, left_mode, mode).unwrap();
-                residual::encode_block(
-                    &mut trial,
-                    &coeff,
-                    3,
-                    usize::from(local_above[bx]) + usize::from(local_left[by]),
-                )
-                .unwrap();
                 let mut distortion = 0u64;
                 for row in 0..4 {
                     for col in 0..4 {
@@ -674,12 +1244,27 @@ fn make_i4(
                         distortion += (diff * diff) as u64;
                     }
                 }
+                if PRUNE
+                    && best
+                        .as_ref()
+                        .is_some_and(|last| distortion * 256 + lambda * mode_cost >= last.3)
+                {
+                    continue;
+                }
+                residual::encode_block(
+                    &mut trial,
+                    &coeff,
+                    3,
+                    usize::from(local_above[bx]) + usize::from(local_left[by]),
+                )
+                .unwrap();
                 let score = distortion * 256 + lambda * trial.cost;
                 if best.as_ref().is_none_or(|last| score < last.3) {
                     best = Some((coeff, patch, mode, score));
                 }
             }
-            let (coeff, patch, mode, _) = best.unwrap();
+            let (coeff, patch, mode, score) = best.unwrap();
+            selected_score += score;
             block.y[index] = coeff;
             block.b_modes[index] = mode;
             store_patch::<16, 256>(&mut tile, bx, by, &patch);
@@ -688,12 +1273,44 @@ fn make_i4(
             local_left[by] = nonzero;
         }
     }
-    LumaCandidate {
-        block,
-        tile,
-        distortion: squared_error::<16, 256>(source, stride, mx * 16, my * 16, &tile),
+    (
+        LumaCandidate {
+            block,
+            tile,
+            distortion: squared_error::<16, 256>(source, stride, mx * 16, my * 16, &tile),
+        },
+        selected_score,
+    )
+}
+#[derive(Clone, Copy)]
+enum UvRatePolicy {
+    TexturedAcTail,
+    FlatDcZero,
+}
+
+#[derive(Clone, Copy)]
+struct UvRdo<'a> {
+    contexts: &'a CoeffContexts,
+    mx: usize,
+    lambda: u64,
+    visible_width: usize,
+    visible_height: usize,
+    policy: UvRatePolicy,
+}
+
+impl UvRdo<'_> {
+    fn block_lambda(self, x: usize, y: usize) -> Option<u64> {
+        let width = self.visible_width.saturating_sub(x).min(4);
+        let height = self.visible_height.saturating_sub(y).min(4);
+        let samples = width * height;
+        // Padded samples do not receive their own rate allowance. Keep hidden
+        // patches unchanged because filtering can couple them to visible edges.
+        (samples > 0).then_some(
+            self.lambda * samples as u64 / (16 * crate::presets::UV_COEFFICIENT_RATE_DIVISOR),
+        )
     }
 }
+
 #[allow(clippy::too_many_arguments)]
 fn make_uv(
     source_u: &[u8],
@@ -705,6 +1322,7 @@ fn make_uv(
     y: usize,
     mode: u8,
     steps: Steps,
+    rdo: Option<UvRdo<'_>>,
 ) -> UvCandidate {
     let mut coeffs = [[[0i16; 16]; 4]; 2];
     let mut tiles = [[0u8; 64]; 2];
@@ -713,16 +1331,59 @@ fn make_uv(
             .into_iter()
             .enumerate()
     {
+        let (mut local_above, mut local_left) = if let Some(UvRdo { contexts, mx, .. }) = rdo {
+            let (above, left) = if index == 0 {
+                (&contexts.u, contexts.left_u)
+            } else {
+                (&contexts.v, contexts.left_v)
+            };
+            ([above[mx * 2], above[mx * 2 + 1]], left)
+        } else {
+            ([false; 2], [false; 2])
+        };
         let (top, left, corner) = edge::<8>(reconstructed, stride, x, y);
         let predicted =
             prediction::predict_uv(&top, &left, corner, y > 0, x > 0, mode_from_u8(mode));
         for by in 0..2 {
             for bx in 0..2 {
                 let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
-                let (coeff, patch) =
+                let baseline =
                     code_predicted_block(source, stride, x + bx * 4, y + by * 4, &predictor, steps);
+                let (coeff, patch) = if let Some((rdo, lambda)) = rdo.and_then(|rdo| {
+                    rdo.block_lambda(x + bx * 4, y + by * 4)
+                        .map(|lambda| (rdo, lambda))
+                }) {
+                    let context = usize::from(local_above[bx]) + usize::from(local_left[by]);
+                    match rdo.policy {
+                        UvRatePolicy::TexturedAcTail => optimize_uv_block(
+                            source,
+                            stride,
+                            x + bx * 4,
+                            y + by * 4,
+                            &predictor,
+                            steps,
+                            context,
+                            lambda,
+                            baseline,
+                        ),
+                        UvRatePolicy::FlatDcZero => optimize_uv_dc_zero(
+                            source,
+                            stride,
+                            x + bx * 4,
+                            y + by * 4,
+                            &predictor,
+                            context,
+                            baseline,
+                        ),
+                    }
+                } else {
+                    baseline
+                };
                 coeffs[index][by * 2 + bx] = coeff;
                 store_patch::<8, 64>(&mut tiles[index], bx, by, &patch);
+                let nonzero = coeff.iter().any(|&coefficient| coefficient != 0);
+                local_above[bx] = nonzero;
+                local_left[by] = nonzero;
             }
         }
     }
@@ -772,10 +1433,16 @@ fn write_macroblock_header(
     above: &[u8],
     left: &[u8; 4],
     segments: SegmentConfig,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
 ) -> Result<(), EncodeError> {
+    let skipped = block.skip();
+    if skip_probability.is_none() && skipped {
+        return Err(EncodeError::InvalidInput);
+    }
     segments.write_id(sink, block.segment_id)?;
-    sink.write(skip_probability, block.skip())?;
+    if let Some(probability) = skip_probability {
+        sink.write(probability, skipped)?;
+    }
     write_modes(sink, block, mx, above, left)
 }
 
@@ -803,11 +1470,313 @@ fn selected_cost(
     lambda: u64,
     segments: SegmentConfig,
     budget: &HeaderBudget,
+    luma_cost: &mut Option<u64>,
+    uv_cost: &mut Option<u64>,
 ) -> Result<Option<u64>, EncodeError> {
     let mut header = HeaderRateCounter::default();
     // Mode search precedes frozen frame statistics; its skip rate proposal is
     // the current syntax default, while counting and emission share the final.
-    write_macroblock_header(&mut header, block, mx, above, left, segments, 128)?;
+    write_macroblock_header(&mut header, block, mx, above, left, segments, Some(128))?;
+    if block.i16 && header.symbols.count > MAX_I16_HEADER_SYMBOLS {
+        return Err(EncodeError::InvalidInput);
+    }
+    if !budget.fits_symbols(header.symbols.count)? {
+        return Ok(None);
+    }
+    // The whole macroblock skip suppresses every coefficient token. Otherwise
+    // even an all-zero plane pays for its EOB tokens, independently of the
+    // other plane. Cache only after the header has passed its budget guard.
+    let coefficient_cost = if block.skip() {
+        0
+    } else {
+        let y = match *luma_cost {
+            Some(cost) => cost,
+            None => {
+                let cost = contexts.measure_luma(block, mx)?;
+                *luma_cost = Some(cost);
+                cost
+            }
+        };
+        let uv = match *uv_cost {
+            Some(cost) => cost,
+            None => {
+                let cost = contexts.measure_uv(block, mx)?;
+                *uv_cost = Some(cost);
+                cost
+            }
+        };
+        y + uv
+    };
+    let cost = header.rate.cost + coefficient_cost;
+    Ok(Some(distortion * 256 + lambda * cost))
+}
+
+fn adjacent_level(value: i16, step: i32, direction: i32) -> Option<i16> {
+    let proposed = i32::from(value) + direction;
+    let limit = (i32::from(i16::MAX) / step).min(2047);
+    (proposed.abs() <= limit).then_some(proposed as i16)
+}
+
+fn uv_future_consumers(mx: usize, my: usize, padded_w: usize, padded_h: usize) -> (bool, bool) {
+    (mx + 1 < padded_w / 16, my + 1 < padded_h / 16)
+}
+
+// Preserve only the UV state read by later macroblocks. The current patch is
+// reconstructed and clamped before this check: changed coefficients can still
+// leave the outgoing predictor samples byte-identical.
+#[allow(clippy::too_many_arguments)]
+fn uv_frontier_preserved(
+    baseline_tile: &[u8; 64],
+    trial_patch: &[u8; 16],
+    baseline_coefficients: &[i16; 16],
+    trial_coefficients: &[i16; 16],
+    bx: usize,
+    by: usize,
+    has_right: bool,
+    has_below: bool,
+    baseline_skip: bool,
+    trial_skip: bool,
+) -> bool {
+    if baseline_skip != trial_skip {
+        return false;
+    }
+    if bx == 1
+        && has_right
+        && (0..4).any(|row| trial_patch[row * 4 + 3] != baseline_tile[(by * 4 + row) * 8 + 7])
+    {
+        return false;
+    }
+    if by == 1
+        && has_below
+        && (0..4).any(|col| trial_patch[12 + col] != baseline_tile[7 * 8 + bx * 4 + col])
+    {
+        return false;
+    }
+    if (bx == 1 && has_right || by == 1 && has_below)
+        && baseline_coefficients.iter().any(|&level| level != 0)
+            != trial_coefficients.iter().any(|&level| level != 0)
+    {
+        return false;
+    }
+    true
+}
+
+// A single selected UV coefficient may change. Local rate checks syntax and
+// header legality; complete independently modeled frame bytes decide admission.
+#[allow(clippy::too_many_arguments)]
+fn refine_selected_uv(
+    block: &mut Macroblock,
+    uv: &mut UvCandidate,
+    y_tile: &[u8; 256],
+    source: display_rgb::Original<'_>,
+    source_y: &[u8],
+    source_u: &[u8],
+    source_v: &[u8],
+    reconstructed_y: &[u8],
+    reconstructed_u: &[u8],
+    reconstructed_v: &[u8],
+    padded_w: usize,
+    width: usize,
+    height: usize,
+    mx: usize,
+    my: usize,
+    steps: Steps,
+    contexts: &CoeffContexts,
+    above_modes: &[u8],
+    left_modes: &[u8; 4],
+    segments: SegmentConfig,
+    budget: &HeaderBudget,
+) -> Result<Option<(RefinementChange, f64)>, EncodeError> {
+    let mut luma_cost = None;
+    let mut uv_cost = None;
+    selected_cost(
+        block,
+        mx,
+        contexts,
+        above_modes,
+        left_modes,
+        0,
+        1,
+        segments,
+        budget,
+        &mut luma_cost,
+        &mut uv_cost,
+    )?
+    .ok_or(EncodeError::OutputLimit)?;
+    let baseline_skip = block.skip();
+    let (has_right, has_below) =
+        uv_future_consumers(mx, my, padded_w, reconstructed_y.len() / padded_w);
+    let frame = display_rgb::Frame {
+        width,
+        height,
+        stride_y: padded_w,
+        original: source,
+        source_y,
+        source_u,
+        source_v,
+        reconstructed_y,
+        reconstructed_u,
+        reconstructed_v,
+        tile_y: y_tile,
+        tile_u: &uv.u_tile,
+        tile_v: &uv.v_tile,
+        mx,
+        my,
+    };
+    let mut cache = None;
+    let mut best_gain = 0.0f64;
+    let mut best = None;
+    for plane in 0..2 {
+        let reconstructed = if plane == 0 {
+            reconstructed_u
+        } else {
+            reconstructed_v
+        };
+        let x = mx * 8;
+        let y = my * 8;
+        let (top, left, corner) = edge::<8>(reconstructed, padded_w / 2, x, y);
+        let predicted = prediction::predict_uv(
+            &top,
+            &left,
+            corner,
+            y > 0,
+            x > 0,
+            mode_from_u8(block.uv_mode),
+        );
+        for by in 0..2 {
+            for bx in 0..2 {
+                let index = by * 2 + bx;
+                let coefficients = if plane == 0 {
+                    block.u[index]
+                } else {
+                    block.v[index]
+                };
+                let last_ac = (1..16)
+                    .rev()
+                    .find(|&position| coefficients[residual::SCAN[position]] != 0)
+                    .map(|position| residual::SCAN[position]);
+                let positions = [Some(0), last_ac];
+                if !frame.has_affected_windows(bx, by) {
+                    continue;
+                }
+                let bounds = frame.affected(bx, by);
+                let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
+                for coefficient_index in positions.into_iter().flatten() {
+                    let step = if coefficient_index == 0 {
+                        steps.dc
+                    } else {
+                        steps.ac
+                    };
+                    let old = coefficients[coefficient_index];
+                    for direction in [-1, 1] {
+                        let Some(level) = adjacent_level(old, step, direction) else {
+                            continue;
+                        };
+                        if plane == 0 {
+                            block.u[index][coefficient_index] = level;
+                        } else {
+                            block.v[index][coefficient_index] = level;
+                        }
+                        let mut trial_uv_cost = None;
+                        let rate = selected_cost(
+                            block,
+                            mx,
+                            contexts,
+                            above_modes,
+                            left_modes,
+                            0,
+                            1,
+                            segments,
+                            budget,
+                            &mut luma_cost,
+                            &mut trial_uv_cost,
+                        );
+                        let trial_skip = block.skip();
+                        if plane == 0 {
+                            block.u[index][coefficient_index] = old;
+                        } else {
+                            block.v[index][coefficient_index] = old;
+                        }
+                        if rate?.is_none() {
+                            continue;
+                        }
+                        let mut trial_coefficients = coefficients;
+                        trial_coefficients[coefficient_index] = level;
+                        let patch = reconstructed_patch(&trial_coefficients, &predictor, steps);
+                        let baseline_tile = if plane == 0 { &uv.u_tile } else { &uv.v_tile };
+                        if !uv_frontier_preserved(
+                            baseline_tile,
+                            &patch,
+                            &coefficients,
+                            &trial_coefficients,
+                            bx,
+                            by,
+                            has_right,
+                            has_below,
+                            baseline_skip,
+                            trial_skip,
+                        ) {
+                            continue;
+                        }
+                        let cache =
+                            cache.get_or_insert_with(|| display_rgb::LocalCache::new(&frame));
+                        let change = display_rgb::Change {
+                            plane,
+                            bx,
+                            by,
+                            patch: &patch,
+                        };
+                        let gain = cache.score(&frame, change, bounds);
+                        if gain > best_gain {
+                            best_gain = gain;
+                            best = Some((plane, index, coefficient_index, old, level, patch));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let refinement = if let Some((plane, index, coefficient_index, old, level, patch)) = best {
+        if plane == 0 {
+            block.u[index][coefficient_index] = level;
+            uv.u[index][coefficient_index] = level;
+            store_patch::<8, 64>(&mut uv.u_tile, index % 2, index / 2, &patch);
+        } else {
+            block.v[index][coefficient_index] = level;
+            uv.v[index][coefficient_index] = level;
+            store_patch::<8, 64>(&mut uv.v_tile, index % 2, index / 2, &patch);
+        }
+        Some((
+            RefinementChange {
+                plane: plane as u8,
+                patch: index as u8,
+                coefficient: coefficient_index as u8,
+                old,
+                new: level,
+            },
+            best_gain,
+        ))
+    } else {
+        None
+    };
+    Ok(refinement)
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn selected_cost_reference(
+    block: &Macroblock,
+    mx: usize,
+    contexts: &CoeffContexts,
+    above: &[u8],
+    left: &[u8; 4],
+    distortion: u64,
+    lambda: u64,
+    segments: SegmentConfig,
+    budget: &HeaderBudget,
+) -> Result<Option<u64>, EncodeError> {
+    let mut header = HeaderRateCounter::default();
+    write_macroblock_header(&mut header, block, mx, above, left, segments, Some(128))?;
     if block.i16 && header.symbols.count > MAX_I16_HEADER_SYMBOLS {
         return Err(EncodeError::InvalidInput);
     }
@@ -921,6 +1890,7 @@ fn encode_observed(
     let mut reconstructed_u = allocated(uv_size)?;
     let mut reconstructed_v = allocated(uv_size)?;
     let mut neutral_chroma = true;
+    let mut rgb_error_sum = 0u64;
     for cy in 0..padded_h / 2 {
         for cx in 0..uv_w {
             let mut rgb = [[0u8; 3]; 4];
@@ -939,6 +1909,16 @@ fn encode_observed(
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
             neutral_chroma &= u == 128 && v == 128;
+            if quality == 60 || quality == 75 {
+                rgb_error_sum += crate::color::nearest_chroma_rgb_error(
+                    rgb,
+                    luma,
+                    u,
+                    v,
+                    width.saturating_sub(cx * 2).min(2),
+                    height.saturating_sub(cy * 2).min(2),
+                );
+            }
             for dy in 0..2 {
                 for dx in 0..2 {
                     source_y[(cy * 2 + dy) * padded_w + cx * 2 + dx] = luma[dy * 2 + dx];
@@ -962,60 +1942,572 @@ fn encode_observed(
         .try_reserve_exact(count)
         .map_err(|_| EncodeError::OutputLimit)?;
     let mut class_counts = [0; 4];
+    let mut curvature = segmentation::CurvatureTotals::default();
     for my in 0..blocks_y {
         for mx in 0..blocks_x {
-            let id = segmentation::classify(&source_y, &source_u, &source_v, padded_w, mx, my);
+            let id = segmentation::classify_with_curvature(
+                &source_y,
+                &source_u,
+                &source_v,
+                padded_w,
+                mx,
+                my,
+                (quality == 60).then_some(&mut curvature),
+            );
             class_counts[id as usize] += 1;
             segment_ids.push(id);
         }
     }
-    let segments = SegmentConfig::from_counts(quality, class_counts, count, neutral_chroma);
-    let deltas = crate::presets::deltas(quality);
-    let mut header_budget = HeaderBudget::new(
+    let high_chroma_loss =
+        crate::presets::high_chroma_loss(quality, rgb_error_sum, width as u32, height as u32);
+    let original_segments =
+        SegmentConfig::from_counts(quality, class_counts, count, neutral_chroma);
+    let medium_textured_luma = crate::presets::medium_textured_luma(
+        quality,
+        class_counts,
         count,
-        segments,
-        deltas,
-        filter,
-        MAX_FIRST_PARTITION_BYTES as usize,
-    )?;
+        rgb_error_sum,
+        width as u32,
+        height as u32,
+    );
+    let photo_q60 = crate::presets::photo_q60_all_texture(
+        quality,
+        class_counts,
+        count,
+        neutral_chroma,
+        high_chroma_loss,
+        curvature.within_cutoff(count),
+    );
+    let photo_q75 = medium_textured_luma && !neutral_chroma;
+    let original_deltas = if high_chroma_loss {
+        crate::presets::original_high_chroma_loss_deltas()
+    } else {
+        crate::presets::frame_deltas(quality, rgb_error_sum, width as u32, height as u32)
+    };
     let mut coeff_contexts = CoeffContexts::new(blocks_x);
     let mut above_modes = vec![0u8; blocks_x * 4];
     let mut left_modes = [0u8; 4];
-    for my in 0..blocks_y {
-        coeff_contexts.row();
+    let mut refinement_log = RefinementLog::default();
+    let mut baseline_overrides = Vec::new();
+    let mut run_profile = |segments: SegmentConfig,
+                           deltas: Deltas,
+                           score_required: bool|
+     -> Result<u64, EncodeError> {
+        reconstructed_y.fill(0);
+        reconstructed_u.fill(0);
+        reconstructed_v.fill(0);
+        blocks.clear();
+        refinement_log = RefinementLog::default();
+        baseline_overrides.clear();
+        coeff_contexts.reset();
+        above_modes.fill(0);
         left_modes.fill(0);
-        for mx in 0..blocks_x {
-            let segment_id = segment_ids[my * blocks_x + mx];
-            let qindex = segments.qindex_for(segment_id);
-            let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
-            let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
-            let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-            let lambda = crate::presets::lambda_for_q(qindex);
-            blocks.push(analyze_one(
-                &source_y,
-                &source_u,
-                &source_v,
+        let mut header_budget = HeaderBudget::new(
+            count,
+            segments,
+            deltas,
+            filter,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )?;
+        let mut comparison = ProfileComparison::default();
+        let mut extra_used = 0usize;
+        for my in 0..blocks_y {
+            coeff_contexts.row();
+            left_modes.fill(0);
+            for mx in 0..blocks_x {
+                let segment_id = segment_ids[my * blocks_x + mx];
+                let qindex = segments.qindex_for(segment_id);
+                let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
+                let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
+                let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
+                let rate_qindex = if medium_textured_luma || photo_q60 {
+                    original_segments.qindex_for(segment_id)
+                } else {
+                    qindex
+                };
+                let lambda = crate::presets::lambda_for_quality(rate_qindex, quality);
+                if !high_chroma_loss {
+                    refinement_log
+                        .reserve_one(count + 128)
+                        .map_err(|_| EncodeError::OutputLimit)?;
+                }
+                let mut analyzed = analyze_one(
+                    &source_y,
+                    &source_u,
+                    &source_v,
+                    Some(display_rgb::Original {
+                        pixels,
+                        stride,
+                        layout: format,
+                    }),
+                    high_chroma_loss,
+                    &mut reconstructed_y,
+                    &mut reconstructed_u,
+                    &mut reconstructed_v,
+                    padded_w,
+                    uv_w,
+                    mx,
+                    my,
+                    y_steps,
+                    uv_steps,
+                    y2_steps,
+                    &mut coeff_contexts,
+                    &mut above_modes,
+                    &mut left_modes,
+                    lambda,
+                    quality,
+                    width,
+                    height,
+                    luma_policy,
+                    segment_id,
+                    segments,
+                    &mut header_budget,
+                )?;
+                if let Some(change) = analyzed.refinement {
+                    refinement_log
+                        .push_reserved(RefinementEdit {
+                            block: (my * blocks_x + mx) as u32,
+                            change,
+                        })
+                        .map_err(|_| EncodeError::OutputLimit)?;
+                }
+                let quota = if high_chroma_loss {
+                    0
+                } else {
+                    extra_quota(my * blocks_x + mx, count)
+                };
+                if quota > 0 {
+                    let x = mx * 16;
+                    let y = my * 16;
+                    let tile_y = read_tile::<16, 256>(&reconstructed_y, padded_w, x, y);
+                    let tile_u = read_tile::<8, 64>(&reconstructed_u, uv_w, mx * 8, my * 8);
+                    let tile_v = read_tile::<8, 64>(&reconstructed_v, uv_w, mx * 8, my * 8);
+                    let frame = display_rgb::Frame {
+                        width,
+                        height,
+                        stride_y: padded_w,
+                        original: display_rgb::Original {
+                            pixels,
+                            stride,
+                            layout: format,
+                        },
+                        source_y: &source_y,
+                        source_u: &source_u,
+                        source_v: &source_v,
+                        reconstructed_y: &reconstructed_y,
+                        reconstructed_u: &reconstructed_u,
+                        reconstructed_v: &reconstructed_v,
+                        tile_y: &tile_y,
+                        tile_u: &tile_u,
+                        tile_v: &tile_v,
+                        mx,
+                        my,
+                    };
+                    if let Some(mut search) = JointSearch::new(
+                        &frame,
+                        &analyzed.block,
+                        analyzed
+                            .refinement
+                            .map(|change| (change, analyzed.refinement_gain)),
+                        &reconstructed_u,
+                        &reconstructed_v,
+                        uv_steps,
+                        quota,
+                    )? {
+                        if baseline_overrides.capacity() == 0 {
+                            baseline_overrides
+                                .try_reserve_exact(count.min(128))
+                                .map_err(|_| EncodeError::OutputLimit)?;
+                            if baseline_overrides.capacity()
+                                * std::mem::size_of::<BaselineOverride>()
+                                > BASELINE_OVERRIDE_BUDGET_BYTES
+                            {
+                                return Err(EncodeError::OutputLimit);
+                            }
+                        }
+                        let (right, below) = uv_future_consumers(mx, my, padded_w, padded_h);
+                        while !search.done() {
+                            search.step(&frame, uv_steps, right, below)?;
+                        }
+                        extra_used += search.used();
+                        if extra_used > 128 {
+                            return Err(EncodeError::InvalidInput);
+                        }
+                        let result = search.result(uv_steps)?;
+                        let prior = usize::from(analyzed.refinement.is_some());
+                        let start = refinement_log.len - prior;
+                        let differs = match analyzed.refinement {
+                            Some(change) => result.len != 1 || result.changes[0] != change,
+                            None => result.len != 0,
+                        };
+                        let target = refinement_log.len - prior + result.len;
+                        refinement_log
+                            .reserve_additional(
+                                target.saturating_sub(refinement_log.len),
+                                count + 128,
+                            )
+                            .map_err(|_| EncodeError::OutputLimit)?;
+                        if prior != 0 {
+                            let old = refinement_log.pop_last().ok_or(EncodeError::InvalidInput)?;
+                            if old.block as usize != my * blocks_x + mx {
+                                return Err(EncodeError::InvalidInput);
+                            }
+                        }
+                        for &change in &result.changes[..result.len] {
+                            refinement_log
+                                .push_reserved(RefinementEdit {
+                                    block: (my * blocks_x + mx) as u32,
+                                    change,
+                                })
+                                .map_err(|_| EncodeError::OutputLimit)?;
+                        }
+                        if differs {
+                            if baseline_overrides.len() == baseline_overrides.capacity() {
+                                return Err(EncodeError::OutputLimit);
+                            }
+                            baseline_overrides.push(BaselineOverride {
+                                block: (my * blocks_x + mx) as u32,
+                                start: start as u32,
+                                len: result.len as u8,
+                                baseline: analyzed.refinement,
+                            });
+                        }
+                        analyzed.block = result.block;
+                        commit_tile::<8, 64>(&mut reconstructed_u, uv_w, mx * 8, my * 8, &result.u);
+                        commit_tile::<8, 64>(&mut reconstructed_v, uv_w, mx * 8, my * 8, &result.v);
+                    }
+                }
+                blocks.push(analyzed.block);
+            }
+        }
+        if !score_required {
+            return Ok(0);
+        }
+        let mut stats = Statistics::new();
+        let mut skips = SkipStats::default();
+        coeff_contexts.reset();
+        for my in 0..blocks_y {
+            coeff_contexts.row();
+            for mx in 0..blocks_x {
+                let block = &blocks[my * blocks_x + mx];
+                skips.observe(block.skip())?;
+                coeff_contexts.encode_coefficients(&mut StatsSink(&mut stats), block, mx)?;
+            }
+        }
+        let skip_probability = skips.frozen_syntax();
+        let mut model = Model::new();
+        for start in (0..NODE_COUNT).step_by(64) {
+            model.optimize_range(
+                &stats,
+                start,
+                (NODE_COUNT - start).min(64),
+                &probability_cost,
+            )?;
+        }
+        coeff_contexts.reset();
+        above_modes.fill(0);
+        left_modes.fill(0);
+        for my in 0..blocks_y {
+            coeff_contexts.row();
+            left_modes.fill(0);
+            for mx in 0..blocks_x {
+                let block = &blocks[my * blocks_x + mx];
+                let rate = estimated_block_rate(
+                    block,
+                    mx,
+                    &mut coeff_contexts,
+                    &mut above_modes,
+                    &mut left_modes,
+                    segments,
+                    &model,
+                    skip_probability,
+                )?;
+                comparison.add_rate(
+                    rate,
+                    original_segments.qindex_for(block.segment_id),
+                    quality,
+                )?;
+            }
+        }
+        for index in 0..blocks.len() {
+            filter_completed_one(
                 &mut reconstructed_y,
                 &mut reconstructed_u,
                 &mut reconstructed_v,
                 padded_w,
-                uv_w,
-                mx,
-                my,
-                y_steps,
-                uv_steps,
-                y2_steps,
-                &mut coeff_contexts,
-                &mut above_modes,
-                &mut left_modes,
-                lambda,
-                luma_policy,
-                segment_id,
-                segments,
-                &mut header_budget,
+                padded_h,
+                index,
+                &blocks,
+                filter,
+            )?;
+        }
+        let view = display_rgb::CompleteFrame::checked(
+            width,
+            height,
+            padded_w,
+            display_rgb::Original {
+                pixels,
+                stride,
+                layout: format,
+            },
+            &reconstructed_y,
+            &reconstructed_u,
+            &reconstructed_v,
+        )
+        .ok_or(EncodeError::InvalidInput)?;
+        for start in (0..width * height).step_by(1_024) {
+            comparison.visible_error = comparison
+                .visible_error
+                .checked_add(view.squared_error_chunk(start, (width * height - start).min(1_024)))
+                .ok_or(EncodeError::OutputLimit)?;
+        }
+        comparison.score(
+            estimated_profile_header_rate(segments, deltas, filter, &model, skip_probability)?,
+            original_segments.base_qindex,
+            quality,
+        )
+    };
+    let mut segments = original_segments
+        .with_medium_textured_luma(medium_textured_luma)
+        .with_photo_q60_rebase(photo_q60);
+    let mut deltas = if medium_textured_luma {
+        crate::presets::medium_textured_deltas(original_deltas)
+    } else {
+        original_deltas
+    };
+    deltas = crate::presets::photo_allocation_deltas(deltas, photo_q60, photo_q75);
+    if high_chroma_loss {
+        let original_score = run_profile(original_segments, original_deltas, true)?;
+        let reduced_segments = original_segments.with_high_chroma_loss_luma(true);
+        let reduced_deltas =
+            crate::presets::frame_deltas(quality, rgb_error_sum, width as u32, height as u32);
+        let reduced_score = run_profile(reduced_segments, reduced_deltas, true)?;
+        if reduced_profile_wins(original_score, reduced_score) {
+            segments = reduced_segments;
+            deltas = reduced_deltas;
+            run_profile(reduced_segments, reduced_deltas, false)?;
+        } else {
+            run_profile(original_segments, original_deltas, false)?;
+        }
+    } else {
+        run_profile(segments, deltas, false)?;
+    }
+    drop(run_profile);
+    if !refinement_log.is_empty() || !baseline_overrides.is_empty() {
+        let extended_sizes =
+            count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
+        let original = display_rgb::Original {
+            pixels,
+            stride,
+            layout: format,
+        };
+        let extended_quality = score_completed_sync(
+            &mut source_y,
+            &mut source_u,
+            &mut source_v,
+            &reconstructed_y,
+            &reconstructed_u,
+            &reconstructed_v,
+            padded_w,
+            padded_h,
+            width,
+            height,
+            original,
+            &blocks,
+            filter,
+        )?;
+        let mut baseline_quality = None;
+        let baseline_sizes = if baseline_overrides.is_empty() {
+            None
+        } else {
+            for index in (0..refinement_log.len).rev() {
+                let edit = refinement_log.get(index).ok_or(EncodeError::InvalidInput)?;
+                if is_overridden(&baseline_overrides, edit, index)
+                    .map_err(|_| EncodeError::InvalidInput)?
+                {
+                    replay_sync_edit(
+                        &mut blocks,
+                        &mut reconstructed_u,
+                        &mut reconstructed_v,
+                        padded_w,
+                        segments,
+                        deltas,
+                        edit,
+                        false,
+                    )?;
+                }
+            }
+            for item in &baseline_overrides {
+                if let Some(change) = item.baseline {
+                    replay_sync_edit(
+                        &mut blocks,
+                        &mut reconstructed_u,
+                        &mut reconstructed_v,
+                        padded_w,
+                        segments,
+                        deltas,
+                        RefinementEdit {
+                            block: item.block,
+                            change,
+                        },
+                        true,
+                    )?;
+                }
+            }
+            let sizes =
+                count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
+            baseline_quality = Some(score_completed_sync(
+                &mut source_y,
+                &mut source_u,
+                &mut source_v,
+                &reconstructed_y,
+                &reconstructed_u,
+                &reconstructed_v,
+                padded_w,
+                padded_h,
+                width,
+                height,
+                original,
+                &blocks,
+                filter,
             )?);
+            for item in baseline_overrides.iter().rev() {
+                if let Some(change) = item.baseline {
+                    replay_sync_edit(
+                        &mut blocks,
+                        &mut reconstructed_u,
+                        &mut reconstructed_v,
+                        padded_w,
+                        segments,
+                        deltas,
+                        RefinementEdit {
+                            block: item.block,
+                            change,
+                        },
+                        false,
+                    )?;
+                }
+            }
+            Some(sizes)
+        };
+        for index in (0..refinement_log.len).rev() {
+            let edit = refinement_log.get(index).ok_or(EncodeError::InvalidInput)?;
+            if !is_overridden(&baseline_overrides, edit, index)
+                .map_err(|_| EncodeError::InvalidInput)?
+            {
+                replay_sync_edit(
+                    &mut blocks,
+                    &mut reconstructed_u,
+                    &mut reconstructed_v,
+                    padded_w,
+                    segments,
+                    deltas,
+                    edit,
+                    false,
+                )?;
+            }
+        }
+        let base_sizes =
+            count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
+        let base_quality = score_completed_sync(
+            &mut source_y,
+            &mut source_u,
+            &mut source_v,
+            &reconstructed_y,
+            &reconstructed_u,
+            &reconstructed_v,
+            padded_w,
+            padded_h,
+            width,
+            height,
+            original,
+            &blocks,
+            filter,
+        )?;
+        let legal = |sizes: (usize, usize)| {
+            sizes.0 <= 0x7ffff && 10 + sizes.0 + sizes.1 <= MAX_OUTPUT_BYTES
+        };
+        let bytes = |sizes: (usize, usize)| 10 + sizes.0 + sizes.1;
+        let legality = |sizes| {
+            if legal(sizes) {
+                Ok(())
+            } else if sizes.0 > 0x7ffff {
+                Err(Status::PartitionLimit)
+            } else {
+                Err(Status::OutputLimit)
+            }
+        };
+        let choice = choose_scored_variants(
+            (
+                bytes(extended_sizes) as u32,
+                legality(extended_sizes),
+                extended_quality,
+            ),
+            baseline_sizes
+                .zip(baseline_quality)
+                .map(|(sizes, quality)| (bytes(sizes) as u32, legality(sizes), quality)),
+            (bytes(base_sizes) as u32, legality(base_sizes), base_quality),
+        )
+        .map_err(|error| match error {
+            Status::PartitionLimit => EncodeError::OutputLimit,
+            Status::OutputLimit => EncodeError::OutputLimit,
+            _ => EncodeError::InvalidInput,
+        })?;
+        if choice != VariantChoice::Base {
+            for index in 0..refinement_log.len {
+                replay_edit_state(
+                    &mut blocks,
+                    &mut reconstructed_u,
+                    &mut reconstructed_v,
+                    padded_w,
+                    segments,
+                    deltas,
+                    refinement_log.get(index).ok_or(EncodeError::InvalidInput)?,
+                    true,
+                )
+                .map_err(|_| EncodeError::InvalidInput)?;
+            }
+            if choice == VariantChoice::Baseline {
+                for index in (0..refinement_log.len).rev() {
+                    let edit = refinement_log.get(index).ok_or(EncodeError::InvalidInput)?;
+                    if is_overridden(&baseline_overrides, edit, index)
+                        .map_err(|_| EncodeError::InvalidInput)?
+                    {
+                        replay_edit_state(
+                            &mut blocks,
+                            &mut reconstructed_u,
+                            &mut reconstructed_v,
+                            padded_w,
+                            segments,
+                            deltas,
+                            edit,
+                            false,
+                        )
+                        .map_err(|_| EncodeError::InvalidInput)?;
+                    }
+                }
+                for item in &baseline_overrides {
+                    if let Some(change) = item.baseline {
+                        replay_edit_state(
+                            &mut blocks,
+                            &mut reconstructed_u,
+                            &mut reconstructed_v,
+                            padded_w,
+                            segments,
+                            deltas,
+                            RefinementEdit {
+                                block: item.block,
+                                change,
+                            },
+                            true,
+                        )
+                        .map_err(|_| EncodeError::InvalidInput)?;
+                    }
+                }
+            }
         }
     }
+    drop(refinement_log);
     let result = emit_segmented_frame(&blocks, width, height, segments, deltas, filter)?;
     observe(
         &reconstructed_y,
@@ -1032,6 +2524,8 @@ fn analyze_one(
     source_y: &[u8],
     source_u: &[u8],
     source_v: &[u8],
+    original_rgb: Option<display_rgb::Original<'_>>,
+    high_chroma_loss: bool,
     reconstructed_y: &mut [u8],
     reconstructed_u: &mut [u8],
     reconstructed_v: &mut [u8],
@@ -1046,11 +2540,14 @@ fn analyze_one(
     above_modes: &mut [u8],
     left_modes: &mut [u8; 4],
     lambda: u64,
+    quality: u32,
+    visible_width: usize,
+    visible_height: usize,
     luma_policy: u8,
     segment_id: u8,
     segments: SegmentConfig,
     header_budget: &mut HeaderBudget,
-) -> Result<Macroblock, EncodeError> {
+) -> Result<AnalyzedBlock, EncodeError> {
     let x = mx * 16;
     let y = my * 16;
     let luma = if luma_policy == 0 {
@@ -1109,6 +2606,11 @@ fn analyze_one(
             lambda,
         )]
     };
+    let uv_policy = match (quality, segment_id) {
+        (60, segmentation::TEXTURED) => Some(UvRatePolicy::TexturedAcTail),
+        (75, segmentation::CHROMATIC_FLAT) => Some(UvRatePolicy::FlatDcZero),
+        _ => None,
+    };
     let uv: Vec<_> = (0..4)
         .map(|mode| {
             make_uv(
@@ -1121,10 +2623,20 @@ fn analyze_one(
                 my * 8,
                 mode,
                 uv_steps,
+                uv_policy.map(|policy| UvRdo {
+                    contexts: coeff_contexts,
+                    mx,
+                    lambda,
+                    visible_width: visible_width.div_ceil(2),
+                    visible_height: visible_height.div_ceil(2),
+                    policy,
+                }),
             )
         })
         .collect();
     let mut best: Option<(u64, usize, usize)> = None;
+    let mut luma_costs = [None; 5];
+    let mut uv_costs = [None; 4];
     for (li, luma_candidate) in luma.iter().enumerate() {
         for (ui, uv_candidate) in uv.iter().enumerate() {
             let candidate = Macroblock {
@@ -1149,6 +2661,8 @@ fn analyze_one(
                 lambda,
                 segments,
                 header_budget,
+                &mut luma_costs[li],
+                &mut uv_costs[ui],
             )?
             else {
                 continue;
@@ -1162,8 +2676,8 @@ fn analyze_one(
     }
     let (_, li, ui) = best.ok_or(EncodeError::OutputLimit)?;
     let selected_luma = &luma[li];
-    let selected_uv = &uv[ui];
-    let block = Macroblock {
+    let mut selected_uv = uv[ui].clone();
+    let mut block = Macroblock {
         y: selected_luma.block.y,
         y2: selected_luma.block.y2,
         i16: selected_luma.block.i16,
@@ -1174,13 +2688,50 @@ fn analyze_one(
         u: selected_uv.u,
         v: selected_uv.v,
     };
+    let mut refinement = None;
+    let mut refinement_gain = 0.0;
+    if !high_chroma_loss {
+        if let Some(original) = original_rgb {
+            let selected = refine_selected_uv(
+                &mut block,
+                &mut selected_uv,
+                &selected_luma.tile,
+                original,
+                source_y,
+                source_u,
+                source_v,
+                reconstructed_y,
+                reconstructed_u,
+                reconstructed_v,
+                padded_w,
+                visible_width,
+                visible_height,
+                mx,
+                my,
+                uv_steps,
+                coeff_contexts,
+                above_modes,
+                left_modes,
+                segments,
+                header_budget,
+            )?;
+            if let Some((change, gain)) = selected {
+                refinement = Some(change);
+                refinement_gain = gain;
+            }
+        }
+    }
     header_budget.commit(&block, mx, above_modes, left_modes, segments)?;
     commit_tile::<16, 256>(reconstructed_y, padded_w, x, y, &selected_luma.tile);
     commit_tile::<8, 64>(reconstructed_u, uv_w, mx * 8, my * 8, &selected_uv.u_tile);
     commit_tile::<8, 64>(reconstructed_v, uv_w, mx * 8, my * 8, &selected_uv.v_tile);
     coeff_contexts.encode_coefficients(&mut RateCounter::default(), &block, mx)?;
     update_modes(&block, mx, above_modes, left_modes);
-    Ok(block)
+    Ok(AnalyzedBlock {
+        block,
+        refinement,
+        refinement_gain,
+    })
 }
 
 fn write_header_prefix(
@@ -1222,9 +2773,15 @@ fn write_quantizer_delta(sink: &mut impl BoolSink, delta: i8) -> Result<(), Enco
     Ok(())
 }
 
-fn write_header_suffix(sink: &mut impl BoolSink, skip_probability: u8) -> Result<(), EncodeError> {
-    sink.bit(true)?; // Macroblock coefficient skip flags enabled.
-    sink.literal(u32::from(skip_probability), 8)
+fn write_header_suffix(
+    sink: &mut impl BoolSink,
+    skip_probability: Option<u8>,
+) -> Result<(), EncodeError> {
+    sink.bit(skip_probability.is_some())?;
+    if let Some(probability) = skip_probability {
+        sink.literal(u32::from(probability), 8)?;
+    }
+    Ok(())
 }
 
 fn write_updates(
@@ -1285,6 +2842,10 @@ impl SkipStats {
             128
         }
     }
+
+    fn frozen_syntax(self) -> Option<u8> {
+        (self.skipped != 0).then(|| self.frozen_probability())
+    }
 }
 
 // I16 signals at most two segment-map bits, skip, three Y-mode bits and
@@ -1293,6 +2854,7 @@ impl SkipStats {
 const MAX_I16_HEADER_SYMBOLS: usize = 9;
 const FINAL_TAIL_BYTES: usize = 4;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct HeaderBudget {
     limit: usize,
     fixed_symbols_and_tail: usize,
@@ -1311,7 +2873,7 @@ impl HeaderBudget {
     ) -> Result<Self, EncodeError> {
         let mut fixed = SymbolCounter::default();
         write_header_prefix(&mut fixed, segments, deltas, filter)?;
-        write_header_suffix(&mut fixed, 128)?;
+        write_header_suffix(&mut fixed, Some(128))?;
         // Each of the 1056 update nodes emits one flag and at most eight
         // literal bits. The model is frozen only after mode analysis.
         let fixed_symbols_and_tail = fixed
@@ -1343,7 +2905,7 @@ impl HeaderBudget {
         segments: SegmentConfig,
     ) -> Result<usize, EncodeError> {
         let mut symbols = SymbolCounter::default();
-        write_macroblock_header(&mut symbols, block, mx, above, left, segments, 128)?;
+        write_macroblock_header(&mut symbols, block, mx, above, left, segments, Some(128))?;
         if block.i16 && symbols.count > MAX_I16_HEADER_SYMBOLS {
             return Err(EncodeError::InvalidInput);
         }
@@ -1446,7 +3008,7 @@ fn write_macroblock(
     mx: usize,
     block: &Macroblock,
     segments: SegmentConfig,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
 ) -> Result<(), EncodeError> {
     write_macroblock_header(
         header,
@@ -1490,34 +3052,12 @@ fn emit_segmented_frame(
     filter.validate()?;
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
-    let (model, skip_probability) = model_frozen(blocks, blocks_x, blocks_y)?;
-    let default_sizes = count_partitions(
-        blocks,
-        blocks_x,
-        blocks_y,
-        segments,
-        deltas,
-        filter,
-        None,
+    let FrozenVariant {
+        model,
         skip_probability,
-    )?;
-    let modeled_sizes = count_partitions(
-        blocks,
-        blocks_x,
-        blocks_y,
-        segments,
-        deltas,
-        filter,
-        Some(&model),
-        skip_probability,
-    )?;
-    let use_model = modeled_sizes.0 <= 0x7ffff
-        && modeled_sizes.0 + modeled_sizes.1 < default_sizes.0 + default_sizes.1;
-    let selected = if use_model {
-        modeled_sizes
-    } else {
-        default_sizes
-    };
+        sizes: selected,
+        use_model,
+    } = count_frozen_variant(blocks, blocks_x, blocks_y, segments, deltas, filter)?;
     let total = 10usize
         .checked_add(selected.0)
         .and_then(|n| n.checked_add(selected.1))
@@ -1559,11 +3099,64 @@ fn emit_segmented_frame(
     Ok(result)
 }
 
+struct FrozenVariant {
+    model: Model,
+    skip_probability: Option<u8>,
+    sizes: (usize, usize),
+    use_model: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn count_frozen_variant(
+    blocks: &[Macroblock],
+    blocks_x: usize,
+    blocks_y: usize,
+    segments: SegmentConfig,
+    deltas: Deltas,
+    filter: FilterConfig,
+) -> Result<FrozenVariant, EncodeError> {
+    let (model, skip_probability) = model_frozen(blocks, blocks_x, blocks_y)?;
+    let default_sizes = count_partitions(
+        blocks,
+        blocks_x,
+        blocks_y,
+        segments,
+        deltas,
+        filter,
+        None,
+        skip_probability,
+    )?;
+    let modeled_sizes = count_partitions(
+        blocks,
+        blocks_x,
+        blocks_y,
+        segments,
+        deltas,
+        filter,
+        Some(&model),
+        skip_probability,
+    )?;
+    let use_model = modeled_sizes.0 <= 0x7ffff
+        && (default_sizes.0 > 0x7ffff
+            || modeled_sizes.0 + modeled_sizes.1 < default_sizes.0 + default_sizes.1);
+    let selected = if use_model {
+        modeled_sizes
+    } else {
+        default_sizes
+    };
+    Ok(FrozenVariant {
+        model,
+        skip_probability,
+        sizes: selected,
+        use_model,
+    })
+}
+
 fn model_frozen(
     blocks: &[Macroblock],
     blocks_x: usize,
     blocks_y: usize,
-) -> Result<(Model, u8), EncodeError> {
+) -> Result<(Model, Option<u8>), EncodeError> {
     let mut stats = Statistics::new();
     let mut skips = SkipStats::default();
     let mut contexts = CoeffContexts::new(blocks_x);
@@ -1584,7 +3177,7 @@ fn model_frozen(
             &probability_cost,
         )?;
     }
-    Ok((model, skips.frozen_probability()))
+    Ok((model, skips.frozen_syntax()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1596,7 +3189,7 @@ fn code_partitions(
     deltas: Deltas,
     filter: FilterConfig,
     model: Option<&Model>,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
     header: &mut impl BoolSink,
     token: &mut impl BoolSink,
 ) -> Result<(), EncodeError> {
@@ -1639,7 +3232,7 @@ fn count_partitions(
     deltas: Deltas,
     filter: FilterConfig,
     model: Option<&Model>,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
 ) -> Result<(usize, usize), EncodeError> {
     let mut first = CountingBoolSink::default();
     let mut second = CountingBoolSink::default();
@@ -1680,11 +3273,121 @@ enum Stage {
     Optimize = 16,
     PrepareOutput = 17,
     Classify = 18,
+    PreviewPrefix = 19,
+    PreviewUpdates = 20,
+    PreviewSuffix = 21,
+    PreviewReset = 22,
+    PreviewCollectStats = 23,
+    PreviewOptimize = 24,
+    PreviewRateBlocks = 25,
+    PreviewResetMetadata = 26,
+    PreviewFilter = 54,
+    PreviewRgbError = 55,
+    ReverseRefinements = 27,
+    ReapplyRefinements = 28,
+    ReleaseRefinements = 35,
+    JointRefine = 36,
+    ReverseToBaseline = 37,
+    ApplyBaseline = 38,
+    ReverseBaseline = 39,
+    ReverseUnchanged = 40,
+    QualityInit = 41,
+    QualityCopy = 42,
+    QualityFilter = 43,
+    QualityMetric = 44,
+    QualityRelease = 53,
 }
 
-/// One step initializes at most 64 KiB, converts one YUV row pair, analyzes
-/// one macroblock, codes one macroblock, or assembles at most 64 KiB. The host
-/// owns scheduling and cancellation between calls.
+struct RefinedCheckpoint {
+    emission: EmissionModel,
+    skip_probability: Option<u8>,
+    sizes: (u32, u32),
+    default_frame_bytes: u32,
+    selected_frame_bytes: u32,
+    update_count: u32,
+    use_model: bool,
+    legality: Result<(), Status>,
+    quality: f64,
+}
+
+fn aligned_payload_cost(bytes: u32) -> u64 {
+    (u64::from(bytes) + 1) & !1
+}
+
+fn choose_scored_variants(
+    extended: (u32, Result<(), Status>, f64),
+    baseline: Option<(u32, Result<(), Status>, f64)>,
+    base: (u32, Result<(), Status>, f64),
+) -> Result<VariantChoice, Status> {
+    let entries = [
+        (VariantChoice::Extended, Some(extended)),
+        (VariantChoice::Baseline, baseline),
+        (VariantChoice::Base, Some(base)),
+    ];
+    for (_, entry) in entries {
+        if let Some((_, legality, score)) = entry {
+            if !score.is_finite() {
+                return Err(Status::InvalidInput);
+            }
+            if let Err(error) = legality {
+                if !matches!(error, Status::OutputLimit | Status::PartitionLimit) {
+                    return Err(error);
+                }
+            }
+        }
+    }
+    let base_cost = aligned_payload_cost(base.0);
+    let mut best_within_base: Option<f64> = None;
+    if base.1.is_ok() {
+        for (_, entry) in entries {
+            if let Some((bytes, Ok(()), score)) = entry {
+                if aligned_payload_cost(bytes) <= base_cost
+                    && best_within_base.is_none_or(|best| score > best)
+                {
+                    best_within_base = Some(score);
+                }
+            }
+        }
+    }
+    let mut best = None;
+    for (choice, entry) in entries {
+        if let Some((bytes, Ok(()), score)) = entry {
+            let eligible = base.1.is_err()
+                || aligned_payload_cost(bytes) <= base_cost
+                || (choice != VariantChoice::Base
+                    && aligned_payload_cost(bytes) == base_cost + 2
+                    && best_within_base.is_some_and(|within| score > within));
+            if eligible && best.is_none_or(|(_, value)| score > value) {
+                best = Some((choice, score));
+            }
+        }
+    }
+    best.map(|(choice, _)| choice)
+        .ok_or_else(|| base.1.unwrap_err())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VariantChoice {
+    Extended,
+    Baseline,
+    Base,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreviewTrial {
+    None,
+    Original,
+    Reduced,
+    FinalOriginal,
+    FinalReduced,
+}
+
+/// One step initializes or copies at most 64 KiB, converts one YUV row pair,
+/// analyzes or filters one macroblock, scores at most 1,024 profile pixels
+/// or 64 moment blocks, codes
+/// one macroblock, or assembles at most 64 KiB. Quality-cache chunks are
+/// allocated and released at most 64 KiB per step. The host owns scheduling
+/// and cancellation between calls.
 pub(crate) struct FrameEncoder {
     request: Request,
     plan: ResourcePlan,
@@ -1697,8 +3400,40 @@ pub(crate) struct FrameEncoder {
     reconstructed_u: Vec<u8>,
     reconstructed_v: Vec<u8>,
     blocks: Vec<Macroblock>,
+    refinement_log: RefinementLog,
+    baseline_overrides: Vec<BaselineOverride>,
+    joint_search: Vec<JointSearch>,
+    joint_baseline: bool,
+    joint_used_total: usize,
+    refined_checkpoint: Option<RefinedCheckpoint>,
+    baseline_checkpoint: Option<RefinedCheckpoint>,
+    base_count: bool,
+    baseline_count: bool,
+    baseline_reapply: bool,
+    quality_variant: VariantChoice,
+    quality_score: Option<display_rgb::CompleteScore>,
+    base_quality: f64,
+    base_legality: Result<(), Status>,
+    quality_copy_plane: usize,
+    override_cursor: usize,
+    replay_index: usize,
+    pending_output_sizes: Option<(u32, u32)>,
+    release_total_slabs: usize,
+    #[cfg(test)]
+    disable_refinement: bool,
     class_counts: [usize; 4],
+    curvature: segmentation::CurvatureTotals,
+    photo_q60: bool,
     neutral_chroma: bool,
+    rgb_error_sum: u64,
+    high_chroma_loss: bool,
+    medium_textured_luma: bool,
+    preview_trial: PreviewTrial,
+    preview_comparison: ProfileComparison,
+    preview_header_rate: RateCounter,
+    preview_original_score: u64,
+    reset_plane: usize,
+    deltas: Deltas,
     segments: SegmentConfig,
     header_budget: HeaderBudget,
     contexts: CoeffContexts,
@@ -1708,7 +3443,7 @@ pub(crate) struct FrameEncoder {
     count_token: CountingBoolSink,
     stats: Statistics,
     skip_stats: SkipStats,
-    skip_probability: u8,
+    skip_probability: Option<u8>,
     model: Model,
     model_count_pass: bool,
     use_model: bool,
@@ -1727,6 +3462,24 @@ pub(crate) struct FrameEncoder {
     cursor: usize,
     init_plane: usize,
 }
+
+// Metadata reset clears fixed arrays plus one column of coefficient/mode
+// context. Large reconstruction and macroblock storage is reset separately.
+const _: () = assert!(
+    std::mem::size_of::<FrameEncoder>() + 13 * (MAX_DIMENSION as usize).div_ceil(16) <= 65_536
+);
+// The shared 8 MiB scratch charge covers the bounded log, two Boolean op
+// buffers, display cache, fixed engine state and an allocator margin.
+const _: () = assert!(
+    REFINEMENT_LOG_BUDGET_BYTES
+        + BASELINE_OVERRIDE_BUDGET_BYTES
+        + 2 * crate::rate::MAX_BUFFERED_OPS * 2
+        + 65_536
+        + std::mem::size_of::<FrameEncoder>()
+        + 1024 * 1024
+        + display_rgb::MAX_QUALITY_CACHE_BYTES
+        <= SCRATCH_ALLOWANCE_BYTES as usize
+);
 
 fn encode_status(error: EncodeError) -> Status {
     match error {
@@ -1794,8 +3547,40 @@ impl FrameEncoder {
             reconstructed_u: Vec::new(),
             reconstructed_v: Vec::new(),
             blocks,
+            refinement_log: RefinementLog::default(),
+            baseline_overrides: Vec::new(),
+            joint_search: Vec::new(),
+            joint_baseline: false,
+            joint_used_total: 0,
+            refined_checkpoint: None,
+            baseline_checkpoint: None,
+            base_count: false,
+            baseline_count: false,
+            baseline_reapply: false,
+            quality_variant: VariantChoice::Extended,
+            quality_score: None,
+            base_quality: 0.0,
+            base_legality: Ok(()),
+            quality_copy_plane: 0,
+            override_cursor: 0,
+            replay_index: 0,
+            pending_output_sizes: None,
+            release_total_slabs: 0,
+            #[cfg(test)]
+            disable_refinement: false,
             class_counts: [0; 4],
+            curvature: segmentation::CurvatureTotals::default(),
+            photo_q60: false,
             neutral_chroma: true,
+            rgb_error_sum: 0,
+            high_chroma_loss: false,
+            medium_textured_luma: false,
+            preview_trial: PreviewTrial::None,
+            preview_comparison: ProfileComparison::default(),
+            preview_header_rate: RateCounter::default(),
+            preview_original_score: 0,
+            reset_plane: 0,
+            deltas: crate::presets::deltas(request.quality),
             segments: SegmentConfig::nonsegmented(crate::presets::qindex(request.quality)),
             header_budget: HeaderBudget::new(
                 plan.macroblock_count as usize,
@@ -1812,7 +3597,7 @@ impl FrameEncoder {
             count_token: CountingBoolSink::default(),
             stats: Statistics::new(),
             skip_stats: SkipStats::default(),
-            skip_probability: 128,
+            skip_probability: Some(128),
             model: Model::new(),
             model_count_pass: false,
             use_model: false,
@@ -1838,6 +3623,45 @@ impl FrameEncoder {
     }
 
     pub(crate) fn stage(&self) -> u32 {
+        // ABI2 diagnostics distinguish the two scored profiles without
+        // changing the internal filter/metric state machine or record layout.
+        if matches!(
+            self.preview_trial,
+            PreviewTrial::Original | PreviewTrial::Reduced
+        ) {
+            let profile = if self.preview_trial == PreviewTrial::Original {
+                0
+            } else {
+                2
+            };
+            match self.stage {
+                Stage::PreviewFilter => return 54 + profile,
+                Stage::PreviewRgbError => return 55 + profile,
+                _ => {}
+            }
+        }
+        if matches!(
+            self.stage,
+            Stage::QualityInit | Stage::QualityCopy | Stage::QualityFilter | Stage::QualityMetric
+        ) {
+            let variant = match self.quality_variant {
+                VariantChoice::Extended => 0,
+                VariantChoice::Baseline => 1,
+                VariantChoice::Base => 2,
+            };
+            return self.stage as u32 + variant * 4;
+        }
+        if self.base_count {
+            match self.stage {
+                Stage::CollectStats => return 29,
+                Stage::Optimize => return 30,
+                Stage::CountPrefix => return 31,
+                Stage::CountUpdates => return 32,
+                Stage::CountSuffix => return 33,
+                Stage::CountBlocks => return 34,
+                _ => {}
+            }
+        }
         self.stage as u32
     }
 
@@ -1858,13 +3682,82 @@ impl FrameEncoder {
             Stage::Classify
             | Stage::Analyze
             | Stage::CollectStats
+            | Stage::PreviewCollectStats
+            | Stage::PreviewRateBlocks
             | Stage::CountBlocks
             | Stage::EmitBlocks => (self.cursor as u32, blocks),
-            Stage::Optimize => (self.cursor as u32, NODE_COUNT as u32),
-            Stage::CountUpdates | Stage::EmitUpdates => {
+            Stage::Optimize | Stage::PreviewOptimize => (self.cursor as u32, NODE_COUNT as u32),
+            Stage::CountUpdates | Stage::EmitUpdates | Stage::PreviewUpdates => {
                 (self.cursor as u32, super::COEFF_UPDATE_PROBS.len() as u32)
             }
+            Stage::PreviewReset => {
+                let plane_bytes = self.reconstructed_y.len()
+                    + self.reconstructed_u.len()
+                    + self.reconstructed_v.len();
+                let block_bytes = self.blocks.len() * std::mem::size_of::<Macroblock>();
+                let done = match self.reset_plane {
+                    0 => self.cursor,
+                    1 => self.reconstructed_y.len() + self.cursor,
+                    2 => self.reconstructed_y.len() + self.reconstructed_u.len() + self.cursor,
+                    _ => plane_bytes + self.cursor * std::mem::size_of::<Macroblock>(),
+                };
+                (done as u32, (plane_bytes + block_bytes) as u32)
+            }
             Stage::Assemble => (self.output.len() as u32, self.plan.frame_bytes),
+            Stage::QualityInit => self.quality_score.as_ref().map_or((0, 1), |score| {
+                let (done, total) = score.initialization_progress();
+                (done as u32, total as u32)
+            }),
+            Stage::QualityCopy => {
+                let previous = match self.quality_copy_plane {
+                    0 => 0,
+                    1 => self.source_y.len(),
+                    2 => self.source_y.len() + self.source_u.len(),
+                    _ => self.plan.yuv_plane_set_bytes as usize,
+                };
+                (
+                    (previous + self.cursor) as u32,
+                    self.plan.yuv_plane_set_bytes,
+                )
+            }
+            Stage::QualityFilter => (self.cursor as u32, blocks),
+            Stage::PreviewFilter => (self.cursor as u32, blocks),
+            Stage::PreviewRgbError => {
+                (self.cursor as u32, self.request.width * self.request.height)
+            }
+            Stage::QualityMetric => self.quality_score.as_ref().map_or((0, 1), |score| {
+                let (done, total) = score.progress();
+                (done as u32, total as u32)
+            }),
+            Stage::QualityRelease => self.quality_score.as_ref().map_or((1, 1), |score| {
+                let (done, total) = score.release_progress();
+                (done as u32, total as u32)
+            }),
+            Stage::ReverseRefinements => (
+                (self.refinement_log.len - self.replay_index) as u32,
+                self.refinement_log.len as u32,
+            ),
+            Stage::ReapplyRefinements => (self.replay_index as u32, self.refinement_log.len as u32),
+            Stage::ReleaseRefinements => (
+                self.release_total_slabs
+                    .saturating_sub(self.refinement_log.slabs.len()) as u32,
+                self.release_total_slabs as u32,
+            ),
+            Stage::JointRefine => self.joint_search.first().map_or((0, 1), |search| {
+                (search.used() as u32, search.quota() as u32)
+            }),
+            Stage::ReverseToBaseline | Stage::ReverseUnchanged => (
+                (self.refinement_log.len - self.replay_index) as u32,
+                self.refinement_log.len as u32,
+            ),
+            Stage::ApplyBaseline => (
+                self.override_cursor as u32,
+                self.baseline_overrides.len() as u32,
+            ),
+            Stage::ReverseBaseline => (
+                (self.baseline_overrides.len() - self.override_cursor) as u32,
+                self.baseline_overrides.len() as u32,
+            ),
             Stage::Done => (1, 1),
             _ => (0, 1),
         }
@@ -1969,6 +3862,16 @@ impl FrameEncoder {
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
             self.neutral_chroma &= u == 128 && v == 128;
+            if self.request.quality == 60 || self.request.quality == 75 {
+                self.rgb_error_sum += crate::color::nearest_chroma_rgb_error(
+                    rgb,
+                    luma,
+                    u,
+                    v,
+                    width.saturating_sub(cx * 2).min(2),
+                    height.saturating_sub(cy * 2).min(2),
+                );
+            }
             for dy in 0..2 {
                 for dx in 0..2 {
                     self.source_y[(cy * 2 + dy) * y_stride + cx * 2 + dx] = luma[dy * 2 + dx];
@@ -1979,6 +3882,27 @@ impl FrameEncoder {
         }
         self.cursor += 1;
         if self.cursor == self.plan.padded_height as usize / 2 {
+            self.high_chroma_loss = crate::presets::high_chroma_loss(
+                self.request.quality,
+                self.rgb_error_sum,
+                self.request.width,
+                self.request.height,
+            );
+            self.preview_trial = if self.high_chroma_loss {
+                PreviewTrial::Original
+            } else {
+                PreviewTrial::None
+            };
+            self.deltas = if self.high_chroma_loss {
+                crate::presets::original_high_chroma_loss_deltas()
+            } else {
+                crate::presets::frame_deltas(
+                    self.request.quality,
+                    self.rgb_error_sum,
+                    self.request.width,
+                    self.request.height,
+                )
+            };
             self.cursor = 0;
             self.stage = Stage::Classify;
         }
@@ -1992,17 +3916,459 @@ impl FrameEncoder {
         self.cursor = 0;
     }
 
+    fn reset_variant_count(&mut self) {
+        self.reset_coding_state();
+        self.stats = Statistics::new();
+        self.skip_stats = SkipStats::default();
+        self.skip_probability = Some(128);
+        self.model = Model::new();
+        self.model_count_pass = false;
+        self.use_model = false;
+        self.default_sizes = (0, 0);
+        self.default_frame_bytes = 0;
+        self.selected_frame_bytes = 0;
+        self.update_count = 0;
+        self.count_header = CountingBoolSink::default();
+        self.count_token = CountingBoolSink::default();
+    }
+
+    fn begin_quality(&mut self, variant: VariantChoice) -> Result<(), Status> {
+        self.quality_variant = variant;
+        if let Some(score) = &mut self.quality_score {
+            score.reset();
+        } else {
+            self.quality_score = Some(
+                display_rgb::CompleteScore::new(
+                    self.request.width as usize,
+                    self.request.height as usize,
+                )
+                .ok_or(Status::MemoryAdmission)?,
+            );
+        }
+        self.cursor = 0;
+        self.quality_copy_plane = 0;
+        self.stage = Stage::QualityInit;
+        Ok(())
+    }
+
+    fn quality_one_step(&mut self) -> Result<(), Status> {
+        match self.stage {
+            Stage::QualityInit => {
+                let score = self.quality_score.as_mut().ok_or(Status::InvalidInput)?;
+                if !score.initialized() && !score.initialize_chunk() {
+                    return Err(Status::MemoryAdmission);
+                }
+                if score.initialized() {
+                    self.stage = Stage::QualityCopy;
+                }
+            }
+            Stage::QualityCopy => {
+                let (src, dst) = match self.quality_copy_plane {
+                    0 => (&self.reconstructed_y, &mut self.source_y),
+                    1 => (&self.reconstructed_u, &mut self.source_u),
+                    2 => (&self.reconstructed_v, &mut self.source_v),
+                    _ => return Err(Status::InvalidInput),
+                };
+                let end = (self.cursor + 65_536).min(src.len());
+                dst.get_mut(self.cursor..end)
+                    .ok_or(Status::InvalidInput)?
+                    .copy_from_slice(&src[self.cursor..end]);
+                self.cursor = end;
+                if end == src.len() {
+                    self.quality_copy_plane += 1;
+                    if self.quality_copy_plane == 3 {
+                        self.cursor = 0;
+                        self.stage = Stage::QualityFilter;
+                    } else {
+                        self.cursor = 0;
+                    }
+                }
+            }
+            Stage::QualityFilter => {
+                let count = self.blocks.len();
+                let end = (self.cursor + 1).min(count);
+                for index in self.cursor..end {
+                    filter_completed_one(
+                        &mut self.source_y,
+                        &mut self.source_u,
+                        &mut self.source_v,
+                        self.plan.padded_width as usize,
+                        self.plan.padded_height as usize,
+                        index,
+                        &self.blocks,
+                        self.filter,
+                    )
+                    .map_err(encode_status)?;
+                }
+                self.cursor = end;
+                if end == count {
+                    self.cursor = 0;
+                    self.stage = Stage::QualityMetric;
+                }
+            }
+            Stage::QualityMetric => {
+                let view = display_rgb::CompleteFrame::checked(
+                    self.request.width as usize,
+                    self.request.height as usize,
+                    self.plan.padded_width as usize,
+                    display_rgb::Original {
+                        pixels: &self.input,
+                        stride: self.request.stride as usize,
+                        layout: self.request.layout,
+                    },
+                    &self.source_y,
+                    &self.source_u,
+                    &self.source_v,
+                )
+                .ok_or(Status::InvalidInput)?;
+                let score = self.quality_score.as_mut().ok_or(Status::InvalidInput)?;
+                score.advance(&view);
+                if score.progress().0 == score.progress().1 {
+                    let value = score.finish().ok_or(Status::InvalidInput)?;
+                    self.finish_quality(value)?;
+                }
+            }
+            _ => return Err(Status::InvalidInput),
+        }
+        Ok(())
+    }
+
+    fn finish_quality(&mut self, value: f64) -> Result<(), Status> {
+        match self.quality_variant {
+            VariantChoice::Extended => {
+                self.refined_checkpoint
+                    .as_mut()
+                    .ok_or(Status::InvalidInput)?
+                    .quality = value;
+                self.replay_index = self.refinement_log.len;
+                self.stage = if self.baseline_overrides.is_empty() {
+                    Stage::ReverseRefinements
+                } else {
+                    Stage::ReverseToBaseline
+                };
+            }
+            VariantChoice::Baseline => {
+                self.baseline_checkpoint
+                    .as_mut()
+                    .ok_or(Status::InvalidInput)?
+                    .quality = value;
+                self.override_cursor = self.baseline_overrides.len();
+                self.stage = Stage::ReverseBaseline;
+            }
+            VariantChoice::Base => {
+                self.base_quality = value;
+                self.choose_completed_quality()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn choose_completed_quality(&mut self) -> Result<(), Status> {
+        let refined = self
+            .refined_checkpoint
+            .as_ref()
+            .ok_or(Status::InvalidInput)?;
+        let baseline = self.baseline_checkpoint.as_ref().map(|checkpoint| {
+            (
+                checkpoint.selected_frame_bytes,
+                checkpoint.legality,
+                checkpoint.quality,
+            )
+        });
+        let choice = choose_scored_variants(
+            (
+                refined.selected_frame_bytes,
+                refined.legality,
+                refined.quality,
+            ),
+            baseline,
+            (
+                self.selected_frame_bytes,
+                self.base_legality,
+                self.base_quality,
+            ),
+        )?;
+        match choice {
+            VariantChoice::Extended | VariantChoice::Baseline => {
+                self.baseline_reapply = choice == VariantChoice::Baseline;
+                self.stage = Stage::ReapplyRefinements;
+                self.replay_index = 0;
+            }
+            VariantChoice::Base => {
+                self.refined_checkpoint = None;
+                self.baseline_checkpoint = None;
+                self.begin_refinement_release();
+            }
+        }
+        Ok(())
+    }
+
+    fn begin_refinement_release(&mut self) {
+        self.release_total_slabs = self.refinement_log.slabs.len();
+        self.baseline_overrides = Vec::new();
+        self.stage = Stage::ReleaseRefinements;
+    }
+
+    fn restore_selected_checkpoint(&mut self, checkpoint: RefinedCheckpoint) -> Result<(), Status> {
+        if checkpoint.legality.is_err() {
+            return Err(Status::InvalidInput);
+        }
+        self.model.restore_emission(&checkpoint.emission);
+        self.skip_probability = checkpoint.skip_probability;
+        self.default_frame_bytes = checkpoint.default_frame_bytes;
+        self.selected_frame_bytes = checkpoint.selected_frame_bytes;
+        self.update_count = checkpoint.update_count;
+        self.use_model = checkpoint.use_model;
+        self.pending_output_sizes = Some(checkpoint.sizes);
+        self.reset_coding_state();
+        self.begin_refinement_release();
+        Ok(())
+    }
+
+    fn replay_at(&mut self, index: usize, forward: bool) -> Result<(), Status> {
+        let edit = self.refinement_log.get(index).ok_or(Status::InvalidInput)?;
+        replay_edit_state(
+            &mut self.blocks,
+            &mut self.reconstructed_u,
+            &mut self.reconstructed_v,
+            self.plan.padded_width as usize,
+            self.segments,
+            self.deltas,
+            edit,
+            forward,
+        )
+    }
+
+    fn replay_baseline_override(&mut self, index: usize, forward: bool) -> Result<(), Status> {
+        let item = *self
+            .baseline_overrides
+            .get(index)
+            .ok_or(Status::InvalidInput)?;
+        if let Some(change) = item.baseline {
+            replay_edit_state(
+                &mut self.blocks,
+                &mut self.reconstructed_u,
+                &mut self.reconstructed_v,
+                self.plan.padded_width as usize,
+                self.segments,
+                self.deltas,
+                RefinementEdit {
+                    block: item.block,
+                    change,
+                },
+                forward,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn reverse_to_baseline_one_step(&mut self) -> Result<(), Status> {
+        if self.replay_index > 0 {
+            let index = self.replay_index - 1;
+            let edit = self.refinement_log.get(index).ok_or(Status::InvalidInput)?;
+            if is_overridden(&self.baseline_overrides, edit, index)? {
+                self.replay_at(index, false)?;
+            }
+            self.replay_index = index;
+        }
+        if self.replay_index == 0 {
+            self.override_cursor = 0;
+            self.stage = Stage::ApplyBaseline;
+        }
+        Ok(())
+    }
+
+    fn apply_baseline_one_step(&mut self) -> Result<(), Status> {
+        if self.override_cursor < self.baseline_overrides.len() {
+            self.replay_baseline_override(self.override_cursor, true)?;
+            self.override_cursor += 1;
+        }
+        if self.override_cursor == self.baseline_overrides.len() {
+            if self.baseline_reapply {
+                self.baseline_reapply = false;
+                let baseline = self
+                    .baseline_checkpoint
+                    .take()
+                    .ok_or(Status::InvalidInput)?;
+                self.refined_checkpoint = None;
+                self.restore_selected_checkpoint(baseline)?;
+            } else {
+                self.reset_variant_count();
+                self.base_count = true;
+                self.baseline_count = true;
+                self.stage = Stage::CollectStats;
+            }
+        }
+        Ok(())
+    }
+
+    fn reverse_baseline_one_step(&mut self) -> Result<(), Status> {
+        if self.override_cursor > 0 {
+            self.override_cursor -= 1;
+            self.replay_baseline_override(self.override_cursor, false)?;
+        }
+        if self.override_cursor == 0 {
+            self.replay_index = self.refinement_log.len;
+            self.stage = Stage::ReverseUnchanged;
+        }
+        Ok(())
+    }
+
+    fn reverse_unchanged_one_step(&mut self) -> Result<(), Status> {
+        if self.replay_index > 0 {
+            let index = self.replay_index - 1;
+            let edit = self.refinement_log.get(index).ok_or(Status::InvalidInput)?;
+            if !is_overridden(&self.baseline_overrides, edit, index)? {
+                self.replay_at(index, false)?;
+            }
+            self.replay_index = index;
+        }
+        if self.replay_index == 0 {
+            self.reset_variant_count();
+            self.baseline_count = false;
+            self.stage = Stage::CollectStats;
+        }
+        Ok(())
+    }
+
+    fn replay_one_refinement(&mut self, forward: bool) -> Result<(), Status> {
+        let index = if forward {
+            self.replay_index
+        } else {
+            self.replay_index
+                .checked_sub(1)
+                .ok_or(Status::InvalidInput)?
+        };
+        self.replay_at(index, forward)?;
+        if forward {
+            self.replay_index += 1;
+        } else {
+            self.replay_index -= 1;
+        }
+        Ok(())
+    }
+
+    fn original_segments(&self) -> SegmentConfig {
+        SegmentConfig::from_counts(
+            self.request.quality,
+            self.class_counts,
+            self.blocks.len(),
+            self.neutral_chroma,
+        )
+    }
+
+    fn begin_preview_reset(&mut self) {
+        self.reset_plane = 0;
+        self.cursor = 0;
+        self.stage = Stage::PreviewReset;
+    }
+
+    fn reset_preview_one_step(&mut self) -> Result<(), Status> {
+        if self.reset_plane < 3 {
+            let plane = match self.reset_plane {
+                0 => &mut self.reconstructed_y,
+                1 => &mut self.reconstructed_u,
+                _ => &mut self.reconstructed_v,
+            };
+            let end = (self.cursor + 65_536).min(plane.len());
+            plane[self.cursor..end].fill(0);
+            self.cursor = end;
+            if end == plane.len() {
+                self.reset_plane += 1;
+                self.cursor = 0;
+            }
+            return Ok(());
+        }
+        let count = (65_536 / std::mem::size_of::<Macroblock>()).max(1);
+        let end = (self.cursor + count).min(self.blocks.len());
+        for block in &mut self.blocks[self.cursor..end] {
+            let segment_id = block.segment_id;
+            *block = Macroblock {
+                segment_id,
+                ..Macroblock::default()
+            };
+        }
+        self.cursor = end;
+        if end == self.blocks.len() {
+            self.stage = Stage::PreviewResetMetadata;
+        }
+        Ok(())
+    }
+
+    fn reset_preview_metadata(&mut self) -> Result<(), Status> {
+        self.reset_coding_state();
+        self.header_budget = HeaderBudget::new(
+            self.blocks.len(),
+            self.segments,
+            self.deltas,
+            self.filter,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .map_err(encode_status)?;
+        self.preview_comparison = ProfileComparison::default();
+        self.preview_header_rate = RateCounter::default();
+        self.stats = Statistics::new();
+        self.skip_stats = SkipStats::default();
+        self.model = Model::new();
+        self.count_header = CountingBoolSink::default();
+        self.count_token = CountingBoolSink::default();
+        self.skip_probability = Some(128);
+        self.model_count_pass = false;
+        self.use_model = false;
+        self.stage = Stage::Analyze;
+        Ok(())
+    }
+
+    fn finish_preview(&mut self) -> Result<(), Status> {
+        let original = self.original_segments();
+        let score = self
+            .preview_comparison
+            .score(
+                self.preview_header_rate.cost,
+                original.base_qindex,
+                self.request.quality,
+            )
+            .map_err(encode_status)?;
+        match self.preview_trial {
+            PreviewTrial::Original => {
+                self.preview_original_score = score;
+                self.segments = original.with_high_chroma_loss_luma(true);
+                self.deltas = crate::presets::frame_deltas(
+                    self.request.quality,
+                    self.rgb_error_sum,
+                    self.request.width,
+                    self.request.height,
+                );
+                self.preview_trial = PreviewTrial::Reduced;
+                self.begin_preview_reset();
+            }
+            PreviewTrial::Reduced => {
+                if reduced_profile_wins(self.preview_original_score, score) {
+                    self.preview_trial = PreviewTrial::FinalReduced;
+                } else {
+                    self.segments = original;
+                    self.deltas = crate::presets::original_high_chroma_loss_deltas();
+                    self.preview_trial = PreviewTrial::FinalOriginal;
+                }
+                self.begin_preview_reset();
+            }
+            _ => return Err(Status::InvalidInput),
+        }
+        Ok(())
+    }
+
     fn classify_one_step(&mut self) -> Result<(), Status> {
         let blocks_x = self.plan.padded_width as usize / 16;
         let mx = self.cursor % blocks_x;
         let my = self.cursor / blocks_x;
-        let segment_id = segmentation::classify(
+        let segment_id = segmentation::classify_with_curvature(
             &self.source_y,
             &self.source_u,
             &self.source_v,
             self.plan.padded_width as usize,
             mx,
             my,
+            (self.request.quality == 60).then_some(&mut self.curvature),
         );
         self.class_counts[segment_id as usize] += 1;
         self.blocks.push(Macroblock {
@@ -2011,16 +4377,42 @@ impl FrameEncoder {
         });
         self.cursor += 1;
         if self.cursor == self.plan.macroblock_count as usize {
+            self.medium_textured_luma = crate::presets::medium_textured_luma(
+                self.request.quality,
+                self.class_counts,
+                self.blocks.len(),
+                self.rgb_error_sum,
+                self.request.width,
+                self.request.height,
+            );
             self.segments = SegmentConfig::from_counts(
                 self.request.quality,
                 self.class_counts,
                 self.blocks.len(),
                 self.neutral_chroma,
+            )
+            .with_medium_textured_luma(self.medium_textured_luma);
+            self.photo_q60 = crate::presets::photo_q60_all_texture(
+                self.request.quality,
+                self.class_counts,
+                self.blocks.len(),
+                self.neutral_chroma,
+                self.high_chroma_loss,
+                self.curvature.within_cutoff(self.blocks.len()),
+            );
+            self.segments = self.segments.with_photo_q60_rebase(self.photo_q60);
+            if self.medium_textured_luma {
+                self.deltas = crate::presets::medium_textured_deltas(self.deltas);
+            }
+            self.deltas = crate::presets::photo_allocation_deltas(
+                self.deltas,
+                self.photo_q60,
+                self.medium_textured_luma && !self.neutral_chroma,
             );
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
                 self.segments,
-                crate::presets::deltas(self.request.quality),
+                self.deltas,
                 self.filter,
                 MAX_FIRST_PARTITION_BYTES as usize,
             )
@@ -2035,21 +4427,50 @@ impl FrameEncoder {
         let blocks_x = self.plan.padded_width as usize / 16;
         let mx = self.cursor % blocks_x;
         let my = self.cursor / blocks_x;
+        let quota = if self.high_chroma_loss {
+            0
+        } else {
+            extra_quota(self.cursor, self.plan.macroblock_count as usize)
+        };
+        #[cfg(test)]
+        let quota = if self.disable_refinement { 0 } else { quota };
         if mx == 0 {
             self.contexts.row();
             self.left_modes.fill(0);
         }
         let segment_id = self.blocks[self.cursor].segment_id;
         let qindex = self.segments.qindex_for(segment_id);
-        let deltas = crate::presets::deltas(self.request.quality);
+        let deltas = self.deltas;
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-        let lambda = crate::presets::lambda_for_q(qindex);
-        let block = analyze_one(
+        let rate_qindex = if self.medium_textured_luma || self.photo_q60 {
+            self.original_segments().qindex_for(segment_id)
+        } else {
+            qindex
+        };
+        let lambda = crate::presets::lambda_for_quality(rate_qindex, self.request.quality);
+        let original_rgb = Some(display_rgb::Original {
+            pixels: &self.input,
+            stride: self.request.stride as usize,
+            layout: self.request.layout,
+        });
+        #[cfg(test)]
+        let original_rgb = if self.disable_refinement {
+            None
+        } else {
+            original_rgb
+        };
+        if !self.high_chroma_loss {
+            self.refinement_log
+                .reserve_one(self.plan.macroblock_count as usize + 128)?;
+        }
+        let analyzed = analyze_one(
             &self.source_y,
             &self.source_u,
             &self.source_v,
+            original_rgb,
+            self.high_chroma_loss,
             &mut self.reconstructed_y,
             &mut self.reconstructed_u,
             &mut self.reconstructed_v,
@@ -2064,17 +4485,261 @@ impl FrameEncoder {
             &mut self.above_modes,
             &mut self.left_modes,
             lambda,
+            self.request.quality,
+            self.request.width as usize,
+            self.request.height as usize,
             0,
             segment_id,
             self.segments,
             &mut self.header_budget,
         )
         .map_err(encode_status)?;
-        self.blocks[self.cursor] = block;
+        if let Some(change) = analyzed.refinement {
+            self.refinement_log.push_reserved(RefinementEdit {
+                block: self.cursor as u32,
+                change,
+            })?;
+        }
+        self.blocks[self.cursor] = analyzed.block;
+        if quota > 0 && !analyzed.block.skip() {
+            let padded_w = self.plan.padded_width as usize;
+            let x = mx * 16;
+            let y = my * 16;
+            let tile_y = read_tile::<16, 256>(&self.reconstructed_y, padded_w, x, y);
+            let tile_u = read_tile::<8, 64>(&self.reconstructed_u, padded_w / 2, mx * 8, my * 8);
+            let tile_v = read_tile::<8, 64>(&self.reconstructed_v, padded_w / 2, mx * 8, my * 8);
+            let frame = display_rgb::Frame {
+                width: self.request.width as usize,
+                height: self.request.height as usize,
+                stride_y: padded_w,
+                original: display_rgb::Original {
+                    pixels: &self.input,
+                    stride: self.request.stride as usize,
+                    layout: self.request.layout,
+                },
+                source_y: &self.source_y,
+                source_u: &self.source_u,
+                source_v: &self.source_v,
+                reconstructed_y: &self.reconstructed_y,
+                reconstructed_u: &self.reconstructed_u,
+                reconstructed_v: &self.reconstructed_v,
+                tile_y: &tile_y,
+                tile_u: &tile_u,
+                tile_v: &tile_v,
+                mx,
+                my,
+            };
+            if let Some(search) = JointSearch::new(
+                &frame,
+                &analyzed.block,
+                analyzed
+                    .refinement
+                    .map(|change| (change, analyzed.refinement_gain)),
+                &self.reconstructed_u,
+                &self.reconstructed_v,
+                uv_steps,
+                quota,
+            )
+            .map_err(encode_status)?
+            {
+                if self.joint_search.capacity() == 0 {
+                    self.joint_search
+                        .try_reserve_exact(1)
+                        .map_err(|_| Status::MemoryAdmission)?;
+                    if self.joint_search.capacity() * std::mem::size_of::<JointSearch>() > 65_536 {
+                        return Err(Status::MemoryAdmission);
+                    }
+                }
+                if self.baseline_overrides.capacity() == 0 {
+                    self.baseline_overrides
+                        .try_reserve_exact((self.plan.macroblock_count as usize).min(128))
+                        .map_err(|_| Status::MemoryAdmission)?;
+                    if self.baseline_overrides.capacity() * std::mem::size_of::<BaselineOverride>()
+                        > BASELINE_OVERRIDE_BUDGET_BYTES
+                    {
+                        return Err(Status::MemoryAdmission);
+                    }
+                }
+                self.joint_search.push(search);
+                self.joint_baseline = analyzed.refinement.is_some();
+                self.stage = Stage::JointRefine;
+                return Ok(());
+            }
+        }
+        self.finish_analyzed_block();
+        Ok(())
+    }
+
+    fn finish_analyzed_block(&mut self) {
         self.cursor += 1;
         if self.cursor == self.plan.macroblock_count as usize {
+            self.joint_search = Vec::new();
+            if self.refinement_log.is_empty() {
+                self.refinement_log = RefinementLog::default();
+            }
+            if self.baseline_overrides.is_empty() {
+                self.baseline_overrides = Vec::new();
+            }
             self.reset_coding_state();
-            self.stage = Stage::CollectStats;
+            self.stage = if matches!(
+                self.preview_trial,
+                PreviewTrial::Original | PreviewTrial::Reduced
+            ) {
+                Stage::PreviewCollectStats
+            } else {
+                Stage::CollectStats
+            };
+        } else {
+            self.stage = Stage::Analyze;
+        }
+    }
+
+    fn joint_one_step(&mut self) -> Result<(), Status> {
+        let padded_w = self.plan.padded_width as usize;
+        let blocks_x = padded_w / 16;
+        let mx = self.cursor % blocks_x;
+        let my = self.cursor / blocks_x;
+        let block = &self.blocks[self.cursor];
+        let qindex = self.segments.qindex_for(block.segment_id);
+        let steps = ac_quant::steps(qindex as u8, self.deltas, Plane::UV);
+        if self.joint_search.first().is_none_or(JointSearch::done) {
+            let search = self.joint_search.pop().ok_or(Status::InvalidInput)?;
+            let result = search.result(steps).map_err(encode_status)?;
+            let prior = usize::from(self.joint_baseline);
+            let start = self
+                .refinement_log
+                .len
+                .checked_sub(prior)
+                .ok_or(Status::InvalidInput)?;
+            let baseline = if self.joint_baseline {
+                let edit = self.refinement_log.get(start).ok_or(Status::InvalidInput)?;
+                if edit.block as usize != self.cursor {
+                    return Err(Status::InvalidInput);
+                }
+                Some(edit.change)
+            } else {
+                None
+            };
+            let differs = match baseline {
+                Some(change) => result.len != 1 || result.changes[0] != change,
+                None => result.len != 0,
+            };
+            if differs && self.baseline_overrides.len() == self.baseline_overrides.capacity() {
+                return Err(Status::MemoryAdmission);
+            }
+            let target = self
+                .refinement_log
+                .len
+                .checked_sub(prior)
+                .and_then(|len| len.checked_add(result.len))
+                .ok_or(Status::MemoryAdmission)?;
+            self.refinement_log.reserve_additional(
+                target.saturating_sub(self.refinement_log.len),
+                self.plan.macroblock_count as usize + 128,
+            )?;
+            if self.joint_baseline {
+                let old = self.refinement_log.pop_last().ok_or(Status::InvalidInput)?;
+                if old.block as usize != self.cursor {
+                    return Err(Status::InvalidInput);
+                }
+            }
+            for &change in &result.changes[..result.len] {
+                self.refinement_log.push_reserved(RefinementEdit {
+                    block: self.cursor as u32,
+                    change,
+                })?;
+            }
+            if differs {
+                self.baseline_overrides.push(BaselineOverride {
+                    block: self.cursor as u32,
+                    start: start as u32,
+                    len: result.len as u8,
+                    baseline,
+                });
+            }
+            self.blocks[self.cursor] = result.block;
+            commit_tile::<8, 64>(
+                &mut self.reconstructed_u,
+                padded_w / 2,
+                mx * 8,
+                my * 8,
+                &result.u,
+            );
+            commit_tile::<8, 64>(
+                &mut self.reconstructed_v,
+                padded_w / 2,
+                mx * 8,
+                my * 8,
+                &result.v,
+            );
+            self.joint_baseline = false;
+            self.finish_analyzed_block();
+            return Ok(());
+        }
+        let tile_y = read_tile::<16, 256>(&self.reconstructed_y, padded_w, mx * 16, my * 16);
+        let tile_u = read_tile::<8, 64>(&self.reconstructed_u, padded_w / 2, mx * 8, my * 8);
+        let tile_v = read_tile::<8, 64>(&self.reconstructed_v, padded_w / 2, mx * 8, my * 8);
+        let frame = display_rgb::Frame {
+            width: self.request.width as usize,
+            height: self.request.height as usize,
+            stride_y: padded_w,
+            original: display_rgb::Original {
+                pixels: &self.input,
+                stride: self.request.stride as usize,
+                layout: self.request.layout,
+            },
+            source_y: &self.source_y,
+            source_u: &self.source_u,
+            source_v: &self.source_v,
+            reconstructed_y: &self.reconstructed_y,
+            reconstructed_u: &self.reconstructed_u,
+            reconstructed_v: &self.reconstructed_v,
+            tile_y: &tile_y,
+            tile_u: &tile_u,
+            tile_v: &tile_v,
+            mx,
+            my,
+        };
+        let (right, below) =
+            uv_future_consumers(mx, my, padded_w, self.plan.padded_height as usize);
+        let used_before = self.joint_search[0].used();
+        self.joint_search[0]
+            .step(&frame, steps, right, below)
+            .map_err(encode_status)?;
+        self.joint_used_total += self.joint_search[0].used() - used_before;
+        if self.joint_used_total > 128 {
+            return Err(Status::InvalidInput);
+        }
+        Ok(())
+    }
+
+    fn preview_rate_one_step(&mut self) -> Result<(), Status> {
+        let blocks_x = self.plan.padded_width as usize / 16;
+        let mx = self.cursor % blocks_x;
+        if mx == 0 {
+            self.contexts.row();
+            self.left_modes.fill(0);
+        }
+        let block = &self.blocks[self.cursor];
+        let original_qindex = self.original_segments().qindex_for(block.segment_id);
+        let rate = estimated_block_rate(
+            block,
+            mx,
+            &mut self.contexts,
+            &mut self.above_modes,
+            &mut self.left_modes,
+            self.segments,
+            &self.model,
+            self.skip_probability,
+        )
+        .map_err(encode_status)?;
+        self.preview_comparison
+            .add_rate(rate, original_qindex, self.request.quality)
+            .map_err(encode_status)?;
+        self.cursor += 1;
+        if self.cursor == self.blocks.len() {
+            self.reset_coding_state();
+            self.stage = Stage::PreviewFilter;
         }
         Ok(())
     }
@@ -2144,7 +4809,9 @@ impl FrameEncoder {
                     .checked_add(second)
                     .and_then(|n| n.checked_add(10))
                     .ok_or(Status::OutputLimit)?;
-                self.use_model = first <= 0x7ffff && proposed_total < self.default_frame_bytes;
+                self.use_model = first <= MAX_FIRST_PARTITION_BYTES as u32
+                    && (self.default_sizes.0 > MAX_FIRST_PARTITION_BYTES as u32
+                        || proposed_total < self.default_frame_bytes);
                 let (first, second) = if self.use_model {
                     (first, second)
                 } else {
@@ -2162,10 +4829,55 @@ impl FrameEncoder {
                 } else {
                     0
                 };
-                self.plan = self.plan.with_output_sizes(first, second)?;
-                // Publish the final plan before any partition or frame reserve.
-                // The host can reserve its concurrent budget at this step boundary.
-                self.stage = Stage::PrepareOutput;
+                if self.refinement_log.is_empty() && self.baseline_overrides.is_empty() {
+                    self.plan = self.plan.with_output_sizes(first, second)?;
+                    self.stage = Stage::PrepareOutput;
+                } else if !self.base_count {
+                    let legality = match self.plan.with_output_sizes(first, second) {
+                        Ok(_) => Ok(()),
+                        Err(error @ (Status::PartitionLimit | Status::OutputLimit)) => Err(error),
+                        Err(error) => return Err(error),
+                    };
+                    self.refined_checkpoint = Some(RefinedCheckpoint {
+                        emission: self.model.emission(),
+                        skip_probability: self.skip_probability,
+                        sizes: (first, second),
+                        default_frame_bytes: self.default_frame_bytes,
+                        selected_frame_bytes: self.selected_frame_bytes,
+                        update_count: self.update_count,
+                        use_model: self.use_model,
+                        legality,
+                        quality: 0.0,
+                    });
+                    self.begin_quality(VariantChoice::Extended)?;
+                } else if self.baseline_count {
+                    let legality = match self.plan.with_output_sizes(first, second) {
+                        Ok(_) => Ok(()),
+                        Err(error @ (Status::PartitionLimit | Status::OutputLimit)) => Err(error),
+                        Err(error) => return Err(error),
+                    };
+                    self.baseline_checkpoint = Some(RefinedCheckpoint {
+                        emission: self.model.emission(),
+                        skip_probability: self.skip_probability,
+                        sizes: (first, second),
+                        default_frame_bytes: self.default_frame_bytes,
+                        selected_frame_bytes: self.selected_frame_bytes,
+                        update_count: self.update_count,
+                        use_model: self.use_model,
+                        legality,
+                        quality: 0.0,
+                    });
+                    self.begin_quality(VariantChoice::Baseline)?;
+                } else {
+                    let base_legality = match self.plan.with_output_sizes(first, second) {
+                        Ok(_) => Ok(()),
+                        Err(error @ (Status::PartitionLimit | Status::OutputLimit)) => Err(error),
+                        Err(error) => return Err(error),
+                    };
+                    self.pending_output_sizes = Some((first, second));
+                    self.base_legality = base_legality;
+                    self.begin_quality(VariantChoice::Base)?;
+                }
             } else {
                 self.stage = Stage::FinalizeHeader;
             }
@@ -2227,6 +4939,123 @@ impl FrameEncoder {
             Stage::Color => self.color_one_pair()?,
             Stage::Classify => self.classify_one_step()?,
             Stage::Analyze => self.analyze_one_step()?,
+            Stage::JointRefine => self.joint_one_step()?,
+            Stage::PreviewPrefix => {
+                self.preview_header_rate = RateCounter::default();
+                write_header_prefix(
+                    &mut self.preview_header_rate,
+                    self.segments,
+                    self.deltas,
+                    self.filter,
+                )
+                .map_err(encode_status)?;
+                self.stage = Stage::PreviewUpdates;
+            }
+            Stage::PreviewUpdates => {
+                let end = (self.cursor + 64).min(NODE_COUNT);
+                write_updates(
+                    &mut self.preview_header_rate,
+                    Some(&self.model),
+                    self.cursor,
+                    end,
+                )
+                .map_err(encode_status)?;
+                self.cursor = end;
+                if end == NODE_COUNT {
+                    self.cursor = 0;
+                    self.stage = Stage::PreviewSuffix;
+                }
+            }
+            Stage::PreviewSuffix => {
+                write_header_suffix(&mut self.preview_header_rate, self.skip_probability)
+                    .map_err(encode_status)?;
+                self.reset_coding_state();
+                self.stage = Stage::PreviewRateBlocks;
+            }
+            Stage::PreviewReset => self.reset_preview_one_step()?,
+            Stage::PreviewResetMetadata => self.reset_preview_metadata()?,
+            Stage::PreviewCollectStats => {
+                let blocks_x = self.plan.padded_width as usize / 16;
+                let mx = self.cursor % blocks_x;
+                if mx == 0 {
+                    self.contexts.row();
+                }
+                self.skip_stats
+                    .observe(self.blocks[self.cursor].skip())
+                    .map_err(encode_status)?;
+                self.contexts
+                    .encode_coefficients(
+                        &mut StatsSink(&mut self.stats),
+                        &self.blocks[self.cursor],
+                        mx,
+                    )
+                    .map_err(encode_status)?;
+                self.cursor += 1;
+                if self.cursor == self.blocks.len() {
+                    self.skip_probability = self.skip_stats.frozen_syntax();
+                    self.cursor = 0;
+                    self.stage = Stage::PreviewOptimize;
+                }
+            }
+            Stage::PreviewOptimize => {
+                let count = (NODE_COUNT - self.cursor).min(64);
+                self.model
+                    .optimize_range(&self.stats, self.cursor, count, &probability_cost)
+                    .map_err(encode_status)?;
+                self.cursor += count;
+                if self.cursor == NODE_COUNT {
+                    self.cursor = 0;
+                    self.stage = Stage::PreviewPrefix;
+                }
+            }
+            Stage::PreviewRateBlocks => self.preview_rate_one_step()?,
+            Stage::PreviewFilter => {
+                filter_completed_one(
+                    &mut self.reconstructed_y,
+                    &mut self.reconstructed_u,
+                    &mut self.reconstructed_v,
+                    self.plan.padded_width as usize,
+                    self.plan.padded_height as usize,
+                    self.cursor,
+                    &self.blocks,
+                    self.filter,
+                )
+                .map_err(encode_status)?;
+                self.cursor += 1;
+                if self.cursor == self.blocks.len() {
+                    self.cursor = 0;
+                    self.stage = Stage::PreviewRgbError;
+                }
+            }
+            Stage::PreviewRgbError => {
+                let width = self.request.width as usize;
+                let total = width * self.request.height as usize;
+                let count = (total - self.cursor).min(1_024);
+                let view = display_rgb::CompleteFrame::checked(
+                    width,
+                    self.request.height as usize,
+                    self.plan.padded_width as usize,
+                    display_rgb::Original {
+                        pixels: &self.input,
+                        stride: self.request.stride as usize,
+                        layout: self.request.layout,
+                    },
+                    &self.reconstructed_y,
+                    &self.reconstructed_u,
+                    &self.reconstructed_v,
+                )
+                .ok_or(Status::InvalidInput)?;
+                self.preview_comparison.visible_error = self
+                    .preview_comparison
+                    .visible_error
+                    .checked_add(view.squared_error_chunk(self.cursor, count))
+                    .ok_or(Status::OutputLimit)?;
+                self.cursor += count;
+                if self.cursor == total {
+                    self.reset_coding_state();
+                    self.finish_preview()?;
+                }
+            }
             Stage::CollectStats => {
                 let blocks_x = self.plan.padded_width as usize / 16;
                 let mx = self.cursor % blocks_x;
@@ -2245,7 +5074,7 @@ impl FrameEncoder {
                     .map_err(encode_status)?;
                 self.cursor += 1;
                 if self.cursor == self.blocks.len() {
-                    self.skip_probability = self.skip_stats.frozen_probability();
+                    self.skip_probability = self.skip_stats.frozen_syntax();
                     self.cursor = 0;
                     self.stage = Stage::Optimize;
                 }
@@ -2265,7 +5094,7 @@ impl FrameEncoder {
                 write_header_prefix(
                     &mut self.count_header,
                     self.segments,
-                    crate::presets::deltas(self.request.quality),
+                    self.deltas,
                     self.filter,
                 )
                 .map_err(encode_status)?;
@@ -2293,6 +5122,59 @@ impl FrameEncoder {
                 self.stage = Stage::CountBlocks;
             }
             Stage::CountBlocks => self.code_one_step(true)?,
+            Stage::QualityInit
+            | Stage::QualityCopy
+            | Stage::QualityFilter
+            | Stage::QualityMetric => self.quality_one_step()?,
+            Stage::QualityRelease => {
+                let score = self.quality_score.as_mut().ok_or(Status::InvalidInput)?;
+                if score.release_one_chunk() {
+                    self.quality_score = None;
+                    self.stage = Stage::PrepareOutput;
+                }
+            }
+            Stage::ReverseRefinements => {
+                self.replay_one_refinement(false)?;
+                if self.replay_index == 0 {
+                    self.reset_variant_count();
+                    self.base_count = true;
+                    self.stage = Stage::CollectStats;
+                }
+            }
+            Stage::ReverseToBaseline => self.reverse_to_baseline_one_step()?,
+            Stage::ApplyBaseline => self.apply_baseline_one_step()?,
+            Stage::ReverseBaseline => self.reverse_baseline_one_step()?,
+            Stage::ReverseUnchanged => self.reverse_unchanged_one_step()?,
+            Stage::ReapplyRefinements => {
+                if self.replay_index < self.refinement_log.len {
+                    self.replay_one_refinement(true)?;
+                }
+                if self.replay_index == self.refinement_log.len {
+                    if self.baseline_reapply {
+                        self.stage = Stage::ReverseToBaseline;
+                    } else {
+                        let refined = self.refined_checkpoint.take().ok_or(Status::InvalidInput)?;
+                        self.baseline_checkpoint = None;
+                        self.restore_selected_checkpoint(refined)?;
+                    }
+                }
+            }
+            Stage::ReleaseRefinements => {
+                self.refinement_log.slabs.pop();
+                if self.refinement_log.slabs.is_empty() {
+                    self.refinement_log = RefinementLog::default();
+                    let (first, second) = self
+                        .pending_output_sizes
+                        .take()
+                        .ok_or(Status::InvalidInput)?;
+                    self.plan = self.plan.with_output_sizes(first, second)?;
+                    self.stage = if self.quality_score.is_some() {
+                        Stage::QualityRelease
+                    } else {
+                        Stage::PrepareOutput
+                    };
+                }
+            }
             Stage::PrepareOutput => {
                 let header = BoolWriter::with_capacity(self.plan.first_partition_bytes as usize)
                     .map_err(|_| Status::MemoryAdmission)?;
@@ -2310,7 +5192,7 @@ impl FrameEncoder {
                 write_header_prefix(
                     &mut self.pending_header,
                     self.segments,
-                    crate::presets::deltas(self.request.quality),
+                    self.deltas,
                     self.filter,
                 )
                 .map_err(encode_status)?;
@@ -2400,6 +5282,2014 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn i4_lower_bound_pruning_matches_exhaustive_mode_search() {
+        let mut state = 0x5015_4d4fu32;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state as u8
+        };
+        for pattern in 0..10 {
+            let mut source = vec![0u8; 32 * 32];
+            let mut reconstructed = vec![0u8; 32 * 32];
+            for y in 0..32 {
+                for x in 0..32 {
+                    let index = y * 32 + x;
+                    source[index] = match pattern {
+                        0 => 0,
+                        1 => 255,
+                        2 => ((x + y) % 2 * 255) as u8,
+                        3 => (x * 7 + y * 3) as u8,
+                        _ => next(),
+                    };
+                    reconstructed[index] = if pattern < 4 {
+                        ((x * 11 + y * 19 + pattern * 23) & 255) as u8
+                    } else {
+                        next()
+                    };
+                }
+            }
+            let mut contexts = CoeffContexts::new(2);
+            for value in &mut contexts.y {
+                *value = next() & 1 != 0;
+            }
+            for value in &mut contexts.left_y {
+                *value = next() & 1 != 0;
+            }
+            let above: Vec<_> = (0..8).map(|_| next() % 10).collect();
+            let left = std::array::from_fn(|_| next() % 10);
+            for qindex in [0, 22, 80, 127] {
+                let steps = ac_quant::steps(qindex, Deltas::default(), Plane::Y1);
+                for lambda in [0, 1, 225, 2048] {
+                    for (mx, my) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let pruned = make_i4_with_pruning::<true>(
+                            &source,
+                            &reconstructed,
+                            32,
+                            mx,
+                            my,
+                            steps,
+                            &above,
+                            &left,
+                            &contexts,
+                            lambda,
+                        );
+                        let exhaustive = make_i4_with_pruning::<false>(
+                            &source,
+                            &reconstructed,
+                            32,
+                            mx,
+                            my,
+                            steps,
+                            &above,
+                            &left,
+                            &contexts,
+                            lambda,
+                        );
+                        assert_eq!(pruned.0.block, exhaustive.0.block);
+                        assert_eq!(pruned.0.tile, exhaustive.0.tile);
+                        assert_eq!(pruned.0.distortion, exhaustive.0.distortion);
+                        assert_eq!(
+                            pruned.1, exhaustive.1,
+                            "pattern={pattern} q={qindex} lambda={lambda} mx={mx} my={my}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn generated_v7_tiny_rgba(width: usize, height: usize) -> Vec<u8> {
+        // Same generated RGB rules as scripts/test/owned-vp8-v7-fixtures.ts.
+        (0..height)
+            .flat_map(|y| {
+                (0..width).flat_map(move |x| {
+                    let rgb = match (width, height) {
+                        (2, 9) => [
+                            (53 + 37 * x + 79 * y) as u8,
+                            (211 + 67 * x + 31 * y) as u8,
+                            (39 + 19 * x + 97 * y) as u8,
+                        ],
+                        (5, 1) => {
+                            if (3 * x + y) % 4 == 0 {
+                                [244, 29, 171]
+                            } else if (2 * x + y) & 1 != 0 {
+                                [35, 227, 91]
+                            } else {
+                                [89, 61, 239]
+                            }
+                        }
+                        (1, 11) => [
+                            (19 + 61 * x + 41 * y + 7 * x * y) as u8,
+                            (173 + 29 * x + 89 * y) as u8,
+                            (67 + 83 * x + 53 * y) as u8,
+                        ],
+                        _ => unreachable!(),
+                    };
+                    [rgb[0], rgb[1], rgb[2], 255]
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn known_tiny_joint_search_is_budgeted_and_matches_sync() {
+        // The retained generated 5x1 RGB input exercises the one-MB 128-unit
+        // quota. This is an encoder control, not an external quality gate.
+        let rgba = generated_v7_tiny_rgba(5, 1);
+        let mut request = engine_request(5, 1, 0, &rgba, 20);
+        request.quality = 85;
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, rgba.clone(), plan).unwrap();
+        let mut last_progress = 0;
+        let mut proposals = 0;
+        while engine.stage != Stage::CollectStats {
+            if engine.stage == Stage::JointRefine {
+                let (done, quota) = engine.progress();
+                assert_eq!(quota, 128);
+                assert!(done >= last_progress);
+                last_progress = done;
+                proposals = done;
+                assert!(engine.output().is_empty());
+            }
+            engine.step().unwrap();
+        }
+        assert_eq!(proposals, 116);
+        assert_eq!(engine.joint_used_total, proposals as usize);
+        assert_eq!(engine.refinement_log.len, 4);
+        let changes: Vec<_> = (0..4)
+            .map(|i| engine.refinement_log.get(i).unwrap().change)
+            .collect();
+        assert_eq!(
+            changes
+                .iter()
+                .map(|change| (
+                    change.plane,
+                    change.patch,
+                    change.coefficient,
+                    change.old,
+                    change.new
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (1, 0, 3, 12, 13),
+                (1, 0, 2, 6, 7),
+                (0, 0, 3, -6, -7),
+                (0, 0, 2, -3, -4),
+            ]
+        );
+        let expected = encode_textured(&rgba, 5, 1, 20, 0, 85).unwrap();
+        assert_eq!(expected.len(), 81);
+        let complete = run_engine(engine);
+        assert_eq!(complete.output(), expected);
+    }
+
+    #[test]
+    fn every_joint_budget_truncation_commits_only_complete_replayable_paths() {
+        let input = generated_v7_tiny_rgba(5, 1);
+        let mut request = engine_request(5, 1, 0, &input, 20);
+        request.quality = 85;
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut base = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        base.disable_refinement = true;
+        while base.stage != Stage::CollectStats {
+            base.step().unwrap();
+        }
+        for budget in 0..=128 {
+            let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while engine.stage != Stage::JointRefine {
+                engine.step().unwrap();
+            }
+            engine.joint_search[0].limit_for_test(budget);
+            while engine.stage == Stage::JointRefine {
+                assert!(engine.joint_search[0].paths_have_distinct_positions());
+                assert!(engine.output().is_empty());
+                engine.step().unwrap();
+            }
+            assert!(engine.stage == Stage::CollectStats);
+            assert_eq!(engine.joint_used_total, budget.min(116));
+            assert!(engine.refinement_log.len <= 4);
+            let mut blocks = engine.blocks.clone();
+            let mut u = engine.reconstructed_u.clone();
+            let mut v = engine.reconstructed_v.clone();
+            for index in (0..engine.refinement_log.len).rev() {
+                replay_edit_state(
+                    &mut blocks,
+                    &mut u,
+                    &mut v,
+                    plan.padded_width as usize,
+                    engine.segments,
+                    engine.deltas,
+                    engine.refinement_log.get(index).unwrap(),
+                    false,
+                )
+                .unwrap();
+            }
+            assert_eq!(blocks, base.blocks, "budget={budget}");
+            assert_eq!(u, base.reconstructed_u, "budget={budget}");
+            assert_eq!(v, base.reconstructed_v, "budget={budget}");
+        }
+    }
+
+    #[test]
+    fn skipped_macroblock_uses_no_joint_cache_or_proposals() {
+        let input: Vec<_> = (0..256).flat_map(|_| [130, 130, 130, 255]).collect();
+        let mut request = engine_request(16, 16, 0, &input, 64);
+        request.quality = 85;
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+        while engine.stage != Stage::CollectStats {
+            engine.step().unwrap();
+        }
+        assert!(engine.blocks[0].skip());
+        assert_eq!(engine.joint_used_total, 0);
+        assert_eq!(engine.joint_search.capacity(), 0);
+        assert_eq!(engine.baseline_overrides.capacity(), 0);
+    }
+
+    #[test]
+    fn generated_v7_tiny_joint_candidates_keep_positive_combined_proxy_and_exact_bytes() {
+        for (width, height, quality) in [(2usize, 9usize, 60), (5, 1, 85), (1, 11, 75)] {
+            let input = generated_v7_tiny_rgba(width, height);
+            let mut request = engine_request(width, height, 0, &input, width * 4);
+            request.quality = quality;
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut candidate = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while candidate.stage != Stage::CollectStats {
+                candidate.step().unwrap();
+            }
+            let mut base = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            base.disable_refinement = true;
+            while base.stage != Stage::CollectStats {
+                base.step().unwrap();
+            }
+            assert!(candidate.joint_used_total <= 128);
+            assert!(candidate.refinement_log.len <= 4);
+            assert_eq!(candidate.blocks[0].y, base.blocks[0].y);
+            assert_eq!(candidate.blocks[0].uv_mode, base.blocks[0].uv_mode);
+            let tile_y = read_tile::<16, 256>(&base.reconstructed_y, 16, 0, 0);
+            let base_u = read_tile::<8, 64>(&base.reconstructed_u, 8, 0, 0);
+            let base_v = read_tile::<8, 64>(&base.reconstructed_v, 8, 0, 0);
+            let trial_u = read_tile::<8, 64>(&candidate.reconstructed_u, 8, 0, 0);
+            let trial_v = read_tile::<8, 64>(&candidate.reconstructed_v, 8, 0, 0);
+            let frame = display_rgb::Frame {
+                width,
+                height,
+                stride_y: 16,
+                original: display_rgb::Original {
+                    pixels: &input,
+                    stride: width * 4,
+                    layout: 0,
+                },
+                source_y: &base.source_y,
+                source_u: &base.source_u,
+                source_v: &base.source_v,
+                reconstructed_y: &base.reconstructed_y,
+                reconstructed_u: &base.reconstructed_u,
+                reconstructed_v: &base.reconstructed_v,
+                tile_y: &tile_y,
+                tile_u: &base_u,
+                tile_v: &base_v,
+                mx: 0,
+                my: 0,
+            };
+            let gain = display_rgb::LocalCache::new(&frame).score_tiles(&frame, &trial_u, &trial_v);
+            assert!(gain > 0.0, "{width}x{height} q{quality} proxy={gain}");
+            let candidate_edits = candidate.refinement_log.len;
+            let candidate = run_engine(candidate);
+            let base = run_engine(base);
+            let mut baseline_only = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while baseline_only.stage != Stage::JointRefine {
+                baseline_only.step().unwrap();
+            }
+            baseline_only.joint_search[0].limit_for_test(0);
+            let baseline_only = run_engine(baseline_only);
+            let sync = encode_textured(
+                &input,
+                width as u32,
+                height as u32,
+                (width * 4) as u32,
+                0,
+                quality,
+            )
+            .unwrap();
+            assert_eq!(candidate.output(), sync);
+            assert!(candidate.output().len() <= base.output().len() + 1);
+            assert_ne!(
+                candidate.output(),
+                base.output(),
+                "{width}x{height} q{quality}"
+            );
+            assert_eq!(
+                candidate.selected_frame_bytes as usize,
+                candidate.output().len()
+            );
+            assert_eq!(
+                candidate.plan.frame_bytes as usize,
+                candidate.output().len()
+            );
+            if (width, height) == (2, 9) {
+                assert_eq!(candidate_edits, 3);
+                assert!(!baseline_only.photo_q60);
+                assert_eq!(baseline_only.output().len(), 98);
+            }
+            assert_ne!(candidate.output(), baseline_only.output());
+        }
+    }
+
+    #[test]
+    fn captured_baseline_variant_resets_model_and_recovers_unrefined_state() {
+        let input = generated_v7_tiny_rgba(2, 9);
+        let mut request = engine_request(2, 9, 0, &input, 8);
+        request.quality = 60;
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut candidate = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        while candidate.stage != Stage::ReverseToBaseline {
+            candidate.step().unwrap();
+        }
+        let extended = candidate.refined_checkpoint.as_ref().unwrap();
+        assert_eq!(
+            extended.sizes.0 + extended.sizes.1 + 10,
+            extended.selected_frame_bytes
+        );
+        assert_eq!(candidate.baseline_overrides.len(), 1);
+        assert_eq!(candidate.baseline_overrides[0].len, 3);
+        assert!(candidate.baseline_overrides[0].baseline.is_some());
+        while candidate.stage != Stage::ReverseBaseline {
+            assert!(candidate.output().is_empty());
+            candidate.step().unwrap();
+        }
+        let baseline = candidate.baseline_checkpoint.as_ref().unwrap();
+        assert_eq!(
+            baseline.sizes.0 + baseline.sizes.1 + 10,
+            baseline.selected_frame_bytes
+        );
+        assert!(!candidate.photo_q60);
+        assert_eq!(baseline.selected_frame_bytes, 98);
+        while !(candidate.stage == Stage::CollectStats
+            && candidate.base_count
+            && !candidate.baseline_count)
+        {
+            assert!(candidate.output().is_empty());
+            candidate.step().unwrap();
+        }
+        let mut base = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        base.disable_refinement = true;
+        while base.stage != Stage::CollectStats {
+            base.step().unwrap();
+        }
+        assert_eq!(candidate.blocks, base.blocks);
+        assert_eq!(candidate.reconstructed_u, base.reconstructed_u);
+        assert_eq!(candidate.reconstructed_v, base.reconstructed_v);
+        while candidate.stage != Stage::ReapplyRefinements {
+            candidate.step().unwrap();
+        }
+        assert!(!candidate.baseline_reapply);
+        let candidate = run_engine(candidate);
+        assert_eq!(candidate.output().len(), 99);
+        assert_ne!(candidate.output(), run_engine(base).output());
+    }
+
+    #[test]
+    fn maximum_admitted_geometry_refinement_log_fits_reserved_scratch() {
+        let request = Request {
+            version: 2,
+            width: 625,
+            height: 16_106,
+            stride: 2_500,
+            layout: 0,
+            quality: 75,
+            input_bytes: 2_500 * 16_106,
+            output_limit: 96 * 1024 * 1024,
+            generation: 1,
+            frame: 1,
+            external_live_bytes: 2_500 * 16_106,
+            retained_output_bytes: 0,
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        assert_eq!(plan.macroblock_count, 40_280);
+        assert_eq!(std::mem::size_of::<RefinementEdit>(), 12);
+        let mut log = RefinementLog::default();
+        let max_edits = plan.macroblock_count as usize + 128;
+        for block in 0..plan.macroblock_count {
+            log.reserve_one(max_edits).unwrap();
+            log.push_reserved(RefinementEdit {
+                block,
+                change: RefinementChange {
+                    plane: 0,
+                    patch: 0,
+                    coefficient: 0,
+                    old: 0,
+                    new: 1,
+                },
+            })
+            .unwrap();
+        }
+        log.reserve_additional(128, max_edits).unwrap();
+        for _ in 0..128 {
+            log.push_reserved(RefinementEdit {
+                block: plan.macroblock_count - 1,
+                change: RefinementChange {
+                    plane: 0,
+                    patch: 0,
+                    coefficient: 0,
+                    old: 0,
+                    new: 1,
+                },
+            })
+            .unwrap();
+        }
+        assert_eq!(log.len, 40_408);
+        assert_eq!(log.slabs.len(), 158);
+        assert!(log.capacity_bytes() <= REFINEMENT_LOG_BUDGET_BYTES);
+        assert_eq!(
+            log.reserve_additional(1, max_edits),
+            Err(Status::MemoryAdmission)
+        );
+        assert_eq!(log.len, 40_408);
+        let mut overrides = Vec::new();
+        overrides.try_reserve_exact(128).unwrap();
+        assert!(
+            overrides.capacity() * std::mem::size_of::<BaselineOverride>()
+                <= BASELINE_OVERRIDE_BUDGET_BYTES
+        );
+        for block in 0..128 {
+            overrides.push(BaselineOverride {
+                block,
+                start: block,
+                len: 1,
+                baseline: None,
+            });
+        }
+        assert_eq!(overrides.len(), 128);
+        assert_eq!(log.slabs.len(), 40_280usize.div_ceil(REFINEMENT_SLAB_LEN));
+    }
+
+    #[test]
+    fn release_progress_counts_reserved_empty_slabs_at_exact_boundaries() {
+        for edits in [256usize, 512] {
+            for trailing_reservation in [false, true] {
+                let height = (edits + 1) * 16;
+                let input = vec![128u8; height * 16 * 4];
+                let request = engine_request(16, height, 0, &input, 64);
+                let plan = ResourcePlan::checked(request).unwrap();
+                let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+                for block in 0..edits {
+                    engine
+                        .refinement_log
+                        .reserve_one(plan.macroblock_count as usize)
+                        .unwrap();
+                    engine
+                        .refinement_log
+                        .push_reserved(RefinementEdit {
+                            block: block as u32,
+                            change: RefinementChange {
+                                plane: 0,
+                                patch: 0,
+                                coefficient: 0,
+                                old: 0,
+                                new: 1,
+                            },
+                        })
+                        .unwrap();
+                }
+                if trailing_reservation {
+                    engine
+                        .refinement_log
+                        .reserve_one(plan.macroblock_count as usize)
+                        .unwrap();
+                    assert!(engine.refinement_log.slabs.last().unwrap().is_empty());
+                }
+                let allocated_slabs =
+                    edits / REFINEMENT_SLAB_LEN + usize::from(trailing_reservation);
+                assert_eq!(engine.refinement_log.slabs.len(), allocated_slabs);
+                engine.pending_output_sizes = Some((10, 10));
+                engine.begin_refinement_release();
+                assert_eq!(engine.progress(), (0, allocated_slabs as u32));
+                for released in 1..=allocated_slabs {
+                    assert!(!engine.step().unwrap());
+                    assert!(engine.output().is_empty());
+                    if released < allocated_slabs {
+                        assert!(engine.stage == Stage::ReleaseRefinements);
+                        assert_eq!(engine.progress(), (released as u32, allocated_slabs as u32));
+                    }
+                }
+                assert!(engine.stage == Stage::PrepareOutput);
+                assert!(engine.refinement_log.slabs.is_empty());
+                assert_eq!(engine.plan.first_partition_bytes, 10);
+                assert_eq!(engine.plan.coefficient_partition_bytes, 10);
+                assert_eq!(engine.plan.frame_bytes, 30);
+            }
+        }
+    }
+
+    #[test]
+    fn coefficient_replay_roundtrips_uv_modes_patches_edges_and_zero_crossings() {
+        let segments = SegmentConfig::nonsegmented(32);
+        let deltas = Deltas::default();
+        let steps = ac_quant::steps(32, deltas, Plane::UV);
+        for mode in 0..4u8 {
+            for block_index in 0..4u32 {
+                for plane in 0..2u8 {
+                    for patch_index in 0..4u8 {
+                        for (old, new) in [(0, 1), (1, 2), (-1, 0)] {
+                            let mut blocks: Vec<Macroblock> =
+                                (0..4).map(|_| Macroblock::default()).collect();
+                            let block = &mut blocks[block_index as usize];
+                            block.uv_mode = mode;
+                            let coefficients = if plane == 0 {
+                                &mut block.u[patch_index as usize]
+                            } else {
+                                &mut block.v[patch_index as usize]
+                            };
+                            coefficients[0] = new;
+                            let mut u: Vec<u8> =
+                                (0..256).map(|index| 80 + (index % 71) as u8).collect();
+                            let mut v: Vec<u8> =
+                                (0..256).map(|index| 90 + (index % 61) as u8).collect();
+                            let reconstructed = if plane == 0 { &mut u } else { &mut v };
+                            let mx = block_index as usize % 2;
+                            let my = block_index as usize / 2;
+                            let x = mx * 8;
+                            let y = my * 8;
+                            let (top, left, corner) = edge::<8>(reconstructed, 16, x, y);
+                            let predicted = prediction::predict_uv(
+                                &top,
+                                &left,
+                                corner,
+                                y > 0,
+                                x > 0,
+                                mode_from_u8(mode),
+                            );
+                            let bx = usize::from(patch_index % 2);
+                            let by = usize::from(patch_index / 2);
+                            let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
+                            let refined_patch =
+                                reconstructed_patch(coefficients, &predictor, steps);
+                            let old_coefficients = {
+                                let mut previous = *coefficients;
+                                previous[0] = old;
+                                previous
+                            };
+                            for row in 0..4 {
+                                let at = (y + by * 4 + row) * 16 + x + bx * 4;
+                                reconstructed[at..at + 4]
+                                    .copy_from_slice(&refined_patch[row * 4..row * 4 + 4]);
+                            }
+                            let refined_u = u.clone();
+                            let refined_v = v.clone();
+                            let edit = RefinementEdit {
+                                block: block_index,
+                                change: RefinementChange {
+                                    plane,
+                                    patch: patch_index,
+                                    coefficient: 0,
+                                    old,
+                                    new,
+                                },
+                            };
+                            replay_edit_state(
+                                &mut blocks,
+                                &mut u,
+                                &mut v,
+                                32,
+                                segments,
+                                deltas,
+                                edit,
+                                false,
+                            )
+                            .unwrap();
+                            let restored = if plane == 0 { &u } else { &v };
+                            let old_patch =
+                                reconstructed_patch(&old_coefficients, &predictor, steps);
+                            for row in 0..4 {
+                                let at = (y + by * 4 + row) * 16 + x + bx * 4;
+                                assert_eq!(&restored[at..at + 4], &old_patch[row * 4..row * 4 + 4]);
+                            }
+                            replay_edit_state(
+                                &mut blocks,
+                                &mut u,
+                                &mut v,
+                                32,
+                                segments,
+                                deltas,
+                                edit,
+                                true,
+                            )
+                            .unwrap();
+                            assert_eq!(u, refined_u);
+                            assert_eq!(v, refined_v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn global_refinement_replay_matches_fresh_unmodified_analysis_and_exact_output() {
+        let (width, height) = (33, 33);
+        let input = frontier_rgb_input(width, height);
+        let mut exercised = 0;
+        for quality in [60, 75, 85] {
+            let mut request = engine_request(width, height, 0, &input, width * 4);
+            request.quality = quality;
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut fresh = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            fresh.disable_refinement = true;
+            while fresh.stage != Stage::CollectStats {
+                fresh.step().unwrap();
+            }
+            let mut selected = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while selected.stage != Stage::ReverseRefinements
+                && selected.stage != Stage::PrepareOutput
+            {
+                selected.step().unwrap();
+            }
+            if selected.stage == Stage::PrepareOutput {
+                assert!(selected.refinement_log.is_empty());
+                continue;
+            }
+            exercised += 1;
+            let refined = selected.refined_checkpoint.as_ref().unwrap();
+            let refined_bytes = refined.selected_frame_bytes;
+            let refined_legality = refined.legality;
+            let refined_quality = refined.quality;
+            let refined_u = selected.reconstructed_u.clone();
+            let refined_v = selected.reconstructed_v.clone();
+            let edit = selected.refinement_log.get(0).unwrap();
+            let mut second = edit;
+            second.change.old = edit.change.new;
+            second.change.new = edit.change.new.checked_add(1).unwrap();
+            replay_edit_state(
+                &mut selected.blocks,
+                &mut selected.reconstructed_u,
+                &mut selected.reconstructed_v,
+                plan.padded_width as usize,
+                selected.segments,
+                selected.deltas,
+                second,
+                true,
+            )
+            .unwrap();
+            replay_edit_state(
+                &mut selected.blocks,
+                &mut selected.reconstructed_u,
+                &mut selected.reconstructed_v,
+                plan.padded_width as usize,
+                selected.segments,
+                selected.deltas,
+                second,
+                false,
+            )
+            .unwrap();
+            assert_eq!(selected.reconstructed_u, refined_u);
+            assert_eq!(selected.reconstructed_v, refined_v);
+            second.change.old = second.change.new;
+            assert_eq!(
+                replay_edit_state(
+                    &mut selected.blocks,
+                    &mut selected.reconstructed_u,
+                    &mut selected.reconstructed_v,
+                    plan.padded_width as usize,
+                    selected.segments,
+                    selected.deltas,
+                    second,
+                    true,
+                ),
+                Err(Status::InvalidInput)
+            );
+            assert_eq!(selected.reconstructed_u, refined_u);
+            assert_eq!(selected.reconstructed_v, refined_v);
+            let mx = edit.block as usize % 3;
+            let my = edit.block as usize / 3;
+            let at = (my * 8 + usize::from(edit.change.patch / 2) * 4)
+                * (plan.padded_width as usize / 2)
+                + mx * 8
+                + usize::from(edit.change.patch % 2) * 4;
+            let plane = if edit.change.plane == 0 {
+                &mut selected.reconstructed_u
+            } else {
+                &mut selected.reconstructed_v
+            };
+            plane[at] ^= 1;
+            assert_eq!(
+                replay_edit_state(
+                    &mut selected.blocks,
+                    &mut selected.reconstructed_u,
+                    &mut selected.reconstructed_v,
+                    plan.padded_width as usize,
+                    selected.segments,
+                    selected.deltas,
+                    edit,
+                    false,
+                ),
+                Err(Status::InvalidInput)
+            );
+            let plane = if edit.change.plane == 0 {
+                &mut selected.reconstructed_u
+            } else {
+                &mut selected.reconstructed_v
+            };
+            plane[at] ^= 1;
+            while selected.stage != Stage::CollectStats {
+                selected.step().unwrap();
+            }
+            assert!(selected.base_count);
+            assert_eq!(selected.blocks, fresh.blocks);
+            assert_eq!(selected.reconstructed_y, fresh.reconstructed_y);
+            assert_eq!(selected.reconstructed_u, fresh.reconstructed_u);
+            assert_eq!(selected.reconstructed_v, fresh.reconstructed_v);
+            while selected.stage != Stage::CountPrefix {
+                selected.step().unwrap();
+            }
+            let (fresh_model, fresh_skip) = model_frozen(&fresh.blocks, 3, 3).unwrap();
+            assert_eq!(selected.model.emission(), fresh_model.emission());
+            assert_eq!(selected.skip_probability, fresh_skip);
+            while !matches!(
+                selected.stage,
+                Stage::ReapplyRefinements | Stage::ReleaseRefinements
+            ) {
+                selected.step().unwrap();
+            }
+            let base_sizes = selected.pending_output_sizes.unwrap();
+            let base_legality = selected
+                .plan
+                .with_output_sizes(base_sizes.0, base_sizes.1)
+                .map(|_| ())
+                .map_err(|error| {
+                    if matches!(error, Status::OutputLimit | Status::PartitionLimit) {
+                        error
+                    } else {
+                        panic!("unexpected base admission {error:?}")
+                    }
+                });
+            let expected_refined = choose_scored_variants(
+                (refined_bytes, refined_legality, refined_quality),
+                None,
+                (
+                    selected.selected_frame_bytes,
+                    base_legality,
+                    selected.base_quality,
+                ),
+            )
+            .unwrap()
+                == VariantChoice::Extended;
+            assert_eq!(
+                selected.stage == Stage::ReapplyRefinements,
+                expected_refined
+            );
+            while selected.stage != Stage::PrepareOutput {
+                selected.step().unwrap();
+            }
+            assert!(selected.refinement_log.slabs.is_empty());
+            assert!(selected.refined_checkpoint.is_none());
+            assert!(selected.pending_output_sizes.is_none());
+            assert!(selected.output().is_empty());
+            let finished = run_engine(selected);
+            assert_eq!(
+                finished.output().len(),
+                finished.selected_frame_bytes as usize
+            );
+            assert_eq!(
+                finished.output(),
+                encode_textured(
+                    &input,
+                    width as u32,
+                    height as u32,
+                    (width * 4) as u32,
+                    0,
+                    quality
+                )
+                .unwrap()
+            );
+        }
+        assert!(exercised > 0);
+    }
+
+    #[test]
+    fn adjacent_uv_levels_respect_signed_dequantized_domain() {
+        assert_eq!(adjacent_level(0, 4, -1), Some(-1));
+        assert_eq!(adjacent_level(-1, 4, 1), Some(0));
+        assert_eq!(adjacent_level(2047, 4, 1), None);
+        assert_eq!(adjacent_level(-2047, 4, -1), None);
+        assert_eq!(adjacent_level(115, 284, 1), None);
+        assert_eq!(adjacent_level(-115, 284, -1), None);
+        assert_eq!(adjacent_level(114, 284, 1), Some(115));
+    }
+
+    #[test]
+    fn uv_frontier_matches_all_later_predictor_inputs_on_padded_grid() {
+        let odd_input = vec![0u8; 17 * 17 * 4];
+        let odd_plan =
+            ResourcePlan::checked(engine_request(17, 17, 0, &odd_input, 17 * 4)).unwrap();
+        assert_eq!((odd_plan.padded_width, odd_plan.padded_height), (32, 32));
+        let odd_w = odd_plan.padded_width as usize;
+        let odd_h = odd_plan.padded_height as usize;
+        assert_eq!(uv_future_consumers(0, 0, odd_w, odd_h), (true, true));
+        assert_eq!(uv_future_consumers(1, 0, odd_w, odd_h), (false, true));
+        assert_eq!(uv_future_consumers(0, 1, odd_w, odd_h), (true, false));
+        assert_eq!(uv_future_consumers(1, 1, odd_w, odd_h), (false, false));
+        let stride = 24; // Three padded macroblocks for predictor edge probes.
+        let tile = std::array::from_fn(|i| (32 + (i * 17) % 181) as u8);
+        let coefficients = [0i16; 16];
+        for (mx, my) in [(0, 0), (2, 0), (0, 2), (2, 2), (1, 1)] {
+            let (has_right, has_below) = uv_future_consumers(mx, my, 48, 48);
+            let mut baseline: Vec<u8> = (0..stride * stride)
+                .map(|i| (21 + (i * 37) % 211) as u8)
+                .collect();
+            commit_tile::<8, 64>(&mut baseline, stride, mx * 8, my * 8, &tile);
+            for by in 0..2 {
+                for bx in 0..2 {
+                    let mut patch = prediction_patch::<8, 64>(&tile, bx, by);
+                    patch[0] ^= 1; // Interior of this macroblock, never a later edge.
+                    assert!(uv_frontier_preserved(
+                        &tile,
+                        &patch,
+                        &coefficients,
+                        &coefficients,
+                        bx,
+                        by,
+                        has_right,
+                        has_below,
+                        false,
+                        false,
+                    ));
+                    let mut trial = baseline.clone();
+                    for row in 0..4 {
+                        for col in 0..4 {
+                            trial[(my * 8 + by * 4 + row) * stride + mx * 8 + bx * 4 + col] =
+                                patch[row * 4 + col];
+                        }
+                    }
+                    for (cx, cy) in [(mx + 1, my), (mx, my + 1), (mx + 1, my + 1)] {
+                        if cx >= 3 || cy >= 3 {
+                            continue;
+                        }
+                        let before = edge::<8>(&baseline, stride, cx * 8, cy * 8);
+                        let after = edge::<8>(&trial, stride, cx * 8, cy * 8);
+                        assert_eq!(
+                            after, before,
+                            "mb=({mx},{my}) patch=({bx},{by}) consumer=({cx},{cy})"
+                        );
+                        for mode in 0..4 {
+                            assert_eq!(
+                                prediction::predict_uv(
+                                    &before.0,
+                                    &before.1,
+                                    before.2,
+                                    cy > 0,
+                                    cx > 0,
+                                    mode_from_u8(mode)
+                                ),
+                                prediction::predict_uv(
+                                    &after.0,
+                                    &after.1,
+                                    after.2,
+                                    cy > 0,
+                                    cx > 0,
+                                    mode_from_u8(mode)
+                                )
+                            );
+                        }
+                    }
+                    let mut right_edge = prediction_patch::<8, 64>(&tile, bx, by);
+                    right_edge[3] ^= 1;
+                    assert_eq!(
+                        uv_frontier_preserved(
+                            &tile,
+                            &right_edge,
+                            &coefficients,
+                            &coefficients,
+                            bx,
+                            by,
+                            has_right,
+                            has_below,
+                            false,
+                            false
+                        ),
+                        !(bx == 1 && has_right)
+                    );
+                    let mut bottom_edge = prediction_patch::<8, 64>(&tile, bx, by);
+                    bottom_edge[12] ^= 1;
+                    assert_eq!(
+                        uv_frontier_preserved(
+                            &tile,
+                            &bottom_edge,
+                            &coefficients,
+                            &coefficients,
+                            bx,
+                            by,
+                            has_right,
+                            has_below,
+                            false,
+                            false
+                        ),
+                        !(by == 1 && has_below)
+                    );
+                    let mut corner_edge = prediction_patch::<8, 64>(&tile, bx, by);
+                    corner_edge[15] ^= 1;
+                    assert_eq!(
+                        uv_frontier_preserved(
+                            &tile,
+                            &corner_edge,
+                            &coefficients,
+                            &coefficients,
+                            bx,
+                            by,
+                            has_right,
+                            has_below,
+                            false,
+                            false
+                        ),
+                        !((bx == 1 && has_right) || (by == 1 && has_below))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn uv_frontier_matches_exported_contexts_and_rejects_skip_transitions() {
+        let tile = [255u8; 64];
+        let predictor = [255u8; 16];
+        let steps = Steps { dc: 1, ac: 1 };
+        for coefficient_index in [0, residual::SCAN[15]] {
+            let mut baseline_coefficients = [0i16; 16];
+            baseline_coefficients[coefficient_index] = 1;
+            let trial_coefficients = [0i16; 16];
+            let baseline_patch = reconstructed_patch(&baseline_coefficients, &predictor, steps);
+            let trial_patch = reconstructed_patch(&trial_coefficients, &predictor, steps);
+            assert_eq!(
+                baseline_patch, trial_patch,
+                "coefficient={coefficient_index}"
+            );
+            for plane in 0..2 {
+                for by in 0..2 {
+                    for bx in 0..2 {
+                        let index = by * 2 + bx;
+                        let mut baseline = Macroblock {
+                            i16: true,
+                            ..Macroblock::default()
+                        };
+                        baseline.y2[0] = 1;
+                        if plane == 0 {
+                            baseline.u[index] = baseline_coefficients;
+                        } else {
+                            baseline.v[index] = baseline_coefficients;
+                        }
+                        let mut trial = Macroblock {
+                            i16: true,
+                            ..Macroblock::default()
+                        };
+                        trial.y2[0] = 1;
+                        if plane == 0 {
+                            trial.u[index] = trial_coefficients;
+                        } else {
+                            trial.v[index] = trial_coefficients;
+                        }
+                        for (has_right, has_below) in
+                            [(true, true), (true, false), (false, true), (false, false)]
+                        {
+                            let permitted = uv_frontier_preserved(
+                                &tile,
+                                &trial_patch,
+                                &baseline_coefficients,
+                                &trial_coefficients,
+                                bx,
+                                by,
+                                has_right,
+                                has_below,
+                                baseline.skip(),
+                                trial.skip(),
+                            );
+                            let mut before = CoeffContexts::new(2);
+                            let mut after = before.clone();
+                            before
+                                .encode_coefficients(&mut RateCounter::default(), &baseline, 0)
+                                .unwrap();
+                            after
+                                .encode_coefficients(&mut RateCounter::default(), &trial, 0)
+                                .unwrap();
+                            let same_export = if plane == 0 {
+                                (!has_right || before.left_u == after.left_u)
+                                    && (!has_below || before.u[..2] == after.u[..2])
+                            } else {
+                                (!has_right || before.left_v == after.left_v)
+                                    && (!has_below || before.v[..2] == after.v[..2])
+                            };
+                            assert_eq!(
+                            permitted, same_export,
+                            "plane={plane} patch=({bx},{by}) right={has_right} below={has_below}"
+                        );
+                        }
+                    }
+                }
+            }
+        }
+        let baseline = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        let mut trial = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        trial.u[3][0] = 1;
+        assert!(baseline.skip());
+        assert!(!trial.skip());
+        assert!(!uv_frontier_preserved(
+            &tile,
+            &[255; 16],
+            &[0; 16],
+            &trial.u[3],
+            1,
+            1,
+            false,
+            false,
+            baseline.skip(),
+            trial.skip()
+        ));
+        let mut before = CoeffContexts::new(1);
+        before.u[0] = true;
+        before.left_u[0] = true;
+        let mut after = before.clone();
+        before
+            .encode_coefficients(&mut RateCounter::default(), &baseline, 0)
+            .unwrap();
+        after
+            .encode_coefficients(&mut RateCounter::default(), &trial, 0)
+            .unwrap();
+        assert_eq!(before.u, [false, false]);
+        assert_eq!(before.left_u, [false, false]);
+        assert_eq!(after.u, [false, true]);
+        assert_eq!(after.left_u, [false, true]);
+    }
+
+    fn frontier_rgb_input(width: usize, height: usize) -> Vec<u8> {
+        (0..height)
+            .flat_map(|y| {
+                (0..width).flat_map(move |x| {
+                    let gray = 48 + (x * 9 + y * 13 + (x * y % 7) * 3) % 160;
+                    [
+                        (gray + (x * 5 + y * 3) % 17) as u8,
+                        gray as u8,
+                        (gray - (x * 3 + y * 7) % 13) as u8,
+                        255,
+                    ]
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn guarded_uv_refinement_preserves_later_pre_refinement_choices() {
+        // 33 visible pixels make the third padded macroblock a real raster
+        // consumer even though most of its samples lie beyond the image.
+        let width = 33;
+        let height = 33;
+        let input = frontier_rgb_input(width, height);
+        let mut accepted_before_final = 0;
+        for quality in [60, 75, 85] {
+            let mut request = engine_request(width, height, 0, &input, width * 4);
+            request.quality = quality;
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut baseline = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            let mut guarded = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            for engine in [&mut baseline, &mut guarded] {
+                while engine.stage != Stage::Analyze {
+                    engine.step().unwrap();
+                }
+                assert!(!engine.high_chroma_loss);
+                assert_eq!(engine.plan.macroblock_count, 9);
+            }
+            let padded_w = plan.padded_width as usize;
+            let uv_w = padded_w / 2;
+            for index in 0..9 {
+                let mx = index % 3;
+                let my = index / 3;
+                if mx == 0 {
+                    baseline.contexts.row();
+                    baseline.left_modes.fill(0);
+                    guarded.contexts.row();
+                    guarded.left_modes.fill(0);
+                }
+                for (before, after) in [
+                    (&baseline.reconstructed_u, &guarded.reconstructed_u),
+                    (&baseline.reconstructed_v, &guarded.reconstructed_v),
+                ] {
+                    assert_eq!(
+                        edge::<8>(before, uv_w, mx * 8, my * 8),
+                        edge::<8>(after, uv_w, mx * 8, my * 8),
+                        "quality={quality} block={index}"
+                    );
+                }
+                assert_eq!(baseline.contexts, guarded.contexts);
+                assert_eq!(baseline.above_modes, guarded.above_modes);
+                assert_eq!(baseline.left_modes, guarded.left_modes);
+                assert_eq!(baseline.header_budget, guarded.header_budget);
+
+                let segment_id = baseline.blocks[index].segment_id;
+                assert_eq!(segment_id, guarded.blocks[index].segment_id);
+                let qindex = baseline.segments.qindex_for(segment_id);
+                let y_steps = ac_quant::steps(qindex as u8, baseline.deltas, Plane::Y1);
+                let uv_steps = ac_quant::steps(qindex as u8, baseline.deltas, Plane::UV);
+                let y2_steps = ac_quant::steps(qindex as u8, baseline.deltas, Plane::Y2);
+                let lambda = crate::presets::lambda_for_quality(qindex, quality);
+
+                // Probe the guarded path with refinement disabled before its
+                // real ABI2 step. The probe has isolated reconstruction,
+                // coefficient contexts, modes and header budget.
+                let mut probe_y = guarded.reconstructed_y.clone();
+                let mut probe_u = guarded.reconstructed_u.clone();
+                let mut probe_v = guarded.reconstructed_v.clone();
+                let mut probe_contexts = guarded.contexts.clone();
+                let mut probe_above = guarded.above_modes.clone();
+                let mut probe_left = guarded.left_modes;
+                let mut probe_budget = guarded.header_budget.clone();
+                let probe = analyze_one(
+                    &guarded.source_y,
+                    &guarded.source_u,
+                    &guarded.source_v,
+                    None,
+                    false,
+                    &mut probe_y,
+                    &mut probe_u,
+                    &mut probe_v,
+                    padded_w,
+                    uv_w,
+                    mx,
+                    my,
+                    y_steps,
+                    uv_steps,
+                    y2_steps,
+                    &mut probe_contexts,
+                    &mut probe_above,
+                    &mut probe_left,
+                    lambda,
+                    quality,
+                    width,
+                    height,
+                    0,
+                    segment_id,
+                    guarded.segments,
+                    &mut probe_budget,
+                )
+                .unwrap();
+                let selected = analyze_one(
+                    &baseline.source_y,
+                    &baseline.source_u,
+                    &baseline.source_v,
+                    None,
+                    false,
+                    &mut baseline.reconstructed_y,
+                    &mut baseline.reconstructed_u,
+                    &mut baseline.reconstructed_v,
+                    padded_w,
+                    uv_w,
+                    mx,
+                    my,
+                    y_steps,
+                    uv_steps,
+                    y2_steps,
+                    &mut baseline.contexts,
+                    &mut baseline.above_modes,
+                    &mut baseline.left_modes,
+                    lambda,
+                    quality,
+                    width,
+                    height,
+                    0,
+                    segment_id,
+                    baseline.segments,
+                    &mut baseline.header_budget,
+                )
+                .unwrap();
+                assert_eq!(
+                    probe.block, selected.block,
+                    "quality={quality} block={index}"
+                );
+                assert_eq!(probe_contexts, baseline.contexts);
+                assert_eq!(probe_above, baseline.above_modes);
+                assert_eq!(probe_left, baseline.left_modes);
+                assert_eq!(probe_budget, baseline.header_budget);
+                assert_eq!(probe_y, baseline.reconstructed_y);
+                for (probe_plane, baseline_plane) in [
+                    (&probe_u, &baseline.reconstructed_u),
+                    (&probe_v, &baseline.reconstructed_v),
+                ] {
+                    for row in 0..8 {
+                        let at = (my * 8 + row) * uv_w + mx * 8;
+                        assert_eq!(
+                            &probe_plane[at..at + 8],
+                            &baseline_plane[at..at + 8],
+                            "quality={quality} block={index} row={row}"
+                        );
+                    }
+                }
+                baseline.blocks[index] = selected.block;
+                baseline.cursor += 1;
+
+                guarded.analyze_one_step().unwrap();
+                while guarded.stage == Stage::JointRefine {
+                    guarded.joint_one_step().unwrap();
+                }
+                let actual = &guarded.blocks[index];
+                let expected = &baseline.blocks[index];
+                assert_eq!(actual.y, expected.y);
+                assert_eq!(actual.y2, expected.y2);
+                assert_eq!(actual.i16, expected.i16);
+                assert_eq!(actual.y_mode, expected.y_mode);
+                assert_eq!(actual.b_modes, expected.b_modes);
+                assert_eq!(actual.uv_mode, expected.uv_mode);
+                assert_eq!(actual.skip(), expected.skip());
+                if index + 1 < 9 {
+                    // The ABI2 stage resets coding state immediately after
+                    // its final analysis step for the counting pass.
+                    assert_eq!(guarded.contexts, baseline.contexts);
+                    assert_eq!(guarded.above_modes, baseline.above_modes);
+                    assert_eq!(guarded.left_modes, baseline.left_modes);
+                    assert_eq!(guarded.header_budget, baseline.header_budget);
+                }
+                assert_eq!(guarded.reconstructed_y, baseline.reconstructed_y);
+                let changed_coefficients = actual
+                    .u
+                    .iter()
+                    .zip(&expected.u)
+                    .chain(actual.v.iter().zip(&expected.v))
+                    .flat_map(|(a, b)| a.iter().zip(b))
+                    .filter(|(a, b)| a != b)
+                    .count();
+                assert!(changed_coefficients <= 4);
+                if index + 1 < 9 {
+                    accepted_before_final += changed_coefficients;
+                }
+            }
+            let abi2 = run_engine(guarded);
+            let sync = encode_textured(
+                &input,
+                width as u32,
+                height as u32,
+                (width * 4) as u32,
+                0,
+                quality,
+            )
+            .unwrap();
+            assert_eq!(abi2.output(), sync, "quality={quality} sync/ABI2");
+        }
+        assert!(
+            accepted_before_final > 0,
+            "fixture must exercise a guarded refinement before a later padded macroblock"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_guarded_uv_refinement_on_padded_odd_grid() {
+        let width = 33;
+        let height = 33;
+        let input = frontier_rgb_input(width, height);
+        for quality in [60, 75, 85] {
+            let mut request = engine_request(width, height, 0, &input, width * 4);
+            request.quality = quality;
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            let (y, u, v, padded_w) = engine.reconstruction();
+            let expected = filtered_visible_yuv(
+                y,
+                u,
+                v,
+                padded_w,
+                width,
+                height,
+                &engine.blocks,
+                engine.filter,
+            );
+            assert_decodes(
+                engine.output(),
+                width,
+                height,
+                &expected,
+                "guarded UV refinement on three-by-three padded grid",
+            );
+        }
+    }
+
+    #[test]
+    fn uv_refinement_requires_strict_ssim_gain_and_preserved_frontier() {
+        let source_y = [128u8; 256];
+        let source_uv = [128u8; 64];
+        let reconstructed_y = [0u8; 256];
+        let reconstructed_uv = [0u8; 64];
+        let y_tile = [128u8; 256];
+        let steps = Steps { dc: 8, ac: 8 };
+        let mut coefficients = [0i16; 16];
+        coefficients[0] = 1;
+        let predictor = [128u8; 16];
+        let patch = reconstructed_patch(&coefficients, &predictor, steps);
+        assert_ne!(patch, predictor);
+        let mut uv = UvCandidate {
+            u: [[0; 16]; 4],
+            v: [[0; 16]; 4],
+            u_tile: [128; 64],
+            v_tile: [128; 64],
+            distortion: 0,
+        };
+        uv.u[0] = coefficients;
+        store_patch::<8, 64>(&mut uv.u_tile, 0, 0, &patch);
+        let baseline_uv = uv.clone();
+        let mut block = Macroblock {
+            i16: true,
+            u: uv.u,
+            ..Macroblock::default()
+        };
+        block.y2[0] = 1;
+        let contexts = CoeffContexts::new(1);
+        let above = [0u8; 4];
+        let left = [0u8; 4];
+        let segments = SegmentConfig::nonsegmented(0);
+        let budget = HeaderBudget::new(
+            1,
+            segments,
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .unwrap();
+        let mut target = [0u8; 16 * 16 * 4];
+        let neutral_uv = [128u8; 64];
+        let neutral = display_rgb::Frame {
+            width: 16,
+            height: 16,
+            stride_y: 16,
+            original: display_rgb::Original {
+                pixels: &[],
+                stride: 0,
+                layout: 0,
+            },
+            source_y: &source_y,
+            source_u: &source_uv,
+            source_v: &source_uv,
+            reconstructed_y: &reconstructed_y,
+            reconstructed_u: &reconstructed_uv,
+            reconstructed_v: &reconstructed_uv,
+            tile_y: &y_tile,
+            tile_u: &neutral_uv,
+            tile_v: &neutral_uv,
+            mx: 0,
+            my: 0,
+        };
+        for y in 0..16 {
+            for x in 0..16 {
+                let rgb = neutral.rendered(x, y, None);
+                target[(y * 16 + x) * 4..(y * 16 + x) * 4 + 3].copy_from_slice(&rgb);
+                target[(y * 16 + x) * 4 + 3] = 255;
+            }
+        }
+        let before = selected_cost(
+            &block, 0, &contexts, &above, &left, 0, 1, segments, &budget, &mut None, &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        refine_selected_uv(
+            &mut block,
+            &mut uv,
+            &y_tile,
+            display_rgb::Original {
+                pixels: &target,
+                stride: 64,
+                layout: 0,
+            },
+            &source_y,
+            &source_uv,
+            &source_uv,
+            &reconstructed_y,
+            &reconstructed_uv,
+            &reconstructed_uv,
+            16,
+            16,
+            16,
+            0,
+            0,
+            steps,
+            &contexts,
+            &above,
+            &left,
+            segments,
+            &budget,
+        )
+        .unwrap();
+        let after = selected_cost(
+            &block, 0, &contexts, &above, &left, 0, 1, segments, &budget, &mut None, &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(block.u[0][0], 0);
+        assert_eq!(uv.u_tile, neutral_uv);
+        assert!(after <= before);
+        assert_eq!(reconstructed_uv, [0; 64]);
+
+        let mut higher_coefficients = coefficients;
+        higher_coefficients[0] = 2;
+        let higher_patch = reconstructed_patch(&higher_coefficients, &predictor, steps);
+        let mut higher_tile = baseline_uv.u_tile;
+        store_patch::<8, 64>(&mut higher_tile, 0, 0, &higher_patch);
+        let higher_frame = display_rgb::Frame {
+            tile_u: &higher_tile,
+            ..neutral
+        };
+        let mut higher_target = target;
+        for y in 0..16 {
+            for x in 0..16 {
+                higher_target[(y * 16 + x) * 4..(y * 16 + x) * 4 + 3]
+                    .copy_from_slice(&higher_frame.rendered(x, y, None));
+            }
+        }
+        let mut expensive_block = Macroblock {
+            i16: true,
+            u: baseline_uv.u,
+            ..Macroblock::default()
+        };
+        expensive_block.y2[0] = 1;
+        let mut expensive_uv = baseline_uv.clone();
+        let higher_before = selected_cost(
+            &expensive_block,
+            0,
+            &contexts,
+            &above,
+            &left,
+            0,
+            1,
+            segments,
+            &budget,
+            &mut None,
+            &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        let chosen = refine_selected_uv(
+            &mut expensive_block,
+            &mut expensive_uv,
+            &y_tile,
+            display_rgb::Original {
+                pixels: &higher_target,
+                stride: 64,
+                layout: 0,
+            },
+            &source_y,
+            &source_uv,
+            &source_uv,
+            &reconstructed_y,
+            &reconstructed_uv,
+            &reconstructed_uv,
+            16,
+            16,
+            16,
+            0,
+            0,
+            steps,
+            &contexts,
+            &above,
+            &left,
+            segments,
+            &budget,
+        )
+        .unwrap();
+        let baseline_frame = display_rgb::Frame {
+            original: display_rgb::Original {
+                pixels: &higher_target,
+                stride: 64,
+                layout: 0,
+            },
+            tile_u: &baseline_uv.u_tile,
+            tile_v: &baseline_uv.v_tile,
+            ..neutral
+        };
+        let combined_gain = display_rgb::LocalCache::new(&baseline_frame).score_tiles(
+            &baseline_frame,
+            &expensive_uv.u_tile,
+            &expensive_uv.v_tile,
+        );
+        assert!((chosen.unwrap().1 - combined_gain).abs() < 1e-9);
+        let higher_after = selected_cost(
+            &expensive_block,
+            0,
+            &contexts,
+            &above,
+            &left,
+            0,
+            1,
+            segments,
+            &budget,
+            &mut None,
+            &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(chosen.unwrap().0.new, 2);
+        assert!(higher_after > higher_before);
+
+        let mut tie_target = target;
+        let baseline = display_rgb::Frame {
+            tile_u: &baseline_uv.u_tile,
+            ..neutral
+        };
+        for y in 0..16 {
+            for x in 0..16 {
+                tie_target[(y * 16 + x) * 4..(y * 16 + x) * 4 + 3]
+                    .copy_from_slice(&baseline.rendered(x, y, None));
+            }
+        }
+        let mut tie_block = Macroblock {
+            i16: true,
+            u: baseline_uv.u,
+            ..Macroblock::default()
+        };
+        tie_block.y2[0] = 1;
+        let mut tie_uv = baseline_uv.clone();
+        refine_selected_uv(
+            &mut tie_block,
+            &mut tie_uv,
+            &y_tile,
+            display_rgb::Original {
+                pixels: &tie_target,
+                stride: 64,
+                layout: 0,
+            },
+            &source_y,
+            &source_uv,
+            &source_uv,
+            &reconstructed_y,
+            &reconstructed_uv,
+            &reconstructed_uv,
+            16,
+            16,
+            16,
+            0,
+            0,
+            steps,
+            &contexts,
+            &above,
+            &left,
+            segments,
+            &budget,
+        )
+        .unwrap();
+        assert_eq!(tie_block.u[0][0], 1);
+
+        let mut zero_block = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        let mut zero_uv = UvCandidate {
+            u: [[0; 16]; 4],
+            v: [[0; 16]; 4],
+            u_tile: neutral_uv,
+            v_tile: neutral_uv,
+            distortion: 0,
+        };
+        let zero_rate = selected_cost(
+            &zero_block,
+            0,
+            &contexts,
+            &above,
+            &left,
+            0,
+            1,
+            segments,
+            &budget,
+            &mut None,
+            &mut None,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(zero_rate < before);
+        let desired = display_rgb::Frame {
+            tile_u: &zero_uv.u_tile,
+            original: display_rgb::Original {
+                pixels: &tie_target,
+                stride: 64,
+                layout: 0,
+            },
+            ..baseline
+        };
+        let gain = display_rgb::LocalCache::new(&desired).score(
+            &desired,
+            display_rgb::Change {
+                plane: 0,
+                bx: 0,
+                by: 0,
+                patch: &patch,
+            },
+            desired.affected(0, 0),
+        );
+        assert!(gain > 0.0);
+        refine_selected_uv(
+            &mut zero_block,
+            &mut zero_uv,
+            &y_tile,
+            display_rgb::Original {
+                pixels: &tie_target,
+                stride: 64,
+                layout: 0,
+            },
+            &source_y,
+            &source_uv,
+            &source_uv,
+            &reconstructed_y,
+            &reconstructed_uv,
+            &reconstructed_uv,
+            16,
+            16,
+            16,
+            0,
+            0,
+            steps,
+            &contexts,
+            &above,
+            &left,
+            segments,
+            &budget,
+        )
+        .unwrap();
+        assert_eq!(zero_block.u[0][0], 0);
+        assert_eq!(zero_uv.u_tile, neutral_uv);
+    }
+
+    #[test]
+    fn preview_comparison_uses_completed_rgb_error_and_checked_rate() {
+        assert!(!reduced_profile_wins(7, 7));
+        assert!(!reduced_profile_wins(7, 8));
+        assert!(reduced_profile_wins(7, 6));
+
+        let mut comparison = ProfileComparison {
+            visible_error: 9,
+            ..ProfileComparison::default()
+        };
+        comparison.add_rate(10, 32, 60).unwrap();
+        assert_eq!(comparison.score(7, 32, 60).unwrap(), 9 * 256 + 17 * 480);
+        comparison.visible_error = u64::MAX;
+        assert!(matches!(
+            comparison.score(0, 32, 60),
+            Err(EncodeError::OutputLimit)
+        ));
+        comparison.visible_error = 0;
+        assert!(matches!(
+            comparison.add_rate(u64::MAX, 32, 60),
+            Err(EncodeError::OutputLimit)
+        ));
+    }
+
+    #[test]
+    fn uv_rdo_drops_only_a_profitable_last_unit_ac() {
+        let predictor = [128u8; 16];
+        let steps = Steps { dc: 8, ac: 20 };
+        for sign in [-1, 1] {
+            let mut coefficients = [0i16; 16];
+            coefficients[0] = -2;
+            coefficients[residual::SCAN[3]] = 2;
+            coefficients[residual::SCAN[15]] = sign;
+            let baseline_patch = reconstructed_patch(&coefficients, &predictor, steps);
+            let mut dropped = coefficients;
+            dropped[residual::SCAN[15]] = 0;
+            let ideal = reconstructed_patch(&dropped, &predictor, steps);
+            assert_ne!(baseline_patch, ideal);
+            for context in 0..=2 {
+                let mut before = RateCounter::default();
+                let mut after = RateCounter::default();
+                residual::encode_block(&mut before, &coefficients, 2, context).unwrap();
+                residual::encode_block(&mut after, &dropped, 2, context).unwrap();
+                assert!(after.cost < before.cost);
+                assert_eq!(
+                    optimize_uv_block(
+                        &ideal,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        steps,
+                        context,
+                        1,
+                        (coefficients, baseline_patch),
+                    ),
+                    (dropped, ideal)
+                );
+                assert_eq!(
+                    optimize_uv_block(
+                        &baseline_patch,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        steps,
+                        context,
+                        0,
+                        (coefficients, baseline_patch),
+                    ),
+                    (coefficients, baseline_patch)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn uv_rdo_leaves_empty_dc_only_and_nonunit_ac_blocks_intact() {
+        let predictor = [128u8; 16];
+        let steps = Steps { dc: 8, ac: 20 };
+        for coefficients in [
+            [0i16; 16],
+            std::array::from_fn(|i| if i == 0 { -2 } else { 0 }),
+            std::array::from_fn(|i| if i == residual::SCAN[15] { -2 } else { 0 }),
+        ] {
+            let patch = reconstructed_patch(&coefficients, &predictor, steps);
+            assert_eq!(
+                optimize_uv_block(
+                    &patch,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    0,
+                    100,
+                    (coefficients, patch),
+                ),
+                (coefficients, patch)
+            );
+        }
+    }
+
+    #[test]
+    fn flat_uv_dc_zero_uses_pixel_sse_and_strict_context_rate() {
+        let predictor = [128u8; 16];
+        let steps = Steps { dc: 13, ac: 20 };
+        for sign in [-1, 1] {
+            let mut coefficients = [0i16; 16];
+            coefficients[0] = sign;
+            let baseline_patch = reconstructed_patch(&coefficients, &predictor, steps);
+            let source = [u8::try_from(128 + sign).unwrap(); 16];
+            assert_eq!(patch_error(&source, 4, 0, 0, &baseline_patch), 16);
+            assert_eq!(patch_error(&source, 4, 0, 0, &predictor), 16);
+            for context in 0..=2 {
+                let mut before = RateCounter::default();
+                let mut after = RateCounter::default();
+                residual::encode_block(&mut before, &coefficients, 2, context).unwrap();
+                residual::encode_block(&mut after, &[0; 16], 2, context).unwrap();
+                assert!(after.cost < before.cost);
+                assert_eq!(
+                    optimize_uv_dc_zero(
+                        &source,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        context,
+                        (coefficients, baseline_patch),
+                    ),
+                    ([0; 16], predictor)
+                );
+            }
+            assert_eq!(
+                optimize_uv_dc_zero(
+                    &baseline_patch,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    0,
+                    (coefficients, baseline_patch),
+                ),
+                (coefficients, baseline_patch)
+            );
+        }
+        for (predictor, dc) in [([0u8; 16], -1), ([255u8; 16], 1)] {
+            let mut coefficients = [0i16; 16];
+            coefficients[0] = dc;
+            let patch = reconstructed_patch(&coefficients, &predictor, steps);
+            assert_eq!(patch, predictor);
+            assert_eq!(
+                optimize_uv_dc_zero(&predictor, 4, 0, 0, &predictor, 0, (coefficients, patch)),
+                ([0; 16], predictor)
+            );
+        }
+        for coefficients in [
+            [0i16; 16],
+            std::array::from_fn(|i| if i == 0 { 2 } else { 0 }),
+            std::array::from_fn(|i| if i <= 1 { 1 } else { 0 }),
+        ] {
+            let patch = reconstructed_patch(&coefficients, &predictor, steps);
+            assert_eq!(
+                optimize_uv_dc_zero(&predictor, 4, 0, 0, &predictor, 0, (coefficients, patch)),
+                (coefficients, patch)
+            );
+        }
+    }
+
+    #[test]
+    fn flat_uv_dc_zero_keeps_mode_trials_and_hidden_patches_isolated() {
+        let source = [129u8; 64];
+        let reconstructed = [0u8; 64];
+        let mut contexts = CoeffContexts::new(1);
+        contexts.u = vec![true, false];
+        contexts.v = vec![false, true];
+        contexts.left_u = [false, true];
+        contexts.left_v = [true, false];
+        let before = contexts.clone();
+        let steps = ac_quant::steps(19, crate::presets::deltas(75), Plane::UV);
+        let baseline = make_uv(
+            &source,
+            &source,
+            &reconstructed,
+            &reconstructed,
+            8,
+            0,
+            0,
+            0,
+            steps,
+            None,
+        );
+        assert!(baseline.u.iter().all(|coeff| coeff[0] == 1));
+        assert!(baseline.v.iter().all(|coeff| coeff[0] == 1));
+        let trial = |visible_width, visible_height| {
+            make_uv(
+                &source,
+                &source,
+                &reconstructed,
+                &reconstructed,
+                8,
+                0,
+                0,
+                0,
+                steps,
+                Some(UvRdo {
+                    contexts: &contexts,
+                    mx: 0,
+                    lambda: 1,
+                    visible_width,
+                    visible_height,
+                    policy: UvRatePolicy::FlatDcZero,
+                }),
+            )
+        };
+        let visible = trial(8, 8);
+        assert!(visible.u.iter().all(|coeff| *coeff == [0; 16]));
+        assert!(visible.v.iter().all(|coeff| *coeff == [0; 16]));
+        assert_eq!(visible.u_tile, [128; 64]);
+        assert_eq!(visible.v_tile, [128; 64]);
+        let partial = trial(1, 1);
+        assert_eq!(partial.u[0], [0; 16]);
+        assert_eq!(partial.v[0], [0; 16]);
+        assert_eq!(partial.u[1..], baseline.u[1..]);
+        assert_eq!(partial.v[1..], baseline.v[1..]);
+        assert_eq!(contexts, before);
+    }
+
+    #[test]
+    fn higher_preset_frames_remain_deterministic_and_match_abi2() {
+        let pixels: Vec<_> = (0..16 * 16 * 4)
+            .map(|i| {
+                if i % 4 == 3 {
+                    255
+                } else {
+                    ((i / 4 * 37 + i / 4 / 16 * 19 + i % 4 * 47) & 255) as u8
+                }
+            })
+            .collect();
+        // The pre-refinement c901c052 payload fingerprints are retained in
+        // source history; coefficient refinement intentionally changes them.
+        for quality in [75, 85] {
+            let bytes = encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap();
+            assert_eq!(
+                encode_textured(&pixels, 16, 16, 64, 0, quality).unwrap(),
+                bytes
+            );
+            let request = Request {
+                quality,
+                ..engine_request(16, 16, 0, &pixels, 64)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, pixels.clone(), plan).unwrap());
+            assert_eq!(engine.output(), bytes);
+        }
+    }
+
+    #[test]
+    fn partial_uv_rate_allowance_preserves_tiny_sync_and_abi2_frames() {
+        let input: Vec<u8> = [
+            [53u8, 178, 89],
+            [124, 201, 150],
+            [72, 215, 106],
+            [143, 238, 167],
+            [91, 252, 123],
+            [162, 19, 184],
+            [110, 33, 140],
+            [181, 56, 201],
+            [129, 70, 157],
+            [200, 93, 218],
+        ]
+        .into_iter()
+        .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
+        .collect();
+        let contexts = CoeffContexts::new(1);
+        let rdo = UvRdo {
+            contexts: &contexts,
+            mx: 0,
+            lambda: 480,
+            visible_width: 1,
+            visible_height: 3,
+            policy: UvRatePolicy::TexturedAcTail,
+        };
+        assert_eq!(rdo.block_lambda(0, 0), Some(1));
+        assert_eq!(rdo.block_lambda(0, 4), None);
+        assert_eq!(rdo.block_lambda(4, 0), None);
+        let sync = encode_textured(&input, 2, 5, 8, 0, 60).unwrap();
+        // The retained c901c052 payload was 86 bytes with FNV-1a
+        // 0x2ba7_7544_8b00_1ee3 before this refinement.
+        assert_eq!(encode_textured(&input, 2, 5, 8, 0, 60).unwrap(), sync);
+        for frame in [1, 2] {
+            let request = Request {
+                quality: 60,
+                frame,
+                ..engine_request(2, 5, 0, &input, 8)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            assert_eq!(engine.output(), sync);
+        }
+    }
+
+    #[test]
+    fn q60_uv_mode_trials_keep_neighbor_contexts_isolated() {
+        let mut contexts = CoeffContexts::new(1);
+        contexts.u = vec![true, false];
+        contexts.v = vec![false, true];
+        contexts.left_u = [false, true];
+        contexts.left_v = [true, false];
+        let before = contexts.clone();
+        let reconstructed = [0u8; 64];
+        let steps = ac_quant::steps(34, crate::presets::deltas(60), Plane::UV);
+        let lambda = crate::presets::lambda_for_quality(34, 60);
+        let mut changed = false;
+        for seed in 0..128 {
+            let source: [u8; 64] = std::array::from_fn(|i| {
+                (96 + (i * 37 + i / 8 * 11 + seed * 17 + i * seed * 3) % 65) as u8
+            });
+            for mode in 0..4 {
+                let baseline = make_uv(
+                    &source,
+                    &source,
+                    &reconstructed,
+                    &reconstructed,
+                    8,
+                    0,
+                    0,
+                    mode,
+                    steps,
+                    None,
+                );
+                let trial = make_uv(
+                    &source,
+                    &source,
+                    &reconstructed,
+                    &reconstructed,
+                    8,
+                    0,
+                    0,
+                    mode,
+                    steps,
+                    Some(UvRdo {
+                        contexts: &contexts,
+                        mx: 0,
+                        lambda,
+                        visible_width: 8,
+                        visible_height: 8,
+                        policy: UvRatePolicy::TexturedAcTail,
+                    }),
+                );
+                assert_eq!(contexts, before);
+                for (original, selected) in baseline.u.iter().zip(&trial.u) {
+                    if original != selected {
+                        changed = true;
+                        let position = (1..16)
+                            .rev()
+                            .find(|&position| original[residual::SCAN[position]] != 0)
+                            .unwrap();
+                        let mut dropped = *original;
+                        assert_eq!(dropped[residual::SCAN[position]].unsigned_abs(), 1);
+                        dropped[residual::SCAN[position]] = 0;
+                        assert_eq!(*selected, dropped);
+                    }
+                }
+            }
+            if changed {
+                break;
+            }
+        }
+        assert!(changed, "deterministic UV trial must exercise one AC drop");
+    }
 
     #[allow(clippy::too_many_arguments)]
     fn filtered_visible_yuv(
@@ -2560,6 +7450,207 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn factored_rate_matrix_matches_reference_scores_and_decisions() {
+        fn candidate(li: usize, ui: usize, segment_id: u8) -> Macroblock {
+            let mut block = Macroblock {
+                i16: li != 4,
+                y_mode: (li % 4) as u8,
+                b_modes: std::array::from_fn(|i| ((i * 3 + li) % 10) as u8),
+                uv_mode: ui as u8,
+                segment_id,
+                ..Macroblock::default()
+            };
+            match li {
+                1 => {
+                    block.y2[0] = -5;
+                    block.y2[15] = 67;
+                }
+                2 => {
+                    block.y[0][0] = 1;
+                    block.y[9][7] = -2114;
+                }
+                3 => {
+                    block.y2[4] = 19;
+                    block.y[3][8] = -35;
+                    block.y[15][15] = 2;
+                }
+                4 => {
+                    block.y[0][0] = 7;
+                    block.y[7][3] = -11;
+                    block.y[15][15] = 2114;
+                }
+                _ => {}
+            }
+            match ui {
+                1 => {
+                    block.u[0][0] = 1;
+                    block.u[3][15] = -2;
+                }
+                2 => {
+                    block.v[1][9] = 2114;
+                    block.v[2][4] = -67;
+                }
+                3 => {
+                    block.u[2][5] = 35;
+                    block.v[3][15] = -19;
+                }
+                _ => {}
+            }
+            block
+        }
+
+        for policy in [0, 1, 2] {
+            let luma_indices: &[usize] = match policy {
+                0 => &[0, 1, 2, 3, 4],
+                1 => &[0, 1, 2, 3],
+                _ => &[4],
+            };
+            for pattern in 0..4 {
+                for segmented in [false, true] {
+                    for (slack, lambda) in [(9, 0), (9, 225), (200, 225)] {
+                        let segments = if segmented {
+                            SegmentConfig::from_counts(75, [1; 4], 4, false)
+                        } else {
+                            SegmentConfig::nonsegmented(23)
+                        };
+                        let segment_id = if segmented { pattern as u8 } else { 0 };
+                        let mut contexts = CoeffContexts::new(2);
+                        let flag = |i: usize| match pattern {
+                            0 => false,
+                            1 => true,
+                            2 => i.is_multiple_of(2),
+                            _ => i.is_multiple_of(3),
+                        };
+                        contexts.y2[0] = flag(0);
+                        for i in 0..4 {
+                            contexts.y[i] = flag(i + 1);
+                        }
+                        for i in 0..2 {
+                            contexts.u[i] = flag(i + 5);
+                            contexts.v[i] = flag(i + 7);
+                        }
+                        contexts.left_y2 = flag(9);
+                        contexts.left_y = std::array::from_fn(|i| flag(i + 10));
+                        contexts.left_u = std::array::from_fn(|i| flag(i + 14));
+                        contexts.left_v = std::array::from_fn(|i| flag(i + 16));
+                        let before = contexts.clone();
+                        let above = [pattern as u8; 8];
+                        let left = [pattern as u8; 4];
+                        let mut budget = HeaderBudget::new(
+                            2,
+                            segments,
+                            Deltas::default(),
+                            FilterConfig::DISABLED,
+                            MAX_FIRST_PARTITION_BYTES as usize,
+                        )
+                        .unwrap();
+                        budget.limit =
+                            budget.fixed_symbols_and_tail + MAX_I16_HEADER_SYMBOLS + slack;
+                        let mut luma_costs = [None; 5];
+                        let mut uv_costs = [None; 4];
+                        let mut factored_best = None;
+                        let mut reference_best = None;
+                        for (li, &source_li) in luma_indices.iter().enumerate() {
+                            for (ui, uv_cost) in uv_costs.iter_mut().enumerate() {
+                                let block = candidate(source_li, ui, segment_id);
+                                let distortion = if lambda == 0 {
+                                    0
+                                } else {
+                                    ((li * 7 + ui * 11 + pattern) % 13) as u64
+                                };
+                                let reference = selected_cost_reference(
+                                    &block, 0, &contexts, &above, &left, distortion, lambda,
+                                    segments, &budget,
+                                );
+                                let factored = selected_cost(
+                                    &block,
+                                    0,
+                                    &contexts,
+                                    &above,
+                                    &left,
+                                    distortion,
+                                    lambda,
+                                    segments,
+                                    &budget,
+                                    &mut luma_costs[li],
+                                    uv_cost,
+                                );
+                                assert_eq!(factored, reference, "policy={policy} pattern={pattern} segmented={segmented} slack={slack} li={li} ui={ui}");
+                                if let Some(score) = reference.unwrap() {
+                                    if reference_best
+                                        .is_none_or(|best: (u64, usize, usize)| score < best.0)
+                                    {
+                                        reference_best = Some((score, source_li, ui));
+                                    }
+                                }
+                                if let Some(score) = factored.unwrap() {
+                                    if factored_best
+                                        .is_none_or(|best: (u64, usize, usize)| score < best.0)
+                                    {
+                                        factored_best = Some((score, source_li, ui));
+                                    }
+                                }
+                            }
+                        }
+                        assert_eq!(factored_best, reference_best);
+                        assert_eq!(contexts, before, "trials changed committed contexts");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn factored_rate_preserves_budget_rejection_before_invalid_tokens() {
+        let segments = SegmentConfig::nonsegmented(23);
+        let mut block = Macroblock {
+            b_modes: [9; 16],
+            ..Macroblock::default()
+        };
+        block.v[0][0] = 2115;
+        let contexts = CoeffContexts::new(1);
+        let above = [0; 4];
+        let left = [0; 4];
+        let mut budget = HeaderBudget::new(
+            2,
+            segments,
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .unwrap();
+        budget.limit = budget.fixed_symbols_and_tail + 2 * MAX_I16_HEADER_SYMBOLS;
+        let mut luma_cost = None;
+        let mut uv_cost = None;
+        let evaluate =
+            |budget: &HeaderBudget, luma_cost: &mut Option<u64>, uv_cost: &mut Option<u64>| {
+                (
+                    selected_cost_reference(
+                        &block, 0, &contexts, &above, &left, 0, 225, segments, budget,
+                    ),
+                    selected_cost(
+                        &block, 0, &contexts, &above, &left, 0, 225, segments, budget, luma_cost,
+                        uv_cost,
+                    ),
+                )
+            };
+        assert_eq!(
+            evaluate(&budget, &mut luma_cost, &mut uv_cost),
+            (Ok(None), Ok(None))
+        );
+        assert_eq!((luma_cost, uv_cost), (None, None));
+        budget.limit = MAX_FIRST_PARTITION_BYTES as usize;
+        assert_eq!(
+            evaluate(&budget, &mut luma_cost, &mut uv_cost),
+            (
+                Err(EncodeError::InvalidInput),
+                Err(EncodeError::InvalidInput)
+            )
+        );
+        assert_eq!(contexts, CoeffContexts::new(1));
     }
 
     #[test]
@@ -2773,6 +7864,8 @@ mod tests {
                     source_y,
                     source_uv,
                     source_uv,
+                    None,
+                    false,
                     &mut reconstructed_y,
                     &mut reconstructed_u,
                     &mut reconstructed_v,
@@ -2787,13 +7880,16 @@ mod tests {
                     &mut above,
                     &mut left,
                     crate::presets::lambda_for_q(23),
+                    75,
+                    32,
+                    16,
                     if mx == 0 { 2 } else { 0 },
                     0,
                     segments,
                     &mut budget,
                 )
                 .unwrap();
-                blocks.push(block);
+                blocks.push(block.block);
                 if mx == 0 {
                     first_symbols = budget.committed_symbols;
                 }
@@ -2931,7 +8027,9 @@ mod tests {
                 let rgb = if x < 16 {
                     [80 + x as u8 + y as u8; 3]
                 } else if x < 32 {
-                    [40, 80, 120]
+                    // One-level variation exercises flat, rather than constant/fine, tiles.
+                    let step = u8::from(x >= 24);
+                    [40 + step, 80 + step, 120 + step]
                 } else if x < 48 {
                     let ramp = (x - 32 + y) as u8;
                     [40 + ramp, 80 + ramp, 120 + ramp]
@@ -2953,10 +8051,12 @@ mod tests {
         let first = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
         assert!(first.segments.enabled);
         assert_eq!(first.class_counts, [1, 1, 1, 1]);
+        assert!(!first.medium_textured_luma);
+        assert_eq!(first.deltas, crate::presets::deltas(75));
         assert_eq!(
             first.segments.qindex,
             [
-                crate::presets::SMOOTH_QINDEX,
+                crate::presets::smooth_qindex(request.quality),
                 crate::presets::chromatic_flat_qindex(request.quality),
                 crate::presets::chromatic_ramp_qindex(request.quality),
                 crate::presets::textured_qindex(request.quality, false)
@@ -2988,7 +8088,7 @@ mod tests {
         assert!(!after_mixed.segments.enabled);
         assert_eq!(
             after_mixed.segments.base_qindex,
-            crate::presets::SMOOTH_QINDEX
+            crate::presets::smooth_qindex(request.quality)
         );
         assert_eq!(after_mixed.output(), fresh.output());
         assert_eq!(
@@ -3002,11 +8102,11 @@ mod tests {
         let chromatic_engine = run_engine(
             FrameEncoder::new(chromatic_request, chromatic.clone(), chromatic_plan).unwrap(),
         );
-        assert_eq!(chromatic_engine.class_counts, [0, 1, 0, 0]);
+        assert_eq!(chromatic_engine.class_counts, [1, 0, 0, 0]);
         assert!(!chromatic_engine.segments.enabled);
         assert_eq!(
             chromatic_engine.segments.base_qindex,
-            crate::presets::chromatic_flat_qindex(chromatic_request.quality)
+            crate::presets::smooth_qindex(request.quality)
         );
         assert_eq!(
             chromatic_engine.output(),
@@ -3058,7 +8158,7 @@ mod tests {
             0,
             &block,
             segments,
-            128,
+            Some(128),
         )
         .unwrap();
         assert_eq!(&header.0[..3], &[(128, true), (128, true), (128, true)]);
@@ -3073,7 +8173,7 @@ mod tests {
                 Ok(())
             }
         }
-        for (quality, expected_dc, expected_ac) in [(60, 0, 0), (75, -9, -9), (85, -4, -4)] {
+        for (quality, expected_dc, expected_ac) in [(60, -4, -11), (75, -9, -9), (85, -4, -4)] {
             let deltas = crate::presets::deltas(quality);
             assert_eq!(deltas.uv_dc, expected_dc);
             assert_eq!(deltas.uv_ac, expected_ac);
@@ -3195,6 +8295,9 @@ mod tests {
         assert_eq!(all_skip.frozen_probability(), 1);
         assert_eq!(none_skip.frozen_probability(), 255);
         assert_eq!(mixed.frozen_probability(), 240);
+        assert_eq!(all_skip.frozen_syntax(), Some(1));
+        assert_eq!(none_skip.frozen_syntax(), None);
+        assert_eq!(mixed.frozen_syntax(), Some(240));
         let mut balanced = SkipStats::default();
         balanced.observe(true).unwrap();
         balanced.observe(false).unwrap();
@@ -3207,9 +8310,50 @@ mod tests {
                 Ok(())
             }
         }
+        let mut disabled = Operations(Vec::new());
+        write_header_suffix(&mut disabled, None).unwrap();
+        assert_eq!(disabled.0, [(128, false)]);
+        let mut nonzero = Macroblock::default();
+        nonzero.y[0][0] = 1;
+        let mut disabled_header = Operations(Vec::new());
+        write_macroblock_header(
+            &mut disabled_header,
+            &nonzero,
+            0,
+            &[0; 4],
+            &[0; 4],
+            SegmentConfig::nonsegmented(22),
+            None,
+        )
+        .unwrap();
+        let mut enabled_header = Operations(Vec::new());
+        write_macroblock_header(
+            &mut enabled_header,
+            &nonzero,
+            0,
+            &[0; 4],
+            &[0; 4],
+            SegmentConfig::nonsegmented(22),
+            Some(255),
+        )
+        .unwrap();
+        assert_eq!(enabled_header.0[0], (255, false));
+        assert_eq!(disabled_header.0, enabled_header.0[1..]);
+        assert_eq!(
+            write_macroblock_header(
+                &mut Operations(Vec::new()),
+                &Macroblock::default(),
+                0,
+                &[0; 4],
+                &[0; 4],
+                SegmentConfig::nonsegmented(22),
+                None,
+            ),
+            Err(EncodeError::InvalidInput)
+        );
         for probability in [1, 128, 240, 255] {
             let mut suffix = Operations(Vec::new());
-            write_header_suffix(&mut suffix, probability).unwrap();
+            write_header_suffix(&mut suffix, Some(probability)).unwrap();
             assert_eq!(suffix.0[0], (128, true));
             assert_eq!(suffix.0.len(), 9);
             for shift in (0..8).rev() {
@@ -3224,7 +8368,7 @@ mod tests {
                 &[0; 4],
                 &[0; 4],
                 SegmentConfig::nonsegmented(22),
-                probability,
+                Some(probability),
             )
             .unwrap();
             assert_eq!(header.0[0], (probability, true));
@@ -3243,12 +8387,12 @@ mod tests {
             })
             .collect();
         let segments = SegmentConfig::nonsegmented(22);
-        for expected_probability in [240, 255, 1] {
-            if expected_probability == 255 {
+        for expected_probability in [Some(240), None, Some(1)] {
+            if expected_probability.is_none() {
                 for block in &mut blocks {
                     block.y[0][0] = 1;
                 }
-            } else if expected_probability == 1 {
+            } else if expected_probability == Some(1) {
                 for block in &mut blocks {
                     block.y[0][0] = 0;
                 }
@@ -3263,7 +8407,7 @@ mod tests {
                 Deltas::default(),
                 FilterConfig::DISABLED,
                 None,
-                128,
+                Some(128),
             )
             .unwrap();
             let mut sizes = [(0, 0); 2];
@@ -3315,6 +8459,111 @@ mod tests {
         }
     }
 
+    fn emit_skip_syntax_control(
+        blocks: &[Macroblock],
+        width: usize,
+        height: usize,
+        skip_probability: Option<u8>,
+    ) -> Vec<u8> {
+        let blocks_x = width.div_ceil(16);
+        let blocks_y = height.div_ceil(16);
+        assert_eq!(blocks.len(), blocks_x * blocks_y);
+        let counted = count_partitions(
+            blocks,
+            blocks_x,
+            blocks_y,
+            SegmentConfig::nonsegmented(23),
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            None,
+            skip_probability,
+        )
+        .unwrap();
+        let mut header = BoolWriter::new();
+        let mut token = BoolWriter::new();
+        code_partitions(
+            blocks,
+            blocks_x,
+            blocks_y,
+            SegmentConfig::nonsegmented(23),
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            None,
+            skip_probability,
+            &mut header,
+            &mut token,
+        )
+        .unwrap();
+        let first = header.finish().unwrap();
+        let second = token.finish().unwrap();
+        assert_eq!(counted, (first.len(), second.len()));
+        let mut frame = Vec::with_capacity(10 + first.len() + second.len());
+        frame.extend_from_slice(&(((first.len() as u32) << 5) | 0x10).to_le_bytes()[..3]);
+        frame.extend_from_slice(&[0x9d, 0x01, 0x2a]);
+        frame.extend_from_slice(&(width as u16).to_le_bytes());
+        frame.extend_from_slice(&(height as u16).to_le_bytes());
+        frame.extend_from_slice(&first);
+        frame.extend_from_slice(&second);
+        assert_eq!(frame.len(), 10 + counted.0 + counted.1);
+        frame
+    }
+
+    fn nonzero_skip_syntax_matrix() -> Vec<(usize, usize, Vec<Macroblock>)> {
+        [(1, 1), (2, 1), (1, 2), (2, 2), (3, 2)]
+            .into_iter()
+            .flat_map(|(blocks_x, blocks_y)| {
+                [1i16, -2, 5].into_iter().map(move |coefficient| {
+                    let blocks = (0..blocks_x * blocks_y)
+                        .map(|index| {
+                            let mut block = Macroblock::default();
+                            block.y[index % 16][0] = coefficient;
+                            block
+                        })
+                        .collect();
+                    (blocks_x * 16 - 1, blocks_y * 16 - 1, blocks)
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn disabled_skip_syntax_never_grows_bounded_nonzero_matrix() {
+        for (width, height, blocks) in nonzero_skip_syntax_matrix() {
+            assert!(blocks.iter().all(|block| !block.skip()));
+            let disabled = emit_skip_syntax_control(&blocks, width, height, None);
+            let enabled = emit_skip_syntax_control(&blocks, width, height, Some(255));
+            eprintln!(
+                "skip-syntax-control {width}x{height} disabled={} enabled={}",
+                disabled.len(),
+                enabled.len()
+            );
+            assert!(
+                disabled.len() <= enabled.len(),
+                "{width}x{height}: disabled={} enabled={}",
+                disabled.len(),
+                enabled.len()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_match_disabled_and_enabled_nonzero_skip_controls() {
+        for (width, height, blocks) in nonzero_skip_syntax_matrix()
+            .into_iter()
+            .filter(|(width, height, _)| matches!((width, height), (15, 15) | (31, 15) | (47, 31)))
+        {
+            let disabled = emit_skip_syntax_control(&blocks, width, height, None);
+            let enabled = emit_skip_syntax_control(&blocks, width, height, Some(255));
+            for decoder in ["vp8", "libvpx"] {
+                let disabled_yuv = decode_visible_yuv(&disabled, width, height, decoder);
+                let enabled_yuv = decode_visible_yuv(&enabled, width, height, decoder);
+                assert!(!disabled_yuv.is_empty());
+                assert_eq!(disabled_yuv, enabled_yuv, "{decoder} {width}x{height}");
+            }
+        }
+    }
+
     #[test]
     fn resumable_and_sync_encoders_share_frozen_skip_probability() {
         let width = 128;
@@ -3332,9 +8581,74 @@ mod tests {
         let request = engine_request(width, height, 0, &input, width * 4);
         let plan = ResourcePlan::checked(request).unwrap();
         let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
-        assert_ne!(engine.skip_probability, 128);
+        assert_ne!(engine.skip_probability, Some(128));
         assert_eq!(engine.output(), expected);
         assert_eq!(engine.plan().frame_bytes as usize, expected.len());
+    }
+
+    #[test]
+    fn disabled_skip_syntax_matches_sync_and_resumable_on_tiny_odd_repeated_frames() {
+        for (width, height, quality) in [(2, 5, 60), (17, 19, 75), (33, 17, 85)] {
+            let mut input = [0, 0, 0, 255].repeat(width * height);
+            for y in 0..height {
+                for x in 0..width {
+                    let at = (y * width + x) * 4;
+                    input[at] = (x * 53 + y * 19 + 17) as u8;
+                    input[at + 1] = (x * 71 + y * 37 + 29) as u8;
+                    input[at + 2] = (x * 11 + y * 83 + 43) as u8;
+                }
+            }
+            let expected = encode_textured(
+                &input,
+                width as u32,
+                height as u32,
+                (width * 4) as u32,
+                0,
+                quality,
+            )
+            .unwrap();
+            if width == 2 && std::env::var_os("WMC501_SKIP_SYNC_REFERENCE").is_some() {
+                eprintln!("skip-sync-reference-2x5-q60: {expected:?}");
+            }
+            for frame in [1, 2] {
+                let request = Request {
+                    quality,
+                    frame,
+                    ..engine_request(width, height, 0, &input, width * 4)
+                };
+                let plan = ResourcePlan::checked(request).unwrap();
+                assert!(std::mem::size_of::<Option<u8>>() <= 2);
+                assert!(
+                    std::mem::size_of::<FrameEncoder>() <= plan.scratch_allowance_bytes as usize
+                );
+                let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+                let mut seen_count = false;
+                let mut seen_emit = false;
+                for _ in 0..100_000 {
+                    if engine.stage == Stage::CountPrefix {
+                        assert_eq!(engine.skip_probability, None);
+                        seen_count = true;
+                    }
+                    if engine.stage == Stage::EmitSuffix {
+                        assert_eq!(engine.skip_probability, None);
+                        seen_emit = true;
+                    }
+                    if engine.step().unwrap() {
+                        break;
+                    }
+                    assert!(engine.output().is_empty());
+                }
+                assert!(engine.stage == Stage::Done);
+                assert!(seen_count && seen_emit);
+                assert!(
+                    engine.blocks.iter().all(|block| !block.skip()),
+                    "{width}x{height} q{quality}"
+                );
+                assert_eq!(engine.skip_probability, None);
+                assert_eq!(engine.output(), expected);
+                assert_eq!(engine.plan().frame_bytes as usize, expected.len());
+            }
+        }
     }
 
     #[test]
@@ -3388,7 +8702,7 @@ mod tests {
         )
         .unwrap();
         write_updates(&mut header, Some(&model), 0, NODE_COUNT).unwrap();
-        write_header_suffix(&mut header, 128).unwrap();
+        write_header_suffix(&mut header, Some(128)).unwrap();
         let bytes = header.finish().unwrap();
         let mut value = (u32::from(bytes[0]) << 8) | u32::from(bytes[1]);
         let (mut offset, mut range, mut count) = (2, 255, 0);
@@ -3493,7 +8807,7 @@ mod tests {
                 0,
                 &block,
                 SegmentConfig::nonsegmented(22),
-                128,
+                Some(128),
             )
             .unwrap();
             assert!(header.pending());
@@ -3538,8 +8852,13 @@ mod tests {
             if stage == engine.stage() {
                 let (after, _) = engine.progress();
                 let bound = match stage {
-                    0 | 13 => 65_536,
-                    4 | 8 | 16 => 64,
+                    0 | 13 | 22 => 65_536,
+                    4 | 8 | 16 | 20 | 24 | 30 | 32 => 64,
+                    41 | 45 | 49 => 64 * 1024 / (3 * 5 * 8),
+                    42 | 46 | 50 => 65_536,
+                    43 | 47 | 51 => 1,
+                    44 | 48 | 52 => 64,
+                    53 => 64 * 1024 / (3 * 5 * 8),
                     _ => 1,
                 };
                 assert!(after >= before && after - before <= bound, "stage={stage}");
@@ -3548,6 +8867,240 @@ mod tests {
                 return engine;
             }
         }
+    }
+
+    #[test]
+    fn completed_quality_policy_preserves_legality_bytes_and_exact_ties() {
+        let ok = Ok(());
+        let limit = Err(Status::OutputLimit);
+        assert_eq!(
+            choose_scored_variants((99, ok, 0.6), Some((98, ok, 0.8)), (100, ok, 0.7)),
+            Ok(VariantChoice::Baseline)
+        );
+        assert_eq!(
+            choose_scored_variants((100, ok, 0.8), Some((99, ok, 0.8)), (100, ok, 0.8)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((101, ok, 0.9), Some((99, ok, 0.7)), (100, ok, 0.8)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((99, limit, 0.9), Some((98, ok, 0.7)), (100, ok, 0.6)),
+            Ok(VariantChoice::Baseline)
+        );
+        assert_eq!(
+            choose_scored_variants((101, ok, 0.9), Some((99, ok, 0.7)), (100, limit, 0.6)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((101, limit, 0.9), Some((99, limit, 0.7)), (100, limit, 0.6)),
+            Err(Status::OutputLimit)
+        );
+        assert_eq!(
+            choose_scored_variants((99, ok, f64::NAN), None, (100, ok, 0.7)),
+            Err(Status::InvalidInput)
+        );
+        assert_eq!(
+            choose_scored_variants((99, ok, 0.9), None, (100, ok, f64::INFINITY)),
+            Err(Status::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn completed_quality_word_window_requires_strict_gain_over_best_within_base() {
+        let ok = Ok(());
+        // Both base parities allow exactly one additional RIFF payload word.
+        for (base, within, extra, too_large) in [(100, 100, 102, 103), (99, 100, 102, 103)] {
+            assert_eq!(
+                choose_scored_variants((extra, ok, 0.9), Some((within, ok, 0.8)), (base, ok, 0.7)),
+                Ok(VariantChoice::Extended)
+            );
+            for score in [0.8, 0.79] {
+                assert_eq!(
+                    choose_scored_variants(
+                        (extra, ok, score),
+                        Some((within, ok, 0.8)),
+                        (base, ok, 0.7)
+                    ),
+                    Ok(VariantChoice::Baseline)
+                );
+            }
+            assert_eq!(
+                choose_scored_variants(
+                    (too_large, ok, 0.99),
+                    Some((within, ok, 0.8)),
+                    (base, ok, 0.7)
+                ),
+                Ok(VariantChoice::Baseline)
+            );
+        }
+        // Padding is free at the base cost, so equal scores keep normal priority.
+        assert_eq!(
+            choose_scored_variants((100, ok, 0.8), Some((99, ok, 0.8)), (99, ok, 0.8)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((102, ok, -0.1), Some((100, ok, -0.2)), (99, ok, -0.3)),
+            Ok(VariantChoice::Extended)
+        );
+        // u32 raw sizes are widened before alignment and the additional word.
+        assert_eq!(aligned_payload_cost(u32::MAX), u64::from(u32::MAX) + 1);
+        assert_eq!(
+            choose_scored_variants((u32::MAX, ok, 0.9), None, (u32::MAX - 2, ok, 0.8)),
+            Ok(VariantChoice::Extended)
+        );
+        assert_eq!(
+            choose_scored_variants((u32::MAX, ok, 0.9), None, (u32::MAX - 4, ok, 0.8)),
+            Ok(VariantChoice::Base)
+        );
+        assert_eq!(
+            choose_scored_variants((101, Err(Status::InvalidInput), 0.9), None, (100, ok, 0.8)),
+            Err(Status::InvalidInput)
+        );
+        assert_eq!(
+            choose_scored_variants((102, ok, f64::NAN), None, (100, ok, 0.8)),
+            Err(Status::InvalidInput)
+        );
+        assert_eq!(
+            choose_scored_variants((101, ok, 0.8), None, (100, Err(Status::OutputLimit), 0.7)),
+            Ok(VariantChoice::Extended)
+        );
+    }
+
+    #[test]
+    fn tiny_chroma_word_gain_selects_existing_extended_payload() {
+        // Public synthetic 7x1 control, frozen independently of encoder output.
+        let pixels = [
+            244, 29, 171, 255, 89, 61, 239, 255, 89, 61, 239, 255, 89, 61, 239, 255, 244, 29, 171,
+            255, 89, 61, 239, 255, 89, 61, 239, 255,
+        ];
+        let expected = [
+            240, 1, 0, 157, 1, 42, 7, 0, 1, 0, 1, 0, 28, 41, 164, 2, 117, 42, 192, 65, 55, 97, 200,
+            252, 0, 254, 241, 170, 137, 67, 161, 120, 232, 63, 40, 191, 254, 67, 13, 136, 162, 223,
+            255, 250, 56, 223, 255, 200, 92, 92, 75, 63, 255, 163, 141, 255, 199, 111, 191, 221,
+            39, 3, 254, 98, 226, 184, 189, 0, 0,
+        ];
+        let request = Request {
+            quality: 85,
+            ..engine_request(7, 1, 0, &pixels, 28)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut staged = FrameEncoder::new(request, pixels.to_vec(), plan).unwrap();
+        while staged.stage != Stage::PrepareOutput {
+            staged.step().unwrap();
+            assert!(staged.output().is_empty());
+        }
+        assert_eq!(staged.selected_frame_bytes, expected.len() as u32);
+        assert_eq!(staged.plan.frame_bytes, expected.len() as u32);
+        let staged = run_engine(staged);
+        assert_eq!(staged.output(), expected);
+        assert_eq!(encode_textured(&pixels, 7, 1, 28, 0, 85).unwrap(), expected);
+    }
+
+    #[test]
+    fn generated_gradient_q75_prefers_filtered_unrefined_frame() {
+        // The frozen fresh3-gradient source formula; this is an engineering
+        // control for the general selector, not a special-case input path.
+        let width = 373usize;
+        let height = 257usize;
+        let mut input = vec![0u8; width * height * 4];
+        for y in 0..height {
+            for x in 0..width {
+                input[(y * width + x) * 4..][..4].copy_from_slice(&[
+                    (255 * x / (width - 1)) as u8,
+                    (255 * (height - 1 - y) / (height - 1)) as u8,
+                    (255 * (5 * x + 3 * y) / (5 * (width - 1) + 3 * (height - 1))) as u8,
+                    255,
+                ]);
+            }
+        }
+        let request = engine_request(width, height, 0, &input, width * 4);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+        let mut refined_quality = None;
+        while engine.stage != Stage::ReleaseRefinements {
+            assert!(engine.output().is_empty());
+            if engine.stage == Stage::QualityInit && engine.quality_variant == VariantChoice::Base {
+                refined_quality = Some(engine.refined_checkpoint.as_ref().unwrap().quality);
+            }
+            engine.step().unwrap();
+        }
+        assert!(engine.joint_used_total > 0 && engine.joint_used_total <= 128);
+        assert!(!engine.medium_textured_luma);
+        assert_eq!(engine.deltas, crate::presets::deltas(75));
+        assert!(engine.base_quality > refined_quality.unwrap());
+        assert!(engine.refined_checkpoint.is_none()); // B0 won the complete filtered score.
+        assert!(engine.baseline_checkpoint.is_none());
+        let engine = run_engine(engine);
+        assert_eq!(engine.output().len(), 1301);
+    }
+
+    #[test]
+    fn staged_filtered_copy_matches_full_reference_for_every_counted_variant() {
+        let (width, height) = (33, 33);
+        let input = frontier_rgb_input(width, height)
+            .into_boxed_slice()
+            .into_vec();
+        let request = engine_request(width, height, 0, &input, width * 4);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+        let mut seen = [false; 3];
+        while engine.stage != Stage::Done {
+            if engine.stage == Stage::QualityMetric {
+                let variant = match engine.quality_variant {
+                    VariantChoice::Extended => 0,
+                    VariantChoice::Baseline => 1,
+                    VariantChoice::Base => 2,
+                };
+                if !seen[variant] {
+                    let mut y = engine.reconstructed_y.clone();
+                    let mut u = engine.reconstructed_u.clone();
+                    let mut v = engine.reconstructed_v.clone();
+                    let padded_w = plan.padded_width as usize;
+                    let padded_h = plan.padded_height as usize;
+                    let mut planes = filter::Planes {
+                        y: filter::Plane {
+                            data: &mut y,
+                            width: padded_w,
+                            height: padded_h,
+                            stride: padded_w,
+                        },
+                        u: filter::Plane {
+                            data: &mut u,
+                            width: padded_w / 2,
+                            height: padded_h / 2,
+                            stride: padded_w / 2,
+                        },
+                        v: filter::Plane {
+                            data: &mut v,
+                            width: padded_w / 2,
+                            height: padded_h / 2,
+                            stride: padded_w / 2,
+                        },
+                    };
+                    let params: Vec<_> = engine
+                        .blocks
+                        .iter()
+                        .map(|block| filter::FilterParams {
+                            level: engine.filter.level,
+                            sharpness: engine.filter.sharpness,
+                            simple: engine.filter.simple,
+                            i4: !block.i16,
+                            has_coefficients: !block.skip(),
+                        })
+                        .collect();
+                    filter::filter_frame(&mut planes, padded_w / 16, padded_h / 16, &params)
+                        .unwrap();
+                    assert_eq!(engine.source_y, y);
+                    assert_eq!(engine.source_u, u);
+                    assert_eq!(engine.source_v, v);
+                    seen[variant] = true;
+                }
+            }
+            engine.step().unwrap();
+        }
+        assert!(seen[0] && seen[2]);
     }
 
     fn textured_checker(low: [u8; 3], high: [u8; 3]) -> Vec<u8> {
@@ -3579,6 +9132,112 @@ mod tests {
         panic!("missing near-neutral imported chroma value {uv_value}");
     }
 
+    fn photo_allocation_input() -> Vec<u8> {
+        let mut pixels = textured_checker([64; 3], [192; 3]);
+        let tint = near_neutral_high(127);
+        for (x, y) in [(15, 14), (14, 15)] {
+            let at = (y * 16 + x) * 4;
+            pixels[at..at + 3].copy_from_slice(&tint);
+        }
+        pixels
+    }
+
+    fn low_curvature_photo_input() -> Vec<u8> {
+        let mut pixels = vec![0; 16 * 16 * 4];
+        for pixel in pixels.as_chunks_mut::<4>().0 {
+            pixel.copy_from_slice(&[64, 84, 104, 255]);
+        }
+        pixels[(7 * 16 + 7) * 4..(7 * 16 + 7) * 4 + 3].copy_from_slice(&[96, 116, 136]);
+        pixels
+    }
+
+    #[test]
+    fn photo_allocation_profiles_match_sync_and_resumable_encoders() {
+        for (input, quality, active_q, uv_dc, selected) in [
+            (photo_allocation_input(), 60, 32, -4, false),
+            (low_curvature_photo_input(), 60, 28, -15, true),
+            (photo_allocation_input(), 75, 26, -11, false),
+        ] {
+            let request = Request {
+                quality,
+                ..engine_request(16, 16, 0, &input, 64)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            assert_eq!(engine.class_counts, [0, 0, 0, 1]);
+            assert!(!engine.neutral_chroma);
+            assert!(!engine.high_chroma_loss);
+            assert_eq!(engine.photo_q60, selected);
+            assert_eq!(engine.medium_textured_luma, quality == 75);
+            assert_eq!(engine.segments.base_qindex, active_q);
+            assert_eq!(engine.segments.qindex_for(segmentation::TEXTURED), active_q);
+            assert_eq!(engine.deltas.uv_dc, uv_dc);
+            assert_eq!(
+                engine
+                    .original_segments()
+                    .qindex_for(segmentation::TEXTURED),
+                if quality == 60 { 32 } else { 28 }
+            );
+            assert_eq!(
+                engine.output(),
+                encode_textured(&input, 16, 16, 64, 0, quality).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn q60_curvature_selection_does_not_leak_between_jobs() {
+        let low = low_curvature_photo_input();
+        let high = photo_allocation_input();
+        let mut first_low = None;
+        let mut first_high = None;
+        for (input, selected) in [(&low, true), (&high, false), (&low, true), (&high, false)] {
+            let request = Request {
+                quality: 60,
+                ..engine_request(16, 16, 0, input, 64)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            assert_eq!(engine.class_counts, [0, 0, 0, 1]);
+            assert_eq!(engine.curvature.within_cutoff(1), selected);
+            assert_eq!(engine.photo_q60, selected);
+            assert_eq!(engine.segments.base_qindex, if selected { 28 } else { 32 });
+            let sync = encode_textured(input, 16, 16, 64, 0, 60).unwrap();
+            assert_eq!(engine.output(), sync);
+            let previous = if selected {
+                &mut first_low
+            } else {
+                &mut first_high
+            };
+            if let Some(previous) = previous {
+                assert_eq!(&sync, previous);
+            } else {
+                *previous = Some(sync);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn photo_allocation_decodes_independently() {
+        for (input, quality) in [
+            (photo_allocation_input(), 60),
+            (low_curvature_photo_input(), 60),
+            (photo_allocation_input(), 75),
+        ] {
+            let request = Request {
+                quality,
+                ..engine_request(16, 16, 0, &input, 64)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            let (y, u, v, padded_w) = engine.reconstruction();
+            let expected =
+                filtered_visible_yuv(y, u, v, padded_w, 16, 16, &engine.blocks, engine.filter);
+            assert_decodes(engine.output(), 16, 16, &expected, "photo allocation");
+        }
+    }
+
     #[test]
     fn exact_neutral_frame_allocation_and_repeated_frame_state() {
         let gray = textured_checker([64; 3], [192; 3]);
@@ -3596,11 +9255,11 @@ mod tests {
         let near_high = one_near_neutral_pair(129);
         let mut first_gray = None;
         for (index, (input, expected_neutral, expected_q)) in [
-            (&gray, true, 27),
+            (&gray, true, 25),
             (&colored, false, 28),
-            (&near_low, false, 28),
-            (&near_high, false, 28),
-            (&gray, true, 27),
+            (&near_low, false, 26),
+            (&near_high, false, 26),
+            (&gray, true, 25),
         ]
         .into_iter()
         .enumerate()
@@ -3610,6 +9269,19 @@ mod tests {
             let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
             assert_eq!(engine.class_counts, [0, 0, 0, 1]);
             assert_eq!(engine.neutral_chroma, expected_neutral);
+            assert_eq!(engine.medium_textured_luma, index != 1);
+            assert_eq!(
+                engine.deltas,
+                if engine.medium_textured_luma {
+                    crate::presets::photo_allocation_deltas(
+                        crate::presets::medium_textured_deltas(crate::presets::deltas(75)),
+                        false,
+                        !engine.neutral_chroma,
+                    )
+                } else {
+                    crate::presets::deltas(75)
+                }
+            );
             assert_eq!(
                 engine.segments.qindex_for(segmentation::TEXTURED),
                 expected_q
@@ -3666,7 +9338,7 @@ mod tests {
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
     fn neutral_and_colored_texture_decode_with_both_filter_modes() {
         for (input, expected_q) in [
-            (textured_checker([64; 3], [192; 3]), 27),
+            (textured_checker([64; 3], [192; 3]), 25),
             (textured_checker([7, 239, 117], [248, 18, 184]), 28),
         ] {
             let request = engine_request(16, 16, 0, &input, 64);
@@ -3830,6 +9502,346 @@ mod tests {
     }
 
     #[test]
+    fn q60_chroma_loss_profile_matches_sync_across_layouts_and_frames() {
+        let (width, height) = (5, 3);
+        let colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255; 3]];
+        let mut rgba = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                let [r, g, b] = colors[(y % 2) * 2 + x % 2];
+                rgba.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        let expected = encode_textured(
+            &rgba,
+            width as u32,
+            height as u32,
+            (width * 4) as u32,
+            0,
+            60,
+        )
+        .unwrap();
+        for layout in 0..=4 {
+            let bpp = if layout == 4 { 3 } else { 4 };
+            let stride = width * bpp + 3;
+            let mut input = Vec::new();
+            for y in 0..height {
+                for x in 0..width {
+                    let at = (y * width + x) * 4;
+                    let [r, g, b, _] = rgba[at..at + 4].try_into().unwrap();
+                    match layout {
+                        0 | 2 => {
+                            input.extend_from_slice(&[r, g, b, if layout == 0 { 255 } else { 7 }])
+                        }
+                        1 | 3 => {
+                            input.extend_from_slice(&[b, g, r, if layout == 1 { 255 } else { 7 }])
+                        }
+                        _ => input.extend_from_slice(&[r, g, b]),
+                    }
+                }
+                input.extend_from_slice(&[42; 3]);
+            }
+            let request = Request {
+                quality: 60,
+                ..engine_request(width, height, layout, &input, stride)
+            };
+            for frame in 1..=2 {
+                let request = Request { frame, ..request };
+                let plan = ResourcePlan::checked(request).unwrap();
+                let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+                assert!(engine.rgb_error_sum > 4096 * 3 * (width * height) as u64);
+                assert!(engine.high_chroma_loss);
+                let reduced = engine.preview_trial == PreviewTrial::FinalReduced;
+                assert_eq!(
+                    (engine.deltas.uv_dc, engine.deltas.uv_ac),
+                    if reduced {
+                        crate::presets::HIGH_CHROMA_LOSS_UV_DELTAS
+                    } else {
+                        crate::presets::HIGH_CHROMA_LOSS_ORIGINAL_UV_DELTAS
+                    }
+                );
+                assert_eq!(
+                    engine.segments.qindex,
+                    if reduced {
+                        [2, 14, 28, 28]
+                    } else {
+                        [6, 18, 32, 32]
+                    }
+                );
+                assert!(!engine.segments.enabled);
+                assert_eq!(engine.segments.base_qindex, if reduced { 28 } else { 32 });
+                assert_eq!(engine.output(), expected, "layout={layout} frame={frame}");
+            }
+        }
+        let neutral = [128, 128, 128, 255].repeat(16 * 16);
+        let request = Request {
+            quality: 60,
+            ..engine_request(16, 16, 0, &neutral, 64)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, neutral, plan).unwrap());
+        assert!(!engine.high_chroma_loss);
+        assert_eq!(engine.deltas, crate::presets::deltas(60));
+        assert_eq!(engine.segments.qindex_for(segmentation::FINE_SMOOTH), 6);
+    }
+
+    // Frozen synthetic V9 control. This input exposed a profile decision whose
+    // source-YUV objective disagreed with completed visible RGB distortion.
+    fn v9_chroma_edge() -> Vec<u8> {
+        let mut pixels = Vec::with_capacity(407 * 277 * 4);
+        for y in 0..277 {
+            for x in 0..407 {
+                let rgb = if ((13 * x + 5 * y) / 19) & 1 != 0 {
+                    [221, 44, 184]
+                } else {
+                    [35, 207, 71]
+                };
+                pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn v9_chroma_edge_chooses_completed_rgb_profile_and_preserves_source() {
+        let input = v9_chroma_edge();
+        let request = Request {
+            quality: 60,
+            ..engine_request(407, 277, 0, &input, 407 * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        let mut metrics = Vec::new();
+        let mut scores = Vec::new();
+        let mut stage_ids = Vec::new();
+        let mut source = None;
+        let mut reduced_unfiltered = None;
+        while engine.stage != Stage::Done {
+            let previous = engine.stage;
+            let before = engine.progress();
+            if matches!(previous, Stage::PreviewFilter | Stage::PreviewRgbError) {
+                stage_ids.push(engine.stage());
+            }
+            engine.step().unwrap();
+            if previous == Stage::PreviewFilter && engine.stage == Stage::PreviewFilter {
+                let after = engine.progress();
+                assert!(after.0 > before.0 && after.0 - before.0 <= 1);
+            }
+            if previous == Stage::Classify && engine.stage == Stage::Analyze {
+                source = Some((
+                    engine.source_y.clone(),
+                    engine.source_u.clone(),
+                    engine.source_v.clone(),
+                ));
+            }
+            if previous == Stage::PreviewRateBlocks
+                && engine.preview_trial == PreviewTrial::Reduced
+                && engine.stage == Stage::PreviewFilter
+            {
+                reduced_unfiltered = Some((
+                    engine.reconstructed_y.clone(),
+                    engine.reconstructed_u.clone(),
+                    engine.reconstructed_v.clone(),
+                    engine.blocks.clone(),
+                ));
+            }
+            if previous == Stage::Analyze
+                && engine.stage == Stage::CollectStats
+                && engine.preview_trial == PreviewTrial::FinalReduced
+            {
+                let (y, u, v, blocks) = reduced_unfiltered.as_ref().unwrap();
+                assert_eq!(&engine.reconstructed_y, y);
+                assert_eq!(&engine.reconstructed_u, u);
+                assert_eq!(&engine.reconstructed_v, v);
+                assert_eq!(&engine.blocks, blocks);
+            }
+            if previous == Stage::PreviewRgbError {
+                if engine.stage == Stage::PreviewRgbError {
+                    let after = engine.progress();
+                    assert_eq!(after.1, 407 * 277);
+                    assert!(after.0 > before.0 && after.0 - before.0 <= 1_024);
+                } else {
+                    metrics.push((
+                        engine.preview_comparison.visible_error,
+                        engine.preview_comparison.weighted_rate,
+                    ));
+                    scores.push(
+                        engine
+                            .preview_comparison
+                            .score(engine.preview_header_rate.cost, 32, 60)
+                            .unwrap(),
+                    );
+                    let (y, u, v) = source.as_ref().unwrap();
+                    assert_eq!(&engine.source_y, y);
+                    assert_eq!(&engine.source_u, u);
+                    assert_eq!(&engine.source_v, v);
+                }
+            }
+            if engine.stage != Stage::Done {
+                assert!(engine.output().is_empty());
+            }
+        }
+        assert_eq!(metrics.len(), 2);
+        stage_ids.sort_unstable();
+        stage_ids.dedup();
+        assert_eq!(stage_ids, [54, 55, 56, 57]);
+        assert_eq!(metrics[0].0, 2_623_431_528);
+        assert_eq!(metrics[1].0, 2_610_868_808);
+        assert_eq!(scores, [710_750_621_568, 708_626_067_008]);
+        assert_eq!(engine.preview_trial, PreviewTrial::FinalReduced);
+        assert_eq!(engine.output().len(), 40_869);
+        assert_eq!(
+            engine.output(),
+            encode_textured(&input, 407, 277, 407 * 4, 0, 60).unwrap()
+        );
+    }
+
+    #[test]
+    fn high_loss_profile_preview_selects_by_content_and_resets_before_final_analysis() {
+        for (width, height) in [(3usize, 7usize), (373, 263)] {
+            let mut input = Vec::with_capacity(width * height * 4);
+            for y in 0..height {
+                for x in 0..width {
+                    let rgb = if width == 3 {
+                        if (2 * x + y) % 3 == 0 {
+                            [232, 34, 184]
+                        } else if (x + 3 * y) & 1 == 1 {
+                            [42, 201, 97]
+                        } else {
+                            [81, 53, 226]
+                        }
+                    } else if ((5 * x + 9 * y) / 13) & 1 == 1 {
+                        [225, 42, 201]
+                    } else {
+                        [18, 231, 57]
+                    };
+                    input.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+                }
+            }
+            let request = Request {
+                quality: 60,
+                ..engine_request(width, height, 0, &input, width * 4)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            let mut preview_resets = 0;
+            let mut reset_steps = 0;
+            let mut original_unfiltered = None;
+            while engine.stage != Stage::Done {
+                let previous = engine.stage;
+                let (before, _) = engine.progress();
+                engine.step().unwrap();
+                if previous == Stage::PreviewRateBlocks
+                    && engine.preview_trial == PreviewTrial::Original
+                    && engine.stage == Stage::PreviewFilter
+                {
+                    original_unfiltered = Some((
+                        engine.reconstructed_y.clone(),
+                        engine.reconstructed_u.clone(),
+                        engine.reconstructed_v.clone(),
+                        engine.blocks.clone(),
+                    ));
+                }
+                if width == 3
+                    && previous == Stage::Analyze
+                    && engine.stage == Stage::CollectStats
+                    && engine.preview_trial == PreviewTrial::FinalOriginal
+                {
+                    let (y, u, v, blocks) = original_unfiltered.as_ref().unwrap();
+                    assert_eq!(&engine.reconstructed_y, y);
+                    assert_eq!(&engine.reconstructed_u, u);
+                    assert_eq!(&engine.reconstructed_v, v);
+                    assert_eq!(&engine.blocks, blocks);
+                }
+                if previous == Stage::PreviewReset {
+                    reset_steps += 1;
+                    if engine.stage == Stage::PreviewReset {
+                        let (after, _) = engine.progress();
+                        assert!(after >= before && after - before <= 65_536);
+                    }
+                }
+                if previous == Stage::PreviewResetMetadata && engine.stage == Stage::Analyze {
+                    preview_resets += 1;
+                    assert!(engine.reconstructed_y.iter().all(|&value| value == 0));
+                    assert!(engine.reconstructed_u.iter().all(|&value| value == 0));
+                    assert!(engine.reconstructed_v.iter().all(|&value| value == 0));
+                    assert!(engine.blocks.iter().all(Macroblock::skip));
+                }
+                if engine.stage != Stage::Done {
+                    assert!(engine.output().is_empty());
+                }
+            }
+            assert!(engine.high_chroma_loss);
+            assert_eq!(preview_resets, 2);
+            assert!(reset_steps >= 8, "width={width} reset_steps={reset_steps}");
+            let reduced = engine.preview_trial == PreviewTrial::FinalReduced;
+            if width == 3 {
+                assert!(!reduced);
+            }
+            assert!(matches!(
+                engine.preview_trial,
+                PreviewTrial::FinalOriginal | PreviewTrial::FinalReduced
+            ));
+            assert_eq!(
+                engine.segments.qindex_for(segmentation::TEXTURED),
+                if reduced { 28 } else { 32 }
+            );
+            assert_eq!(
+                engine.output(),
+                encode_textured(
+                    &input,
+                    width as u32,
+                    height as u32,
+                    (width * 4) as u32,
+                    0,
+                    60
+                )
+                .unwrap(),
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn q60_high_chroma_loss_decodes_independently() {
+        let colors = [
+            [255, 0, 0, 255],
+            [0, 255, 0, 255],
+            [0, 0, 255, 255],
+            [255; 4],
+        ];
+        let mut input = Vec::new();
+        for y in 0..16 {
+            for x in 0..16 {
+                input.extend_from_slice(&colors[(y % 2) * 2 + x % 2]);
+            }
+        }
+        let request = Request {
+            quality: 60,
+            ..engine_request(16, 16, 0, &input, 64)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert!(matches!(
+            engine.preview_trial,
+            PreviewTrial::FinalReduced | PreviewTrial::FinalOriginal
+        ));
+        assert!(engine.neutral_chroma);
+        assert_eq!(
+            engine.segments.qindex_for(segmentation::TEXTURED),
+            if engine.preview_trial == PreviewTrial::FinalReduced {
+                30
+            } else {
+                34
+            }
+        );
+        let (y, u, v, padded_width) = engine.reconstruction();
+        let expected =
+            filtered_visible_yuv(y, u, v, padded_width, 16, 16, &engine.blocks, engine.filter);
+        assert_decodes(engine.output(), 16, 16, &expected, "q60 high chroma loss");
+    }
+
+    #[test]
     fn resumable_engine_rejects_plan_mismatch_transparency_and_output_limit() {
         let input = vec![128, 128, 128, 255];
         let request = engine_request(1, 1, 0, &input, 4);
@@ -3888,7 +9900,7 @@ mod tests {
                 .map(|block| block.segment_id)
                 .collect::<Vec<_>>(),
             [
-                segmentation::NEUTRAL_SMOOTH,
+                segmentation::FINE_SMOOTH,
                 segmentation::CHROMATIC_FLAT,
                 segmentation::CHROMATIC_RAMP,
                 segmentation::TEXTURED
@@ -3988,6 +10000,7 @@ mod tests {
                 8,
                 3,
                 uv_steps,
+                None,
             );
             (
                 i16.tile,
@@ -4182,7 +10195,7 @@ mod tests {
             let engine = run_engine(
                 FrameEncoder::new_with_filter(request, pixels.clone(), plan, filter).unwrap(),
             );
-            assert_eq!(engine.skip_probability, selected_probability);
+            assert_eq!(engine.skip_probability, Some(selected_probability));
             assert_eq!(engine.output(), frame);
             assert_decodes(
                 &frame,
@@ -4484,7 +10497,7 @@ mod tests {
         );
     }
 
-    fn assert_decodes(frame: &[u8], width: usize, height: usize, expected: &[u8], label: &str) {
+    fn decode_visible_yuv(frame: &[u8], width: usize, height: usize, decoder: &str) -> Vec<u8> {
         let mut ivf = vec![0u8; 44];
         ivf[..4].copy_from_slice(b"DKIF");
         ivf[6..8].copy_from_slice(&32u16.to_le_bytes());
@@ -4496,42 +10509,187 @@ mod tests {
         ivf[24..28].copy_from_slice(&1u32.to_le_bytes());
         ivf[32..36].copy_from_slice(&(frame.len() as u32).to_le_bytes());
         ivf.extend_from_slice(frame);
+        let mut child = Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-c:v",
+                decoder,
+                "-i",
+                "pipe:0",
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "yuv420p",
+                "pipe:1",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&ivf).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    }
+
+    fn assert_decodes(frame: &[u8], width: usize, height: usize, expected: &[u8], label: &str) {
         for decoder in ["vp8", "libvpx"] {
-            let mut child = Command::new("ffmpeg")
-                .args([
-                    "-v",
-                    "error",
-                    "-c:v",
-                    decoder,
-                    "-i",
-                    "pipe:0",
-                    "-frames:v",
-                    "1",
-                    "-f",
-                    "rawvideo",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "pipe:1",
-                ])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
-            child.stdin.take().unwrap().write_all(&ivf).unwrap();
-            let output = child.wait_with_output().unwrap();
-            assert!(
-                output.status.success(),
-                "{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let difference = output.stdout.iter().zip(expected).position(|(a, b)| a != b);
-            assert_eq!(output.stdout.len(), expected.len());
+            let decoded = decode_visible_yuv(frame, width, height, decoder);
+            let difference = decoded.iter().zip(expected).position(|(a, b)| a != b);
+            assert_eq!(decoded.len(), expected.len());
             assert!(
                 difference.is_none(),
-                "decoder={decoder} {width}x{height} {label} mismatch={difference:?} actual={:?} expected={:?}", difference.map(|i| &output.stdout[i..(i+8).min(expected.len())]), difference.map(|i| &expected[i..(i+8).min(expected.len())])
+                "decoder={decoder} {width}x{height} {label} mismatch={difference:?} actual={:?} expected={:?}", difference.map(|i| &decoded[i..(i+8).min(expected.len())]), difference.map(|i| &expected[i..(i+8).min(expected.len())])
             );
         }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_reconstruct_an_asserted_uv_ac_drop() {
+        let predictor = [128u8; 16];
+        let deltas = Deltas::default();
+        let steps = ac_quant::steps(23, deltas, Plane::UV);
+        for plane in 0..2 {
+            for sign in [-1, 1] {
+                let mut original = [0i16; 16];
+                original[0] = -2;
+                original[residual::SCAN[3]] = 2;
+                original[residual::SCAN[15]] = sign;
+                let mut wanted = original;
+                wanted[residual::SCAN[15]] = 0;
+                let ideal = reconstructed_patch(&wanted, &predictor, steps);
+                let (chosen, patch) = optimize_uv_block(
+                    &ideal,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    0,
+                    1,
+                    (original, reconstructed_patch(&original, &predictor, steps)),
+                );
+                assert_eq!(
+                    chosen, wanted,
+                    "the independent oracle must exercise AC removal"
+                );
+                assert_ne!(chosen, original);
+                let mut block = Macroblock {
+                    i16: true,
+                    ..Macroblock::default()
+                };
+                if plane == 0 {
+                    block.u[0] = chosen;
+                } else {
+                    block.v[0] = chosen;
+                }
+                let frame = emit_segmented_frame(
+                    &[block],
+                    16,
+                    16,
+                    SegmentConfig::nonsegmented(23),
+                    deltas,
+                    FilterConfig::DISABLED,
+                )
+                .unwrap();
+                let mut expected = vec![128u8; 16 * 16 + 2 * 8 * 8];
+                for row in 0..4 {
+                    let at = 16 * 16 + plane * 8 * 8 + row * 8;
+                    expected[at..at + 4].copy_from_slice(&patch[row * 4..row * 4 + 4]);
+                }
+                assert_decodes(&frame, 16, 16, &expected, "asserted signed UV AC removal");
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_reconstruct_an_asserted_flat_uv_dc_zero_choice() {
+        let source = [129u8; 64];
+        let reconstructed = [0u8; 64];
+        let contexts = CoeffContexts::new(1);
+        let deltas = crate::presets::deltas(75);
+        let steps = ac_quant::steps(
+            crate::presets::chromatic_flat_qindex(75) as u8,
+            deltas,
+            Plane::UV,
+        );
+        let baseline = make_uv(
+            &source,
+            &source,
+            &reconstructed,
+            &reconstructed,
+            8,
+            0,
+            0,
+            0,
+            steps,
+            None,
+        );
+        let chosen = make_uv(
+            &source,
+            &source,
+            &reconstructed,
+            &reconstructed,
+            8,
+            0,
+            0,
+            0,
+            steps,
+            Some(UvRdo {
+                contexts: &contexts,
+                mx: 0,
+                lambda: 1,
+                visible_width: 8,
+                visible_height: 8,
+                policy: UvRatePolicy::FlatDcZero,
+            }),
+        );
+        assert_eq!(baseline.u[0][0], 1);
+        assert_eq!(
+            chosen.u[0], [0; 16],
+            "the decode oracle must exercise DC removal"
+        );
+        assert_ne!(baseline.u[0], chosen.u[0]);
+        let mut block = Macroblock {
+            i16: true,
+            segment_id: segmentation::CHROMATIC_FLAT,
+            u: chosen.u,
+            v: chosen.v,
+            ..Macroblock::default()
+        };
+        block.v[1][0] = -2; // Keep coefficient/EOB context active after the zero U block.
+        let patch = reconstructed_patch(&block.v[1], &[128; 16], steps);
+        let frame = emit_segmented_frame(
+            &[block],
+            16,
+            16,
+            SegmentConfig::from_counts(75, [0, 1, 0, 0], 1, false),
+            deltas,
+            FilterConfig::DISABLED,
+        )
+        .unwrap();
+        let mut expected = vec![128u8; 16 * 16 + 2 * 8 * 8];
+        for row in 0..4 {
+            let at = 16 * 16 + 8 * 8 + row * 8 + 4;
+            expected[at..at + 4].copy_from_slice(&patch[row * 4..row * 4 + 4]);
+        }
+        assert_decodes(
+            &frame,
+            16,
+            16,
+            &expected,
+            "asserted flat UV DC zero and EOB context",
+        );
     }
 
     /// External engineering oracle, deliberately separate from product acceptance.

@@ -15,7 +15,7 @@ function moduleWith(sections: number[][]): Buffer {
   return Buffer.from([...wasmHeader, ...sections.flat()]);
 }
 
-describe('owned VP8 development WASM admission', () => {
+describe('owned VP8 candidate WASM admission', () => {
   it('accepts the generated artifact within the declared memory and byte budgets', () => {
     const artifact = readFileSync(
       resolve(import.meta.dirname, '../../../crates/owned-vp8/owned-vp8.wasm')

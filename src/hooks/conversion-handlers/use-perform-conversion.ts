@@ -404,9 +404,8 @@ async function executePipeline(
     throw new Error('Unable to extract VideoDecoderConfig — cannot run conversion pipeline');
   }
 
-  // WebP: skip Worker pipeline — wasm-webp hangs in Worker context (WASM preload
-  // from main document is not accessible to Workers). Main-thread OffscreenCanvas
-  // path is faster and more reliable.
+  // WebP uses the main conversion pipeline, which selects internal Canvas
+  // Workers or conversion-owned VP8 software with one decoder/resource ledger.
   const isWebP = serializedOptions.format === 'webp';
   if (isWebP) {
     const { runConversionPipeline } = await import('@services/conversion-pipeline');

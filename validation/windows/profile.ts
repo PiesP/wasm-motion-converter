@@ -42,6 +42,12 @@ import { exerciseOwnedDemuxServiceMeasurement } from './helpers/owned-demux-meas
 import { exerciseOwnedDemuxProduct } from './helpers/owned-demux-product.ts';
 import { runOwnedVp8NativeProbe } from './helpers/owned-vp8-probe.ts';
 import {
+  exerciseOwnedVp8OwnerRetention,
+  exerciseOwnedVp8Product,
+  exerciseOwnedVp8V8PixelInputs,
+} from './helpers/owned-vp8-product.ts';
+import { withVp8WindowsEnvironment } from './helpers/vp8-windows-environment.ts';
+import {
   assertUsefulOutput,
   classifyWasmWarmCache,
   choose as chooseMotionOption,
@@ -3788,6 +3794,177 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const pixelScenario = 'owned-vp8-product-v8-low-inputs';
+  const pixelSelector = resolve(
+    bundleRoot,
+    'validation/windows/inputs/owned-vp8-product-v8-low-inputs.json'
+  );
+  let pixelSelectorText: string | undefined;
+  try {
+    pixelSelectorText = await readFile(pixelSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (pixelSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(pixelSelectorText), { scenario: pixelScenario });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter((name) => name.endsWith('.json') && name !== `${pixelScenario}.json`),
+      []
+    );
+    const [prior, candidate] = await Promise.all([
+      readBuild(bundleRoot, 'validation/windows/prior-dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+      readBuild(bundleRoot, 'dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+    ]);
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseOwnedVp8V8PixelInputs({
+        browser,
+        bundleRoot,
+        output,
+        prior,
+        candidate,
+        server: started,
+        validateBundleFile,
+        loadApplication,
+      });
+    } finally {
+      await closeServer(started.server);
+    }
+  }
+  const vp8ProductSelectors = [
+    {
+      scenario: 'owned-vp8-product',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product.json',
+    },
+    {
+      scenario: 'owned-vp8-product-ba',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-ba.json',
+    },
+    {
+      scenario: 'owned-vp8-product-near-cap',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-near-cap.json',
+    },
+    {
+      scenario: 'owned-vp8-product-large-admitted',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-large-admitted.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-low',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-low.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-low-ba',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-low-ba.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-medium',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-medium.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-medium-ba',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-medium-ba.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-high',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-high.json',
+    },
+    {
+      scenario: 'owned-vp8-product-v8-high-ba',
+      selectorPath: 'validation/windows/inputs/owned-vp8-product-v8-high-ba.json',
+    },
+  ] as const;
+  for (const { scenario, selectorPath } of vp8ProductSelectors) {
+    let selectorText: string;
+    try {
+      selectorText = await readFile(resolve(bundleRoot, selectorPath), 'utf8');
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      throw error;
+    }
+    assert.deepEqual(JSON.parse(selectorText), { scenario });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter((name) => name.endsWith('.json') && name !== `${scenario}.json`),
+      []
+    );
+    const [prior, candidate] = await Promise.all([
+      readBuild(bundleRoot, 'validation/windows/prior-dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+      readBuild(bundleRoot, 'dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+    ]);
+    const started = await startStaticServer(bundleRoot);
+    try {
+      const exercise = () =>
+        exerciseOwnedVp8Product({
+          browser,
+          bundleRoot,
+          output,
+          scenario,
+          prior,
+          candidate,
+          server: started,
+          validateBundleFile,
+          loadApplication,
+        });
+      return scenario.includes('-v8')
+        ? await withVp8WindowsEnvironment(browser, output, scenario, exercise)
+        : await exercise();
+    } finally {
+      await closeServer(started.server);
+    }
+  }
+  const ownerRetentionSelector = resolve(
+    bundleRoot,
+    'validation/windows/inputs/owned-vp8-owner-retention.json'
+  );
+  let ownerRetentionSelectorText: string | undefined;
+  try {
+    ownerRetentionSelectorText = await readFile(ownerRetentionSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (ownerRetentionSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(ownerRetentionSelectorText), {
+      scenario: 'owned-vp8-owner-retention',
+    });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter(
+        (name) => name.endsWith('.json') && name !== 'owned-vp8-owner-retention.json'
+      ),
+      []
+    );
+    const candidate = await readBuild(bundleRoot, 'dist', validateBundleFile, {
+      verifyInventory: true,
+      exactInventory: true,
+    });
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseOwnedVp8OwnerRetention({
+        browser,
+        bundleRoot,
+        output,
+        candidate,
+        server: started,
+        validateBundleFile,
+        loadApplication,
+      });
+    } finally {
+      await closeServer(started.server);
+    }
+  }
   const demuxMeasurementSelector = resolve(
     bundleRoot,
     'validation/windows/inputs/owned-demux-service-measurement.json'
@@ -5776,7 +5953,7 @@ export async function run({
     const started = await startStaticServer(bundleRoot);
     const checks: unknown[] = [];
     try {
-      for (const mode of ['factory', 'import', 'cancelled-factory'] as const) {
+      for (const mode of ['http-failure', 'invalid-module', 'cancelled-load'] as const) {
         const context = await browser.newContext({
           locale: 'en-US',
           serviceWorkers: 'block',

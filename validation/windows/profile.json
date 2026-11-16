@@ -29,6 +29,18 @@
       "motion-signature-owner-recovery.json",
       "gif-owned-fallback-recovery.json",
       "owned-vp8-native.json",
+      "owned-vp8-product.json",
+      "owned-vp8-owner-retention.json",
+      "owned-vp8-product-ba.json",
+      "owned-vp8-product-near-cap.json",
+      "owned-vp8-product-large-admitted.json",
+      "owned-vp8-product-v8-low.json",
+      "owned-vp8-product-v8-low-inputs.json",
+      "owned-vp8-product-v8-low-ba.json",
+      "owned-vp8-product-v8-medium.json",
+      "owned-vp8-product-v8-medium-ba.json",
+      "owned-vp8-product-v8-high.json",
+      "owned-vp8-product-v8-high-ba.json",
       "owned-demux-product.json",
       "owned-demux-service-measurement.json"
     ],
@@ -283,6 +295,209 @@
           "validation/windows/public-target.json"
         ]
       },
+      "owned-vp8-product": {
+        "selector": "owned-vp8-product.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "public/test-video-ci-h264.mp4",
+          "public/test-video-ci-high-motion-120fps.mp4",
+          "public/test-video-contract-clusters.webm",
+          "validation/windows/inputs/owned-vp8-product.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-owner-retention": {
+        "selector": "owned-vp8-owner-retention.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "public/test-video-ci-h264.mp4",
+          "public/test-video-ci-high-motion-120fps.mp4",
+          "public/test-video-contract-clusters.webm",
+          "validation/windows/inputs/owned-vp8-owner-retention.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": [
+          "validation/windows/prior-dist",
+          "validation/windows/public-target.json"
+        ]
+      },
+      "owned-vp8-product-ba": {
+        "selector": "owned-vp8-product-ba.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "public/test-video-ci-h264.mp4",
+          "public/test-video-ci-high-motion-120fps.mp4",
+          "public/test-video-contract-clusters.webm",
+          "validation/windows/inputs/owned-vp8-product-ba.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-product-near-cap": {
+        "selector": "owned-vp8-product-near-cap.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "dist-validation/owned-vp8-near-cap.webm",
+          "validation/windows/owned-vp8-near-cap.json",
+          "validation/windows/inputs/owned-vp8-product-near-cap.json"
+        ],
+        "generated_assets": ["dist-validation/owned-vp8-near-cap.webm"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [
+          ["vp", "run", "prepare:owned-vp8-near-cap"],
+          ["vp", "run", "build:ci"]
+        ],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-product-large-admitted": {
+        "selector": "owned-vp8-product-large-admitted.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "dist-validation/owned-vp8-large-admitted.webm",
+          "validation/windows/owned-vp8-large-admitted.json",
+          "validation/windows/inputs/owned-vp8-product-large-admitted.json"
+        ],
+        "generated_assets": ["dist-validation/owned-vp8-large-admitted.webm"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [
+          ["vp", "run", "prepare:owned-vp8-large-admitted"],
+          ["vp", "run", "build:ci"]
+        ],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-product-v8-low-inputs": {
+        "selector": "owned-vp8-product-v8-low-inputs.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "validation/windows/owned-vp8-inputs",
+          "validation/windows/owned-vp8-v8.json",
+          "validation/windows/inputs/owned-vp8-product-v8-low-inputs.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-product-v8-low": {
+        "selector": "owned-vp8-product-v8-low.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "validation/windows/owned-vp8-inputs",
+          "validation/windows/owned-vp8-v8.json",
+          "validation/windows/inputs/owned-vp8-product-v8-low.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-product-v8-low-ba": {
+        "selector": "owned-vp8-product-v8-low-ba.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "validation/windows/owned-vp8-inputs",
+          "validation/windows/owned-vp8-v8.json",
+          "validation/windows/inputs/owned-vp8-product-v8-low-ba.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-product-v8-medium": {
+        "selector": "owned-vp8-product-v8-medium.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "validation/windows/owned-vp8-inputs",
+          "validation/windows/owned-vp8-v8.json",
+          "validation/windows/inputs/owned-vp8-product-v8-medium.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-product-v8-medium-ba": {
+        "selector": "owned-vp8-product-v8-medium-ba.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "validation/windows/owned-vp8-inputs",
+          "validation/windows/owned-vp8-v8.json",
+          "validation/windows/inputs/owned-vp8-product-v8-medium-ba.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-product-v8-high": {
+        "selector": "owned-vp8-product-v8-high.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "validation/windows/owned-vp8-inputs",
+          "validation/windows/owned-vp8-v8.json",
+          "validation/windows/inputs/owned-vp8-product-v8-high.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
+      "owned-vp8-product-v8-high-ba": {
+        "selector": "owned-vp8-product-v8-high-ba.json",
+        "browsers": ["msedge", "chrome"],
+        "modes": ["desktop"],
+        "required_inputs": [
+          "dist",
+          "validation/windows/prior-dist",
+          "validation/windows/owned-vp8-inputs",
+          "validation/windows/owned-vp8-v8.json",
+          "validation/windows/inputs/owned-vp8-product-v8-high-ba.json"
+        ],
+        "generated_assets": ["dist"],
+        "bundle_asset_policy": "source-modules-and-required-inputs",
+        "build_commands": [["vp", "run", "build:ci"]],
+        "unused_full_campaign_assets": ["validation/windows/public-target.json"]
+      },
       "owned-demux-product": {
         "selector": "owned-demux-product.json",
         "browsers": ["msedge", "chrome"],
@@ -364,7 +579,17 @@
     "validation/windows/private-inputs",
     "validation/windows/gif-quantization-owner-video.json",
     "validation/windows/motion-owner-video.json",
+    "validation/windows/owned-vp8-v8.json",
+    "validation/windows/owned-vp8-near-cap.json",
+    "validation/windows/owned-vp8-large-admitted.json",
+    "validation/windows/owned-vp8-inputs",
     "validation/windows/helpers/owned-vp8-probe.ts",
+    "validation/windows/helpers/owned-vp8-product.ts",
+    "validation/windows/helpers/owned-vp8-input-capture.ts",
+    "validation/windows/helpers/owned-vp8-owner-retention.ts",
+    "validation/windows/helpers/owned-vp8-direct-owner.ts",
+    "validation/windows/vp8-timing-probe.ts",
+    "validation/windows/helpers/vp8-windows-environment.ts",
     "validation/windows/helpers/owned-demux-product.ts",
     "validation/windows/helpers/owned-demux-measurement.ts",
     "test/fixtures/owned-demux"

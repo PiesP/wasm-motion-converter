@@ -30,13 +30,15 @@ type Workload = {
   outputWidth?: number;
   outputHeight?: number;
 };
-type WebpRoute = 'webp-parallel-canvas' | 'webp-serial-canvas' | 'webp-wasm';
+type WebpRoute = 'webp-parallel-canvas' | 'webp-serial-canvas' | 'webp-owned-vp8' | 'webp-wasm';
 
 export function classifyWebpRoute(line: string): WebpRoute | null {
   if (line.includes('Branch: WebP encoder (parallel Worker pool + OffscreenCanvas)'))
     return 'webp-parallel-canvas';
   if (line.includes('Branch: WebP encoder (OffscreenCanvas convertToBlob + mux)'))
     return 'webp-serial-canvas';
+  if (line.includes('Branch: WebP encoder (owned VP8 + mux)')) return 'webp-owned-vp8';
+  // Retain recognition of the pinned prior distribution during comparison.
   if (line.includes('Branch: WebP encoder (streaming encodeRGB + mux)')) return 'webp-wasm';
   return null;
 }

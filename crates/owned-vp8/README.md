@@ -1,28 +1,77 @@
-# Owned VP8 v2 engineering implementation
+# Owned VP8 v2 candidate implementation
 
 Execution and acceptance are governed by [issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
 and the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
-This crate remains experimental and absent from production delivery. The
-historical DC-only result and receipts remain in `497-owned-vp8-result.md`.
+The candidate main and conversion Worker software routes import this crate's
+WASM artifact. Master delivery and `wasm-webp` removal remain gated by product
+qualification. The historical DC-only result and receipts remain in
+`497-owned-vp8-result.md`.
 
 The residual path now codes all sixteen coefficients using B_PRED/B_DC prediction,
-plus a separately exercised I16/DC and Y2/WHT path. The default experimental
-entrypoint now selects bounded I16/I4/UV modes using distortion and estimated
+plus a separately exercised I16/DC and Y2/WHT path. The candidate encoder
+selects bounded I16/I4/UV modes using distortion and estimated
 mode/coefficient/skip bit costs. Trials isolate reconstruction and contexts.
 Per-frame coefficient statistics follow frozen mode/coefficient decisions. A
 bounded optimizer proposes updates, and exact whole-frame counting includes
 update flags and literals. The encoder adopts updates only when the complete
 frame is strictly smaller; count and emission use the same frozen model.
-The bounded resumable ABI2 core is implemented. Color/preset calibration,
-filter tuning, and browser/product qualification remain unfinished. q60/75/85 map to exploratory quantizers and do not qualify fidelity
-or removal of `wasm-webp`.
+The bounded resumable ABI2 core is implemented. The exact Rust/module candidate
+passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as recorded
+in the [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
+Browser/product performance and lifecycle qualification remain unfinished; these
+codec results do not qualify runtime removal of `wasm-webp`.
 
-The exploratory q75 textured preset retains its finer luma quantizer for a
-frame only when every imported, padded U/V sample is exactly 128. This flag is
-accumulated during the existing bounded RGB-to-YUV conversion. Other textured
-frames use the chromatic q75 preset; q60/q85 are identical in both tables.
-The source color conversion and four segment IDs are unchanged. This allocation
-has no independent qualification claim.
+The release profile uses `opt-level = 3` as a throughput candidate. The
+[one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
+defines the comparison with the retained `opt-level = "s"` module. This build
+setting alone does not establish faster conversion or product acceptance.
+
+I4 mode selection now applies two exact integer score lower bounds to skip
+modes that cannot replace the current winner. The mode order and strict tie
+rule are unchanged; an exhaustive test-only search checks selected modes,
+coefficients, reconstruction and score. The [prospective experiment and
+source-bound result](../../docs/experiments/501-owned-vp8-exact-rdo-pruning.md)
+define the original module control, byte comparisons and performance limits.
+
+Textured allocation uses a per-frame flag that is true only when every imported,
+padded U/V sample is exactly 128, accumulated during bounded RGB-to-YUV conversion.
+The current exploratory colored and neutral qindices are defined in `src/presets.rs`.
+The neutral allocation preserves the earlier grayscale control. Per-preset
+fixed-pixel results against the shipped baseline are recorded in the linked
+source-bound result; product performance and lifecycle gates remain open.
+The source color conversion and four segment IDs are unchanged.
+
+For normal q60 frames with non-neutral imported chroma and exclusively Textured
+source macroblocks, the photo allocation also requires each imported padded Y/U/V
+plane's frame mean absolute within-tile second difference to be at most 2. The
+classifier retains its separate maximum-curvature rule and four class IDs. The
+mean uses 448 Y and 96 U/V differences per macroblock, excludes tile boundaries,
+and is accumulated during source classification. Eligible frames lower the coding base and all segment
+qindices by four. It signals Y1 DC, Y2 DC and Y2 AC deltas of +4 and UV DC/AC
+deltas of -15/-7. The original qindices remain the mode-rate reference. Y1 AC
+also becomes finer because VP8 has no separate Y1 AC delta. Neutral, mixed-map
+and high-chroma-loss q60 frames, or frames above the per-plane mean cutoff,
+keep their prior allocation. Padded edge replication can dilute the measured
+mean for narrow or odd inputs; this candidate does not assert visible-only parity.
+
+At q60, the existing source-derived high-chroma-loss predicate compares the
+Original and Reduced profiles. Each completed trial is filtered after its
+analysis and rate statistics are finished. Its visible owned-renderer RGB
+squared error is multiplied by 256 and added to the existing block and header
+rate terms weighted with Original qindices; exact ties retain Original. This is
+a prospective change of distortion domain and effective rate balance. Source
+YUV remains live through both trials and the final selected-profile analysis.
+The filtered trial reconstruction is discarded through the bounded reset, and
+that third analysis restores the selected unfiltered records and prediction
+state before counting or emission. The ABI reports distinct Original and
+Reduced filter/RGB stages and charges one filter macroblock or at most 1,024
+RGB pixels per step without another full-frame buffer. This policy
+does not change ordinary filtered-SSIM refinement or qualify product fidelity.
+
+The finest smooth segment also preserves DC precision when all three imported
+Y/U/V tile ranges are exactly zero. Smooth colored tiles with a one-level range
+retain the separate flat-class rate allocation. This uses bounded per-tile range
+scans and the existing four IDs; no geometry-specific rule or extra segment is used.
 
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
 sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
@@ -43,6 +92,20 @@ remains owned Rust; these adapted arithmetic/table portions retain attribution. 
 [LICENSE.libwebp](LICENSE.libwebp) and [PATENTS.libwebp](PATENTS.libwebp) with source
 and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
+
+The q75 engineering calibration applies only when every admitted macroblock is
+Textured and the visible source RGB error from nearest-chroma import is at most
+4,096 per channel. It lowers every base and segment luma qindex by two, including
+unused classes and neutral inputs. UV DC and AC deltas increase by two so scalar
+UV quantizer steps remain unchanged for neutral inputs, including clamping. For
+non-neutral inputs satisfying that same policy, UV DC delta then decreases by
+four, to -11; UV AC remains -7. Mode and coefficient rate weights use original
+qindices. Other q75 frames retain the previous q75 quantizers and rate weights.
+Mode choices and UV reconstruction may still change. The condition reuses the
+q60 import-error reference and does not change q85, geometry, cadence or
+acceptance thresholds. The [fixed-pixel result](../../docs/experiments/501-owned-vp8-low-curvature-result.md)
+binds the compiled artifact, exposed regressions and first V12 cohort. Full
+product and delivery gates remain required before adoption.
 
 ## ABI2 and resources
 
@@ -71,8 +134,39 @@ capacity can exceed logical input length and must be admitted explicitly.
 
 `FrameEncoder` in `src/textured.rs` stages initialization, color import,
 macroblock analysis, exact partition-length counting, frozen-decision emission,
-finalization and assembly. Finalized sizes are published at a separate preparation barrier before output
-allocation, so the host can reserve the new plan before advancing;
+finalization and assembly. Visible UV refinement retains the mandatory one-edit
+choice per macroblock and spends at most 128 additional proposal evaluations per
+frame, assigned by uniform per-macroblock quotas. Its private search uses at most
+64 directed coefficient moves per macroblock, a two-path beam and four distinct
+coefficient positions per path. Each additional proposal takes one bounded ABI
+step. Complete trials score the combined U/V reconstruction; the search commits
+only a final state with the original skip syntax and coefficient frontier.
+
+Exact byte counting independently evaluates the extended choice, the mandatory
+choices captured during the same analysis, and the unrefined records when those
+variants differ. After each count, the encoder copies completed reconstruction
+into the former source YUV slots, applies the signaled loop filter in raster
+order, and scores visible RGB with streaming SSIM moments. With legal unrefined
+output, it first finds the best finite score among legal variants whose
+word-aligned RIFF payload cost is no greater than that output's cost. A legal
+refined variant costing exactly one additional two-byte RIFF word is eligible
+only when its score strictly exceeds that best score. It then selects the
+highest finite score among eligible variants; larger aligned costs remain
+ineligible. Alignment uses widened arithmetic and includes the odd-byte padding
+required by the existing animation mux. This admission window does not raise the output or
+partition safety limits. If unrefined output is illegal, it selects the highest
+finite score among legal refined variants or returns the unrefined limit error.
+Exact score ties prefer extended, then captured mandatory, then unrefined. The RGB view
+approximates decoder conversion and cannot replace external quality gates.
+A bounded coefficient log and
+captured-choice overrides reverse and reapply reconstruction between counts;
+the unfiltered reconstruction remains intact for replay. One macroblock of
+filtering, 64 KiB of copying, or 64 four-by-four metric blocks run per ABI step.
+The two-row moment cache is capped at 1 MiB inside the unchanged 8 MiB scratch
+charge and releases at most 64 KiB per step. Metadata is released before the
+single output allocation. Finalized sizes
+are published at a separate preparation barrier after selection, so the host
+can reserve the new plan before advancing;
 first-partition overflow is separate from total output overflow. Output remains
 hidden until arithmetic coding and final assembly finish. Carry scans and finalization resume in bounded units; emission retains at most
 8192 two-byte operations per partition for one macroblock, drains at most 1024
@@ -100,7 +194,7 @@ cargo build --locked --offline --release --target wasm32-unknown-unknown
 ```
 
 From the repository root, use the project-selected Node to generate or verify
-the development-only bounded artifact and its source provenance:
+the bounded candidate artifact and its source provenance:
 
 ```sh
 vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --generate
@@ -112,8 +206,9 @@ The provenance manifest includes this README and license files as well as Rust
 sources. Regenerate it after changing any listed input, then run `--check`; an
 unchanged WASM digest alone does not validate stale provenance.
 
-The artifact is `owned-vp8.wasm` in this crate, outside the production import
-and delivery graph. Its memory declaration has an exact 192-MiB maximum; raw
+The artifact is `owned-vp8.wasm` in this crate, imported by the candidate main
+and conversion Worker software routes. Master delivery remains gated by product
+qualification. Its memory declaration has an exact 192-MiB maximum; raw
 Cargo development output without that declaration does not qualify delivery.
 
 Ignored tests explicitly require FFmpeg's native `vp8` and separate `libvpx`

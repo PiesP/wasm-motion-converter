@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "source": "Generated opaque VP9 solid-color video; no external media",
+  "generator": "scripts/test/generate-owned-vp8-large-admitted.ts",
+  "input": {
+    "path": "dist-validation/owned-vp8-large-admitted.webm",
+    "sha256": "d3aae8949721b4f278e0c12f5abe3b4b98edbfd37d2f7143e7d1e7fbf35abe10",
+    "bytes": 7762,
+    "codec": "vp9",
+    "width": 4032,
+    "height": 2457,
+    "pixels": 9906624,
+    "frames": 2,
+    "fps": 2,
+    "durationMs": 1000
+  },
+  "settings": {
+    "format": "webp",
+    "quality": "low",
+    "qualityPercent": 60,
+    "targetCadenceFps": 12,
+    "scale": 1,
+    "smartFrameSkip": "off"
+  }
+}

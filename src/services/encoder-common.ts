@@ -26,6 +26,12 @@ export interface EncoderFrameCounts {
   gifRetainedMappedFrames?: number;
   gifRetainedImageDataWrites?: number;
   gifRetainedWasmCapacityBytes?: number;
+  /** Exact ABI2 software execution observations; absent on Canvas and GIF routes. */
+  ownedVp8Frames?: number;
+  ownedVp8Steps?: number;
+  ownedVp8HostTaskYields?: number;
+  ownedVp8PeakActualLinearCapacityBytes?: number;
+  ownedVp8PeakReservedLinearCapacityBytes?: number;
 }
 
 /** Base options shared by all format encoders */
@@ -56,6 +62,8 @@ export interface BaseEncoderOptions {
   smartFrameSkip?: SmartFrameSkipMode | undefined;
   /** Conversion-owned memory pressure; independent of optional browser heap APIs. */
   decimationMemoryCheck?: (() => { usagePercentage: number } | null) | undefined;
+  /** Existing app-specific guard after conversion-owned VP8 reservations are added. */
+  assertOwnedVp8AdditionalMemoryBytes?: ((bytes: number) => void) | undefined;
   /** Development profiling callback for overlapping per-operation wall time. */
   profileOperation?: ProfileOperationRecorder | undefined;
   /** Development profiling callback for the selected frame-copy strategy. */

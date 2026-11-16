@@ -149,6 +149,50 @@ export class StreamingWebpMuxer {
     );
   }
 
+  /** Owned container chunks, pending copy, and the separately retained ICC copy. */
+  get retainedBytes(): number {
+    return (
+      this.currentOffset +
+      (this.pending?.bitstream.byteLength ?? 0) +
+      (this.iccProfile?.byteLength ?? 0)
+    );
+  }
+
+  /** Bytes already owned while a replacement frame copy is being made.
+   * The caller charges the replacement copy separately before this operation. */
+  retainedBeforePresentationCopy(startUs: number): number {
+    const previous = this.pending;
+    if (!previous) return this.retainedBytes;
+    const durationMs = Math.round(startUs / 1000) - Math.round(previous.startUs / 1000);
+    const emittedBytes =
+      durationMs >= StreamingWebpMuxer.MIN_PRESENTATION_HOLD_MS
+        ? (this.headerWritten ? 0 : this.headerSize()) +
+          Math.ceil(durationMs / 0xffffff) *
+            (StreamingWebpMuxer.ANMF_HEADER +
+              StreamingWebpMuxer.VP8_CHUNK_OVERHEAD +
+              previous.bitstream.byteLength +
+              (previous.bitstream.byteLength & 1))
+        : 0;
+    return this.retainedBytes + emittedBytes;
+  }
+
+  /** Upper bound while the final pending frame is expanded into ANMF chunks. */
+  retainedBeforeFinishPresentation(endUs: number): number {
+    const pending = this.pending;
+    if (!pending) return this.retainedBytes;
+    const durationMs = Math.round(endUs / 1000) - Math.round(pending.startUs / 1000);
+    if (durationMs === 0 && this.frameCount > 0) return this.retainedBytes;
+    const count = Math.ceil(
+      Math.max(StreamingWebpMuxer.MIN_PRESENTATION_HOLD_MS, durationMs) / 0xffffff
+    );
+    const chunkBytes =
+      StreamingWebpMuxer.ANMF_HEADER +
+      StreamingWebpMuxer.VP8_CHUNK_OVERHEAD +
+      pending.bitstream.byteLength +
+      (pending.bitstream.byteLength & 1);
+    return this.retainedBytes + (this.headerWritten ? 0 : this.headerSize()) + count * chunkBytes;
+  }
+
   /** Number of frames added so far. */
   get frames(): number {
     return this.frameCount;

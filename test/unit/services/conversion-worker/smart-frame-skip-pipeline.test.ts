@@ -25,7 +25,7 @@ const demuxResult = {
 };
 
 vi.mock('@services/gif-encoder-service', () => ({ encodeGif: mocks.encodeGif }));
-vi.mock('@services/webp-encoder-service', () => ({ encodeWebp: mocks.encodeWebp }));
+vi.mock('@services/webp-encoder-service', () => ({ encodeWebpOwned: mocks.encodeWebp }));
 
 import { runWorkerPipeline } from '@services/conversion-worker/pipeline-worker';
 
@@ -322,7 +322,7 @@ describe('worker pipeline smart frame skip forwarding', () => {
       encodedFrames: 1,
       emittedFrames: 1,
     });
-    expect(result.profile?.encoderRoute).toBe('webp-wasm');
+    expect(result.profile?.encoderRoute).toBe('webp-owned-vp8');
   });
 
   it('transfers only output view bytes when the encoder returns spare capacity', async () => {

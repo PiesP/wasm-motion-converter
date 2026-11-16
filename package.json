@@ -35,7 +35,11 @@
     "build:gif-wasm": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts",
     "build:gif-wasm:check": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts --check",
     "build:gif-wasm:generate": "node --experimental-strip-types scripts/build/build-gif-scalar-wasm.ts --generate",
+    "build:vp8-wasm": "node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts",
+    "build:vp8-wasm:check": "node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --check",
+    "build:vp8-wasm:generate": "node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --generate",
     "build": "vp build",
+    "build:ci": "vp run build:ci:native",
     "postbuild": "node --experimental-strip-types scripts/build/postbuild.ts",
     "preview": "vp preview",
     "clean": "node --experimental-strip-types scripts/build/clean.ts",
@@ -47,6 +51,8 @@
     "test:e2e": "playwright test",
     "pretest:e2e": "vp run build:owned-wasm",
     "prepare:e2e:fixture": "node --experimental-strip-types scripts/test/generate-e2e-video.ts",
+    "prepare:owned-vp8-near-cap": "node --experimental-strip-types scripts/test/generate-owned-vp8-near-cap.ts",
+    "prepare:owned-vp8-large-admitted": "node --experimental-strip-types scripts/test/generate-owned-vp8-large-admitted.ts",
     "pretest:e2e:ci": "vp run build:owned-wasm && vp run prepare:e2e:fixture",
     "test:e2e:ci": "node --experimental-strip-types scripts/test/run-playwright.ts ci",
     "pretest:e2e:resource": "vp run build:owned-wasm && node --experimental-strip-types scripts/test/prepare-resource-fixtures.ts",
@@ -59,10 +65,11 @@
     "test:cov": "vp test run --project unit --project browser --coverage",
     "pretest:cov": "vp run build:owned-wasm",
     "check:i18n": "node --experimental-strip-types scripts/check/i18n.ts",
+    "check:owned-vp8-inputs": "node --experimental-strip-types scripts/check/owned-vp8-inputs.ts",
     "build:demux-wasm": "node --experimental-strip-types scripts/build/build-owned-demux-wasm.ts",
     "build:demux-wasm:check": "node --experimental-strip-types scripts/build/build-owned-demux-wasm.ts --check",
     "build:demux-wasm:generate": "node --experimental-strip-types scripts/build/build-owned-demux-wasm.ts --generate",
-    "build:owned-wasm": "vp run build:gif-wasm && vp run build:demux-wasm"
+    "build:owned-wasm": "vp run build:gif-wasm && vp run build:demux-wasm && vp run build:vp8-wasm"
   },
   "dependencies": {
     "@piesp/browser-core": "file:packages/core",

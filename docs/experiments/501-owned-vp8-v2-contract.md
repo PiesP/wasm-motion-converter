@@ -36,12 +36,13 @@ gzip/raw and deferred/background gzip must not exceed this baseline. Owned VP8
 WASM is capped at the removed component's 482273 raw / 184377 gzip bytes. The
 linear-capacity ceiling is 192 MiB, additionally subject to aggregate admission.
 
-The UI WebP flow explicitly enters the main-thread pipeline, which selects
-parallel Canvas Worker, serial Canvas, then software. The separate conversion
-Worker also contains a software encoder path. `webp-encoder-service.ts` currently
-copies packed RGB into the Emscripten singleton, extracts VP8 from still RIFF,
-and feeds the owned animation mux. Both software call sites must be covered by
-integration/removal; native results cannot qualify the new software encoder.
+At the frozen baseline, the UI WebP flow entered the main-thread pipeline and
+both software call sites used the Emscripten `wasm-webp` singleton. The candidate
+main and conversion Worker routes now call `encodeWebpOwned`; the retained
+`encodeWebp` function is a comparator, not the candidate product selector.
+The main pipeline still selects parallel Canvas Worker, serial Canvas, then
+software. Both software call sites require qualification; native results cannot
+qualify the new software encoder.
 
 Core input contract: opaque 8-bit sRGB code values in checked packed RGB or
 RGBA/RGBX/BGRA/BGRX records with width, height, byte stride and explicit layout.
@@ -152,8 +153,103 @@ All PSNR, SSIM, size, performance, resource and delivery thresholds remain
 unchanged. Following its rejected evaluation, select `--cohort corrected-v3`
 for tuning or explicit `--regression`; it is no longer fresh acceptance.
 Retain initial-v1 and corrected-v2 as explicit regression cohorts.
-See [the frozen candidate result](501-owned-vp8-v3-result.md). No fresh successor
-cohort is currently frozen; do not relabel any observed condition as fresh.
+See [the frozen candidate result](501-owned-vp8-v3-result.md). At that result no fresh successor
+cohort had been frozen; do not relabel any observed condition as fresh.
+
+## Prospective corrected-v4 source-only freeze
+
+After corrected-v3 passed 43/45 fresh conditions and failed the q60/q85 size
+gates on its admitted large fixture, the old three held-out cohorts are exposed
+regression inputs. Before any corrected-v4 comparator or candidate output,
+`501-owned-vp8-v4-fixtures.json` froze 15 new held-out inputs / 45 conditions.
+The source-only generator `scripts/test/owned-vp8-v4-fixtures.ts` uses distinct
+formulas, seed and geometry for grayscale, gradient, chroma, text, noise, tiny,
+row, column, near-cap large and X-layout records. It also binds a new CC0
+photograph, two previously unobserved frames 73 and 169 of the pinned V8 video,
+and one exact duplicate hold of frame 73. See
+`501-owned-vp8-v4-photo-PROVENANCE.md` for the original photo license and digest.
+The original source is privately staged outside Git and public assets.
+
+The existing 15 tuning inputs and all numerical quality, size, performance,
+resource and delivery gates are unchanged. Its first frozen evaluation rejected
+the candidate at44/45; see [the result](501-owned-vp8-v4-result.md).
+All four observed held-out cohorts now require `--regression`; at that result no
+fresh successor had been frozen. Supply `--fresh-photo PATH` for
+the v4 photograph and `--video PATH` for the pinned video. Preserve the v4
+manifest, generator, input bytes and every outcome after first evaluation;
+subsequent v4 runs become exposed regression evidence and must require the
+explicit regression purpose. Source-only freeze does not qualify any codec,
+browser route, Windows result or product adoption.
+
+## Prospective corrected-v5 source-only freeze
+
+Following the corrected-v4 44/45 rejection at the q60 SSIM gate on its tiny
+fixture, `501-owned-vp8-v5-fixtures.json` freezes 18 new held-out inputs and
+54 conditions before any corrected-v5 codec output. Its source-only generator
+`scripts/test/owned-vp8-v5-fixtures.ts` binds distinct grayscale, gradient,
+chroma, text, noise, three independent tiny color patterns (2 × 7, 5 × 3,
+7 × 2), one-row and one-column patterns, a near-cap large frame, opaque BGRA
+and RGBX layouts, a new CC0 photograph and its nonoverlapping detail region,
+two previously unobserved frames 24 and 137 of the pinned V8 video, and an
+exact duplicate hold of frame 24. The photo's original identity, license and
+private staging are in `501-owned-vp8-v5-photo-PROVENANCE.md`; the manifest binds
+the pixel hashes, source hashes, decode filters and prior manifest identities.
+
+The existing 15 tuning inputs and all numerical quality, size, performance,
+resource and delivery gates remain unchanged. Its first frozen candidate
+evaluation passed 50/54 conditions and was rejected; see
+[the retained result](501-owned-vp8-v5-result.md). All v1-v5 held-out inputs are
+now exposed regression evidence and require `--regression`; at that result no
+fresh successor had been frozen. Use
+`--cohort corrected-v5 --regression --fresh-photo PATH --video PATH` for the
+preserved source identities. Preserve all original
+manifests, generators, inputs, thresholds and outcomes. This source-only freeze
+and later regression use establish no browser, Windows or product qualification.
+
+## Prospective corrected-v6 source-only freeze
+
+`501-owned-vp8-v6-fixtures.json` freezes 18 new held-out inputs / 54 conditions
+at q60/75/85 before any corrected-v6 codec output. The source-only generator
+`scripts/test/owned-vp8-v6-fixtures.ts` provides new seeded/formula grayscale,
+gradient, chroma-edge, colored-text and noise pixels; three tiny/odd patterns
+(1 × 9, 3 × 7, 9 × 1), separate one-row and one-column controls, a near-cap
+4080 × 2467 frame, opaque BGRA and RGBX layouts, a new CC0 photograph and
+nonoverlapping detail crop, unobserved V8 frames 32 and 181, and an exact
+duplicate hold of frame 32. [Photo provenance](501-owned-vp8-v6-photo-PROVENANCE.md)
+binds the pinned original; the manifest binds its bytes and decoded pixels,
+the V8 source, decode filters, generator and every earlier manifest hash.
+
+The complete `--cohort corrected-v6 --acceptance` set served the first frozen
+candidate evaluation: 53/54 conditions passed and the candidate was rejected;
+see [the retained result](501-owned-vp8-v6-result.md). Explicit acceptance
+subsets fail before evidence creation or codec initialization. All v1-v6
+held-out inputs now require `--regression`; the same 15 tuning inputs and all
+numeric gates remain unchanged. At that result no fresh successor had been frozen.
+Preserve the source-only manifest, generator, originals and original gates.
+Fixed-pixel evidence establishes no browser, Windows, or product qualification.
+
+## Prospective corrected-v7 source-only freeze
+
+`501-owned-vp8-v7-fixtures.json` freezes 18 new held-out inputs / 54 conditions
+at q60/75/85 before any corrected-v7 codec output. The independent source-only
+generator `scripts/test/owned-vp8-v7-fixtures.ts` uses a new seed, formulas and
+geometry for grayscale, gradient, chroma edges, colored text, noise, three
+tiny/odd controls (2 × 9, 5 × 1, 1 × 11), separate one-row and one-column
+controls, an admitted 4110 × 2449 near-cap frame, opaque BGRA and RGBX layouts,
+a new CC0 photograph with a nonoverlapping detail crop, previously unselected
+V8 frames 47 and 184, and an exact duplicate hold of frame 47. The
+[photo provenance](501-owned-vp8-v7-photo-PROVENANCE.md) binds its pinned
+original; the manifest binds source bytes, decoded pixels, FFmpeg filters,
+generator and every previous manifest hash.
+
+The complete set served its first frozen candidate evaluation: 51/54 conditions
+passed and the candidate was rejected; see
+[the retained result](501-owned-vp8-v7-result.md). Explicit acceptance subsets
+fail before evidence creation or codec initialization. All v1-v7 held-out inputs
+now require `--regression`; no fresh successor is currently frozen. The same
+15 tuning inputs and every numeric gate remain unchanged. Preserve the original
+source-only freeze, candidate, inputs and failed results. Fixed-pixel evidence
+does not qualify a browser, Windows environment, or product route.
 
 ## Resources and adoption
 
@@ -166,7 +262,8 @@ pending asynchronous write. Arithmetic output must be finalized before leasing.
 New production Cargo dependencies: zero. Dense bounded records and bounded
 host-task-yielding stages precede performance acceptance.
 
-The candidate remains absent from production routes/assets until M2/M3/M4 pass.
+The candidate branch imports owned VP8 into its product routes and build graph
+for qualification; master delivery remains held until the required gates pass.
 M5 then removes reachable wasm-webp runtime, loaders/chunks/declarations/copies,
 classification and runtime-only patch handling; a pinned dev oracle may remain.
 Verify main/Worker/service-worker execution, offline/update recovery, MIME/CSP,
@@ -190,6 +287,37 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
 
 ## Discrepancy inventory
 
+- Fixed during low-preset UV calibration: `crates/owned-vp8/src/presets.rs`
+  described tuning-only calibration while the execution ledger also records
+  explicitly exposed regression controls after rejected candidates. Its comment
+  now distinguishes those controls from fresh acceptance. All failures remain.
+- Fixed during the corrected-v4 freeze: the exposed-input diagnostic in
+  `scripts/test/owned-vp8-v2-compare.ts` still said no fresh cohort was frozen
+  after admitting v4. That historical diagnostic was corrected; all v1-v7
+  cohorts now require explicit regression after their own evaluations.
+
+- Fixed after the first owned-load CI run: the comment in
+  `validation/windows/webp-initialization.ts` assumed a WebP-format new-file
+  recovery action, but source-bound CI classified actual owned load failures as
+  general errors and `src/components/ErrorDisplay.tsx` exposed Retry. The helper
+  now invokes that explicit same-file user action with a bounded locator wait;
+  the original two timeouts remain retained evidence.
+- Fixed during candidate CI recovery migration: the comment at
+  `validation/windows/webp-initialization.ts:11`, test group/case names in
+  `test/e2e/output-contract.spec.ts` and mode list in
+  `validation/windows/profile.ts` still promised Emscripten factory/import failure
+  and explicit reload while the candidate software route used owned VP8.
+  CI observed zero intercepted requests and successful conversion instead.
+  Their replacement covers owned HTTP/invalid-module/cancelled-load boundaries
+  and explicit same-document new-request recovery. The old source and failed
+  CI receipt remain preserved; production master remains gated on qualification.
+- Retained diagnostic-artifact correction: the private task receipt
+  `native-large-diagnostic/RESULT.md` said its per-class coefficient byte totals
+  sum to the final coefficient partition. Its replay code/log omits the four-byte
+  arithmetic finalizer from those class shares (q60:83494 versus83498 total).
+  `native-large-v3-diagnostic/RESULT.md` records this correction and accounts for
+  finalization separately. The original frozen artifact remains unchanged;
+  this attribution wording does not change its emitted bytes or quality result.
 - Fixed after final M2 review: `crates/owned-vp8/README.md` described the ignored
   independent-decoder proof as filtering-disabled only, although
   `src/textured.rs` also tests enabled filtering, including neutral/colored
@@ -242,6 +370,42 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   `src/services/conversion-worker/pipeline-worker.ts` retained wasm-webp route
   descriptions while calling `encodeWebpOwned`. Both comments now identify the
   owned software path. Production adoption remains subject to the open gates.
+- Fixed in candidate `d43d23d0`: `src/hooks/conversion-handlers/use-perform-conversion.ts`
+  attributed the UI's main WebP route to a wasm-webp Worker hang and described
+  only an OffscreenCanvas encoder. The candidate main route now selects internal
+  Canvas Workers or owned VP8 software; its comment identifies that routing.
+- Fixed in candidate `d43d23d0`: `.github/threat-model.md` listed bundled
+  wasm-webp as an active software encoding option. Its architecture row now
+  identifies Canvas and owned VP8 while retaining the comparison path and
+  bundled assets pending M5 package classification.
+- Fixed in the Windows fixture stage: `CONTRIBUTING.md` build task table omitted
+  the `build:ci` owned VP8 input preflight present in `vite.config.ts`. The row
+  now states the README-only, V8 digest and unexpected-entry checks.
+- Fixed in the Windows preparation stage: `validation/windows/README.md` said
+  `prior-dist/` and `public-target.json` were both required for packaging without
+  limiting the claim to the default full profile. The focused `owned-vp8-product`
+  entry in `validation/windows/profile.json` requires `prior-dist/` but lists
+  `public-target.json` as unused, and `windows-acceptance/vmctl.py` selects that
+  scenario's `required_inputs`. The README now identifies the full-profile
+  requirement and focused selection separately; the first product smoke stages
+  no public target.
+- Fixed in this build stage: `scripts/build/build-owned-vp8-wasm.ts` and
+  `crates/owned-vp8/README.md` described the artifact as development-only and
+  absent from product imports after the candidate main and Worker routes began
+  loading it. Builder role, crate guidance and aggregate build now describe the
+  candidate graph without claiming qualified master delivery. The README also
+  described independent decoder tests as filtering-disabled after enabled-filter
+  reconstruction tests were added; it now identifies both cases.
+- Fixed in this contract: the adoption paragraph said the candidate remained
+  absent from product routes after the candidate branch began importing it.
+  It now distinguishes qualification imports from gated master delivery.
+
+Related maintenance, not additional confirmed contradictions: the frozen-baseline
+route paragraph is now explicitly dated to distinguish it from candidate behavior;
+its older revision remains valid baseline evidence. The notice generator now has
+independent owned VP8 attribution (MIT, libwebp BSD/patent and RFC references),
+closing a candidate-distribution notice gap without treating package-inventory
+omission as a conflicting implementation claim.
 - External reference discrepancy, unchanged: RFC 6386 section 13.3's illustrative
   coefficient pseudocode swaps plane labels relative to its detailed probability
   table and sets `prevCoeffWasZero` unconditionally. The detailed table/narrative
@@ -256,6 +420,18 @@ These fixed-pixel checks do not qualify product timing, animation or memory.
   (`SEGMENT_ABSDATA = 1`) and its decoder branch. Segment implementation follows
   bit 1 for absolute quantizers and must pass independent decoding. This does not
   modify the external RFC or establish product qualification.
+
+- Fixed for candidate acceptance: `test/e2e/output-contract.spec.ts` and
+  `test/e2e/resource-profile.spec.ts` still expected `webp-wasm` while both
+  candidate pipeline selectors report `webp-owned-vp8`. Their route assertions
+  now use the candidate identity without changing frame/resource expectations.
+- Fixed for candidate acceptance: `validation/windows/output-finalization.ts`
+  and its unit test recognized only the old `streaming encodeRGB + mux`
+  software log. They now recognize `owned VP8 + mux`; the old mapping remains
+  explicitly scoped to the pinned prior comparator.
+- Fixed candidate diagnostic: `src/services/offscreen-webp-encoder.ts` told
+  callers to use wasm-webp when Canvas was unavailable, although the candidate
+  software selector uses owned VP8. It now names the software encoder.
 
 No other confirmed repository documentation/code conflict was found in the
 inspected VP8, runtime-route, resource-policy and build-convention scope.

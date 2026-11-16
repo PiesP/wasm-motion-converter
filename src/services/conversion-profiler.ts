@@ -38,6 +38,7 @@ export const PROFILE_ENCODER_ROUTES = [
   'webp-parallel-canvas',
   'webp-serial-canvas',
   'webp-wasm',
+  'webp-owned-vp8',
 ] as const;
 
 export const PROFILE_COPY_PATHS = ['RGBX', 'RGBA', 'BGRA', 'BGRX', 'canvas', 'unknown'] as const;

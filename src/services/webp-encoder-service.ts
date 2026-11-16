@@ -4,14 +4,14 @@
 /**
  * WebP Encoder Service — Streaming Architecture (Decode→Encode Interleaved)
  *
- * Uses wasm-webp's single-frame encodeRGB API with streaming decode→encode
- * interleaving. Ordered delivery keeps one active encoding callback; the
- * decoder may overlap one staged RGB copy with that callback.
+ * The product software route uses conversion-owned ABI2 VP8. The legacy
+ * wasm-webp entrypoint remains for independent comparison tests. Both keep
+ * ordered decode→encode delivery and share the presentation muxer.
  *
  * Pipeline:
  *   1. decodeFrames streams frames via onFrameAvailable callback
- *   2. Per frame: encodeRGB() → VP8 bitstream extraction → collect
- *   3. muxAnimatedWebP() → final animated WebP container
+ *   2. Per frame: borrowed VP8 keyframe → presentation muxer
+ *   3. Finalize the animated RIFF/WEBP container
  */
 
 import type { ProgressCallback } from '@t/conversion-types';
@@ -23,18 +23,266 @@ import { decodeFrames } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
+import { WebpFrameMemoryBudget } from './frame-memory';
+import { resolveOutputLimits } from './output-limits';
+import { createOwnedVp8Encoder, OwnedVp8MemoryAdmissionError } from './owned-vp8-core';
+import { OwnedVp8MemoryBroker } from './owned-vp8-memory';
 import { withPooledBuffer } from './pooled-buffer';
 import { extractVP8Bitstream, StreamingWebpMuxer } from './streaming-webp-encoder';
 import { encodeRGBReuse } from './wasm-webp-singleton';
 
 /**
- * Encode demuxed video frames to animated WebP with streaming decode→encode.
- *
- * Pipeline:
- *   1. decodeFrames (streaming via onFrameAvailable) → per-frame encodeRGB
- *   2. Collect VP8 bitstreams
- *   3. Mux into RIFF/WEBP container
+ * Candidate product software path. One owned module instance spans all frames;
+ * the decoder's target reservation remains held until each borrowed write ends.
  */
+export async function encodeWebpOwned(
+  demux: DemuxResult,
+  opts: BaseEncoderOptions,
+  onProgress?: ProgressCallback,
+  signal?: AbortSignal
+): Promise<Uint8Array> {
+  const srcW = opts.width;
+  const srcH = opts.height;
+  const w = Math.max(1, Math.floor(srcW * opts.scale));
+  const h = Math.max(1, Math.floor(srcH * opts.scale));
+  const quality = WEBP_QUALITY_PERCENT[opts.quality];
+  if (quality !== 60 && quality !== 75 && quality !== 85)
+    throw new Error('Owned VP8 quality preset is unsupported');
+  const outputLimits = resolveOutputLimits('webp', opts);
+  const frameDecimation = opts.frameDecimation ?? 1;
+
+  logger.info('encoders', '  │  ├─ WebP: codec support check', { codec: demux.config.codec });
+
+  const startTime = performance.now();
+
+  // Streaming encode state — use incremental muxer to avoid O(N) memory accumulation
+  const muxer = new StreamingWebpMuxer(w, h, opts, opts.profileOperation);
+  const frameMemoryBudget = new WebpFrameMemoryBudget({
+    codedWidth: demux.config.codedWidth ?? srcW,
+    codedHeight: demux.config.codedHeight ?? srcH,
+    displayWidth: demux.config.displayAspectWidth ?? srcW,
+    displayHeight: demux.config.displayAspectHeight ?? srcH,
+    targetWidth: w,
+    targetHeight: h,
+    workerCount: 1,
+    sourceHeadroomFrames: 1,
+    serialSoftware: true,
+  });
+  let broker: OwnedVp8MemoryBroker;
+  try {
+    broker = new OwnedVp8MemoryBroker(
+      demux,
+      frameMemoryBudget,
+      muxer,
+      opts.assertOwnedVp8AdditionalMemoryBytes ?? (() => undefined),
+      outputLimits.maxOutputBytes
+    );
+  } catch (error) {
+    frameMemoryBudget.dispose();
+    throw error;
+  }
+  let encoder: Awaited<ReturnType<typeof createOwnedVp8Encoder>> | undefined;
+  let totalInputFrames = 0;
+  let skippedByDecimation = 0;
+  let encodeIdx = 0;
+  let ownedVp8Steps = 0;
+  let ownedVp8HostTaskYields = 0;
+  let ownedVp8PeakActualLinearCapacityBytes = 0;
+  let ownedVp8PeakReservedLinearCapacityBytes = 0;
+
+  // Additional sampling policy uses supplied conversion accounting when available.
+  const decimationController = createDynamicDecimationController(opts.decimationMemoryCheck);
+
+  // Decode frames with streaming callback — each frame is encoded immediately
+  try {
+    encoder = await createOwnedVp8Encoder({
+      accounting: broker,
+      ...(signal ? { signal } : {}),
+    });
+    const activeEncoder = encoder;
+    const {
+      totalInputFrames: totalDecoded,
+      skippedByDecimation: totalSkipped,
+      smartSkipped: totalSmartSkipped,
+      consumedChunks,
+      selectedFrames,
+      presentationEndUs,
+    } = await decodeFrames(
+      demux,
+      {
+        width: w,
+        height: h,
+        frameDecimation,
+        minimumSourceFrameGap: opts.minimumSourceFrameGap,
+        pressureCadenceRatio: opts.pressureCadenceRatio,
+        hwAccel: 'prefer-hardware',
+        smartFrameSkip: opts.smartFrameSkip,
+        pixelFormat: 'rgb',
+        frameMemoryBudget,
+        profileOperation: opts.profileOperation,
+        profileCopyPath: opts.profileCopyPath,
+        stagedCopyLookahead: false,
+        onFrameDecoded: (frameNum, total) => {
+          opts.onFrameDecoded?.(frameNum, total);
+          totalInputFrames = total;
+          // Report encoding progress during streaming (onFrameDecoded is already
+          // called by decodeFrames internally — no duplicate call here)
+          if (onProgress && encodeIdx > 0) {
+            const encodePct = total > 0 ? Math.round((encodeIdx / total) * 40) : 0;
+            onProgress({
+              phase: 'encoding',
+              progress: 50 + Math.min(40, encodePct),
+              fps: 0,
+              etaSeconds: null,
+              memoryMB: null,
+              currentFrame: encodeIdx,
+              totalFrames: total,
+            });
+          }
+        },
+        // Streaming callback: encode each frame immediately upon decoding
+        onFrameAvailable: async (rgbData, _frameDurationMs, _frameNum, memoryHandoff, timing) => {
+          if (signal?.aborted) {
+            globalBufferPool.release(rgbData);
+            throw new DOMException('Cancelled', 'AbortError');
+          }
+
+          // ── Dynamic decimation based on memory pressure ──
+          const shouldSkip = decimationController.shouldSkip(_frameNum);
+
+          if (shouldSkip) {
+            // Release buffer and skip encoding
+            globalBufferPool.release(rgbData);
+            return;
+          }
+
+          return withPooledBuffer(rgbData, async () => {
+            const target = memoryHandoff?.take();
+            if (!target)
+              throw new OwnedVp8MemoryAdmissionError('Owned VP8 target reservation is missing');
+            try {
+              const encodingStart = opts.profileOperation ? performance.now() : null;
+              const stats = await activeEncoder.encode(
+                rgbData.subarray(0, w * h * 3),
+                {
+                  width: w,
+                  height: h,
+                  stride: w * 3,
+                  layout: 4,
+                  quality,
+                  outputLimit: outputLimits.maxOutputBytes,
+                  externalLiveBytes: broker.frameLiveBytes,
+                  retainedOutputBytes: muxer.retainedBytes,
+                },
+                (rawVp8) => {
+                  broker.assertPresentationCopy(timing.startUs);
+                  muxer.addPresentationFrame(rawVp8, timing);
+                }
+              );
+              if (encodingStart !== null)
+                opts.profileOperation?.('webpEncoding', performance.now() - encodingStart);
+              ownedVp8Steps += stats.steps;
+              ownedVp8HostTaskYields += stats.hostTaskYields;
+              ownedVp8PeakActualLinearCapacityBytes = Math.max(
+                ownedVp8PeakActualLinearCapacityBytes,
+                stats.actualLinearCapacityBytes
+              );
+              ownedVp8PeakReservedLinearCapacityBytes = Math.max(
+                ownedVp8PeakReservedLinearCapacityBytes,
+                stats.reservedLinearCapacityBytes
+              );
+              encodeIdx++;
+              opts.onFrameEncoded?.(encodeIdx, demux.totalFrames);
+            } finally {
+              target.release();
+            }
+          });
+        },
+      },
+      signal
+    );
+
+    totalInputFrames = totalDecoded;
+    skippedByDecimation = totalSkipped;
+
+    // No decoder callback may still hold a borrowed VP8 lease after decodeFrames
+    // completes. Release linear memory before Blob finalization; retain the
+    // canvas reservation until final cleanup because its cache can remain live.
+    encoder.retire();
+
+    if (encodeIdx === 0) {
+      throw new Error('No frames decoded for WebP encoding');
+    }
+
+    broker.assertFinishPresentation(presentationEndUs);
+    muxer.finishPresentation(presentationEndUs);
+    broker.assertFinalization();
+
+    // Mux all encoded frames into animated WebP container
+    const result = await muxer.finish(signal);
+    const totalElapsed = (performance.now() - startTime) / 1000;
+
+    onProgress?.({
+      phase: 'encoding',
+      progress: 90,
+      fps: 0,
+      etaSeconds: 0,
+      memoryMB: null,
+      currentFrame: encodeIdx,
+      encodedFrames: encodeIdx,
+      emittedFrames: muxer.frames,
+      outputFrames: muxer.frames,
+      totalFrames: Math.max(muxer.frames, totalInputFrames),
+    });
+    opts.onEncodingComplete?.({
+      consumedChunks,
+      decodedFrames: totalInputFrames,
+      selectedFrames,
+      encodedFrames: encodeIdx,
+      emittedFrames: muxer.frames,
+      ownedVp8Frames: encodeIdx,
+      ownedVp8Steps,
+      ownedVp8HostTaskYields,
+      ownedVp8PeakActualLinearCapacityBytes,
+      ownedVp8PeakReservedLinearCapacityBytes,
+    });
+
+    logger.info('encoders', 'WebP encoding complete', {
+      decodedFrames: totalInputFrames,
+      keptFrames: muxer.frames,
+      totalFrames: demux.totalFrames,
+      frameDecimation,
+      outputBytes: result.length,
+      fps: Math.round(muxer.frames / totalElapsed),
+      duration: `${totalElapsed.toFixed(2)}s`,
+      resolution: `${w}×${h}`,
+      quality,
+      skippedByDecimation,
+      smartSkipped: totalSmartSkipped,
+      dynamicSkipCount: decimationController.getSkipCount(),
+    });
+    logger.info('encoders', '  │  └─ WebP: encode finished', {
+      keptFrames: muxer.frames,
+      outputBytes: result.length,
+      duration: `${totalElapsed.toFixed(2)}s`,
+      frameDecimation,
+      skippedByDecimation,
+      smartSkipped: totalSmartSkipped,
+    });
+
+    return result;
+  } finally {
+    try {
+      encoder?.retire();
+    } finally {
+      broker.release();
+      frameMemoryBudget.dispose();
+    }
+  }
+}
+
+/** Retained wasm-webp comparison entrypoint; product software routing selects
+ * encodeWebpOwned explicitly and never falls back after an ABI2 failure. */
 export async function encodeWebp(
   demux: DemuxResult,
   opts: BaseEncoderOptions,

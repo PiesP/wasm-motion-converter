@@ -51,6 +51,8 @@ export interface DemuxResult {
   indexRoute?: 'imported' | 'parsed' | undefined;
   /** One per-job copy; the main realm holds another master copy. */
   indexSnapshotBytes?: number | undefined;
+  /** Original caller-owned ArrayBuffer outside the 128 MiB demux reserve. */
+  inputBufferBytes?: number | undefined;
 }
 
 type DemuxPreparedCallback = (estimatedTotalFrames: number) => void;
@@ -259,6 +261,7 @@ export async function demuxVideo(
       sourceTotalMs: 0,
       indexRoute,
       indexSnapshotBytes,
+      inputBufferBytes,
       framerate,
       trimStartUs: request.trimStart * 1_000_000,
       ...(request.trimEnd > 0 ? { trimEndUs: request.trimEnd * 1_000_000 } : {}),
