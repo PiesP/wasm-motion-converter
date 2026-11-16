@@ -1156,6 +1156,74 @@ fn i4_edge(
     };
     (top, left, corner)
 }
+
+#[derive(Clone, Copy)]
+struct I4TailChoice {
+    coefficients: [i16; 16],
+    patch: [u8; 16],
+    distortion: u64,
+    token_rate: u64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn choose_i4_ac_tail(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    predictor: &[u8; 16],
+    steps: Steps,
+    context: usize,
+    lambda: u64,
+    coefficients: [i16; 16],
+    patch: [u8; 16],
+) -> I4TailChoice {
+    let mut baseline_rate = RateCounter::default();
+    residual::encode_block(&mut baseline_rate, &coefficients, 3, context).unwrap();
+    let baseline = I4TailChoice {
+        coefficients,
+        patch,
+        distortion: patch_error(source, stride, x, y, &patch),
+        token_rate: baseline_rate.cost,
+    };
+    let Some(last_ac) = (1..16)
+        .rev()
+        .find(|&position| coefficients[residual::SCAN[position]] != 0)
+    else {
+        return baseline;
+    };
+    let tail = residual::SCAN[last_ac];
+    if coefficients[tail].unsigned_abs() != 1
+        || !coefficients
+            .iter()
+            .enumerate()
+            .any(|(index, &level)| index != tail && level != 0)
+    {
+        return baseline;
+    }
+    let mut trial = coefficients;
+    trial[tail] = 0;
+    let mut trial_rate = RateCounter::default();
+    residual::encode_block(&mut trial_rate, &trial, 3, context).unwrap();
+    if trial_rate.cost >= baseline.token_rate {
+        return baseline;
+    }
+    let trial_patch = reconstructed_patch(&trial, predictor, steps);
+    let trial_distortion = patch_error(source, stride, x, y, &trial_patch);
+    if trial_distortion * 256 + lambda * trial_rate.cost
+        < baseline.distortion * 256 + lambda * baseline.token_rate
+    {
+        I4TailChoice {
+            coefficients: trial,
+            patch: trial_patch,
+            distortion: trial_distortion,
+            token_rate: trial_rate.cost,
+        }
+    } else {
+        baseline
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn make_i4(
     source: &[u8],
@@ -1168,6 +1236,7 @@ fn make_i4(
     left_modes: &[u8; 4],
     contexts: &CoeffContexts,
     lambda: u64,
+    i4_ac_tail_rdo: bool,
 ) -> LumaCandidate {
     make_i4_with_pruning::<true>(
         source,
@@ -1180,6 +1249,7 @@ fn make_i4(
         left_modes,
         contexts,
         lambda,
+        i4_ac_tail_rdo,
     )
     .0
 }
@@ -1196,6 +1266,7 @@ fn make_i4_with_pruning<const PRUNE: bool>(
     left_modes: &[u8; 4],
     contexts: &CoeffContexts,
     lambda: u64,
+    i4_ac_tail_rdo: bool,
 ) -> (LumaCandidate, u64) {
     let mut tile = [0u8; 256];
     let mut block = Macroblock::default();
@@ -1234,30 +1305,36 @@ fn make_i4_with_pruning<const PRUNE: bool>(
                     continue;
                 }
                 let predicted = prediction::predict_i4(&top, &left, corner, bmode_from_u8(mode));
-                let (coeff, patch) =
+                let (mut coeff, mut patch) =
                     code_predicted_block(source, stride, x, y, &predicted, y_steps);
-                let mut distortion = 0u64;
-                for row in 0..4 {
-                    for col in 0..4 {
-                        let diff = i32::from(source[(y + row) * stride + x + col])
-                            - i32::from(patch[row * 4 + col]);
-                        distortion += (diff * diff) as u64;
-                    }
-                }
-                if PRUNE
+                let mut distortion = patch_error(source, stride, x, y, &patch);
+                if !i4_ac_tail_rdo
+                    && PRUNE
                     && best
                         .as_ref()
                         .is_some_and(|last| distortion * 256 + lambda * mode_cost >= last.3)
                 {
                     continue;
                 }
-                residual::encode_block(
-                    &mut trial,
-                    &coeff,
-                    3,
-                    usize::from(local_above[bx]) + usize::from(local_left[by]),
-                )
-                .unwrap();
+                let context = usize::from(local_above[bx]) + usize::from(local_left[by]);
+                if i4_ac_tail_rdo {
+                    let choice = choose_i4_ac_tail(
+                        source, stride, x, y, &predicted, y_steps, context, lambda, coeff, patch,
+                    );
+                    coeff = choice.coefficients;
+                    patch = choice.patch;
+                    distortion = choice.distortion;
+                    if PRUNE
+                        && best
+                            .as_ref()
+                            .is_some_and(|last| distortion * 256 + lambda * mode_cost >= last.3)
+                    {
+                        continue;
+                    }
+                    trial.cost += choice.token_rate;
+                } else {
+                    residual::encode_block(&mut trial, &coeff, 3, context).unwrap();
+                }
                 let score = distortion * 256 + lambda * trial.cost;
                 if best.as_ref().is_none_or(|last| score < last.3) {
                     best = Some((coeff, patch, mode, score));
@@ -2048,6 +2125,7 @@ fn encode_observed(
                         layout: format,
                     }),
                     high_chroma_loss,
+                    mixed_y1_ac,
                     &mut reconstructed_y,
                     &mut reconstructed_u,
                     &mut reconstructed_v,
@@ -2535,6 +2613,7 @@ fn analyze_one(
     source_v: &[u8],
     original_rgb: Option<display_rgb::Original<'_>>,
     high_chroma_loss: bool,
+    i4_ac_tail_rdo: bool,
     reconstructed_y: &mut [u8],
     reconstructed_u: &mut [u8],
     reconstructed_v: &mut [u8],
@@ -2584,6 +2663,7 @@ fn analyze_one(
             left_modes,
             coeff_contexts,
             lambda,
+            i4_ac_tail_rdo,
         ));
         options
     } else if luma_policy == 1 {
@@ -2613,6 +2693,7 @@ fn analyze_one(
             left_modes,
             coeff_contexts,
             lambda,
+            i4_ac_tail_rdo,
         )]
     };
     let uv_policy = match (quality, segment_id) {
@@ -4493,6 +4574,7 @@ impl FrameEncoder {
             &self.source_v,
             original_rgb,
             self.high_chroma_loss,
+            self.mixed_y1_ac,
             &mut self.reconstructed_y,
             &mut self.reconstructed_u,
             &mut self.reconstructed_v,
@@ -5306,6 +5388,173 @@ mod tests {
     use std::process::{Command, Stdio};
 
     #[test]
+    fn i4_ac_tail_requires_a_remaining_coefficient_and_strict_rate_distortion_gain() {
+        let steps = ac_quant::steps(22, Deltas::default(), Plane::Y1);
+        let predictor = [128u8; 16];
+        let tail = residual::SCAN[15];
+        for context in 0..=2 {
+            for sign in [-1, 1] {
+                for keeper in [0, residual::SCAN[1]] {
+                    let mut coefficients = [0i16; 16];
+                    coefficients[keeper] = 2;
+                    coefficients[tail] = sign;
+                    let baseline_patch = reconstructed_patch(&coefficients, &predictor, steps);
+                    let mut shortened = coefficients;
+                    shortened[tail] = 0;
+                    let shorter_patch = reconstructed_patch(&shortened, &predictor, steps);
+                    assert_ne!(baseline_patch, shorter_patch);
+                    let mut baseline_rate = RateCounter::default();
+                    let mut shorter_rate = RateCounter::default();
+                    residual::encode_block(&mut baseline_rate, &coefficients, 3, context).unwrap();
+                    residual::encode_block(&mut shorter_rate, &shortened, 3, context).unwrap();
+                    assert!(shorter_rate.cost < baseline_rate.cost);
+
+                    // A source equal to the shortened reconstruction makes the
+                    // improvement independent of lambda and sign.
+                    let chosen = choose_i4_ac_tail(
+                        &shorter_patch,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        steps,
+                        context,
+                        0,
+                        coefficients,
+                        baseline_patch,
+                    );
+                    assert_eq!(chosen.coefficients, shortened);
+                    assert_eq!(chosen.patch, shorter_patch);
+                    assert_eq!(chosen.distortion, 0);
+                    assert_eq!(chosen.token_rate, shorter_rate.cost);
+
+                    // A source equal to the baseline reconstruction cannot
+                    // improve distortion when lambda is zero; ties retain it.
+                    let retained = choose_i4_ac_tail(
+                        &baseline_patch,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        steps,
+                        context,
+                        0,
+                        coefficients,
+                        baseline_patch,
+                    );
+                    assert_eq!(retained.coefficients, coefficients);
+                    assert_eq!(retained.patch, baseline_patch);
+                    assert_eq!(retained.token_rate, baseline_rate.cost);
+
+                    // The previous baseline-distortion prune would skip the
+                    // improving candidate at this bound.
+                    let old_bound = patch_error(&shorter_patch, 4, 0, 0, &baseline_patch) * 256;
+                    assert!(old_bound > 1);
+                    let previous_best = old_bound - 1;
+                    assert!(old_bound >= previous_best);
+                    assert!(chosen.distortion * 256 < previous_best);
+                }
+            }
+            for coefficients in [
+                [0i16; 16],
+                {
+                    let mut values = [0i16; 16];
+                    values[tail] = 1;
+                    values
+                },
+                {
+                    let mut values = [0i16; 16];
+                    values[0] = 2;
+                    values[tail] = 2;
+                    values
+                },
+            ] {
+                let patch = reconstructed_patch(&coefficients, &predictor, steps);
+                let choice = choose_i4_ac_tail(
+                    &patch,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    context,
+                    1024,
+                    coefficients,
+                    patch,
+                );
+                assert_eq!(choice.coefficients, coefficients);
+                assert_eq!(choice.patch, patch);
+            }
+        }
+    }
+
+    #[test]
+    fn i4_ac_tail_equal_reconstruction_keeps_baseline_on_zero_lambda_tie() {
+        let steps = ac_quant::steps(22, Deltas::default(), Plane::Y1);
+        let predictor = [255u8; 16];
+        let mut coefficients = [0i16; 16];
+        coefficients[0] = 1000;
+        coefficients[residual::SCAN[15]] = 1;
+        let mut shortened = coefficients;
+        shortened[residual::SCAN[15]] = 0;
+        let patch = reconstructed_patch(&coefficients, &predictor, steps);
+        assert_eq!(patch, reconstructed_patch(&shortened, &predictor, steps));
+        let mut baseline_rate = RateCounter::default();
+        let mut shorter_rate = RateCounter::default();
+        residual::encode_block(&mut baseline_rate, &coefficients, 3, 2).unwrap();
+        residual::encode_block(&mut shorter_rate, &shortened, 3, 2).unwrap();
+        assert!(shorter_rate.cost < baseline_rate.cost);
+        let choice = choose_i4_ac_tail(
+            &patch,
+            4,
+            0,
+            0,
+            &predictor,
+            steps,
+            2,
+            0,
+            coefficients,
+            patch,
+        );
+        assert_eq!(choice.coefficients, coefficients);
+        assert_eq!(choice.token_rate, baseline_rate.cost);
+    }
+
+    #[test]
+    fn i4_ac_tail_never_trades_higher_token_rate_for_lower_distortion() {
+        let steps = ac_quant::steps(22, Deltas::default(), Plane::Y1);
+        let predictor = [128u8; 16];
+        let mut coefficients = [0i16; 16];
+        coefficients[residual::SCAN[1]] = 2;
+        coefficients[residual::SCAN[2]] = 1;
+        let mut shortened = coefficients;
+        shortened[residual::SCAN[2]] = 0;
+        let patch = reconstructed_patch(&coefficients, &predictor, steps);
+        let shorter_patch = reconstructed_patch(&shortened, &predictor, steps);
+        assert_ne!(patch, shorter_patch);
+        let mut baseline_rate = RateCounter::default();
+        let mut shorter_rate = RateCounter::default();
+        residual::encode_block(&mut baseline_rate, &coefficients, 3, 0).unwrap();
+        residual::encode_block(&mut shorter_rate, &shortened, 3, 0).unwrap();
+        assert!(shorter_rate.cost >= baseline_rate.cost);
+        let choice = choose_i4_ac_tail(
+            &shorter_patch,
+            4,
+            0,
+            0,
+            &predictor,
+            steps,
+            0,
+            0,
+            coefficients,
+            patch,
+        );
+        assert_eq!(choice.coefficients, coefficients);
+        assert_eq!(choice.patch, patch);
+        assert_eq!(choice.token_rate, baseline_rate.cost);
+    }
+
+    #[test]
     fn i4_lower_bound_pruning_matches_exhaustive_mode_search() {
         let mut state = 0x5015_4d4fu32;
         let mut next = || {
@@ -5346,41 +5595,118 @@ mod tests {
             for qindex in [0, 22, 80, 127] {
                 let steps = ac_quant::steps(qindex, Deltas::default(), Plane::Y1);
                 for lambda in [0, 1, 225, 2048] {
-                    for (mx, my) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                        let pruned = make_i4_with_pruning::<true>(
-                            &source,
-                            &reconstructed,
-                            32,
-                            mx,
-                            my,
-                            steps,
-                            &above,
-                            &left,
-                            &contexts,
-                            lambda,
-                        );
-                        let exhaustive = make_i4_with_pruning::<false>(
-                            &source,
-                            &reconstructed,
-                            32,
-                            mx,
-                            my,
-                            steps,
-                            &above,
-                            &left,
-                            &contexts,
-                            lambda,
-                        );
-                        assert_eq!(pruned.0.block, exhaustive.0.block);
-                        assert_eq!(pruned.0.tile, exhaustive.0.tile);
-                        assert_eq!(pruned.0.distortion, exhaustive.0.distortion);
-                        assert_eq!(
-                            pruned.1, exhaustive.1,
-                            "pattern={pattern} q={qindex} lambda={lambda} mx={mx} my={my}"
-                        );
+                    for tail_rdo in [false, true] {
+                        for (mx, my) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                            let pruned = make_i4_with_pruning::<true>(
+                                &source,
+                                &reconstructed,
+                                32,
+                                mx,
+                                my,
+                                steps,
+                                &above,
+                                &left,
+                                &contexts,
+                                lambda,
+                                tail_rdo,
+                            );
+                            let exhaustive = make_i4_with_pruning::<false>(
+                                &source,
+                                &reconstructed,
+                                32,
+                                mx,
+                                my,
+                                steps,
+                                &above,
+                                &left,
+                                &contexts,
+                                lambda,
+                                tail_rdo,
+                            );
+                            assert_eq!(pruned.0.block, exhaustive.0.block);
+                            assert_eq!(pruned.0.tile, exhaustive.0.tile);
+                            assert_eq!(pruned.0.distortion, exhaustive.0.distortion);
+                            assert_eq!(
+                                pruned.1, exhaustive.1,
+                                "pattern={pattern} q={qindex} lambda={lambda} tail_rdo={tail_rdo} mx={mx} my={my}"
+                            );
+                        }
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn i4_selected_score_counts_each_mode_and_selected_residual_once() {
+        let source: Vec<_> = (0..16 * 16).map(|i| (i * 37 + i / 16 * 11) as u8).collect();
+        let reconstructed: Vec<_> = (0..16 * 16).map(|i| (i * 19) as u8).collect();
+        let mut contexts = CoeffContexts::new(1);
+        contexts.y[..4].copy_from_slice(&[true, false, true, false]);
+        contexts.left_y = [false, true, false, true];
+        let above_modes = [0, 3, 6, 9];
+        let left_modes = [9, 6, 3, 0];
+        let lambda = 225;
+        for tail_rdo in [false, true] {
+            let (candidate, score) = make_i4_with_pruning::<true>(
+                &source,
+                &reconstructed,
+                16,
+                0,
+                0,
+                ac_quant::steps(22, Deltas::default(), Plane::Y1),
+                &above_modes,
+                &left_modes,
+                &contexts,
+                lambda,
+                tail_rdo,
+            );
+            let mut above_context = [false; 4];
+            above_context.copy_from_slice(&contexts.y[..4]);
+            let mut left_context = contexts.left_y;
+            let mut independently_scored = 0;
+            let mut distortion = 0;
+            for by in 0..4 {
+                for bx in 0..4 {
+                    let index = by * 4 + bx;
+                    let above_mode = if by == 0 {
+                        above_modes[bx]
+                    } else {
+                        candidate.block.b_modes[index - 4]
+                    };
+                    let left_mode = if bx == 0 {
+                        left_modes[by]
+                    } else {
+                        candidate.block.b_modes[index - 1]
+                    };
+                    let mut mode_rate = RateCounter::default();
+                    let mut token_rate = RateCounter::default();
+                    write_bmode(
+                        &mut mode_rate,
+                        above_mode,
+                        left_mode,
+                        candidate.block.b_modes[index],
+                    )
+                    .unwrap();
+                    residual::encode_block(
+                        &mut token_rate,
+                        &candidate.block.y[index],
+                        3,
+                        usize::from(above_context[bx]) + usize::from(left_context[by]),
+                    )
+                    .unwrap();
+                    let patch = prediction_patch::<16, 256>(&candidate.tile, bx, by);
+                    let error = patch_error(&source, 16, bx * 4, by * 4, &patch);
+                    distortion += error;
+                    independently_scored +=
+                        error * 256 + lambda * (mode_rate.cost + token_rate.cost);
+                    let nonzero = candidate.block.y[index].iter().any(|&level| level != 0);
+                    above_context[bx] = nonzero;
+                    left_context[by] = nonzero;
+                }
+            }
+            assert_eq!(candidate.distortion, distortion);
+            assert_eq!(score, independently_scored, "tail_rdo={tail_rdo}");
         }
     }
 
@@ -6438,6 +6764,7 @@ mod tests {
                     &guarded.source_v,
                     None,
                     false,
+                    false,
                     &mut probe_y,
                     &mut probe_u,
                     &mut probe_v,
@@ -6466,6 +6793,7 @@ mod tests {
                     &baseline.source_u,
                     &baseline.source_v,
                     None,
+                    false,
                     false,
                     &mut baseline.reconstructed_y,
                     &mut baseline.reconstructed_u,
@@ -7887,6 +8215,7 @@ mod tests {
                     source_uv,
                     source_uv,
                     None,
+                    false,
                     false,
                     &mut reconstructed_y,
                     &mut reconstructed_u,
@@ -10150,6 +10479,7 @@ mod tests {
                 &left,
                 &contexts,
                 225,
+                true,
             );
             let uv = make_uv(
                 &source_uv,

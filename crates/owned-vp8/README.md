@@ -19,19 +19,22 @@ The bounded resumable ABI2 core is implemented. The earlier low-curvature module
 `e918f3016451b60f04dfa551e5ae57820bcbc65c8c8834f01c8426b72355e584`
 passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as
 recorded in its [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
-The current [mixed Y1 AC allocation candidate](../../docs/experiments/501-owned-vp8-mixed-y1-ac-allocation-candidate.md)
-has not passed its codec quality/size or product gates. The earlier results do
-not qualify this module or runtime removal of `wasm-webp`.
+The [mixed Y1 AC allocation control](../../docs/experiments/501-owned-vp8-mixed-y1-ac-allocation-candidate.md)
+failed one of its 50 codec quality/size screen conditions. The current
+[I4 AC-tail RDO candidate](../../docs/experiments/501-owned-vp8-i4-ac-tail-rdo-candidate.md)
+has not undergone its codec quality/size screen or passed product gates.
+Earlier results do not qualify this module or runtime removal of `wasm-webp`.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
 defines the comparison with the retained `opt-level = "s"` module. This build
 setting alone does not establish faster conversion or product acceptance.
 
-I4 mode selection now applies two exact integer score lower bounds to skip
-modes that cannot replace the current winner. The mode order and strict tie
-rule are unchanged; an exhaustive test-only search checks selected modes,
-coefficients, reconstruction and score. The [prospective experiment and
+I4 mode selection applies a mode-only lower bound before reconstruction and a
+distortion lower bound after any eligible AC-tail trial, skipping modes that
+cannot replace the current winner. The mode order and strict tie rule are
+unchanged; an exhaustive test-only search checks selected modes, coefficients,
+reconstruction and score. The [prospective experiment and
 source-bound result](../../docs/experiments/501-owned-vp8-exact-rdo-pruning.md)
 define the original module control, byte comparisons and performance limits.
 
