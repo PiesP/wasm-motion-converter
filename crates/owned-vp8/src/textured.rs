@@ -9607,12 +9607,21 @@ mod tests {
                                 y_steps.dc,
                                 ac_quant::steps(original_qindex, original_deltas, Plane::Y1).dc
                             );
-                            for plane in [Plane::Y2, Plane::UV] {
-                                assert_eq!(
-                                    ac_quant::steps(qindex, engine.deltas, plane),
-                                    ac_quant::steps(original_qindex, original_deltas, plane)
-                                );
-                            }
+                            assert_eq!(
+                                ac_quant::steps(qindex, engine.deltas, Plane::Y2),
+                                ac_quant::steps(original_qindex, original_deltas, Plane::Y2)
+                            );
+                            let before_uv =
+                                ac_quant::steps(original_qindex, original_deltas, Plane::UV);
+                            let after_uv = ac_quant::steps(qindex, engine.deltas, Plane::UV);
+                            assert_eq!(after_uv.ac, before_uv.ac);
+                            let expected_uv_dc = match original_qindex {
+                                6 => 5,
+                                18 => 16,
+                                32 => 25,
+                                _ => unreachable!("mixed q60 segment qindex"),
+                            };
+                            assert_eq!(after_uv.dc, expected_uv_dc);
                         } else {
                             assert_eq!(qindex, original_qindex);
                             assert_eq!(engine.deltas, crate::presets::deltas(75));
@@ -9982,7 +9991,7 @@ mod tests {
                 true, false, true, false, false, true, // Y1 DC -4.
                 true, false, true, false, false, true, // Y2 DC -4.
                 true, false, true, false, false, true, // Y2 AC -4.
-                true, true, false, false, false, true, // UV DC -8.
+                true, true, false, false, true, true, // UV DC -9.
                 true, true, true, true, true, true,  // UV AC -15.
                 false, // Entropy updates are not retained.
             ]

@@ -135,7 +135,7 @@ pub(crate) fn mixed_y1_ac_deltas(mut selected: Deltas, enabled: bool) -> Deltas 
         selected.y1_dc = -4;
         selected.y2_dc = -4;
         selected.y2_ac = -4;
-        selected.uv_dc = -8;
+        selected.uv_dc = -9;
         selected.uv_ac = -15;
     }
     selected
@@ -231,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_y1_ac_allocation_changes_only_y1_ac_steps_for_every_segment() {
+    fn mixed_y1_ac_allocation_refines_uv_dc_in_two_segments() {
         use crate::ac_quant::{steps, Plane};
 
         let original = deltas(60);
@@ -244,7 +244,7 @@ mod tests {
                 selected.uv_dc,
                 selected.uv_ac
             ),
-            (-4, -4, -4, -8, -15)
+            (-4, -4, -4, -9, -15)
         );
         assert_eq!(
             (
@@ -263,7 +263,7 @@ mod tests {
             textured_qindex(60, false),
         ];
         assert_eq!(qindices, [6, 18, 32, 32]);
-        for original_q in qindices {
+        for (segment, original_q) in qindices.into_iter().enumerate() {
             let allocated_q = original_q + MIXED_Y1_AC_QINDEX_INCREASE;
             let before_y1 = steps(original_q as u8, original, Plane::Y1);
             let after_y1 = steps(allocated_q as u8, selected, Plane::Y1);
@@ -273,10 +273,11 @@ mod tests {
                 steps(allocated_q as u8, selected, Plane::Y2),
                 steps(original_q as u8, original, Plane::Y2)
             );
-            assert_eq!(
-                steps(allocated_q as u8, selected, Plane::UV),
-                steps(original_q as u8, original, Plane::UV)
-            );
+            let before_uv = steps(original_q as u8, original, Plane::UV);
+            let after_uv = steps(allocated_q as u8, selected, Plane::UV);
+            assert_eq!(after_uv.ac, before_uv.ac);
+            assert_eq!(before_uv.dc, [6, 17, 25, 25][segment]);
+            assert_eq!(after_uv.dc, [5, 16, 25, 25][segment]);
             assert_eq!(
                 lambda_for_quality(original_q, 60),
                 lambda_for_q(original_q) * 6 / 5
