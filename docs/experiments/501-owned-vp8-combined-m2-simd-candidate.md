@@ -1,9 +1,11 @@
 # Combined M2 and strict compiler candidate
 
-This is a new source combination, not a qualified runtime replacement. Start
+This combined candidate is measured at signed source
+`e0211406bff52db7258b0679c3698fb083971df0`; it is not a qualified
+runtime replacement. It starts
 from Y1 M2 metadata head `1a11279d9a1cf2f6b7563bf88e212a720a0d5e9d`
-(measured `1e80f53b`, module `fc13fa5f`), add only the paired-display
-`display_rgb.rs` from `e00198fe`, and use the strict compiler generator from
+(measured `1e80f53b`, module `fc13fa5f`), adds only the paired-display
+`display_rgb.rs` from `e00198fe`, and uses the strict compiler generator from
 `bdcc5906`. The original component sources, failed experiments and receipts
 remain unchanged. No new production dependency, preset, layout, ABI, work
 quantum, resource ceiling, geometry, frame selection or cadence change is made.
@@ -16,7 +18,7 @@ different-source ratios cannot be transferred or multiplied. Compiler SIMD
 permission does not by itself prove emitted or executed SIMD instructions or
 installed-browser support. No automatic scalar retry is added.
 
-## Prospective engineering and comparison
+## Engineering and comparison contract
 
 1. Check the actual combined native Rust suite, explicit independent decoder
    cases, fmt and Clippy. Generate with the pinned Rust 1.99.1 and Node 26.13.1
@@ -54,7 +56,8 @@ removal, physical zero-copy/peak claim, merge or deployment is established here.
 
 ## Current state
 
-Source integration, native Rust and compiled ABI2 engineering are complete.
+Source integration, native Rust and compiled ABI2 engineering are complete at
+`e0211406bff52db7258b0679c3698fb083971df0`.
 The first pinned
 format check, locked/offline ordinary suite (161 passed, 17 ignored), separate
 independent-decoder ignored suite (17 passed), and Clippy with warnings denied
@@ -83,9 +86,43 @@ candidate-bound policy test. `wasm-build-01/policy-source-identity.json`
 records the comparison; the new module's actual admission is covered by the
 maintained generator, compiled ABI script and independent audit above.
 
-Exact-output, Node performance, full 687-condition identity, fresh,
-browser/product and delivery checks have not run for this combination.
-Component result documents retain their own actual source and environment
-identities. Neither the compiler flag nor these engineering checks establish
-emitted or executed SIMD instructions, browser compatibility or product
-adoption.
+The direct 20-condition fixed-input comparison passed raw VP8 identity against
+the immediate scalar Y1 module `fc13fa5f`. Its private
+`combined-m2-simd-01/equality-summary.json` has SHA-256
+`2972fca4a60de988b81896082ae954950679c7799e5a3452acdc0bf6f73cb899`.
+The subsequent 10-warm/40-measured balanced Node encode-only comparison on
+five actual post-Canvas RGB q60 inputs measured candidate median encode times
+16.25–23.87% lower than the immediate Y1 control. The source-bound private
+`combined-m2-simd-01/timing-summary.json` has SHA-256
+`b64aa5fb0fc1f3c49a5001433117abcb4aef4e9f7b6a13844f19582a2c3a3e2d`.
+These five Node ratios are engineering observations, not whole-product or
+installed-browser performance.
+
+The separate same-687 qualification first verified all 229 original fixture
+inputs, covering 217 distinct input digests and 36 duplicate-quality
+conditions. It then made 687 **new combined-module encodings** at the original
+layouts, strides and qualities. All 687 new raw VP8 payloads matched the saved
+scalar Y1 payloads byte for byte. The scalar Y1's earlier 687 evaluation had
+reused 45 current rows and newly run 642; that historical reuse does not count
+as a combined encoding. The private preflight summary SHA-256 is
+`251f5767af64a9d44708ef6df303e31409fd964cdeb48ab62c54689fccec0bfb`;
+the combined encode summary is
+`d7663bfe1945e43ce13e53f7763201c31aab1caba717485abb0d8ac5dcae3659`.
+An independent read-only audit passed for all 687 conditions at
+`combined-m2-simd-01/full687-identity-01/audit-01/audit.json` (SHA-256
+`d4072179638840ddf7e7431ceed7ece8e48e0894a48c68fb277067809303e98c`).
+The old scalar Y1 decoder and metric results are reused only after this full
+raw identity. No new VP8 decode, metric rescore, or primary wasm-webp reencode
+was performed for the combined cohort.
+
+The independent audit observed a maximum terminal linear capacity of
+104,923,136 bytes and at most 531,225 bounded steps per condition. Recorded
+copies totaled 1,670,713,074 input bytes into WASM and 17,323,041 output
+bytes from WASM across 687 encodings. The terminal admitted-capacity and
+aggregate fields read zero after release; they do not measure in-flight or
+physical memory peaks. Component result documents retain their own source and
+environment identities. Fresh media, full animation, Stop, browser/product
+behavior, physical resource and performance acceptance, security/CI and
+delivery gates remain open. The patched wasm-webp runtime stays primary.
+Neither the compiler flag nor these engineering checks establish emitted or
+executed SIMD instructions, installed-browser support or product adoption.
