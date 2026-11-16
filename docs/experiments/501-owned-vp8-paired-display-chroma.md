@@ -1,9 +1,9 @@
 # Owned VP8 paired display chroma candidate
 
 Related issue: [#501](https://github.com/PiesP/wasm-motion-converter/issues/501).
-Status: built engineering candidate. The local Rust and compiled ABI2 checks
-below passed. No exposed/held-out codec equality campaign, timing result,
-browser acceptance, or physical resource peak is recorded here.
+Status: exact-byte engineering comparison and scoped Node timing completed for
+the measured candidate. Browser/product acceptance and physical resource peak
+remain unverified.
 
 ## Source-bound reason for this trial
 
@@ -106,11 +106,60 @@ evidence directories. `vp exec` reported the absence of a project-local
 Vite+ installation in this manual worktree; its resolved Node executable was
 the pinned 26.13.1 runtime, and no install was performed.
 
-The coordinator owns the separate exposed decoder-display and raw-byte equality
-campaign, frozen 20-condition equality screen, and only then the balanced
-40-condition timing campaign. Preserve failed receipts and bind every result to
-its exact source, module, input, and control. A passing local test alone does not
-establish decoder parity, a performance benefit, physical memory peak, or product
-qualification. The older 627/60 fixed-pixel result belongs only to the
-`a83f5b69` / `e918f301` source and module pair; the crate README now identifies
+## Frozen equality and Node timing result
+
+The measured source is the signed clean commit
+`979577d7516069e9b12caf019855d9db72699dd5` (tree
+`4ac7405fb1dc3478ec5d02abc1adf6fa2357b25b`) with the candidate WASM and
+provenance identities above. The control is the original clean
+`b9b7e893` / `f962b9e8` source and module. The 20-condition equality screen
+passed before timing: five fixed inputs at q60/q75/q85 and five retained actual
+browser RGB frames at q60. Every row matched raw VP8 bytes, ABI step counts,
+status runs, and trace digests. All five actual frames also matched the original
+raw ANMF output. Prior decoder evidence for those five rows was reused by
+exact raw-byte identity; no new decode is claimed for this screen. The equality
+summary SHA-256 is
+`7884a231f9696bbd4b982ae26c2152ef645a649753c90acb44864a2b1f11848d`
+(raw rows SHA-256
+`1a7155e4c58e793c71ce9f74f7f4cbaf5c1d950a9ebe1df80c73f67bd738cadc`).
+
+Only after `ALL_20_EQUAL`, one serialized Node 26.13.1 timing process ran one
+unmeasured warm encode per module and actual RGB row (10 total), then 40 timed
+encodes: four per module per row in ABBA and BAAB blocks. Each module was
+compiled once per process; each row reused its own instance after warming.
+The timer covered `job.encode` without a trace callback or digest. The raw
+sample SHA-256 is
+`f5f106735de37b51abc970288132f8b1bca2db6014fb0593d9b34d8b2d22c396`;
+the complete median, min, max, and MAD statistics are bound by timing summary
+SHA-256 `1ffb9a762ab1256cf2bc3b49919eaae9163c969f2ef50576729d0e07c2b2ab8e`.
+The coordinator independently recomputed all schedules, statistics, and ratios
+from the raw samples (audit SHA-256
+`3555fad6879da0af37e1cb796c312da0ecd62e9cfdb87f1d4ddffca71109d835`).
+
+| Actual RGB row, q60 | Control median ms | Candidate median ms | Candidate/control | Median reduction |
+| --- | ---: | ---: | ---: | ---: |
+| 00 | 793.844 | 717.544 | 0.9038861194162566 | 9.61% |
+| 19 | 706.128 | 643.594 | 0.9114420630730646 | 8.86% |
+| 38 | 748.875 | 677.157 | 0.9042327694211572 | 9.58% |
+| 57 | 796.109 | 693.044 | 0.8705392122981641 | 12.95% |
+| 76 | 590.232 | 533.128 | 0.9032523416725895 | 9.67% |
+
+Medians are displayed to 0.001 ms; ratios use unrounded medians. Exact sample,
+minimum, maximum, and MAD values remain in the source-bound receipts above.
+
+All 10 warm and 40 timed records reported 20,512,768 bytes of retained linear
+capacity. This is an ABI accounting observation, not browser/GPU or physical
+peak memory. The measured Node encode boundary shows an 8.86–12.95% median
+reduction on these five RGB frames. It does not establish whole-product
+throughput, browser acceptance, or a general speedup. The comparison retains
+the original actual-V8 size and performance holds; full exposed, fresh,
+platform, lifecycle, resource, delivery, and runtime-removal gates remain
+separate.
+
+The pre-closeout `979577d7` source, README, module, provenance, and experiment
+document were copied under the private `paired-display-chroma-01/docs-closeout-01`
+receipt before this documentation-only update. This later document revision is
+outside the module's 28 provenance inputs and does not change the measured
+source or WASM. The older 627/60 fixed-pixel result belongs only to the
+`a83f5b69` / `e918f301` source and module pair; the crate README identifies
 that historical scope explicitly.
