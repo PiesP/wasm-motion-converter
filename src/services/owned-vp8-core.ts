@@ -430,7 +430,7 @@ export class OwnedVp8Encoder {
     }
   }
 
-  private async admit(record: ResponseRecord): Promise<void> {
+  private admit(record: ResponseRecord): void | Promise<void> {
     if (
       record.admittedCapacity > MAX_LINEAR_BYTES ||
       record.hostOutputCopyBytes > MAX_OUTPUT_BYTES ||
@@ -441,24 +441,39 @@ export class OwnedVp8Encoder {
       record.admittedCapacity !== this.reservedLinear ||
       record.hostOutputCopyBytes !== this.reservedHostCopy
     ) {
+      let reservation: void | Promise<void>;
       try {
-        await this.options.accounting.reserve(record.admittedCapacity, record.hostOutputCopyBytes);
+        reservation = this.options.accounting.reserve(
+          record.admittedCapacity,
+          record.hostOutputCopyBytes
+        );
       } catch (error) {
         throw new OwnedVp8MemoryAdmissionError('Owned VP8 reservation failed', { cause: error });
       }
-      this.active();
-      this.reservedLinear = record.admittedCapacity;
-      this.reservedHostCopy = record.hostOutputCopyBytes;
+      const admitted = (): void => {
+        this.active();
+        this.reservedLinear = record.admittedCapacity;
+        this.reservedHostCopy = record.hostOutputCopyBytes;
+        this.observe(record);
+      };
+      if (reservation !== undefined)
+        return Promise.resolve(reservation).then(admitted, (error: unknown) => {
+          throw new OwnedVp8MemoryAdmissionError('Owned VP8 reservation failed', { cause: error });
+        });
+      admitted();
+      return;
     }
     this.observe(record);
   }
 
-  private async yieldIfDue(deadline: { at: number }, stats: { yields: number }): Promise<void> {
+  private yieldIfDue(deadline: { at: number }, stats: { yields: number }): void | Promise<void> {
     this.active();
     if (performance.now() >= deadline.at) {
-      await schedulerYield();
-      stats.yields++;
-      deadline.at = performance.now() + TASK_BUDGET_MS;
+      return schedulerYield().then(() => {
+        stats.yields++;
+        deadline.at = performance.now() + TASK_BUDGET_MS;
+        this.active();
+      });
     }
     this.active();
   }
@@ -538,16 +553,19 @@ export class OwnedVp8Encoder {
       const request = this.view(api.vp8_v2_request_ptr(), REQUEST_BYTES);
       const words = new DataView(request.buffer, request.byteOffset, request.byteLength);
       values.forEach((value, index) => words.setUint32(index * 4, value, true));
-      await this.admit(this.status(api.vp8_v2_plan(), [0], true));
+      let admission = this.admit(this.status(api.vp8_v2_plan(), [0], true));
+      if (admission !== undefined) await admission;
 
       let record: ResponseRecord;
       for (;;) {
         this.active();
         record = this.status(api.vp8_v2_reserve_step(this.generation, frame), [0, WORKING]);
         if (record.status === 0) lease = 'input';
-        await this.admit(record);
+        admission = this.admit(record);
+        if (admission !== undefined) await admission;
         if (record.status === 0) break;
-        await this.yieldIfDue(deadline, taskStats);
+        const pendingYield = this.yieldIfDue(deadline, taskStats);
+        if (pendingYield !== undefined) await pendingYield;
       }
       checkSource();
       if (record.inputLength !== sourceLength || record.inputPointer === 0)
@@ -560,22 +578,26 @@ export class OwnedVp8Encoder {
         destination.set(pixels.subarray(at, at + COPY_CHUNK_BYTES), at);
         if (api.memory.buffer !== inputBuffer)
           throw new OwnedVp8AbiError('Owned VP8 memory grew during an input write');
-        await this.yieldIfDue(deadline, taskStats);
+        const pendingYield = this.yieldIfDue(deadline, taskStats);
+        if (pendingYield !== undefined) await pendingYield;
       }
       this.active();
       checkSource();
       record = this.status(api.vp8_v2_begin(this.generation, frame), [WORKING]);
       lease = 'none';
-      await this.admit(record);
+      admission = this.admit(record);
+      if (admission !== undefined) await admission;
 
       for (;;) {
         this.active();
         record = this.status(api.vp8_v2_step(this.generation, frame), [WORKING, OUTPUT_READY]);
         steps++;
         if (record.status === OUTPUT_READY) lease = 'output';
-        await this.admit(record); // The output plan is reserved before the following step.
+        admission = this.admit(record); // The output plan is reserved before the following step.
+        if (admission !== undefined) await admission;
         if (record.status === OUTPUT_READY) break;
-        await this.yieldIfDue(deadline, taskStats);
+        const pendingYield = this.yieldIfDue(deadline, taskStats);
+        if (pendingYield !== undefined) await pendingYield;
       }
       if (
         record.outputPointer === 0 ||

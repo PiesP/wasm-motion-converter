@@ -167,17 +167,39 @@ describe('owned VP8 conversion-owned host adapter', () => {
     const source = pixels(256, 256);
     const backing = source.buffer;
     const originalSubarray = source.subarray.bind(source);
-    vi.spyOn(source, 'subarray').mockImplementationOnce((start, end) => {
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    let enterYield!: () => void;
+    let finishYield!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enterYield = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      finishYield = resolve;
+    });
+    vi.stubGlobal('scheduler', {
+      yield: vi.fn(() => {
+        enterYield();
+        return pending;
+      }),
+    });
+    const copiedStarts: number[] = [];
+    vi.spyOn(source, 'subarray').mockImplementation((start, end) => {
       const chunk = originalSubarray(start, end);
-      queueMicrotask(() => structuredClone(backing, { transfer: [backing] }));
+      copiedStarts.push(start ?? 0);
+      if (start === 0) now = 10;
       return chunk;
     });
     const ledger = accounting();
     const encoder = await core.createOwnedVp8Encoder({ accounting: ledger });
     const consume = vi.fn();
-    await expect(
-      encoder.encode(source, { ...settings(256, 256), layout: 2 }, consume)
-    ).rejects.toBeInstanceOf(core.OwnedVp8InvalidInputError);
+    const task = encoder.encode(source, { ...settings(256, 256), layout: 2 }, consume);
+    await entered;
+    expect(copiedStarts).toEqual([0]);
+    structuredClone(backing, { transfer: [backing] });
+    finishYield();
+    await expect(task).rejects.toBeInstanceOf(core.OwnedVp8InvalidInputError);
+    expect(copiedStarts).toEqual([0]);
     expect(consume).not.toHaveBeenCalled();
     expect(ledger.release).toHaveBeenCalledTimes(1);
   });
@@ -270,6 +292,97 @@ describe('owned VP8 conversion-owned host adapter', () => {
     });
     expect(step).toHaveBeenCalledTimes(2);
     encoder.retire();
+    expect(ledger.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a real host yield and cancellation between unchanged-capacity ABI steps', async () => {
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 3_072 });
+    const response = new DataView(memory.buffer, 128, 96);
+    const put = (index: number, value: number): void => response.setUint32(index * 4, value, true);
+    const publish = (status: number, phase: number): number => {
+      put(0, 2);
+      put(1, status);
+      put(2, phase);
+      put(3, 1);
+      put(4, 1);
+      put(5, phase === 3 ? 1024 : 0);
+      put(6, phase === 3 ? 4 : 0);
+      put(9, 65_536);
+      put(10, 65_536);
+      put(11, 256 * 1024);
+      return status;
+    };
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    let enteredYield!: () => void;
+    let finishYield!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enteredYield = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      finishYield = resolve;
+    });
+    const yieldTask = vi.fn(() => {
+      enteredYield();
+      return pending;
+    });
+    vi.stubGlobal('scheduler', { yield: yieldTask });
+    const controller = new AbortController();
+    const ledger = accounting();
+    let stepCalls = 0;
+    const step = vi.fn(() => {
+      stepCalls++;
+      if (stepCalls === 2) now = 10;
+      return publish(10, 4);
+    });
+    const fake = {
+      memory,
+      vp8_v2_abi_version: () => 2,
+      vp8_v2_request_ptr: () => 64,
+      vp8_v2_response_ptr: () => 128,
+      vp8_v2_plan: () => publish(0, 1),
+      vp8_v2_reserve_step: () => publish(0, 3),
+      vp8_v2_begin: () => publish(10, 4),
+      vp8_v2_step: step,
+      vp8_v2_abort: vi.fn(() => publish(9, 0)),
+      vp8_v2_release_input: vi.fn(() => publish(0, 0)),
+      vp8_v2_release_output: vi.fn(() => publish(0, 0)),
+      vp8_v2_retire: vi.fn(() => 0),
+    };
+    ledger.reserve(65_536, 0);
+    const encoder = new core.OwnedVp8Encoder(
+      { exports: fake } as unknown as WebAssembly.Instance,
+      { accounting: ledger, signal: controller.signal },
+      65_536
+    );
+    const consume = vi.fn();
+    const task = encoder.encode(new Uint8Array([128, 128, 128, 255]), settings(1, 1), consume);
+    await entered;
+    expect(step).toHaveBeenCalledTimes(2);
+    expect(ledger.reserve).toHaveBeenCalledTimes(1);
+    expect(ledger.observe).toHaveBeenCalledTimes(5);
+    controller.abort();
+    finishYield();
+    await expect(task).rejects.toBeInstanceOf(core.OwnedVp8CancelledError);
+    expect(yieldTask).toHaveBeenCalledTimes(1);
+    expect(step).toHaveBeenCalledTimes(2);
+    expect(consume).not.toHaveBeenCalled();
+    expect(ledger.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('translates a synchronous output reservation failure before consumption', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(wasmResponse()));
+    const ledger = accounting();
+    ledger.reserve.mockImplementation((_linear, hostCopy) => {
+      if (hostCopy > 0) throw new Error('denied');
+    });
+    const encoder = await core.createOwnedVp8Encoder({ accounting: ledger });
+    const consume = vi.fn();
+    await expect(encoder.encode(pixels(), settings(), consume)).rejects.toThrow(
+      'Owned VP8 reservation failed'
+    );
+    expect(ledger.reserve.mock.calls.some(([, hostCopy]) => hostCopy > 0)).toBe(true);
+    expect(consume).not.toHaveBeenCalled();
     expect(ledger.release).toHaveBeenCalledTimes(1);
   });
 
