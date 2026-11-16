@@ -19,13 +19,24 @@ import {
 } from './owned-vp8-direct-owner.ts';
 import {
   assertV8CaptureBuild,
+  assertV8CaptureLock,
   compareCapturedPixels,
+  compareV8StreamedHashes,
+  installV8AllInputHashCapture,
   installV8PixelCapture,
+  patchV8MainEncoderCallback,
   streamCapturedRgb,
   V8_CAPTURE_INDICES,
+  V8_CAPTURE_LOCK_PATH,
   V8_RGB_BYTES,
   V8_LEGACY_COPY_BYTES,
+  V8IncrementalHashReceiver,
+  V8_PRIOR_LEGACY_WASM_SHA256,
+  V8_PRIOR_SOURCE_SHA,
   type CapturedPixel,
+  type V8CaptureBuild,
+  type V8HashMessage,
+  type V8StreamedHashRow,
 } from './owned-vp8-input-capture.ts';
 import {
   collectGarbageCheckpoint,
@@ -125,8 +136,7 @@ const LARGE_ADMITTED_FIXTURE: Fixture = {
   durationMs: 1_000,
 };
 const MAX_ADMITTED_FRAME_PIXELS = 10_066_329;
-const PINNED_PRIOR_LEGACY_WASM_SHA256 =
-  '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
+const PINNED_PRIOR_LEGACY_WASM_SHA256 = V8_PRIOR_LEGACY_WASM_SHA256;
 const PINNED_PRIOR_LEGACY_LOADER_SHA256 =
   '15cd582651f78831babe9b54012388f22614c48b39c899fa2772e62b037dae47';
 const PINNED_PRIOR_LEGACY_MAIN_LOADER_SHA256 =
@@ -3416,7 +3426,7 @@ export async function exerciseOwnedVp8V8PixelInputs({
   const fixtureBytes = await readFile(fixturePath);
   assert.equal(fixtureBytes.length, 3_145_371, 'V8 source byte length differs');
   assert.equal(digest(fixtureBytes), V8_SHA256, 'V8 source digest differs');
-  assert.equal(prior.state.sourceSha, 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4');
+  assert.equal(prior.state.sourceSha, V8_PRIOR_SOURCE_SHA);
   const ownedAsset = candidate.state.files.filter((file) =>
     /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(file.path)
   );
@@ -3437,13 +3447,44 @@ export async function exerciseOwnedVp8V8PixelInputs({
     `${prior.relativePath}/${mainLoader[0]!.path}`
   );
   const patch = patchPinnedLegacyMainLoader(await readFile(loaderPath));
+  const captureLockPath = await validateBundleFile(bundleRoot, V8_CAPTURE_LOCK_PATH);
+  const captureLockBytes = await readFile(captureLockPath);
+  assert(
+    captureLockBytes.length > 0 && captureLockBytes.length <= 8 * 1024,
+    'V8 capture lock extent differs'
+  );
+  const captureLock: unknown = JSON.parse(captureLockBytes.toString('utf8'));
+  assertV8CaptureLock(captureLock, prior, candidate);
+  const callbackAssets = {} as Record<
+    V8CaptureBuild,
+    { path: string; size: number; originalSha256: string; patchedSha256: string; bytes: Uint8Array }
+  >;
+  for (const name of ['prior', 'candidate'] as const) {
+    const build = name === 'prior' ? prior : candidate;
+    const matches = build.state.files.filter((file) =>
+      /^assets\/conversion-pipeline\.[\w-]{8}\.js$/.test(file.path)
+    );
+    assert.equal(matches.length, 1, `${name} main conversion asset is not unique`);
+    const asset = matches[0]!;
+    const locked = captureLock[name].callbackAsset;
+    assert.deepEqual(asset, locked, `${name} main conversion lock differs from inventory`);
+    const path = await validateBundleFile(bundleRoot, `${build.relativePath}/${asset.path}`);
+    const patched = patchV8MainEncoderCallback(
+      await readFile(path),
+      name,
+      locked.size,
+      locked.sha256
+    );
+    assert.equal(patched.originalSha256, asset.sha256, `${name} main conversion inventory differs`);
+    callbackAssets[name] = { path: asset.path, size: asset.size, ...patched };
+  }
   const report: Record<string, unknown> = {
     schemaVersion: 1,
     scenario,
     status: 'running',
     browserVersion: browser.version(),
     scope:
-      'actual post-Canvas packed RGB input diagnostic; captured copies and streaming add unknown overhead; no timing, Stop, resource, physical-copy, GPU or acceptance qualification',
+      'actual main-software encoder-input RGB and callback presentation diagnostic; five retained post-WASM RGB copies plus all 77 streamed hashes add unknown overhead; no timing, Stop, resource, physical-copy, GPU or acceptance qualification',
     fixture: {
       path: V8_FIXTURE.path,
       sha256: V8_SHA256,
@@ -3468,9 +3509,19 @@ export async function exerciseOwnedVp8V8PixelInputs({
     },
     selectedInputIndices: V8_CAPTURE_INDICES,
     expectedObservedInputs: 77,
+    captureLock: { path: V8_CAPTURE_LOCK_PATH, sha256: digest(captureLockBytes) },
     maxRetainedPageCopiesPerContextBytes: 32 * 1024 * 1024,
     priorIndexedCopyBytesPerFrame: V8_LEGACY_COPY_BYTES,
     streamChunkBytes: 64 * 1024,
+    allInputHashObservation: {
+      logicalRgbBytesPerBuild: 77 * V8_RGB_BYTES,
+      expectedChunksPerBuild: 77 * Math.ceil(V8_RGB_BYTES / (64 * 1024)),
+      maxBorrowedChunkViewBytes: 64 * 1024,
+      maxBinaryStringCharactersPerChunk: 64 * 1024,
+      maxBase64CharactersPerChunk: 4 * Math.ceil((64 * 1024) / 3),
+      rowArtifactFilesPerBuild: 1,
+      browserTransportAndImplementationCopies: 'unknown',
+    },
     prior: {
       sourceSha: prior.state.sourceSha,
       treeSha: prior.state.treeSha,
@@ -3482,6 +3533,12 @@ export async function exerciseOwnedVp8V8PixelInputs({
         originalSha256: mainLoader[0]!.sha256,
         patchedSha256: patch.sha256,
       },
+      callbackPatch: {
+        path: callbackAssets.prior.path,
+        size: callbackAssets.prior.size,
+        originalSha256: callbackAssets.prior.originalSha256,
+        patchedSha256: callbackAssets.prior.patchedSha256,
+      },
     },
     candidate: {
       sourceSha: candidate.state.sourceSha,
@@ -3489,17 +3546,28 @@ export async function exerciseOwnedVp8V8PixelInputs({
       coreSha: candidate.state.coreSha,
       manifestSha256: candidate.manifestSha256,
       ownedAsset: ownedAsset[0],
+      callbackPatch: {
+        path: callbackAssets.candidate.path,
+        size: callbackAssets.candidate.size,
+        originalSha256: callbackAssets.candidate.originalSha256,
+        patchedSha256: callbackAssets.candidate.patchedSha256,
+      },
     },
     captures: [] as unknown[],
   };
   const reportPath = join(output, `${scenario}.json`);
   const persist = () => writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   await persist();
+  let activeReceiver: V8IncrementalHashReceiver | null = null;
   try {
     for (const name of ['prior', 'candidate'] as const) {
       const build = name === 'prior' ? prior : candidate;
       await server.setDistribution(build.relativePath);
       const observedLegacyLoaderPaths: string[] = [];
+      const observedCallbackPaths: string[] = [];
+      const callbackAsset = callbackAssets[name];
+      const receiver = new V8IncrementalHashReceiver(output, name);
+      activeReceiver = receiver;
       const context = await createContext(
         browser,
         build,
@@ -3518,10 +3586,23 @@ export async function exerciseOwnedVp8V8PixelInputs({
           : [],
         observedLegacyLoaderPaths
       );
+      await context.route(`**/${callbackAsset.path}`, async (route) => {
+        const response = await route.fetch();
+        assert.equal(response.status(), 200, `${name} main conversion asset was not served`);
+        const original = await response.body();
+        assert.equal(digest(original), callbackAsset.originalSha256);
+        assert.equal(original.byteLength, callbackAsset.size);
+        await route.fulfill({ response, body: Buffer.from(callbackAsset.bytes) });
+        observedCallbackPaths.push(callbackAsset.path);
+      });
       // The capture wraps only the selected real main route, before app initialization.
       await context.addInitScript(installV8PixelCapture, name);
+      await context.addInitScript(installV8AllInputHashCapture);
       try {
         const page = await context.newPage();
+        await page.exposeFunction('__wmcV8HashStream', (message: V8HashMessage) =>
+          receiver.consume(message)
+        );
         const pageErrors: string[] = [];
         page.on('pageerror', (error) => {
           if (pageErrors.length < 32) pageErrors.push(error.message);
@@ -3546,7 +3627,15 @@ export async function exerciseOwnedVp8V8PixelInputs({
           };
           await persist();
           const pixels = await streamCapturedRgb(page, output, name);
+          const streamedHashes = receiver.complete();
+          for (const pixel of pixels)
+            assert.equal(
+              streamedHashes[pixel.index]?.sha256,
+              pixel.sha256,
+              `${name} selected post-WASM RGB differs from streamed callback ${pixel.index}`
+            );
           assert.deepEqual(pageErrors, [], `${name} page errors`);
+          assert.deepEqual(observedCallbackPaths, [callbackAsset.path]);
           if (name === 'prior')
             assert(
               observedLegacyLoaderPaths.includes(mainLoader[0]!.path),
@@ -3558,6 +3647,9 @@ export async function exerciseOwnedVp8V8PixelInputs({
             observedInputs: 77,
             emittedAnmfCount: completed.parsed.frames.length,
             pixels,
+            streamedHashes,
+            streamedInputRowsFile: `owned-vp8-v8-all-input-${name}.jsonl`,
+            observedCallbackPaths,
             webp: completed.saved,
             parsed: completed.parsed,
             decoded: completed.decoded,
@@ -3566,6 +3658,7 @@ export async function exerciseOwnedVp8V8PixelInputs({
           });
           delete report.inProgressOutput;
           await persist();
+          activeReceiver = null;
         } finally {
           await page.close();
         }
@@ -3573,19 +3666,35 @@ export async function exerciseOwnedVp8V8PixelInputs({
         await context.close();
       }
     }
-    const captures = report.captures as Array<{ pixels: CapturedPixel[] }>;
+    const captures = report.captures as Array<{
+      pixels: CapturedPixel[];
+      streamedHashes: V8StreamedHashRow[];
+    }>;
     assert.equal(captures.length, 2);
     const comparison = compareCapturedPixels(captures[0]!.pixels, captures[1]!.pixels);
     report.comparison = comparison;
-    if (comparison.some((entry) => !entry.same)) {
+    const allComparison = compareV8StreamedHashes(
+      captures[0]!.streamedHashes,
+      captures[1]!.streamedHashes
+    );
+    report.allInputComparison = allComparison;
+    if (
+      comparison.some((entry) => !entry.same) ||
+      allComparison.some(
+        (entry) => !entry.samePixels || !entry.sameFrameNum || !entry.samePresentation
+      )
+    ) {
       report.status = 'DIAGNOSTIC_MISMATCH';
       await persist();
-      throw new Error('Post-Canvas selected RGB pixels differ between prior and candidate');
+      throw new Error(
+        'V8 input pixels or presentation metadata differ between prior and candidate'
+      );
     }
     report.status = 'passed';
     await persist();
     return { profile: scenario, status: 'passed', report: `${scenario}.json`, captures: 10 };
   } catch (error) {
+    if (activeReceiver) report.inProgressStream = activeReceiver.snapshot();
     if (report.status !== 'DIAGNOSTIC_MISMATCH') report.status = 'failed';
     report.error = failure(error);
     await persist();
