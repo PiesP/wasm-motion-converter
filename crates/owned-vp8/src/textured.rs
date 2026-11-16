@@ -220,6 +220,23 @@ fn predictor_dc(reconstructed: &[u8], stride: usize, x: usize, y: usize, size: u
     (sum + count / 2) / count
 }
 
+fn quantize_y1_zero_bin(transformed: &[i32; 16], steps: Steps, enabled: bool) -> [i16; 16] {
+    let mut coefficients = ac_quant::quantize_block(transformed, steps);
+    if enabled {
+        // Only marginal Y1 AC units change. Wide products also admit i32::MIN
+        // fixture values without overflowing their unsigned magnitude.
+        let threshold = 5 * u64::try_from(steps.ac).expect("positive Y1 AC step");
+        for index in 1..16 {
+            if coefficients[index].unsigned_abs() == 1
+                && 8 * u64::from(transformed[index].unsigned_abs()) < threshold
+            {
+                coefficients[index] = 0;
+            }
+        }
+    }
+    coefficients
+}
+
 fn code_predicted_block(
     source: &[u8],
     stride: usize,
@@ -227,6 +244,7 @@ fn code_predicted_block(
     y: usize,
     predictor: &[u8; 16],
     steps: Steps,
+    y1_zero_bin: bool,
 ) -> ([i16; 16], [u8; 16]) {
     let mut residual = [0i16; 16];
     for row in 0..4 {
@@ -236,7 +254,7 @@ fn code_predicted_block(
         }
     }
     let transformed = transform::forward(&residual);
-    let coefficients = ac_quant::quantize_block(&transformed, steps);
+    let coefficients = quantize_y1_zero_bin(&transformed, steps, y1_zero_bin);
     let inverse = transform::inverse(&ac_quant::dequantize_block(&coefficients, steps));
     let mut reconstructed = [0u8; 16];
     for i in 0..16 {
@@ -1049,6 +1067,7 @@ fn make_i16(
     mode: u8,
     y_steps: Steps,
     y2_steps: Steps,
+    y1_zero_bin: bool,
 ) -> LumaCandidate {
     let (top, left, corner) = edge::<16>(reconstructed, stride, x, y);
     let predicted =
@@ -1074,7 +1093,7 @@ fn make_i16(
             let mut transformed = transform::forward(&samples);
             dc[index] = transformed[0] as i16;
             transformed[0] = 0;
-            block.y[index] = ac_quant::quantize_block(&transformed, y_steps);
+            block.y[index] = quantize_y1_zero_bin(&transformed, y_steps, y1_zero_bin);
         }
     }
     block.y2 = ac_quant::quantize_block(&transform::forward_wht(&dc), y2_steps);
@@ -1318,6 +1337,7 @@ fn make_i4(
     contexts: &CoeffContexts,
     lambda: u64,
     i4_ac_tail_rdo: bool,
+    y1_zero_bin: bool,
 ) -> LumaCandidate {
     make_i4_with_pruning::<true>(
         source,
@@ -1331,6 +1351,7 @@ fn make_i4(
         contexts,
         lambda,
         i4_ac_tail_rdo,
+        y1_zero_bin,
     )
     .0
 }
@@ -1348,6 +1369,7 @@ fn make_i4_with_pruning<const PRUNE: bool>(
     contexts: &CoeffContexts,
     lambda: u64,
     i4_ac_tail_rdo: bool,
+    y1_zero_bin: bool,
 ) -> (LumaCandidate, u64) {
     let mut tile = [0u8; 256];
     let mut block = Macroblock::default();
@@ -1389,7 +1411,7 @@ fn make_i4_with_pruning<const PRUNE: bool>(
                 }
                 let predicted = prediction::predict_i4(&top, &left, corner, bmode_from_u8(mode));
                 let (coeff, patch) =
-                    code_predicted_block(source, stride, x, y, &predicted, y_steps);
+                    code_predicted_block(source, stride, x, y, &predicted, y_steps, y1_zero_bin);
                 let distortion = patch_error(source, stride, x, y, &patch);
                 if PRUNE
                     && best
@@ -1519,8 +1541,15 @@ fn make_uv(
         for by in 0..2 {
             for bx in 0..2 {
                 let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
-                let baseline =
-                    code_predicted_block(source, stride, x + bx * 4, y + by * 4, &predictor, steps);
+                let baseline = code_predicted_block(
+                    source,
+                    stride,
+                    x + bx * 4,
+                    y + by * 4,
+                    &predictor,
+                    steps,
+                    false,
+                );
                 let (coeff, patch) = if let Some((rdo, lambda)) = rdo.and_then(|rdo| {
                     rdo.block_lambda(x + bx * 4, y + by * 4)
                         .map(|lambda| (rdo, lambda))
@@ -2708,7 +2737,7 @@ fn analyze_one(
     source_v: &[u8],
     original_rgb: Option<display_rgb::Original<'_>>,
     high_chroma_loss: bool,
-    i4_ac_tail_rdo: bool,
+    mixed_y1_ac: bool,
     reconstructed_y: &mut [u8],
     reconstructed_u: &mut [u8],
     reconstructed_v: &mut [u8],
@@ -2745,6 +2774,7 @@ fn analyze_one(
                 mode,
                 y_steps,
                 y2_steps,
+                mixed_y1_ac,
             ));
         }
         options.push(make_i4(
@@ -2758,7 +2788,8 @@ fn analyze_one(
             left_modes,
             coeff_contexts,
             lambda,
-            i4_ac_tail_rdo,
+            mixed_y1_ac,
+            mixed_y1_ac,
         ));
         options
     } else if luma_policy == 1 {
@@ -2773,6 +2804,7 @@ fn analyze_one(
                     mode,
                     y_steps,
                     y2_steps,
+                    mixed_y1_ac,
                 )
             })
             .collect()
@@ -2788,7 +2820,8 @@ fn analyze_one(
             left_modes,
             coeff_contexts,
             lambda,
-            i4_ac_tail_rdo,
+            mixed_y1_ac,
+            mixed_y1_ac,
         )]
     };
     let uv_policy = match (quality, segment_id) {
@@ -5483,6 +5516,223 @@ mod tests {
     use std::process::{Command, Stdio};
 
     #[test]
+    fn y1_zero_bin_uses_exact_five_eighths_boundary_for_both_signs() {
+        let deltas = crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true);
+        for (qindex, expected_step, first_nonzero) in
+            [(10u8, 14i32, 9i32), (22, 26, 17), (36, 40, 25)]
+        {
+            let steps = ac_quant::steps(qindex, deltas, Plane::Y1);
+            assert_eq!(steps.ac, expected_step);
+            for sign in [-1i32, 1] {
+                for magnitude in [
+                    0,
+                    expected_step / 2,
+                    first_nonzero - 1,
+                    first_nonzero,
+                    first_nonzero + 1,
+                    expected_step * 2,
+                ] {
+                    let mut transformed = [0i32; 16];
+                    transformed[0] = 37;
+                    transformed[1] = sign * magnitude;
+                    transformed[2] = sign * expected_step * 2;
+                    transformed[3] = i32::MIN;
+                    let canonical = ac_quant::quantize_block(&transformed, steps);
+                    assert_eq!(quantize_y1_zero_bin(&transformed, steps, false), canonical);
+                    let chosen = quantize_y1_zero_bin(&transformed, steps, true);
+                    assert_eq!(chosen[0], canonical[0]);
+                    assert_eq!(chosen[2..], canonical[2..]);
+                    if magnitude < first_nonzero {
+                        assert_eq!(chosen[1], 0);
+                    } else {
+                        assert_eq!(chosen[1], canonical[1]);
+                        assert_ne!(chosen[1], 0);
+                    }
+                }
+            }
+        }
+        let steps = ac_quant::steps(36, deltas, Plane::Y1);
+        let mut transformed = [0i32; 16];
+        transformed[1] = 24;
+        assert_eq!(quantize_y1_zero_bin(&transformed, steps, true)[1], 0);
+        transformed[1] = 25; // Exact 5/8 equality retains the canonical +1.
+        assert_eq!(quantize_y1_zero_bin(&transformed, steps, true)[1], 1);
+        transformed[1] = -25;
+        assert_eq!(quantize_y1_zero_bin(&transformed, steps, true)[1], -1);
+    }
+
+    #[test]
+    fn y1_zero_bin_disabled_preserves_canonical_coefficients_across_presets() {
+        let transformed = [
+            i32::MIN,
+            i32::MIN,
+            i32::MAX,
+            -60,
+            -26,
+            -13,
+            -1,
+            0,
+            1,
+            13,
+            26,
+            60,
+            127,
+            -127,
+            1024,
+            -1024,
+        ];
+        for quality in [60u32, 75, 85] {
+            let deltas = crate::presets::deltas(quality);
+            for qindex in [0u8, 6, 10, 22, 36, 80, 127] {
+                let steps = ac_quant::steps(qindex, deltas, Plane::Y1);
+                assert_eq!(
+                    quantize_y1_zero_bin(&transformed, steps, false),
+                    ac_quant::quantize_block(&transformed, steps),
+                    "quality={quality} qindex={qindex}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn y1_zero_bin_final_coefficients_feed_skip_and_contexts() {
+        let steps = Steps { dc: 20, ac: 40 };
+        let mut transformed = [0i32; 16];
+        transformed[residual::SCAN[1]] = 24;
+        let canonical = quantize_y1_zero_bin(&transformed, steps, false);
+        let biased = quantize_y1_zero_bin(&transformed, steps, true);
+        assert_eq!(canonical[residual::SCAN[1]], 1);
+        assert_eq!(biased, [0i16; 16]);
+        let mut before = Macroblock::default();
+        before.y[15] = canonical;
+        let mut after = before;
+        after.y[15] = biased;
+        assert!(!before.skip());
+        assert!(after.skip());
+        let mut before_contexts = CoeffContexts::new(1);
+        let mut after_contexts = CoeffContexts::new(1);
+        before_contexts
+            .encode_coefficients(&mut RateCounter::default(), &before, 0)
+            .unwrap();
+        after_contexts
+            .encode_coefficients(&mut RateCounter::default(), &after, 0)
+            .unwrap();
+        assert!(before_contexts.y[3]);
+        assert!(before_contexts.left_y[3]);
+        assert!(!after_contexts.y[3]);
+        assert!(!after_contexts.left_y[3]);
+    }
+
+    #[test]
+    fn y1_zero_bin_changes_source_bound_i4_and_i16_reconstruction() {
+        let deltas = crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true);
+        let y_steps = ac_quant::steps(22, deltas, Plane::Y1);
+        let y2_steps = ac_quant::steps(22, deltas, Plane::Y2);
+        let predictor = [128u8; 16];
+        let mut i4_found = false;
+        let mut i4_mode_found = false;
+        let mut i16_found = false;
+        for magnitude in 1u8..=64 {
+            let mut patch_source = [128u8; 16];
+            patch_source[0] += magnitude;
+            let (canonical, canonical_patch) =
+                code_predicted_block(&patch_source, 4, 0, 0, &predictor, y_steps, false);
+            let (biased, biased_patch) =
+                code_predicted_block(&patch_source, 4, 0, 0, &predictor, y_steps, true);
+            if canonical != biased {
+                assert_eq!(biased[0], canonical[0]);
+                assert_eq!(
+                    biased_patch,
+                    reconstructed_patch(&biased, &predictor, y_steps)
+                );
+                assert_ne!(canonical_patch, biased_patch);
+                i4_found = true;
+            }
+
+            let mut source = [128u8; 256];
+            source[0] += magnitude;
+            let reconstruction = [128u8; 256];
+            let contexts = CoeffContexts::new(1);
+            let above = [0u8; 4];
+            let left = [0u8; 4];
+            let before_i4 = make_i4(
+                &source,
+                &reconstruction,
+                16,
+                0,
+                0,
+                y_steps,
+                &above,
+                &left,
+                &contexts,
+                225,
+                false,
+                false,
+            );
+            let after_i4 = make_i4(
+                &source,
+                &reconstruction,
+                16,
+                0,
+                0,
+                y_steps,
+                &above,
+                &left,
+                &contexts,
+                225,
+                false,
+                true,
+            );
+            if before_i4.block.y != after_i4.block.y {
+                assert_ne!(before_i4.tile, after_i4.tile);
+                i4_mode_found = true;
+            }
+            let before = make_i16(
+                &source,
+                &reconstruction,
+                16,
+                0,
+                0,
+                0,
+                y_steps,
+                y2_steps,
+                false,
+            );
+            let after = make_i16(
+                &source,
+                &reconstruction,
+                16,
+                0,
+                0,
+                0,
+                y_steps,
+                y2_steps,
+                true,
+            );
+            if before.block.y != after.block.y {
+                assert_eq!(before.block.y2, after.block.y2);
+                assert_ne!(before.tile, after.tile);
+                i16_found = true;
+            }
+            if i4_found && i4_mode_found && i16_found {
+                break;
+            }
+        }
+        assert!(
+            i4_found,
+            "I4 source patch did not activate the Y1 AC zero bin"
+        );
+        assert!(
+            i4_mode_found,
+            "I4 mode trial did not activate the Y1 AC zero bin"
+        );
+        assert!(
+            i16_found,
+            "I16 source patch did not activate the Y1 AC zero bin"
+        );
+    }
+
+    #[test]
     fn i4_selected_ac_neighbors_match_independent_single_edit_enumeration() {
         let steps = ac_quant::steps(22, Deltas::default(), Plane::Y1);
         let predictor = [128u8; 16];
@@ -5647,33 +5897,37 @@ mod tests {
                     .map(|index| ((index * 37 + index / 16 * 11 + seed * 29) & 255) as u8)
                     .collect();
                 for lambda in [0u64, 1, 225] {
-                    let plain = make_i4_with_pruning::<false>(
-                        &source,
-                        &reconstructed,
-                        16,
-                        0,
-                        0,
-                        ac_quant::steps(22, Deltas::default(), Plane::Y1),
-                        &above,
-                        &left,
-                        &contexts,
-                        lambda,
-                        false,
-                    );
-                    let neighbors = make_i4_with_pruning::<false>(
-                        &source,
-                        &reconstructed,
-                        16,
-                        0,
-                        0,
-                        ac_quant::steps(22, Deltas::default(), Plane::Y1),
-                        &above,
-                        &left,
-                        &contexts,
-                        lambda,
-                        true,
-                    );
-                    assert_eq!(neighbors.0.block.b_modes[0], plain.0.block.b_modes[0]);
+                    for y1_zero_bin in [false, true] {
+                        let plain = make_i4_with_pruning::<false>(
+                            &source,
+                            &reconstructed,
+                            16,
+                            0,
+                            0,
+                            ac_quant::steps(22, Deltas::default(), Plane::Y1),
+                            &above,
+                            &left,
+                            &contexts,
+                            lambda,
+                            false,
+                            y1_zero_bin,
+                        );
+                        let neighbors = make_i4_with_pruning::<false>(
+                            &source,
+                            &reconstructed,
+                            16,
+                            0,
+                            0,
+                            ac_quant::steps(22, Deltas::default(), Plane::Y1),
+                            &above,
+                            &left,
+                            &contexts,
+                            lambda,
+                            true,
+                            y1_zero_bin,
+                        );
+                        assert_eq!(neighbors.0.block.b_modes[0], plain.0.block.b_modes[0]);
+                    }
                 }
             }
         }
@@ -6273,7 +6527,9 @@ mod tests {
             for qindex in [0, 22, 80, 127] {
                 let steps = ac_quant::steps(qindex, Deltas::default(), Plane::Y1);
                 for lambda in [0, 1, 225, 2048] {
-                    for tail_rdo in [false, true] {
+                    for (tail_rdo, y1_zero_bin) in
+                        [(false, false), (true, false), (false, true), (true, true)]
+                    {
                         for (mx, my) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                             let pruned = make_i4_with_pruning::<true>(
                                 &source,
@@ -6287,6 +6543,7 @@ mod tests {
                                 &contexts,
                                 lambda,
                                 tail_rdo,
+                                y1_zero_bin,
                             );
                             let exhaustive = make_i4_with_pruning::<false>(
                                 &source,
@@ -6300,13 +6557,14 @@ mod tests {
                                 &contexts,
                                 lambda,
                                 tail_rdo,
+                                y1_zero_bin,
                             );
                             assert_eq!(pruned.0.block, exhaustive.0.block);
                             assert_eq!(pruned.0.tile, exhaustive.0.tile);
                             assert_eq!(pruned.0.distortion, exhaustive.0.distortion);
                             assert_eq!(
                                 pruned.1, exhaustive.1,
-                                "pattern={pattern} q={qindex} lambda={lambda} tail_rdo={tail_rdo} mx={mx} my={my}"
+                                "pattern={pattern} q={qindex} lambda={lambda} tail_rdo={tail_rdo} zero_bin={y1_zero_bin} mx={mx} my={my}"
                             );
                         }
                     }
@@ -6327,7 +6585,8 @@ mod tests {
         // The coefficient trial has a separate half weight; the returned
         // mode score must still use the unmodified weight.
         let mode_lambda: u64 = 225;
-        for tail_rdo in [false, true] {
+        for (tail_rdo, y1_zero_bin) in [(false, false), (true, false), (false, true), (true, true)]
+        {
             let (candidate, score) = make_i4_with_pruning::<true>(
                 &source,
                 &reconstructed,
@@ -6340,6 +6599,7 @@ mod tests {
                 &contexts,
                 mode_lambda,
                 tail_rdo,
+                y1_zero_bin,
             );
             let mut above_context = [false; 4];
             above_context.copy_from_slice(&contexts.y[..4]);
@@ -9086,6 +9346,123 @@ mod tests {
     }
 
     #[test]
+    fn y1_zero_bin_activates_on_selected_eligible_block_and_excludes_q75() {
+        for (quality, eligible) in [(60u32, true), (75, false)] {
+            let mut witnessed = false;
+            let mut eligible_attempts = 0usize;
+            'sources: for magnitude in 1u8..=32 {
+                for x in [0usize, 3, 8, 15, 16, 20, 24, 31] {
+                    let mut input = mixed_low_curvature_input();
+                    let at = x * 4;
+                    for channel in &mut input[at..at + 3] {
+                        *channel = channel.saturating_add(magnitude);
+                    }
+                    let request = Request {
+                        quality,
+                        ..engine_request(32, 16, 0, &input, 128)
+                    };
+                    let plan = ResourcePlan::checked(request).unwrap();
+                    let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+                    engine.disable_refinement = true;
+                    while engine.stage != Stage::Analyze {
+                        engine.step().unwrap();
+                    }
+                    if engine.mixed_y1_ac != eligible {
+                        continue;
+                    }
+                    eligible_attempts += 1;
+                    while engine.stage == Stage::Analyze {
+                        engine.step().unwrap();
+                    }
+                    let stride = engine.plan.padded_width as usize;
+                    for (index, block) in engine.blocks.iter().enumerate() {
+                        if !block.i16 {
+                            continue;
+                        }
+                        let mx = index % (stride / 16);
+                        let my = index / (stride / 16);
+                        let qindex = engine.segments.qindex_for(block.segment_id) as u8;
+                        let y_steps = ac_quant::steps(qindex, engine.deltas, Plane::Y1);
+                        let y2_steps = ac_quant::steps(qindex, engine.deltas, Plane::Y2);
+                        let original_qindex =
+                            engine.original_segments().qindex_for(block.segment_id) as u8;
+                        if eligible {
+                            let original_deltas = crate::presets::deltas(60);
+                            assert_eq!(
+                                engine.deltas,
+                                crate::presets::mixed_y1_ac_deltas(original_deltas, true)
+                            );
+                            assert_eq!(qindex, original_qindex + 4);
+                            assert_eq!(
+                                y_steps.dc,
+                                ac_quant::steps(original_qindex, original_deltas, Plane::Y1).dc
+                            );
+                            for plane in [Plane::Y2, Plane::UV] {
+                                assert_eq!(
+                                    ac_quant::steps(qindex, engine.deltas, plane),
+                                    ac_quant::steps(original_qindex, original_deltas, plane)
+                                );
+                            }
+                        } else {
+                            assert_eq!(qindex, original_qindex);
+                            assert_eq!(engine.deltas, crate::presets::deltas(75));
+                        }
+                        let canonical = make_i16(
+                            &engine.source_y,
+                            &engine.reconstructed_y,
+                            stride,
+                            mx * 16,
+                            my * 16,
+                            block.y_mode,
+                            y_steps,
+                            y2_steps,
+                            false,
+                        );
+                        let biased = make_i16(
+                            &engine.source_y,
+                            &engine.reconstructed_y,
+                            stride,
+                            mx * 16,
+                            my * 16,
+                            block.y_mode,
+                            y_steps,
+                            y2_steps,
+                            true,
+                        );
+                        if canonical.block.y == biased.block.y {
+                            continue;
+                        }
+                        assert_eq!(canonical.block.y2, biased.block.y2);
+                        assert_eq!(block.y2, canonical.block.y2);
+                        assert_eq!(
+                            read_tile::<16, 256>(&engine.reconstructed_y, stride, mx * 16, my * 16),
+                            if eligible {
+                                biased.tile
+                            } else {
+                                canonical.tile
+                            },
+                        );
+                        assert_eq!(
+                            block.y,
+                            if eligible {
+                                biased.block.y
+                            } else {
+                                canonical.block.y
+                            },
+                        );
+                        witnessed = true;
+                        break 'sources;
+                    }
+                }
+            }
+            assert!(
+                witnessed,
+                "quality={quality} eligible={eligible} attempts={eligible_attempts}: no selected I16 marginal Y1 AC witness"
+            );
+        }
+    }
+
+    #[test]
     fn mixed_y1_ac_profile_matches_sync_resumable_and_repeated_frames() {
         let mixed = mixed_low_curvature_input();
         let textured = mixed_segment_input();
@@ -11147,6 +11524,7 @@ mod tests {
                 3,
                 y_steps,
                 y2_steps,
+                false,
             );
             let i4 = make_i4(
                 &source_y,
@@ -11160,6 +11538,7 @@ mod tests {
                 &contexts,
                 225,
                 true,
+                false,
             );
             let uv = make_uv(
                 &source_uv,

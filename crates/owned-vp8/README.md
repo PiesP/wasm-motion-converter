@@ -54,6 +54,12 @@ passed, but actual row 38 exceeded the raw VP8 size cap by 1,069.5 bytes.
 This point is rejected; the full exposed and product gates remain unrun.
 This README result update requires a provenance refresh before the current
 checkout's manifest can be treated as verified.
+The current [eligible Y1 AC zero-bin candidate](../../docs/experiments/501-owned-vp8-y1-ac-zero-bin-candidate.md)
+adds one fixed encoder-side `5/8` zero threshold only for marginal Y1 AC
+levels in the existing mixed q60 profile. Canonical nearest quantization and
+all signaled decoder steps remain unchanged elsewhere. It has no codec or
+product result; the selected-mode AC-neighbor failure does not qualify it.
+Regenerate its source-bound module and provenance before measurement.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
