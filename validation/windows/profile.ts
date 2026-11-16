@@ -44,6 +44,7 @@ import { runOwnedVp8NativeProbe } from './helpers/owned-vp8-probe.ts';
 import {
   exerciseOwnedVp8OwnerRetention,
   exerciseOwnedVp8Product,
+  exerciseOwnedVp8V8PixelInputs,
 } from './helpers/owned-vp8-product.ts';
 import { withVp8WindowsEnvironment } from './helpers/vp8-windows-environment.ts';
 import {
@@ -3793,6 +3794,41 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const pixelScenario = 'owned-vp8-product-v8-low-inputs';
+  const pixelSelector = resolve(bundleRoot, `validation/windows/inputs/${pixelScenario}.json`);
+  let pixelSelectorText: string | undefined;
+  try {
+    pixelSelectorText = await readFile(pixelSelector, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (pixelSelectorText !== undefined) {
+    assert.deepEqual(JSON.parse(pixelSelectorText), { scenario: pixelScenario });
+    const selected = await readdir(resolve(bundleRoot, 'validation/windows/inputs'));
+    assert.deepEqual(
+      selected.filter((name) => name.endsWith('.json') && name !== `${pixelScenario}.json`),
+      []
+    );
+    const [prior, candidate] = await Promise.all([
+      readBuild(bundleRoot, 'validation/windows/prior-dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+      readBuild(bundleRoot, 'dist', validateBundleFile, {
+        verifyInventory: true,
+        exactInventory: true,
+      }),
+    ]);
+    const started = await startStaticServer(bundleRoot);
+    try {
+      return await exerciseOwnedVp8V8PixelInputs({
+        browser, bundleRoot, output, prior, candidate, server: started,
+        validateBundleFile, loadApplication,
+      });
+    } finally {
+      await closeServer(started.server);
+    }
+  }
   const vp8ProductSelectors = [
     {
       scenario: 'owned-vp8-product',

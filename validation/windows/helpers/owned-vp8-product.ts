@@ -24,6 +24,14 @@ import {
   verifyOwnerRetention,
 } from './owned-vp8-owner-retention.ts';
 import { readVp8WindowsBrowserIdentity } from './vp8-windows-environment.ts';
+import {
+  compareCapturedPixels,
+  installV8PixelCapture,
+  streamCapturedRgb,
+  V8_CAPTURE_INDICES,
+  V8_RGB_BYTES,
+  type CapturedPixel,
+} from './owned-vp8-input-capture.ts';
 
 type Build = {
   relativePath: string;
@@ -1356,9 +1364,8 @@ async function createContext(
   await context.addInitScript(disableCanvasWebp);
   if (timing) await context.addInitScript(installVp8TimingProbe);
   if (ownerRetentionWorker) await context.addInitScript(installWorkerLifecycleObserver);
-  if (functional) {
-    if (main)
-      await context.addInitScript(() => {
+  if (main)
+    await context.addInitScript(() => {
         const NativeWorker = Worker;
         globalThis.Worker = class DisabledConversionWorker extends NativeWorker {
           constructor(url: string | URL, options?: WorkerOptions) {
@@ -1368,7 +1375,8 @@ async function createContext(
           }
         };
       });
-    else await context.addInitScript(installMotionObserver);
+  if (functional) {
+    if (!main) await context.addInitScript(installMotionObserver);
     if (main) await context.addInitScript(instrumentOwnedInstance);
   }
   await context.addInitScript(installProductObserver);
@@ -3338,4 +3346,245 @@ export async function exerciseOwnedVp8OwnerRetention({
   if (report.status !== 'PASS')
     throw new Error(`Owner-retention reachability gate ${report.status}; see ${scenario}.json`);
   return { profile: scenario, status: report.status, report: `${scenario}.json` };
+}
+
+/** Diagnostic-only V8 q60 input pixels. Each build runs once in its own context. */
+export async function exerciseOwnedVp8V8PixelInputs({
+  browser,
+  bundleRoot,
+  output,
+  prior,
+  candidate,
+  server,
+  validateBundleFile,
+  loadApplication,
+}: {
+  browser: Browser;
+  bundleRoot: string;
+  output: string;
+  prior: Build;
+  candidate: Build;
+  server: Server;
+  validateBundleFile: (root: string, path: string) => Promise<string>;
+  loadApplication: (page: Page, url: string) => Promise<unknown>;
+}) {
+  const scenario = 'owned-vp8-product-v8-low-inputs';
+  await mkdir(output, { recursive: true });
+  const manifestPath = await validateBundleFile(bundleRoot, 'validation/windows/owned-vp8-v8.json');
+  const manifestBytes = await readFile(manifestPath);
+  const manifest = JSON.parse(manifestBytes.toString('utf8')) as {
+    schemaVersion: number;
+    input: {
+      path: string;
+      sha256: string;
+      width: number;
+      height: number;
+      frames: number;
+      fps: number;
+      durationMs: number;
+    };
+    settings: {
+      format: string;
+      qualities: string[];
+      qualityPercent: number[];
+      targetCadenceFps: number[];
+      scale: number;
+      smartFrameSkip: string;
+    };
+  };
+  assert.equal(manifest.schemaVersion, 1);
+  assert.deepEqual(manifest.input, {
+    path: V8_FIXTURE.path,
+    sha256: V8_SHA256,
+    width: 1920,
+    height: 1080,
+    frames: 192,
+    fps: 30,
+    durationMs: 6400,
+  });
+  assert.deepEqual(manifest.settings, {
+    format: 'webp',
+    qualities: ['low', 'medium', 'high'],
+    qualityPercent: [60, 75, 85],
+    targetCadenceFps: [12, 18, 30],
+    scale: 1,
+    smartFrameSkip: 'off',
+  });
+  const fixturePath = await validateBundleFile(bundleRoot, V8_FIXTURE.path);
+  const fixtureBytes = await readFile(fixturePath);
+  assert.equal(fixtureBytes.length, 3_145_371, 'V8 source byte length differs');
+  assert.equal(digest(fixtureBytes), V8_SHA256, 'V8 source digest differs');
+  assert.equal(prior.state.sourceSha, 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4');
+  assert.equal(
+    candidate.state.sourceSha,
+    'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186',
+  );
+  const ownedAsset = candidate.state.files.filter((file) =>
+    /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/.test(file.path),
+  );
+  assert.equal(ownedAsset.length, 1, 'Candidate owned WASM asset is not unique');
+  const legacyWasm = prior.state.files.filter((file) =>
+    /^assets\/webp-wasm[-.][\w-]{8}\.wasm$/.test(file.path),
+  );
+  assert.equal(legacyWasm.length, 1, 'Prior WebP WASM asset is not unique');
+  assert.equal(legacyWasm[0]!.sha256, PINNED_PRIOR_LEGACY_WASM_SHA256);
+  const mainLoader = prior.state.files.filter((file) =>
+    /^assets\/wasm-webp[-.][\w-]{8}\.js$/.test(file.path),
+  );
+  assert.equal(mainLoader.length, 1, 'Prior main loader is not unique');
+  assert.equal(mainLoader[0]!.sha256, PINNED_PRIOR_LEGACY_MAIN_LOADER_SHA256);
+  const loaderPath = await validateBundleFile(
+    bundleRoot,
+    `${prior.relativePath}/${mainLoader[0]!.path}`,
+  );
+  const patch = patchPinnedLegacyMainLoader(await readFile(loaderPath));
+  const report: Record<string, unknown> = {
+    schemaVersion: 1,
+    scenario,
+    status: 'running',
+    browserVersion: browser.version(),
+    scope:
+      'actual post-Canvas packed RGB input diagnostic; captured copies and streaming add unknown overhead; no timing, Stop, resource, physical-copy, GPU or acceptance qualification',
+    fixture: {
+      path: V8_FIXTURE.path,
+      sha256: V8_SHA256,
+      bytes: fixtureBytes.length,
+      manifestSha256: digest(manifestBytes),
+    },
+    settings: {
+      quality: 'low',
+      qualityPercent: 60,
+      cadenceFps: 12,
+      scale: 1,
+      smartFrameSkip: 'off',
+    },
+    layout: {
+      format: 'RGB',
+      channels: 3,
+      opaque: true,
+      width: 1920,
+      height: 1080,
+      stride: 5760,
+      bytesPerFrame: V8_RGB_BYTES,
+    },
+    selectedSuccessfulEncodeIndices: V8_CAPTURE_INDICES,
+    expectedSuccessfulEncodes: 77,
+    maxRetainedPageCopiesPerContextBytes: 32 * 1024 * 1024,
+    streamChunkBytes: 64 * 1024,
+    prior: {
+      sourceSha: prior.state.sourceSha,
+      treeSha: prior.state.treeSha,
+      coreSha: prior.state.coreSha,
+      manifestSha256: prior.manifestSha256,
+      legacyWasm: legacyWasm[0],
+      loaderPatch: {
+        path: mainLoader[0]!.path,
+        originalSha256: mainLoader[0]!.sha256,
+        patchedSha256: patch.sha256,
+      },
+    },
+    candidate: {
+      sourceSha: candidate.state.sourceSha,
+      treeSha: candidate.state.treeSha,
+      coreSha: candidate.state.coreSha,
+      manifestSha256: candidate.manifestSha256,
+      ownedAsset: ownedAsset[0],
+    },
+    captures: [] as unknown[],
+  };
+  const reportPath = join(output, `${scenario}.json`);
+  const persist = () => writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  await persist();
+  try {
+    for (const name of ['prior', 'candidate'] as const) {
+      const build = name === 'prior' ? prior : candidate;
+      await server.setDistribution(build.relativePath);
+      const observedLegacyLoaderPaths: string[] = [];
+      const context = await createContext(
+        browser,
+        build,
+        false,
+        true,
+        [],
+        false,
+        name === 'prior'
+          ? [
+              {
+                path: mainLoader[0]!.path,
+                originalSha256: mainLoader[0]!.sha256,
+                bytes: patch.bytes,
+              },
+            ]
+          : [],
+        observedLegacyLoaderPaths,
+      );
+      // The capture wraps only the selected real main route, before app initialization.
+      await context.addInitScript(installV8PixelCapture, name);
+      try {
+        const page = await context.newPage();
+        const pageErrors: string[] = [];
+        page.on('pageerror', (error) => {
+          if (pageErrors.length < 32) pageErrors.push(error.message);
+        });
+        try {
+          await loadApplication(page, server.url);
+          await configurePage(page, fixturePath, V8_FIXTURE, 'low');
+          const completed = await measureJob(
+            page,
+            V8_FIXTURE,
+            V8_SHA256,
+            'low',
+            name,
+            'first-in-document',
+            output,
+            `${scenario}-${name}`,
+          );
+          report.inProgressOutput = { build: name, webp: completed.saved, parsed: completed.parsed };
+          await persist();
+          const pixels = await streamCapturedRgb(page, output, name);
+          assert.deepEqual(pageErrors, [], `${name} page errors`);
+          if (name === 'prior')
+            assert(
+              observedLegacyLoaderPaths.includes(mainLoader[0]!.path),
+              'Pinned prior main loader was not served',
+            );
+          assert.equal(completed.parsed.frames.length, 77, `${name} output ANMF count differs`);
+          (report.captures as unknown[]).push({
+            build: name,
+            successfulEncodes: 77,
+            emittedAnmfCount: completed.parsed.frames.length,
+            pixels,
+            webp: completed.saved,
+            parsed: completed.parsed,
+            decoded: completed.decoded,
+            route: 'actual UI main software',
+            ...(name === 'prior' ? { observedLegacyLoaderPaths } : {}),
+          });
+          delete report.inProgressOutput;
+          await persist();
+        } finally {
+          await page.close();
+        }
+      } finally {
+        await context.close();
+      }
+    }
+    const captures = report.captures as Array<{ pixels: CapturedPixel[] }>;
+    assert.equal(captures.length, 2);
+    const comparison = compareCapturedPixels(captures[0]!.pixels, captures[1]!.pixels);
+    report.comparison = comparison;
+    if (comparison.some((entry) => !entry.same)) {
+      report.status = 'DIAGNOSTIC_MISMATCH';
+      await persist();
+      throw new Error('Post-Canvas selected RGB pixels differ between prior and candidate');
+    }
+    report.status = 'passed';
+    await persist();
+    return { profile: scenario, status: 'passed', report: `${scenario}.json`, captures: 10 };
+  } catch (error) {
+    if (report.status !== 'DIAGNOSTIC_MISMATCH') report.status = 'failed';
+    report.error = failure(error);
+    await persist();
+    throw error;
+  }
 }
