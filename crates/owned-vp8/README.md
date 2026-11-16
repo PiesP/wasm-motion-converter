@@ -15,6 +15,21 @@ Separate component timing ratios must not be multiplied. Browser capability,
 product performance, physical resource peaks, and delivery remain unqualified.
 Changes to this README require a provenance refresh before prebuilt verification.
 
+The work branch at signed source `2c5ddff0c4a73a6af583ad012d6ec968069c52a3` adds a
+[UV refinement header-cache trial](../../docs/experiments/501-owned-vp8-refinement-header-cache.md)
+on top of `9698e01371fce297cf8ff15a44ae050f81d11320`. It reuses only the
+skip-keyed header rate and symbol count within one macroblock refinement. The
+signed `e0211406` combined source, measured `bd170496` module and their retained
+timings above are historical baselines for this new trial. Its generated module
+`49b5820dda386a0fbeb5f0d568d97e93517568c4c67852f69f88b5d8500abff4`
+passes source-bound rebuild/prebuilt checks and 48 compiled ABI2 cases. The
+direct 20-condition comparison matched the BD control in raw VP8 bytes,
+steps, status and trace.
+One 10-warm/40-measured Node cohort gave one lower and four higher candidate
+medians across five actual RGB inputs. Integration is **deferred** for lack of
+a consistent benefit; full 687, fresh/V13, browser and product comparisons
+remain unrun. No physical peak or runtime adoption follows from this cohort.
+
 Execution and acceptance are governed by [issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
 and the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
 The candidate main and conversion Worker software routes import this crate's

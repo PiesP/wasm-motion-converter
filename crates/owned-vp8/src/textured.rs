@@ -1674,19 +1674,56 @@ fn selected_cost(
     luma_cost: &mut Option<u64>,
     uv_cost: &mut Option<u64>,
 ) -> Result<Option<u64>, EncodeError> {
-    let mut header = HeaderRateCounter::default();
+    selected_cost_with_header_cache(
+        block, mx, contexts, above, left, distortion, lambda, segments, budget, luma_cost, uv_cost,
+        None,
+    )
+}
+
+// Only UV refinement keeps this cache: its header inputs remain fixed while a
+// trial coefficient can change the whole-macroblock skip bit.
+#[allow(clippy::too_many_arguments)]
+fn selected_cost_with_header_cache(
+    block: &Macroblock,
+    mx: usize,
+    contexts: &CoeffContexts,
+    above: &[u8],
+    left: &[u8; 4],
+    distortion: u64,
+    lambda: u64,
+    segments: SegmentConfig,
+    budget: &HeaderBudget,
+    luma_cost: &mut Option<u64>,
+    uv_cost: &mut Option<u64>,
+    header_cache: Option<&mut [Option<(u64, usize)>; 2]>,
+) -> Result<Option<u64>, EncodeError> {
     // Mode search precedes frozen frame statistics; its skip rate proposal is
     // the current syntax default, while counting and emission share the final.
-    write_macroblock_header(&mut header, block, mx, above, left, segments, Some(128))?;
-    if block.i16 && header.symbols.count > MAX_I16_HEADER_SYMBOLS {
+    let (header_rate, header_symbols) = if let Some(cache) = header_cache {
+        let slot = usize::from(block.skip());
+        if let Some(header) = cache[slot] {
+            header
+        } else {
+            let mut header = HeaderRateCounter::default();
+            write_macroblock_header(&mut header, block, mx, above, left, segments, Some(128))?;
+            let result = (header.rate.cost, header.symbols.count);
+            cache[slot] = Some(result);
+            result
+        }
+    } else {
+        let mut header = HeaderRateCounter::default();
+        write_macroblock_header(&mut header, block, mx, above, left, segments, Some(128))?;
+        (header.rate.cost, header.symbols.count)
+    };
+    if block.i16 && header_symbols > MAX_I16_HEADER_SYMBOLS {
         return Err(EncodeError::InvalidInput);
     }
-    if !budget.fits_symbols(header.symbols.count)? {
+    if !budget.fits_symbols(header_symbols)? {
         return Ok(None);
     }
     // The whole macroblock skip suppresses every coefficient token. Otherwise
     // even an all-zero plane pays for its EOB tokens, independently of the
-    // other plane. Cache only after the header has passed its budget guard.
+    // other plane. Cache coefficient costs only after the header budget guard.
     let coefficient_cost = if block.skip() {
         0
     } else {
@@ -1708,7 +1745,7 @@ fn selected_cost(
         };
         y + uv
     };
-    let cost = header.rate.cost + coefficient_cost;
+    let cost = header_rate + coefficient_cost;
     Ok(Some(distortion * 256 + lambda * cost))
 }
 
@@ -1790,7 +1827,8 @@ fn refine_selected_uv(
 ) -> Result<Option<(RefinementChange, f64)>, EncodeError> {
     let mut luma_cost = None;
     let mut uv_cost = None;
-    selected_cost(
+    let mut header_cache = [None; 2];
+    selected_cost_with_header_cache(
         block,
         mx,
         contexts,
@@ -1802,6 +1840,7 @@ fn refine_selected_uv(
         budget,
         &mut luma_cost,
         &mut uv_cost,
+        Some(&mut header_cache),
     )?
     .ok_or(EncodeError::OutputLimit)?;
     let baseline_skip = block.skip();
@@ -1879,7 +1918,7 @@ fn refine_selected_uv(
                             block.v[index][coefficient_index] = level;
                         }
                         let mut trial_uv_cost = None;
-                        let rate = selected_cost(
+                        let rate = selected_cost_with_header_cache(
                             block,
                             mx,
                             contexts,
@@ -1891,6 +1930,7 @@ fn refine_selected_uv(
                             budget,
                             &mut luma_cost,
                             &mut trial_uv_cost,
+                            Some(&mut header_cache),
                         );
                         let trial_skip = block.skip();
                         if plane == 0 {
@@ -8941,6 +8981,259 @@ mod tests {
             )
         );
         assert_eq!(contexts, CoeffContexts::new(1));
+    }
+
+    #[test]
+    fn refinement_header_cache_matches_uncached_cost_across_skip_and_contexts() {
+        for i16 in [false, true] {
+            for segmented in [false, true] {
+                let segments = if segmented {
+                    SegmentConfig::from_counts(75, [1; 4], 4, false)
+                } else {
+                    SegmentConfig::nonsegmented(23)
+                };
+                for pattern in 0..4 {
+                    let mut contexts = CoeffContexts::new(2);
+                    contexts.y2[1] = pattern & 1 != 0;
+                    contexts.y[4..8].fill(pattern & 2 != 0);
+                    contexts.u[2..4].fill(pattern & 1 != 0);
+                    contexts.v[2..4].fill(pattern & 2 != 0);
+                    contexts.left_y2 = pattern & 2 != 0;
+                    contexts.left_y = [pattern & 1 != 0; 4];
+                    contexts.left_u = [pattern & 2 != 0; 2];
+                    contexts.left_v = [pattern & 1 != 0; 2];
+                    let above = [pattern as u8; 8];
+                    let left = [pattern as u8; 4];
+                    let budget = HeaderBudget::new(
+                        1,
+                        segments,
+                        Deltas::default(),
+                        FilterConfig::DISABLED,
+                        MAX_FIRST_PARTITION_BYTES as usize,
+                    )
+                    .unwrap();
+                    for luma_nonzero in [false, true] {
+                        let mut block = Macroblock {
+                            i16,
+                            y_mode: (pattern % 4) as u8,
+                            b_modes: std::array::from_fn(|index| ((index + pattern) % 10) as u8),
+                            uv_mode: (3 - pattern) as u8,
+                            segment_id: if segmented { pattern as u8 } else { 0 },
+                            ..Macroblock::default()
+                        };
+                        if luma_nonzero {
+                            if i16 {
+                                block.y2[0] = 1;
+                            } else {
+                                block.y[0][0] = 1;
+                            }
+                        }
+                        let mut cache = [None; 2];
+                        let mut luma_cost = None;
+                        for (u_dc, v_ac) in [(0, 0), (1, 0), (1, -2), (0, 0), (0, 3)] {
+                            block.u[0][0] = u_dc;
+                            block.v[3][15] = v_ac;
+                            let expected = selected_cost(
+                                &block, 1, &contexts, &above, &left, 7, 225, segments, &budget,
+                                &mut None, &mut None,
+                            );
+                            let actual = selected_cost_with_header_cache(
+                                &block,
+                                1,
+                                &contexts,
+                                &above,
+                                &left,
+                                7,
+                                225,
+                                segments,
+                                &budget,
+                                &mut luma_cost,
+                                &mut None,
+                                Some(&mut cache),
+                            );
+                            assert_eq!(actual, expected, "i16={i16} segmented={segmented} pattern={pattern} luma={luma_nonzero} u={u_dc} v={v_ac}");
+                            let slot = usize::from(block.skip());
+                            assert!(cache[slot].is_some());
+                            if i16 {
+                                assert!(cache[slot].unwrap().1 <= MAX_I16_HEADER_SYMBOLS);
+                            }
+                        }
+                        assert!(cache[0].is_some());
+                        if !luma_nonzero {
+                            assert!(cache[1].is_some());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn refinement_header_cache_rechecks_budget_before_coefficient_tokens() {
+        let segments = SegmentConfig::nonsegmented(23);
+        let contexts = CoeffContexts::new(1);
+        let above = [0; 4];
+        let left = [0; 4];
+        let mut block = Macroblock {
+            b_modes: [9; 16],
+            ..Macroblock::default()
+        };
+        block.v[0][0] = 1;
+        let mut budget = HeaderBudget::new(
+            1,
+            segments,
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .unwrap();
+        let mut cache = [None; 2];
+        assert!(selected_cost_with_header_cache(
+            &block,
+            0,
+            &contexts,
+            &above,
+            &left,
+            0,
+            225,
+            segments,
+            &budget,
+            &mut None,
+            &mut None,
+            Some(&mut cache),
+        )
+        .unwrap()
+        .is_some());
+        let header = cache[0].unwrap();
+        assert!(header.1 > MAX_I16_HEADER_SYMBOLS);
+
+        // The same cached header must be checked against the current budget,
+        // before an invalid coefficient can reach the token writer.
+        block.v[0][0] = 2115;
+        budget.limit = budget.fixed_symbols_and_tail + header.1 - 1;
+        assert_eq!(
+            selected_cost_with_header_cache(
+                &block,
+                0,
+                &contexts,
+                &above,
+                &left,
+                0,
+                225,
+                segments,
+                &budget,
+                &mut None,
+                &mut None,
+                Some(&mut cache),
+            ),
+            Ok(None)
+        );
+        budget.limit += 1;
+        assert_eq!(
+            selected_cost_with_header_cache(
+                &block,
+                0,
+                &contexts,
+                &above,
+                &left,
+                0,
+                225,
+                segments,
+                &budget,
+                &mut None,
+                &mut None,
+                Some(&mut cache),
+            ),
+            Err(EncodeError::InvalidInput)
+        );
+        budget.committed_blocks = 1;
+        assert_eq!(
+            selected_cost_with_header_cache(
+                &block,
+                0,
+                &contexts,
+                &above,
+                &left,
+                0,
+                225,
+                segments,
+                &budget,
+                &mut None,
+                &mut None,
+                Some(&mut cache),
+            ),
+            Err(EncodeError::InvalidInput)
+        );
+        assert_eq!(cache[0], Some(header));
+    }
+
+    #[test]
+    fn refinement_header_cache_starts_empty_for_each_header_context() {
+        let contexts = CoeffContexts::new(1);
+        let above = [0; 4];
+        let left = [0; 4];
+        let segments = SegmentConfig::from_counts(75, [1; 4], 4, false);
+        let budget = HeaderBudget::new(
+            1,
+            segments,
+            Deltas::default(),
+            FilterConfig::DISABLED,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .unwrap();
+        let mut i16 = Macroblock {
+            i16: true,
+            segment_id: 1,
+            ..Macroblock::default()
+        };
+        let mut first_cache = [None; 2];
+        let first = selected_cost_with_header_cache(
+            &i16,
+            0,
+            &contexts,
+            &above,
+            &left,
+            0,
+            1,
+            segments,
+            &budget,
+            &mut None,
+            &mut None,
+            Some(&mut first_cache),
+        );
+        assert_eq!(
+            first,
+            selected_cost(
+                &i16, 0, &contexts, &above, &left, 0, 1, segments, &budget, &mut None, &mut None,
+            )
+        );
+        assert!(first_cache[1].is_some());
+
+        i16.i16 = false;
+        i16.b_modes = [9; 16];
+        let mut second_cache = [None; 2];
+        assert_eq!(second_cache, [None; 2]);
+        let second = selected_cost_with_header_cache(
+            &i16,
+            0,
+            &contexts,
+            &above,
+            &left,
+            0,
+            1,
+            segments,
+            &budget,
+            &mut None,
+            &mut None,
+            Some(&mut second_cache),
+        );
+        assert_eq!(
+            second,
+            selected_cost(
+                &i16, 0, &contexts, &above, &left, 0, 1, segments, &budget, &mut None, &mut None,
+            )
+        );
+        assert_ne!(first_cache[1], second_cache[1]);
     }
 
     #[test]
