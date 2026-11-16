@@ -535,6 +535,18 @@ describe('owned VP8 Windows product contract', () => {
       expect(profile.assets).toContain('validation/windows/helpers/owned-vp8-product.ts');
     }
     expect(profile.assets).toContain('validation/windows/owned-vp8-inputs');
+    const pixelDiagnostic = profile.preparation.scenarios['owned-vp8-product-v8-low-inputs'];
+    expect(profile.preparation.selector_files).toContain('owned-vp8-product-v8-low-inputs.json');
+    expect(pixelDiagnostic?.selector).toBe('owned-vp8-product-v8-low-inputs.json');
+    expect(pixelDiagnostic?.required_inputs).toEqual([
+      'dist',
+      'validation/windows/prior-dist',
+      'validation/windows/owned-vp8-inputs',
+      'validation/windows/owned-vp8-v8.json',
+      'validation/windows/inputs/owned-vp8-product-v8-low-inputs.json',
+    ]);
+    expect(pixelDiagnostic?.build_commands).toEqual([['vp', 'run', 'build:ci']]);
+    expect(profile.assets).toContain('validation/windows/helpers/owned-vp8-input-capture.ts');
     expect(profile.assets).not.toContain('validation/windows/owned-vp8-inputs/v8.webm');
     const near = profile.preparation.scenarios['owned-vp8-product-near-cap'];
     expect(profile.preparation.selector_files).toContain('owned-vp8-product-near-cap.json');
@@ -587,6 +599,7 @@ describe('owned VP8 Windows product contract', () => {
     expect(ignores).toContain('/dist-validation/owned-vp8-near-cap.webm');
     expect(ignores).toContain('/dist-validation/owned-vp8-large-admitted.webm');
     expect(ignores).toContain('/validation/windows/inputs/owned-vp8-product-large-admitted.json');
+    expect(ignores).toContain('/validation/windows/inputs/owned-vp8-product-v8-low-inputs.json');
     expect(ignores).toContain('/dist-validation/.owned-vp8-near-cap-attempt-*/');
   });
 
