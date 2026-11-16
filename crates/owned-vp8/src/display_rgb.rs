@@ -103,6 +103,29 @@ fn cubic(distance: i64) -> i64 {
     }
 }
 
+// Visit the same row-major taps for both display chroma planes. Keep the
+// signed multiply order of each scalar walk for the general filter.
+fn paired_chroma_sum(
+    h: Axis,
+    v: Axis,
+    mut sample: impl FnMut(usize, usize) -> (u8, u8),
+) -> (i64, i64) {
+    if h.len == 1 && v.len == 1 && h.weight[0] == 4096 && v.weight[0] == 4096 {
+        let (u_sample, v_sample) = sample(h.at[0], v.at[0]);
+        return (i64::from(u_sample) << 24, i64::from(v_sample) << 24);
+    }
+    let mut u_sum = 0i64;
+    let mut v_sum = 0i64;
+    for row in 0..v.len {
+        for col in 0..h.len {
+            let (u_sample, v_sample) = sample(h.at[col], v.at[row]);
+            u_sum += i64::from(u_sample) * i64::from(h.weight[col]) * i64::from(v.weight[row]);
+            v_sum += i64::from(v_sample) * i64::from(h.weight[col]) * i64::from(v.weight[row]);
+        }
+    }
+    (u_sum, v_sum)
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct Frame<'a> {
     pub width: usize,
@@ -145,6 +168,26 @@ impl Frame<'_> {
         }
     }
 
+    fn baseline_uv_pair(&self, x: usize, y: usize) -> (u8, u8) {
+        let bx = x / 8;
+        let by = y / 8;
+        if bx == self.mx && by == self.my {
+            let at = (y % 8) * 8 + x % 8;
+            return (self.tile_u[at], self.tile_v[at]);
+        }
+        let at = y * (self.stride_y / 2) + x;
+        if by < self.my || (by == self.my && bx < self.mx) {
+            (self.reconstructed_u[at], self.reconstructed_v[at])
+        } else {
+            (self.source_u[at], self.source_v[at])
+        }
+    }
+
+    fn paired_chroma_sum(&self, h: Axis, v: Axis) -> (i64, i64) {
+        paired_chroma_sum(h, v, |x, y| self.baseline_uv_pair(x, y))
+    }
+
+    #[cfg(test)]
     fn uv(&self, plane: usize, x: usize, y: usize, change: Option<Change<'_>>) -> u8 {
         let bx = x / 8;
         let by = y / 8;
@@ -169,6 +212,7 @@ impl Frame<'_> {
         }
     }
 
+    #[cfg(test)]
     fn chroma_sum(&self, plane: usize, h: Axis, v: Axis) -> i64 {
         let mut sum = 0i64;
         for row in 0..v.len {
@@ -431,6 +475,7 @@ impl<'a> CompleteFrame<'a> {
         })
     }
 
+    #[cfg(test)]
     fn chroma_sum(&self, plane: &[u8], h: Axis, v: Axis) -> i64 {
         let mut sum = 0;
         for row in 0..v.len {
@@ -444,6 +489,18 @@ impl<'a> CompleteFrame<'a> {
     }
 
     fn rendered(&self, x: usize, y: usize) -> [u8; 3] {
+        let direct = self.height.is_multiple_of(2);
+        let h = Axis::chroma(x, self.width, true, direct);
+        let v = Axis::chroma(y, self.height, false, direct);
+        let (u_sum, v_sum) = paired_chroma_sum(h, v, |x, y| {
+            let at = y * (self.stride_y / 2) + x;
+            (self.u[at], self.v[at])
+        });
+        render(self.y[y * self.stride_y + x], u_sum, v_sum)
+    }
+
+    #[cfg(test)]
+    fn rendered_scalar(&self, x: usize, y: usize) -> [u8; 3] {
         let direct = self.height.is_multiple_of(2);
         let h = Axis::chroma(x, self.width, true, direct);
         let v = Axis::chroma(y, self.height, false, direct);
@@ -647,6 +704,17 @@ const _: () = assert!(
 
 impl LocalCache {
     pub(super) fn new(frame: &Frame<'_>) -> Self {
+        Self::build(frame, |h, v| frame.paired_chroma_sum(h, v))
+    }
+
+    #[cfg(test)]
+    fn new_scalar(frame: &Frame<'_>) -> Self {
+        Self::build(frame, |h, v| {
+            (frame.chroma_sum(0, h, v), frame.chroma_sum(1, h, v))
+        })
+    }
+
+    fn build(frame: &Frame<'_>, mut chroma_sum: impl FnMut(Axis, Axis) -> (i64, i64)) -> Self {
         let bounds = (
             (frame.mx * 16).saturating_sub(4),
             (frame.mx * 16 + 20).min(frame.width),
@@ -686,8 +754,7 @@ impl LocalCache {
                 let h = cache.horizontal[x - x0];
                 let v = cache.vertical[y - y0];
                 let luma = frame.y(px, py);
-                let u_sum = frame.chroma_sum(0, h, v);
-                let v_sum = frame.chroma_sum(1, h, v);
+                let (u_sum, v_sum) = chroma_sum(h, v);
                 cache.pixels[(y - y0) * 32 + x - x0] = Pixel {
                     luma,
                     u_sum,
@@ -854,6 +921,9 @@ mod tests {
             (5, 1),
             (2, 9),
             (1, 11),
+            (7, 9),
+            (11, 13),
+            (15, 19),
             (17, 19),
             (33, 16),
         ] {
@@ -905,11 +975,34 @@ mod tests {
                 .is_none());
                 let frame =
                     CompleteFrame::checked(width, height, stride_y, original, &y, &u, &v).unwrap();
+                for row in 0..height {
+                    for col in 0..width {
+                        let direct = height.is_multiple_of(2);
+                        let h = Axis::chroma(col, width, true, direct);
+                        let v_axis = Axis::chroma(row, height, false, direct);
+                        assert_eq!(
+                            paired_chroma_sum(h, v_axis, |x, y| {
+                                let at = y * (frame.stride_y / 2) + x;
+                                (frame.u[at], frame.v[at])
+                            }),
+                            (
+                                frame.chroma_sum(frame.u, h, v_axis),
+                                frame.chroma_sum(frame.v, h, v_axis)
+                            ),
+                            "sums {width}x{height} layout={layout} pixel={col},{row}"
+                        );
+                        assert_eq!(
+                            frame.rendered(col, row),
+                            frame.rendered_scalar(col, row),
+                            "{width}x{height} layout={layout} pixel={col},{row}"
+                        );
+                    }
+                }
                 let scalar = metric_ssim(
                     width,
                     height,
                     |x, y| original.at(x, y),
-                    |x, y| frame.rendered(x, y),
+                    |x, y| frame.rendered_scalar(x, y),
                 );
                 let mut stream = CompleteScore::new(width, height).unwrap();
                 while !stream.initialized() {
@@ -919,15 +1012,15 @@ mod tests {
                     stream.advance(&frame);
                 }
                 assert_eq!(
-                    stream.finish(),
-                    Some(scalar),
+                    stream.finish().unwrap().to_bits(),
+                    scalar.to_bits(),
                     "{width}x{height} layout={layout}"
                 );
                 stream.reset();
                 while stream.progress().0 < stream.progress().1 {
                     stream.advance(&frame);
                 }
-                assert_eq!(stream.finish(), Some(scalar));
+                assert_eq!(stream.finish().unwrap().to_bits(), scalar.to_bits());
             }
         }
     }
@@ -1063,6 +1156,52 @@ mod tests {
             |_x, y| [if y >= 8 { 255 } else { y as u8 }; 3],
         );
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn paired_chroma_keeps_scalar_signed_tap_order_and_fast_path_guard() {
+        let samples =
+            |x: usize, y: usize| ((x * 37 + y * 53 + 11) as u8, (x * 71 + y * 19 + 223) as u8);
+        let scalar = |plane: usize, h: Axis, v: Axis| {
+            let mut sum = 0i64;
+            for row in 0..v.len {
+                for col in 0..h.len {
+                    let (u, chroma_v) = samples(h.at[col], v.at[row]);
+                    let value = if plane == 0 { u } else { chroma_v };
+                    sum += i64::from(value) * i64::from(h.weight[col]) * i64::from(v.weight[row]);
+                }
+            }
+            sum
+        };
+        for h_len in 1..=4 {
+            for v_len in 1..=4 {
+                let h = Axis {
+                    at: [0, 1, 1, 3],
+                    weight: [-512, 4096, 1024, -512],
+                    len: h_len,
+                };
+                let v = Axis {
+                    at: [3, 3, 1, 0],
+                    weight: [4096, -384, 768, -384],
+                    len: v_len,
+                };
+                let sums = paired_chroma_sum(h, v, samples);
+                assert_eq!(sums, (scalar(0, h, v), scalar(1, h, v)));
+            }
+        }
+        for (h_weight, v_weight) in [(4096, 4096), (4095, 4096), (4096, -4096)] {
+            let mut h = Axis::single(3);
+            let mut v = Axis::single(1);
+            h.weight[0] = h_weight;
+            v.weight[0] = v_weight;
+            let mut calls = 0;
+            let sums = paired_chroma_sum(h, v, |x, y| {
+                calls += 1;
+                samples(x, y)
+            });
+            assert_eq!(calls, 1);
+            assert_eq!(sums, (scalar(0, h, v), scalar(1, h, v)));
+        }
     }
 
     #[test]
@@ -1209,7 +1348,7 @@ mod tests {
                 for row in 0..height {
                     for col in 0..width {
                         let source = frame.original.at(col, row);
-                        let rendered = frame.rendered(col, row);
+                        let rendered = frame.rendered_scalar(col, row);
                         for channel in 0..3 {
                             let difference =
                                 i32::from(source[channel]) - i32::from(rendered[channel]);
@@ -1310,9 +1449,13 @@ mod tests {
             (5, 1),
             (1, 11),
             (2, 9),
+            (7, 9),
+            (11, 13),
+            (15, 19),
             (17, 17),
             (31, 31),
             (32, 32),
+            (33, 35),
         ] {
             let padded_w = width.div_ceil(16) * 16;
             let padded_h = height.div_ceil(16) * 16;
@@ -1335,7 +1478,7 @@ mod tests {
             let reconstructed_v: Vec<_> = (0..padded_w * padded_h / 4)
                 .map(|i| ((i * 19 + 149) % 256) as u8)
                 .collect();
-            for layout in [0, 1, 4] {
+            for layout in 0..=4 {
                 let bpp = if layout == 4 { 3 } else { 4 };
                 let stride = width * bpp + 3;
                 let mut original = vec![0; stride * height];
@@ -1347,7 +1490,7 @@ mod tests {
                             ((x * 17 + y * 19) % 256) as u8,
                         ];
                         let pixel = &mut original[y * stride + x * bpp..][..bpp];
-                        if layout == 1 {
+                        if layout == 1 || layout == 3 {
                             pixel[..3].copy_from_slice(&[rgb[2], rgb[1], rgb[0]]);
                         } else {
                             pixel[..3].copy_from_slice(&rgb);
@@ -1372,6 +1515,10 @@ mod tests {
                                 &reconstructed_v[(my * 8 + row) * uv_stride + mx * 8..][..8],
                             );
                         }
+                        for i in 0..64 {
+                            tile_u[i] = tile_u[i].wrapping_add(17);
+                            tile_v[i] = tile_v[i].wrapping_sub(29);
+                        }
                         let frame = Frame {
                             width,
                             height,
@@ -1393,10 +1540,40 @@ mod tests {
                             mx,
                             my,
                         };
+                        for y in 0..height.div_ceil(2) {
+                            for x in 0..width.div_ceil(2) {
+                                assert_eq!(
+                                    frame.baseline_uv_pair(x, y),
+                                    (frame.uv(0, x, y, None), frame.uv(1, x, y, None)),
+                                    "UV owner {width}x{height} MB={mx},{my} sample={x},{y}"
+                                );
+                            }
+                        }
+                        let direct = height.is_multiple_of(2);
+                        for y in 0..height {
+                            for x in 0..width {
+                                let h = Axis::chroma(x, width, true, direct);
+                                let v = Axis::chroma(y, height, false, direct);
+                                assert_eq!(
+                                    frame.paired_chroma_sum(h, v),
+                                    (frame.chroma_sum(0, h, v), frame.chroma_sum(1, h, v)),
+                                    "sums {width}x{height} MB={mx},{my} pixel={x},{y}"
+                                );
+                            }
+                        }
                         if !(0..4).any(|patch| frame.has_affected_windows(patch % 2, patch / 2)) {
                             continue;
                         }
                         let cache = LocalCache::new(&frame);
+                        let scalar_cache = LocalCache::new_scalar(&frame);
+                        for (paired, scalar) in cache.pixels.iter().zip(scalar_cache.pixels.iter())
+                        {
+                            assert_eq!(
+                                (paired.u_sum, paired.v_sum, paired.baseline),
+                                (scalar.u_sum, scalar.v_sum, scalar.baseline),
+                                "cache {width}x{height} layout={layout} MB={mx},{my}"
+                            );
+                        }
                         assert_eq!(cache.score_tiles(&frame, &tile_u, &tile_v), 0.0);
                         let mut trial_u = tile_u;
                         let mut trial_v = tile_v;
@@ -1406,6 +1583,35 @@ mod tests {
                             }
                             if i % 11 == 0 {
                                 trial_v[i] = trial_v[i].wrapping_sub(83);
+                            }
+                        }
+                        assert_eq!(
+                            cache.score_tiles(&frame, &trial_u, &trial_v).to_bits(),
+                            scalar_cache
+                                .score_tiles(&frame, &trial_u, &trial_v)
+                                .to_bits(),
+                            "joint score {width}x{height} layout={layout} MB={mx},{my}"
+                        );
+                        let patch = [42u8; 16];
+                        for plane in 0..2 {
+                            for by in 0..2 {
+                                for bx in 0..2 {
+                                    if !frame.has_affected_windows(bx, by) {
+                                        continue;
+                                    }
+                                    let change = Change {
+                                        plane,
+                                        bx,
+                                        by,
+                                        patch: &patch,
+                                    };
+                                    let bounds = frame.affected(bx, by);
+                                    assert_eq!(
+                                        cache.score(&frame, change, bounds).to_bits(),
+                                        scalar_cache.score(&frame, change, bounds).to_bits(),
+                                        "patch score {width}x{height} layout={layout} MB={mx},{my} plane={plane} patch={bx},{by}"
+                                    );
+                                }
                             }
                         }
                         let count = ((width.max(8) >> 2) - 1) * ((height.max(8) >> 2) - 1);
