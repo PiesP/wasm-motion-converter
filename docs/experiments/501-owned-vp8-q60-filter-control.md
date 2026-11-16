@@ -74,6 +74,29 @@ with unchanged initial1114112/max201326592 linear bytes. Root rehashed all28
 provenance inputs and module; provenance SHA-256:
 `52da97af5b7f6147e7fce432064bdaff353f9cf3f028e336edaa09d6da92eceb`.
 
-Quality, size, product performance/resource, browser acceptance and delivery
-remain NOT_RUN for this point. Freeze the clean signed source/module before
-the diagnostic screen. Production wasm-webp remains.
+The frozen diagnostic below ran at signed source
+`a7157e664c51059c819c98b8bbd3ec5f299ef16f`. Product performance/resource,
+browser acceptance and delivery remain NOT_RUN for this point.
+
+## Frozen screen: retain filter6
+
+The control passes47/50 exposed rows. Tuning q60 `legacy-gradient` and
+`tune-broad-gradient` fail PSNR and SSIM; actual frame19 fails PSNR. All
+raw-size gates pass. Separate original-reference PSNR fails19/38/57/76;
+frame76delta is -1.812508 dB, worse than the retained filter6 guard's
+-1.704513 dB. All five original-reference SSIM gates pass. This result
+does not support disabling the default q60 filter.
+
+Both decoders agree for all five controls and the90 saved tuning streams
+(180 additional decoder children); no reencoding or metric change was used.
+Private `q60-filter-control-01/quality-preparation` receipts:
+
+- Frozen five lock: `2339ad8371c420d68240d6c19c56764384fce45c077b126ac684a1c8b124654a`.
+- New45 results: `b64d3f2fc8ae81329058438986a2efc8b4efec451d7ef0350e6aa5df7b8b2185`.
+- Paired decoder summary: `93f92ce877a105c5234c7eac732659640e9ed10107bb7bd47d95d774c54a1a2b`.
+- Root result audit: `e69dd09709ad068b43553e3df74b2864a1afefc39d73db62bef70a5b83b6e29b`.
+
+Disposition: REJECTED_DIAGNOSTIC_POINT / RETAIN_FILTER6. Keep all failures
+and unchanged thresholds. No unchanged/full77/687/freshV13/product rerun
+follows this point. Continue a separate evidence-backed correction. Production
+wasm-webp remains.
