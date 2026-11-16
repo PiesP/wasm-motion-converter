@@ -40,6 +40,7 @@ type SourceRecord = {
   saved: Saved;
   parsed?: { canvas?: unknown; totalDurationMs?: unknown; icc?: unknown; frames?: unknown[] };
   decodedFrameProbe?: unknown;
+  streamedHashes?: unknown;
 };
 type DeclaredRecord = { origin: string; record: SourceRecord };
 type Frame = { payload: Buffer; timestampMs: number; holdMs: number; vp8Sha256: string };
@@ -68,6 +69,254 @@ function savedRecord(value: unknown): value is SourceRecord {
     Number.isSafeInteger(saved.bytes) &&
     typeof saved.sha256 === 'string'
   );
+}
+
+const V8_CAPTURE_REPORT = 'owned-vp8-product-v8-low-inputs';
+const V8_INPUT_SHA256 = 'c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1';
+const V8_INPUT_PATH = 'validation/windows/owned-vp8-inputs/v8.webm';
+const V8_INPUT_BYTES = 3_145_371;
+const V8_INPUT_COUNT = 77;
+const V8_RGB_BYTES = 1920 * 1080 * 3;
+const V8_CAPTURE_INDICES = [0, 19, 38, 57, 76];
+const V8_INPUT_ROW_MAX_BYTES = 64 * 1024;
+const V8_PRIOR_SOURCE_SHA = 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4';
+const V8_PRIOR_WASM_SHA256 = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
+const V8_CANDIDATE_WASM_SHA256 = 'bd170496ba1f2574bd095effdc55b7cd102b203dcc347a472141fcfbd9284b0e';
+
+type V8InputRow = {
+  index: number;
+  frameNum: number;
+  startUs: number;
+  endUs: number;
+  logicalRgbBytes: number;
+  chunks: number;
+  sha256: string;
+};
+
+function assertV8InputRows(
+  value: unknown,
+  build: 'prior' | 'candidate'
+): asserts value is V8InputRow[] {
+  assert(
+    Array.isArray(value) && value.length === V8_INPUT_COUNT,
+    `${build} V8 input count differs`
+  );
+  let previous: V8InputRow | undefined;
+  for (let index = 0; index < value.length; index++) {
+    const row: unknown = value[index];
+    assert(plainObject(row), `${build} V8 input row is malformed`);
+    assert.equal(row.index, index, `${build} V8 input ordinal differs`);
+    assert(
+      Number.isSafeInteger(row.frameNum) && Number(row.frameNum) >= 0,
+      `${build} V8 frame number differs`
+    );
+    assert(
+      Number.isSafeInteger(row.startUs) &&
+        Number.isSafeInteger(row.endUs) &&
+        Number(row.startUs) >= 0 &&
+        Number(row.endUs) > Number(row.startUs) &&
+        Number(row.endUs) <= 6_400_000,
+      `${build} V8 presentation interval differs`
+    );
+    assert.equal(row.logicalRgbBytes, V8_RGB_BYTES, `${build} V8 logical RGB extent differs`);
+    assert.equal(
+      row.chunks,
+      Math.ceil(V8_RGB_BYTES / (64 * 1024)),
+      `${build} V8 chunk count differs`
+    );
+    assert(
+      typeof row.sha256 === 'string' && /^[0-9a-f]{64}$/.test(row.sha256),
+      `${build} V8 input digest differs`
+    );
+    if (previous)
+      assert(
+        Number(row.frameNum) > previous.frameNum && Number(row.startUs) > previous.startUs,
+        `${build} V8 input order differs`
+      );
+    else assert.equal(row.startUs, 0, `${build} V8 first input does not start at zero`);
+    previous = row as V8InputRow;
+  }
+}
+
+/** Admit only the prospectively instrumented two-build V8 input report. */
+export function assertV8InputCaptureReport(report: Record<string, unknown>): DeclaredRecord[] {
+  assert.equal(report.scenario, V8_CAPTURE_REPORT, 'V8 input scenario differs');
+  assert.equal(report.status, 'passed', 'V8 input capture did not pass');
+  assert.deepEqual(
+    report.selectedInputIndices,
+    V8_CAPTURE_INDICES,
+    'V8 selected input indices differ'
+  );
+  assert.equal(report.expectedObservedInputs, V8_INPUT_COUNT, 'V8 expected input count differs');
+  assert.deepEqual(
+    report.fixture,
+    {
+      path: V8_INPUT_PATH,
+      sha256: V8_INPUT_SHA256,
+      bytes: V8_INPUT_BYTES,
+      manifestSha256: (report.fixture as Record<string, unknown> | undefined)?.manifestSha256,
+    },
+    'V8 input fixture differs'
+  );
+  assert(
+    plainObject(report.fixture) &&
+      typeof report.fixture.manifestSha256 === 'string' &&
+      /^[0-9a-f]{64}$/.test(report.fixture.manifestSha256),
+    'V8 input manifest identity differs'
+  );
+  assert.deepEqual(
+    report.settings,
+    {
+      quality: 'low',
+      qualityPercent: 60,
+      cadenceFps: 12,
+      scale: 1,
+      smartFrameSkip: 'off',
+    },
+    'V8 conversion settings differ'
+  );
+  assert.deepEqual(
+    report.layout,
+    {
+      format: 'RGB',
+      channels: 3,
+      opaque: true,
+      width: 1920,
+      height: 1080,
+      stride: 5760,
+      bytesPerFrame: V8_RGB_BYTES,
+    },
+    'V8 RGB layout differs'
+  );
+  assert(
+    plainObject(report.prior) &&
+      report.prior.sourceSha === V8_PRIOR_SOURCE_SHA &&
+      plainObject(report.prior.legacyWasm) &&
+      report.prior.legacyWasm.sha256 === V8_PRIOR_WASM_SHA256,
+    'V8 shipped prior identity differs'
+  );
+  assert(
+    plainObject(report.candidate) &&
+      plainObject(report.candidate.ownedAsset) &&
+      report.candidate.ownedAsset.sha256 === V8_CANDIDATE_WASM_SHA256,
+    'V8 owned candidate module differs'
+  );
+  assert(
+    Array.isArray(report.captures) && report.captures.length === 2,
+    'V8 requires two captures'
+  );
+  const records: DeclaredRecord[] = [];
+  for (const [index, build] of (['prior', 'candidate'] as const).entries()) {
+    const capture: unknown = report.captures[index];
+    assert(plainObject(capture) && capture.build === build, `${build} V8 capture is missing`);
+    assert.equal(capture.observedInputs, V8_INPUT_COUNT, `${build} V8 observed inputs differ`);
+    assert.equal(
+      capture.emittedAnmfCount,
+      V8_INPUT_COUNT,
+      `${build} V8 emitted ANMF count differs`
+    );
+    assert.equal(capture.route, 'actual UI main software', `${build} V8 route differs`);
+    assert(savedRecord({ saved: capture.webp }), `${build} V8 saved identity is missing`);
+    assertV8InputRows(capture.streamedHashes, build);
+    assert.equal(capture.streamedInputRowsFile, `owned-vp8-v8-all-input-${build}.jsonl`);
+    assert(
+      Array.isArray(capture.pixels) && capture.pixels.length === V8_CAPTURE_INDICES.length,
+      `${build} V8 selected RGB count differs`
+    );
+    for (const [selected, ordinal] of V8_CAPTURE_INDICES.entries()) {
+      const pixel: unknown = capture.pixels[selected];
+      assert(
+        plainObject(pixel) && pixel.index === ordinal,
+        `${build} V8 selected RGB index differs`
+      );
+      assert.equal(pixel.bytes, V8_RGB_BYTES, `${build} V8 selected RGB extent differs`);
+      assert(
+        typeof pixel.sha256 === 'string' &&
+          pixel.sha256 === capture.streamedHashes[ordinal]!.sha256,
+        `${build} V8 selected RGB hash differs from streamed input`
+      );
+      assert.equal(
+        pixel.file,
+        `owned-vp8-v8-low-input-${build}-${String(ordinal).padStart(2, '0')}.rgb`,
+        `${build} V8 selected RGB path differs`
+      );
+    }
+    assert(plainObject(capture.parsed), `${build} V8 parsed animation is missing`);
+    records.push({
+      origin: `captures[${index}]`,
+      record: {
+        build,
+        status: 'passed',
+        fixture: 'v8-low-inputs',
+        quality: 'low',
+        inputSha256: V8_INPUT_SHA256,
+        saved: capture.webp as Saved,
+        parsed: capture.parsed as NonNullable<SourceRecord['parsed']>,
+        streamedHashes: capture.streamedHashes,
+      },
+    });
+  }
+  const prior = report.captures[0] as Record<string, unknown>;
+  const candidate = report.captures[1] as Record<string, unknown>;
+  const priorRows = prior.streamedHashes as V8InputRow[];
+  const candidateRows = candidate.streamedHashes as V8InputRow[];
+  assert(
+    Array.isArray(report.allInputComparison) && report.allInputComparison.length === V8_INPUT_COUNT,
+    'V8 all-input comparison is missing'
+  );
+  for (let index = 0; index < V8_INPUT_COUNT; index++) {
+    const left = priorRows[index]!;
+    const right = candidateRows[index]!;
+    assert.equal(right.frameNum, left.frameNum, `V8 frame number mismatch at ${index}`);
+    assert.equal(right.startUs, left.startUs, `V8 start mismatch at ${index}`);
+    assert.equal(right.endUs, left.endUs, `V8 end mismatch at ${index}`);
+    assert.equal(right.sha256, left.sha256, `V8 RGB mismatch at ${index}`);
+    assert.deepEqual(
+      report.allInputComparison[index],
+      {
+        index,
+        priorSha256: left.sha256,
+        candidateSha256: right.sha256,
+        samePixels: true,
+        sameFrameNum: true,
+        samePresentation: true,
+      },
+      `V8 all-input comparison differs at ${index}`
+    );
+  }
+  assert(
+    Array.isArray(report.comparison) && report.comparison.length === V8_CAPTURE_INDICES.length,
+    'V8 selected comparison is missing'
+  );
+  for (const [index, ordinal] of V8_CAPTURE_INDICES.entries())
+    assert.deepEqual(
+      report.comparison[index],
+      {
+        index: ordinal,
+        priorSha256: priorRows[ordinal]!.sha256,
+        candidateSha256: candidateRows[ordinal]!.sha256,
+        same: true,
+      },
+      `V8 selected comparison differs at ${ordinal}`
+    );
+  return records;
+}
+
+/** Each emitted frame retains the absolute input start; the final endpoint is frozen. */
+export function assertV8CapturedOutputTimeline(
+  rows: readonly V8InputRow[],
+  frames: readonly { timestampMs: number; holdMs: number }[]
+): void {
+  assert.equal(rows.length, V8_INPUT_COUNT, 'V8 input timeline count differs');
+  assert.equal(frames.length, V8_INPUT_COUNT, 'V8 output timeline count differs');
+  for (let index = 0; index < V8_INPUT_COUNT; index++) {
+    const start = Math.round(rows[index]!.startUs / 1000);
+    const end = index + 1 === V8_INPUT_COUNT ? 6_400 : Math.round(rows[index + 1]!.startUs / 1000);
+    const hold = end - start;
+    assert(hold >= 11, `V8 output would have coalesced input ${index}`);
+    assert.equal(frames[index]!.timestampMs, start, `V8 output timestamp differs at ${index}`);
+    assert.equal(frames[index]!.holdMs, hold, `V8 output hold differs at ${index}`);
+  }
 }
 
 /** Only the report's declared output sites are eligible; no directory media scan. */
@@ -552,7 +801,7 @@ export async function readStableFile(
 
 export function assertReportName(name: string): void {
   assert(
-    /^(?:owned-vp8-product(?:-near-cap|-v8-(?:low|medium|high))?(?:-ba)?|owned-vp8-product-large-admitted)\.json$/.test(
+    /^(?:owned-vp8-product(?:-near-cap|-v8-(?:low|medium|high))?(?:-ba)?|owned-vp8-product-large-admitted|owned-vp8-product-v8-low-inputs)\.json$/.test(
       name
     ),
     'Invalid report name'
@@ -623,10 +872,15 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
   );
   assert.equal(bundle.value.scenario, product.value.scenario, 'Bundle scenario differs');
   assert(Array.isArray(bundle.value.files), 'Bundle inventory missing');
-  assert(Array.isArray(product.value.inputs), 'Product input identities missing');
+  const v8InputCapture = product.value.scenario === V8_CAPTURE_REPORT;
+  if (!v8InputCapture)
+    assert(Array.isArray(product.value.inputs), 'Product input identities missing');
   const inputDigests = new Set<string>();
   const inputs: Array<{ path: string; bytes: number; sha256: string }> = [];
-  for (const value of product.value.inputs) {
+  const reportedInputs = v8InputCapture
+    ? [plainObject(product.value.fixture) ? product.value.fixture : null]
+    : (product.value.inputs as unknown[]);
+  for (const value of reportedInputs) {
     assert(plainObject(value), 'Malformed input identity');
     const path = value.path;
     assert(
@@ -662,7 +916,10 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     inputDigests.add(value.sha256);
     inputs.push({ path, bytes: Number(value.bytes), sha256: value.sha256 });
   }
-  const frozenManifest = product.value.frozenInputManifestSha256;
+  const frozenManifest =
+    v8InputCapture && plainObject(product.value.fixture)
+      ? product.value.fixture.manifestSha256
+      : product.value.frozenInputManifestSha256;
   if (frozenManifest !== undefined) {
     assert(typeof frozenManifest === 'string' && /^[0-9a-f]{64}$/.test(frozenManifest));
     assert(
@@ -725,7 +982,18 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     );
     assert.equal(sha256(bytes), largeAdmittedManifest, 'Large admitted manifest digest differs');
   }
-  const records = declaredOutputs(product.value);
+  const records = v8InputCapture
+    ? assertV8InputCaptureReport(product.value)
+    : declaredOutputs(product.value);
+  if (v8InputCapture) {
+    assert.equal(inputs.length, 1, 'V8 source count differs');
+    assert.deepEqual(inputs[0], {
+      path: V8_INPUT_PATH,
+      bytes: V8_INPUT_BYTES,
+      sha256: V8_INPUT_SHA256,
+    });
+    assert(frozenManifest, 'V8 frozen manifest is absent');
+  }
   if (product.value.scenario === 'owned-vp8-product-near-cap') {
     assert.equal(inputs.length, 1, 'Near-cap input cohort differs');
     assert.equal(inputs[0]!.path, 'dist-validation/owned-vp8-near-cap.webm');
@@ -770,8 +1038,9 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
   const report: Record<string, unknown> = {
     schemaVersion: 1,
     status: 'running',
-    scope:
-      'Saved owned-software animation decode; no conversion timing, perceptual quality, or peak-memory claim',
+    scope: v8InputCapture
+      ? 'Saved owned-software animation decode and paired V8 encoder-input hashes; no source-frame mapping, conversion timing, perceptual quality, or peak-memory claim'
+      : 'Saved owned-software animation decode; no conversion timing, perceptual quality, or peak-memory claim',
     sourceRequirementOutcomes:
       product.value.scenario === 'owned-vp8-product-near-cap'
         ? {
@@ -814,6 +1083,116 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
     });
   await persist();
   try {
+    if (v8InputCapture) {
+      for (const declared of records) {
+        const build = declared.record.build!;
+        const capture = (product.value.captures as Record<string, unknown>[])[
+          build === 'prior' ? 0 : 1
+        ]!;
+        const rowFile = `owned-vp8-v8-all-input-${build}.jsonl`;
+        const rowBytes = await readStableFile(
+          join(sourceOutput, rowFile),
+          V8_INPUT_ROW_MAX_BYTES,
+          undefined,
+          `${build} V8 input rows`
+        );
+        assertCollected(rowFile, sha256(rowBytes));
+        const lines = rowBytes.toString('utf8').split('\n');
+        assert.equal(lines.pop(), '', `${build} V8 input rows lack terminal newline`);
+        assert.equal(lines.length, V8_INPUT_COUNT, `${build} V8 input row file count differs`);
+        assert.deepEqual(
+          lines.map((line) => JSON.parse(line) as unknown),
+          capture.streamedHashes,
+          `${build} V8 durable input rows differ from report`
+        );
+        for (const pixel of capture.pixels as Array<{
+          file: string;
+          bytes: number;
+          sha256: string;
+        }>) {
+          assertCollected(pixel.file, pixel.sha256);
+          const rgb = await readStableFile(
+            join(sourceOutput, pixel.file),
+            V8_RGB_BYTES,
+            pixel.bytes,
+            `${build} V8 selected RGB`
+          );
+          assert.equal(sha256(rgb), pixel.sha256, `${build} V8 selected RGB bytes differ`);
+        }
+      }
+      const lock = product.value.captureLock;
+      assert(
+        plainObject(lock) &&
+          lock.path === 'dist-validation/owned-vp8-v8-input-capture-lock.json' &&
+          typeof lock.sha256 === 'string' &&
+          /^[0-9a-f]{64}$/.test(lock.sha256),
+        'V8 capture lock identity is missing'
+      );
+      assert(
+        bundle.value.files.some(
+          (entry: unknown) =>
+            plainObject(entry) && entry.file === lock.path && entry.sha256 === lock.sha256
+        ),
+        'V8 capture lock differs from bundle inventory'
+      );
+      const lockBytes = await readStableFile(
+        join(run, 'payload', lock.path),
+        8 * 1024,
+        undefined,
+        'V8 capture lock'
+      );
+      assert.equal(sha256(lockBytes), lock.sha256, 'V8 capture lock bytes differ');
+      const lockValue: unknown = JSON.parse(lockBytes.toString('utf8'));
+      assert(
+        plainObject(lockValue) &&
+          lockValue.schemaVersion === 1 &&
+          lockValue.scenario === V8_CAPTURE_REPORT,
+        'V8 capture lock schema differs'
+      );
+      for (const build of ['prior', 'candidate'] as const) {
+        const reportBuild = product.value[build];
+        const lockedBuild = lockValue[build];
+        assert(
+          plainObject(reportBuild) && plainObject(lockedBuild),
+          `${build} V8 capture lock build is missing`
+        );
+        for (const key of ['sourceSha', 'treeSha', 'coreSha', 'manifestSha256'])
+          assert.equal(
+            lockedBuild[key],
+            reportBuild[key],
+            `${build} V8 capture lock ${key} differs`
+          );
+        assert(
+          plainObject(lockedBuild.callbackAsset) && plainObject(reportBuild.callbackPatch),
+          `${build} V8 callback identity is missing`
+        );
+        for (const key of ['path', 'size'])
+          assert.equal(
+            lockedBuild.callbackAsset[key],
+            reportBuild.callbackPatch[key],
+            `${build} V8 callback ${key} differs`
+          );
+        assert.equal(
+          lockedBuild.callbackAsset.sha256,
+          reportBuild.callbackPatch.originalSha256,
+          `${build} V8 callback digest differs`
+        );
+        const reportedModule = reportBuild[build === 'prior' ? 'legacyWasm' : 'ownedAsset'];
+        assert(
+          plainObject(reportedModule) && plainObject(lockedBuild.module),
+          `${build} V8 module identity is missing`
+        );
+        assert.deepEqual(lockedBuild.module, reportedModule, `${build} V8 module differs`);
+      }
+      report.v8InputCapture = {
+        status: 'paired-input-hashes-verified',
+        inputRowsPerBuild: V8_INPUT_COUNT,
+        selectedRgbCopiesPerBuild: V8_CAPTURE_INDICES.length,
+        sourceFrameMapping: 'unverified',
+        perceptualMetrics: 'not-run',
+      };
+      await persist();
+    }
     const identities = new Map<string, { declared: DeclaredRecord; icc: unknown }>();
     for (const declared of records) {
       const { saved } = declared.record;
@@ -834,6 +1213,13 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
       const bytes = await readStableFile(path, MAX_OUTPUT_BYTES, saved.bytes, 'Saved output');
       assert.equal(sha256(bytes), saved.sha256, 'Saved output digest differs');
       const { parsed, frames } = extractVp8Frames(bytes);
+      if (v8InputCapture) {
+        assert.deepEqual(parsed.canvas, { width: 1920, height: 1080 }, 'V8 canvas differs');
+        assert.equal(frames.length, V8_INPUT_COUNT, 'V8 ANMF count differs');
+        assert.equal(parsed.totalDurationMs, 6_400, 'V8 animation duration differs');
+        assert.equal(parsed.loopCount, 0, 'V8 animation loop differs');
+        assertV8CapturedOutputTimeline(declared.record.streamedHashes as V8InputRow[], frames);
+      }
       if (declared.record.fixture === 'large-admitted')
         assert.deepEqual(parsed.canvas, { width: 4032, height: 2457 });
       if (declared.record.parsed) {
@@ -848,6 +1234,12 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
           parsed.frames.length,
           'Reported frame count differs'
         );
+        if (v8InputCapture)
+          assert.deepEqual(
+            declared.record.parsed.frames,
+            parsed.frames,
+            'V8 reported frame order differs'
+          );
         if (declared.record.parsed.icc !== undefined)
           assert.deepEqual(declared.record.parsed.icc, parsed.icc, 'Reported ICC differs');
       }
@@ -910,10 +1302,11 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
         icc: parsed.icc,
         emittedAnmfCount: frames.length,
         totalDurationMs: parsed.totalDurationMs,
-        frameTimeline: frames.map(({ timestampMs, holdMs, vp8Sha256 }) => ({
+        frameTimeline: frames.map(({ timestampMs, holdMs, vp8Sha256, payload }) => ({
           timestampMs,
           holdMs,
           vp8Sha256,
+          ...(v8InputCapture ? { vp8Bytes: payload.length } : {}),
         })),
         ivf: {
           file: basename(ivf),
@@ -973,6 +1366,62 @@ async function verifyRun(run: string, expectedSource: string, output: string, re
         await persist();
         assert(same, 'Large admitted prior/candidate ICC profiles differ');
       }
+    }
+    if (v8InputCapture) {
+      const prior = [...identities.values()].find(
+        ({ declared }) => declared.record.build === 'prior'
+      );
+      const candidate = [...identities.values()].find(
+        ({ declared }) => declared.record.build === 'candidate'
+      );
+      assert(prior && candidate, 'V8 paired animations are missing');
+      const same = JSON.stringify(prior.icc) === JSON.stringify(candidate.icc);
+      (report.iccPairs as unknown[]).push({
+        key: 'v8-low-inputs',
+        priorIcc: prior.icc,
+        candidateIcc: candidate.icc,
+        same,
+      });
+      await persist();
+      assert(same, 'V8 paired ICC profiles differ');
+      const verified = report.outputs as Array<{
+        build: string;
+        saved: Saved;
+        frameTimeline: Array<{
+          timestampMs: number;
+          holdMs: number;
+          vp8Sha256: string;
+          vp8Bytes: number;
+        }>;
+      }>;
+      const left = verified.find((entry) => entry.build === 'prior');
+      const right = verified.find((entry) => entry.build === 'candidate');
+      assert(left && right, 'V8 verified paired outputs are missing');
+      assert.equal(left.frameTimeline.length, V8_INPUT_COUNT);
+      assert.equal(right.frameTimeline.length, V8_INPUT_COUNT);
+      report.v8PairedOutputDiagnostic = {
+        scope:
+          'VP8 payload and total WebP byte comparison only; no quality or size acceptance decision',
+        totalWebpBytes: { prior: left.saved.bytes, candidate: right.saved.bytes },
+        frames: left.frameTimeline.map((frame, index) => {
+          const other = right.frameTimeline[index]!;
+          assert.equal(
+            other.timestampMs,
+            frame.timestampMs,
+            `V8 output timestamp differs at ${index}`
+          );
+          assert.equal(other.holdMs, frame.holdMs, `V8 output hold differs at ${index}`);
+          return {
+            index,
+            timestampMs: frame.timestampMs,
+            holdMs: frame.holdMs,
+            priorVp8Bytes: frame.vp8Bytes,
+            candidateVp8Bytes: other.vp8Bytes,
+            sameVp8Payload: frame.vp8Sha256 === other.vp8Sha256,
+          };
+        }),
+      };
+      await persist();
     }
     report.status = 'passed';
     await persist();
