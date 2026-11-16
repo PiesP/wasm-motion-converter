@@ -79,6 +79,30 @@ is246671 raw/81976 Node gzip level-9 bytes, with unchanged initial
 source inputs and the artifact were independently rehashed. Provenance:
 `587c5d55d24f71e2fe49349d60b89121ad23fa678b5419c0d6ed54074119aef2`.
 
-Codec quality/size, product performance/resource, browser acceptance and
-delivery remain NOT_RUN. Freeze a clean signed source/module before the
-diagnostic screen. Production wasm-webp remains.
+The frozen diagnostic below ran at signed source
+`7e4de4e9e0089faa326514bbc172fb5041e015a1`. Product performance/resource,
+browser acceptance and delivery remain NOT_RUN for this point.
+
+## Frozen screen: rejected allocation point
+
+All45 tuning rows and four of five actual controls pass all quality/size
+gates,49/50 exposed rows total. Actual76 remains12014 bytes above its10815
+limit. Separate original-reference PSNR fails38 (-1.071556 dB) and76
+(-1.189932 dB); all other original-reference gates pass. Frame76 raw VP8
+and decoded RGB are byte-identical to the prior -9 point. The marginal Y1
+AC change therefore does not correct that frame's remaining error or size.
+
+Native VP8 and libvpx agree for all five controls and90 saved tuning streams
+(180 additional decoder children), without reencoding or rescoring. The new
+45-row quality summary explicitly distinguishes all45 gate passes from
+childexit0. Private `y1-uv-rate-allocation-01/quality-preparation` receipts:
+
+- Frozen five lock: `dcb5fb7577f9dd24a67c217cf922d6c9417de487fe4ef243e0f79ea4aadc1427`.
+- New45 results: `ab7ec6d9e6c9790a2cb7c484f0ce35350abcbb78813921a72a051220d2965845`.
+- Paired decoder summary: `124a42b7bfbd9d5a4c2daad82b39933759883cc7aa048da22934ab1d9bc8b2a1`.
+- Root result audit: `3d01a375233b1487b9c059da859fd6a640ea3fd54fff7f8f3edecb6f49c011ac`.
+
+Disposition: REJECTED_DIAGNOSTIC_POINT / RETAIN_CURRENT. Preserve failed
+rows and unchanged thresholds; no unchanged/full77/687/freshV13/product
+rerun follows this point. Continue mechanism investigation with separately
+bounded source and evidence. Production wasm-webp remains.
