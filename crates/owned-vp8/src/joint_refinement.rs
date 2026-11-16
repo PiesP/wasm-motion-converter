@@ -67,6 +67,7 @@ pub(super) struct JointSearch {
     predicted_u: [u8; 64],
     predicted_v: [u8; 64],
     cache: display_rgb::LocalCache,
+    guard_rgb_ssd: bool,
     moves: [Move; MAX_MOVES],
     move_count: usize,
     beam: [Path; BEAM_WIDTH],
@@ -148,10 +149,10 @@ impl JointSearch {
         live: &display_rgb::Frame<'_>,
         selected: &Macroblock,
         baseline: Option<(RefinementChange, f64)>,
-        reconstructed_u: &[u8],
-        reconstructed_v: &[u8],
+        reconstructed_uv: [&[u8]; 2],
         steps: Steps,
         quota: usize,
+        guard_rgb_ssd: bool,
     ) -> Result<Option<Self>, EncodeError> {
         if quota == 0 {
             return Ok(None);
@@ -162,6 +163,7 @@ impl JointSearch {
         if selected.skip() {
             return Ok(None);
         }
+        let [reconstructed_u, reconstructed_v] = reconstructed_uv;
         let stride = live.stride_y / 2;
         let predicted_u =
             predict_plane(reconstructed_u, stride, live.mx, live.my, selected.uv_mode);
@@ -290,6 +292,7 @@ impl JointSearch {
             predicted_u,
             predicted_v,
             cache,
+            guard_rgb_ssd,
             moves,
             move_count,
             beam: [Path::default(); BEAM_WIDTH],
@@ -448,7 +451,20 @@ impl JointSearch {
                 tile_v: &self.base_v,
                 ..*live
             };
-            let gain = self.cache.score_tiles(&base_frame, &trial.u, &trial.v);
+            let gain = if self.guard_rgb_ssd {
+                let score = self
+                    .cache
+                    .score_tiles_with_ssd(&base_frame, &trial.u, &trial.v, true);
+                let Some(gain) = score.allowed_gain(true) else {
+                    if self.used == self.quota {
+                        self.done = true;
+                    }
+                    return Ok(());
+                };
+                gain
+            } else {
+                self.cache.score_tiles(&base_frame, &trial.u, &trial.v)
+            };
             let path = Path { gain, ..path };
             if gain > self.best_gain
                 && self.final_frontier_valid(&trial.block, &trial.u, &trial.v, right, below)
@@ -506,6 +522,11 @@ impl JointSearch {
         assert!(quota <= EXTRA_PROPOSALS_PER_FRAME);
         assert_eq!(self.used, 0);
         self.quota = quota;
+    }
+
+    #[cfg(test)]
+    pub(super) fn rgb_ssd_guard_enabled_for_test(&self) -> bool {
+        self.guard_rgb_ssd
     }
 
     #[cfg(test)]
@@ -590,7 +611,7 @@ mod tests {
         let mut block = Macroblock::default();
         block.y[0][0] = 1; // Keep the base unskipped while testing UV beam behavior.
         let steps = ac_quant::steps(32, Deltas::default(), Plane::UV);
-        let mut search = JointSearch::new(&frame, &block, None, &uv, &uv, steps, 128)
+        let mut search = JointSearch::new(&frame, &block, None, [&uv, &uv], steps, 128, false)
             .unwrap()
             .unwrap();
         let first_depth = search.move_count;
@@ -606,5 +627,38 @@ mod tests {
         assert_eq!(search.used, first_depth + 1);
         assert_eq!(search.depth, 1);
         assert!(search.paths_have_distinct_positions());
+
+        // The same moves remain charged, but a baseline matching the source
+        // cannot admit a changed RGB sample with higher source error.
+        let mut guarded = JointSearch::new(&frame, &block, None, [&uv, &uv], steps, 128, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(guarded.move_count, first_depth);
+        let first = Path::default().append(0, guarded.moves[0]);
+        let first_result = guarded.render_path(first, steps).unwrap();
+        assert!(
+            guarded
+                .cache
+                .score_tiles_with_ssd(&frame, &first_result.u, &first_result.v, true)
+                .rgb_ssd_delta
+                > 0
+        );
+        guarded.step(&frame, steps, false, false).unwrap();
+        assert_eq!(guarded.next_count, 0);
+        for _ in 1..first_depth {
+            guarded.step(&frame, steps, false, false).unwrap();
+        }
+        assert_eq!(guarded.used, first_depth);
+        for path in &guarded.next[..guarded.next_count] {
+            let result = guarded.render_path(*path, steps).unwrap();
+            assert_eq!(
+                guarded
+                    .cache
+                    .score_tiles_with_ssd(&frame, &result.u, &result.v, true)
+                    .rgb_ssd_delta,
+                0
+            );
+        }
+        assert_eq!(guarded.best_len, 0);
     }
 }
