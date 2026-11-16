@@ -25,6 +25,13 @@ import { V4_HELDOUT, generateV4Fixture } from './owned-vp8-v4-fixtures.ts';
 import { V5_HELDOUT, generateV5Fixture, type V5SourcePaths } from './owned-vp8-v5-fixtures.ts';
 import { V6_HELDOUT, generateV6Fixture } from './owned-vp8-v6-fixtures.ts';
 import { V7_HELDOUT, generateV7Fixture } from './owned-vp8-v7-fixtures.ts';
+import {
+  V13_HELDOUT,
+  generateV13Fixture,
+  preflightV13,
+  type V13Manifest,
+  type V13SourcePaths,
+} from './owned-vp8-v13-fixtures.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ORACLE_HASH = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
@@ -37,7 +44,8 @@ export type FixtureCohort =
   | 'corrected-v4'
   | 'corrected-v5'
   | 'corrected-v6'
-  | 'corrected-v7';
+  | 'corrected-v7'
+  | 'corrected-v13';
 
 export function selectFixtureCohort(
   split: FixtureSplit,
@@ -47,53 +55,55 @@ export function selectFixtureCohort(
 ) {
   if (fixtureIds !== undefined && split === 'held-out' && !regression)
     throw new Error('Fixture subsets are diagnostic only; acceptance requires the full cohort');
-  if (split === 'held-out' && !regression)
-    throw new Error(
-      `${cohort} is exposed: use --regression; no fresh successor is currently frozen`
-    );
+  if (cohort === 'corrected-v13' && split === 'tuning')
+    throw new Error('V13 has no tuning inputs; use a prior exposed tuning cohort');
+  if (split === 'held-out' && !regression && cohort !== 'corrected-v13')
+    throw new Error(`${cohort} is exposed: use --regression; this cohort is not fresh`);
   const entries =
-    cohort === 'corrected-v7'
-      ? [
-          ...FIXTURES.filter((item) => item.split === 'tuning'),
-          ...CORRECTION_TUNING,
-          ...V3_TUNING,
-          ...V7_HELDOUT,
-        ]
-      : cohort === 'corrected-v6'
+    cohort === 'corrected-v13'
+      ? V13_HELDOUT
+      : cohort === 'corrected-v7'
         ? [
             ...FIXTURES.filter((item) => item.split === 'tuning'),
             ...CORRECTION_TUNING,
             ...V3_TUNING,
-            ...V6_HELDOUT,
+            ...V7_HELDOUT,
           ]
-        : cohort === 'corrected-v5'
+        : cohort === 'corrected-v6'
           ? [
               ...FIXTURES.filter((item) => item.split === 'tuning'),
               ...CORRECTION_TUNING,
               ...V3_TUNING,
-              ...V5_HELDOUT,
+              ...V6_HELDOUT,
             ]
-          : cohort === 'corrected-v4'
+          : cohort === 'corrected-v5'
             ? [
                 ...FIXTURES.filter((item) => item.split === 'tuning'),
                 ...CORRECTION_TUNING,
                 ...V3_TUNING,
-                ...V4_HELDOUT,
+                ...V5_HELDOUT,
               ]
-            : cohort === 'corrected-v3'
+            : cohort === 'corrected-v4'
               ? [
                   ...FIXTURES.filter((item) => item.split === 'tuning'),
                   ...CORRECTION_TUNING,
                   ...V3_TUNING,
-                  ...V3_HELDOUT,
+                  ...V4_HELDOUT,
                 ]
-              : cohort === 'corrected-v2'
+              : cohort === 'corrected-v3'
                 ? [
                     ...FIXTURES.filter((item) => item.split === 'tuning'),
                     ...CORRECTION_TUNING,
-                    ...CORRECTION_HELDOUT,
+                    ...V3_TUNING,
+                    ...V3_HELDOUT,
                   ]
-                : FIXTURES;
+                : cohort === 'corrected-v2'
+                  ? [
+                      ...FIXTURES.filter((item) => item.split === 'tuning'),
+                      ...CORRECTION_TUNING,
+                      ...CORRECTION_HELDOUT,
+                    ]
+                  : FIXTURES;
   const available = entries.filter((item) => item.split === split);
   if (fixtureIds === undefined) return available;
   if (fixtureIds.length === 0) throw new Error('Fixture subset must contain at least one ID');
@@ -269,7 +279,7 @@ function decode(file: string, width: number, height: number): Uint8Array {
 export async function compare(options: {
   output: string;
   split: FixtureSplit;
-  sources: V5SourcePaths;
+  sources: V5SourcePaths & V13SourcePaths;
   cohort?: FixtureCohort;
   regression?: boolean;
   fixtureIds?: readonly string[];
@@ -295,6 +305,12 @@ export async function compare(options: {
     if (output === path || output.startsWith(path + sep))
       throw new Error('Evidence must remain outside delivered assets');
   }
+  const v13ManifestFile = join(ROOT, 'docs/experiments/501-owned-vp8-v13-fixtures.json');
+  const v13Manifest =
+    cohort === 'corrected-v13'
+      ? (JSON.parse(readFileSync(v13ManifestFile, 'utf8')) as V13Manifest)
+      : undefined;
+  if (v13Manifest) preflightV13(v13Manifest, options.sources, ROOT, options.regression ?? false);
   mkdirSync(output, { recursive: true });
   const wasmFile = join(candidateRoot, 'crates/owned-vp8/owned-vp8.wasm');
   execFileSync(
@@ -457,6 +473,13 @@ export async function compare(options: {
       );
     frozen.fixtures.push(...fresh.fixtures);
   }
+  if (v13Manifest)
+    frozen.fixtures.push(
+      ...v13Manifest.fixtures.map((row) => ({
+        id: row.id,
+        sha256: row.sha256 ?? '',
+      }))
+    );
   assert.equal(new Set(frozen.fixtures.map((entry) => entry.id)).size, frozen.fixtures.length);
   const identities = {
     ...selection,
@@ -465,17 +488,19 @@ export async function compare(options: {
     correctionManifestSha256:
       cohort !== 'initial-v1' ? digest(readFileSync(correctionManifestFile)) : null,
     freshManifestSha256:
-      cohort === 'corrected-v7'
-        ? digest(readFileSync(v7ManifestFile))
-        : cohort === 'corrected-v6'
-          ? digest(readFileSync(v6ManifestFile))
-          : cohort === 'corrected-v5'
-            ? digest(readFileSync(v5ManifestFile))
-            : cohort === 'corrected-v4'
-              ? digest(readFileSync(v4ManifestFile))
-              : cohort === 'corrected-v3'
-                ? digest(readFileSync(v3ManifestFile))
-                : null,
+      cohort === 'corrected-v13'
+        ? digest(readFileSync(v13ManifestFile))
+        : cohort === 'corrected-v7'
+          ? digest(readFileSync(v7ManifestFile))
+          : cohort === 'corrected-v6'
+            ? digest(readFileSync(v6ManifestFile))
+            : cohort === 'corrected-v5'
+              ? digest(readFileSync(v5ManifestFile))
+              : cohort === 'corrected-v4'
+                ? digest(readFileSync(v4ManifestFile))
+                : cohort === 'corrected-v3'
+                  ? digest(readFileSync(v3ManifestFile))
+                  : null,
     source: execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: candidateRoot,
       encoding: 'utf8',
@@ -527,6 +552,7 @@ export async function compare(options: {
   });
   const results: object[] = [];
   for (const spec of selected) {
+    const freshV13 = V13_HELDOUT.some((entry) => entry.id === spec.id);
     const freshV7 = V7_HELDOUT.some((entry) => entry.id === spec.id);
     const freshV6 = V6_HELDOUT.some((entry) => entry.id === spec.id);
     const freshV5 = V5_HELDOUT.some((entry) => entry.id === spec.id);
@@ -537,19 +563,21 @@ export async function compare(options: {
     const fresh =
       V3_TUNING.some((entry) => entry.id === spec.id) ||
       V3_HELDOUT.some((entry) => entry.id === spec.id);
-    const fixture = freshV7
-      ? generateV7Fixture(spec.id, options.sources)
-      : freshV6
-        ? generateV6Fixture(spec.id, options.sources)
-        : freshV5
-          ? generateV5Fixture(spec.id, options.sources)
-          : freshV4
-            ? generateV4Fixture(spec.id, options.sources)
-            : fresh
-              ? generateV3Fixture(spec.id, options.sources)
-              : correction
-                ? generateCorrectionFixture(spec.id, options.sources)
-                : generateFixture(spec.id, options.sources);
+    const fixture = freshV13
+      ? generateV13Fixture(spec.id, options.sources, v13Manifest!)
+      : freshV7
+        ? generateV7Fixture(spec.id, options.sources)
+        : freshV6
+          ? generateV6Fixture(spec.id, options.sources)
+          : freshV5
+            ? generateV5Fixture(spec.id, options.sources)
+            : freshV4
+              ? generateV4Fixture(spec.id, options.sources)
+              : fresh
+                ? generateV3Fixture(spec.id, options.sources)
+                : correction
+                  ? generateCorrectionFixture(spec.id, options.sources)
+                  : generateFixture(spec.id, options.sources);
     assert.equal(
       digest(fixture.pixels),
       frozen.fixtures.find((entry) => entry.id === spec.id)?.sha256
@@ -645,6 +673,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const freshPhoto = args.includes('--fresh-photo')
     ? args[args.indexOf('--fresh-photo') + 1]
     : undefined;
+  const photoA = args.includes('--photo-a') ? args[args.indexOf('--photo-a') + 1] : undefined;
+  const photoB = args.includes('--photo-b') ? args[args.indexOf('--photo-b') + 1] : undefined;
   const cohort = args.includes('--cohort') ? args[args.indexOf('--cohort') + 1] : 'initial-v1';
   if (
     cohort !== 'initial-v1' &&
@@ -653,7 +683,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     cohort !== 'corrected-v4' &&
     cohort !== 'corrected-v5' &&
     cohort !== 'corrected-v6' &&
-    cohort !== 'corrected-v7'
+    cohort !== 'corrected-v7' &&
+    cohort !== 'corrected-v13'
   )
     throw new Error('Unknown fixture cohort');
   if (acceptance && regression) throw new Error('Choose acceptance or exposed regression');
@@ -662,7 +693,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     : undefined;
   if (!args.includes('--output') || !output)
     throw new Error(
-      'Use --output NEW_EVIDENCE_DIRECTORY [--photo PATH --video PATH] [--fixture ID ... for tuning or --regression only]'
+      'Use --output NEW_EVIDENCE_DIRECTORY [--photo-a PATH --photo-b PATH for V13] [--fixture ID ... for tuning or --regression only]'
     );
   const report = await compare({
     output,
@@ -675,6 +706,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       ...(video ? { video } : {}),
       ...(tuningPhoto ? { tuningPhoto } : {}),
       ...(freshPhoto ? { freshPhoto } : {}),
+      ...(photoA ? { photoA } : {}),
+      ...(photoB ? { photoB } : {}),
     },
     ...(candidateRoot ? { candidateRoot } : {}),
   });
