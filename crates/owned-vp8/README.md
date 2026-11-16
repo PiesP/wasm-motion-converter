@@ -27,6 +27,13 @@ passed 47 of 50 conditions; three actual-browser-RGB rows failed PSNR. The
 also passed 47 of 50; actual rows 19, 38, and 57 failed PSNR. None of these
 points qualifies this module or runtime removal of `wasm-webp`. Product
 acceptance remains unrun.
+The prospective [I4 AC-tail source-Y SSD guard](../../docs/experiments/501-owned-vp8-i4-ac-tail-ssd-guard-candidate.md)
+adds a no-increase source-Y patch SSD condition to the half-weight trial;
+its codec and product qualification are pending. After the maintained
+generation, independent check, and compiled ABI gate, the checked-in WASM
+and provenance represent this SSD-guard source. Until those gates pass,
+they must not be used as this candidate; the measured half-weight module
+remains a separate retained control.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)

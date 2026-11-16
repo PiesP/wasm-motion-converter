@@ -1210,8 +1210,9 @@ fn choose_i4_ac_tail(
     }
     let trial_patch = reconstructed_patch(&trial, predictor, steps);
     let trial_distortion = patch_error(source, stride, x, y, &trial_patch);
-    if trial_distortion * 256 + lambda * trial_rate.cost
-        < baseline.distortion * 256 + lambda * baseline.token_rate
+    if trial_distortion <= baseline.distortion
+        && trial_distortion * 256 + lambda * trial_rate.cost
+            < baseline.distortion * 256 + lambda * baseline.token_rate
     {
         I4TailChoice {
             coefficients: trial,
@@ -5500,15 +5501,17 @@ mod tests {
     }
 
     #[test]
-    fn i4_ac_tail_equal_reconstruction_keeps_baseline_on_zero_lambda_tie() {
+    fn i4_ac_tail_equal_reconstruction_keeps_zero_lambda_tie_but_accepts_rate_gain() {
         let steps = ac_quant::steps(22, Deltas::default(), Plane::Y1);
         let predictor = [255u8; 16];
+        let source = [255u8; 16];
         let mut coefficients = [0i16; 16];
         coefficients[0] = 1000;
         coefficients[residual::SCAN[15]] = 1;
         let mut shortened = coefficients;
         shortened[residual::SCAN[15]] = 0;
         let patch = reconstructed_patch(&coefficients, &predictor, steps);
+        assert_eq!(patch, source);
         assert_eq!(patch, reconstructed_patch(&shortened, &predictor, steps));
         let mut baseline_rate = RateCounter::default();
         let mut shorter_rate = RateCounter::default();
@@ -5516,7 +5519,7 @@ mod tests {
         residual::encode_block(&mut shorter_rate, &shortened, 3, 2).unwrap();
         assert!(shorter_rate.cost < baseline_rate.cost);
         let choice = choose_i4_ac_tail(
-            &patch,
+            &source,
             4,
             0,
             0,
@@ -5529,6 +5532,74 @@ mod tests {
         );
         assert_eq!(choice.coefficients, coefficients);
         assert_eq!(choice.token_rate, baseline_rate.cost);
+        let rate_choice = choose_i4_ac_tail(
+            &source,
+            4,
+            0,
+            0,
+            &predictor,
+            steps,
+            2,
+            1,
+            coefficients,
+            patch,
+        );
+        assert_eq!(rate_choice.coefficients, shortened);
+        assert_eq!(rate_choice.patch, patch);
+        assert_eq!(rate_choice.distortion, 0);
+        assert_eq!(rate_choice.token_rate, shorter_rate.cost);
+    }
+
+    #[test]
+    fn i4_ac_tail_retains_a_rate_favored_tail_that_increases_source_y_ssd() {
+        let steps = ac_quant::steps(
+            22,
+            crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true),
+            Plane::Y1,
+        );
+        assert_eq!(steps, Steps { dc: 20, ac: 26 });
+        let predictor = [128u8; 16];
+        let trial_lambda = crate::presets::lambda_for_quality(18, 60) / 2;
+        assert_eq!(trial_lambda, 101);
+        for context in 0..=2 {
+            for sign in [-1, 1] {
+                let mut coefficients = [0i16; 16];
+                coefficients[0] = 2;
+                coefficients[residual::SCAN[15]] = sign;
+                let baseline_patch = reconstructed_patch(&coefficients, &predictor, steps);
+                let mut shortened = coefficients;
+                shortened[residual::SCAN[15]] = 0;
+                let shorter_patch = reconstructed_patch(&shortened, &predictor, steps);
+                let trial_ssd = patch_error(&baseline_patch, 4, 0, 0, &shorter_patch);
+                assert!(trial_ssd > 0);
+                let mut baseline_rate = RateCounter::default();
+                let mut shorter_rate = RateCounter::default();
+                residual::encode_block(&mut baseline_rate, &coefficients, 3, context).unwrap();
+                residual::encode_block(&mut shorter_rate, &shortened, 3, context).unwrap();
+                assert!(shorter_rate.cost < baseline_rate.cost);
+                assert!(
+                    trial_ssd * 256 + trial_lambda * shorter_rate.cost
+                        < trial_lambda * baseline_rate.cost,
+                    "context={context} sign={sign}"
+                );
+                let choice = choose_i4_ac_tail(
+                    &baseline_patch,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    context,
+                    trial_lambda,
+                    coefficients,
+                    baseline_patch,
+                );
+                assert_eq!(choice.coefficients, coefficients);
+                assert_eq!(choice.patch, baseline_patch);
+                assert_eq!(choice.distortion, 0);
+                assert_eq!(choice.token_rate, baseline_rate.cost);
+            }
+        }
     }
 
     #[test]
@@ -5566,7 +5637,7 @@ mod tests {
     }
 
     #[test]
-    fn i4_ac_tail_half_weight_retains_a_marginal_coefficient() {
+    fn i4_ac_tail_historical_full_and_half_rd_decisions_remain_distinct() {
         let steps = ac_quant::steps(
             22,
             crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true),
@@ -5620,9 +5691,11 @@ mod tests {
             coefficients,
             baseline_patch,
         );
-        assert_eq!(full_choice.coefficients, shortened);
-        assert_eq!(full_choice.patch, shorter_patch);
-        assert_eq!(full_choice.token_rate, shorter_rate.cost);
+        // The historical full-weight RD decision removed this coefficient.
+        // The new source-Y SSD ceiling retains it at either weight.
+        assert_eq!(full_choice.coefficients, coefficients);
+        assert_eq!(full_choice.patch, baseline_patch);
+        assert_eq!(full_choice.token_rate, baseline_rate.cost);
         let half_choice = choose_i4_ac_tail(
             &source,
             4,
