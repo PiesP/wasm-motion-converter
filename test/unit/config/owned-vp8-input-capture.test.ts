@@ -28,13 +28,29 @@ const valid = () => ({
 });
 
 describe('V8 post-Canvas packed RGB capture contract', () => {
-  it('binds the module digest separately from the candidate Git source', () => {
+  it('keeps candidate source and allowlisted module digests separate', () => {
     const source = 'ee86865e30ee9395ee2c2c26041a197debf0114c';
-    const module = 'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186';
-    assert.doesNotThrow(() => assertV8CaptureBuild(source, module));
-    assert.throws(() => assertV8CaptureBuild(module, module), /Git source SHA/);
+    const historicalModule = 'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186';
+    const combinedModule = 'bd170496ba1f2574bd095effdc55b7cd102b203dcc347a472141fcfbd9284b0e';
+    assert.doesNotThrow(() => assertV8CaptureBuild(source, historicalModule));
+    assert.doesNotThrow(() =>
+      assertV8CaptureBuild('bd1cbfdb267edc4b5617023f17234425a13da235', combinedModule)
+    );
+    assert.throws(() => assertV8CaptureBuild(combinedModule, combinedModule), /Git source SHA/);
     assert.throws(() => assertV8CaptureBuild(source, source), /WASM digest differs/);
     assert.throws(() => assertV8CaptureBuild(source, '0'.repeat(64)), /WASM digest differs/);
+    assert.throws(
+      () => assertV8CaptureBuild(source, historicalModule.slice(0, -1) + '0'),
+      /WASM digest differs/
+    );
+    assert.throws(
+      () => assertV8CaptureBuild(source, combinedModule.slice(0, -1) + '0'),
+      /WASM digest differs/
+    );
+    assert.throws(
+      () => assertV8CaptureBuild(source, combinedModule.slice(0, -1)),
+      /WASM digest differs/
+    );
   });
 
   it('selects five observed input ordinals within a 32 MiB per-context budget', () => {
