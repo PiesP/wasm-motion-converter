@@ -1,4 +1,4 @@
-# #501 I4 AC-tail source-Y SSD guard: prospective candidate
+# #501 I4 AC-tail source-Y SSD guard: rejected
 
 ## Retained controls and one source change
 
@@ -47,7 +47,8 @@ Fresh held-out media, Windows product acceptance, lifecycle, and performance
 remain separate gates. Local source-Y SSD non-increase does not guarantee
 final RGB PSNR non-increase after prediction-mode changes, neighboring
 reconstruction, deblocking, and chroma. Retaining more coefficients could
-also exceed the raw-byte limit. No codec or product outcome is claimed here.
+also exceed the raw-byte limit. The measured codec outcome is recorded below;
+no product outcome is claimed.
 
 ## Engineering validation before the codec screen
 
@@ -75,5 +76,48 @@ The first independent audit attempt compared Python gzip bytes with the
 Node-defined gzip budget and failed because their deflate output differs.
 That failed audit was retained; the corrected audit checked source hashes,
 raw bytes, pinned Node gzip bytes, and WASM memory independently and passed.
-No codec screen, broader exposure, fresh cohort, Windows product acceptance,
-or performance gate has run for this source point.
+
+## Frozen exposed screen: rejected for adoption
+
+The measured source was signed commit
+`b5b9e8aa645633fd703904540543a4b277ecf104` with module SHA-256
+`b91db560333d74090976b68df02b52bba4fc0435b0966bf6db991941295c87d4`.
+All 45 tuning conditions passed. The run labels them
+`DIAGNOSTIC_SUBSET_NOT_ACCEPTANCE` because explicit IDs were supplied; the
+coordinator verified their ordered inputs against the prior 45 conditions.
+In the five exposed actual-browser-RGB conditions, every row passed PSNR and
+RGB SSIM. Raw VP8 size failed row 38, yielding a joint **49/50** and
+rejecting this candidate for adoption. The retained coordinator screen
+summary SHA-256 is
+`c215b88a65899059379bdb3627dd8dd73ff09efd3cdc6e371fc59671e9d6ca90`.
+
+| Actual row | Candidate bytes | Size limit | PSNR delta (dB) | SSIM delta | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 0 | 38,348 | 40,825 | -0.012174 | +0.003388 | Pass |
+| 19 | 31,633 | 33,835 | -0.416624 | +0.001833 | Pass |
+| 38 | 34,554 | 33,402.5 | -0.351695 | +0.001452 | Size fail |
+| 57 | 36,893 | 37,487.5 | -0.217471 | +0.002008 | Pass |
+| 76 | 10,773 | 10,815 | -0.589310 | +0.001034 | Pass |
+
+Row 38 exceeds its raw-size limit by 1,151.5 bytes. Against the earlier
+mixed-allocation control's 34,741 bytes on that row, this guard saves 187
+bytes but still fails the unchanged size gate. The full- and half-weight
+tail points passed size there but failed PSNR; their failed receipts remain
+separate from this point.
+
+The saved 45-condition paired audit matched 90 retained baseline/candidate
+streams against 180 native `vp8`/`libvpx` decodes and their RGB hashes. Its
+summary SHA-256 is
+`7411c3fc5820623a22032c3535c2b69fb800105c571ac89a25ecbf8194c28ab8`;
+the coordinator independently rehashed all 90 retained RGB files and 180
+decoder files. The full 687-condition screen, fresh cohort, Windows product
+acceptance, lifecycle, and performance were not run after rejection.
+
+The measured source and module remain fixed at `b5b9e8aa`. Updating the crate
+README result wording changed one provenance input after measurement. A
+metadata-only maintained generation kept the source and module byte-identical,
+refreshed all 28 input hashes, and passed `--verify-prebuilt`. The current
+post-closeout provenance JSON SHA-256 is
+`f7f5289e0949c72e41acdf25051d24b0294dca482e3ea81d94a3f6c45056d75c`;
+the earlier `f47c45a2` manifest above remains the measured-source receipt.
+This metadata refresh is not another codec screen or product acceptance.
