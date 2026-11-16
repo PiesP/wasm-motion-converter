@@ -65,7 +65,33 @@ were retained before generation. This module adds 267 raw and 172 gzip bytes
 relative to the original artifact; those module sizes are not encoded-frame
 size or product throughput measurements.
 
-The frozen 50-condition codec screen, paired saved-output decoder audit, full
+The frozen 50-condition codec screen and paired saved-output decoder audit
+were pending at this build stage; their bounded result follows. The full
 687-condition exposed screen, fresh cohort, Windows product acceptance, and
-performance have not run for this candidate. Engineering correctness alone
-does not qualify adoption.
+performance remained unrun.
+
+## Frozen exposed screen: rejected for adoption
+
+The measured source was commit `df2f35dee1b85d7cf22f3fa7736ff9a08db15462`
+with the module SHA above. All 45 tuning conditions passed. All five exposed
+actual-browser-RGB conditions passed PSNR and SSIM; raw VP8 size failed on row
+38 alone. The joint result is **49/50**, so this candidate is rejected for
+adoption. The local coordinator summary SHA-256 is
+`822bbd4787985dad07cc438748b0291adf95026be017931ebf2d3240fd91b569`.
+
+| Actual row | Primary bytes | Candidate bytes | Size limit | Delta from original module | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 0 | 32,660 | 38,695 | 40,825 | -1,931 | Pass |
+| 19 | 27,068 | 31,878 | 33,835 | -1,336 | Pass |
+| 38 | 26,722 | 34,741 | 33,402.5 | -1,805 | Size fail |
+| 57 | 29,990 | 37,107 | 37,487.5 | -1,924 | Pass |
+| 76 | 8,652 | 10,773 | 10,815 | -8 | Pass |
+
+Row 38 exceeds the size limit by 1,338.5 bytes despite its 1,805-byte
+reduction from the original owned module. A separate paired 45-condition
+audit matched 90 saved streams and 180 native `vp8`/`libvpx` decodes against
+the retained RGB hashes. Its summary SHA-256 is
+`3b18b8e389b6085e29158a7214eb50f77f26f2a08a5d31f1da05362a22f2df7f`.
+The full 687-condition exposed screen, fresh cohort, Windows product
+acceptance, and performance were not run after the size failure. Keep this
+failed point and earlier rejected candidates as distinct evidence.
