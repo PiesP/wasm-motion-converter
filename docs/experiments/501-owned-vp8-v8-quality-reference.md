@@ -139,3 +139,35 @@ Its FFmpeg original-reference colors are a specified decoder interpretation of
 the WebM, not a claim of exact browser Canvas RGB identity. Actual temporal
 visual review, product timing, physical memory, other modes and platforms,
 fresh held-out acceptance, and an adoption decision remain separate work.
+
+## Executed exposed diagnostic, 2026-11-16
+
+The reader at signed commit `11f36894d836b1b225c9eb026c75a8d6bedc02b1`
+completed the source-map and explicit diagnostic stages with actual exit code 0.
+The product capture remains `ffa113f5`; the independent decoder reader remains
+`4ca407d8`. The measured owned module is `bd170496`. The exclusive prospective
+plan SHA-256 was `3fca4d916a6018e552917f4babcdacdf3a827cf4ef019a5eda0205fe0938d254`.
+
+- Source-map SHA-256: `547f244271e6060ebf5c9656f50eb70bca315f4eef2bb28cb5f2cf29ec03d6ae`.
+- Diagnostic SHA-256: `ffda451a99ac5f9f2fbf1cea198d300fb8c5eeb9f262fa5bd6bfc2d0a1967a5e`.
+- All 192 original and both 77 output frames decoded serially, and every output
+  RGBA digest matched the independent native VP8/libvpx verification.
+- Original-reference PSNR failed ordinals 70, 75 and 76: candidate deltas were
+  -1.304898, -1.612122 and -1.704513 dB under the unchanged -1 dB floor. All 77
+  SSIM comparisons passed, with a minimum delta of -0.002037.
+- The five actual-input RGB residual controls passed PSNR, SSIM and raw frame
+  size. Their worst PSNR delta was -0.628164 dB and minimum SSIM delta +0.000032.
+  The direct original-to-Canvas measurements match across the two backends.
+- Saved total bytes were 1,983,774 prior and 2,307,098 candidate, within the
+  unchanged 2,479,717.5-byte allowance. Actual retained private files occupied
+  1,437,560,865 bytes, below the 2 GiB cap. Streamed decoder byte counts are not
+  physical memory or delivery measurements.
+
+The original-reference diagnostic is **rejected**. Separate reference outcomes
+do not cancel failed rows. Preserve the report and all original receipts; a
+corrected encoder requires a new source-bound candidate and prospective
+comparison. No V13 candidate encode, other-preset acceptance, temporal visual
+review, performance/resource acceptance or runtime removal follows from this
+result. Investigate signed color/residual error and actual preset branches
+before selecting a bounded correction; do not change the source reference or
+thresholds to erase the failure.
