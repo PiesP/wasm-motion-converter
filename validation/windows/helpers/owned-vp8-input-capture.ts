@@ -34,12 +34,16 @@ export const V8_MAIN_ASSETS = {
     sha256: 'f8745266b663b98aad72ede8ef7b4a440c5c920183173264fee8ee9be8b9cfb5',
     needle:
       'onFrameAvailable:async(n,i,a,c,u)=>{if(r?.aborted)throw T.release(n),new DOMException(`Cancelled`,`AbortError`);if(_.shouldSkip(a))T.release(n);else return gt(n,async()=>{',
-    insertion: 'await globalThis.__wmcV8HashCallback(n,a,u);',
+    capture: 'const __wmcV8ObserverPixels=n,__wmcV8ObserverFrameNum=a,__wmcV8ObserverTiming=u;',
+    insertion:
+      'await globalThis.__wmcV8HashCallback(__wmcV8ObserverPixels,__wmcV8ObserverFrameNum,__wmcV8ObserverTiming);',
   },
   candidate: {
     needle:
       'onFrameAvailable:async(n,a,u,d,f)=>{if(r?.aborted)throw E.release(n),new DOMException(`Cancelled`,`AbortError`);if(T.shouldSkip(u))E.release(n);else return $t(n,async()=>{',
-    insertion: 'await globalThis.__wmcV8HashCallback(n,u,f);',
+    capture: 'const __wmcV8ObserverPixels=n,__wmcV8ObserverFrameNum=u,__wmcV8ObserverTiming=f;',
+    insertion:
+      'await globalThis.__wmcV8HashCallback(__wmcV8ObserverPixels,__wmcV8ObserverFrameNum,__wmcV8ObserverTiming);',
   },
 } as const;
 
@@ -161,14 +165,37 @@ export function patchV8MainEncoderCallback(
 /** Exact-text boundary shared by the two pinned main assets and pure contract tests. */
 export function patchV8ExactCallback(
   original: Uint8Array,
-  contract: { sha256: string; expectedBytes: number; needle: string; insertion: string }
+  contract: {
+    sha256: string;
+    expectedBytes: number;
+    needle: string;
+    capture: string;
+    insertion: string;
+  }
 ): { bytes: Uint8Array; originalSha256: string; patchedSha256: string } {
   assert.equal(original.byteLength, contract.expectedBytes, 'V8 main asset size differs');
   const originalSha256 = createHash('sha256').update(original).digest('hex');
   assert.equal(originalSha256, contract.sha256, 'V8 main asset digest differs');
   const source = Buffer.from(original).toString('utf8');
   assert.equal(source.split(contract.needle).length, 2, 'V8 main callback is not unique');
-  const bytes = Buffer.from(source.replace(contract.needle, contract.needle + contract.insertion));
+  for (const identifier of [
+    '__wmcV8ObserverPixels',
+    '__wmcV8ObserverFrameNum',
+    '__wmcV8ObserverTiming',
+  ])
+    assert(
+      !source.includes(identifier),
+      `V8 main observer identifier ${identifier} already exists`
+    );
+  assert(contract.needle.startsWith('onFrameAvailable:async('), 'V8 main callback entry differs');
+  const outerOpen = contract.needle.indexOf('=>{') + 3;
+  assert(outerOpen > 3, 'V8 main callback outer body differs');
+  const replacement =
+    contract.needle.slice(0, outerOpen) +
+    contract.capture +
+    contract.needle.slice(outerOpen) +
+    contract.insertion;
+  const bytes = Buffer.from(source.replace(contract.needle, replacement));
   return {
     bytes,
     originalSha256,

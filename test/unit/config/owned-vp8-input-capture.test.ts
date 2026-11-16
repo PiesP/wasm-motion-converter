@@ -332,12 +332,20 @@ describe('V8 all-input streamed hash observer', () => {
 
   it('pins both five-argument field maps and rejects drift before patching', () => {
     assert.match(V8_MAIN_ASSETS.prior.needle, /async\(n,i,a,c,u\)/);
-    assert.equal(V8_MAIN_ASSETS.prior.insertion, 'await globalThis.__wmcV8HashCallback(n,a,u);');
+    assert.equal(
+      V8_MAIN_ASSETS.prior.capture,
+      'const __wmcV8ObserverPixels=n,__wmcV8ObserverFrameNum=a,__wmcV8ObserverTiming=u;'
+    );
     assert.match(V8_MAIN_ASSETS.candidate.needle, /async\(n,a,u,d,f\)/);
     assert.equal(
-      V8_MAIN_ASSETS.candidate.insertion,
-      'await globalThis.__wmcV8HashCallback(n,u,f);'
+      V8_MAIN_ASSETS.candidate.capture,
+      'const __wmcV8ObserverPixels=n,__wmcV8ObserverFrameNum=u,__wmcV8ObserverTiming=f;'
     );
+    assert.equal(
+      V8_MAIN_ASSETS.prior.insertion,
+      'await globalThis.__wmcV8HashCallback(__wmcV8ObserverPixels,__wmcV8ObserverFrameNum,__wmcV8ObserverTiming);'
+    );
+    assert.equal(V8_MAIN_ASSETS.candidate.insertion, V8_MAIN_ASSETS.prior.insertion);
     assert(V8_MAIN_ASSETS.prior.needle.endsWith('async()=>{'));
     assert(V8_MAIN_ASSETS.candidate.needle.endsWith('async()=>{'));
     assert.throws(
@@ -360,71 +368,110 @@ describe('V8 all-input streamed hash observer', () => {
           candidateSha256
         ).bytes
       ).toString(),
-      /__wmcV8HashCallback\(n,u,f\)/
+      /__wmcV8HashCallback\(__wmcV8ObserverPixels,__wmcV8ObserverFrameNum,__wmcV8ObserverTiming\)/
     );
   });
 
-  it('requires exact bytes and one callback, with the hook inside pooled cleanup', async () => {
-    const needle = 'return pooled(pixels,async()=>{';
-    const insertion = 'await hook(pixels,frameNum,presentation);';
-    const source = `async function callback(pixels,frameNum,presentation){${needle}return 1})}`;
-    const bytes = Buffer.from(source);
-    const contract = {
-      expectedBytes: bytes.length,
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-      needle,
-      insertion,
-    };
-    const patched = patchV8ExactCallback(bytes, contract);
-    assert.equal(patched.originalSha256, contract.sha256);
-    assert.equal(patched.patchedSha256, createHash('sha256').update(patched.bytes).digest('hex'));
-    assert.equal(Buffer.from(patched.bytes).toString(), source.replace(needle, needle + insertion));
-    assert.throws(
-      () => patchV8ExactCallback(bytes, { ...contract, expectedBytes: bytes.length + 1 }),
-      /size/
-    );
-    assert.throws(
-      () => patchV8ExactCallback(bytes, { ...contract, sha256: '0'.repeat(64) }),
-      /digest/
-    );
-    for (const changed of [
-      source.replace(needle, 'return other(pixels,async()=>{'),
-      source + source,
-    ]) {
-      const input = Buffer.from(changed);
+  it('captures outer callback fields before inner TDZ while retaining pool cleanup', async () => {
+    for (const build of ['prior', 'candidate'] as const) {
+      const contract = V8_MAIN_ASSETS[build];
+      const inner =
+        build === 'prior' ? 'let a=7;return a' : 'let n=7,u=8,f=9;let r=d?.take();return r';
+      const source = '({' + contract.needle + inner + '})}})';
+      const bytes = Buffer.from(source);
+      const patchContract = {
+        ...contract,
+        expectedBytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      };
+      const patched = patchV8ExactCallback(bytes, patchContract);
+      assert.equal(patched.originalSha256, patchContract.sha256);
+      assert.equal(patched.patchedSha256, createHash('sha256').update(patched.bytes).digest('hex'));
+      const patchedText = Buffer.from(patched.bytes).toString();
+      assert(patchedText.indexOf(contract.capture) < patchedText.indexOf('if(r?.aborted)'));
+      assert(patchedText.indexOf(contract.insertion) > patchedText.indexOf('async()=>{'));
+      assert.throws(
+        () => patchV8ExactCallback(bytes, { ...patchContract, expectedBytes: bytes.length + 1 }),
+        /size/
+      );
+      assert.throws(
+        () => patchV8ExactCallback(bytes, { ...patchContract, sha256: '0'.repeat(64) }),
+        /digest/
+      );
+      for (const changed of [
+        source.replace(contract.needle, 'onFrameAvailable:async()=>{'),
+        source + source,
+      ]) {
+        const input = Buffer.from(changed);
+        assert.throws(
+          () =>
+            patchV8ExactCallback(input, {
+              ...patchContract,
+              expectedBytes: input.length,
+              sha256: createHash('sha256').update(input).digest('hex'),
+            }),
+          /not unique/
+        );
+      }
+      const collision = Buffer.from(`${source};/* __wmcV8ObserverPixels */`);
       assert.throws(
         () =>
-          patchV8ExactCallback(input, {
-            ...contract,
-            expectedBytes: input.length,
-            sha256: createHash('sha256').update(input).digest('hex'),
+          patchV8ExactCallback(collision, {
+            ...patchContract,
+            expectedBytes: collision.length,
+            sha256: createHash('sha256').update(collision).digest('hex'),
           }),
-        /not unique/
+        /observer identifier/
       );
-    }
-    let released = 0;
-    const sandbox = {
-      hook: async () => {
-        throw new Error('stream failed');
-      },
-      pooled: async (_pixels: Uint8Array, use: () => Promise<number>) => {
+      let released = 0;
+      let taken = 0;
+      let skipped = false;
+      const observed: unknown[][] = [];
+      const release = () => {
+        released++;
+      };
+      const pooled = async (_pixels: Uint8Array, use: () => Promise<number>) => {
         try {
           return await use();
         } finally {
-          released++;
+          release();
         }
-      },
-    };
-    const callback = runInNewContext(
-      `${Buffer.from(patched.bytes).toString()}; callback`,
-      sandbox
-    ) as (
-      pixels: Uint8Array,
-      frameNum: number,
-      presentation: { startUs: number; endUs: number }
-    ) => Promise<number>;
-    await assert.rejects(callback(new Uint8Array(1), 0, { startUs: 0, endUs: 1 }), /stream failed/);
-    assert.equal(released, 1);
+      };
+      const sandbox = {
+        r: null,
+        T: { release, shouldSkip: () => skipped },
+        E: { release },
+        _: { shouldSkip: () => skipped },
+        gt: pooled,
+        $t: pooled,
+        __wmcV8HashCallback: async (...args: unknown[]) => {
+          observed.push(args);
+        },
+      };
+      const callback = (
+        runInNewContext(patchedText, sandbox) as {
+          onFrameAvailable: (...args: unknown[]) => Promise<number>;
+        }
+      ).onFrameAvailable;
+      const pixels = new Uint8Array(1);
+      const timing = { startUs: 0, endUs: 1 };
+      const handoff = { take: () => ++taken };
+      await callback(pixels, 0, 19, handoff, timing);
+      assert.deepEqual(observed, [[pixels, 19, timing]]);
+      assert.equal(released, 1);
+      assert.equal(taken, build === 'candidate' ? 1 : 0);
+      sandbox.__wmcV8HashCallback = async () => {
+        throw new Error('stream failed');
+      };
+      await assert.rejects(callback(pixels, 0, 19, handoff, timing), /stream failed/);
+      assert.equal(released, 2);
+      assert.equal(taken, build === 'candidate' ? 1 : 0);
+      skipped = true;
+      await callback(pixels, 0, 19, handoff, timing);
+      assert.equal(released, 3);
+      assert.equal(observed.length, 1);
+      assert.equal(taken, build === 'candidate' ? 1 : 0);
+    }
   });
 
   it('streams one borrowed RGB frame in bounded canonical chunks', async () => {
