@@ -1,0 +1,448 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v12",
+  "purpose": "Prospective source-only fresh held-out inputs; v1-v11 remain exposed regression evidence",
+  "tuningBasis": "No new tuning entries; the existing 15 tuning fixtures stay exposed controls",
+  "pixelConvention": {
+    "stride": "width * 4, except packed RGB24 uses width * 3 and fresh12-padded-rgba uses width * 4 + 44 with 0x73 padding",
+    "rgba": "R,G,B,A with A=255",
+    "bgra": "B,G,R,A with A=255",
+    "rgb24": "packed R,G,B bytes with no alpha or row padding",
+    "visibleOpaque": "RGBA and BGRA visible alpha bytes equal 255"
+  },
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "bounds": {
+    "maxWidth": 16383,
+    "maxHeight": 16383,
+    "maxPixels": 10066329,
+    "forestPhotoBytes": 3384891,
+    "nightPhotoBytes": 996324,
+    "videoBytes": 3145371
+  },
+  "sources": {
+    "photos": {
+      "forest": {
+        "name": "Image of a forest.jpg",
+        "page": "https://commons.wikimedia.org/wiki/File:Image_of_a_forest.jpg",
+        "revision": "https://commons.wikimedia.org/w/index.php?title=File:Image_of_a_forest.jpg&oldid=1270624296",
+        "download": "https://upload.wikimedia.org/wikipedia/commons/a/af/Image_of_a_forest.jpg",
+        "license": "CC0-1.0",
+        "author": "Akum20",
+        "originalWidth": 4160,
+        "originalHeight": 3120,
+        "bytes": 3384891,
+        "sha1": "f89d802d8f72eebd30f31487d96c374ec4a7fb95",
+        "sha256": "fad0d6b48507ac4d6792430a01470b60f926aae1ab8097ae85d8bea55d036819"
+      },
+      "night": {
+        "name": "Long exposure of urban cityscape at night.jpg",
+        "page": "https://commons.wikimedia.org/wiki/File:Long_exposure_of_urban_cityscape_at_night.jpg",
+        "revision": "https://commons.wikimedia.org/w/index.php?title=File:Long_exposure_of_urban_cityscape_at_night.jpg&oldid=701678803",
+        "download": "https://upload.wikimedia.org/wikipedia/commons/c/c8/Long_exposure_of_urban_cityscape_at_night.jpg",
+        "license": "CC0-1.0",
+        "author": "Peng LIU",
+        "originalWidth": 1734,
+        "originalHeight": 1158,
+        "bytes": 996324,
+        "sha1": "b9d846e178a22fdae4de8f3e9cf0e1fd1b2919b3",
+        "sha256": "38dbe09d4a50885a7a824d6a07fc0a455d67a311128f410a05cf8b5702e65eda"
+      }
+    },
+    "photoRegions": {
+      "forest": {
+        "primary": {
+          "x": 240,
+          "y": 180,
+          "width": 1500,
+          "height": 1250
+        },
+        "detail": {
+          "x": 2200,
+          "y": 1000,
+          "width": 1300,
+          "height": 1600
+        }
+      },
+      "night": {
+        "primary": {
+          "x": 100,
+          "y": 100,
+          "width": 650,
+          "height": 900
+        },
+        "detail": {
+          "x": 950,
+          "y": 100,
+          "width": 650,
+          "height": 900
+        }
+      }
+    },
+    "video": {
+      "name": "V8.webm",
+      "page": "https://commons.wikimedia.org/wiki/File:V8.webm",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/a/a7/V8.webm",
+      "license": "CC0-1.0",
+      "author": "BMKME",
+      "sha256": "c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1",
+      "bytes": 3145371,
+      "frameCount": 192,
+      "fps": 30
+    }
+  },
+  "priorManifestSha256": {
+    "initialV1": "75646176a29a6cc6506b07d5ad955401571573df1cd7f2c217f9b7565b7f5918",
+    "correctedV2": "015b9a64af8cdc648f7ac976c14e64ae355a239f343115d21f2269c381afeb81",
+    "correctedV3": "072947742fe4fce1aaf77702f8cfee3d2c7410a79d5715155f047913f00c2d2a",
+    "correctedV4": "13c723fe5e5839fc3cc48a06056ada04cce0127b2b04931163a25f9619fd23b7",
+    "correctedV5": "c8929d67d57c6df20e2c152c85ac4178b9b4a4c9c7184892b62df130de8faf83",
+    "correctedV6": "7451495d9c36648193d6864d2e68318262989a32c5cb3e621acd9232dc7e9c2b",
+    "correctedV7": "0fe8e83f194f25c2ba1f6d9e68486c46a4567d631f7db3aee4e5681bd02fa6bb",
+    "correctedV8": "d4b17b2990ce5fbb96dfa75c3377c8b6fb20336e91e202a5440f5e5d2da24e19",
+    "correctedV9": "8eeae4aeb52b433ff2936ee7973d31795b6d39edc5f734e0a33de84ebf176c54",
+    "correctedV10": "741d4674a4ef687be0e57ea02e8d0470bdbd7f21a74b16c17b25e66f9bc8db40",
+    "correctedV11": "976a1365e7eeb13759df8f00d8b9ff296875c531ad10c707d445a25ac5c298a0"
+  },
+  "generator": "scripts/test/owned-vp8-v12-fixtures.ts; source-only generation, no codec outputs",
+  "generatorSha256": "acb0eae52ecf91877693e901ac1dae525ada4a94727713233ca5b1d7baeb479a",
+  "externalDecode": {
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "command": "ffmpeg -v error -noautorotate -i SOURCE -vf FILTER -frames:v 1 -f rawvideo -pix_fmt rgba pipe:1",
+    "forestFilter": "crop=1500:1250:240:180,scale=463:587:flags=bicubic",
+    "forestDetailFilter": "crop=1300:1600:2200:1000,scale=307:391:flags=bicubic",
+    "nightFilter": "crop=650:900:100:100,scale=421:281:flags=bicubic",
+    "nightDetailFilter": "crop=650:900:950:100,scale=389:263:flags=bicubic",
+    "videoFilter": "select=eq(n\\,FRAME),scale=548:308:flags=bicubic"
+  },
+  "fixtures": [
+    {
+      "id": "fresh12-gray",
+      "split": "held-out",
+      "class": "grayscale",
+      "width": 587,
+      "height": 341,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2348,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d2e059acbd4aa772a28759f0de012f3d40b112ac8aa6d629fc0b4acbc21c4708"
+    },
+    {
+      "id": "fresh12-gradient",
+      "split": "held-out",
+      "class": "gradient",
+      "width": 459,
+      "height": 319,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1836,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "524cf1d8d60d707cddd25d88cf0697769ec22b98954de63f8be599c074a55621"
+    },
+    {
+      "id": "fresh12-chroma-edge",
+      "split": "held-out",
+      "class": "chroma",
+      "width": 447,
+      "height": 311,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1788,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "8fc2770a2500d7c87b5c9cbf6726e3e9644d77c8e56f618f9ce77a3ce8280902"
+    },
+    {
+      "id": "fresh12-text",
+      "split": "held-out",
+      "class": "text",
+      "width": 503,
+      "height": 347,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2012,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "e23c940f63ee72bf761372dbf2779e3a7ca1196c0d187664eea5b180468b8469"
+    },
+    {
+      "id": "fresh12-noise",
+      "split": "held-out",
+      "class": "noise",
+      "width": 367,
+      "height": 269,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1468,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "c04b77666f27948b918d837359449e598190cfdac715db4740b34e84c09acbd2"
+    },
+    {
+      "id": "fresh12-tiny-7x3",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 7,
+      "height": 3,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 28,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "5504fb288d6fb1e52a495835c8ebc435558fe76bf487cd8c8f3a59404512bd91"
+    },
+    {
+      "id": "fresh12-tiny-2x15",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 2,
+      "height": 15,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 8,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "7710860894c6bb1a558548b4c085af440e356dca062d6b4f2bb8fff8af3bd028"
+    },
+    {
+      "id": "fresh12-one-column",
+      "split": "held-out",
+      "class": "odd",
+      "width": 1,
+      "height": 401,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "8eaff02a0b9f4159be60975c819ef1352586197c0e8271159d6e6f5c969ce2c6"
+    },
+    {
+      "id": "fresh12-one-row",
+      "split": "held-out",
+      "class": "odd",
+      "width": 397,
+      "height": 1,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1588,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "0691f4b72fa82013af502c0c96c1d64370ffe1d74e0e8860659f49e0b40bef06"
+    },
+    {
+      "id": "fresh12-large-admitted",
+      "split": "held-out",
+      "class": "large",
+      "width": 3997,
+      "height": 2517,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 15988,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d50e2b15a9e341c4703190a499d2b8cfc8d11d542c29e6942ddd50ea45413223"
+    },
+    {
+      "id": "fresh12-bgra",
+      "split": "held-out",
+      "class": "layout",
+      "width": 331,
+      "height": 211,
+      "layout": "BGRA",
+      "source": "generated",
+      "stride": 1324,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "f67bf1dcf7ee8d932e9316d17cd9ef05cfc0b90a2aee2ddd2f134bc09ec4acae"
+    },
+    {
+      "id": "fresh12-padded-rgba",
+      "split": "held-out",
+      "class": "padded-stride",
+      "width": 339,
+      "height": 207,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1400,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d37bde5684e389652bf1b14c1049ddc487b790b62740c9266c1736325b51a329"
+    },
+    {
+      "id": "fresh12-packed-rgb24",
+      "split": "held-out",
+      "class": "packed-layout",
+      "width": 343,
+      "height": 213,
+      "layout": "RGB24",
+      "source": "generated",
+      "stride": 1029,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "f62f8c6416680b8b35cabd1cbdf21e9853cf4c65bec592e22d6b430168f8e334"
+    },
+    {
+      "id": "fresh12-forest",
+      "split": "held-out",
+      "class": "photograph-forest",
+      "width": 463,
+      "height": 587,
+      "layout": "RGBA",
+      "source": "forest-photo",
+      "stride": 1852,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "425785426d797d1a98f8907c06d2ef64961634d81c3e56990dc222537148dbd9"
+    },
+    {
+      "id": "fresh12-forest-detail",
+      "split": "held-out",
+      "class": "photograph-forest-detail",
+      "width": 307,
+      "height": 391,
+      "layout": "RGBA",
+      "source": "forest-photo",
+      "stride": 1228,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a8b70070cddfc3ffecfd6d5b0fd427118f61d7ee224d7d463d52fc4fc672bfc1"
+    },
+    {
+      "id": "fresh12-night",
+      "split": "held-out",
+      "class": "photograph-night",
+      "width": 421,
+      "height": 281,
+      "layout": "RGBA",
+      "source": "night-photo",
+      "stride": 1684,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "0712f27eac2ce469a27f622ae0e30f145a2d7b5541b8367ea31310b762f9a5f6"
+    },
+    {
+      "id": "fresh12-night-detail",
+      "split": "held-out",
+      "class": "photograph-night-detail",
+      "width": 389,
+      "height": 263,
+      "layout": "RGBA",
+      "source": "night-photo",
+      "stride": 1556,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "5b1b063b4392f468721c8efedb321c6a44b8ef875a6a72d4436f0d4f3dae22c3"
+    },
+    {
+      "id": "fresh12-video-37",
+      "split": "held-out",
+      "class": "video",
+      "width": 548,
+      "height": 308,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 37,
+      "stride": 2192,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a2676be0f382c9dac31dcc2a706bf44679fc00d48e5b6a9b223e43a0dfb4899e"
+    },
+    {
+      "id": "fresh12-video-157",
+      "split": "held-out",
+      "class": "video",
+      "width": 548,
+      "height": 308,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 157,
+      "stride": 2192,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "3243e4b8eb1430a962cd18703ef0339609b9d28ea296fa0d9548bbf38fe0d55b"
+    },
+    {
+      "id": "fresh12-duplicate-hold",
+      "split": "held-out",
+      "class": "duplicate-hold",
+      "width": 548,
+      "height": 308,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 37,
+      "repeatOf": "fresh12-video-37",
+      "stride": 2192,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a2676be0f382c9dac31dcc2a706bf44679fc00d48e5b6a9b223e43a0dfb4899e"
+    }
+  ]
+}

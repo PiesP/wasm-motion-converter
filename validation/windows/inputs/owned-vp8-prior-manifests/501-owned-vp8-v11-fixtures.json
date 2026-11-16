@@ -1,0 +1,415 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v11",
+  "purpose": "Prospective source-only fresh held-out inputs; v1-v10 remain exposed regression evidence",
+  "tuningBasis": "No new tuning entries; the existing 15 tuning fixtures stay exposed controls",
+  "pixelConvention": {
+    "stride": "width * 4, except packed RGB24 uses width * 3 and fresh11-padded-rgba uses width * 4 + 36 with 0x6d padding",
+    "rgba": "R,G,B,A with A=255",
+    "bgra": "B,G,R,A with A=255",
+    "rgbx": "R,G,B,X with deterministic seeded X bytes ignored by RGB comparison",
+    "bgrx": "B,G,R,X with deterministic seeded X bytes ignored by RGB comparison",
+    "rgb24": "packed R,G,B bytes with no alpha or row padding",
+    "visibleOpaque": "RGBA and BGRA visible alpha bytes equal 255; RGBX and BGRX X bytes are ignored"
+  },
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "bounds": {
+    "maxWidth": 16383,
+    "maxHeight": 16383,
+    "maxPixels": 10066329,
+    "photoBytes": 3797100,
+    "videoBytes": 3145371
+  },
+  "sources": {
+    "photo": {
+      "name": "20190831 Montagne.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:20190831_Montagne.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:20190831_Montagne.jpg&oldid=850548619",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/2/28/20190831_Montagne.jpg",
+      "license": "CC0-1.0",
+      "author": "Gb89.2",
+      "originalWidth": 5152,
+      "originalHeight": 3864,
+      "bytes": 3797100,
+      "sha1": "0d8423320e903f65d44bb1c93746a2bd9bdd2719",
+      "sha256": "7e3d85269a6d4178c6af24b30c6132b2b3744aed50d8737658fa29e680c156a8"
+    },
+    "photoRegions": {
+      "primary": {
+        "x": 300,
+        "y": 250,
+        "width": 1500,
+        "height": 1300
+      },
+      "detail": {
+        "x": 2500,
+        "y": 700,
+        "width": 1250,
+        "height": 1600
+      }
+    },
+    "video": {
+      "name": "V8.webm",
+      "page": "https://commons.wikimedia.org/wiki/File:V8.webm",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/a/a7/V8.webm",
+      "license": "CC0-1.0",
+      "author": "BMKME",
+      "sha256": "c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1",
+      "bytes": 3145371,
+      "frameCount": 192,
+      "fps": 30
+    }
+  },
+  "priorManifestSha256": {
+    "initialV1": "75646176a29a6cc6506b07d5ad955401571573df1cd7f2c217f9b7565b7f5918",
+    "correctedV2": "015b9a64af8cdc648f7ac976c14e64ae355a239f343115d21f2269c381afeb81",
+    "correctedV3": "072947742fe4fce1aaf77702f8cfee3d2c7410a79d5715155f047913f00c2d2a",
+    "correctedV4": "13c723fe5e5839fc3cc48a06056ada04cce0127b2b04931163a25f9619fd23b7",
+    "correctedV5": "c8929d67d57c6df20e2c152c85ac4178b9b4a4c9c7184892b62df130de8faf83",
+    "correctedV6": "7451495d9c36648193d6864d2e68318262989a32c5cb3e621acd9232dc7e9c2b",
+    "correctedV7": "0fe8e83f194f25c2ba1f6d9e68486c46a4567d631f7db3aee4e5681bd02fa6bb",
+    "correctedV8": "d4b17b2990ce5fbb96dfa75c3377c8b6fb20336e91e202a5440f5e5d2da24e19",
+    "correctedV9": "8eeae4aeb52b433ff2936ee7973d31795b6d39edc5f734e0a33de84ebf176c54",
+    "correctedV10": "741d4674a4ef687be0e57ea02e8d0470bdbd7f21a74b16c17b25e66f9bc8db40"
+  },
+  "generator": "scripts/test/owned-vp8-v11-fixtures.ts; source-only generation, no codec outputs",
+  "generatorSha256": "df1531d4d98387c23ed55a35536fcf275a20f3f0c8558efdc73a4c978edb0eae",
+  "externalDecode": {
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "command": "ffmpeg -v error -noautorotate -i SOURCE -vf FILTER -frames:v 1 -f rawvideo -pix_fmt rgba pipe:1",
+    "photoFilter": "crop=1500:1300:300:250,scale=463:587:flags=bicubic",
+    "photoDetailFilter": "crop=1250:1600:2500:700,scale=307:391:flags=bicubic",
+    "videoFilter": "select=eq(n\\,FRAME),scale=536:302:flags=bicubic"
+  },
+  "fixtures": [
+    {
+      "id": "fresh11-gray",
+      "split": "held-out",
+      "class": "grayscale",
+      "width": 571,
+      "height": 323,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2284,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d66aeff7627bf7a7b597febfdf35ef8b0eae823ac53d60b5bbfbc77b85b94aaa"
+    },
+    {
+      "id": "fresh11-gradient",
+      "split": "held-out",
+      "class": "gradient",
+      "width": 443,
+      "height": 307,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1772,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "906d03423b2afd013da6ff856c3304121506116ad05f8888a2408a3181dac9b1"
+    },
+    {
+      "id": "fresh11-chroma-edge",
+      "split": "held-out",
+      "class": "chroma",
+      "width": 433,
+      "height": 293,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1732,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "672456bfc4a6ed58317f3fc7bb17f890eb9934b05d489dd178875d5519b20816"
+    },
+    {
+      "id": "fresh11-text",
+      "split": "held-out",
+      "class": "text",
+      "width": 491,
+      "height": 331,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1964,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "60ab61e70627fc8112ac6c9ab05d478806c52a16ce4d7b59c3a51f22bb8fee69"
+    },
+    {
+      "id": "fresh11-noise",
+      "split": "held-out",
+      "class": "noise",
+      "width": 353,
+      "height": 257,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1412,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "6aff5bda02771b7fa9a002397db8978075bfcb808493ae5e626f7150b021b450"
+    },
+    {
+      "id": "fresh11-tiny-5x9",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 5,
+      "height": 9,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 20,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "b4f81056977baadb6443bca337937d56920d9bebade5c7ddc7ce94d81f7f734e"
+    },
+    {
+      "id": "fresh11-tiny-13x2",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 13,
+      "height": 2,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 52,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "9998a06d88fc216e99375f469ffb4b1abb2a63ad01b76f97365f4a8cd5ebb738"
+    },
+    {
+      "id": "fresh11-one-column",
+      "split": "held-out",
+      "class": "odd",
+      "width": 1,
+      "height": 389,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "1ec974d9a61e0f08cfb842a95a2e90a8078aed5e2a5b9489bbfb2d70106cb513"
+    },
+    {
+      "id": "fresh11-one-row",
+      "split": "held-out",
+      "class": "odd",
+      "width": 383,
+      "height": 1,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1532,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "0f9c8c30162de75c36d0610a742f1b436d57c67a4ef2eeebd386a76648b017fe"
+    },
+    {
+      "id": "fresh11-large-admitted",
+      "split": "held-out",
+      "class": "large",
+      "width": 4001,
+      "height": 2515,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 16004,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "cdf84fd0ef56092d51e745fda890592d86c83765b0b474384db82b68be2e7006"
+    },
+    {
+      "id": "fresh11-bgra",
+      "split": "held-out",
+      "class": "layout",
+      "width": 317,
+      "height": 197,
+      "layout": "BGRA",
+      "source": "generated",
+      "stride": 1268,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "18373e2670f206f1c84cce126a482659ad7c7625e60453d674b3ad2b2776e5dc"
+    },
+    {
+      "id": "fresh11-rgbx",
+      "split": "held-out",
+      "class": "layout",
+      "width": 317,
+      "height": 197,
+      "layout": "RGBX",
+      "source": "generated",
+      "stride": 1268,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "b0c4558ee1e980b9113345ee110433b0d8bb8122923d14f6e40d456b25ac8f57"
+    },
+    {
+      "id": "fresh11-bgrx",
+      "split": "held-out",
+      "class": "layout",
+      "width": 317,
+      "height": 197,
+      "layout": "BGRX",
+      "source": "generated",
+      "stride": 1268,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ea7210b7b1818f91f97ef2012f7e7183b728f81dc38670bea91324d32de5f8e1"
+    },
+    {
+      "id": "fresh11-padded-rgba",
+      "split": "held-out",
+      "class": "padded-stride",
+      "width": 325,
+      "height": 191,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1336,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "451be7f148909ff3fc86976365276f3b606e904d814508d57ecb68734b4af165"
+    },
+    {
+      "id": "fresh11-packed-rgb24",
+      "split": "held-out",
+      "class": "packed-layout",
+      "width": 329,
+      "height": 199,
+      "layout": "RGB24",
+      "source": "generated",
+      "stride": 987,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "db3e6bfc65f8f48a838aedbc296e28dfdd7bd591f7da0d563c0c3c9de52c1199"
+    },
+    {
+      "id": "fresh11-photo",
+      "split": "held-out",
+      "class": "photograph",
+      "width": 463,
+      "height": 587,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1852,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "1a55a04aed506b9c1ec15e1a5689e4ca3501c3b18b30dd7a8082e88d14e45259"
+    },
+    {
+      "id": "fresh11-photo-detail",
+      "split": "held-out",
+      "class": "photograph-detail",
+      "width": 307,
+      "height": 391,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1228,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "f9f68a6f72606976510cf6abdd25d0c6dc574653fe612b5087687c357689a12c"
+    },
+    {
+      "id": "fresh11-video-111",
+      "split": "held-out",
+      "class": "video",
+      "width": 536,
+      "height": 302,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 111,
+      "stride": 2144,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "16c7b557a678c1cff5584bed898930b7d0684b3d153d1c029715a7ac022c8bfa"
+    },
+    {
+      "id": "fresh11-video-171",
+      "split": "held-out",
+      "class": "video",
+      "width": 536,
+      "height": 302,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 171,
+      "stride": 2144,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "13e975f32f027e7bb544a26b890acc2d4d744a1a004c27ab4cc543c45adf200c"
+    },
+    {
+      "id": "fresh11-duplicate-hold",
+      "split": "held-out",
+      "class": "duplicate-hold",
+      "width": 536,
+      "height": 302,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 111,
+      "repeatOf": "fresh11-video-111",
+      "stride": 2144,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "16c7b557a678c1cff5584bed898930b7d0684b3d153d1c029715a7ac022c8bfa"
+    }
+  ]
+}

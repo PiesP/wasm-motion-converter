@@ -46,6 +46,13 @@ import {
   V7_PHOTO_REGIONS,
   generateV7Fixture,
 } from '../../../scripts/test/owned-vp8-v7-fixtures';
+import {
+  V13_HELDOUT,
+  assertV13PriorManifestRoles,
+  assertV13Shape,
+  preflightV13,
+  type V13Manifest,
+} from '../../../scripts/test/owned-vp8-v13-fixtures';
 
 describe('owned VP8 prospective cohort isolation', () => {
   const root = resolve(import.meta.dirname, '../../..');
@@ -53,6 +60,82 @@ describe('owned VP8 prospective cohort isolation', () => {
     createHash('sha256')
       .update(readFileSync(resolve(root, path)))
       .digest('hex');
+
+  it('keeps V13 bounded to 20/60 and rejects draft or wrong-purpose execution', async () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v13-fixtures.json'), 'utf8')
+    ) as V13Manifest;
+    expect(['FROZEN_UNEXECUTED', 'EXPOSED_REGRESSION']).toContain(manifest.status);
+    expect(manifest.freezeId).toBe('vp8-v13-first-heldout-20261116-01');
+    expect(manifest.attemptBudget).toBe(1);
+    const selected = selectFixtureCohort('held-out', 'corrected-v13');
+    expect(selected).toEqual(V13_HELDOUT);
+    expect(selected).toHaveLength(20);
+    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+      expectedConditionCount: 60,
+      completeCohort: true,
+      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+    });
+    expect(manifest.fixtures.map((row) => row.id)).toEqual(selected.map((row) => row.id));
+    expect(manifest.fixtures.filter((row) => row.source === 'generated')).toHaveLength(13);
+    expect(manifest.fixtures.filter((row) => row.source === 'photo')).toHaveLength(7);
+    expect(manifest.fixtures.find((row) => row.repeatOf)?.repeatOf).toBe('fresh13-photoA-1');
+    expect(() => selectFixtureCohort('tuning', 'corrected-v13')).toThrow('no tuning');
+    expect(() =>
+      selectFixtureCohort('held-out', 'corrected-v13', false, ['fresh13-neutral'])
+    ).toThrow('diagnostic only');
+    const draft = structuredClone(manifest);
+    draft.status = 'PROSPECTIVE_UNFROZEN';
+    expect(() => preflightV13(draft, {}, root)).toThrow('not acceptance ready');
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v13-draft-'));
+    const output = join(parent, 'evidence');
+    try {
+      await expect(
+        compare({
+          output,
+          split: 'held-out',
+          cohort: 'corrected-v13',
+          regression: manifest.status === 'FROZEN_UNEXECUTED',
+          sources: {},
+          candidateRoot: join(parent, 'missing-candidate'),
+        })
+      ).rejects.toThrow('not acceptance ready');
+      expect(existsSync(output)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects V13 manifest spec drift before any pixel or codec work', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v13-fixtures.json'), 'utf8')
+    ) as V13Manifest;
+    manifest.fixtures[0]!.width++;
+    expect(() => assertV13Shape(manifest)).toThrow('fresh13-neutral width changed');
+  });
+
+  it('rejects V13 when the V12 role aliases the V11 manifest before collision scanning', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v13-fixtures.json'), 'utf8')
+    ) as V13Manifest;
+    const later = [
+      ['correctedV8', 'd4b17b2990ce5fbb96dfa75c3377c8b6fb20336e91e202a5440f5e5d2da24e19'],
+      ['correctedV9', '8eeae4aeb52b433ff2936ee7973d31795b6d39edc5f734e0a33de84ebf176c54'],
+      ['correctedV10', '741d4674a4ef687be0e57ea02e8d0470bdbd7f21a74b16c17b25e66f9bc8db40'],
+      ['correctedV11', '976a1365e7eeb13759df8f00d8b9ff296875c531ad10c707d445a25ac5c298a0'],
+      ['correctedV12', '56ce94096af1c1d4424e55854b933f5c82ebc14e06bf8360b6cd9470f1a91d95'],
+    ] as const;
+    for (const [role, digest] of later)
+      manifest.priorManifests[role] = {
+        path: `501-owned-vp8-v${role.slice('correctedV'.length)}-fixtures.json`,
+        sha256: digest,
+      };
+    expect(() => assertV13PriorManifestRoles(manifest)).not.toThrow();
+    manifest.priorManifests.correctedV12 = { ...manifest.priorManifests.correctedV11! };
+    expect(() => assertV13PriorManifestRoles(manifest)).toThrow(
+      'correctedV12 prior manifest filename is wrong'
+    );
+  });
 
   it('requires an explicit regression purpose for the exposed initial held-out set', () => {
     expect(() => selectFixtureCohort('held-out', 'initial-v1')).toThrow('exposed');
