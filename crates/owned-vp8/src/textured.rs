@@ -1158,11 +1158,84 @@ fn i4_edge(
 }
 
 #[derive(Clone, Copy)]
-struct I4TailChoice {
+struct I4AcChoice {
     coefficients: [i16; 16],
     patch: [u8; 16],
     distortion: u64,
     token_rate: u64,
+}
+
+struct I4ModeChoice {
+    coefficients: [i16; 16],
+    patch: [u8; 16],
+    predictor: [u8; 16],
+    mode: u8,
+    mode_cost: u64,
+    token_rate: u64,
+    score: u64,
+}
+
+// Each AC trial starts from the same selected-mode coefficients. Scan order is
+// ascending; equal scores keep the baseline or the first admitted trial.
+#[allow(clippy::too_many_arguments)]
+fn choose_i4_selected_ac_neighbor(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    predictor: &[u8; 16],
+    steps: Steps,
+    context: usize,
+    trial_lambda: u64,
+    coefficients: [i16; 16],
+    patch: [u8; 16],
+    baseline_rate: u64,
+) -> I4AcChoice {
+    let baseline = I4AcChoice {
+        coefficients,
+        patch,
+        distortion: patch_error(source, stride, x, y, &patch),
+        token_rate: baseline_rate,
+    };
+    let baseline_score = baseline.distortion * 256 + trial_lambda * baseline_rate;
+    let mut best = baseline;
+    let mut best_score = baseline_score;
+    for position in 1..16 {
+        let index = residual::SCAN[position];
+        let level = coefficients[index];
+        if level == 0
+            || (level.unsigned_abs() == 1
+                && coefficients
+                    .iter()
+                    .enumerate()
+                    .all(|(other, &value)| other == index || value == 0))
+        {
+            continue;
+        }
+        let mut trial = coefficients;
+        trial[index] = if level > 0 { level - 1 } else { level + 1 };
+        let mut rate = RateCounter::default();
+        residual::encode_block(&mut rate, &trial, 3, context).unwrap();
+        if rate.cost >= baseline_rate {
+            continue;
+        }
+        let trial_patch = reconstructed_patch(&trial, predictor, steps);
+        let distortion = patch_error(source, stride, x, y, &trial_patch);
+        if !i4_ac_tail_within_ssd_budget(distortion, baseline.distortion) {
+            continue;
+        }
+        let score = distortion * 256 + trial_lambda * rate.cost;
+        if score < baseline_score && score < best_score {
+            best = I4AcChoice {
+                coefficients: trial,
+                patch: trial_patch,
+                distortion,
+                token_rate: rate.cost,
+            };
+            best_score = score;
+        }
+    }
+    best
 }
 
 fn i4_ac_tail_within_ssd_budget(trial: u64, baseline: u64) -> bool {
@@ -1170,6 +1243,8 @@ fn i4_ac_tail_within_ssd_budget(trial: u64, baseline: u64) -> bool {
     10 * trial <= 11 * baseline
 }
 
+// Historical single-tail control used by the retained full/half-weight tests.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn choose_i4_ac_tail(
     source: &[u8],
@@ -1182,10 +1257,10 @@ fn choose_i4_ac_tail(
     lambda: u64,
     coefficients: [i16; 16],
     patch: [u8; 16],
-) -> I4TailChoice {
+) -> I4AcChoice {
     let mut baseline_rate = RateCounter::default();
     residual::encode_block(&mut baseline_rate, &coefficients, 3, context).unwrap();
-    let baseline = I4TailChoice {
+    let baseline = I4AcChoice {
         coefficients,
         patch,
         distortion: patch_error(source, stride, x, y, &patch),
@@ -1219,7 +1294,7 @@ fn choose_i4_ac_tail(
         && trial_distortion * 256 + lambda * trial_rate.cost
             < baseline.distortion * 256 + lambda * baseline.token_rate
     {
-        I4TailChoice {
+        I4AcChoice {
             coefficients: trial,
             patch: trial_patch,
             distortion: trial_distortion,
@@ -1278,7 +1353,7 @@ fn make_i4_with_pruning<const PRUNE: bool>(
     let mut block = Macroblock::default();
     let mut selected_score = 0u64;
     // Keep full lambda for mode selection and the returned macroblock score.
-    let tail_lambda = lambda / 2;
+    let neighbor_lambda = lambda / 2;
     let mut local_above = [false; 4];
     local_above.copy_from_slice(&contexts.y[mx * 4..mx * 4 + 4]);
     let mut local_left = contexts.left_y;
@@ -1298,7 +1373,7 @@ fn make_i4_with_pruning<const PRUNE: bool>(
             } else {
                 left_modes[by]
             };
-            let mut best: Option<([i16; 16], [u8; 16], u8, u64)> = None;
+            let mut best: Option<I4ModeChoice> = None;
             for mode in 0..10u8 {
                 let mut trial = RateCounter::default();
                 write_bmode(&mut trial, above, left_mode, mode).unwrap();
@@ -1308,59 +1383,62 @@ fn make_i4_with_pruning<const PRUNE: bool>(
                 if PRUNE
                     && best
                         .as_ref()
-                        .is_some_and(|last| lambda * mode_cost >= last.3)
+                        .is_some_and(|last| lambda * mode_cost >= last.score)
                 {
                     continue;
                 }
                 let predicted = prediction::predict_i4(&top, &left, corner, bmode_from_u8(mode));
-                let (mut coeff, mut patch) =
+                let (coeff, patch) =
                     code_predicted_block(source, stride, x, y, &predicted, y_steps);
-                let mut distortion = patch_error(source, stride, x, y, &patch);
-                if !i4_ac_tail_rdo
-                    && PRUNE
+                let distortion = patch_error(source, stride, x, y, &patch);
+                if PRUNE
                     && best
                         .as_ref()
-                        .is_some_and(|last| distortion * 256 + lambda * mode_cost >= last.3)
+                        .is_some_and(|last| distortion * 256 + lambda * mode_cost >= last.score)
                 {
                     continue;
                 }
                 let context = usize::from(local_above[bx]) + usize::from(local_left[by]);
-                if i4_ac_tail_rdo {
-                    let choice = choose_i4_ac_tail(
-                        source,
-                        stride,
-                        x,
-                        y,
-                        &predicted,
-                        y_steps,
-                        context,
-                        tail_lambda,
-                        coeff,
-                        patch,
-                    );
-                    coeff = choice.coefficients;
-                    patch = choice.patch;
-                    distortion = choice.distortion;
-                    if PRUNE
-                        && best
-                            .as_ref()
-                            .is_some_and(|last| distortion * 256 + lambda * mode_cost >= last.3)
-                    {
-                        continue;
-                    }
-                    trial.cost += choice.token_rate;
-                } else {
-                    residual::encode_block(&mut trial, &coeff, 3, context).unwrap();
-                }
+                residual::encode_block(&mut trial, &coeff, 3, context).unwrap();
                 let score = distortion * 256 + lambda * trial.cost;
-                if best.as_ref().is_none_or(|last| score < last.3) {
-                    best = Some((coeff, patch, mode, score));
+                if best.as_ref().is_none_or(|last| score < last.score) {
+                    best = Some(I4ModeChoice {
+                        coefficients: coeff,
+                        patch,
+                        predictor: predicted,
+                        mode,
+                        mode_cost,
+                        token_rate: trial.cost - mode_cost,
+                        score,
+                    });
                 }
             }
-            let (coeff, patch, mode, score) = best.unwrap();
+            let best = best.unwrap();
+            let mut coeff = best.coefficients;
+            let mut patch = best.patch;
+            let mut score = best.score;
+            if i4_ac_tail_rdo {
+                let context = usize::from(local_above[bx]) + usize::from(local_left[by]);
+                let choice = choose_i4_selected_ac_neighbor(
+                    source,
+                    stride,
+                    x,
+                    y,
+                    &best.predictor,
+                    y_steps,
+                    context,
+                    neighbor_lambda,
+                    coeff,
+                    patch,
+                    best.token_rate,
+                );
+                coeff = choice.coefficients;
+                patch = choice.patch;
+                score = choice.distortion * 256 + lambda * (best.mode_cost + choice.token_rate);
+            }
             selected_score += score;
             block.y[index] = coeff;
-            block.b_modes[index] = mode;
+            block.b_modes[index] = best.mode;
             store_patch::<16, 256>(&mut tile, bx, by, &patch);
             let nonzero = coeff.iter().any(|&c| c != 0);
             local_above[bx] = nonzero;
@@ -5403,6 +5481,369 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn i4_selected_ac_neighbors_match_independent_single_edit_enumeration() {
+        let steps = ac_quant::steps(22, Deltas::default(), Plane::Y1);
+        let predictor = [128u8; 16];
+        let mut coefficients = [0i16; 16];
+        coefficients[0] = 3;
+        coefficients[residual::SCAN[1]] = 2;
+        coefficients[residual::SCAN[4]] = -2;
+        coefficients[residual::SCAN[10]] = 1;
+        coefficients[residual::SCAN[15]] = -1;
+        let baseline_patch = reconstructed_patch(&coefficients, &predictor, steps);
+        for context in 0usize..=2 {
+            let mut baseline_rate = RateCounter::default();
+            residual::encode_block(&mut baseline_rate, &coefficients, 3, context).unwrap();
+            for source in [
+                baseline_patch,
+                reconstructed_patch(
+                    &{
+                        let mut trial = coefficients;
+                        trial[residual::SCAN[1]] -= 1;
+                        trial
+                    },
+                    &predictor,
+                    steps,
+                ),
+                [128u8; 16],
+            ] {
+                for trial_lambda in [0u64, 1, 101, 2048] {
+                    let mut expected = coefficients;
+                    let mut expected_patch = baseline_patch;
+                    let mut expected_distortion = patch_error(&source, 4, 0, 0, &baseline_patch);
+                    let mut expected_rate = baseline_rate.cost;
+                    let baseline_distortion = expected_distortion;
+                    let baseline_score = expected_distortion * 256 + trial_lambda * expected_rate;
+                    let mut expected_score = baseline_score;
+                    let mut tested = 0usize;
+                    for position in 1..16 {
+                        let index = residual::SCAN[position];
+                        let level = coefficients[index];
+                        if level == 0 {
+                            continue;
+                        }
+                        let mut trial = coefficients;
+                        trial[index] -= level.signum();
+                        if trial.iter().all(|&value| value == 0) {
+                            continue;
+                        }
+                        tested += 1;
+                        let mut rate = RateCounter::default();
+                        residual::encode_block(&mut rate, &trial, 3, context).unwrap();
+                        let patch = reconstructed_patch(&trial, &predictor, steps);
+                        let distortion = patch_error(&source, 4, 0, 0, &patch);
+                        let score = distortion * 256 + trial_lambda * rate.cost;
+                        if rate.cost < baseline_rate.cost
+                            && 10 * distortion <= 11 * baseline_distortion
+                            && score < baseline_score
+                            && score < expected_score
+                        {
+                            expected = trial;
+                            expected_patch = patch;
+                            expected_distortion = distortion;
+                            expected_rate = rate.cost;
+                            expected_score = score;
+                        }
+                    }
+                    assert_eq!(tested, 4);
+                    let actual = choose_i4_selected_ac_neighbor(
+                        &source,
+                        4,
+                        0,
+                        0,
+                        &predictor,
+                        steps,
+                        context,
+                        trial_lambda,
+                        coefficients,
+                        baseline_patch,
+                        baseline_rate.cost,
+                    );
+                    assert_eq!(actual.coefficients, expected);
+                    assert_eq!(actual.patch, expected_patch);
+                    assert_eq!(actual.distortion, expected_distortion);
+                    assert_eq!(actual.token_rate, expected_rate);
+                    assert_eq!(
+                        actual
+                            .coefficients
+                            .iter()
+                            .zip(coefficients)
+                            .filter(|(after, before)| **after != *before)
+                            .count(),
+                        usize::from(actual.coefficients != coefficients),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn i4_selected_ac_neighbor_preserves_nonzero_and_strict_ties() {
+        let steps = ac_quant::steps(22, Deltas::default(), Plane::Y1);
+        let predictor = [128u8; 16];
+        for context in 0usize..=2 {
+            for sign in [-1i16, 1i16] {
+                let mut only = [0i16; 16];
+                only[residual::SCAN[15]] = sign;
+                let patch = reconstructed_patch(&only, &predictor, steps);
+                let mut rate = RateCounter::default();
+                residual::encode_block(&mut rate, &only, 3, context).unwrap();
+                let retained = choose_i4_selected_ac_neighbor(
+                    &[128u8; 16],
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    context,
+                    2048,
+                    only,
+                    patch,
+                    rate.cost,
+                );
+                assert_eq!(retained.coefficients, only);
+                let tie = choose_i4_selected_ac_neighbor(
+                    &patch, 4, 0, 0, &predictor, steps, context, 0, only, patch, rate.cost,
+                );
+                assert_eq!(tie.coefficients, only);
+                only[0] = 2;
+                let patch = reconstructed_patch(&only, &predictor, steps);
+                let mut reduced = only;
+                reduced[residual::SCAN[15]] = 0;
+                let reduced_patch = reconstructed_patch(&reduced, &predictor, steps);
+                let mut rate = RateCounter::default();
+                residual::encode_block(&mut rate, &only, 3, context).unwrap();
+                let chosen = choose_i4_selected_ac_neighbor(
+                    &reduced_patch,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    context,
+                    0,
+                    only,
+                    patch,
+                    rate.cost,
+                );
+                assert_eq!(chosen.coefficients, reduced);
+            }
+        }
+    }
+
+    #[test]
+    fn i4_first_mode_winner_is_unmodified_by_neighbor_search() {
+        let reconstructed = [128u8; 256];
+        let above = [0u8, 1, 2, 3];
+        let left = [3u8, 2, 1, 0];
+        for context in 0usize..=2 {
+            let mut contexts = CoeffContexts::new(1);
+            contexts.y[0] = context >= 1;
+            contexts.left_y[0] = context == 2;
+            for seed in 0usize..8 {
+                let source: Vec<u8> = (0usize..256)
+                    .map(|index| ((index * 37 + index / 16 * 11 + seed * 29) & 255) as u8)
+                    .collect();
+                for lambda in [0u64, 1, 225] {
+                    let plain = make_i4_with_pruning::<false>(
+                        &source,
+                        &reconstructed,
+                        16,
+                        0,
+                        0,
+                        ac_quant::steps(22, Deltas::default(), Plane::Y1),
+                        &above,
+                        &left,
+                        &contexts,
+                        lambda,
+                        false,
+                    );
+                    let neighbors = make_i4_with_pruning::<false>(
+                        &source,
+                        &reconstructed,
+                        16,
+                        0,
+                        0,
+                        ac_quant::steps(22, Deltas::default(), Plane::Y1),
+                        &above,
+                        &left,
+                        &contexts,
+                        lambda,
+                        true,
+                    );
+                    assert_eq!(neighbors.0.block.b_modes[0], plain.0.block.b_modes[0]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn i4_selected_ac_neighbor_rejects_non_decreasing_rate_and_half_rd_tie() {
+        let steps = ac_quant::steps(22, Deltas::default(), Plane::Y1);
+        let predictor = [128u8; 16];
+        let mut coefficients = [0i16; 16];
+        coefficients[residual::SCAN[1]] = 2;
+        coefficients[residual::SCAN[2]] = 1;
+        let patch = reconstructed_patch(&coefficients, &predictor, steps);
+        let mut reduced = coefficients;
+        reduced[residual::SCAN[2]] = 0;
+        let reduced_patch = reconstructed_patch(&reduced, &predictor, steps);
+        let mut rate = RateCounter::default();
+        let mut reduced_rate = RateCounter::default();
+        residual::encode_block(&mut rate, &coefficients, 3, 0).unwrap();
+        residual::encode_block(&mut reduced_rate, &reduced, 3, 0).unwrap();
+        assert!(reduced_rate.cost >= rate.cost);
+        let choice = choose_i4_selected_ac_neighbor(
+            &reduced_patch,
+            4,
+            0,
+            0,
+            &predictor,
+            steps,
+            0,
+            0,
+            coefficients,
+            patch,
+            rate.cost,
+        );
+        assert_ne!(choice.coefficients, reduced);
+
+        let saturated_predictor = [255u8; 16];
+        let mut saturated = [0i16; 16];
+        saturated[0] = 1000;
+        saturated[residual::SCAN[15]] = -1;
+        let saturated_patch = reconstructed_patch(&saturated, &saturated_predictor, steps);
+        let mut reduced = saturated;
+        reduced[residual::SCAN[15]] = 0;
+        assert_eq!(
+            saturated_patch,
+            reconstructed_patch(&reduced, &saturated_predictor, steps)
+        );
+        let mut rate = RateCounter::default();
+        let mut reduced_rate = RateCounter::default();
+        residual::encode_block(&mut rate, &saturated, 3, 2).unwrap();
+        residual::encode_block(&mut reduced_rate, &reduced, 3, 2).unwrap();
+        assert!(reduced_rate.cost < rate.cost);
+        let tie = choose_i4_selected_ac_neighbor(
+            &saturated_patch,
+            4,
+            0,
+            0,
+            &saturated_predictor,
+            steps,
+            2,
+            0,
+            saturated,
+            saturated_patch,
+            rate.cost,
+        );
+        assert_eq!(tie.coefficients, saturated);
+    }
+
+    #[test]
+    fn i4_selected_ac_neighbor_reduces_both_signs_above_unit() {
+        let steps = ac_quant::steps(22, Deltas::default(), Plane::Y1);
+        let predictor = [128u8; 16];
+        for context in 0usize..=2 {
+            for level in [-2i16, 2i16] {
+                let mut coefficients = [0i16; 16];
+                coefficients[0] = 2;
+                coefficients[residual::SCAN[15]] = level;
+                let mut reduced = coefficients;
+                reduced[residual::SCAN[15]] -= level.signum();
+                let patch = reconstructed_patch(&coefficients, &predictor, steps);
+                let reduced_patch = reconstructed_patch(&reduced, &predictor, steps);
+                assert_ne!(patch, reduced_patch);
+                let mut rate = RateCounter::default();
+                let mut reduced_rate = RateCounter::default();
+                residual::encode_block(&mut rate, &coefficients, 3, context).unwrap();
+                residual::encode_block(&mut reduced_rate, &reduced, 3, context).unwrap();
+                assert!(reduced_rate.cost < rate.cost);
+                let chosen = choose_i4_selected_ac_neighbor(
+                    &reduced_patch,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    context,
+                    0,
+                    coefficients,
+                    patch,
+                    rate.cost,
+                );
+                assert_eq!(chosen.coefficients, reduced);
+                assert_eq!(chosen.patch, reduced_patch);
+                assert_eq!(chosen.distortion, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn i4_selected_ac_neighbor_keeps_first_equal_trial_and_replaces_with_strictly_better() {
+        let steps = ac_quant::steps(
+            22,
+            crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true),
+            Plane::Y1,
+        );
+        assert_eq!(steps, Steps { dc: 20, ac: 26 });
+        let predictor = [255u8; 16];
+        let source = [255u8; 16];
+        let trial_lambda = 101u64;
+        for context in 0usize..=2 {
+            for (first_level, expect_first) in [(6i16, true), (8i16, false)] {
+                let mut baseline = [0i16; 16];
+                baseline[0] = 1000;
+                baseline[residual::SCAN[1]] = first_level;
+                baseline[residual::SCAN[2]] = 6;
+                let baseline_patch = reconstructed_patch(&baseline, &predictor, steps);
+                assert_eq!(baseline_patch, source);
+                let mut baseline_rate = RateCounter::default();
+                residual::encode_block(&mut baseline_rate, &baseline, 3, context).unwrap();
+                let mut single_edit_rates = [0u64; 2];
+                for (trial_index, position) in [1usize, 2].into_iter().enumerate() {
+                    let mut trial = baseline;
+                    trial[residual::SCAN[position]] -= 1;
+                    assert_eq!(reconstructed_patch(&trial, &predictor, steps), source);
+                    let mut rate = RateCounter::default();
+                    residual::encode_block(&mut rate, &trial, 3, context).unwrap();
+                    assert!(rate.cost < baseline_rate.cost);
+                    assert!(
+                        trial_lambda * rate.cost < trial_lambda * baseline_rate.cost,
+                        "position={position} context={context}"
+                    );
+                    single_edit_rates[trial_index] = rate.cost;
+                }
+                if expect_first {
+                    assert_eq!(single_edit_rates[0], single_edit_rates[1]);
+                } else {
+                    assert!(single_edit_rates[1] < single_edit_rates[0]);
+                }
+                let choice = choose_i4_selected_ac_neighbor(
+                    &source,
+                    4,
+                    0,
+                    0,
+                    &predictor,
+                    steps,
+                    context,
+                    trial_lambda,
+                    baseline,
+                    baseline_patch,
+                    baseline_rate.cost,
+                );
+                let selected_position = if expect_first { 1 } else { 2 };
+                let mut expected = baseline;
+                expected[residual::SCAN[selected_position]] -= 1;
+                assert_eq!(choice.coefficients, expected);
+                assert_eq!(choice.patch, source);
+                assert_eq!(choice.distortion, 0);
+                assert_eq!(choice.token_rate, single_edit_rates[selected_position - 1]);
+            }
+        }
+    }
 
     #[test]
     fn i4_ac_tail_requires_a_remaining_coefficient_and_strict_rate_distortion_gain() {

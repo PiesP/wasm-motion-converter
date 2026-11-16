@@ -43,6 +43,13 @@ for adoption; full exposed and product gates remain unrun. Its measured
 module is source-bound to `a4dfd228`; README edits
 require a provenance refresh before the current checkout's manifest can be
 treated as verified.
+The current codec-unmeasured [selected-mode AC-neighbor candidate](../../docs/experiments/501-owned-vp8-i4-selected-ac-neighbor-candidate.md)
+first selects each I4 prediction mode with the original full-lambda search.
+Only the winning mode then tries up to 15 independent one-level AC reductions
+under the same 10% SSD, strict rate, and half-lambda RD guards. This candidate
+requires its own generated and provenance-checked module before codec screens.
+Its codec and product outcomes are unknown; the earlier 49/50 result does not
+qualify it.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
@@ -50,10 +57,11 @@ defines the comparison with the retained `opt-level = "s"` module. This build
 setting alone does not establish faster conversion or product acceptance.
 
 I4 mode selection applies a mode-only lower bound before reconstruction and a
-distortion lower bound after any eligible AC-tail trial, skipping modes that
-cannot replace the current winner. The mode order and strict tie rule are
-unchanged; an exhaustive test-only search checks selected modes, coefficients,
-reconstruction and score. The [prospective experiment and
+distortion lower bound before residual counting, skipping modes that cannot
+replace the current winner. The mode order and strict tie rule are unchanged.
+The selected-mode AC search starts only after that winner is fixed; its chosen
+patch is committed before later I4 predictions. An exhaustive test-only search
+checks selected modes, coefficients, reconstruction and score. The [prospective experiment and
 source-bound result](../../docs/experiments/501-owned-vp8-exact-rdo-pruning.md)
 define the original module control, byte comparisons and performance limits.
 
