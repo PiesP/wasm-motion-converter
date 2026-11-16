@@ -31,6 +31,14 @@ the muxer would have coalesced an input. This binds output order and timing to
 observed callback presentation without asserting that the internal frame counter
 is the source video's frame index.
 
+The decoder prefers a native frame's known duration for its terminal interval.
+That raw microsecond endpoint may be 6,400,333 us, which the muxer rounds to
+6,400 ms. Every input interval must end within the rounded 6,400 ms window, and
+the terminal endpoint must equal 6,400 ms after rounding. The verifier checks
+the exact ANMF timeline separately; it does not impose a raw 6,400,000 us cap. The first verifier
+attempt incorrectly imposed that cap and failed before decoding; its receipt
+remains preserved. This correction changes no output timing or quality gate.
+
 This is structural and encoder-input evidence. Original-video frame selection
 and PTS mapping, independent source-reference PSNR/SSIM, actual temporal visual
 review, product timing, physical memory and platform acceptance remain separate.

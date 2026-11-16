@@ -58,7 +58,7 @@ describe('saved animation verifier', () => {
       index,
       frameNum: index + 1,
       startUs: index * 80_000,
-      endUs: Math.min(6_400_000, (index + 1) * 80_000),
+      endUs: index === 76 ? 6_400_000 : (index + 1) * 80_000,
       logicalRgbBytes: 6_220_800,
       chunks: 95,
       sha256: digest,
@@ -139,6 +139,19 @@ describe('saved animation verifier', () => {
       'prior',
       'candidate',
     ]);
+    const nativeTerminal = structuredClone(report);
+    for (const captured of nativeTerminal.captures) captured.streamedHashes[76]!.endUs = 6_400_333;
+    expect(() => assertV8InputCaptureReport(nativeTerminal)).not.toThrow();
+    const wrongTerminal = structuredClone(nativeTerminal);
+    for (const captured of wrongTerminal.captures) captured.streamedHashes[76]!.endUs = 6_399_499;
+    expect(() => assertV8InputCaptureReport(wrongTerminal)).toThrow(/rounded terminal endpoint/);
+    const midIntervalOutside = structuredClone(nativeTerminal);
+    for (const captured of midIntervalOutside.captures)
+      captured.streamedHashes[38]!.endUs = 6_400_500;
+    expect(() => assertV8InputCaptureReport(midIntervalOutside)).toThrow(/presentation interval/);
+    const outOfWindow = structuredClone(nativeTerminal);
+    for (const captured of outOfWindow.captures) captured.streamedHashes[76]!.startUs = 6_400_000;
+    expect(() => assertV8InputCaptureReport(outOfWindow)).toThrow(/presentation interval/);
     const timeline = rows.map((row, index) => ({
       timestampMs: row.startUs / 1000,
       holdMs: index === 76 ? 320 : 80,

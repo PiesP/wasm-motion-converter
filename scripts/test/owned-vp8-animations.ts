@@ -114,8 +114,9 @@ function assertV8InputRows(
       Number.isSafeInteger(row.startUs) &&
         Number.isSafeInteger(row.endUs) &&
         Number(row.startUs) >= 0 &&
+        Number(row.startUs) < 6_400_000 &&
         Number(row.endUs) > Number(row.startUs) &&
-        Number(row.endUs) <= 6_400_000,
+        Math.round(Number(row.endUs) / 1000) <= 6_400,
       `${build} V8 presentation interval differs`
     );
     assert.equal(row.logicalRgbBytes, V8_RGB_BYTES, `${build} V8 logical RGB extent differs`);
@@ -136,6 +137,14 @@ function assertV8InputRows(
     else assert.equal(row.startUs, 0, `${build} V8 first input does not start at zero`);
     previous = row as V8InputRow;
   }
+  assert(previous, `${build} V8 terminal input is missing`);
+  // Native frame duration can end at 6,400,333 us. The muxer rounds the
+  // absolute endpoint once; raw decoder time and ANMF milliseconds differ.
+  assert.equal(
+    Math.round(previous.endUs / 1000),
+    6_400,
+    `${build} V8 rounded terminal endpoint differs`
+  );
 }
 
 /** Admit only the prospectively instrumented two-build V8 input report. */
