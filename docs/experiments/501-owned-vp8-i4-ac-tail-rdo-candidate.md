@@ -1,4 +1,4 @@
-# #501 I4 AC-tail RDO candidate
+# #501 I4 AC-tail RDO candidate: rejected
 
 ## Prospective source contract
 
@@ -53,8 +53,8 @@ of 1.25 times the primary or primary plus 128. Paired output decoding and RGB
 hashes must be verified. The full 687-condition exposed screen follows only if
 all 50 rows and decoder checks pass. A fresh held-out cohort, Windows product
 acceptance, lifecycle, and performance are separate gates. Extra per-step CPU
-is possible and has not been measured. No size, quality, speed, or acceptance
-result is claimed for this candidate.
+is possible and has not been measured. The codec result is recorded below;
+no throughput or product-acceptance result is claimed.
 
 ## Engineering validation before the codec screen
 
@@ -68,7 +68,8 @@ The maintained scalar `--generate` build produced module SHA-256
 The module has 245,363 raw bytes and 81,966 bytes under the pinned Node gzip
 level-9 recipe with timestamp zero. Its declared initial linear memory is
 1,114,112 bytes and its exact maximum is 201,326,592 bytes (192 MiB).
-All 28 recorded source-input hashes matched. The provenance JSON SHA-256 is
+All 28 recorded source-input hashes matched. At the measured source, the
+provenance JSON SHA-256 was
 `7cc85c109d4ab4f43a60925f1c4c781bebdee9529bf5d968d5ce01799cf849cb`.
 The independent `--check` rebuild matched the generated module,
 `--verify-prebuilt` passed, and the compiled ABI2 engineering check passed.
@@ -78,5 +79,39 @@ The retained control module is
 243,475 raw bytes and 81,320 pinned-Node-gzip bytes. The candidate module
 adds 1,888 raw and 646 gzip bytes. These are executable-module sizes, not
 encoded-frame size or conversion-throughput measurements. The frozen 50-row
-codec screen, broader exposed screen, fresh cohort, Windows acceptance, and
-performance qualification remain unrun for this source point.
+codec screen result follows. The broader exposed screen, fresh cohort,
+Windows acceptance, and performance qualification remain unrun for this
+source point.
+
+## Frozen exposed screen: rejected for adoption
+
+The measured source was commit `5ac69991e0ca95bbf4e09fa6e8a8787cc574e9da`
+with module SHA-256
+`1270b81d00b76e8697b8abc0f7fdca4301543b1930d0c1047caecc76599abbfa`.
+All 45 tuning conditions passed. In the five exposed actual-browser-RGB
+conditions, raw VP8 size and RGB SSIM passed every row, while PSNR failed
+rows 19, 38, and 57 against the primary comparator minus 1 dB. The joint
+result is **47/50**, so this candidate is rejected for adoption. The retained
+50-condition coordinator summary SHA-256 is
+`28090e270dd836b944988581d8954bbd7ae0e44e8918626c09e36b1cc857082c`.
+
+| Actual row | Primary bytes | Candidate bytes | Size limit | PSNR delta (dB) | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 0 | 32,660 | 35,236 | 40,825 | -0.957844 | Pass |
+| 19 | 27,068 | 29,465 | 33,835 | -1.234737 | PSNR fail |
+| 38 | 26,722 | 32,333 | 33,402.5 | -1.156728 | PSNR fail |
+| 57 | 29,990 | 34,225 | 37,487.5 | -1.110714 | PSNR fail |
+| 76 | 8,652 | 10,774 | 10,815 | -0.589395 | Pass |
+
+Row 38 has 1,069.5 bytes of raw-size headroom, but its PSNR is below the
+threshold by 0.156728 dB. The paired 45-condition audit matched 90 retained
+streams and 180 native `vp8`/`libvpx` decodes against their RGB hashes. Its
+summary SHA-256 is
+`0b9eba3b949498e7b039cc818b0a033d7c8824ffd539277c63f9e65a3d19ab08`.
+After the README result wording changed, maintained generation and
+`--verify-prebuilt` passed again. The WASM bytes remained exactly the measured
+module; the documentation-bound provenance JSON SHA-256 became
+`3ec995b795efc84bcc112738250f9ec7d349abf9055a4a39ad0f808328ebeece`.
+The full 687-condition exposed screen, fresh cohort, Windows product
+acceptance, and performance were not run after the PSNR failures. Keep this
+failed point and the rejected control as distinct evidence.

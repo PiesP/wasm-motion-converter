@@ -20,10 +20,10 @@ The bounded resumable ABI2 core is implemented. The earlier low-curvature module
 passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as
 recorded in its [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
 The [mixed Y1 AC allocation control](../../docs/experiments/501-owned-vp8-mixed-y1-ac-allocation-candidate.md)
-failed one of its 50 codec quality/size screen conditions. The current
+failed one of its 50 codec quality/size screen conditions. The
 [I4 AC-tail RDO candidate](../../docs/experiments/501-owned-vp8-i4-ac-tail-rdo-candidate.md)
-has not undergone its codec quality/size screen or passed product gates.
-Earlier results do not qualify this module or runtime removal of `wasm-webp`.
+passed 47 of 50 conditions; three actual-browser-RGB rows failed PSNR. Neither
+point qualifies this module or runtime removal of `wasm-webp`.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
