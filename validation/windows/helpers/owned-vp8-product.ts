@@ -35,6 +35,7 @@ import {
   V8_PRIOR_SOURCE_SHA,
   type CapturedPixel,
   type V8CaptureBuild,
+  type V8CaptureLock,
   type V8HashMessage,
   type V8StreamedHashRow,
 } from './owned-vp8-input-capture.ts';
@@ -3466,7 +3467,7 @@ export async function exerciseOwnedVp8V8PixelInputs({
     );
     assert.equal(matches.length, 1, `${name} main conversion asset is not unique`);
     const asset = matches[0]!;
-    const locked = captureLock[name].callbackAsset;
+    const locked: V8CaptureLock['candidate']['callbackAsset'] = captureLock[name].callbackAsset;
     assert.deepEqual(asset, locked, `${name} main conversion lock differs from inventory`);
     const path = await validateBundleFile(bundleRoot, `${build.relativePath}/${asset.path}`);
     const patched = patchV8MainEncoderCallback(
