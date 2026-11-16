@@ -7,6 +7,7 @@ use crate::ac_quant::Deltas;
 pub(crate) const QINDEX: [usize; 3] = [40, 22, 8];
 const SMOOTH_QINDEX: usize = 6;
 const MEDIUM_LUMA_REDUCTION: usize = 2;
+pub(crate) const MIXED_Y1_AC_QINDEX_INCREASE: usize = 4;
 
 pub(crate) fn smooth_qindex(_quality: u32) -> usize {
     SMOOTH_QINDEX
@@ -115,6 +116,31 @@ pub(crate) fn photo_q60_all_texture(
         && low_curvature
 }
 
+pub(crate) fn mixed_y1_ac_profile(
+    quality: u32,
+    counts: [usize; 4],
+    neutral_chroma: bool,
+    high_chroma_loss: bool,
+    low_curvature: bool,
+) -> bool {
+    quality == 60
+        && !neutral_chroma
+        && !high_chroma_loss
+        && counts.iter().filter(|&&count| count > 0).count() >= 2
+        && low_curvature
+}
+
+pub(crate) fn mixed_y1_ac_deltas(mut selected: Deltas, enabled: bool) -> Deltas {
+    if enabled {
+        selected.y1_dc = -4;
+        selected.y2_dc = -4;
+        selected.y2_ac = -4;
+        selected.uv_dc = -8;
+        selected.uv_ac = -15;
+    }
+    selected
+}
+
 pub(crate) fn photo_allocation_deltas(
     mut selected: Deltas,
     q60_all_texture: bool,
@@ -179,6 +205,88 @@ pub(crate) fn lambda_for_quality(qindex: usize, quality: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mixed_y1_ac_profile_requires_colored_low_curvature_q60_and_multiple_ids() {
+        let mixed = [1, 0, 1, 0];
+        assert!(mixed_y1_ac_profile(60, mixed, false, false, true));
+        for (quality, counts, neutral, high_loss, low_curvature) in [
+            (75, mixed, false, false, true),
+            (85, mixed, false, false, true),
+            (60, [0; 4], false, false, true),
+            (60, [0, 0, 0, 4], false, false, true),
+            (60, mixed, true, false, true),
+            (60, mixed, false, true, true),
+            (60, mixed, false, false, false),
+        ] {
+            assert!(!mixed_y1_ac_profile(
+                quality,
+                counts,
+                neutral,
+                high_loss,
+                low_curvature
+            ));
+        }
+        assert_eq!(mixed_y1_ac_deltas(deltas(60), false), deltas(60));
+    }
+
+    #[test]
+    fn mixed_y1_ac_allocation_changes_only_y1_ac_steps_for_every_segment() {
+        use crate::ac_quant::{steps, Plane};
+
+        let original = deltas(60);
+        let selected = mixed_y1_ac_deltas(original, true);
+        assert_eq!(
+            (
+                selected.y1_dc,
+                selected.y2_dc,
+                selected.y2_ac,
+                selected.uv_dc,
+                selected.uv_ac
+            ),
+            (-4, -4, -4, -8, -15)
+        );
+        assert_eq!(
+            (
+                original.y1_dc,
+                original.y2_dc,
+                original.y2_ac,
+                original.uv_dc,
+                original.uv_ac
+            ),
+            (0, 0, 0, -4, -11)
+        );
+        let qindices = [
+            smooth_qindex(60),
+            chromatic_flat_qindex(60),
+            chromatic_ramp_qindex(60),
+            textured_qindex(60, false),
+        ];
+        assert_eq!(qindices, [6, 18, 32, 32]);
+        for original_q in qindices {
+            let allocated_q = original_q + MIXED_Y1_AC_QINDEX_INCREASE;
+            let before_y1 = steps(original_q as u8, original, Plane::Y1);
+            let after_y1 = steps(allocated_q as u8, selected, Plane::Y1);
+            assert_eq!(after_y1.dc, before_y1.dc);
+            assert!(after_y1.ac > before_y1.ac);
+            assert_eq!(
+                steps(allocated_q as u8, selected, Plane::Y2),
+                steps(original_q as u8, original, Plane::Y2)
+            );
+            assert_eq!(
+                steps(allocated_q as u8, selected, Plane::UV),
+                steps(original_q as u8, original, Plane::UV)
+            );
+            assert_eq!(
+                lambda_for_quality(original_q, 60),
+                lambda_for_q(original_q) * 6 / 5
+            );
+        }
+        assert_eq!(
+            steps(10, selected, Plane::UV).ac,
+            steps(6, original, Plane::UV).ac
+        );
+    }
 
     #[test]
     fn photo_allocation_requires_exact_source_profile() {

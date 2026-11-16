@@ -15,21 +15,68 @@ Per-frame coefficient statistics follow frozen mode/coefficient decisions. A
 bounded optimizer proposes updates, and exact whole-frame counting includes
 update flags and literals. The encoder adopts updates only when the complete
 frame is strictly smaller; count and emission use the same frozen model.
-The bounded resumable ABI2 core is implemented. The exact Rust/module candidate
-passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as recorded
-in the [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
-Browser/product performance and lifecycle qualification remain unfinished; these
-codec results do not qualify runtime removal of `wasm-webp`.
+The bounded resumable ABI2 core is implemented. The earlier low-curvature module
+`e918f3016451b60f04dfa551e5ae57820bcbc65c8c8834f01c8426b72355e584`
+passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as
+recorded in its [source-bound result](../../docs/experiments/501-owned-vp8-low-curvature-result.md).
+The [mixed Y1 AC allocation control](../../docs/experiments/501-owned-vp8-mixed-y1-ac-allocation-candidate.md)
+failed one of its 50 codec quality/size screen conditions. The
+[I4 AC-tail RDO candidate](../../docs/experiments/501-owned-vp8-i4-ac-tail-rdo-candidate.md)
+passed 47 of 50 conditions; three actual-browser-RGB rows failed PSNR. The
+[half-weight I4 AC-tail trial](../../docs/experiments/501-owned-vp8-i4-ac-tail-half-lambda-candidate.md)
+also passed 47 of 50; actual rows 19, 38, and 57 failed PSNR. None of these
+points qualifies this module or runtime removal of `wasm-webp`. Product
+acceptance remains unrun.
+The [I4 AC-tail source-Y SSD guard](../../docs/experiments/501-owned-vp8-i4-ac-tail-ssd-guard-candidate.md)
+adds a no-increase source-Y patch SSD condition to the half-weight trial.
+It passed 49 of 50 frozen codec conditions: all actual rows passed PSNR and
+RGB SSIM, but row 38 exceeded the raw VP8 size limit. This point is rejected
+for adoption; the full exposed and product gates remain unrun. Its measured
+module is source-bound to `b5b9e8aa`; README edits require a provenance
+refresh before the current checkout's manifest can be treated as verified.
+The [10% I4 AC-tail source-Y SSD budget](../../docs/experiments/501-owned-vp8-i4-ac-tail-ssd-budget-candidate.md)
+allows a bounded local SSD increase while retaining the strict rate and
+half-weight RD checks. It passed 49 of 50 frozen codec conditions: all actual
+rows passed PSNR and RGB SSIM, but row 38 exceeded the raw VP8 size limit.
+The saved 45-condition paired decoder audit passed. This point is rejected
+for adoption; full exposed and product gates remain unrun. Its measured
+module is source-bound to `a4dfd228`; README edits
+require a provenance refresh before the current checkout's manifest can be
+treated as verified.
+The [selected-mode AC-neighbor candidate](../../docs/experiments/501-owned-vp8-i4-selected-ac-neighbor-candidate.md)
+first selects each I4 prediction mode with the original full-lambda search.
+Only the winning mode then tries up to 15 independent one-level AC reductions
+under the same 10% SSD, strict rate, and half-lambda RD guards. Its signed
+measured source `fece0674` and module
+`206cf945b56ca26d1cb11d1636cb80a4a623036691a8a6d901c41bd79910f223`
+passed 49 of 50 frozen codec conditions: all actual PSNR and RGB SSIM rows
+passed, but actual row 38 exceeded the raw VP8 size cap by 1,069.5 bytes.
+This point is rejected; the full exposed and product gates remain unrun.
+This README result update requires a provenance refresh before the current
+checkout's manifest can be treated as verified.
+The current [eligible Y1 AC zero-bin candidate](../../docs/experiments/501-owned-vp8-y1-ac-zero-bin-candidate.md)
+adds one fixed encoder-side `5/8` zero threshold only for marginal Y1 AC
+levels in the existing mixed q60 profile. Canonical nearest quantization and
+all signaled decoder steps remain unchanged elsewhere. Its signed measured
+source `1e80f53b` and module
+`fc13fa5fcc7b07a7922e64489220d9e1073588947216d3dba9fbca498eb64347`
+passed the frozen 50-condition screen, the 45-condition paired decoder audit,
+and the 687-condition exposed regression (45 current rows reused, 642 newly
+run). This is exposed codec evidence only; fresh media, full animation,
+physical resource, browser product, performance, and delivery gates remain
+open. The patched `wasm-webp` runtime stays primary pending qualification.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
 defines the comparison with the retained `opt-level = "s"` module. This build
 setting alone does not establish faster conversion or product acceptance.
 
-I4 mode selection now applies two exact integer score lower bounds to skip
-modes that cannot replace the current winner. The mode order and strict tie
-rule are unchanged; an exhaustive test-only search checks selected modes,
-coefficients, reconstruction and score. The [prospective experiment and
+I4 mode selection applies a mode-only lower bound before reconstruction and a
+distortion lower bound before residual counting, skipping modes that cannot
+replace the current winner. The mode order and strict tie rule are unchanged.
+The selected-mode AC search starts only after that winner is fixed; its chosen
+patch is committed before later I4 predictions. An exhaustive test-only search
+checks selected modes, coefficients, reconstruction and score. The [prospective experiment and
 source-bound result](../../docs/experiments/501-owned-vp8-exact-rdo-pruning.md)
 define the original module control, byte comparisons and performance limits.
 
@@ -51,8 +98,10 @@ qindices by four. It signals Y1 DC, Y2 DC and Y2 AC deltas of +4 and UV DC/AC
 deltas of -15/-7. The original qindices remain the mode-rate reference. Y1 AC
 also becomes finer because VP8 has no separate Y1 AC delta. Neutral, mixed-map
 and high-chroma-loss q60 frames, or frames above the per-plane mean cutoff,
-keep their prior allocation. Padded edge replication can dilute the measured
-mean for narrow or odd inputs; this candidate does not assert visible-only parity.
+do not receive this photo allocation. Eligible mixed-map q60 frames use the
+separate Y1 AC allocation linked above. Padded edge replication can dilute
+the measured mean for narrow or odd inputs; this candidate does not assert
+visible-only parity.
 
 At q60, the existing source-derived high-chroma-loss predicate compares the
 Original and Reduced profiles. Each completed trial is filtered after its
