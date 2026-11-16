@@ -1,4 +1,4 @@
-# #501 selected-mode I4 AC-neighbor candidate: unmeasured
+# #501 selected-mode I4 AC-neighbor candidate: rejected
 
 ## Frozen control and change
 
@@ -78,11 +78,54 @@ The rejected parent module
 and manifest
 `8b6d395d52d3ba415347d43b22cc8853b01c366396a9e92c1afd4927480f2cea`
 remain preserved separately. The raw and gzip byte differences are executable
-module sizes, not encoded-frame size or throughput measurements. Codec,
-product and delivery gates remain unrun for this source point.
+module sizes, not encoded-frame size or throughput measurements. The codec
+result follows. Product and delivery gates remain unrun for this source point.
 
 The frozen 45-plus-five screen remains unchanged, with primary-relative PSNR,
 RGB SSIM, raw VP8 size, paired stream and independent decoder checks. Only
 50/50 permits the full 687-row exposed screen. Fresh media, Windows product
-acceptance, lifecycle, performance and delivery remain separate gates. No
-quality, size, speed or adoption result is predicted here.
+acceptance, lifecycle, performance and delivery remain separate gates.
+
+## Frozen exposed screen: rejected for adoption
+
+The measured source was signed commit
+`fece06745eed79d75433f6916b265ef5ad7fed3d` with module SHA-256
+`206cf945b56ca26d1cb11d1636cb80a4a623036691a8a6d901c41bd79910f223`.
+All 45 tuning conditions passed. Their run metadata says
+`DIAGNOSTIC_SUBSET_NOT_ACCEPTANCE` because explicit IDs were supplied; the
+coordinator matched the ordered IDs to the prior 45-condition set. All five
+exposed actual-browser-RGB rows passed the unchanged PSNR and RGB SSIM gates.
+Raw VP8 size failed row 38 alone, yielding a joint **49/50** and rejecting
+this point for adoption. The coordinator's saved screen summary SHA-256 is
+`e9a88f88e5f16693291c181a414d3dd7eaada2d7a5f0d55c2e40e3f6d200dd00`.
+
+| Actual row | Raw VP8 bytes | Size cap | PSNR delta (dB) | RGB SSIM delta | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 0 | 38,312 | 40,825 | -0.005718 | +0.003441 | Pass |
+| 19 | 31,579 | 33,835 | -0.413355 | +0.001888 | Pass |
+| 38 | 34,472 | 33,402.5 | -0.328682 | +0.001512 | Size fail |
+| 57 | 36,780 | 37,487.5 | -0.212363 | +0.002011 | Pass |
+| 76 | 10,773 | 10,815 | -0.589310 | +0.001034 | Pass |
+
+Row 38 exceeds its raw-size cap by 1,069.5 bytes. It is 155 bytes larger
+than the rejected 10% AC-tail control on that same row. Broader AC positions
+after selecting one prediction mode did not recover the missing size; this
+observation does not establish which coefficients or modes changed in an
+integrated frame. The separate 45-condition paired audit matched 90 retained
+baseline/candidate streams against 180 native `vp8`/`libvpx` RGB decodes and
+their hashes. Its summary SHA-256 is
+`9cebf43d233dd253d635e52a4e6bd29c959e9639ec932899f530427106f05849`;
+the coordinator independently rehashed all 90 retained RGB files and 180
+decoder files. This decoder proof does not repair the raw-size failure.
+The full 687-condition screen, fresh cohort, Windows product acceptance,
+lifecycle, performance and delivery were not run after the size failure.
+Retain this failure and the earlier 10% control as distinct evidence.
+
+After the README result wording was updated, maintained generation produced
+the same WASM bytes as the measured commit. The independent byte comparison,
+`--verify-prebuilt`, all 28 current source-input hashes, pinned-Node level-9
+gzip, and declared-memory audit passed. The metadata-only closeout manifest
+SHA-256 is
+`668a300b94c780348c077a13e08fe220bef69ff0b6bbd0d153a227f739eea230`;
+the measured commit's earlier manifest remains bound to its actual README and
+source. This metadata refresh is not a new codec measurement.

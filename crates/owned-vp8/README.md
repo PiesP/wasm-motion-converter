@@ -43,13 +43,17 @@ for adoption; full exposed and product gates remain unrun. Its measured
 module is source-bound to `a4dfd228`; README edits
 require a provenance refresh before the current checkout's manifest can be
 treated as verified.
-The current codec-unmeasured [selected-mode AC-neighbor candidate](../../docs/experiments/501-owned-vp8-i4-selected-ac-neighbor-candidate.md)
+The [selected-mode AC-neighbor candidate](../../docs/experiments/501-owned-vp8-i4-selected-ac-neighbor-candidate.md)
 first selects each I4 prediction mode with the original full-lambda search.
 Only the winning mode then tries up to 15 independent one-level AC reductions
-under the same 10% SSD, strict rate, and half-lambda RD guards. This candidate
-requires its own generated and provenance-checked module before codec screens.
-Its codec and product outcomes are unknown; the earlier 49/50 result does not
-qualify it.
+under the same 10% SSD, strict rate, and half-lambda RD guards. Its signed
+measured source `fece0674` and module
+`206cf945b56ca26d1cb11d1636cb80a4a623036691a8a6d901c41bd79910f223`
+passed 49 of 50 frozen codec conditions: all actual PSNR and RGB SSIM rows
+passed, but actual row 38 exceeded the raw VP8 size cap by 1,069.5 bytes.
+This point is rejected; the full exposed and product gates remain unrun.
+This README result update requires a provenance refresh before the current
+checkout's manifest can be treated as verified.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
