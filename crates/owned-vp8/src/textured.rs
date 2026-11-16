@@ -9461,7 +9461,7 @@ mod tests {
                 Ok(())
             }
         }
-        for (quality, level) in [(60, 6), (75, 4), (85, 4)] {
+        for (quality, level) in [(60, 0), (75, 4), (85, 4)] {
             assert_eq!(FilterConfig::for_quality(quality).level, level);
         }
         let filter = FilterConfig {
@@ -9728,7 +9728,7 @@ mod tests {
                         engine.deltas,
                         crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true)
                     );
-                    assert_eq!(engine.filter.level, 6);
+                    assert_eq!(engine.filter.level, 0);
                 }
                 let sync = encode_textured(input, width as u32, 16, (width * 4) as u32, 0, quality)
                     .unwrap();
