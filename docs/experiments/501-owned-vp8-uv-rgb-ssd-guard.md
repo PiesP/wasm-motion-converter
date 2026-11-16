@@ -1,4 +1,4 @@
-# #501 mixed-Y1-AC UV RGB SSD guard: quality-unmeasured trial
+# #501 mixed-Y1-AC UV RGB SSD guard: partial diagnostic result
 
 ## Hypothesis and retained evidence
 
@@ -34,8 +34,8 @@ The native-check-02 source digests are:
 - `textured.rs`: `6bc0b0e786b621f49123b510185e68a0e0fcc251bd32bef1288e24472a4fd002`.
 - `joint_refinement.rs`: `8e5dbfdc35b85cd6072b6efcb62335940dcb9684fc6a7969fd45904ef22d52dc`.
 
-The source-bound WASM checks are recorded below. No candidate quality, size,
-performance, browser or fresh V13 measurement has run for this trial. The
+The source-bound WASM checks are recorded below. The diagnostic quality and size screen is recorded below. No performance,
+browser or fresh V13 measurement has run for this trial. The
 previous BD original-reference PSNR failures and product latency remain
 unresolved; the test witness proves the guard path, not the cause or a fix
 for those measured failures.
@@ -53,6 +53,35 @@ rehashed all 28 provenance inputs and the generated module. Provenance SHA-256:
 `1b34bf9c51a5434a491623bc9e36f05c7a3f18851964051a758443628988fd8b`.
 
 These checks establish engineering behavior for the compiled artifact, not the
-required quality/size frontier or product latency. The next step is a clean
-source commit and a prospective freeze of the exposed 45+5 screen and five
-original-reference comparisons. Fresh V13 candidate encodes remain zero.
+required quality/size frontier or product latency. The measured source is signed commit `844cfcb9f084ff663ac8198f68372387394f1b71`.
+The exposed screen results follow. Fresh V13 candidate encodes remain zero.
+
+## Frozen diagnostic screen result
+
+The source above completed the prospectively frozen 45 tuning conditions and
+five actual-browser-RGB controls. Every row passed PSNR, SSIM and raw VP8 size
+gates against the shipped patched wasm-webp comparator. All five actual controls
+were independently decoded with native VP8 and libvpx. The saved 45-condition
+artifacts also passed 180 decoder children for 90 primary/candidate streams,
+with both decoder RGB hashes matching the retained metric RGB. No reencoding or
+threshold change was used for that saved-stream verification.
+
+The five separate original-source-reference comparisons passed SSIM, but
+frame 76 failed PSNR: 40.996814 dB versus primary 42.701327 dB, a -1.704513 dB
+delta against the unchanged -1 dB floor. Its raw VP8 and decoded RGB are
+byte-identical to BD170. Frames 0/19/38/57 passed the original-reference gates.
+This sampled-SSD policy therefore has not corrected the worst source-reference
+failure and does not qualify production adoption. Its 10,760-byte frame 76
+remains below the unchanged 10,815-byte size limit.
+
+Private retained receipts under `uv-rgb-ssd-guard-01/quality-preparation`:
+
+- Frozen five-screen lock: `8b87090d99ed72de1f87514a87715b89a0d631a190d603c1a5bfd5cab07ebe6f`.
+- New 45-row results: `a44f20528deda76bb8d6ec49c420cbbaf80122f8d1fcde17ce71a3ccf5bb88dc`.
+- Saved-stream decoder summary: `fe2a024094268e252e9a2d2015b4f86c33fbb96e74891b0b6ee718de69a8b4a1`.
+- Independent root result audit: `e67dec6dfbb66bef13146a02becc8a88b57d041f58205e69e17a1f7754d0a80b`.
+
+Status is PARTIAL / RETAIN_CURRENT. The full 77-frame screen, full 687-condition
+cohort, fresh V13, product performance, resource and delivery acceptance were
+not run for this source. Production wasm-webp stays in place. Continue with a
+separately frozen correction candidate; preserve this result and all failures.
