@@ -23,7 +23,9 @@ The [mixed Y1 AC allocation control](../../docs/experiments/501-owned-vp8-mixed-
 failed one of its 50 codec quality/size screen conditions. The
 [I4 AC-tail RDO candidate](../../docs/experiments/501-owned-vp8-i4-ac-tail-rdo-candidate.md)
 passed 47 of 50 conditions; three actual-browser-RGB rows failed PSNR. Neither
-point qualifies this module or runtime removal of `wasm-webp`.
+point qualifies this module or runtime removal of `wasm-webp`. The current
+[half-weight I4 AC-tail trial](../../docs/experiments/501-owned-vp8-i4-ac-tail-half-lambda-candidate.md)
+has not yet undergone its codec screen or product acceptance.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)

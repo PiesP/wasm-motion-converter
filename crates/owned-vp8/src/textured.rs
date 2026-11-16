@@ -1271,6 +1271,8 @@ fn make_i4_with_pruning<const PRUNE: bool>(
     let mut tile = [0u8; 256];
     let mut block = Macroblock::default();
     let mut selected_score = 0u64;
+    // Keep full lambda for mode selection and the returned macroblock score.
+    let tail_lambda = lambda / 2;
     let mut local_above = [false; 4];
     local_above.copy_from_slice(&contexts.y[mx * 4..mx * 4 + 4]);
     let mut local_left = contexts.left_y;
@@ -1319,7 +1321,16 @@ fn make_i4_with_pruning<const PRUNE: bool>(
                 let context = usize::from(local_above[bx]) + usize::from(local_left[by]);
                 if i4_ac_tail_rdo {
                     let choice = choose_i4_ac_tail(
-                        source, stride, x, y, &predicted, y_steps, context, lambda, coeff, patch,
+                        source,
+                        stride,
+                        x,
+                        y,
+                        &predicted,
+                        y_steps,
+                        context,
+                        tail_lambda,
+                        coeff,
+                        patch,
                     );
                     coeff = choice.coefficients;
                     patch = choice.patch;
@@ -5555,6 +5566,81 @@ mod tests {
     }
 
     #[test]
+    fn i4_ac_tail_half_weight_retains_a_marginal_coefficient() {
+        let steps = ac_quant::steps(
+            22,
+            crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true),
+            Plane::Y1,
+        );
+        assert_eq!(steps, Steps { dc: 20, ac: 26 });
+        let predictor: [u8; 16] = [128; 16];
+        let source: [u8; 16] = [
+            151, 114, 152, 115, 114, 156, 111, 152, 152, 111, 155, 114, 115, 152, 114, 151,
+        ];
+        let mut coefficients = [0i16; 16];
+        coefficients[0] = 2;
+        coefficients[residual::SCAN[15]] = 1;
+        let mut shortened = coefficients;
+        shortened[residual::SCAN[15]] = 0;
+        let baseline_patch = reconstructed_patch(&coefficients, &predictor, steps);
+        let shorter_patch = reconstructed_patch(&shortened, &predictor, steps);
+        assert_eq!(
+            baseline_patch,
+            [134, 131, 135, 132, 131, 139, 128, 135, 135, 128, 138, 131, 132, 135, 131, 134]
+        );
+        assert_eq!(shorter_patch, [133; 16]);
+        let baseline_ssd = patch_error(&source, 4, 0, 0, &baseline_patch);
+        let shorter_ssd = patch_error(&source, 4, 0, 0, &shorter_patch);
+        assert_eq!((baseline_ssd, shorter_ssd), (4624, 6165));
+        let mut baseline_rate = RateCounter::default();
+        let mut shorter_rate = RateCounter::default();
+        residual::encode_block(&mut baseline_rate, &coefficients, 3, 0).unwrap();
+        residual::encode_block(&mut shorter_rate, &shortened, 3, 0).unwrap();
+        assert_eq!((baseline_rate.cost, shorter_rate.cost), (6130, 2372));
+
+        // Original q18 mode weight stays full; only this coefficient trial
+        // receives its integer half.
+        let mode_lambda: u64 = crate::presets::lambda_for_quality(18, 60);
+        assert_eq!(mode_lambda, 202);
+        let trial_lambda = mode_lambda / 2;
+        let distortion_loss = (shorter_ssd - baseline_ssd) * 256;
+        let rate_saving = baseline_rate.cost - shorter_rate.cost;
+        assert!(trial_lambda * rate_saving <= distortion_loss);
+        assert!(distortion_loss < mode_lambda * rate_saving);
+
+        let full_choice = choose_i4_ac_tail(
+            &source,
+            4,
+            0,
+            0,
+            &predictor,
+            steps,
+            0,
+            mode_lambda,
+            coefficients,
+            baseline_patch,
+        );
+        assert_eq!(full_choice.coefficients, shortened);
+        assert_eq!(full_choice.patch, shorter_patch);
+        assert_eq!(full_choice.token_rate, shorter_rate.cost);
+        let half_choice = choose_i4_ac_tail(
+            &source,
+            4,
+            0,
+            0,
+            &predictor,
+            steps,
+            0,
+            trial_lambda,
+            coefficients,
+            baseline_patch,
+        );
+        assert_eq!(half_choice.coefficients, coefficients);
+        assert_eq!(half_choice.patch, baseline_patch);
+        assert_eq!(half_choice.token_rate, baseline_rate.cost);
+    }
+
+    #[test]
     fn i4_lower_bound_pruning_matches_exhaustive_mode_search() {
         let mut state = 0x5015_4d4fu32;
         let mut next = || {
@@ -5646,7 +5732,9 @@ mod tests {
         contexts.left_y = [false, true, false, true];
         let above_modes = [0, 3, 6, 9];
         let left_modes = [9, 6, 3, 0];
-        let lambda = 225;
+        // The coefficient trial has a separate half weight; the returned
+        // mode score must still use the unmodified weight.
+        let mode_lambda: u64 = 225;
         for tail_rdo in [false, true] {
             let (candidate, score) = make_i4_with_pruning::<true>(
                 &source,
@@ -5658,7 +5746,7 @@ mod tests {
                 &above_modes,
                 &left_modes,
                 &contexts,
-                lambda,
+                mode_lambda,
                 tail_rdo,
             );
             let mut above_context = [false; 4];
@@ -5699,7 +5787,7 @@ mod tests {
                     let error = patch_error(&source, 16, bx * 4, by * 4, &patch);
                     distortion += error;
                     independently_scored +=
-                        error * 256 + lambda * (mode_rate.cost + token_rate.cost);
+                        error * 256 + mode_lambda * (mode_rate.cost + token_rate.cost);
                     let nonzero = candidate.block.y[index].iter().any(|&level| level != 0);
                     above_context[bx] = nonzero;
                     left_context[by] = nonzero;
