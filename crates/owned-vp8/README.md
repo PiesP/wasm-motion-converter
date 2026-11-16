@@ -34,12 +34,15 @@ RGB SSIM, but row 38 exceeded the raw VP8 size limit. This point is rejected
 for adoption; the full exposed and product gates remain unrun. Its measured
 module is source-bound to `b5b9e8aa`; README edits require a provenance
 refresh before the current checkout's manifest can be treated as verified.
-The prospective [10% I4 AC-tail source-Y SSD budget](../../docs/experiments/501-owned-vp8-i4-ac-tail-ssd-budget-candidate.md)
+The [10% I4 AC-tail source-Y SSD budget](../../docs/experiments/501-owned-vp8-i4-ac-tail-ssd-budget-candidate.md)
 allows a bounded local SSD increase while retaining the strict rate and
-half-weight RD checks. Its codec and product outcomes are unmeasured. The
-retained `b91db560` module belongs to the rejected no-increase guard. The
-checked-in WASM and provenance represent this new source only after maintained
-generation, independent check, and compiled ABI verification pass.
+half-weight RD checks. It passed 49 of 50 frozen codec conditions: all actual
+rows passed PSNR and RGB SSIM, but row 38 exceeded the raw VP8 size limit.
+The saved 45-condition paired decoder audit passed. This point is rejected
+for adoption; full exposed and product gates remain unrun. Its measured
+module is source-bound to `a4dfd228`; README edits
+require a provenance refresh before the current checkout's manifest can be
+treated as verified.
 
 The release profile uses `opt-level = 3` as a throughput candidate. The
 [one-variable control](../../docs/experiments/501-owned-vp8-throughput-profile.md)
