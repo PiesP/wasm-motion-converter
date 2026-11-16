@@ -2,22 +2,41 @@
 // Copyright (c) 2026 PiesP
 
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 
 import { describe, it } from 'vite-plus/test';
 
+import { writeOwnedVp8InputCaptureLock } from '../../../scripts/test/generate-owned-vp8-input-capture-lock.ts';
 import {
   assertCaptureInventory,
   assertV8CaptureBuild,
+  assertV8CaptureLock,
   captureIndex,
   compareCapturedPixels,
+  compareV8StreamedHashes,
+  createV8CaptureLock,
+  installV8AllInputHashCapture,
+  patchV8ExactCallback,
+  patchV8MainEncoderCallback,
   V8_CAPTURE_BUDGET,
   V8_CAPTURE_CHUNK,
   V8_CAPTURE_INDICES,
+  V8_COMBINED_MODULE_SHA256,
+  V8_MAIN_ASSETS,
+  V8_PRIOR_LEGACY_WASM_SHA256,
+  V8_PRIOR_SOURCE_SHA,
   V8_RGB_BYTES,
   V8_LEGACY_COPY_BYTES,
+  V8IncrementalHashReceiver,
   installV8PixelCapture,
   type CapturedPixel,
+  type V8CaptureBuildSource,
+  type V8HashMessage,
+  type V8StreamedHashRow,
 } from '../../../validation/windows/helpers/owned-vp8-input-capture.ts';
 
 const valid = () => ({
@@ -28,13 +47,29 @@ const valid = () => ({
 });
 
 describe('V8 post-Canvas packed RGB capture contract', () => {
-  it('binds the module digest separately from the candidate Git source', () => {
+  it('keeps candidate source and allowlisted module digests separate', () => {
     const source = 'ee86865e30ee9395ee2c2c26041a197debf0114c';
-    const module = 'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186';
-    assert.doesNotThrow(() => assertV8CaptureBuild(source, module));
-    assert.throws(() => assertV8CaptureBuild(module, module), /Git source SHA/);
+    const historicalModule = 'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186';
+    const combinedModule = 'bd170496ba1f2574bd095effdc55b7cd102b203dcc347a472141fcfbd9284b0e';
+    assert.doesNotThrow(() => assertV8CaptureBuild(source, historicalModule));
+    assert.doesNotThrow(() =>
+      assertV8CaptureBuild('bd1cbfdb267edc4b5617023f17234425a13da235', combinedModule)
+    );
+    assert.throws(() => assertV8CaptureBuild(combinedModule, combinedModule), /Git source SHA/);
     assert.throws(() => assertV8CaptureBuild(source, source), /WASM digest differs/);
     assert.throws(() => assertV8CaptureBuild(source, '0'.repeat(64)), /WASM digest differs/);
+    assert.throws(
+      () => assertV8CaptureBuild(source, historicalModule.slice(0, -1) + '0'),
+      /WASM digest differs/
+    );
+    assert.throws(
+      () => assertV8CaptureBuild(source, combinedModule.slice(0, -1) + '0'),
+      /WASM digest differs/
+    );
+    assert.throws(
+      () => assertV8CaptureBuild(source, combinedModule.slice(0, -1)),
+      /WASM digest differs/
+    );
   });
 
   it('selects five observed input ordinals within a 32 MiB per-context budget', () => {
@@ -174,5 +209,435 @@ describe('V8 post-Canvas packed RGB capture contract', () => {
     for (const index of V8_CAPTURE_INDICES) state.release(index);
     assert.equal(state.snapshot().retainedBytes, 0);
     assert.throws(() => instance.exports.vp8_v2_begin(1, 77), /input lease, request or ticket/);
+  });
+});
+
+describe('V8 all-input streamed hash observer', () => {
+  const build = (kind: 'prior' | 'candidate'): V8CaptureBuildSource => ({
+    manifestSha256: (kind === 'prior' ? '1' : '2').repeat(64),
+    state: {
+      sourceSha: kind === 'prior' ? V8_PRIOR_SOURCE_SHA : 'a'.repeat(40),
+      treeSha: (kind === 'prior' ? '3' : '4').repeat(40),
+      coreSha: '5'.repeat(40),
+      files: [
+        {
+          path:
+            kind === 'prior' ? 'assets/webp-wasm.12345678.wasm' : 'assets/owned-vp8.12345678.wasm',
+          size: 1024,
+          sha256: kind === 'prior' ? V8_PRIOR_LEGACY_WASM_SHA256 : V8_COMBINED_MODULE_SHA256,
+        },
+        {
+          path:
+            kind === 'prior'
+              ? 'assets/conversion-pipeline.Dl9WEMix.js'
+              : 'assets/conversion-pipeline.B-ebNt7j.js',
+          size: kind === 'prior' ? 81_318 : 99_288,
+          sha256: kind === 'prior' ? V8_MAIN_ASSETS.prior.sha256 : '9'.repeat(64),
+        },
+      ],
+    },
+  });
+
+  it('locks source, module, inventory, callback asset and exact needle for both builds', () => {
+    const prior = build('prior');
+    const candidate = build('candidate');
+    const lock = createV8CaptureLock(prior, candidate);
+    assert.equal(lock.schemaVersion, 1);
+    assert.equal(lock.candidate.sourceSha, 'a'.repeat(40));
+    assert.equal(lock.candidate.module.sha256, V8_COMBINED_MODULE_SHA256);
+    assert.equal(lock.candidate.callbackAsset.sha256, '9'.repeat(64));
+    assert.equal(
+      lock.candidate.callbackNeedleSha256,
+      createHash('sha256').update(V8_MAIN_ASSETS.candidate.needle).digest('hex')
+    );
+    assert.doesNotThrow(() => assertV8CaptureLock(lock, prior, candidate));
+    assert.throws(
+      () => assertV8CaptureLock(lock, prior, { ...candidate, manifestSha256: '8'.repeat(64) }),
+      /lock differs/
+    );
+    assert.throws(
+      () =>
+        assertV8CaptureLock(
+          { ...lock, candidate: { ...lock.candidate, sourceSha: 'b'.repeat(40) } },
+          prior,
+          candidate
+        ),
+      /lock differs/
+    );
+    assert.throws(
+      () =>
+        createV8CaptureLock(
+          { ...prior, state: { ...prior.state, sourceSha: 'b'.repeat(40) } },
+          candidate
+        ),
+      /prior source pin/
+    );
+    assert.throws(
+      () =>
+        createV8CaptureLock(prior, {
+          ...candidate,
+          state: {
+            ...candidate.state,
+            files: candidate.state.files.map((file, index) =>
+              index === 0 ? { ...file, sha256: '0'.repeat(64) } : file
+            ),
+          },
+        }),
+      /WASM digest differs/
+    );
+    assert.throws(
+      () =>
+        createV8CaptureLock(prior, {
+          ...candidate,
+          state: {
+            ...candidate.state,
+            files: candidate.state.files.map((file, index) =>
+              index === 0
+                ? {
+                    ...file,
+                    sha256: 'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186',
+                  }
+                : file
+            ),
+          },
+        }),
+      /combined WASM pin/
+    );
+    assert.throws(
+      () =>
+        createV8CaptureLock(prior, {
+          ...candidate,
+          state: { ...candidate.state, files: candidate.state.files.slice(0, 1) },
+        }),
+      /main callback asset is not unique/
+    );
+  });
+
+  it('creates a lock once, reuses identical bytes and preserves mismatched evidence', async () => {
+    const output = await mkdtemp(join(tmpdir(), 'wmc-v8-lock-'));
+    const path = join(output, 'owned-vp8-v8-input-capture-lock.json');
+    const bytes = Buffer.from('exclusive lock\n');
+    try {
+      assert.equal(await writeOwnedVp8InputCaptureLock(path, bytes), 'new');
+      assert.equal(await writeOwnedVp8InputCaptureLock(path, bytes), 'reused');
+      await assert.rejects(
+        writeOwnedVp8InputCaptureLock(path, Buffer.from('different lock\n')),
+        /lock differs/
+      );
+      assert.deepEqual(await readFile(path), bytes);
+    } finally {
+      await rm(output, { recursive: true, force: true });
+    }
+  });
+
+  it('pins both five-argument field maps and rejects drift before patching', () => {
+    assert.match(V8_MAIN_ASSETS.prior.needle, /async\(n,i,a,c,u\)/);
+    assert.equal(
+      V8_MAIN_ASSETS.prior.capture,
+      'const __wmcV8ObserverPixels=n,__wmcV8ObserverFrameNum=a,__wmcV8ObserverTiming=u;'
+    );
+    assert.match(V8_MAIN_ASSETS.candidate.needle, /async\(n,a,u,d,f\)/);
+    assert.equal(
+      V8_MAIN_ASSETS.candidate.capture,
+      'const __wmcV8ObserverPixels=n,__wmcV8ObserverFrameNum=u,__wmcV8ObserverTiming=f;'
+    );
+    assert.equal(
+      V8_MAIN_ASSETS.prior.insertion,
+      'await globalThis.__wmcV8HashCallback(__wmcV8ObserverPixels,__wmcV8ObserverFrameNum,__wmcV8ObserverTiming);'
+    );
+    assert.equal(V8_MAIN_ASSETS.candidate.insertion, V8_MAIN_ASSETS.prior.insertion);
+    assert(V8_MAIN_ASSETS.prior.needle.endsWith('async()=>{'));
+    assert(V8_MAIN_ASSETS.candidate.needle.endsWith('async()=>{'));
+    assert.throws(
+      () =>
+        patchV8MainEncoderCallback(Buffer.from('wrong'), 'prior', 5, V8_MAIN_ASSETS.prior.sha256),
+      /digest/
+    );
+    assert.throws(
+      () => patchV8MainEncoderCallback(Buffer.from('wrong'), 'candidate', 6, '0'.repeat(64)),
+      /size/
+    );
+    const candidateSource = Buffer.from(`${V8_MAIN_ASSETS.candidate.needle}return 1})}`);
+    const candidateSha256 = createHash('sha256').update(candidateSource).digest('hex');
+    assert.match(
+      Buffer.from(
+        patchV8MainEncoderCallback(
+          candidateSource,
+          'candidate',
+          candidateSource.length,
+          candidateSha256
+        ).bytes
+      ).toString(),
+      /__wmcV8HashCallback\(__wmcV8ObserverPixels,__wmcV8ObserverFrameNum,__wmcV8ObserverTiming\)/
+    );
+  });
+
+  it('captures outer callback fields before inner TDZ while retaining pool cleanup', async () => {
+    for (const build of ['prior', 'candidate'] as const) {
+      const contract = V8_MAIN_ASSETS[build];
+      const inner =
+        build === 'prior' ? 'let a=7;return a' : 'let n=7,u=8,f=9;let r=d?.take();return r';
+      const source = '({' + contract.needle + inner + '})}})';
+      const bytes = Buffer.from(source);
+      const patchContract = {
+        ...contract,
+        expectedBytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+      };
+      const patched = patchV8ExactCallback(bytes, patchContract);
+      assert.equal(patched.originalSha256, patchContract.sha256);
+      assert.equal(patched.patchedSha256, createHash('sha256').update(patched.bytes).digest('hex'));
+      const patchedText = Buffer.from(patched.bytes).toString();
+      assert(patchedText.indexOf(contract.capture) < patchedText.indexOf('if(r?.aborted)'));
+      assert(patchedText.indexOf(contract.insertion) > patchedText.indexOf('async()=>{'));
+      assert.throws(
+        () => patchV8ExactCallback(bytes, { ...patchContract, expectedBytes: bytes.length + 1 }),
+        /size/
+      );
+      assert.throws(
+        () => patchV8ExactCallback(bytes, { ...patchContract, sha256: '0'.repeat(64) }),
+        /digest/
+      );
+      for (const changed of [
+        source.replace(contract.needle, 'onFrameAvailable:async()=>{'),
+        source + source,
+      ]) {
+        const input = Buffer.from(changed);
+        assert.throws(
+          () =>
+            patchV8ExactCallback(input, {
+              ...patchContract,
+              expectedBytes: input.length,
+              sha256: createHash('sha256').update(input).digest('hex'),
+            }),
+          /not unique/
+        );
+      }
+      const collision = Buffer.from(`${source};/* __wmcV8ObserverPixels */`);
+      assert.throws(
+        () =>
+          patchV8ExactCallback(collision, {
+            ...patchContract,
+            expectedBytes: collision.length,
+            sha256: createHash('sha256').update(collision).digest('hex'),
+          }),
+        /observer identifier/
+      );
+      let released = 0;
+      let taken = 0;
+      let skipped = false;
+      const observed: unknown[][] = [];
+      const release = () => {
+        released++;
+      };
+      const pooled = async (_pixels: Uint8Array, use: () => Promise<number>) => {
+        try {
+          return await use();
+        } finally {
+          release();
+        }
+      };
+      const sandbox = {
+        r: null,
+        T: { release, shouldSkip: () => skipped },
+        E: { release },
+        _: { shouldSkip: () => skipped },
+        gt: pooled,
+        $t: pooled,
+        __wmcV8HashCallback: async (...args: unknown[]) => {
+          observed.push(args);
+        },
+      };
+      const callback = (
+        runInNewContext(patchedText, sandbox) as {
+          onFrameAvailable: (...args: unknown[]) => Promise<number>;
+        }
+      ).onFrameAvailable;
+      const pixels = new Uint8Array(1);
+      const timing = { startUs: 0, endUs: 1 };
+      const handoff = { take: () => ++taken };
+      await callback(pixels, 0, 19, handoff, timing);
+      assert.deepEqual(observed, [[pixels, 19, timing]]);
+      assert.equal(released, 1);
+      assert.equal(taken, build === 'candidate' ? 1 : 0);
+      sandbox.__wmcV8HashCallback = async () => {
+        throw new Error('stream failed');
+      };
+      await assert.rejects(callback(pixels, 0, 19, handoff, timing), /stream failed/);
+      assert.equal(released, 2);
+      assert.equal(taken, build === 'candidate' ? 1 : 0);
+      skipped = true;
+      await callback(pixels, 0, 19, handoff, timing);
+      assert.equal(released, 3);
+      assert.equal(observed.length, 1);
+      assert.equal(taken, build === 'candidate' ? 1 : 0);
+    }
+  });
+
+  it('streams one borrowed RGB frame in bounded canonical chunks', async () => {
+    const pixels = new Uint8Array(V8_RGB_BYTES);
+    pixels.fill(41);
+    const expected = createHash('sha256').update(pixels).digest('hex');
+    const hash = createHash('sha256');
+    let chunks = 0;
+    let offset = 0;
+    const messages: Array<Exclude<V8HashMessage, { kind: 'chunk' }>> = [];
+    const sandbox = {
+      Uint8Array,
+      btoa,
+      __wmcV8HashStream: async (message: V8HashMessage) => {
+        if (message.kind !== 'chunk') {
+          messages.push(message);
+          return;
+        }
+        assert.equal(message.index, 0);
+        assert.equal(message.offset, offset);
+        assert(message.base64.length <= 4 * Math.ceil(V8_CAPTURE_CHUNK / 3));
+        const bytes = Buffer.from(message.base64, 'base64');
+        assert.equal(bytes.toString('base64'), message.base64);
+        assert(bytes.length <= V8_CAPTURE_CHUNK);
+        hash.update(bytes);
+        offset += bytes.length;
+        chunks++;
+      },
+    };
+    runInNewContext(`(${installV8AllInputHashCapture.toString()})()`, sandbox);
+    const callback = Reflect.get(sandbox, '__wmcV8HashCallback') as (
+      bytes: Uint8Array,
+      frameNum: number,
+      timing: { startUs: number; endUs: number }
+    ) => Promise<void>;
+    await callback(pixels, 0, { startUs: 0, endUs: 33_333 });
+    assert.deepEqual(JSON.parse(JSON.stringify(messages)), [
+      { kind: 'begin', index: 0, frameNum: 0, startUs: 0, endUs: 33_333 },
+      { kind: 'end', index: 0 },
+    ]);
+    assert.equal(offset, V8_RGB_BYTES);
+    assert.equal(chunks, 95);
+    assert.equal(hash.digest('hex'), expected);
+    await assert.rejects(callback(pixels.subarray(0, 1), 1, { startUs: 1, endUs: 2 }), /extent/);
+  });
+
+  it('rejects ticket, ordering, noncanonical data and truncation while retaining rows', async () => {
+    const output = await mkdtemp(join(tmpdir(), 'wmc-v8-stream-'));
+    try {
+      const receiver = new V8IncrementalHashReceiver(output, 'candidate');
+      const begin: V8HashMessage = {
+        kind: 'begin',
+        index: 0,
+        frameNum: 0,
+        startUs: 0,
+        endUs: 33_333,
+      };
+      await receiver.consume(begin);
+      await assert.rejects(receiver.consume(begin), /overlap/);
+      await assert.rejects(receiver.consume({ kind: 'end', index: 0 }), /truncated/);
+      await assert.rejects(
+        receiver.consume({ kind: 'chunk', index: 1, offset: 0, base64: 'AA==' }),
+        /ticket/
+      );
+      const full = Buffer.alloc(V8_CAPTURE_CHUNK, 41);
+      const fullBase64 = full.toString('base64');
+      assert(fullBase64.endsWith('Q=='));
+      await assert.rejects(
+        receiver.consume({ kind: 'chunk', index: 0, offset: 1, base64: fullBase64 }),
+        /offset/
+      );
+      await assert.rejects(
+        receiver.consume({
+          kind: 'chunk',
+          index: 0,
+          offset: 0,
+          base64: `${fullBase64.slice(0, -1)}\n`,
+        }),
+        /before decode/
+      );
+      await assert.rejects(
+        receiver.consume({ kind: 'chunk', index: 0, offset: 0, base64: 'A'.repeat(87_384) }),
+        /before decode/
+      );
+      await assert.rejects(
+        receiver.consume({
+          kind: 'chunk',
+          index: 0,
+          offset: 0,
+          base64: fullBase64.replace(/Q==$/, 'R=='),
+        }),
+        /noncanonical/
+      );
+      const hash = createHash('sha256');
+      for (let offset = 0; offset < V8_RGB_BYTES; offset += V8_CAPTURE_CHUNK) {
+        const bytes = full.subarray(0, Math.min(V8_CAPTURE_CHUNK, V8_RGB_BYTES - offset));
+        hash.update(bytes);
+        await receiver.consume({
+          kind: 'chunk',
+          index: 0,
+          offset,
+          base64: bytes.toString('base64'),
+        });
+      }
+      assert.deepEqual(receiver.snapshot().active, { index: 0, offset: V8_RGB_BYTES });
+      await receiver.consume({ kind: 'end', index: 0 });
+      assert.equal(receiver.snapshot().active, null);
+      const rows = receiver.snapshot().rows;
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]!.sha256, hash.digest('hex'));
+      assert.equal(rows[0]!.chunks, 95);
+      await assert.rejects(receiver.consume({ kind: 'end', index: 0 }), /ticket/);
+      await assert.rejects(
+        receiver.consume({ ...begin, index: 1, frameNum: 0, startUs: 0 }),
+        /order/
+      );
+      await receiver.consume({
+        kind: 'begin',
+        index: 1,
+        frameNum: 2,
+        startUs: 33_333,
+        endUs: 66_666,
+      });
+      for (let offset = 0; offset < V8_RGB_BYTES; offset += V8_CAPTURE_CHUNK) {
+        const bytes = full.subarray(0, Math.min(V8_CAPTURE_CHUNK, V8_RGB_BYTES - offset));
+        await receiver.consume({
+          kind: 'chunk',
+          index: 1,
+          offset,
+          base64: bytes.toString('base64'),
+        });
+      }
+      await receiver.consume({ kind: 'end', index: 1 });
+      assert.deepEqual(await readdir(output), ['owned-vp8-v8-all-input-candidate.jsonl']);
+      const lines = (await readFile(join(output, 'owned-vp8-v8-all-input-candidate.jsonl'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(lines, receiver.snapshot().rows);
+      assert.throws(() => receiver.complete(), /count/);
+    } finally {
+      await rm(output, { recursive: true, force: true });
+    }
+  });
+
+  it('compares all 77 hashes, decoder counters and presentation intervals', () => {
+    const rows: V8StreamedHashRow[] = Array.from({ length: 77 }, (_, index) => ({
+      index,
+      frameNum: index * 2,
+      startUs: index * 83_333,
+      endUs: (index + 1) * 83_333,
+      logicalRgbBytes: V8_RGB_BYTES,
+      chunks: 95,
+      sha256: 'a'.repeat(64),
+    }));
+    const candidate = rows.map((row) => ({ ...row }));
+    candidate[19]!.sha256 = 'b'.repeat(64);
+    candidate[38]!.frameNum++;
+    candidate[57]!.startUs++;
+    const comparison = compareV8StreamedHashes(rows, candidate);
+    assert.deepEqual(
+      comparison
+        .filter((entry) => !entry.samePixels || !entry.sameFrameNum || !entry.samePresentation)
+        .map((entry) => entry.index),
+      [19, 38, 57]
+    );
+    assert.throws(() => compareV8StreamedHashes(rows.slice(0, -1), candidate), /76 !== 77/);
   });
 });

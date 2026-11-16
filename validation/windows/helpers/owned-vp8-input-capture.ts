@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { open, stat } from 'node:fs/promises';
+import { appendFile, open, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { Page } from '@playwright/test';
@@ -15,15 +15,397 @@ export const V8_CAPTURE_INDICES = [0, 19, 38, 57, 76] as const;
 export const V8_CAPTURE_BUDGET = 32 * 1024 * 1024;
 export const V8_CAPTURE_CHUNK = 64 * 1024;
 const EXPECTED_ENCODES = 77;
+const V8_MAX_BASE64_CHARS = 4 * Math.ceil(V8_CAPTURE_CHUNK / 3);
+export const V8_CAPTURE_LOCK_PATH = 'dist-validation/owned-vp8-v8-input-capture-lock.json';
+export const V8_PRIOR_SOURCE_SHA = 'be35f5fa89a60189475fe2ef7fd446e9fa18cef4';
+export const V8_PRIOR_LEGACY_WASM_SHA256 =
+  '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
+export const V8_COMBINED_MODULE_SHA256 =
+  'bd170496ba1f2574bd095effdc55b7cd102b203dcc347a472141fcfbd9284b0e';
+const ALLOWED_CAPTURE_MODULES = new Set([
+  'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186',
+  V8_COMBINED_MODULE_SHA256,
+]);
+
+// The prior asset SHA is pinned. The candidate needle came from the 4272
+// reference; its actual asset SHA is frozen after the final source-bound build.
+export const V8_MAIN_ASSETS = {
+  prior: {
+    sha256: 'f8745266b663b98aad72ede8ef7b4a440c5c920183173264fee8ee9be8b9cfb5',
+    needle:
+      'onFrameAvailable:async(n,i,a,c,u)=>{if(r?.aborted)throw T.release(n),new DOMException(`Cancelled`,`AbortError`);if(_.shouldSkip(a))T.release(n);else return gt(n,async()=>{',
+    capture: 'const __wmcV8ObserverPixels=n,__wmcV8ObserverFrameNum=a,__wmcV8ObserverTiming=u;',
+    insertion:
+      'await globalThis.__wmcV8HashCallback(__wmcV8ObserverPixels,__wmcV8ObserverFrameNum,__wmcV8ObserverTiming);',
+  },
+  candidate: {
+    needle:
+      'onFrameAvailable:async(n,a,u,d,f)=>{if(r?.aborted)throw E.release(n),new DOMException(`Cancelled`,`AbortError`);if(T.shouldSkip(u))E.release(n);else return $t(n,async()=>{',
+    capture: 'const __wmcV8ObserverPixels=n,__wmcV8ObserverFrameNum=u,__wmcV8ObserverTiming=f;',
+    insertion:
+      'await globalThis.__wmcV8HashCallback(__wmcV8ObserverPixels,__wmcV8ObserverFrameNum,__wmcV8ObserverTiming);',
+  },
+} as const;
+
+export type V8CaptureBuild = 'prior' | 'candidate';
+export type V8StreamedHashRow = {
+  index: number;
+  frameNum: number;
+  startUs: number;
+  endUs: number;
+  logicalRgbBytes: number;
+  chunks: number;
+  sha256: string;
+};
+export type V8HashMessage =
+  | {
+      kind: 'begin';
+      index: number;
+      frameNum: number;
+      startUs: number;
+      endUs: number;
+    }
+  | { kind: 'chunk'; index: number; offset: number; base64: string }
+  | { kind: 'end'; index: number };
+
+export type V8CaptureBuildSource = {
+  manifestSha256: string;
+  state: {
+    sourceSha: string;
+    treeSha: string;
+    coreSha: string;
+    files: { path: string; size: number; sha256: string }[];
+  };
+};
+
+/** Assemble only source-bound fields already checked by readBuild's exact inventory. */
+export function createV8CaptureLock(prior: V8CaptureBuildSource, candidate: V8CaptureBuildSource) {
+  const identity = (build: V8CaptureBuild, source: V8CaptureBuildSource) => {
+    for (const value of [source.state.sourceSha, source.state.treeSha, source.state.coreSha])
+      assert.match(value, /^[0-9a-f]{40}$/, `V8 ${build} source identity differs`);
+    assert.match(source.manifestSha256, /^[0-9a-f]{64}$/, `V8 ${build} inventory digest differs`);
+    const select = (pattern: RegExp, role: string) => {
+      const matches = source.state.files.filter((file) => pattern.test(file.path));
+      assert.equal(matches.length, 1, `V8 ${build} ${role} is not unique`);
+      const file = matches[0]!;
+      assert(
+        Number.isSafeInteger(file.size) && file.size > 0 && /^[0-9a-f]{64}$/.test(file.sha256),
+        `V8 ${build} ${role} identity differs`
+      );
+      return { path: file.path, size: file.size, sha256: file.sha256 };
+    };
+    const module = select(
+      build === 'prior'
+        ? /^assets\/webp-wasm[-.][\w-]{8}\.wasm$/
+        : /^assets\/owned-vp8[-.][\w-]{8}\.wasm$/,
+      'WASM module'
+    );
+    const callbackAsset = select(
+      /^assets\/conversion-pipeline\.[\w-]{8}\.js$/,
+      'main callback asset'
+    );
+    if (build === 'prior') {
+      assert.equal(source.state.sourceSha, V8_PRIOR_SOURCE_SHA, 'V8 prior source pin differs');
+      assert.equal(module.sha256, V8_PRIOR_LEGACY_WASM_SHA256, 'V8 prior WASM pin differs');
+      assert.equal(
+        callbackAsset.sha256,
+        V8_MAIN_ASSETS.prior.sha256,
+        'V8 prior main asset pin differs'
+      );
+    } else {
+      assertV8CaptureBuild(source.state.sourceSha, module.sha256);
+      assert.equal(module.sha256, V8_COMBINED_MODULE_SHA256, 'V8 combined WASM pin differs');
+    }
+    return {
+      sourceSha: source.state.sourceSha,
+      treeSha: source.state.treeSha,
+      coreSha: source.state.coreSha,
+      manifestSha256: source.manifestSha256,
+      module,
+      callbackAsset,
+      callbackNeedleSha256: createHash('sha256').update(V8_MAIN_ASSETS[build].needle).digest('hex'),
+    };
+  };
+  return {
+    schemaVersion: 1 as const,
+    scenario: 'owned-vp8-product-v8-low-inputs' as const,
+    prior: identity('prior', prior),
+    candidate: identity('candidate', candidate),
+  };
+}
+
+export type V8CaptureLock = ReturnType<typeof createV8CaptureLock>;
+
+export function assertV8CaptureLock(
+  value: unknown,
+  prior: V8CaptureBuildSource,
+  candidate: V8CaptureBuildSource
+): asserts value is V8CaptureLock {
+  assert.deepEqual(
+    value,
+    createV8CaptureLock(prior, candidate),
+    'V8 capture lock differs from built source'
+  );
+}
+
+/** Patch only the retained main-software callback, after its pooled owner begins. */
+export function patchV8MainEncoderCallback(
+  original: Uint8Array,
+  build: V8CaptureBuild,
+  expectedBytes: number,
+  expectedSha256: string
+): { bytes: Uint8Array; originalSha256: string; patchedSha256: string } {
+  const contract = V8_MAIN_ASSETS[build];
+  if (build === 'prior')
+    assert.equal(expectedSha256, V8_MAIN_ASSETS.prior.sha256, 'V8 prior main asset pin differs');
+  assert.match(expectedSha256, /^[0-9a-f]{64}$/, 'V8 main asset digest is invalid');
+  return patchV8ExactCallback(original, { ...contract, expectedBytes, sha256: expectedSha256 });
+}
+
+/** Exact-text boundary shared by the two pinned main assets and pure contract tests. */
+export function patchV8ExactCallback(
+  original: Uint8Array,
+  contract: {
+    sha256: string;
+    expectedBytes: number;
+    needle: string;
+    capture: string;
+    insertion: string;
+  }
+): { bytes: Uint8Array; originalSha256: string; patchedSha256: string } {
+  assert.equal(original.byteLength, contract.expectedBytes, 'V8 main asset size differs');
+  const originalSha256 = createHash('sha256').update(original).digest('hex');
+  assert.equal(originalSha256, contract.sha256, 'V8 main asset digest differs');
+  const source = Buffer.from(original).toString('utf8');
+  assert.equal(source.split(contract.needle).length, 2, 'V8 main callback is not unique');
+  for (const identifier of [
+    '__wmcV8ObserverPixels',
+    '__wmcV8ObserverFrameNum',
+    '__wmcV8ObserverTiming',
+  ])
+    assert(
+      !source.includes(identifier),
+      `V8 main observer identifier ${identifier} already exists`
+    );
+  assert(contract.needle.startsWith('onFrameAvailable:async('), 'V8 main callback entry differs');
+  const outerOpen = contract.needle.indexOf('=>{') + 3;
+  assert(outerOpen > 3, 'V8 main callback outer body differs');
+  const replacement =
+    contract.needle.slice(0, outerOpen) +
+    contract.capture +
+    contract.needle.slice(outerOpen) +
+    contract.insertion;
+  const bytes = Buffer.from(source.replace(contract.needle, replacement));
+  return {
+    bytes,
+    originalSha256,
+    patchedSha256: createHash('sha256').update(bytes).digest('hex'),
+  };
+}
+
+/** Self-contained browser hook; the borrowed RGB view remains in its pooled owner. */
+export function installV8AllInputHashCapture(): void {
+  const logicalBytes = 1920 * 1080 * 3;
+  const chunkBytes = 64 * 1024;
+  let nextIndex = 0;
+  let active = false;
+  Reflect.set(
+    globalThis,
+    '__wmcV8HashCallback',
+    async (pixels: Uint8Array, frameNum: number, timing: { startUs: number; endUs: number }) => {
+      if (active || nextIndex >= 77) throw new Error('V8 streamed callback overlap or excess');
+      if (!(pixels instanceof Uint8Array) || pixels.byteLength < logicalBytes)
+        throw new Error('V8 streamed RGB extent differs');
+      if (
+        !Number.isSafeInteger(frameNum) ||
+        frameNum < 0 ||
+        !Number.isSafeInteger(timing?.startUs) ||
+        !Number.isSafeInteger(timing?.endUs) ||
+        timing.startUs < 0 ||
+        timing.endUs <= timing.startUs
+      )
+        throw new Error('V8 streamed callback presentation differs');
+      const send = Reflect.get(globalThis, '__wmcV8HashStream') as
+        | ((message: V8HashMessage) => Promise<void>)
+        | undefined;
+      if (typeof send !== 'function') throw new Error('V8 streamed hash binding is absent');
+      active = true;
+      const index = nextIndex++;
+      try {
+        await send({
+          kind: 'begin',
+          index,
+          frameNum,
+          startUs: timing.startUs,
+          endUs: timing.endUs,
+        });
+        for (let offset = 0; offset < logicalBytes; offset += chunkBytes) {
+          const length = Math.min(chunkBytes, logicalBytes - offset);
+          const view = pixels.subarray(offset, offset + length);
+          let binary = '';
+          for (let at = 0; at < view.length; at += 8192)
+            binary += String.fromCharCode(...view.subarray(at, at + 8192));
+          await send({ kind: 'chunk', index, offset, base64: btoa(binary) });
+        }
+        await send({ kind: 'end', index });
+      } finally {
+        active = false;
+      }
+    }
+  );
+}
+
+/** Node-side bounded stream. Each completed row is durable before the next frame. */
+export class V8IncrementalHashReceiver {
+  private readonly rows: V8StreamedHashRow[] = [];
+  private receiving = false;
+  private readonly output: string;
+  private readonly build: V8CaptureBuild;
+  private active: {
+    index: number;
+    frameNum: number;
+    startUs: number;
+    endUs: number;
+    offset: number;
+    chunks: number;
+    hash: ReturnType<typeof createHash>;
+  } | null = null;
+
+  constructor(output: string, build: V8CaptureBuild) {
+    this.output = output;
+    this.build = build;
+  }
+
+  async consume(message: V8HashMessage): Promise<void> {
+    assert(!this.receiving, 'V8 streamed binding calls overlap');
+    this.receiving = true;
+    try {
+      await this.consumeOne(message);
+    } finally {
+      this.receiving = false;
+    }
+  }
+
+  private async consumeOne(message: V8HashMessage): Promise<void> {
+    if (message.kind === 'begin') {
+      assert.equal(this.active, null, 'V8 streamed callback overlap');
+      assert.equal(message.index, this.rows.length, 'V8 streamed callback ordinal differs');
+      assert(message.index < EXPECTED_ENCODES, 'V8 streamed callback count exceeds bound');
+      assert(
+        Number.isSafeInteger(message.frameNum) && message.frameNum >= 0,
+        'V8 streamed frame number differs'
+      );
+      assert(
+        Number.isSafeInteger(message.startUs) &&
+          Number.isSafeInteger(message.endUs) &&
+          message.startUs >= 0 &&
+          message.endUs > message.startUs,
+        'V8 streamed presentation interval differs'
+      );
+      const previous = this.rows.at(-1);
+      assert(
+        previous
+          ? message.frameNum > previous.frameNum && message.startUs > previous.startUs
+          : message.startUs === 0,
+        'V8 streamed presentation order differs'
+      );
+      this.active = {
+        index: message.index,
+        frameNum: message.frameNum,
+        startUs: message.startUs,
+        endUs: message.endUs,
+        offset: 0,
+        chunks: 0,
+        hash: createHash('sha256'),
+      };
+      return;
+    }
+    const active = this.active;
+    assert(active && message.index === active.index, 'V8 streamed callback ticket differs');
+    if (message.kind === 'chunk') {
+      assert.equal(message.offset, active.offset, 'V8 streamed chunk offset differs');
+      const expected = Math.min(V8_CAPTURE_CHUNK, V8_RGB_BYTES - active.offset);
+      assert(expected > 0, 'V8 streamed chunk exceeds logical RGB');
+      const padding = '='.repeat((3 - (expected % 3)) % 3);
+      assert(
+        typeof message.base64 === 'string' &&
+          message.base64.length === 4 * Math.ceil(expected / 3) &&
+          message.base64.length <= V8_MAX_BASE64_CHARS &&
+          /^[A-Za-z0-9+/]*={0,2}$/.test(message.base64) &&
+          message.base64.endsWith(padding) &&
+          (padding !== '' || !message.base64.includes('=')),
+        'V8 streamed base64 shape differs before decode'
+      );
+      const bytes = Buffer.from(message.base64, 'base64');
+      assert.equal(bytes.byteLength, expected, 'V8 streamed chunk length differs');
+      assert.equal(bytes.toString('base64'), message.base64, 'V8 streamed base64 is noncanonical');
+      active.hash.update(bytes);
+      active.offset += bytes.byteLength;
+      active.chunks++;
+      return;
+    }
+    assert.equal(message.kind, 'end', 'V8 streamed message kind differs');
+    assert.equal(active.offset, V8_RGB_BYTES, 'V8 streamed RGB is truncated');
+    const row: V8StreamedHashRow = {
+      index: active.index,
+      frameNum: active.frameNum,
+      startUs: active.startUs,
+      endUs: active.endUs,
+      logicalRgbBytes: active.offset,
+      chunks: active.chunks,
+      sha256: active.hash.digest('hex'),
+    };
+    const path = join(this.output, `owned-vp8-v8-all-input-${this.build}.jsonl`);
+    const line = `${JSON.stringify(row)}\n`;
+    if (row.index === 0) await writeFile(path, line, { flag: 'wx' });
+    else await appendFile(path, line);
+    this.rows.push(row);
+    this.active = null;
+  }
+
+  snapshot(): {
+    rows: readonly V8StreamedHashRow[];
+    active: { index: number; offset: number } | null;
+  } {
+    return {
+      rows: [...this.rows],
+      active: this.active ? { index: this.active.index, offset: this.active.offset } : null,
+    };
+  }
+
+  complete(): readonly V8StreamedHashRow[] {
+    assert.equal(this.active, null, 'V8 streamed callback remains active');
+    assert.equal(this.rows.length, EXPECTED_ENCODES, 'V8 streamed callback count differs');
+    return [...this.rows];
+  }
+}
+
+export function compareV8StreamedHashes(
+  prior: readonly V8StreamedHashRow[],
+  candidate: readonly V8StreamedHashRow[]
+) {
+  assert.equal(prior.length, EXPECTED_ENCODES);
+  assert.equal(candidate.length, EXPECTED_ENCODES);
+  return prior.map((row, index) => {
+    const other = candidate[index]!;
+    assert.equal(row.index, index);
+    assert.equal(other.index, index);
+    return {
+      index,
+      priorSha256: row.sha256,
+      candidateSha256: other.sha256,
+      samePixels: row.sha256 === other.sha256,
+      sameFrameNum: row.frameNum === other.frameNum,
+      samePresentation: row.startUs === other.startUs && row.endUs === other.endUs,
+    };
+  });
+}
 
 /** Git provenance and compiled module identity are distinct build fields. */
 export function assertV8CaptureBuild(sourceSha: string, moduleSha256: string): void {
   assert.match(sourceSha, /^[0-9a-f]{40}$/, 'Candidate Git source SHA is invalid');
-  assert.equal(
-    moduleSha256,
-    'f962b9e803a014febc96d9a59bbab8faeb032866e837136c6afd8dd972fc4186',
-    'Candidate owned WASM digest differs'
-  );
+  assert.match(moduleSha256, /^[0-9a-f]{64}$/, 'Candidate owned WASM digest differs');
+  assert(ALLOWED_CAPTURE_MODULES.has(moduleSha256), 'Candidate owned WASM digest differs');
 }
 
 export function captureIndex(ordinal: number): boolean {
