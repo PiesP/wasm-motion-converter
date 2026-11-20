@@ -286,6 +286,17 @@ frame-local flags and scratch bound cover the trial. Its common quantizer
 changes effective luma and chroma steps, so the frozen frame quality and size
 gates apply.
 
+A separate exposed q75 diagnostic tests only coarser UV AC on all-textured
+frames whose nearest-chroma import RGB MSE exceeds the existing strict 4,096
+threshold. The 17 observed high-import inputs shared an effective UV AC qindex
+of 32 in the q60 control across either of its two luma choices. This experiment
+uses that AC grid at q75, preserving the selected base qindex, UV DC, luma,
+filter, rate weights, mode candidates and existing refinement. It does not
+run a second profile or add retained storage. A q60 packet substitution missed
+the q75 SSIM gate on one small high-import control, so this arm must cover the
+entire affected exposed population before adoption. The original V13 55/60
+result, unrelated muted q60 size miss and q60 high-import profile remain separate.
+
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction

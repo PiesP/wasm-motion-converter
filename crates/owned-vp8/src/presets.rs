@@ -22,6 +22,7 @@ pub(crate) const HIGH_CHROMA_LOSS_QINDEX_REDUCTION: usize = 4;
 pub(crate) const HIGH_CHROMA_LOSS_ORIGINAL_UV_DELTAS: (i8, i8) = (-13, 0);
 pub(crate) const HIGH_CHROMA_LOSS_UV_DELTAS: (i8, i8) = (-9, 4);
 const CHROMA_LOSS_THRESHOLD_PER_RGB_CHANNEL: u64 = 4096;
+const HIGH_IMPORT_UV_AC_QINDEX: i8 = 32;
 pub(crate) const FILTER_LEVEL: [u8; 3] = [6, 4, 4];
 pub(crate) const LAMBDA_NUMERATOR: u64 = 1;
 pub(crate) const LAMBDA_DENOMINATOR: u64 = 1;
@@ -92,6 +93,27 @@ pub(crate) fn medium_textured_luma(
         && total > 0
         && counts[crate::segmentation::TEXTURED as usize] == total
         && chroma_loss_limit(width, height).is_some_and(|limit| rgb_error_sum <= limit)
+}
+
+// Test the high-import q60 UV AC grid on q75 without that profile's
+// luma, rate, filter, or preview choices.
+pub(crate) fn medium_high_import_deltas(
+    mut selected: Deltas,
+    quality: u32,
+    counts: [usize; 4],
+    total: usize,
+    rgb_error_sum: u64,
+    visible: (u32, u32),
+    base_qindex: usize,
+) -> Deltas {
+    if quality == 75
+        && total > 0
+        && counts[crate::segmentation::TEXTURED as usize] == total
+        && chroma_loss_limit(visible.0, visible.1).is_some_and(|limit| rgb_error_sum > limit)
+    {
+        selected.uv_ac = HIGH_IMPORT_UV_AC_QINDEX - base_qindex as i8;
+    }
+    selected
 }
 
 pub(crate) fn medium_textured_deltas(mut original: Deltas) -> Deltas {
@@ -379,6 +401,47 @@ mod tests {
             assert!(!high_chroma_loss(quality, u64::MAX, 5, 3));
         }
         assert_eq!(frame_deltas(60, u64::MAX, u32::MAX, u32::MAX), deltas(60));
+    }
+
+    #[test]
+    fn medium_high_import_uses_common_uv_ac_grid_only_above_the_visible_threshold() {
+        use crate::ac_quant::{steps, Plane};
+
+        let visible = (5, 3);
+        let threshold = 4096 * 3 * 5 * 3;
+        let textured = [0, 0, 0, 1];
+        for (quality, counts, total, error) in [
+            (75, textured, 1, threshold - 1),
+            (75, textured, 1, threshold),
+            (75, [1, 0, 0, 1], 2, threshold + 1),
+            (75, [0; 4], 0, threshold + 1),
+            (60, textured, 1, threshold + 1),
+            (85, textured, 1, threshold + 1),
+        ] {
+            let before = deltas(quality);
+            assert_eq!(
+                medium_high_import_deltas(before, quality, counts, total, error, visible, 28),
+                before
+            );
+        }
+        let before = deltas(75);
+        for neutral in [false, true] {
+            let base = textured_qindex(75, neutral);
+            let selected =
+                medium_high_import_deltas(before, 75, textured, 1, threshold + 1, visible, base);
+            assert_eq!(base as i8 + selected.uv_ac, 32);
+            assert_eq!(selected.uv_dc, before.uv_dc);
+            for plane in [Plane::Y1, Plane::Y2] {
+                assert_eq!(
+                    steps(base as u8, selected, plane),
+                    steps(base as u8, before, plane)
+                );
+            }
+            let original_uv = steps(base as u8, before, Plane::UV);
+            let selected_uv = steps(base as u8, selected, Plane::UV);
+            assert_eq!(selected_uv.dc, original_uv.dc);
+            assert!(selected_uv.ac > original_uv.ac);
+        }
     }
 
     #[test]
