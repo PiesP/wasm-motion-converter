@@ -36,7 +36,7 @@ const providerFiles = [
   [
     'automation/security/scanner-pins.ts',
     'scanner-pins.ts.txt',
-    'fb571eeceff38b596ac23cf370b3e39a7fcac90d281773c36fb12f1a8cab6960',
+    '4faf0995672138f00731e459555dc81ff33d8dd4b7f16bad38f68219db5e80f6',
   ],
 ] as const;
 const roots: string[] = [];
@@ -100,7 +100,7 @@ if (file === 'gh') {
     }
     const digest = pins.osv.image.split('@')[1];
     process.stdout.write(scenario === 'missing-digest' ? 'HTTP/2 200\\r\\n' :
-      'Docker-Content-Digest: ' + (scenario === 'mismatch-digest' ? 'sha256:' + '0'.repeat(64) : digest) + '\\r\\n');
+      'Content-Type: application/vnd.oci.image.index.v1+json\\r\\nDocker-Content-Digest: ' + (scenario === 'mismatch-digest' ? 'sha256:' + '0'.repeat(64) : digest) + '\\r\\n');
   }
 }
 `

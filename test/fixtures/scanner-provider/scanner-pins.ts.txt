@@ -11,6 +11,10 @@ export type ScannerPins = {
 
 const coolingHours = 24;
 const digest = '[0-9a-f]{64}';
+const manifestMediaTypes = [
+  'application/vnd.oci.image.index.v1+json',
+  'application/vnd.docker.distribution.manifest.list.v2+json',
+];
 
 type CheckObservation = {
   id: 'osv_release' | 'osv_digest' | 'semgrep_release';
@@ -206,14 +210,26 @@ function checkOsvDigest(version: string, image: string, emit: boolean): CheckObs
     '--header',
     `Authorization: Bearer ${token}`,
     '--header',
-    'Accept: application/vnd.docker.distribution.manifest.v2+json',
+    `Accept: ${manifestMediaTypes.join(', ')}`,
     `https://ghcr.io/v2/google/osv-scanner-action/manifests/v${version}`,
   ]);
   const actual = headers
     .split(/\r?\n/u)
     .filter((line) => /^docker-content-digest:/iu.test(line))
     .map((line) => line.slice(line.indexOf(':') + 1).trim());
+  const contentTypes = headers
+    .split(/\r?\n/u)
+    .filter((line) => /^content-type:/iu.test(line))
+    .map((line) =>
+      line
+        .slice(line.indexOf(':') + 1)
+        .split(';')[0]
+        ?.trim()
+        .toLowerCase()
+    );
   const expected = image.slice(image.indexOf('@') + 1);
+  if (contentTypes.length !== 1 || !manifestMediaTypes.some((type) => type === contentTypes[0]))
+    throw new Error('Invalid OSV manifest Content-Type');
   if (actual.length !== 1 || !/^sha256:[0-9a-f]{64}$/u.test(actual[0]!))
     throw new Error(
       `::error title=osv-scanner digest mismatch::Pinned digest ${expected}; v${version} resolves to unknown.`
