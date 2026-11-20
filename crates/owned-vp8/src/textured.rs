@@ -2275,7 +2275,7 @@ fn encode_observed(
                     &source_y,
                     &source_u,
                     &source_v,
-                    Some(display_rgb::Original {
+                    (!mixed_y1_ac).then_some(display_rgb::Original {
                         pixels,
                         stride,
                         layout: format,
@@ -2312,7 +2312,7 @@ fn encode_observed(
                         })
                         .map_err(|_| EncodeError::OutputLimit)?;
                 }
-                let quota = if high_chroma_loss {
+                let quota = if high_chroma_loss || mixed_y1_ac {
                     0
                 } else {
                     extra_quota(my * blocks_x + mx, count)
@@ -4691,7 +4691,7 @@ impl FrameEncoder {
         let blocks_x = self.plan.padded_width as usize / 16;
         let mx = self.cursor % blocks_x;
         let my = self.cursor / blocks_x;
-        let quota = if self.high_chroma_loss {
+        let quota = if self.high_chroma_loss || self.mixed_y1_ac {
             0
         } else {
             extra_quota(self.cursor, self.plan.macroblock_count as usize)
@@ -4714,7 +4714,7 @@ impl FrameEncoder {
             qindex
         };
         let lambda = crate::presets::lambda_for_quality(rate_qindex, self.request.quality);
-        let original_rgb = Some(display_rgb::Original {
+        let original_rgb = (!self.mixed_y1_ac).then_some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
             layout: self.request.layout,
@@ -9590,6 +9590,49 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn mixed_q60_keeps_uniform_quantizer_and_residual_analysis_without_display_refinement() {
+        let input = mixed_low_curvature_input();
+        let request = Request {
+            quality: 60,
+            ..engine_request(32, 16, 0, &input, 128)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut candidate = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        let mut unrefined = FrameEncoder::new(request, input, plan).unwrap();
+        unrefined.disable_refinement = true;
+        for engine in [&mut candidate, &mut unrefined] {
+            while engine.stage != Stage::CollectStats {
+                assert!(engine.stage != Stage::JointRefine);
+                engine.step().unwrap();
+            }
+            assert!(engine.mixed_y1_ac);
+            assert!(!engine.segments.enabled);
+            assert_eq!(engine.segments.qindex, [10; 4]);
+            assert_eq!(engine.filter.level, 6);
+            assert_eq!((engine.deltas.uv_dc, engine.deltas.uv_ac), (-8, -15));
+            assert!(engine.refinement_log.is_empty());
+            assert!(engine.baseline_overrides.is_empty());
+            assert_eq!(engine.joint_used_total, 0);
+        }
+        assert_eq!(candidate.blocks, unrefined.blocks);
+        assert_eq!(candidate.reconstructed_y, unrefined.reconstructed_y);
+        assert_eq!(candidate.reconstructed_u, unrefined.reconstructed_u);
+        assert_eq!(candidate.reconstructed_v, unrefined.reconstructed_v);
+        assert_eq!(candidate.contexts, unrefined.contexts);
+        assert_eq!(candidate.header_budget, unrefined.header_budget);
+        assert!(candidate.blocks.iter().any(|block| {
+            block
+                .y
+                .iter()
+                .flatten()
+                .chain(block.y2.iter())
+                .chain(block.u.iter().flatten())
+                .chain(block.v.iter().flatten())
+                .any(|&level| level != 0)
+        }));
     }
 
     #[test]

@@ -70,7 +70,7 @@ passed, but actual row 38 exceeded the raw VP8 size cap by 1,069.5 bytes.
 This point is rejected; the full exposed and product gates remain unrun.
 This README result update requires a provenance refresh before the current
 checkout's manifest can be treated as verified.
-The current [eligible Y1 AC zero-bin candidate](../../docs/experiments/501-owned-vp8-y1-ac-zero-bin-candidate.md)
+The [eligible Y1 AC zero-bin candidate](../../docs/experiments/501-owned-vp8-y1-ac-zero-bin-candidate.md)
 adds one fixed encoder-side `5/8` zero threshold only for marginal Y1 AC
 levels in the existing mixed q60 profile. Canonical nearest quantization and
 all signaled decoder steps remain unchanged elsewhere. Its signed measured
@@ -102,7 +102,7 @@ The current exploratory colored and neutral qindices are defined in `src/presets
 The neutral allocation preserves the earlier grayscale control. Per-preset
 fixed-pixel results against the shipped baseline are recorded in the linked
 source-bound result; product performance and lifecycle gates remain open.
-The source color conversion and four segment IDs are unchanged.
+Source color conversion and the four classifier IDs are unchanged.
 
 For normal q60 frames with non-neutral imported chroma and exclusively Textured
 source macroblocks, the photo allocation also requires each imported padded Y/U/V
@@ -114,10 +114,18 @@ qindices by four. It signals Y1 DC, Y2 DC and Y2 AC deltas of +4 and UV DC/AC
 deltas of -15/-7. The original qindices remain the mode-rate reference. Y1 AC
 also becomes finer because VP8 has no separate Y1 AC delta. Neutral, mixed-map
 and high-chroma-loss q60 frames, or frames above the per-plane mean cutoff,
-do not receive this photo allocation. Eligible mixed-map q60 frames use the
-separate Y1 AC allocation linked above. Padded edge replication can dilute
-the measured mean for narrow or odd inputs; this candidate does not assert
-visible-only parity.
+do not receive this photo allocation. Padded edge replication can dilute
+the measured mean for narrow or odd inputs.
+
+Eligible mixed low-curvature q60 frames use one wire quantizer chosen as the
+lower weighted median of the effective class indices, weighted by classified
+macroblock counts. The classifier IDs still determine the original rate
+prices and UV AC-tail eligibility. On fully visible chroma tiles, each UV mode
+uses bounded DC error feedback inside the 8×8 tile. This compound ablation
+uses full I16/I4/UV analysis and skips both display-based chroma refinement
+and its extra search quota for these frames. Any failure in the frozen small
+screen rejects this candidate. See the [uniform quantizer experiment](../../docs/experiments/501-owned-vp8-mixed-q60-uniform-quantizer.md)
+and [chroma DC feedback experiment](../../docs/experiments/501-owned-vp8-chroma-dc-feedback.md).
 
 At q60, the existing source-derived high-chroma-loss predicate compares the
 Original and Reduced profiles. Each completed trial is filtered after its
@@ -133,10 +141,10 @@ Reduced filter/RGB stages and charges one filter macroblock or at most 1,024
 RGB pixels per step without another full-frame buffer. This policy
 does not change ordinary filtered-SSIM refinement or qualify product fidelity.
 
-The finest smooth segment also preserves DC precision when all three imported
-Y/U/V tile ranges are exactly zero. Smooth colored tiles with a one-level range
-retain the separate flat-class rate allocation. This uses bounded per-tile range
-scans and the existing four IDs; no geometry-specific rule or extra segment is used.
+With wire segmentation, the finest smooth segment preserves DC precision
+when all three imported Y/U/V tile ranges are exactly zero. Smooth colored
+tiles with a one-level range retain the separate flat-class rate allocation.
+The classifier uses bounded per-tile range scans and the existing four IDs.
 
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
 sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
@@ -199,13 +207,14 @@ capacity can exceed logical input length and must be admitted explicitly.
 
 `FrameEncoder` in `src/textured.rs` stages initialization, color import,
 macroblock analysis, exact partition-length counting, frozen-decision emission,
-finalization and assembly. Visible UV refinement retains the mandatory one-edit
-choice per macroblock and spends at most 128 additional proposal evaluations per
-frame, assigned by uniform per-macroblock quotas. Its private search uses at most
-64 directed coefficient moves per macroblock, a two-path beam and four distinct
-coefficient positions per path. Each additional proposal takes one bounded ABI
-step. Complete trials score the combined U/V reconstruction; the search commits
-only a final state with the original skip syntax and coefficient frontier.
+finalization and assembly. Eligible frames with display-based UV refinement
+retain a one-edit choice per macroblock and spend at most 128 additional
+proposal evaluations per frame, assigned by uniform per-macroblock quotas.
+The private search uses at most 64 directed coefficient moves per macroblock,
+a two-path beam and four distinct coefficient positions per path. Each
+additional proposal takes one bounded ABI step. Complete trials score the
+combined U/V reconstruction. The search commits only a final state with the
+original skip syntax and coefficient frontier.
 
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those
