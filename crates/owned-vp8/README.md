@@ -315,11 +315,21 @@ For a frame with varied visible imported luma, U and V both within one unit
 of 128, and visible RGB import error within the existing chroma-loss bound,
 the FineSmooth class uses the rounded-up midpoint between q6 and the
 preset's monochrome texture index if only FineSmooth and Textured classes
-are occupied. A wholly FineSmooth field uses I16 prediction for its luma.
-A mixed field keeps I4 and I16. Eligible full chroma tiles can seed local
+are occupied. Mixed q85 uses the monochrome texture index for FineSmooth.
+A wholly FineSmooth field uses I16 prediction. A mixed field keeps I4
+and I16 and uses the mean physical Y1 quantizer to price I4 direction
+trials. The final macroblock comparison keeps its complete ordinary cost. Eligible full chroma tiles can seed local
 UV DC feedback from the actual committed top and left reconstruction
 errors. The physical grid and the separately selected mode-cost reference
 are shared by the synchronous encoder and the resumable ABI.
+
+On a wholly FineSmooth near-neutral grid, the selected I16 mode can
+drop a trailing unit Y2 AC coefficient when the reconstructed tile and
+context-dependent token cost improve the local score. Mixed rough
+q60 fields with ramp and texture classes and chroma leading luma move
+the UV AC delta halfway toward UV DC. In the low-curvature q75 rate
+selector, an expensive map with fine and flat blocks, no ramps, and
+at most one textured block per 32 can also use the shared q60 profile.
 
 For mixed low-curvature frames that retain the q75 rate profile, the first
 rate point raised the four segment qindices by four and compensated

@@ -3192,6 +3192,14 @@ fn analyze_one(
         luma_policy
     };
     let i16_zero_bin = mixed_y1_ac || textured_i16_zero_bin;
+    // Use the Y1 matrix mean for directional search on smooth mixed
+    // luma. The final macroblock still pays its ordinary complete cost.
+    let i4_search_lambda = if segments.enabled && segments.neutral_smooth_grid {
+        let mean = ((y_steps.dc + 15 * y_steps.ac + 8) / 16) as u64;
+        (3 * mean * mean / 128).max(1)
+    } else {
+        lambda
+    };
     let luma = if luma_policy == 0 {
         let mut options = Vec::with_capacity(5);
         for mode in 0..4 {
@@ -3217,7 +3225,7 @@ fn analyze_one(
             above_modes,
             left_modes,
             coeff_contexts,
-            lambda,
+            i4_search_lambda,
             mixed_y1_ac,
             mixed_y1_ac,
         ));
@@ -3249,7 +3257,7 @@ fn analyze_one(
             above_modes,
             left_modes,
             coeff_contexts,
-            lambda,
+            i4_search_lambda,
             mixed_y1_ac,
             mixed_y1_ac,
         )]

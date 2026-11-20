@@ -123,9 +123,14 @@ impl Config {
         let [fine, flat, ramp, _] = counts;
         let neutral_smooth_grid = near_neutral_smooth && fine > 0 && flat == 0 && ramp == 0;
         if neutral_smooth_grid {
-            // Apply the midpoint to the fine class. Mixed maps keep both luma mode families.
             let index = FINE_SMOOTH as usize;
-            qindex[index] = (qindex[index] + presets::textured_qindex(quality, true)).div_ceil(2);
+            let texture_grid = presets::textured_qindex(quality, true);
+            // At the finest preset, reserve the midpoint for wholly smooth fields.
+            qindex[index] = if quality == 85 && counts[TEXTURED as usize] > 0 {
+                texture_grid
+            } else {
+                (qindex[index] + texture_grid).div_ceil(2)
+            };
         }
         let enabled = counts.iter().filter(|&&count| count > 0).count() > 1;
         let base_qindex = qindex[counts.iter().position(|&count| count > 0).unwrap_or(3)];
@@ -552,6 +557,18 @@ pub(crate) fn classify_with_curvature(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn high_mixed_neutral_grid_retains_the_uniform_midpoint() {
+        for (quality, mixed, uniform) in [(60, 20, 20), (75, 17, 17), (85, 14, 10)] {
+            let fields = Config::from_frame_counts(quality, [1, 0, 0, 1], 2, false, true);
+            assert_eq!(fields.qindex_for(FINE_SMOOTH), mixed);
+            let field = Config::from_frame_counts(quality, [2, 0, 0, 0], 2, false, true);
+            assert_eq!(field.qindex_for(FINE_SMOOTH), uniform);
+            let chromatic = Config::from_frame_counts(quality, [1, 0, 1, 0], 2, false, true);
+            assert!(!chromatic.neutral_smooth_grid);
+        }
+    }
 
     #[test]
     fn mixed_q60_uniform_floors_the_weighted_lower_median_at_the_ramp_index() {
