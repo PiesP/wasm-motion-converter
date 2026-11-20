@@ -2511,7 +2511,7 @@ fn encode_observed(
     let mut segments = original_segments
         .with_medium_textured_luma(medium_textured_luma)
         .with_photo_q60_rebase(photo_q60)
-        .with_mixed_q60_uniform(class_counts, mixed_y1_ac);
+        .with_mixed_q60_allocation(class_counts, mixed_y1_ac);
     let mut deltas = if medium_textured_luma {
         crate::presets::medium_textured_deltas(original_deltas)
     } else {
@@ -4663,7 +4663,7 @@ impl FrameEncoder {
             self.segments = self
                 .segments
                 .with_photo_q60_rebase(self.photo_q60)
-                .with_mixed_q60_uniform(self.class_counts, self.mixed_y1_ac);
+                .with_mixed_q60_allocation(self.class_counts, self.mixed_y1_ac);
             if self.medium_textured_luma {
                 self.deltas = crate::presets::medium_textured_deltas(self.deltas);
             }
@@ -9472,8 +9472,12 @@ mod tests {
                                 engine.deltas,
                                 crate::presets::mixed_y1_ac_deltas(original_deltas, true)
                             );
-                            assert!(!engine.segments.enabled);
-                            assert_eq!(qindex, engine.segments.base_qindex as u8);
+                            assert!(engine.segments.enabled);
+                            assert_eq!(
+                                usize::from(qindex),
+                                usize::from(original_qindex)
+                                    + crate::presets::MIXED_Y1_AC_QINDEX_INCREASE
+                            );
                         } else {
                             assert_eq!(qindex, original_qindex);
                             assert_eq!(engine.deltas, crate::presets::deltas(75));
@@ -9560,13 +9564,13 @@ mod tests {
                     run_engine(FrameEncoder::new(request, (*input).clone(), plan).unwrap());
                 assert_eq!(engine.mixed_y1_ac, expected_profile);
                 if expected_profile {
-                    assert!(!engine.segments.enabled);
+                    assert!(engine.segments.enabled);
                     assert!(
                         !engine.photo_q60 && !engine.high_chroma_loss && !engine.neutral_chroma
                     );
                     assert!(engine.curvature.within_cutoff(engine.blocks.len()));
-                    assert_eq!(engine.segments.qindex, [32; 4]);
-                    assert_eq!(engine.segments.base_qindex, 32);
+                    assert_eq!(engine.segments.qindex, [10, 22, 36, 36]);
+                    assert_eq!(engine.segments.base_qindex, 10);
                     assert_eq!(engine.original_segments().qindex, [6, 18, 32, 32]);
                     assert_eq!(
                         engine.deltas,
@@ -9593,7 +9597,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_q60_keeps_uniform_quantizer_and_residual_analysis_without_display_refinement() {
+    fn mixed_q60_keeps_segmented_residual_analysis_without_display_refinement() {
         let input = mixed_low_curvature_input();
         let request = Request {
             quality: 60,
@@ -9609,8 +9613,8 @@ mod tests {
                 engine.step().unwrap();
             }
             assert!(engine.mixed_y1_ac);
-            assert!(!engine.segments.enabled);
-            assert_eq!(engine.segments.qindex, [32; 4]);
+            assert!(engine.segments.enabled);
+            assert_eq!(engine.segments.qindex, [10, 22, 36, 36]);
             assert_eq!(engine.filter.level, 6);
             assert_eq!((engine.deltas.uv_dc, engine.deltas.uv_ac), (-8, -15));
             assert!(engine.refinement_log.is_empty());
@@ -9637,7 +9641,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
-    fn independent_decoders_reconstruct_uniform_mixed_q60_with_retained_source_classes() {
+    fn independent_decoders_reconstruct_segmented_mixed_q60_with_retained_source_classes() {
         let mut input = mixed_low_curvature_input();
         // An isolated luminance peak makes the right block textured while
         // leaving the frame within the mixed low-curvature profile.
@@ -9650,10 +9654,11 @@ mod tests {
             ..engine_request(32, 16, 0, &input, 128)
         };
         let plan = ResourcePlan::checked(request).unwrap();
+        let sync = encode_textured(&input, 32, 16, 128, 0, 60).unwrap();
         let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
         assert!(engine.mixed_y1_ac);
-        assert!(!engine.segments.enabled);
-        assert_eq!(engine.segments.qindex, [32; 4]);
+        assert!(engine.segments.enabled);
+        assert_eq!(engine.segments.qindex, [10, 22, 36, 36]);
         assert_eq!(engine.blocks[0].segment_id, segmentation::FINE_SMOOTH);
         assert_eq!(engine.blocks[1].segment_id, segmentation::TEXTURED);
         assert!(UvRatePolicy::for_source_class(60, engine.blocks[0].segment_id).is_none());
@@ -9673,6 +9678,7 @@ mod tests {
                 .qindex_for(engine.blocks[1].segment_id),
             32
         );
+        assert_eq!(engine.output(), sync);
         let (y, u, v, padded_w) = engine.reconstruction();
         let expected =
             filtered_visible_yuv(y, u, v, padded_w, 32, 16, &engine.blocks, engine.filter);
@@ -9680,6 +9686,60 @@ mod tests {
             engine.output(),
             32,
             16,
+            &expected,
+            "segmented mixed q60 quantizers",
+        );
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_reconstruct_uniform_mixed_q60_above_map_limit() {
+        let width = 512;
+        let height = 512;
+        let tile = mixed_low_curvature_input();
+        let mut input = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            let row_start = y % 16 * 32 * 4;
+            let row = &tile[row_start..row_start + 32 * 4];
+            for _ in 0..width / 32 {
+                input.extend_from_slice(row);
+            }
+        }
+        let request = Request {
+            quality: 60,
+            ..engine_request(width, height, 0, &input, width * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let sync = encode_textured(
+            &input,
+            width as u32,
+            height as u32,
+            (width * 4) as u32,
+            0,
+            60,
+        )
+        .unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert!(engine.mixed_y1_ac);
+        assert_eq!(engine.class_counts, [512, 0, 512, 0]);
+        assert!(!engine.segments.enabled);
+        assert_eq!(engine.segments.qindex, [32; 4]);
+        assert_eq!(engine.output(), sync);
+        let (y, u, v, padded_w) = engine.reconstruction();
+        let expected = filtered_visible_yuv(
+            y,
+            u,
+            v,
+            padded_w,
+            width,
+            height,
+            &engine.blocks,
+            engine.filter,
+        );
+        assert_decodes(
+            engine.output(),
+            width,
+            height,
             &expected,
             "uniform mixed q60 quantizer",
         );
@@ -9860,13 +9920,14 @@ mod tests {
     #[test]
     fn uniform_mixed_q60_header_admits_three_signed_y_deltas() {
         let original = SegmentConfig::nonsegmented(6);
-        let selected = SegmentConfig::from_counts(60, [1, 0, 1, 0], 2, false)
-            .with_mixed_q60_uniform([1, 0, 1, 0], true);
+        let counts = [512, 0, 512, 0];
+        let selected = SegmentConfig::from_counts(60, counts, 1024, false)
+            .with_mixed_q60_allocation(counts, true);
         let before_deltas = crate::presets::deltas(60);
         let after_deltas = crate::presets::mixed_y1_ac_deltas(before_deltas, true);
         let filter = FilterConfig::for_quality(60);
         let before = HeaderBudget::new(
-            2,
+            1024,
             original,
             before_deltas,
             filter,
@@ -9874,7 +9935,7 @@ mod tests {
         )
         .unwrap();
         let after = HeaderBudget::new(
-            2,
+            1024,
             selected,
             after_deltas,
             filter,

@@ -117,16 +117,24 @@ and high-chroma-loss q60 frames, or frames above the per-plane mean cutoff,
 do not receive this photo allocation. Padded edge replication can dilute
 the measured mean for narrow or odd inputs.
 
-Eligible mixed low-curvature q60 frames use one wire quantizer chosen as the
-lower weighted median of the effective class indices, weighted by classified
-macroblock counts. This trial floors that choice at the existing unshifted
-q60 chromatic-ramp index to test whether coarser quantization lowers residual
-cost on smooth frames. The classifier IDs still determine the original rate
-prices and UV AC-tail eligibility. On fully visible chroma tiles, each UV mode
-uses bounded DC error feedback inside the 8×8 tile. This compound ablation
-uses full I16/I4/UV analysis and skips both display-based chroma refinement
-and its extra search quota for these frames. Any failure in the frozen small
-screen rejects this candidate. Whole-product timing is a separate gate.
+Eligible mixed low-curvature q60 frames retain the four class quantizers,
+shifted by four, when the estimated segment ID map costs at most 128 bytes.
+The estimate uses the existing map probabilities and the classified
+macroblock counts. It excludes the frame header and arithmetic termination.
+When the estimate exceeds 128 bytes, the encoder uses the lower weighted
+median of the shifted indices with the existing unshifted q60 chromatic-ramp
+index as a floor and omits the map. The classifier IDs determine the
+original rate prices and UV AC-tail eligibility in both cases. On fully
+visible chroma tiles, each UV mode uses bounded DC error feedback inside the
+8×8 tile. Both paths use full I16/I4/UV analysis without display-based chroma
+refinement or its extra search quota.
+
+The estimate uses the fixed quality contract's 128-byte absolute allowance
+as the cutoff. It does not change the external size gate. The three failed
+exposed rows enter the diagnostic first, followed by the frozen 45 tuning
+and seven actual-input conditions if those rows pass. Any small-screen
+failure rejects the candidate. The complete exposed matrix and whole-product
+timing require separate evidence.
 See the [uniform quantizer experiment](../../docs/experiments/501-owned-vp8-mixed-q60-uniform-quantizer.md)
 and [chroma DC feedback experiment](../../docs/experiments/501-owned-vp8-chroma-dc-feedback.md).
 

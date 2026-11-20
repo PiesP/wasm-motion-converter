@@ -3,7 +3,11 @@
 // Four absolute VP8 quantizer segments. Bit syntax follows RFC 6386 section 9.3
 // and the reference decoder's SEGMENT_ABSDATA=1 definition.
 
-use crate::{presets, rate::BoolSink, EncodeError};
+use crate::{
+    presets,
+    rate::{BoolSink, RateCounter},
+    EncodeError,
+};
 
 pub(crate) const FINE_SMOOTH: u8 = 0;
 pub(crate) const CHROMATIC_FLAT: u8 = 1;
@@ -12,6 +16,8 @@ pub(crate) const TEXTURED: u8 = 3;
 pub(crate) const CURVATURE_CUTOFF: u64 = 2;
 const Y_DIFFERENCES_PER_BLOCK: u64 = 448;
 const UV_DIFFERENCES_PER_BLOCK: u64 = 96;
+// Existing absolute size allowance, in RateCounter units of 1/256 bit.
+const MIXED_Q60_MAP_RATE_LIMIT: u64 = 128 * 8 * 256;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(crate) struct CurvatureTotals {
@@ -131,16 +137,39 @@ impl Config {
         self
     }
 
-    pub(crate) fn with_mixed_q60_uniform(self, counts: [usize; 4], selected: bool) -> Self {
+    pub(crate) fn with_mixed_q60_allocation(mut self, counts: [usize; 4], selected: bool) -> Self {
         if !selected {
             return self;
         }
-        let mut weighted_indices = std::array::from_fn::<_, 4, _>(|id| {
-            (
-                self.qindex[id] + presets::MIXED_Y1_AC_QINDEX_INCREASE,
-                counts[id],
-            )
-        });
+        self.base_qindex += presets::MIXED_Y1_AC_QINDEX_INCREASE;
+        self.qindex = self
+            .qindex
+            .map(|qindex| qindex + presets::MIXED_Y1_AC_QINDEX_INCREASE);
+        if self.map_rate_cost(counts) <= MIXED_Q60_MAP_RATE_LIMIT {
+            return self;
+        }
+        self.uniform_mixed_q60(counts)
+    }
+
+    fn map_rate_cost(self, counts: [usize; 4]) -> u64 {
+        let mut cost = 0;
+        for (id, count) in counts.into_iter().enumerate() {
+            if count == 0 {
+                continue;
+            }
+            let mut rate = RateCounter::default();
+            self.write_id(&mut rate, id as u8)
+                .expect("four class counts have valid segment IDs");
+            // The VP8 axis limit permits at most 1024² macroblocks. A
+            // two-symbol class path uses at most 8192 cost units.
+            cost += rate.cost * count as u64;
+        }
+        cost
+    }
+
+    fn uniform_mixed_q60(self, counts: [usize; 4]) -> Self {
+        let mut weighted_indices =
+            std::array::from_fn::<_, 4, _>(|id| (self.qindex[id], counts[id]));
         weighted_indices.sort_unstable_by_key(|&(qindex, _)| qindex);
         // Equal qindices contribute the same result regardless of their order.
         // This one-based rank chooses the lower weighted median for even totals.
@@ -367,6 +396,10 @@ mod tests {
         let original = Config::from_counts(60, [1, 1, 1, 1], 4, false);
         assert_eq!(original.base_qindex, 6);
         assert_eq!(original.qindex, [6, 18, 32, 32]);
+        let shifted = original.with_mixed_q60_allocation([1, 1, 1, 1], true);
+        assert!(shifted.enabled);
+        assert_eq!(shifted.base_qindex, 10);
+        assert_eq!(shifted.qindex, [10, 22, 36, 36]);
         let ramp = presets::chromatic_ramp_qindex(60);
         for (counts, qindex) in [
             ([1, 1, 1, 1], ramp),
@@ -374,7 +407,7 @@ mod tests {
             ([0, 3, 1, 1], ramp),
             ([1, 2, 2, 2], 36),
         ] {
-            let selected = original.with_mixed_q60_uniform(counts, true);
+            let selected = shifted.uniform_mixed_q60(counts);
             assert!(!selected.enabled);
             assert_eq!(selected.base_qindex, qindex);
             assert_eq!(selected.qindex, [qindex; 4]);
@@ -386,25 +419,55 @@ mod tests {
             assert_eq!(symbols.count, 1);
         }
         let unordered = Config {
-            qindex: [32, 6, 32, 18],
-            ..original
+            qindex: [36, 10, 36, 22],
+            ..shifted
         };
-        assert_eq!(
-            unordered
-                .with_mixed_q60_uniform([1, 4, 3, 0], true)
-                .base_qindex,
-            ramp
-        );
-        assert_eq!(
-            unordered
-                .with_mixed_q60_uniform([1, 3, 4, 0], true)
-                .base_qindex,
-            36
-        );
-        let inactive = original.with_mixed_q60_uniform([1, 1, 1, 1], false);
+        assert_eq!(unordered.uniform_mixed_q60([1, 4, 3, 0]).base_qindex, ramp);
+        assert_eq!(unordered.uniform_mixed_q60([1, 3, 4, 0]).base_qindex, 36);
+        let inactive = original.with_mixed_q60_allocation([1, 1, 1, 1], false);
         assert!(inactive.enabled);
         assert_eq!(inactive.qindex, original.qindex);
         assert_eq!(inactive.map_probabilities, original.map_probabilities);
+    }
+
+    #[test]
+    fn map_rate_matches_repeated_id_writes() {
+        for counts in [[0, 0, 0, 5], [512, 0, 512, 0], [1, 49, 4, 512]] {
+            let segments = Config::from_counts(60, counts, counts.iter().sum(), false);
+            let mut repeated = RateCounter::default();
+            for (id, count) in counts.into_iter().enumerate() {
+                for _ in 0..count {
+                    segments.write_id(&mut repeated, id as u8).unwrap();
+                }
+            }
+            assert_eq!(segments.map_rate_cost(counts), repeated.cost);
+        }
+    }
+
+    #[test]
+    fn mixed_q60_keeps_the_map_at_the_exact_rate_limit() {
+        // Two equiprobable bits per ID make 512 macroblocks cost exactly 128
+        // bytes in the rate estimator, independent of their classification.
+        for (total, enabled) in [(511, true), (512, true), (513, false)] {
+            let counts = [256, 0, total - 256, 0];
+            let original = Config {
+                map_probabilities: [128; 3],
+                ..Config::from_counts(60, counts, total, false)
+            };
+            let cost = original.map_rate_cost(counts);
+            assert_eq!(cost, (total * 2 * 256) as u64);
+            let selected = original.with_mixed_q60_allocation(counts, true);
+            assert_eq!(selected.enabled, enabled);
+            if enabled {
+                assert_eq!(selected.base_qindex, 10);
+                assert_eq!(selected.qindex, [10, 22, 36, 36]);
+                assert_eq!(selected.map_probabilities, original.map_probabilities);
+                assert_eq!(selected.active, original.active);
+            } else {
+                assert_eq!(cost, MIXED_Q60_MAP_RATE_LIMIT + 512);
+                assert_eq!(selected.qindex, [36; 4]);
+            }
+        }
     }
 
     #[test]
