@@ -294,9 +294,10 @@ costs, rate weights, trial order, and strict tie rule. The original luma
 ranking trial used the existing two-class wire map.
 
 The single-quantizer q85 rate trial uses that exact source gate and bias.
-It selects the weighted lower median of the original class qindices, with
-no additional floor, and omits VP8 segmentation. Equal populations choose
-the finer index. Source IDs and class-specific rate weights stay intact.
+It rounds the mean of the original FineSmooth and ChromaticFlat qindices,
+weighted by their source macroblock counts, to the nearest integer. Exact
+half-integer ties round up. The resulting base index omits VP8 segmentation.
+Source IDs and class-specific rate weights stay intact.
 Every coded block uses the selected base index with the existing UV deltas,
 mode analysis, filter, and display-refinement competition. Blocks with a
 different original qindex use different luma and chroma steps, so the trial

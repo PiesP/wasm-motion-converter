@@ -193,6 +193,21 @@ impl Config {
             .with_uniform_qindex(counts, presets::chromatic_ramp_qindex(75))
     }
 
+    pub(crate) fn with_q85_smooth_pair_allocation(self, counts: [usize; 4]) -> Self {
+        let [fine, flat, ramp, textured] = counts;
+        debug_assert!(fine > 0 && flat > 0 && ramp == 0 && textured == 0);
+        let total = fine + flat;
+        debug_assert!(total <= 1024 * 1024);
+        let fine_qindex = self.qindex_for(FINE_SMOOTH);
+        let flat_qindex = self.qindex_for(CHROMATIC_FLAT);
+        debug_assert!(fine_qindex <= 127 && flat_qindex <= 127);
+        // Each admitted VP8 axis has at most 1024 macroblocks. Even with
+        // the largest legal indices, the weighted sum plus half the count
+        // is below 2^27 and fits wasm32 usize.
+        let weighted = fine * fine_qindex + flat * flat_qindex;
+        Self::nonsegmented((weighted + total / 2) / total)
+    }
+
     pub(crate) fn map_exceeds_rate_allowance(self, counts: [usize; 4]) -> bool {
         self.enabled && self.map_rate_cost(counts) > MAP_RATE_ALLOWANCE
     }
@@ -521,8 +536,13 @@ mod tests {
     }
 
     #[test]
-    fn q85_unfloored_weighted_lower_median_keeps_the_majority_grid_and_breaks_ties_low() {
-        for (counts, expected) in [([1, 1, 0, 0], 6), ([3, 1, 0, 0], 6), ([113, 287, 0, 0], 15)] {
+    fn q85_smooth_pair_rounds_the_weighted_original_indices_to_nearest() {
+        for (counts, expected) in [
+            ([1, 1, 0, 0], 11),
+            ([3, 1, 0, 0], 8),
+            ([1, 3, 0, 0], 13),
+            ([113, 287, 0, 0], 12),
+        ] {
             let original = Config::from_counts(85, counts, counts.iter().sum(), false);
             assert!(original.enabled && !original.map_exceeds_rate_allowance(counts));
             assert_eq!(
@@ -532,7 +552,7 @@ mod tests {
                 ),
                 (6, 15)
             );
-            let selected = original.with_uniform_qindex(counts, 0);
+            let selected = original.with_q85_smooth_pair_allocation(counts);
             assert!(!selected.enabled);
             assert_eq!(selected.base_qindex, expected);
             assert_eq!(selected.qindex, [expected; 4]);
@@ -543,6 +563,19 @@ mod tests {
             }
             assert_eq!(header.count, 1);
         }
+    }
+
+    #[test]
+    fn q85_smooth_pair_rounding_fits_the_vp8_macroblock_bound() {
+        let counts = [524_288, 524_288, 0, 0];
+        let original = Config {
+            qindex: [126, 127, 0, 0],
+            ..Config::nonsegmented(0)
+        };
+        assert_eq!(
+            original.with_q85_smooth_pair_allocation(counts).base_qindex,
+            127
+        );
     }
 
     #[test]

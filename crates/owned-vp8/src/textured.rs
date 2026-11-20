@@ -2614,8 +2614,7 @@ fn encode_observed(
         segments = segments.with_mixed_q75_allocation(class_counts);
         deltas = crate::presets::medium_y1_ac_deltas(deltas);
     } else if luma_bias {
-        // Preserve class weights while coding every block at the lower median.
-        segments = original_segments.with_uniform_qindex(class_counts, 0);
+        segments = original_segments.with_q85_smooth_pair_allocation(class_counts);
     }
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
@@ -4911,7 +4910,9 @@ impl FrameEncoder {
                 self.segments = self.segments.with_mixed_q75_allocation(self.class_counts);
                 self.deltas = crate::presets::medium_y1_ac_deltas(self.deltas);
             } else if self.luma_bias {
-                self.segments = self.segments.with_uniform_qindex(self.class_counts, 0);
+                self.segments = self
+                    .segments
+                    .with_q85_smooth_pair_allocation(self.class_counts);
             }
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
@@ -10265,6 +10266,11 @@ mod tests {
         }
         assert!(!q85_smooth_pair_luma_bias(85, true, false, counts));
         assert!(!q85_smooth_pair_luma_bias(85, false, true, counts));
+        let expensive = [1024, 1024, 0, 0];
+        let segments = SegmentConfig::from_counts(85, expensive, expensive.iter().sum(), false);
+        let omit = omit_display_refinement(85, false, false, segments, expensive);
+        assert!(omit);
+        assert!(!q85_smooth_pair_luma_bias(85, false, omit, expensive));
         for counts in [[1, 0, 0, 0], [0, 1, 0, 0], [1, 1, 1, 0], [1, 1, 0, 1]] {
             assert!(!q85_smooth_pair_luma_bias(85, false, false, counts));
         }
@@ -10305,8 +10311,9 @@ mod tests {
             .unwrap();
             assert_eq!(engine.output(), sync);
             if quality == 85 {
-                assert_eq!(engine.segments.base_qindex, 6);
-                assert_eq!(engine.segments.qindex, [6; 4]);
+                assert_eq!(engine.request, request);
+                assert_eq!(engine.segments.base_qindex, 11);
+                assert_eq!(engine.segments.qindex, [11; 4]);
                 assert_eq!(engine.rate_qindex(segmentation::FINE_SMOOTH), 6);
                 assert_eq!(engine.rate_qindex(segmentation::CHROMATIC_FLAT), 15);
                 assert_eq!(engine.deltas, crate::presets::deltas(85));
