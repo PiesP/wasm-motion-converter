@@ -287,12 +287,15 @@ gates apply.
 A separate q75 rate trial covers the ordinary at-or-below-budget map path.
 It requires non-neutral low-curvature source planes and both FineSmooth and
 ChromaticFlat, with no other class present. The wire uses one quantizer at
-the existing q75 chromatic-ramp index. It keeps the ordinary luma and UV
-deltas, source-class rate weights, filter, and display refinement policy.
-The full analysis and exact final selector still run. Quantized steps can
-change the selected modes and reconstructed pixels. One frame-local boolean
-preserves the source rate reference inside the existing engine scratch bound.
-This trial does not apply to q60 or q85.
+the existing q75 chromatic-ramp index of 27. The trial keeps ordinary luma
+quantization, source-class rate weights, FlatDcZero, the filter, and display
+refinement with the same final variant selector. It translates the uniform
+q60 pair's effective UV DC and AC indices of 24 and 17 into q75 wire deltas
+of −3 and −10. The existing tile-local UV DC correction applies to fully
+visible 8×8 chroma tiles. Quantized steps can change mode choices and visible
+reconstruction. The frame-local flags and scratch bound cover the trial.
+The current q60 and q85 settings remain in effect at those presets.
+The q75 quality and rate effects need source-bound exposed evaluation.
 
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those

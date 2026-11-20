@@ -141,6 +141,17 @@ pub(crate) fn mixed_y1_ac_deltas(mut selected: Deltas, enabled: bool) -> Deltas 
     selected
 }
 
+pub(crate) fn q75_smooth_pair_deltas(mut selected: Deltas) -> Deltas {
+    // Translate the uniform q60 pair's effective UV indices to the q75 wire
+    // base. The q75 luma grid and the original class-specific rate weights stay
+    // independent of this chroma allocation.
+    let q60 = mixed_y1_ac_deltas(deltas(60), true);
+    let shift = chromatic_ramp_qindex(60) as i8 - chromatic_ramp_qindex(75) as i8;
+    selected.uv_dc = q60.uv_dc + shift;
+    selected.uv_ac = q60.uv_ac + shift;
+    selected
+}
+
 pub(crate) fn medium_y1_ac_deltas(mut selected: Deltas) -> Deltas {
     // Applies only to mixed q75. Its ordinary UV deltas are both -9, so
     // compensating by four stays inside the signed VP8 header range.
@@ -298,6 +309,30 @@ mod tests {
             steps(10, selected, Plane::UV).ac,
             steps(6, original, Plane::UV).ac
         );
+    }
+
+    #[test]
+    fn q75_smooth_pair_reuses_q60_effective_uv_steps_and_keeps_luma() {
+        use crate::ac_quant::{steps, Plane};
+
+        let ordinary = deltas(75);
+        let selected = q75_smooth_pair_deltas(ordinary);
+        let q60 = mixed_y1_ac_deltas(deltas(60), true);
+        let q75_base = chromatic_ramp_qindex(75) as u8;
+        let q60_base = chromatic_ramp_qindex(60) as u8;
+        assert_eq!((selected.uv_dc, selected.uv_ac), (-3, -10));
+        assert_eq!(i16::from(q75_base) + i16::from(selected.uv_dc), 24);
+        assert_eq!(i16::from(q75_base) + i16::from(selected.uv_ac), 17);
+        assert_eq!(
+            steps(q75_base, selected, Plane::UV),
+            steps(q60_base, q60, Plane::UV)
+        );
+        for plane in [Plane::Y1, Plane::Y2] {
+            assert_eq!(
+                steps(q75_base, selected, plane),
+                steps(q75_base, ordinary, plane)
+            );
+        }
     }
 
     #[test]

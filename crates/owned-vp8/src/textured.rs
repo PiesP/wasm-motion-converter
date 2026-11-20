@@ -2283,7 +2283,7 @@ fn encode_observed(
         omit_display_refinement,
         class_counts,
     );
-    let uv_dc_feedback = mixed_y1_ac || medium_y1_ac;
+    let uv_dc_feedback = mixed_y1_ac || medium_y1_ac || q75_smooth_pair.is_some();
     let photo_q75 = medium_textured_luma && !neutral_chroma;
     let original_deltas = if high_chroma_loss {
         crate::presets::original_high_chroma_loss_deltas()
@@ -2596,6 +2596,7 @@ fn encode_observed(
         deltas = crate::presets::medium_y1_ac_deltas(deltas);
     } else if let Some(wire) = q75_smooth_pair {
         segments = wire;
+        deltas = crate::presets::q75_smooth_pair_deltas(deltas);
     }
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
@@ -4862,7 +4863,7 @@ impl FrameEncoder {
                 self.class_counts,
             );
             self.q75_smooth_pair = q75_smooth_pair.is_some();
-            self.uv_dc_feedback = self.mixed_y1_ac || self.medium_y1_ac;
+            self.uv_dc_feedback = self.mixed_y1_ac || self.medium_y1_ac || self.q75_smooth_pair;
             self.segments = self
                 .segments
                 .with_photo_q60_rebase(self.photo_q60)
@@ -4881,6 +4882,7 @@ impl FrameEncoder {
                 self.deltas = crate::presets::medium_y1_ac_deltas(self.deltas);
             } else if let Some(wire) = q75_smooth_pair {
                 self.segments = wire;
+                self.deltas = crate::presets::q75_smooth_pair_deltas(self.deltas);
             }
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
@@ -10207,7 +10209,7 @@ mod tests {
     }
 
     #[test]
-    fn q75_smooth_pair_preserves_ordinary_policies_and_other_preset_packets() {
+    fn q75_smooth_pair_chroma_allocation_matches_both_encoders_and_preserves_other_presets() {
         let (width, height) = (31, 15);
         let stride = width * 4;
         let input: Vec<_> = mixed_segment_input()
@@ -10244,14 +10246,22 @@ mod tests {
                 expected_wire.map_probabilities
             );
             assert_eq!(engine.q75_smooth_pair, quality == 75);
-            assert_eq!(engine.uv_dc_feedback, quality == 60);
+            assert_eq!(engine.uv_dc_feedback, matches!(quality, 60 | 75));
             assert_eq!(engine.omit_display_refinement, quality == 60);
             assert!(!engine.medium_y1_ac);
             assert_eq!(engine.filter.level, crate::presets::filter_level(quality));
-            assert_eq!(
-                engine.deltas,
-                crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(quality), quality == 60,)
-            );
+            let ordinary =
+                crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(quality), quality == 60);
+            let expected = if quality == 75 {
+                Deltas {
+                    uv_dc: -3,
+                    uv_ac: -10,
+                    ..ordinary
+                }
+            } else {
+                ordinary
+            };
+            assert_eq!(engine.deltas, expected);
             for id in [segmentation::FINE_SMOOTH, segmentation::CHROMATIC_FLAT] {
                 assert_eq!(engine.rate_qindex(id), original.qindex_for(id));
             }
@@ -10261,6 +10271,8 @@ mod tests {
                 control.step().unwrap();
             }
             control.q75_smooth_pair = false;
+            control.uv_dc_feedback = quality == 60;
+            control.deltas = ordinary;
             control.segments = original.with_mixed_q60_allocation(counts, quality == 60);
             control.header_budget = HeaderBudget::new(
                 control.blocks.len(),
@@ -10291,7 +10303,7 @@ mod tests {
     }
 
     #[test]
-    fn q75_uv_dc_feedback_requires_low_curvature_and_the_expensive_chroma_map() {
+    fn q75_expensive_map_feedback_requires_low_curvature() {
         let expensive = [512, 0, 512, 0];
         let cheap = [1, 0, 1, 0];
         let single = [1024, 0, 0, 0];
@@ -10748,7 +10760,7 @@ mod tests {
     }
 
     #[test]
-    fn uniform_mixed_q75_header_signals_one_base_index_and_compensated_deltas() {
+    fn uniform_mixed_q75_headers_signal_the_base_index_and_profile_deltas() {
         struct Bits(Vec<bool>);
         impl BoolSink for Bits {
             fn write(&mut self, _probability: u8, bit: bool) -> Result<(), EncodeError> {
@@ -10775,6 +10787,25 @@ mod tests {
                 true, false, true, false, false, true, // Y2 AC -4.
                 true, true, true, false, true, true, // UV DC -13.
                 true, true, true, false, true, true,  // UV AC -13.
+                false, // Entropy updates are not retained.
+            ]
+        );
+
+        let wire = q75_smooth_pair_wire_config(75, false, true, false, [3, 5, 0, 0]).unwrap();
+        let deltas = crate::presets::q75_smooth_pair_deltas(crate::presets::deltas(75));
+        let mut header = Bits(Vec::new());
+        write_header_prefix(&mut header, wire, deltas, FilterConfig::for_quality(75)).unwrap();
+        assert!(!header.0[2]);
+        assert_eq!(
+            &header.0[16..23],
+            &[false, false, true, true, false, true, true]
+        );
+        assert_eq!(
+            &header.0[23..],
+            &[
+                false, false, false, // Ordinary luma deltas.
+                true, false, false, true, true, true, // UV DC -3.
+                true, true, false, true, false, true,  // UV AC -10.
                 false, // Entropy updates are not retained.
             ]
         );
