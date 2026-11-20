@@ -138,6 +138,24 @@ timing require separate evidence.
 See the [uniform quantizer experiment](../../docs/experiments/501-owned-vp8-mixed-q60-uniform-quantizer.md)
 and [chroma DC feedback experiment](../../docs/experiments/501-owned-vp8-chroma-dc-feedback.md).
 
+The segmented mixed q60 branch can emit one wire ID for two occupied
+decoder-equivalent classes. It maps Texture (3) to ChromaticRamp (2) only
+when their absolute qindices and filter levels agree. Source-class IDs,
+rate policies, original map eligibility and analyzed macroblocks stay intact.
+The wire header recomputes the three probabilities from the merged counts
+and omits the now-unused segment 3 quantizer and filter fields. Remaining
+segment features keep the established absolute syntax.
+
+The original decision and its legality are established before counting the
+alias. The selected coefficient model, skip syntax, context and token
+partition are reused. A bounded header-only arithmetic replay uses the
+existing counter and mode rows, at most 64 model entries or one macroblock
+per ABI2 step. The alias is emitted only when its actual first partition
+shrinks. The frame and output-copy sizes then reflect the smaller packet
+within the original reserved linear capacity. The additional configuration
+is charged within the fixed engine scratch bound. The frame needs no
+additional pixel pass or frame buffer.
+
 At q60, the existing source-derived high-chroma-loss predicate compares the
 Original and Reduced profiles. Each completed trial is filtered after its
 analysis and rate statistics are finished. Its visible owned-renderer RGB
