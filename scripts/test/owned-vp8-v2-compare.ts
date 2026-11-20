@@ -99,6 +99,13 @@ import {
   v21Specs,
   type V21Manifest,
 } from './owned-vp8-v21-fixtures.ts';
+import {
+  V22_MANIFEST,
+  V22_PACK_READER,
+  v22PackedReader,
+  v22Specs,
+  type V22Manifest,
+} from './owned-vp8-v22-fixtures.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ORACLE_HASH = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
@@ -129,7 +136,8 @@ export type FixtureCohort =
   | 'corrected-v18'
   | 'corrected-v19'
   | 'corrected-v20b'
-  | 'corrected-v21';
+  | 'corrected-v21'
+  | 'corrected-v22';
 
 export function selectFixtureCohort(
   split: FixtureSplit,
@@ -137,7 +145,12 @@ export function selectFixtureCohort(
   regression = false,
   fixtureIds?: readonly string[]
 ) {
-  if (cohort === 'corrected-v19' || cohort === 'corrected-v20b' || cohort === 'corrected-v21')
+  if (
+    cohort === 'corrected-v19' ||
+    cohort === 'corrected-v20b' ||
+    cohort === 'corrected-v21' ||
+    cohort === 'corrected-v22'
+  )
     throw new Error('Use the source-bound reservation and signed manifest');
   if (fixtureIds !== undefined && split === 'held-out' && !regression)
     throw new Error('Fixture subsets are diagnostic only; acceptance requires the full cohort');
@@ -537,7 +550,7 @@ export function readV18Reservation(options: FreshReservationOptions & { sources:
 
 function readFreshReservation(
   options: FreshReservationOptions,
-  version: 'V16' | 'V17' | 'V18' | 'V19' | 'V20B' | 'V21',
+  version: 'V16' | 'V17' | 'V18' | 'V19' | 'V20B' | 'V21' | 'V22',
   sources: readonly (string | undefined)[],
   manifest: string,
   exposedCount: number
@@ -607,6 +620,10 @@ function readFreshReservation(
       inventorySha256?: string;
     };
     plannedUtc: string;
+    productWitnesses?: {
+      indicative?: { groups: number; passed: boolean };
+      whole?: { frames: number[]; passed: boolean };
+    };
     development?: {
       earlier?: { count: number; passed: number };
       multiscale?: {
@@ -628,6 +645,21 @@ function readFreshReservation(
     ['EXPOSED_REGRESSION_ONLY', 'PASS_EXPOSED_REGRESSION_ONLY', exposedCount, exposedCount],
     `${version} requires all ${exposedCount} exposed conditions`
   );
+  if (version === 'V22') {
+    assert.equal(
+      plan.exposed.inventorySha256,
+      '8c8b8bc2eb73156421b8a43aab2638ee9a1df4899283a4f2fcdcf71c9ca8f527'
+    );
+    assert.notEqual(plan.candidate.source, '86c376285331ca82f0d1b72006b9b23d7369df12');
+    assert.notEqual(
+      plan.candidate.module,
+      'e01cfef2bb456ae96fa856a9ff70606fe2382e22ce18897adc948593454c0662'
+    );
+    assert.equal(plan.productWitnesses?.indicative?.groups, 6);
+    assert.equal(plan.productWitnesses?.indicative?.passed, true);
+    assert.deepEqual(plan.productWitnesses?.whole?.frames, [77, 115, 192]);
+    assert.equal(plan.productWitnesses?.whole?.passed, true);
+  }
   if (version === 'V21') {
     assert.equal(
       plan.exposed.inventorySha256,
@@ -693,7 +725,7 @@ function readFreshReservation(
   assert.deepEqual(plan.primary, { wasmSha256: ORACLE_HASH, jsSha256: ORACLE_JS_HASH });
   assert.deepEqual(
     sources,
-    (['V19', 'V20B', 'V21'].includes(version) ? ['packed'] : ['photo', 'video']).map(
+    (['V19', 'V20B', 'V21', 'V22'].includes(version) ? ['packed'] : ['photo', 'video']).map(
       (role) => plan.sourcesFromManifestMetadataOnly[role]?.path
     ),
     `${version} admission original paths differ`
@@ -712,7 +744,7 @@ function readFreshReservation(
   assert.equal(registration.url, request.registration, `${version} readback URL differs`);
   assert.equal(registration.author, 'PiesP', `${version} readback owner differs`);
   assert.match(registration.responseSha256, /^[a-f0-9]{64}$/);
-  if (version === 'V19' || version === 'V20B' || version === 'V21') {
+  if (version === 'V19' || version === 'V20B' || version === 'V21' || version === 'V22') {
     assert.match(plan.bridgeSha256 ?? '', /^[a-f0-9]{64}$/);
     assert.equal(registration.planSha256, request.planSha256);
     assert.equal(registration.bridgeSha256, plan.bridgeSha256);
@@ -779,7 +811,12 @@ export async function compare(options: {
     V15SourcePaths &
     V16SourcePaths &
     V17SourcePaths &
-    V18SourcePaths & { v19Packed?: string; v20bPacked?: string; v21Packed?: string };
+    V18SourcePaths & {
+      v19Packed?: string;
+      v20bPacked?: string;
+      v21Packed?: string;
+      v22Packed?: string;
+    };
   cohort?: FixtureCohort;
   regression?: boolean;
   fixtureIds?: readonly string[];
@@ -788,25 +825,38 @@ export async function compare(options: {
   const cohort = options.cohort ?? 'initial-v1';
   const useV20B = cohort === 'corrected-v20b';
   const useV21 = cohort === 'corrected-v21';
-  const packedVersion = useV21 ? 'V21' : useV20B ? 'V20B' : 'V19';
-  const packedManifestPath = useV21 ? V21_MANIFEST : useV20B ? V20B_MANIFEST : V19_MANIFEST;
+  const useV22 = cohort === 'corrected-v22';
+  const packedVersion = useV22 ? 'V22' : useV21 ? 'V21' : useV20B ? 'V20B' : 'V19';
+  const packedManifestPath = useV22
+    ? V22_MANIFEST
+    : useV21
+      ? V21_MANIFEST
+      : useV20B
+        ? V20B_MANIFEST
+        : V19_MANIFEST;
   const packedManifestBytes =
-    useV21 || useV20B || cohort === 'corrected-v19'
+    useV22 || useV21 || useV20B || cohort === 'corrected-v19'
       ? readFileSync(join(ROOT, packedManifestPath))
       : undefined;
   const packedManifest = packedManifestBytes
-    ? (JSON.parse(packedManifestBytes.toString('utf8')) as V19Manifest | V20BManifest | V21Manifest)
+    ? (JSON.parse(packedManifestBytes.toString('utf8')) as
+        | V19Manifest
+        | V20BManifest
+        | V21Manifest
+        | V22Manifest)
     : undefined;
   if (packedManifest)
     assert.ok(
       options.split === 'held-out' && !options.regression && options.fixtureIds === undefined
     );
   const selected = packedManifest
-    ? useV21
-      ? v21Specs(packedManifest as V21Manifest)
-      : useV20B
-        ? v20bSpecs(packedManifest as V20BManifest)
-        : v19Specs(packedManifest as V19Manifest)
+    ? useV22
+      ? v22Specs(packedManifest as V22Manifest)
+      : useV21
+        ? v21Specs(packedManifest as V21Manifest)
+        : useV20B
+          ? v20bSpecs(packedManifest as V20BManifest)
+          : v19Specs(packedManifest as V19Manifest)
     : selectFixtureCohort(options.split, cohort, options.regression, options.fixtureIds);
   const selection = fixtureSelectionIdentity(
     selected,
@@ -885,11 +935,13 @@ export async function compare(options: {
   const v18ManifestSha256 = v18ManifestBytes && digest(v18ManifestBytes);
   const packedManifestSha256 = packedManifestBytes && digest(packedManifestBytes);
   const reservedSha = packedManifestSha256 ?? v18ManifestSha256 ?? v17ManifestSha256;
-  const packedInput = useV21
-    ? options.sources.v21Packed
-    : useV20B
-      ? options.sources.v20bPacked
-      : options.sources.v19Packed;
+  const packedInput = useV22
+    ? options.sources.v22Packed
+    : useV21
+      ? options.sources.v21Packed
+      : useV20B
+        ? options.sources.v20bPacked
+        : options.sources.v19Packed;
   if (packedManifest) {
     assert.ok(
       packedInput &&
@@ -899,7 +951,13 @@ export async function compare(options: {
     assert.equal(basename(packedInput), 'packed-01');
     assert.equal(
       basename(dirname(packedInput)),
-      useV21 ? 'fresh-v21-sources-01' : useV20B ? 'fresh-v20b-sources-01' : 'fresh-v19-sources-01'
+      useV22
+        ? 'fresh-v22-sources-01'
+        : useV21
+          ? 'fresh-v21-sources-01'
+          : useV20B
+            ? 'fresh-v20b-sources-01'
+            : 'fresh-v19-sources-01'
     );
   }
   const admission =
@@ -916,7 +974,7 @@ export async function compare(options: {
           packedVersion,
           [packedInput],
           packedManifestPath,
-          useV21 ? 1167 : useV20B ? 1107 : 1047
+          useV22 ? 1227 : useV21 ? 1167 : useV20B ? 1107 : 1047
         )
       : reservedManifest && reservedSha && !options.regression
         ? readFreshReservation(
@@ -974,6 +1032,8 @@ export async function compare(options: {
     );
     assert.equal(registry.source, admission.registryCommit, 'V17 registry source differs');
     assert.equal(registry.tree, admission.registryTree, 'V17 registry tree differs');
+    if (useV22)
+      assert.equal(gitAt(ROOT, 'rev-parse', 'HEAD^'), 'f28a08fee2576154d683892d817fa4fc60d85513');
     if (useV21)
       assert.equal(gitAt(ROOT, 'rev-parse', 'HEAD^'), '39ea3416d7bc0567294a33067eff6c84066bd181');
     if (useV20B)
@@ -981,11 +1041,13 @@ export async function compare(options: {
     for (const path of [
       packedManifest ? packedManifestPath : v18Manifest ? V18_MANIFEST : V17_MANIFEST,
       packedManifest
-        ? useV21
-          ? V21_PACK_READER
-          : useV20B
-            ? V20B_PACK_READER
-            : V19_PACK_READER
+        ? useV22
+          ? V22_PACK_READER
+          : useV21
+            ? V21_PACK_READER
+            : useV20B
+              ? V20B_PACK_READER
+              : V19_PACK_READER
         : v18Manifest
           ? 'scripts/test/owned-vp8-v18-fixtures.ts'
           : 'scripts/test/owned-vp8-v17-fixtures.ts',
@@ -1294,11 +1356,18 @@ export async function compare(options: {
   }
   const readPacked =
     packedManifest && packedInput
-      ? useV21
-        ? v21PackedReader(packedInput, packedManifest as V21Manifest, readFreshReceipt, digest)
-        : useV20B
-          ? v20bPackedReader(packedInput, packedManifest as V20BManifest, readFreshReceipt, digest)
-          : v19PackedReader(packedInput, packedManifest as V19Manifest, readFreshReceipt, digest)
+      ? useV22
+        ? v22PackedReader(packedInput, packedManifest as V22Manifest, readFreshReceipt, digest)
+        : useV21
+          ? v21PackedReader(packedInput, packedManifest as V21Manifest, readFreshReceipt, digest)
+          : useV20B
+            ? v20bPackedReader(
+                packedInput,
+                packedManifest as V20BManifest,
+                readFreshReceipt,
+                digest
+              )
+            : v19PackedReader(packedInput, packedManifest as V19Manifest, readFreshReceipt, digest)
       : undefined;
   if (reservedManifest || packedManifest) mkdirSync(output);
   const v15Fixtures = v15Manifest
@@ -1457,6 +1526,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const v19Packed = args.includes('--v19-packed')
     ? args[args.indexOf('--v19-packed') + 1]
     : undefined;
+  const v22Packed = args.includes('--v22-packed')
+    ? args[args.indexOf('--v22-packed') + 1]
+    : undefined;
   const v21Packed = args.includes('--v21-packed')
     ? args[args.indexOf('--v21-packed') + 1]
     : undefined;
@@ -1480,7 +1552,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     cohort !== 'corrected-v18' &&
     cohort !== 'corrected-v19' &&
     cohort !== 'corrected-v20b' &&
-    cohort !== 'corrected-v21'
+    cohort !== 'corrected-v21' &&
+    cohort !== 'corrected-v22'
   )
     throw new Error('Unknown fixture cohort');
   if (acceptance && regression) throw new Error('Choose acceptance or exposed regression');
@@ -1517,6 +1590,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       ...(v19Packed ? { v19Packed } : {}),
       ...(v20bPacked ? { v20bPacked } : {}),
       ...(v21Packed ? { v21Packed } : {}),
+      ...(v22Packed ? { v22Packed } : {}),
     },
     ...(candidateRoot ? { candidateRoot } : {}),
   });
