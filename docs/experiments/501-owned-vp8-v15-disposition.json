@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "freezeId": "vp8-v15-first-heldout-20261120-01",
+  "status": "EXPOSED_REGRESSION",
+  "originalFrozenManifestSha256": "2025389427eaac1f938b827410156f89149df91556141b97a7bcd2cee4a55d05",
+  "firstAttempt": {
+    "status": "REJECTED_HELDOUT",
+    "sourceSha": "d8c8638da87686ed59b94fe8c72f97299656e94e",
+    "registrySha": "192f8d21e711152a9e7904aba79e081bb1f453a0",
+    "moduleSha256": "d00b1419e5d6a6948012ad03b677f63a0b718e90aefd139545f7bd7c53d3f784",
+    "outcomeSha256": "615bc7942918be915e5b4de815fe31d8da7d245a727b1c86dff195167ea979c0",
+    "resultsSha256": "3a5db0794cec8c57ac523f949c09786e836a4aa479f19fdf70dca2c514ef2115",
+    "identitiesSha256": "bb32d8b563351b22d918fe3e2a8b8643a3f1c976aeb7647404ded2f93ba20bb8",
+    "passed": 57,
+    "conditions": 60,
+    "failures": [
+      { "fixture": "fresh15-glyph", "quality": 85, "gate": "size" },
+      { "fixture": "fresh15-diagonal", "quality": 60, "gate": "size" },
+      { "fixture": "fresh15-dark", "quality": 85, "gate": "size" }
+    ]
+  }
+}

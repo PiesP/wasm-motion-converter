@@ -1,0 +1,413 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v16",
+  "status": "FROZEN_UNEXECUTED",
+  "freezeId": "vp8-v16-first-heldout-20261120-01",
+  "attemptBudget": 1,
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "generatorSha256": "b654c0e9c939475f0248b00b047a7f9a8ae66e9948b8961f025829a83af9372d",
+  "ffmpegVersion": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "sourceSelectionSha256": "9c2f31d078338fce680f05097a812a9116b16172a2105e0c28c16c6178ba8b28",
+  "sourceMetadataSha256": "25f9ecdc2a4a066f200692bcd5a5dfbf63d044485a4c76b5f6366de00b9a8a76",
+  "sources": {
+    "photo": {
+      "page": "https://commons.wikimedia.org/wiki/File:Grand_Central_Station_Main_Concourse_Rectilinear_projection_Jan_2006.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Grand_Central_Station_Main_Concourse_Rectilinear_projection_Jan_2006.jpg&oldid=927156370",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/9/95/Grand_Central_Station_Main_Concourse_Rectilinear_projection_Jan_2006.jpg",
+      "author": "David Iliff (Diliff)",
+      "license": "CC-BY-SA-3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "width": 2500,
+      "height": 1287,
+      "bytes": 1182771,
+      "publisherSha1": "2ad5e091d4968ea6cc3655079ded94b546322076",
+      "sha256": "cc449f71424d673078394299ea0660b175f05ded1ff8c75dfa81f1cb73113b72"
+    },
+    "video": {
+      "page": "https://commons.wikimedia.org/wiki/File:Escalator_S%C3%B6dra_station_2019.webm",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Escalator_S%C3%B6dra_station_2019.webm&oldid=813105970",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/4/44/Escalator_S%C3%B6dra_station_2019.webm",
+      "author": "Jan Ainali",
+      "license": "CC-BY-SA-4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "width": 2560,
+      "height": 1440,
+      "bytes": 18092630,
+      "publisherSha1": "e6e9ba4c86a375bf5c7d728b7e2ea8857f09fa09",
+      "sha256": "067d8ecce314927dc8a3e237d0d65ca1b7c048d71533c51e879eced9ce2032e6",
+      "streamIndex": 0,
+      "timeBase": "1/1000"
+    }
+  },
+  "priorV13": {
+    "path": "docs/experiments/501-owned-vp8-v13-fixtures.json",
+    "sha256": "eedc528acbeaf09faf94330ef4f2501d2209ad628fa92c8fd0b6e6e8ed49df3d"
+  },
+  "priorV14": {
+    "path": "docs/experiments/501-owned-vp8-v14-fixtures.json",
+    "sha256": "f4f096225a12d56ebba36b5e1f8676fff508022865049e232f1d38a603bdae59"
+  },
+  "priorV15": {
+    "path": "docs/experiments/501-owned-vp8-v15-fixtures.json",
+    "sha256": "2025389427eaac1f938b827410156f89149df91556141b97a7bcd2cee4a55d05"
+  },
+  "fixtures": [
+    {
+      "id": "fresh16-neutral",
+      "split": "held-out",
+      "class": "neutral",
+      "width": 503,
+      "height": 373,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2012,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ba03b495a4fc516f98836c81d3c53cf8fa5a2aaf172095f3c395cc800b54f32e"
+    },
+    {
+      "id": "fresh16-near-neutral",
+      "split": "held-out",
+      "class": "near-neutral",
+      "width": 461,
+      "height": 301,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1844,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "f9eeb6c6f25098e9a6c7fce0f1011dc1c562db85a79f53003ed5f7ed6634f64a"
+    },
+    {
+      "id": "fresh16-glyph",
+      "split": "held-out",
+      "class": "glyph-edge",
+      "width": 487,
+      "height": 321,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1948,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a55eda01bb9f57f732b5f2355b72c7488189d8e34fe4532699d7091f82d0b7ed"
+    },
+    {
+      "id": "fresh16-diagonal",
+      "split": "held-out",
+      "class": "diagonal-chroma",
+      "width": 413,
+      "height": 317,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1652,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "5c2a8bb093e32dcf28487caeab2a70178b122ad7fb54ef5f045a0eb40bfbe732"
+    },
+    {
+      "id": "fresh16-dark",
+      "split": "held-out",
+      "class": "dark-gradient",
+      "width": 353,
+      "height": 283,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1412,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "5631e3cfa468af57d5bfaeef5a09b54bfeb96e713d006268b2488b5821946ede"
+    },
+    {
+      "id": "fresh16-saturated",
+      "split": "held-out",
+      "class": "saturated-boundary",
+      "width": 421,
+      "height": 287,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1684,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ec5ce7b4b49d10073a8a99bf236130f9bb76e11f39c12b9a9e4fbcf914122295"
+    },
+    {
+      "id": "fresh16-noise",
+      "split": "held-out",
+      "class": "deterministic-noise",
+      "width": 307,
+      "height": 251,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1228,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "208c19cc2bac320d826eca21f68f7b7c0bd6781d21a333044d7397f6fa31426b"
+    },
+    {
+      "id": "fresh16-curvature",
+      "split": "held-out",
+      "class": "mixed-curvature",
+      "width": 469,
+      "height": 307,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1876,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "bf7ac7a9db2885c859d79fcb462461cc1db6d1f55cb6ecb128a04da798af3665"
+    },
+    {
+      "id": "fresh16-tiny",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 13,
+      "height": 1,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 52,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "4a4a5e5cc3bb8b045ee159c6f4712e5f63b37dc3f858731ff4e1fc9d5f0a2542"
+    },
+    {
+      "id": "fresh16-odd",
+      "split": "held-out",
+      "class": "odd",
+      "width": 9,
+      "height": 15,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 36,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "0ac65e0b3edb111d4ac0503d1f881fb5cec178a27d71cc46b7b9a4b4e08f2266"
+    },
+    {
+      "id": "fresh16-wide",
+      "split": "held-out",
+      "class": "wide-shallow",
+      "width": 2411,
+      "height": 31,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 9644,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "9e0c73939f189e0d2ffc6a6ebd439e4088870801a0cf8ba5c811fd02fcea56dc"
+    },
+    {
+      "id": "fresh16-large",
+      "split": "held-out",
+      "class": "large-admitted",
+      "width": 3269,
+      "height": 2053,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 13076,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "6cbd0eb3a4883873f6ce430663d5f94fa8c95efdfa7edd650a9d5d04c2527885"
+    },
+    {
+      "id": "fresh16-photo-nw",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 503,
+      "height": 339,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        137,
+        93,
+        603,
+        407
+      ],
+      "stride": 2012,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "2996c5021dd9a1fccdb4681441f3a5d9733de3343b115c0bd05ccc118041af0e"
+    },
+    {
+      "id": "fresh16-photo-ne",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 553,
+      "height": 391,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        1391,
+        81,
+        677,
+        479
+      ],
+      "stride": 2212,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a4cb9de1ba4b70d0b8fc8f81e28b6bd81c6657f9b0b77e70a27a6879a98bbc29"
+    },
+    {
+      "id": "fresh16-photo-sw",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 449,
+      "height": 311,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        267,
+        753,
+        519,
+        359
+      ],
+      "stride": 1796,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "80027bdbc05f81bafbf3713c0bb83488c2b893baa296e3ef0a952cac0946cc61"
+    },
+    {
+      "id": "fresh16-photo-se",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 607,
+      "height": 365,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        1541,
+        741,
+        729,
+        437
+      ],
+      "stride": 2428,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "12384d484bf96c45fd18e8138aac891d0f7332314fc6eea32243c3fcceb8ce8e"
+    },
+    {
+      "id": "fresh16-video-1375ms",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 601,
+      "height": 337,
+      "layout": "RGBA",
+      "source": "video",
+      "minimumMs": 1375,
+      "stride": 2404,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "pts": 1407,
+      "sha256": "5250bb72890159b2ae8dab83c2c4ad3fa67e351b656843b72ab9a620caa3f0d7"
+    },
+    {
+      "id": "fresh16-video-4750ms",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 539,
+      "height": 303,
+      "layout": "RGBA",
+      "source": "video",
+      "minimumMs": 4750,
+      "stride": 2156,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "pts": 4774,
+      "sha256": "9c26002e27a46e39a09578963db78d7d0dca49e1d7736899d4243a1ed3e202ad"
+    },
+    {
+      "id": "fresh16-video-7875ms",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 449,
+      "height": 253,
+      "layout": "RGBA",
+      "source": "video",
+      "minimumMs": 7875,
+      "stride": 1796,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "pts": 7907,
+      "sha256": "8e00aaa238c97055d4fae2abb08cfb26af9042bf638d47f55d8e7726982e5b79"
+    },
+    {
+      "id": "fresh16-video-11125ms",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 719,
+      "height": 405,
+      "layout": "RGBA",
+      "source": "video",
+      "minimumMs": 11125,
+      "stride": 2876,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "pts": 11140,
+      "sha256": "2a83de4a6c09b596662b49beb7ca3ec3ed6826df753fc0a64379c366445b9445"
+    }
+  ]
+}
