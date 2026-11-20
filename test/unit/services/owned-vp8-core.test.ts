@@ -117,6 +117,42 @@ describe('owned VP8 conversion-owned host adapter', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['resolve', 'reject'])(
+    'waits for an abandoned compile to physically %s before reloading',
+    async (outcome) => {
+      const module = await WebAssembly.compile(wasmBytes);
+      const inFlight = Promise.withResolvers<WebAssembly.Module>();
+      const entered = Promise.withResolvers<void>();
+      const compile = vi
+        .spyOn(WebAssembly, 'compile')
+        .mockImplementationOnce(() => {
+          entered.resolve();
+          return inFlight.promise;
+        })
+        .mockResolvedValue(module);
+      const fetchMock = vi.fn(async () => wasmResponse());
+      vi.stubGlobal('fetch', fetchMock);
+      const controller = new AbortController();
+      const first = core.createOwnedVp8Encoder({
+        signal: controller.signal,
+        accounting: accounting(),
+      });
+      await entered.promise;
+      controller.abort();
+      await expect(first).rejects.toBeInstanceOf(core.OwnedVp8CancelledError);
+      const next = core.createOwnedVp8Encoder({ accounting: accounting() });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(compile).toHaveBeenCalledOnce();
+      if (outcome === 'resolve') inFlight.resolve(module);
+      else inFlight.reject(new Error('late compile failure'));
+      const recovered = await next;
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(compile).toHaveBeenCalledTimes(2);
+      recovered.retire();
+    }
+  );
+
   it('classifies a failed response stream as a load failure and permits a retry', async () => {
     const broken = new Response(
       new ReadableStream<Uint8Array>({
@@ -226,6 +262,7 @@ describe('owned VP8 conversion-owned host adapter', () => {
 
   it.each([
     ['valid', 0, 0x90, true],
+    ['bad release response', 0, 0x90, true],
     ['unsupported version', 0, 0x92, false],
     ['scaled width', 7, 0x40, false],
     ['scaled height', 9, 0x80, false],
@@ -235,7 +272,7 @@ describe('owned VP8 conversion-owned host adapter', () => {
     ['first partition exceeds extent', 1, 0xff, false],
   ] as const)(
     'admits output before the next step and checks its header (%s)',
-    async (_, offset, byte, valid) => {
+    async (scenario, offset, byte, valid) => {
       const memory = new WebAssembly.Memory({ initial: 1, maximum: 3_072 });
       const response = new DataView(memory.buffer, 128, 96);
       const raw = new Uint8Array(memory.buffer, 2048, 100);
@@ -286,7 +323,11 @@ describe('owned VP8 conversion-owned host adapter', () => {
         vp8_v2_step: step,
         vp8_v2_abort: () => publish(9, 0, 0),
         vp8_v2_release_input: () => publish(0, 0, 0),
-        vp8_v2_release_output: vi.fn(() => publish(0, 0, 0)),
+        vp8_v2_release_output: vi.fn(() => {
+          const status = publish(0, 0, 0);
+          if (scenario === 'bad release response') put(0, 3);
+          return status;
+        }),
         vp8_v2_retire: () => 0,
       };
       ledger.reserve(65_536, 0);
@@ -301,7 +342,10 @@ describe('owned VP8 conversion-owned host adapter', () => {
       await vi.waitFor(() => expect(ledger.reserve).toHaveBeenLastCalledWith(4 * 65_536, 100));
       expect(step).toHaveBeenCalledTimes(1);
       completeReservation();
-      if (valid) {
+      if (scenario === 'bad release response') {
+        await expect(task).rejects.toBeInstanceOf(core.OwnedVp8AbiError);
+        expect(consume).toHaveBeenCalledOnce();
+      } else if (valid) {
         await expect(task).resolves.toMatchObject({ finalizedVp8Bytes: 100 });
         expect(consume).toHaveBeenCalledOnce();
       } else {

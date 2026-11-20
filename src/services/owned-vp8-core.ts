@@ -22,6 +22,7 @@ const WORKING = 10;
 const OUTPUT_READY = 11;
 const U32_MAX = 0xffff_ffff;
 
+let compilerIdle: Promise<void> | undefined;
 let compiledModule: { module: WebAssembly.Module; initialPages: number } | undefined;
 
 export class OwnedVp8LoadError extends Error {
@@ -686,6 +687,8 @@ export async function createOwnedVp8Encoder(
   const assetUrl = new URL('../../crates/owned-vp8/owned-vp8.wasm', import.meta.url);
   if (assetUrl.origin !== globalThis.location?.origin && assetUrl.protocol !== 'file:')
     throw new OwnedVp8LoadError('Owned VP8 WASM asset is not same-origin');
+  while (compilerIdle) await awaitAbortable(compilerIdle, options.signal);
+  if (options.isCurrent?.() === false) throw cancelled(options.signal);
   let compiled = compiledModule;
   if (!compiled) {
     let response: Response;
@@ -730,9 +733,20 @@ export async function createOwnedVp8Encoder(
     const initialPages = inspectMemoryDeclaration(bytes);
     let module: WebAssembly.Module;
     try {
-      module = await awaitAbortable(WebAssembly.compile(bytes as BufferSource), options.signal);
+      // Compilation cannot be aborted. Keep its realm slot until native settlement
+      // even if this caller has already observed cancellation.
+      while (compilerIdle) await awaitAbortable(compilerIdle, options.signal);
+      if (options.signal?.aborted || options.isCurrent?.() === false)
+        throw cancelled(options.signal);
+      const physical = WebAssembly.compile(bytes as BufferSource);
+      const release = (): void => {
+        compilerIdle = undefined;
+      };
+      compilerIdle = physical.then(release, release);
+      module = await awaitAbortable(physical, options.signal);
     } catch (error) {
-      if (options.signal?.aborted) throw cancelled(options.signal);
+      if (options.signal?.aborted || options.isCurrent?.() === false)
+        throw cancelled(options.signal);
       throw new OwnedVp8LoadError('Owned VP8 WASM compilation failed', { cause: error });
     }
     if (options.signal?.aborted || options.isCurrent?.() === false) throw cancelled(options.signal);
