@@ -29,7 +29,7 @@ function fixture(): string {
     join(root, 'package.json'),
     JSON.stringify({
       version: '0.2.3',
-      packageManager: 'pnpm@12.18.0',
+      packageManager: 'pnpm@12.22.0',
     })
   );
   writeFileSync(join(root, '.node-version'), process.versions.node);
@@ -66,7 +66,7 @@ describe('Pages source-build contract', () => {
   });
   const selected = JSON.stringify({
     node: { version: process.versions.node },
-    package_manager: { name: 'pnpm', version: '12.18.0' },
+    package_manager: { name: 'pnpm', version: '12.22.0' },
   });
   const run =
     (calls: { command: string; args: string[]; environment?: NodeJS.ProcessEnv }[]) =>
