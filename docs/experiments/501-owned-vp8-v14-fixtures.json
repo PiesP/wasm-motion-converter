@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "cohort": "corrected-v14",
-  "status": "PROSPECTIVE_UNFROZEN",
+  "status": "FROZEN_UNEXECUTED",
   "freezeId": "vp8-v14-first-heldout-20261120-01",
   "attemptBudget": 1,
   "thresholds": {
@@ -59,7 +59,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "47171449e10c4f0e29ac81ed091a9b394fcfa42263dc4629b39f57efc73ff8c3"
     },
     {
       "id": "fresh14-near-neutral",
@@ -75,7 +75,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "6894a4778119bdf20f1aef730951bb07582aacf8c31d50ab8ead97476c3042f7"
     },
     {
       "id": "fresh14-glyph",
@@ -91,7 +91,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "d0f929fbc514520d06fecde29ab9dc33683508e7075dfd777425d86d5ff9af8c"
     },
     {
       "id": "fresh14-diagonal",
@@ -107,7 +107,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "9a047381af346ea163d85b66af05de0fa85bd2574314d430046ab9ee3c4ffd0e"
     },
     {
       "id": "fresh14-dark",
@@ -123,7 +123,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "8379ae4ae435e42288fab71adca5b2523eaa752dfc6320698e5fa526a412e588"
     },
     {
       "id": "fresh14-saturated",
@@ -139,7 +139,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "5585550f6af943693b49399df75c402e17d7f3772e10a37592a8861791b9ef88"
     },
     {
       "id": "fresh14-noise",
@@ -155,7 +155,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "5e66a4a36f3f3c98cbcac690b3829eafe28f51b4bd9e0ae8fbd18f12bd4ea4e1"
     },
     {
       "id": "fresh14-curvature",
@@ -171,7 +171,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "f7460b1477bae37fa2f88ac3ade3d2d3ec06004b061bca05f0fe7a7cbbf6dfe8"
     },
     {
       "id": "fresh14-tiny",
@@ -187,7 +187,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "15248c511b3ef6486d5050483dcdaaef85984bed01fb360528b940b595304a88"
     },
     {
       "id": "fresh14-odd",
@@ -203,7 +203,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "fd7db138d63572acd9689951a29e618048d306777d50cdad3faa51d8016b025c"
     },
     {
       "id": "fresh14-wide",
@@ -219,7 +219,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "6982250562ece2f1f19ce2610b02d42bec8b2391af81af763083b463defeb3b7"
     },
     {
       "id": "fresh14-large",
@@ -235,7 +235,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "d23d869a0a30a842dc33d4e34eda6f8adf5e616f9a4ce470e1ecf9eade189a12"
     },
     {
       "id": "fresh14-photo-nw",
@@ -257,7 +257,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "69dbc05e45500d1221a3feada6a272861d0acbe00a5137c66773faf40e7e0375"
     },
     {
       "id": "fresh14-photo-ne",
@@ -279,7 +279,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "d92e3ada6a6a3f34d2a4b0fa3cc5b7f467eb76d9a70b0c34b74e75bebb911108"
     },
     {
       "id": "fresh14-photo-sw",
@@ -301,7 +301,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "26f3aba23254a8d24c268c00ab2667d1a1bcf2dd7ddbc375dda0b570c542885e"
     },
     {
       "id": "fresh14-photo-se",
@@ -323,7 +323,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "dbbe80fbed97293c983c050825fffc30462fa728062f05523f3da35b57a772f8"
     },
     {
       "id": "fresh14-video-1000",
@@ -340,7 +340,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "38fa17fbf8345176693926d04384b371b7c178395d413977b0e37ecef88883aa"
     },
     {
       "id": "fresh14-video-4000",
@@ -357,7 +357,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "8e2c1dfcd04101106aac05c6f0a4774e04e8be21fe0c72edbcac8c857af09774"
     },
     {
       "id": "fresh14-video-6000",
@@ -374,7 +374,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "96def2d47c912af1a9fa554853074e76c001c6f4617479508038ff30b25e7622"
     },
     {
       "id": "fresh14-video-8000",
@@ -391,7 +391,7 @@
         75,
         85
       ],
-      "sha256": null
+      "sha256": "f56ded370a5864ba06d03d759347a6c97127c979eb8bf7c99d9310ed7dca2432"
     }
   ]
 }
