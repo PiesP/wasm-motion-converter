@@ -2111,12 +2111,19 @@ fn rate_profile_quality(
     rgb_error_sum: u64,
     (width, height): (u32, u32),
 ) -> u32 {
-    if requested_quality == 75
-        && !neutral_chroma
-        && low_curvature
-        && segmentation::smooth_pair_only(class_counts)
-        && !crate::presets::high_chroma_loss(60, rgb_error_sum, width, height)
-    {
+    if requested_quality != 75 || neutral_chroma || !low_curvature {
+        return requested_quality;
+    }
+    let use_q60 = if segmentation::smooth_pair_only(class_counts) {
+        true
+    } else {
+        let total: usize = class_counts.iter().sum();
+        let ramps = class_counts[segmentation::CHROMATIC_RAMP as usize];
+        ramps > total - ramps
+            && SegmentConfig::from_counts(requested_quality, class_counts, total, neutral_chroma)
+                .map_exceeds_rate_allowance(class_counts)
+    };
+    if use_q60 && !crate::presets::high_chroma_loss(60, rgb_error_sum, width, height) {
         60
     } else {
         requested_quality
@@ -5971,6 +5978,52 @@ mod tests {
     }
 
     #[test]
+    fn ramp_majority_q75_rate_profile_requires_an_expensive_mixed_map_and_low_import_error() {
+        let dimensions = (416, 384);
+        let cutoff = 4096 * 3 * u64::from(dimensions.0) * u64::from(dimensions.1);
+        let majority = [96, 96, 336, 96];
+        let tie = [0, 0, 520, 520];
+        let cheap = [96, 0, 150, 0];
+        let single = [0, 0, 624, 0];
+        for (counts, expected_expensive) in [
+            (majority, true),
+            (tie, true),
+            (cheap, false),
+            (single, false),
+        ] {
+            let segments = SegmentConfig::from_counts(75, counts, counts.iter().sum(), false);
+            assert_eq!(
+                segments.map_exceeds_rate_allowance(counts),
+                expected_expensive
+            );
+        }
+        for (quality, counts, neutral, low_curvature, rgb_error_sum, expected) in [
+            (75, majority, false, true, cutoff, 60),
+            (75, majority, false, true, cutoff + 1, 75),
+            (75, majority, false, false, 0, 75),
+            (75, majority, true, true, 0, 75),
+            (75, tie, false, true, 0, 75),
+            (75, cheap, false, true, 0, 75),
+            (75, single, false, true, 0, 75),
+            (60, majority, false, true, 0, 60),
+            (85, majority, false, true, 0, 85),
+        ] {
+            assert_eq!(
+                rate_profile_quality(
+                    quality,
+                    counts,
+                    neutral,
+                    low_curvature,
+                    rgb_error_sum,
+                    dimensions
+                ),
+                expected,
+                "{quality} {counts:?}"
+            );
+        }
+    }
+
+    #[test]
     fn smooth_pair_q75_uses_exact_q60_packet_on_both_entry_paths() {
         for (width, height, stride, layout, vertical) in
             [(32, 16, 128, 0, false), (37, 33, 153, 1, true)]
@@ -6038,7 +6091,7 @@ mod tests {
     }
 
     #[test]
-    fn one_class_or_chromatic_ramps_keep_the_requested_q75_packet() {
+    fn one_class_or_cheap_chromatic_ramp_map_keeps_the_requested_q75_packet() {
         for ramp in [false, true] {
             let width = 32;
             let height = 16;
@@ -10711,14 +10764,18 @@ mod tests {
 
     const Q75_FEEDBACK_AXIS: usize = 514;
 
-    fn q75_uv_dc_feedback_input() -> Vec<u8> {
+    fn mixed_chroma_input(
+        width: usize,
+        height: usize,
+        tile_kind: impl Fn(usize) -> usize,
+    ) -> Vec<u8> {
         // The blue offset gives the ramp tiles an imported U close to 130,
         // between reconstructed levels at the q75 ramp's UV DC step of 20.
-        let mut input = Vec::with_capacity(Q75_FEEDBACK_AXIS * Q75_FEEDBACK_AXIS * 4);
-        for y in 0..Q75_FEEDBACK_AXIS {
-            for x in 0..Q75_FEEDBACK_AXIS {
+        let mut input = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            for x in 0..width {
                 let local_x = x % 16;
-                let step = match x / 16 % 4 {
+                let step = match tile_kind(x / 16) {
                     0 => local_x as u8,                              // Chromatic ramp.
                     1 => 0,                                          // Fine constant.
                     2 => u8::from(local_x >= 8),                     // Chromatic flat.
@@ -10728,6 +10785,75 @@ mod tests {
             }
         }
         input
+    }
+
+    fn q75_uv_dc_feedback_input() -> Vec<u8> {
+        mixed_chroma_input(Q75_FEEDBACK_AXIS, Q75_FEEDBACK_AXIS, |column| column % 4)
+    }
+
+    #[test]
+    fn ramp_majority_q75_uses_exact_q60_packet_on_both_entry_paths() {
+        let (width, height) = (416, 384);
+        let stride = width * 4;
+        let input = mixed_chroma_input(width, height, |column| (column % 13).saturating_sub(5) / 2);
+        let medium = engine_request(width, height, 0, &input, stride);
+        let low = Request {
+            quality: 60,
+            ..medium
+        };
+        let resumable = |request| {
+            let plan = ResourcePlan::checked(request).unwrap();
+            run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap())
+        };
+        let selected = resumable(medium);
+        let expected = resumable(low);
+        assert_eq!(selected.request, medium);
+        assert_eq!(selected.class_counts, [96, 96, 336, 96]);
+        assert!(selected.curvature.within_cutoff(selected.blocks.len()));
+        assert_eq!(selected.effective_quality, 60);
+        assert!(
+            selected.mixed_y1_ac && selected.uv_dc_feedback && selected.omit_display_refinement
+        );
+        assert!(!selected.medium_y1_ac && !selected.high_chroma_loss && !selected.segments.enabled);
+        assert_eq!(selected.preview_trial, PreviewTrial::None);
+        assert_eq!(selected.filter, FilterConfig::for_quality(60));
+        assert_eq!(selected.deltas, expected.deltas);
+        let selected_plan = selected.plan();
+        let expected_plan = expected.plan();
+        assert_eq!(
+            [
+                selected_plan.first_partition_bytes,
+                selected_plan.coefficient_partition_bytes,
+                selected_plan.frame_bytes,
+                selected_plan.host_output_copy_bytes,
+                selected_plan.linear_live_bytes,
+                selected_plan.linear_capacity_bytes,
+                selected_plan.aggregate_bytes,
+            ],
+            [
+                expected_plan.first_partition_bytes,
+                expected_plan.coefficient_partition_bytes,
+                expected_plan.frame_bytes,
+                expected_plan.host_output_copy_bytes,
+                expected_plan.linear_live_bytes,
+                expected_plan.linear_capacity_bytes,
+                expected_plan.aggregate_bytes,
+            ]
+        );
+        assert_eq!(selected.output(), expected.output());
+        let sync = |quality| {
+            encode_textured(
+                &input,
+                medium.width,
+                medium.height,
+                medium.stride,
+                medium.layout,
+                quality,
+            )
+            .unwrap()
+        };
+        assert_eq!(sync(60), selected.output());
+        assert_eq!(sync(75), selected.output());
     }
 
     fn q75_uv_dc_feedback_engine(input: Vec<u8>) -> FrameEncoder {

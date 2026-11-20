@@ -286,8 +286,8 @@ full visible 8×8 chroma tiles.
 The first q75 feedback experiment isolated the effect of that tile-local
 correction on original-reference PSNR.
 
-The q75 rate experiment applies to the same mixed low-curvature profile.
-The first rate point raised the four segment qindices by four and compensated
+For mixed low-curvature frames that retain the q75 rate profile, the first
+rate point raised the four segment qindices by four and compensated
 with deltas of −4 for Y1 DC and Y2 DC/AC and −13 for UV DC/AC. The current
 trial keeps those deltas and uses the lower weighted median of the raised
 indices, weighted by the original class counts and floored at the q75 chromatic
@@ -310,21 +310,23 @@ the q75 SSIM gate on one small high-import control, so this arm must cover the
 entire affected exposed population before adoption. The original V13 55/60
 result, unrelated muted q60 size miss and q60 high-import profile remain separate.
 
-The exposed q75 smooth-pair experiment also selects the complete q60 rate
-profile for a frame whose imported chroma is non-neutral, whose padded
-mean curvature passes the existing three-plane cutoff, and whose only
-occupied source classes are FineSmooth and ChromaticFlat. Both classes
-must be present. The visible RGB import error must also be at or below the
-existing q60 high-chroma-loss cutoff. Single-class frames, chromatic ramps,
-textured blocks, high import error, and other requested presets keep their
-usual profiles.
+Two exposed q75 rate-profile conditions select the complete q60 profile for
+non-neutral frames that pass the three-plane mean curvature cutoff and the
+q60 high-chroma-loss cutoff. The first requires both FineSmooth and
+ChromaticFlat and excludes other classes. The second requires an enabled map
+above the existing 128-byte estimated allowance and a strict majority of
+original ChromaticRamp IDs. This second condition uses the original class
+counts and applies before either profile changes the wire quantizers.
+Single-class frames, mixed maps outside either condition, high import error,
+and other requested presets retain their usual profiles.
 
 The decision reuses the existing color import and classification in both the
 synchronous oracle and the resumable ABI2 encoder. It selects the q60
 quantizers, coefficient deltas, rate weights, mode search, refinement policy
 and signaled filter before encoding begins. The same RGB bytes follow the
 same analysis, counting and output path as an explicit q60 request. No
-additional input traversal or alternate encoding is used. The request still
+additional input traversal or alternate encoding is used. The ramp condition
+checks only the existing four class counts and map-rate estimate. The request still
 records q75; the admitted extents, output ceiling, partitions, stage bounds,
 and lease protocol retain their existing contract. The selected filter and
 quantizer remain signaled in the ordinary VP8 header, with no extra wire
