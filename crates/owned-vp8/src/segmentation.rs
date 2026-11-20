@@ -4,6 +4,7 @@
 // and the reference decoder's SEGMENT_ABSDATA=1 definition.
 
 use crate::{
+    ac_quant::{steps, Deltas, Plane},
     presets,
     rate::{BoolSink, RateCounter},
     EncodeError,
@@ -208,7 +209,11 @@ impl Config {
             .with_uniform_qindex(counts, presets::chromatic_ramp_qindex(75))
     }
 
-    pub(crate) fn with_q85_smooth_pair_allocation(self, counts: [usize; 4]) -> Self {
+    pub(crate) fn with_q85_smooth_pair_allocation(
+        self,
+        counts: [usize; 4],
+        deltas: Deltas,
+    ) -> Self {
         let [fine, flat, ramp, textured] = counts;
         debug_assert!(fine > 0 && flat > 0 && ramp == 0 && textured == 0);
         let total = fine + flat;
@@ -220,7 +225,16 @@ impl Config {
         // the largest legal indices, the weighted sum plus half the count
         // is below 2^27 and fits wasm32 usize.
         let weighted = fine * fine_qindex + flat * flat_qindex;
-        Self::nonsegmented((weighted + total / 2) / total)
+        let mean = (weighted + total / 2) / total;
+        let uv_dc_step = |qindex: usize| steps(qindex as u8, deltas, Plane::UV).dc;
+        let initial = uv_dc_step(mean);
+        // Adjacent qindices can have the same UV DC step. Stay within the
+        // original source quantizer range while testing the next real step.
+        let coarsest = fine_qindex.max(flat_qindex);
+        let selected = (mean + 1..=coarsest)
+            .find(|&qindex| uv_dc_step(qindex) > initial)
+            .unwrap_or(mean);
+        Self::nonsegmented(selected)
     }
 
     pub(crate) fn map_exceeds_rate_allowance(self, counts: [usize; 4]) -> bool {
@@ -590,12 +604,15 @@ mod tests {
     }
 
     #[test]
-    fn q85_smooth_pair_rounds_the_weighted_original_indices_to_nearest() {
-        for (counts, expected) in [
-            ([1, 1, 0, 0], 11),
-            ([3, 1, 0, 0], 8),
-            ([1, 3, 0, 0], 13),
-            ([113, 287, 0, 0], 12),
+    fn q85_smooth_pair_takes_the_next_distinct_uv_dc_step_after_the_rounded_mean() {
+        let deltas = presets::deltas(85);
+        for (counts, mean, expected) in [
+            ([1, 1, 0, 0], 11, 12),
+            ([5, 4, 0, 0], 10, 12),
+            ([3, 1, 0, 0], 8, 9),
+            ([1, 3, 0, 0], 13, 14),
+            ([113, 287, 0, 0], 12, 13),
+            ([1, 31, 0, 0], 15, 15),
         ] {
             let original = Config::from_counts(85, counts, counts.iter().sum(), false);
             assert!(original.enabled && !original.map_exceeds_rate_allowance(counts));
@@ -606,10 +623,15 @@ mod tests {
                 ),
                 (6, 15)
             );
-            let selected = original.with_q85_smooth_pair_allocation(counts);
+            let selected = original.with_q85_smooth_pair_allocation(counts, deltas);
             assert!(!selected.enabled);
             assert_eq!(selected.base_qindex, expected);
             assert_eq!(selected.qindex, [expected; 4]);
+            let dc_at = |index| steps(index, deltas, Plane::UV).dc;
+            assert!((mean..expected).all(|index| dc_at(index as u8) == dc_at(mean as u8)));
+            if expected > mean {
+                assert!(dc_at(expected as u8) > dc_at(mean as u8));
+            }
             let mut header = crate::rate::SymbolCounter::default();
             selected.write_header(&mut header, 4).unwrap();
             for id in [FINE_SMOOTH, CHROMATIC_FLAT] {
@@ -627,7 +649,9 @@ mod tests {
             ..Config::nonsegmented(0)
         };
         assert_eq!(
-            original.with_q85_smooth_pair_allocation(counts).base_qindex,
+            original
+                .with_q85_smooth_pair_allocation(counts, presets::deltas(85))
+                .base_qindex,
             127
         );
     }

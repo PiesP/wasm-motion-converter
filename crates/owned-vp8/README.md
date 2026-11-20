@@ -345,8 +345,12 @@ ranking trial used the existing two-class wire map.
 The single-quantizer q85 rate trial uses that exact source gate and bias.
 It rounds the mean of the original FineSmooth and ChromaticFlat qindices,
 weighted by their source macroblock counts, to the nearest integer. Exact
-half-integer ties round up. The resulting base index omits VP8 segmentation.
-Source IDs and class-specific rate weights stay intact.
+half-integer ties round up. The rate ablation advances that mean to the first
+larger index with a distinct, coarser UV DC step, bounded by the coarser
+original class index. This accounts for repeated entries in the VP8 DC table.
+If the bound contains no distinct coarser step, the mean is retained. The
+selected base index omits VP8 segmentation. Source IDs and class-specific rate
+weights stay intact.
 Every coded block uses the selected base index with the existing UV deltas,
 mode analysis, filter, and display-refinement competition. Blocks with a
 different original qindex use different luma and chroma steps, so the trial
@@ -354,6 +358,13 @@ requires requalification. Classification, partition preflight, final output limi
 and the padded variant selector otherwise follow the existing paths. The
 frame-local bias takes at most five visible-tile scans of 256 additions
 inside an existing analysis step, with no added allocation or replay.
+
+A separate q85 rate ablation applies to non-neutral maps within the existing
+map allowance whose only source classes are FineSmooth and Textured. It moves
+the signed UV AC delta one step toward a coarser step, from -4 to -3. The UV
+DC and luma deltas, class quantizers, segmentation, and refinement policy
+retain their usual settings. This uses existing class counts and requires no
+additional frame analysis or alternative encoding.
 
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those

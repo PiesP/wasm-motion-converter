@@ -116,6 +116,27 @@ pub(crate) fn medium_high_import_deltas(
     selected
 }
 
+pub(crate) fn q85_smooth_textured_deltas(
+    mut selected: Deltas,
+    quality: u32,
+    counts: [usize; 4],
+    neutral_chroma: bool,
+    omit_display_refinement: bool,
+) -> Deltas {
+    let [fine, flat, ramp, textured] = counts;
+    if quality == 85
+        && !neutral_chroma
+        && !omit_display_refinement
+        && fine > 0
+        && textured > 0
+        && flat == 0
+        && ramp == 0
+    {
+        selected.uv_ac = selected.uv_ac.saturating_add(1).min(15);
+    }
+    selected
+}
+
 pub(crate) fn medium_textured_deltas(mut original: Deltas) -> Deltas {
     original.uv_dc += MEDIUM_LUMA_REDUCTION as i8;
     original.uv_ac += MEDIUM_LUMA_REDUCTION as i8;
@@ -518,6 +539,48 @@ mod tests {
             let selected_uv = steps(base as u8, selected, Plane::UV);
             assert_eq!(selected_uv.dc, original_uv.dc);
             assert!(selected_uv.ac > original_uv.ac);
+        }
+    }
+
+    #[test]
+    fn q85_smooth_textured_coarsens_only_uv_ac_under_the_map_allowance() {
+        use crate::ac_quant::{steps, Plane};
+
+        let mixed = [1, 0, 0, 1];
+        for (quality, counts, neutral, omit) in [
+            (60, mixed, false, false),
+            (75, mixed, false, false),
+            (85, mixed, true, false),
+            (85, mixed, false, true),
+            (85, [1, 1, 0, 0], false, false),
+            (85, [1, 1, 0, 1], false, false),
+            (85, [1, 0, 1, 1], false, false),
+            (85, [1, 0, 0, 0], false, false),
+            (85, [0, 0, 0, 1], false, false),
+        ] {
+            let before = deltas(quality);
+            assert_eq!(
+                q85_smooth_textured_deltas(before, quality, counts, neutral, omit),
+                before
+            );
+        }
+        let before = deltas(85);
+        let selected = q85_smooth_textured_deltas(before, 85, mixed, false, false);
+        assert_eq!(
+            selected,
+            Deltas {
+                uv_ac: -3,
+                ..before
+            }
+        );
+        for qindex in [6, 14] {
+            for plane in [Plane::Y1, Plane::Y2] {
+                assert_eq!(steps(qindex, selected, plane), steps(qindex, before, plane));
+            }
+            let original = steps(qindex, before, Plane::UV);
+            let proposed = steps(qindex, selected, Plane::UV);
+            assert_eq!(proposed.dc, original.dc);
+            assert_eq!(proposed.ac, original.ac + 1);
         }
     }
 
