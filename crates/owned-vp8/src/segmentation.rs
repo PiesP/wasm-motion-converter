@@ -17,7 +17,7 @@ pub(crate) const CURVATURE_CUTOFF: u64 = 2;
 const Y_DIFFERENCES_PER_BLOCK: u64 = 448;
 const UV_DIFFERENCES_PER_BLOCK: u64 = 96;
 // Existing absolute size allowance, in RateCounter units of 1/256 bit.
-const MIXED_Q60_MAP_RATE_LIMIT: u64 = 128 * 8 * 256;
+const MAP_RATE_ALLOWANCE: u64 = 128 * 8 * 256;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(crate) struct CurvatureTotals {
@@ -145,10 +145,14 @@ impl Config {
         self.qindex = self
             .qindex
             .map(|qindex| qindex + presets::MIXED_Y1_AC_QINDEX_INCREASE);
-        if self.map_rate_cost(counts) <= MIXED_Q60_MAP_RATE_LIMIT {
+        if !self.map_exceeds_rate_allowance(counts) {
             return self;
         }
         self.uniform_mixed_q60(counts)
+    }
+
+    pub(crate) fn map_exceeds_rate_allowance(self, counts: [usize; 4]) -> bool {
+        self.enabled && self.map_rate_cost(counts) > MAP_RATE_ALLOWANCE
     }
 
     fn map_rate_cost(self, counts: [usize; 4]) -> u64 {
@@ -456,6 +460,7 @@ mod tests {
             };
             let cost = original.map_rate_cost(counts);
             assert_eq!(cost, (total * 2 * 256) as u64);
+            assert_eq!(original.map_exceeds_rate_allowance(counts), !enabled);
             let selected = original.with_mixed_q60_allocation(counts, true);
             assert_eq!(selected.enabled, enabled);
             if enabled {
@@ -464,7 +469,7 @@ mod tests {
                 assert_eq!(selected.map_probabilities, original.map_probabilities);
                 assert_eq!(selected.active, original.active);
             } else {
-                assert_eq!(cost, MIXED_Q60_MAP_RATE_LIMIT + 512);
+                assert_eq!(cost, MAP_RATE_ALLOWANCE + 512);
                 assert_eq!(selected.qindex, [36; 4]);
             }
         }

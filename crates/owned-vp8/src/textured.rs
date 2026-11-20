@@ -2058,6 +2058,19 @@ fn encode_macroblock_coeffs(
     Ok(())
 }
 
+fn omit_display_refinement(
+    quality: u32,
+    mixed_y1_ac: bool,
+    neutral_chroma: bool,
+    segments: SegmentConfig,
+    class_counts: [usize; 4],
+) -> bool {
+    mixed_y1_ac
+        || (matches!(quality, 75 | 85)
+            && !neutral_chroma
+            && segments.map_exceeds_rate_allowance(class_counts))
+}
+
 pub fn encode_textured(
     pixels: &[u8],
     width: u32,
@@ -2218,6 +2231,13 @@ fn encode_observed(
         high_chroma_loss,
         curvature.within_cutoff(count),
     );
+    let omit_display_refinement = omit_display_refinement(
+        quality,
+        mixed_y1_ac,
+        neutral_chroma,
+        original_segments,
+        class_counts,
+    );
     let photo_q75 = medium_textured_luma && !neutral_chroma;
     let original_deltas = if high_chroma_loss {
         crate::presets::original_high_chroma_loss_deltas()
@@ -2275,7 +2295,7 @@ fn encode_observed(
                     &source_y,
                     &source_u,
                     &source_v,
-                    (!mixed_y1_ac).then_some(display_rgb::Original {
+                    (!omit_display_refinement).then_some(display_rgb::Original {
                         pixels,
                         stride,
                         layout: format,
@@ -2312,7 +2332,7 @@ fn encode_observed(
                         })
                         .map_err(|_| EncodeError::OutputLimit)?;
                 }
-                let quota = if high_chroma_loss || mixed_y1_ac {
+                let quota = if high_chroma_loss || omit_display_refinement {
                     0
                 } else {
                     extra_quota(my * blocks_x + mx, count)
@@ -3675,6 +3695,7 @@ pub(crate) struct FrameEncoder {
     curvature: segmentation::CurvatureTotals,
     photo_q60: bool,
     mixed_y1_ac: bool,
+    omit_display_refinement: bool,
     neutral_chroma: bool,
     rgb_error_sum: u64,
     high_chroma_loss: bool,
@@ -3824,6 +3845,7 @@ impl FrameEncoder {
             curvature: segmentation::CurvatureTotals::default(),
             photo_q60: false,
             mixed_y1_ac: false,
+            omit_display_refinement: false,
             neutral_chroma: true,
             rgb_error_sum: 0,
             high_chroma_loss: false,
@@ -4660,6 +4682,13 @@ impl FrameEncoder {
                 self.high_chroma_loss,
                 self.curvature.within_cutoff(self.blocks.len()),
             );
+            self.omit_display_refinement = omit_display_refinement(
+                self.request.quality,
+                self.mixed_y1_ac,
+                self.neutral_chroma,
+                self.segments,
+                self.class_counts,
+            );
             self.segments = self
                 .segments
                 .with_photo_q60_rebase(self.photo_q60)
@@ -4691,7 +4720,7 @@ impl FrameEncoder {
         let blocks_x = self.plan.padded_width as usize / 16;
         let mx = self.cursor % blocks_x;
         let my = self.cursor / blocks_x;
-        let quota = if self.high_chroma_loss || self.mixed_y1_ac {
+        let quota = if self.high_chroma_loss || self.omit_display_refinement {
             0
         } else {
             extra_quota(self.cursor, self.plan.macroblock_count as usize)
@@ -4714,7 +4743,7 @@ impl FrameEncoder {
             qindex
         };
         let lambda = crate::presets::lambda_for_quality(rate_qindex, self.request.quality);
-        let original_rgb = (!self.mixed_y1_ac).then_some(display_rgb::Original {
+        let original_rgb = (!self.omit_display_refinement).then_some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
             layout: self.request.layout,
@@ -9746,6 +9775,144 @@ mod tests {
     }
 
     #[test]
+    fn higher_preset_display_gate_keeps_neutral_single_class_and_cheap_maps() {
+        let expensive = [136; 4];
+        let cheap = [128; 4];
+        let single = [544, 0, 0, 0];
+        for quality in [75, 85] {
+            let gate = |counts: [usize; 4], neutral_chroma| {
+                let total = counts.iter().sum();
+                let segments = SegmentConfig::from_counts(quality, counts, total, neutral_chroma);
+                omit_display_refinement(quality, false, neutral_chroma, segments, counts)
+            };
+            assert!(gate(expensive, false));
+            assert!(!gate(expensive, true));
+            assert!(!gate(single, false));
+            assert!(!gate(cheap, false));
+            assert!(!gate([1; 4], false));
+        }
+        let segments = SegmentConfig::from_counts(60, expensive, 544, false);
+        assert!(segments.map_exceeds_rate_allowance(expensive));
+        assert!(!omit_display_refinement(
+            60, false, false, segments, expensive,
+        ));
+        assert!(omit_display_refinement(
+            60, true, false, segments, expensive,
+        ));
+    }
+
+    const HIGH_MAP_WIDTH: usize = 512;
+    const HIGH_MAP_HEIGHT: usize = 272;
+
+    fn higher_preset_high_map_input() -> Vec<u8> {
+        // Tile the existing four-class synthetic row to produce a balanced map
+        // just above the threshold, without a preset-specific fixture.
+        let tile = mixed_segment_input();
+        let mut pixels = Vec::with_capacity(HIGH_MAP_WIDTH * HIGH_MAP_HEIGHT * 4);
+        for y in 0..HIGH_MAP_HEIGHT {
+            let start = (y % 16) * 64 * 4;
+            for _ in 0..HIGH_MAP_WIDTH / 64 {
+                pixels.extend_from_slice(&tile[start..start + 64 * 4]);
+            }
+        }
+        pixels
+    }
+
+    fn higher_preset_high_map_engine(input: Vec<u8>, quality: u32) -> FrameEncoder {
+        let request = Request {
+            quality,
+            ..engine_request(
+                HIGH_MAP_WIDTH,
+                HIGH_MAP_HEIGHT,
+                0,
+                &input,
+                HIGH_MAP_WIDTH * 4,
+            )
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+        loop {
+            assert!(!matches!(
+                engine.stage,
+                Stage::JointRefine
+                    | Stage::QualityInit
+                    | Stage::QualityCopy
+                    | Stage::QualityFilter
+                    | Stage::QualityMetric
+            ));
+            if engine.step().unwrap() {
+                break;
+            }
+        }
+        assert!(engine.omit_display_refinement);
+        assert!(engine.segments.enabled);
+        assert!(!engine.neutral_chroma);
+        assert_eq!(engine.class_counts, [136; 4]);
+        let original = engine.original_segments();
+        assert_eq!(engine.segments.base_qindex, original.base_qindex);
+        assert_eq!(engine.segments.qindex, original.qindex);
+        assert_eq!(
+            engine.segments.map_probabilities,
+            original.map_probabilities
+        );
+        assert_eq!(engine.deltas, crate::presets::deltas(quality));
+        assert_eq!(
+            engine.filter.level,
+            FilterConfig::for_quality(quality).level
+        );
+        assert!(engine.refinement_log.is_empty() && engine.baseline_overrides.is_empty());
+        assert_eq!(engine.joint_used_total, 0);
+        assert!(engine.refined_checkpoint.is_none());
+        assert!(engine.blocks.iter().any(|block| !block.skip()));
+        engine
+    }
+
+    #[test]
+    fn higher_preset_high_map_matches_sync_and_resumable_output() {
+        let pixels = higher_preset_high_map_input();
+        for quality in [75, 85] {
+            let engine = higher_preset_high_map_engine(pixels.clone(), quality);
+            let sync = encode_textured(
+                &pixels,
+                HIGH_MAP_WIDTH as u32,
+                HIGH_MAP_HEIGHT as u32,
+                (HIGH_MAP_WIDTH * 4) as u32,
+                0,
+                quality,
+            )
+            .unwrap();
+            assert_eq!(engine.output(), sync);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_reconstruct_higher_preset_high_map_without_refinement() {
+        let pixels = higher_preset_high_map_input();
+        for quality in [75, 85] {
+            let engine = higher_preset_high_map_engine(pixels.clone(), quality);
+            let (y, u, v, padded_w) = engine.reconstruction();
+            let expected = filtered_visible_yuv(
+                y,
+                u,
+                v,
+                padded_w,
+                HIGH_MAP_WIDTH,
+                HIGH_MAP_HEIGHT,
+                &engine.blocks,
+                engine.filter,
+            );
+            assert_decodes(
+                engine.output(),
+                HIGH_MAP_WIDTH,
+                HIGH_MAP_HEIGHT,
+                &expected,
+                "higher-preset segmented reconstruction without display refinement",
+            );
+        }
+    }
+
+    #[test]
     fn mixed_segment_map_and_fresh_frames_are_deterministic() {
         let input = mixed_segment_input();
         let request = engine_request(64, 16, 0, &input, 256);
@@ -10752,6 +10919,8 @@ mod tests {
             staged.step().unwrap();
             assert!(staged.output().is_empty());
         }
+        assert!(!staged.omit_display_refinement);
+        assert!(!staged.segments.enabled);
         assert_eq!(staged.selected_frame_bytes, expected.len() as u32);
         assert_eq!(staged.plan.frame_bytes, expected.len() as u32);
         let staged = run_engine(staged);
@@ -10788,6 +10957,7 @@ mod tests {
             engine.step().unwrap();
         }
         assert!(engine.joint_used_total > 0 && engine.joint_used_total <= 128);
+        assert!(!engine.omit_display_refinement);
         assert!(!engine.medium_textured_luma);
         assert_eq!(engine.deltas, crate::presets::deltas(75));
         assert!(engine.base_quality > refined_quality.unwrap());

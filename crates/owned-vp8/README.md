@@ -227,6 +227,20 @@ additional proposal takes one bounded ABI step. Complete trials score the
 combined U/V reconstruction. The search commits only a final state with the
 original skip syntax and coefficient frontier.
 
+For q75 and q85, the higher-preset speed experiment omits the local display
+refinement and its extra quota when imported chroma is non-neutral and the
+enabled segment ID map costs more than the same 128-byte estimate. The encoder
+evaluates the estimate once per frame from the original map probabilities and
+four class counts, after classification. It still signals that map and uses the
+same quantizers, deltas and normal luma/chroma analysis. Monochrome, one-class and
+at-or-below-budget maps retain the full search. With no edits the encoder follows
+the existing single-variant counting and emission path. The q60 policies above
+apply as before.
+
+This quality-changing hypothesis targets the macroblock analysis cost observed
+in the whole-job medium-preset comparison. It needs the unchanged 687-condition,
+frame-level and whole-product gates before adoption.
+
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction
