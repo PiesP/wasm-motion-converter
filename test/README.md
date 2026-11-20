@@ -57,6 +57,11 @@ discovery and their Vitest invocation comments did not select those tests.
 See [Resource testing](./RESOURCE-TESTING.md) for the opt-in resource profile's
 workload, signals, limits, and interpretation rules.
 
+## Read-credit contract
+
+Run the pinned TLA+ model and selected demux read-credit replays with the
+commands in [Owned demux read-credit verification](unit/services/owned-read-credit-model/README.md).
+
 ## Media fixtures
 
 Fresh CI checkouts generate `public/test-video-ci-h264.mp4` before the CI browser

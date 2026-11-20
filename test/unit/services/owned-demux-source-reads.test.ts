@@ -145,3 +145,123 @@ describe('owned demux realm read credit', () => {
     expect(ownedReadCreditStats().liveBytes).toBe(0);
   });
 });
+
+describe('owned read-credit model traces', () => {
+  const HALF_BYTES = CAP_BYTES / 2;
+
+  it.each(['immediate', 'queued'] as const)(
+    'keeps the %s grant charged across abort until the caller resumes',
+    async (admission) => {
+      const blocker = admission === 'queued' ? tryAcquireOwnedReadLease(CAP_BYTES)! : null;
+      const reason = new Error('cancelled before caller resume');
+      const controller = new AbortController();
+      const source = {
+        slice: vi.fn(() => ({ arrayBuffer: async () => new ArrayBuffer(0) })),
+      };
+      const read = readOwnedRange(source, 0, CAP_BYTES, controller.signal);
+      expect(ownedReadCreditStats()).toEqual({
+        liveBytes: CAP_BYTES,
+        retiredBytes: 0,
+        waiters: admission === 'queued' ? 1 : 0,
+      });
+
+      blocker?.release();
+      expect(ownedReadCreditStats()).toEqual({
+        liveBytes: CAP_BYTES,
+        retiredBytes: 0,
+        waiters: 0,
+      });
+      controller.abort(reason);
+      // The grant has already charged the budget. The caller has not yet resumed.
+      expect(tryAcquireOwnedReadLease(1)).toBeNull();
+      expect(ownedReadCreditStats()).toEqual({
+        liveBytes: CAP_BYTES,
+        retiredBytes: 0,
+        waiters: 0,
+      });
+      expect(source.slice).not.toHaveBeenCalled();
+
+      await expect(read).rejects.toBe(reason);
+      expect(source.slice).not.toHaveBeenCalled();
+      expect(ownedReadCreditStats()).toEqual({ liveBytes: 0, retiredBytes: 0, waiters: 0 });
+    }
+  );
+
+  it.each(['fulfilled', 'rejected'] as const)(
+    'admits the successor only after aborted I/O eventually settles (%s)',
+    async (settlement) => {
+      const firstIo = Promise.withResolvers<ArrayBuffer>();
+      const firstSource = { slice: vi.fn(() => ({ arrayBuffer: () => firstIo.promise })) };
+      const firstCredit = tryAcquireOwnedReadLease(CAP_BYTES)!;
+      const reason = new Error('cancelled during I/O');
+      const controller = new AbortController();
+      const first = readOwnedRangeWithLease(
+        firstSource,
+        0,
+        CAP_BYTES,
+        firstCredit,
+        controller.signal
+      );
+      expect(firstSource.slice).toHaveBeenCalledExactlyOnceWith(0, CAP_BYTES);
+
+      const buffer = new ArrayBuffer(1);
+      const secondSource = { slice: vi.fn(() => ({ arrayBuffer: async () => buffer })) };
+      const second = readOwnedRange(secondSource, 0, 1);
+      expect(ownedReadCreditStats()).toEqual({
+        liveBytes: CAP_BYTES,
+        retiredBytes: 0,
+        waiters: 1,
+      });
+
+      controller.abort(reason);
+      await expect(first).rejects.toBe(reason);
+      expect(ownedReadCreditStats()).toEqual({
+        liveBytes: CAP_BYTES,
+        retiredBytes: CAP_BYTES,
+        waiters: 1,
+      });
+      expect(secondSource.slice).not.toHaveBeenCalled();
+
+      if (settlement === 'fulfilled') firstIo.resolve(new ArrayBuffer(CAP_BYTES));
+      else firstIo.reject(new Error('late I/O error'));
+      // The I/O reaction returns the first lease's credit and grants the waiter.
+      // This continuation is queued before the successor can resume its acquisition.
+      await Promise.resolve();
+      expect(ownedReadCreditStats()).toEqual({ liveBytes: 1, retiredBytes: 0, waiters: 0 });
+      expect(secondSource.slice).not.toHaveBeenCalled();
+
+      await expect(second).resolves.toBe(buffer);
+      await expect(first).rejects.toBe(reason);
+      expect(secondSource.slice).toHaveBeenCalledExactlyOnceWith(0, 1);
+      expect(ownedReadCreditStats()).toEqual({ liveBytes: 0, retiredBytes: 0, waiters: 0 });
+    }
+  );
+
+  it('holds a fitting tail behind the head and drains it after head cancellation', async () => {
+    const blocker = tryAcquireOwnedReadLease(HALF_BYTES)!;
+    const controller = new AbortController();
+    const reason = new Error('cancelled head waiter');
+    const headSource = { slice: vi.fn(() => ({ arrayBuffer: async () => new ArrayBuffer(0) })) };
+    const tailBuffer = new ArrayBuffer(HALF_BYTES);
+    const tailSource = { slice: vi.fn(() => ({ arrayBuffer: async () => tailBuffer })) };
+    const head = readOwnedRange(headSource, 0, CAP_BYTES, controller.signal);
+    const tail = readOwnedRange(tailSource, 0, HALF_BYTES);
+
+    expect(tryAcquireOwnedReadLease(1)).toBeNull();
+    expect(ownedReadCreditStats()).toEqual({ liveBytes: HALF_BYTES, retiredBytes: 0, waiters: 2 });
+    expect(headSource.slice).not.toHaveBeenCalled();
+    expect(tailSource.slice).not.toHaveBeenCalled();
+
+    controller.abort(reason);
+    expect(ownedReadCreditStats()).toEqual({ liveBytes: CAP_BYTES, retiredBytes: 0, waiters: 0 });
+    expect(tailSource.slice).not.toHaveBeenCalled();
+
+    await expect(head).rejects.toBe(reason);
+    await expect(tail).resolves.toBe(tailBuffer);
+    expect(headSource.slice).not.toHaveBeenCalled();
+    expect(tailSource.slice).toHaveBeenCalledExactlyOnceWith(0, HALF_BYTES);
+    expect(ownedReadCreditStats()).toEqual({ liveBytes: HALF_BYTES, retiredBytes: 0, waiters: 0 });
+    blocker.release();
+    expect(ownedReadCreditStats()).toEqual({ liveBytes: 0, retiredBytes: 0, waiters: 0 });
+  });
+});
