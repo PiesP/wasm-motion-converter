@@ -41,6 +41,7 @@ pub(crate) struct Config {
     pub qindex: [usize; 4],
     pub map_probabilities: [u8; 3],
     active: [bool; 4],
+    alias_textured_to_ramp: bool,
 }
 
 impl Config {
@@ -51,6 +52,7 @@ impl Config {
             qindex: [qindex; 4],
             map_probabilities: [255; 3],
             active: [false; 4],
+            alias_textured_to_ramp: false,
         }
     }
 
@@ -64,18 +66,8 @@ impl Config {
         let qindex = class_qindices(quality, neutral_chroma);
         let enabled = counts.iter().filter(|&&count| count > 0).count() > 1;
         let base_qindex = qindex[counts.iter().position(|&count| count > 0).unwrap_or(3)];
-        let probability = |numerator: usize, denominator: usize| {
-            (numerator * 256 + denominator / 2)
-                .checked_div(denominator)
-                .unwrap_or(255)
-                .clamp(1, 255) as u8
-        };
         let map_probabilities = if enabled {
-            [
-                probability(counts[0] + counts[1], total),
-                probability(counts[0], counts[0] + counts[1]),
-                probability(counts[2], counts[2] + counts[3]),
-            ]
+            Self::map_probabilities(counts, total)
         } else {
             [255; 3]
         };
@@ -85,7 +77,51 @@ impl Config {
             qindex,
             map_probabilities,
             active: counts.map(|count| count > 0),
+            alias_textured_to_ramp: false,
         }
+    }
+
+    fn map_probabilities(counts: [usize; 4], total: usize) -> [u8; 3] {
+        let probability = |numerator: usize, denominator: usize| {
+            (numerator * 256 + denominator / 2)
+                .checked_div(denominator)
+                .unwrap_or(255)
+                .clamp(1, 255) as u8
+        };
+        [
+            probability(counts[0] + counts[1], total),
+            probability(counts[0], counts[0] + counts[1]),
+            probability(counts[2], counts[2] + counts[3]),
+        ]
+    }
+
+    pub(crate) fn mixed_q60_wire_alias(
+        self,
+        mut counts: [usize; 4],
+        selected: bool,
+    ) -> Option<Self> {
+        let ramp = CHROMATIC_RAMP as usize;
+        let textured = TEXTURED as usize;
+        if !selected
+            || !self.enabled
+            || !self.active[ramp]
+            || !self.active[textured]
+            || self.qindex[ramp] != self.qindex[textured]
+        {
+            return None;
+        }
+        // Both occupied classes already receive the same absolute filter level.
+        // Map only the wire ID. The source class and its rate rules stay intact.
+        counts[ramp] += counts[textured];
+        counts[textured] = 0;
+        let mut active = self.active;
+        active[textured] = false;
+        Some(Self {
+            map_probabilities: Self::map_probabilities(counts, counts.iter().sum()),
+            active,
+            alias_textured_to_ramp: true,
+            ..self
+        })
     }
 
     pub(crate) fn qindex_for(self, id: u8) -> usize {
@@ -210,10 +246,13 @@ impl Config {
         sink.bit(true)?; // Fresh keyframe segmentation map.
         sink.bit(true)?; // Fresh segment feature data.
         sink.bit(true)?; // Absolute quantizer values (SEGMENT_ABSDATA).
-        for &qindex in &self.qindex {
-            sink.bit(true)?;
-            sink.literal(qindex as u32, 7)?;
-            sink.bit(false)?; // Positive value.
+        for (id, &qindex) in self.qindex.iter().enumerate() {
+            let write_quantizer = !(self.alias_textured_to_ramp && id == TEXTURED as usize);
+            sink.bit(write_quantizer)?;
+            if write_quantizer {
+                sink.literal(qindex as u32, 7)?;
+                sink.bit(false)?; // Positive value.
+            }
         }
         // Absolute segmentation replaces the frame's filter level. Signal
         // the same level for each active ID, leaving unused IDs at zero.
@@ -239,6 +278,11 @@ impl Config {
             if id > TEXTURED {
                 return Err(EncodeError::InvalidInput);
             }
+            let id = if self.alias_textured_to_ramp && id == TEXTURED {
+                CHROMATIC_RAMP
+            } else {
+                id
+            };
             sink.write(self.map_probabilities[0], id >= CHROMATIC_RAMP)?;
             if id >= CHROMATIC_RAMP {
                 sink.write(self.map_probabilities[2], id == TEXTURED)?;
@@ -527,6 +571,40 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn mixed_q60_wire_alias_requires_both_equivalent_occupied_classes() {
+        let counts = [120, 240, 180, 60];
+        let source = Config::from_counts(60, counts, 600, false);
+        // Set the original absolute qindices directly; this test isolates
+        // wire construction from the preceding eligibility decision.
+        let coding = Config {
+            qindex: [10, 22, 36, 36],
+            base_qindex: 10,
+            ..source
+        };
+        let aliased = coding.mixed_q60_wire_alias(counts, true).unwrap();
+        assert_eq!(aliased.map_probabilities, [154, 85, 255]);
+        assert_eq!(aliased.active, [true, true, true, false]);
+        assert_eq!(aliased.qindex, coding.qindex);
+        assert_eq!(aliased.base_qindex, coding.base_qindex);
+        assert!(aliased.enabled);
+        assert_eq!(coding.map_probabilities, [154, 85, 192]);
+        assert_eq!(coding.active, [true; 4]);
+
+        assert!(coding.mixed_q60_wire_alias(counts, false).is_none());
+        let uniform = Config::nonsegmented(36);
+        assert!(uniform.mixed_q60_wire_alias(counts, true).is_none());
+        let unequal = Config {
+            qindex: [10, 22, 36, 37],
+            ..coding
+        };
+        assert!(unequal.mixed_q60_wire_alias(counts, true).is_none());
+        for incomplete in [[120, 240, 0, 240], [120, 240, 240, 0]] {
+            let missing = Config::from_counts(60, incomplete, 600, false);
+            assert!(missing.mixed_q60_wire_alias(incomplete, true).is_none());
         }
     }
 

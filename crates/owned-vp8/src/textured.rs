@@ -2801,7 +2801,12 @@ fn encode_observed(
         }
     }
     drop(refinement_log);
-    let result = emit_segmented_frame(&blocks, width, height, segments, deltas, filter)?;
+    let wire_alias = segments
+        .mixed_q60_wire_alias(class_counts, mixed_y1_ac)
+        .map(|alias| (alias, above_modes.as_mut_slice()));
+    let result = emit_segmented_frame_with_alias(
+        &blocks, width, height, segments, deltas, filter, wire_alias,
+    )?;
     observe(
         &reconstructed_y,
         &reconstructed_u,
@@ -3342,6 +3347,7 @@ fn emit_frame(
     )
 }
 
+#[cfg(test)]
 fn emit_segmented_frame(
     blocks: &[Macroblock],
     width: usize,
@@ -3350,13 +3356,25 @@ fn emit_segmented_frame(
     deltas: Deltas,
     filter: FilterConfig,
 ) -> Result<Vec<u8>, EncodeError> {
+    emit_segmented_frame_with_alias(blocks, width, height, segments, deltas, filter, None)
+}
+
+fn emit_segmented_frame_with_alias(
+    blocks: &[Macroblock],
+    width: usize,
+    height: usize,
+    mut segments: SegmentConfig,
+    deltas: Deltas,
+    filter: FilterConfig,
+    wire_alias: Option<(SegmentConfig, &mut [u8])>,
+) -> Result<Vec<u8>, EncodeError> {
     filter.validate()?;
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
     let FrozenVariant {
         model,
         skip_probability,
-        sizes: selected,
+        sizes: mut selected,
         use_model,
     } = count_frozen_variant(blocks, blocks_x, blocks_y, segments, deltas, filter)?;
     let total = 10usize
@@ -3367,6 +3385,27 @@ fn emit_segmented_frame(
         return Err(EncodeError::OutputLimit);
     }
     let selected_model = use_model.then_some(&model);
+    let total = if let Some((alias, above)) = wire_alias {
+        let first = count_alias_header(
+            blocks,
+            blocks_x,
+            above,
+            alias,
+            deltas,
+            filter,
+            selected_model,
+            skip_probability,
+        )?;
+        if first < selected.0 {
+            segments = alias;
+            selected.0 = first;
+            10 + selected.0 + selected.1
+        } else {
+            total
+        }
+    } else {
+        total
+    };
     let mut header = BoolWriter::with_capacity(selected.0)?;
     let mut token = BoolWriter::with_capacity(selected.1)?;
     code_partitions(
@@ -3398,6 +3437,40 @@ fn emit_segmented_frame(
     result.extend_from_slice(&first);
     result.extend_from_slice(&second);
     Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn count_alias_header(
+    blocks: &[Macroblock],
+    blocks_x: usize,
+    above: &mut [u8],
+    segments: SegmentConfig,
+    deltas: Deltas,
+    filter: FilterConfig,
+    model: Option<&Model>,
+    skip_probability: Option<u8>,
+) -> Result<usize, EncodeError> {
+    let mut counter = CountingBoolSink::default();
+    write_header_prefix(&mut counter, segments, deltas, filter)?;
+    write_updates(&mut counter, model, 0, NODE_COUNT)?;
+    write_header_suffix(&mut counter, skip_probability)?;
+    above.fill(0);
+    for row in blocks.chunks_exact(blocks_x) {
+        let mut left = [0; 4];
+        for (mx, block) in row.iter().enumerate() {
+            write_macroblock_header(
+                &mut counter,
+                block,
+                mx,
+                above,
+                &left,
+                segments,
+                skip_probability,
+            )?;
+            update_modes(block, mx, above, &mut left);
+        }
+    }
+    counter.finish_size()
 }
 
 struct FrozenVariant {
@@ -3597,6 +3670,10 @@ enum Stage {
     QualityFilter = 43,
     QualityMetric = 44,
     QualityRelease = 53,
+    CountAliasPrefix = 58,
+    CountAliasUpdates = 59,
+    CountAliasSuffix = 60,
+    CountAliasBlocks = 61,
 }
 
 struct RefinedCheckpoint {
@@ -3740,6 +3817,7 @@ pub(crate) struct FrameEncoder {
     reset_plane: usize,
     deltas: Deltas,
     segments: SegmentConfig,
+    wire_alias: Option<SegmentConfig>,
     header_budget: HeaderBudget,
     contexts: CoeffContexts,
     above_modes: Vec<u8>,
@@ -3892,6 +3970,7 @@ impl FrameEncoder {
             reset_plane: 0,
             deltas: crate::presets::deltas(request.quality),
             segments: SegmentConfig::nonsegmented(crate::presets::qindex(request.quality)),
+            wire_alias: None,
             header_budget: HeaderBudget::new(
                 plan.macroblock_count as usize,
                 SegmentConfig::nonsegmented(crate::presets::qindex(request.quality)),
@@ -3995,11 +4074,13 @@ impl FrameEncoder {
             | Stage::PreviewCollectStats
             | Stage::PreviewRateBlocks
             | Stage::CountBlocks
+            | Stage::CountAliasBlocks
             | Stage::EmitBlocks => (self.cursor as u32, blocks),
             Stage::Optimize | Stage::PreviewOptimize => (self.cursor as u32, NODE_COUNT as u32),
-            Stage::CountUpdates | Stage::EmitUpdates | Stage::PreviewUpdates => {
-                (self.cursor as u32, super::COEFF_UPDATE_PROBS.len() as u32)
-            }
+            Stage::CountUpdates
+            | Stage::CountAliasUpdates
+            | Stage::EmitUpdates
+            | Stage::PreviewUpdates => (self.cursor as u32, super::COEFF_UPDATE_PROBS.len() as u32),
             Stage::PreviewReset => {
                 let plane_bytes = self.reconstructed_y.len()
                     + self.reconstructed_u.len()
@@ -5126,7 +5207,7 @@ impl FrameEncoder {
                 &mut self.left_modes,
                 mx,
                 block,
-                self.segments,
+                self.wire_alias.unwrap_or(self.segments),
                 self.skip_probability,
             )
             .map_err(encode_status)?;
@@ -5177,7 +5258,15 @@ impl FrameEncoder {
                 };
                 if self.refinement_log.is_empty() && self.baseline_overrides.is_empty() {
                     self.plan = self.plan.with_output_sizes(first, second)?;
-                    self.stage = Stage::PrepareOutput;
+                    self.wire_alias = self
+                        .segments
+                        .mixed_q60_wire_alias(self.class_counts, self.mixed_y1_ac);
+                    self.stage = if self.wire_alias.is_some() {
+                        self.count_header = CountingBoolSink::default();
+                        Stage::CountAliasPrefix
+                    } else {
+                        Stage::PrepareOutput
+                    };
                 } else if !self.base_count {
                     let legality = match self.plan.with_output_sizes(first, second) {
                         Ok(_) => Ok(()),
@@ -5227,6 +5316,43 @@ impl FrameEncoder {
             } else {
                 self.stage = Stage::FinalizeHeader;
             }
+        }
+        Ok(())
+    }
+
+    fn count_alias_block(&mut self) -> Result<(), Status> {
+        let blocks_x = self.plan.padded_width as usize / 16;
+        let mx = self.cursor % blocks_x;
+        if mx == 0 {
+            self.left_modes.fill(0);
+        }
+        let block = &self.blocks[self.cursor];
+        write_macroblock_header(
+            &mut self.count_header,
+            block,
+            mx,
+            &self.above_modes,
+            &self.left_modes,
+            self.wire_alias.ok_or(Status::InvalidInput)?,
+            self.skip_probability,
+        )
+        .map_err(encode_status)?;
+        update_modes(block, mx, &mut self.above_modes, &mut self.left_modes);
+        self.cursor += 1;
+        if self.cursor == self.blocks.len() {
+            let first = self.count_header.finish_size().map_err(encode_status)?;
+            if first < self.plan.first_partition_bytes as usize {
+                // The original plan is already legal. Keep its capacity floor
+                // while publishing the exact smaller byte and host-copy sizes.
+                self.plan = self
+                    .plan
+                    .with_output_sizes(first as u32, self.plan.coefficient_partition_bytes)?;
+                self.selected_frame_bytes = self.plan.frame_bytes;
+            } else {
+                self.wire_alias = None;
+            }
+            self.cursor = 0;
+            self.stage = Stage::PrepareOutput;
         }
         Ok(())
     }
@@ -5521,6 +5647,38 @@ impl FrameEncoder {
                     };
                 }
             }
+            Stage::CountAliasPrefix => {
+                write_header_prefix(
+                    &mut self.count_header,
+                    self.wire_alias.ok_or(Status::InvalidInput)?,
+                    self.deltas,
+                    self.filter,
+                )
+                .map_err(encode_status)?;
+                self.stage = Stage::CountAliasUpdates;
+            }
+            Stage::CountAliasUpdates => {
+                let end = (self.cursor + 64).min(NODE_COUNT);
+                write_updates(
+                    &mut self.count_header,
+                    self.use_model.then_some(&self.model),
+                    self.cursor,
+                    end,
+                )
+                .map_err(encode_status)?;
+                self.cursor = end;
+                if end == NODE_COUNT {
+                    self.stage = Stage::CountAliasSuffix;
+                }
+            }
+            Stage::CountAliasSuffix => {
+                write_header_suffix(&mut self.count_header, self.skip_probability)
+                    .map_err(encode_status)?;
+                self.above_modes.fill(0);
+                self.cursor = 0;
+                self.stage = Stage::CountAliasBlocks;
+            }
+            Stage::CountAliasBlocks => self.count_alias_block()?,
             Stage::PrepareOutput => {
                 let header = BoolWriter::with_capacity(self.plan.first_partition_bytes as usize)
                     .map_err(|_| Status::MemoryAdmission)?;
@@ -5537,7 +5695,7 @@ impl FrameEncoder {
             Stage::EmitPrefix => {
                 write_header_prefix(
                     &mut self.pending_header,
-                    self.segments,
+                    self.wire_alias.unwrap_or(self.segments),
                     self.deltas,
                     self.filter,
                 )
@@ -9829,6 +9987,137 @@ mod tests {
         );
     }
 
+    fn mixed_q60_wire_alias_input() -> Vec<u8> {
+        let original = mixed_low_curvature_input();
+        let mut input = Vec::with_capacity(64 * 16 * 4);
+        for row in original.as_chunks::<{ 32 * 4 }>().0 {
+            input.extend_from_slice(row);
+            input.extend_from_slice(row);
+        }
+        // Keep an unmodified chromatic ramp and place a single textured peak
+        // in the second ramp tile without crossing the frame mean cutoff.
+        for channel in &mut input[(8 * 64 + 56) * 4..][..3] {
+            *channel += 12;
+        }
+        input
+    }
+
+    fn first_partition_bytes(payload: &[u8]) -> usize {
+        (u32::from_le_bytes([payload[0], payload[1], payload[2], 0]) >> 5) as usize
+    }
+
+    fn unaliased_mixed_q60_payload(engine: &FrameEncoder) -> Vec<u8> {
+        emit_segmented_frame(
+            &engine.blocks,
+            64,
+            16,
+            engine.segments,
+            engine.deltas,
+            engine.filter,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn mixed_q60_wire_alias_preserves_frozen_tokens_and_original_admission() {
+        let input = mixed_q60_wire_alias_input();
+        let request = Request {
+            quality: 60,
+            ..engine_request(64, 16, 0, &input, 256)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        while engine.stage != Stage::CountAliasPrefix {
+            assert!(!engine.step().unwrap());
+        }
+        assert!(engine.mixed_y1_ac && engine.segments.enabled);
+        assert_eq!(engine.class_counts, [2, 0, 1, 1]);
+        let original_plan = engine.plan;
+        let original = unaliased_mixed_q60_payload(&engine);
+        let first = first_partition_bytes(&original);
+        assert_eq!(original_plan.first_partition_bytes as usize, first);
+        assert_eq!(original_plan.frame_bytes as usize, original.len());
+
+        // A tied replay keeps original syntax and the same admitted plan.
+        let mut tied = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        while tied.stage != Stage::CountAliasPrefix {
+            assert!(!tied.step().unwrap());
+        }
+        tied.wire_alias = Some(tied.segments);
+        let tied = run_engine(tied);
+        assert!(tied.wire_alias.is_none());
+        assert_eq!(tied.output(), original);
+        assert_eq!(tied.plan, original_plan);
+
+        let engine = run_engine(engine);
+        assert!(engine.wire_alias.is_some());
+        assert_eq!(engine.blocks[3].segment_id, segmentation::TEXTURED);
+        assert_eq!(engine.segments.map_probabilities, [128, 255, 128]);
+        let packet = engine.output();
+        let alias_first = first_partition_bytes(packet);
+        assert!(alias_first < first);
+        assert_eq!(packet.len(), engine.plan.frame_bytes as usize);
+        assert_eq!(packet.len(), engine.plan.host_output_copy_bytes as usize);
+        assert_eq!(packet.len(), engine.selected_frame_bytes() as usize);
+        assert_eq!(
+            engine.plan.linear_capacity_bytes,
+            original_plan.linear_capacity_bytes
+        );
+        assert_eq!(
+            engine.plan.coefficient_partition_bytes,
+            original_plan.coefficient_partition_bytes
+        );
+        assert_eq!(&packet[10 + alias_first..], &original[10 + first..]);
+        assert_eq!(packet, encode_textured(&input, 64, 16, 256, 0, 60).unwrap());
+        assert_eq!(engine.skip_probability, tied.skip_probability);
+        assert_eq!(engine.use_model, tied.use_model);
+        assert_eq!(engine.update_count, tied.update_count);
+        assert_eq!(engine.blocks, tied.blocks);
+        assert_eq!(engine.reconstructed_u, tied.reconstructed_u);
+        assert_eq!(engine.reconstructed_v, tied.reconstructed_v);
+        assert_eq!(engine.reconstructed_y, tied.reconstructed_y);
+
+        let capped = Request {
+            output_limit: packet.len() as u32,
+            ..request
+        };
+        let mut capped =
+            FrameEncoder::new(capped, input, ResourcePlan::checked(capped).unwrap()).unwrap();
+        loop {
+            match capped.step() {
+                Err(Status::OutputLimit) => break,
+                result => assert_eq!(result, Ok(false)),
+            }
+            assert!(capped.stage != Stage::CountAliasPrefix);
+        }
+        assert!(capped.output().is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_match_mixed_q60_wire_alias() {
+        let input = mixed_q60_wire_alias_input();
+        let request = Request {
+            quality: 60,
+            ..engine_request(64, 16, 0, &input, 256)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        let original = unaliased_mixed_q60_payload(&engine);
+        assert!(engine.output().len() < original.len());
+        let (y, u, v, padded_w) = engine.reconstruction();
+        let expected =
+            filtered_visible_yuv(y, u, v, padded_w, 64, 16, &engine.blocks, engine.filter);
+        assert_decodes(&original, 64, 16, &expected, "original mixed q60 map");
+        assert_decodes(
+            engine.output(),
+            64,
+            16,
+            &expected,
+            "alias of equivalent mixed q60 segments",
+        );
+    }
+
     #[test]
     fn higher_preset_display_gate_keeps_neutral_single_class_and_cheap_maps() {
         let expensive = [136; 4];
@@ -10984,7 +11273,7 @@ mod tests {
                 let (after, _) = engine.progress();
                 let bound = match stage {
                     0 | 13 | 22 => 65_536,
-                    4 | 8 | 16 | 20 | 24 | 30 | 32 => 64,
+                    4 | 8 | 16 | 20 | 24 | 30 | 32 | 59 => 64,
                     41 | 45 | 49 => 64 * 1024 / (3 * 5 * 8),
                     42 | 46 | 50 => 65_536,
                     43 | 47 | 51 => 1,
