@@ -22,6 +22,7 @@ import type {
 import {
   BYTES_PER_MB,
   DEFAULT_FPS,
+  DEMUX_MEMORY_BUDGET_BYTES,
   FRAME_PIPELINE_MEMORY_BUDGET_BYTES,
   GIF_TARGET_FPS,
   MEMORY_CRITICAL_RATIO,
@@ -58,6 +59,11 @@ import {
 import { encodeGif } from './gif-encoder-service';
 import { encodeWebpOffscreen } from './offscreen-webp-encoder';
 import { resolveOutputLimits } from './output-limits';
+import {
+  discardOwnedVp8Module,
+  getOwnedVp8ModuleBytes,
+  waitForOwnedVp8Load,
+} from './owned-vp8-module-state';
 import { createStreamingWebpEncoder, type StreamingWebpEncoder } from './parallel-webp-encoder';
 import { probeCanvasWebpCapability } from './webp-capability';
 import { encodeWebpOwned } from './webp-encoder-service';
@@ -84,6 +90,10 @@ export async function runConversionPipeline(
 ): Promise<ArrayBuffer> {
   const pipelineStart = performance.now();
   const format = request.format;
+  const previousLoad = waitForOwnedVp8Load(signal);
+  if (previousLoad) await previousLoad;
+  signal?.throwIfAborted();
+  if (format === 'gif') discardOwnedVp8Module();
   const logCtx = {
     format,
     quality: request.quality,
@@ -172,6 +182,7 @@ async function _runPipelineInner(
         (retainedInputBytes +
           retainedIndexBytes +
           globalBufferPool.totalRetainedMemory +
+          getOwnedVp8ModuleBytes() +
           additionalBytes) /
           BYTES_PER_MB
       );
@@ -183,6 +194,7 @@ async function _runPipelineInner(
         retainedInputBytes +
         retainedIndexBytes +
         globalBufferPool.totalRetainedMemory +
+        getOwnedVp8ModuleBytes() +
         additionalBytes;
       const estimatedMB = Math.ceil(estimatedBytes / BYTES_PER_MB);
       if (estimatedMB >= maxMemoryMB * MEMORY_CRITICAL_RATIO) {
@@ -191,6 +203,15 @@ async function _runPipelineInner(
         );
       }
     };
+
+    // Drop cached VP8 source when it cannot coexist with this input and demux
+    // reservation. Otherwise, keep it available for another software WebP job.
+    if (
+      getOwnedVp8ModuleBytes() > 0 &&
+      sampleAccountedMemoryMB(Math.max(0, DEMUX_MEMORY_BUDGET_BYTES - retainedIndexBytes)) >=
+        maxMemoryMB * MEMORY_CRITICAL_RATIO
+    )
+      discardOwnedVp8Module();
 
     const demuxSpan = profiler?.begin('demuxing');
     const demuxProgressThrottled = throttled.callback;
@@ -444,6 +465,7 @@ async function _runPipelineInner(
       const offscreenOk = await probeCanvasWebpCapability(
         WEBP_QUALITY_PERCENT[request.quality] / 100
       );
+      if (offscreenOk) discardOwnedVp8Module();
       workerPool =
         offscreenOk && typeof Worker !== 'undefined' && memorySafeWorkerCount > 0
           ? createWorkerPool(memorySafeWorkerCount)

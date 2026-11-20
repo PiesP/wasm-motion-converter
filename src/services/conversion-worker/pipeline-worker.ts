@@ -18,10 +18,16 @@ import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
 import { encodeGif } from '@services/gif-encoder-service';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
+import {
+  discardOwnedVp8Module,
+  getOwnedVp8ModuleBytes,
+  waitForOwnedVp8Load,
+} from '@services/owned-vp8-module-state';
 import { encodeWebpOwned } from '@services/webp-encoder-service';
 import {
   BYTES_PER_MB,
   DEFAULT_FPS,
+  DEMUX_MEMORY_BUDGET_BYTES,
   GIF_TARGET_FPS,
   MEMORY_CRITICAL_RATIO,
   PROGRESS_PHASE,
@@ -106,6 +112,10 @@ export async function runWorkerPipeline(
   indexSnapshot?: OwnedInputIndexSnapshot
 ): Promise<{ outputBuffer: ArrayBuffer; profile?: ConversionProfileReport }> {
   const pipelineStart = performance.now();
+  const previousLoad = waitForOwnedVp8Load(signal);
+  if (previousLoad) await previousLoad;
+  signal?.throwIfAborted();
+  if (options.format === 'gif') discardOwnedVp8Module();
   const profilerClass = import.meta.env.DEV
     ? (await import('@services/conversion-profiler')).ConversionProfiler
     : undefined;
@@ -149,11 +159,13 @@ export async function runWorkerPipeline(
   // ── Memory sampling and guard (H3 fix) ──
   // Workers do not expose performance.memory. Include the transferred input,
   // pooled frame buffers, and any known output buffer in a conservative estimate.
+  const retainedIndexBytes = 2 * (request.indexSnapshot?.bytes.byteLength ?? 0);
   const sampleMemoryMB = (additionalBytes = 0): number => {
     const estimatedBytes =
       (inputBuffer?.byteLength ?? 0) +
-      2 * (request.indexSnapshot?.bytes.byteLength ?? 0) +
+      retainedIndexBytes +
       globalBufferPool.totalRetainedMemory +
+      getOwnedVp8ModuleBytes() +
       additionalBytes;
     return Math.ceil(estimatedBytes / BYTES_PER_MB);
   };
@@ -265,6 +277,12 @@ export async function runWorkerPipeline(
   let demuxSession: Awaited<ReturnType<typeof demuxVideo>> | undefined;
 
   try {
+    if (
+      getOwnedVp8ModuleBytes() > 0 &&
+      sampleMemoryMB(Math.max(0, DEMUX_MEMORY_BUDGET_BYTES - retainedIndexBytes)) >=
+        maxMemoryMB * MEMORY_CRITICAL_RATIO
+    )
+      discardOwnedVp8Module();
     assertMemoryBudget();
 
     // ── Demux Phase ────────────────────────────────────────────

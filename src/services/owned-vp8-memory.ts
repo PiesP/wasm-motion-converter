@@ -17,6 +17,7 @@ import {
   OwnedVp8OutputLimitError,
   type OwnedVp8Accounting,
 } from './owned-vp8-core';
+import { getOwnedVp8ModuleBytes } from './owned-vp8-module-state';
 import type { StreamingWebpMuxer } from './streaming-webp-encoder';
 
 const MAX_CONVERSION_BYTES = WORKER_MAX_MEMORY_MB * BYTES_PER_MB;
@@ -42,6 +43,7 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
         this.muxer.retainedBytes,
         this.linearCapacityBytes,
         this.hostCopyBytes,
+        getOwnedVp8ModuleBytes(),
         nextUsage
       );
     });
@@ -51,6 +53,7 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
           this.muxer.retainedBytes,
           this.linearCapacityBytes,
           this.hostCopyBytes,
+          getOwnedVp8ModuleBytes(),
           this.frames.usage,
           nextPooledBytes
         );
@@ -77,6 +80,7 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
     muxBytes: number,
     linearBytes: number,
     copyBytes: number,
+    moduleBytes = getOwnedVp8ModuleBytes(),
     frameUsage = this.frames.usage,
     pooledBytes = globalBufferPool.totalRetainedMemory
   ): void {
@@ -85,11 +89,13 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
       !Number.isSafeInteger(muxBytes) ||
       !Number.isSafeInteger(linearBytes) ||
       !Number.isSafeInteger(copyBytes) ||
+      !Number.isSafeInteger(moduleBytes) ||
       !Number.isSafeInteger(frameLiveBytes) ||
       !Number.isSafeInteger(pooledBytes) ||
       muxBytes < 0 ||
       linearBytes < 0 ||
       copyBytes < 0 ||
+      moduleBytes < 0 ||
       pooledBytes < 0 ||
       frameLiveBytes > FRAME_PIPELINE_MEMORY_BUDGET_BYTES ||
       copyBytes > WEBP_MAX_OUTPUT_BYTES
@@ -106,16 +112,24 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
       frameLiveBytes +
       muxBytes +
       linearBytes +
-      copyBytes;
+      copyBytes +
+      moduleBytes;
     if (!Number.isSafeInteger(total) || total > MAX_CONVERSION_BYTES)
       throw new OwnedVp8MemoryAdmissionError('Owned VP8 conversion exceeds aggregate memory');
     // The caller's existing guard already charges original input, both index
-    // copies, and every pooled byte. Supply only the remaining reservations.
+    // copies, pooled bytes, and the realm module charge. For a load admission
+    // include the proposed increase over the current module charge.
     const alreadyCharged =
       (this.demux.inputBufferBytes ?? 0) +
       2 * (this.demux.indexSnapshotBytes ?? 0) +
-      globalBufferPool.totalRetainedMemory;
+      globalBufferPool.totalRetainedMemory +
+      getOwnedVp8ModuleBytes();
     this.assertAdditionalMemoryBytes(Math.max(0, total - alreadyCharged));
+  }
+
+  assertModuleLoad(bytes: number): void {
+    if (this.released) throw new OwnedVp8MemoryAdmissionError('Owned VP8 broker retired');
+    this.assertTotal(this.muxer.retainedBytes, this.linearCapacityBytes, this.hostCopyBytes, bytes);
   }
 
   reserve(linearCapacityBytes: number, hostOutputCopyBytes: number): void {

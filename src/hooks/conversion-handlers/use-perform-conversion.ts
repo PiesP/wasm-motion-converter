@@ -143,8 +143,7 @@ export async function handleConvert(
     return;
   }
 
-  // Guard against double-click: abort any in-flight conversion and prevent
-  // a second pipeline from starting while the first is still running.
+  // Ignore repeated Convert clicks while the active pipeline is running.
   if (appState() === 'converting') {
     logger.warn('conversion', 'Convert called while already converting — skipping');
     return;

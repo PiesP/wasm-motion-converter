@@ -26,6 +26,7 @@ import { resolveVideoDimensions } from '@services/frame-utils';
 import { copyOwnedInputIndex } from '@services/owned-input-index-cache';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import type { OwnedVp8FailureKind } from '@services/owned-vp8-errors';
+import { discardOwnedVp8Module, waitForOwnedVp8Load } from '@services/owned-vp8-module-state';
 import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -111,6 +112,13 @@ export async function runPipelineViaWorker(
   if (signal?.aborted) {
     throw new DOMException('Cancelled', 'AbortError');
   }
+
+  // A dedicated Worker cannot reuse the main realm's compiled module. Wait
+  // for the previous loader and give up the cached source before dispatch.
+  const previousLoad = waitForOwnedVp8Load(signal);
+  if (previousLoad) await previousLoad;
+  signal?.throwIfAborted();
+  discardOwnedVp8Module();
 
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const requestId = crypto.randomUUID();

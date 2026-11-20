@@ -68,6 +68,7 @@ import {
   copyOwnedInputIndex,
   publishOwnedInputIndex,
 } from '@services/owned-input-index-cache';
+import { getOwnedVp8ModuleBytes, ownedVp8ModuleState } from '@services/owned-vp8-module-state';
 import { MAX_CODEC_DESCRIPTION_BYTES, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 
 const validDecoderConfig: SerializedDecoderConfig = {
@@ -183,6 +184,46 @@ describe('runPipelineViaWorker lifecycle', () => {
     ThrowingWorker.workerError = null;
     runConversionPipeline.mockReset();
     for (const method of Object.values(logger)) method.mockReset();
+  });
+
+  it('waits for the main realm loader before constructing the dedicated GIF Worker', async () => {
+    const physical = Promise.withResolvers<void>();
+    ownedVp8ModuleState.loaderIdle = physical.promise;
+    ownedVp8ModuleState.loadBytes = 740_651;
+    ThrowingWorker.response = {
+      type: 'error',
+      requestId: 'request-1',
+      message: 'GIF Worker received input',
+      code: 'ENCODER_ERROR',
+    };
+    try {
+      const next = runPipelineWithFallback(
+        new Blob(['video']),
+        validDecoderConfig,
+        validOptions,
+        vi.fn()
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(ThrowingWorker.constructionCount).toBe(0);
+      ownedVp8ModuleState.loaderIdle = undefined;
+      ownedVp8ModuleState.loadBytes = 0;
+      const binary = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+      ownedVp8ModuleState.cache = {
+        module: new WebAssembly.Module(binary),
+        initialPages: 0,
+        sourceBytes: binary.byteLength,
+      };
+      physical.resolve();
+      await expect(next).rejects.toThrow('GIF Worker received input');
+      expect(ThrowingWorker.constructionCount).toBe(1);
+      expect(getOwnedVp8ModuleBytes()).toBe(0);
+      expect(runConversionPipeline).not.toHaveBeenCalled();
+    } finally {
+      ownedVp8ModuleState.cache = undefined;
+      ownedVp8ModuleState.loadBytes = 0;
+      ownedVp8ModuleState.loaderIdle = undefined;
+      physical.resolve();
+    }
   });
 
   it.each([

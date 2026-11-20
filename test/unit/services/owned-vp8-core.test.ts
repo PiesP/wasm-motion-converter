@@ -12,8 +12,10 @@ const wasmBytes = Uint8Array.from(
       new URL('../../../crates/owned-vp8/owned-vp8.wasm', import.meta.url)
   )
 );
+const LOAD_STAGING_BYTES = 482_273;
 
 let core: Core;
+let moduleState: typeof import('@services/owned-vp8-module-state');
 
 function wasmResponse(bytes: Uint8Array = wasmBytes, mime = 'application/wasm'): Response {
   return new Response(Uint8Array.from(bytes).buffer as ArrayBuffer, {
@@ -23,6 +25,7 @@ function wasmResponse(bytes: Uint8Array = wasmBytes, mime = 'application/wasm'):
 
 function accounting() {
   return {
+    assertModuleLoad: vi.fn((_bytes: number) => undefined),
     reserve: vi.fn((_linear: number, _hostCopy: number): void | Promise<void> => undefined),
     observe: vi.fn((_actual: number) => undefined),
     release: vi.fn(() => undefined),
@@ -54,6 +57,7 @@ function settings(width = 16, height = 16) {
 beforeEach(async () => {
   vi.resetModules();
   core = await import('@services/owned-vp8-core');
+  moduleState = await import('@services/owned-vp8-module-state');
 });
 
 afterEach(() => {
@@ -123,24 +127,166 @@ describe('owned VP8 conversion-owned host adapter', () => {
     }
   );
 
-  it('does not retain an aborted fetch or a sticky load Promise', async () => {
-    let finishFetch!: (response: Response) => void;
-    const deferred = new Promise<Response>((resolve) => {
-      finishFetch = resolve;
+  it.each(['resolve', 'reject'] as const)(
+    'abandons the caller promptly while cancelled fetch headers later %s',
+    async (outcome) => {
+      const headers = Promise.withResolvers<Response>();
+      const cancelBody = vi.fn();
+      const unusedBody = new ReadableStream<Uint8Array>({ cancel: cancelBody });
+      const fetchMock = vi
+        .fn()
+        .mockReturnValueOnce(headers.promise)
+        .mockResolvedValue(wasmResponse());
+      vi.stubGlobal('fetch', fetchMock);
+      const controller = new AbortController();
+      const ledger = accounting();
+      const first = core.createOwnedVp8Encoder({ accounting: ledger, signal: controller.signal });
+      controller.abort();
+      await expect(first).rejects.toBeInstanceOf(core.OwnedVp8CancelledError);
+      const next = core.createOwnedVp8Encoder({ accounting: accounting() });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(moduleState.getOwnedVp8ModuleBytes()).toBe(0);
+      expect(fetchMock).toHaveBeenCalledOnce();
+      if (outcome === 'resolve')
+        headers.resolve(
+          new Response(unusedBody, { headers: { 'content-type': 'application/wasm' } })
+        );
+      else headers.reject(new TypeError('late fetch failure'));
+      const recovered = await next;
+      recovered.retire();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(ledger.assertModuleLoad).not.toHaveBeenCalled();
+      expect(cancelBody).toHaveBeenCalledTimes(outcome === 'resolve' ? 1 : 0);
+    }
+  );
+
+  it('rejects a cold load before allocating its staging buffer', async () => {
+    const stream = new ReadableStream<Uint8Array>();
+    const response = new Response(stream, { headers: { 'content-type': 'application/wasm' } });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+    const allocate = vi.fn();
+    vi.stubGlobal(
+      'Uint8Array',
+      new Proxy(Uint8Array, {
+        construct(target, args, newTarget) {
+          allocate(args[0]);
+          return Reflect.construct(target, args, newTarget);
+        },
+      })
+    );
+    const compile = vi.spyOn(WebAssembly, 'compile');
+    const ledger = accounting();
+    const denial = new Error('Cold load budget denied');
+    ledger.assertModuleLoad.mockImplementation(() => {
+      throw denial;
     });
-    const fetchMock = vi.fn().mockReturnValueOnce(deferred).mockResolvedValue(wasmResponse());
+
+    await expect(core.createOwnedVp8Encoder({ accounting: ledger })).rejects.toMatchObject({
+      name: new core.OwnedVp8MemoryAdmissionError().name,
+      cause: denial,
+    });
+    expect(ledger.assertModuleLoad).toHaveBeenCalledExactlyOnceWith(LOAD_STAGING_BYTES);
+    expect(allocate).not.toHaveBeenCalledWith(LOAD_STAGING_BYTES);
+    expect(compile).not.toHaveBeenCalled();
+    expect(ledger.reserve).not.toHaveBeenCalled();
+    expect(moduleState.getOwnedVp8ModuleBytes()).toBe(0);
+    expect(stream.locked).toBe(false);
+  });
+
+  it('charges the stream backing separately from its logical view and shares a successful load', async () => {
+    const backing = new Uint8Array(wasmBytes.byteLength + 17);
+    const payload = backing.subarray(8, 8 + wasmBytes.byteLength);
+    payload.set(wasmBytes);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(payload);
+        controller.close();
+      },
+    });
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(stream, {
+          headers: { 'content-type': 'application/wasm' },
+        })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const entered = Promise.withResolvers<BufferSource>();
+    const physical = Promise.withResolvers<WebAssembly.Module>();
+    const module = await WebAssembly.compile(wasmBytes);
+    const compile = vi.spyOn(WebAssembly, 'compile').mockImplementation((bytes) => {
+      entered.resolve(bytes);
+      return physical.promise;
+    });
+    const firstLedger = accounting();
+    const secondLedger = accounting();
+    const first = core.createOwnedVp8Encoder({ accounting: firstLedger });
+    const second = core.createOwnedVp8Encoder({ accounting: secondLedger });
+    const staged = await entered.promise;
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(compile).toHaveBeenCalledOnce();
+    expect(firstLedger.assertModuleLoad.mock.calls).toEqual([
+      [LOAD_STAGING_BYTES],
+      [LOAD_STAGING_BYTES + backing.byteLength],
+      [LOAD_STAGING_BYTES + payload.byteLength],
+    ]);
+    expect(secondLedger.assertModuleLoad).not.toHaveBeenCalled();
+    expect(staged).toMatchObject({ byteLength: payload.byteLength });
+    expect(moduleState.getOwnedVp8ModuleBytes()).toBe(LOAD_STAGING_BYTES + wasmBytes.byteLength);
+    expect(firstLedger.reserve).not.toHaveBeenCalled();
+
+    physical.resolve(module);
+    const [firstEncoder, secondEncoder] = await Promise.all([first, second]);
+    expect(firstEncoder).not.toBe(secondEncoder);
+    expect(moduleState.getOwnedVp8ModuleBytes()).toBe(wasmBytes.byteLength);
+    expect(firstLedger.reserve).toHaveBeenCalledOnce();
+    expect(secondLedger.reserve).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(compile).toHaveBeenCalledOnce();
+    firstEncoder.retire();
+    secondEncoder.retire();
+    expect(firstLedger.release).toHaveBeenCalledOnce();
+    expect(secondLedger.release).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the staging charge through cancellation of a physically pending read', async () => {
+    const entered = Promise.withResolvers<void>();
+    const underlyingCancel = Promise.withResolvers<void>();
+    const cancel = vi.fn(() => underlyingCancel.promise);
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull() {
+          entered.resolve();
+        },
+        cancel,
+      },
+      { highWaterMark: 0 }
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(stream, { headers: { 'content-type': 'application/wasm' } })
+      )
+      .mockResolvedValueOnce(wasmResponse());
     vi.stubGlobal('fetch', fetchMock);
     const controller = new AbortController();
     const first = core.createOwnedVp8Encoder({
-      accounting: accounting(),
       signal: controller.signal,
+      accounting: accounting(),
     });
+    await entered.promise;
     controller.abort();
     await expect(first).rejects.toBeInstanceOf(core.OwnedVp8CancelledError);
-    finishFetch(wasmResponse());
-    const recovered = await core.createOwnedVp8Encoder({ accounting: accounting() });
-    recovered.retire();
+    const waiting = core.createOwnedVp8Encoder({ accounting: accounting() });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(moduleState.getOwnedVp8ModuleBytes()).toBe(LOAD_STAGING_BYTES);
+    underlyingCancel.resolve();
+    const second = await waiting;
+    expect(moduleState.getOwnedVp8ModuleBytes()).toBe(wasmBytes.byteLength);
+    expect(stream.locked).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    second.retire();
   });
 
   it.each(['resolve', 'reject'])(
@@ -159,22 +305,28 @@ describe('owned VP8 conversion-owned host adapter', () => {
       const fetchMock = vi.fn(async () => wasmResponse());
       vi.stubGlobal('fetch', fetchMock);
       const controller = new AbortController();
+      const ledger = accounting();
       const first = core.createOwnedVp8Encoder({
         signal: controller.signal,
-        accounting: accounting(),
+        accounting: ledger,
       });
       await entered.promise;
+      expect(moduleState.getOwnedVp8ModuleBytes()).toBe(LOAD_STAGING_BYTES + wasmBytes.byteLength);
       controller.abort();
       await expect(first).rejects.toBeInstanceOf(core.OwnedVp8CancelledError);
       const next = core.createOwnedVp8Encoder({ accounting: accounting() });
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
       expect(fetchMock).toHaveBeenCalledOnce();
       expect(compile).toHaveBeenCalledOnce();
+      expect(ledger.reserve).not.toHaveBeenCalled();
+      expect(moduleState.getOwnedVp8ModuleBytes()).toBe(LOAD_STAGING_BYTES + wasmBytes.byteLength);
       if (outcome === 'resolve') inFlight.resolve(module);
       else inFlight.reject(new Error('late compile failure'));
       const recovered = await next;
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(compile).toHaveBeenCalledTimes(2);
+      expect(ledger.reserve).not.toHaveBeenCalled();
+      expect(moduleState.getOwnedVp8ModuleBytes()).toBe(wasmBytes.byteLength);
       recovered.retire();
     }
   );

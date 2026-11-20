@@ -6,7 +6,6 @@ import { schedulerYield } from '@piesp/browser-core/util';
 import {
   OwnedVp8AbiError,
   OwnedVp8BusyError,
-  OwnedVp8CancelledError,
   OwnedVp8InitializationAbiError,
   OwnedVp8InvalidInputError,
   OwnedVp8LoadError,
@@ -17,6 +16,12 @@ import {
   OwnedVp8UnsupportedLayoutError,
   OwnedVp8UnsupportedPixelsError,
 } from './owned-vp8-errors';
+import {
+  awaitAbortable,
+  cancelled,
+  ownedVp8ModuleState,
+  type CompiledOwnedVp8Module,
+} from './owned-vp8-module-state';
 
 export {
   OwnedVp8AbiError,
@@ -48,8 +53,11 @@ const WORKING = 10;
 const OUTPUT_READY = 11;
 const U32_MAX = 0xffff_ffff;
 
-let compilerIdle: Promise<void> | undefined;
-let compiledModule: { module: WebAssembly.Module; initialPages: number } | undefined;
+interface ModuleLoadOwner {
+  signal: AbortSignal | undefined;
+  isCurrent: (() => boolean) | undefined;
+  accounting: OwnedVp8Accounting | undefined;
+}
 
 export interface OwnedVp8Settings {
   width: number;
@@ -65,6 +73,7 @@ export interface OwnedVp8Settings {
 
 /** Reservations include WASM capacity once and a separate possible host copy. */
 export interface OwnedVp8Accounting {
+  assertModuleLoad(bytes: number): void;
   reserve(linearCapacityBytes: number, hostOutputCopyBytes: number): void | Promise<void>;
   observe?(actualCapacityBytes: number): void;
   release(): void;
@@ -134,35 +143,6 @@ function fixedWord(value: number, label: string): number {
   return value;
 }
 
-function cancelled(signal?: AbortSignal): OwnedVp8CancelledError {
-  return new OwnedVp8CancelledError('Owned VP8 conversion cancelled', {
-    cause: signal?.reason,
-  });
-}
-
-function awaitAbortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!signal) return work;
-  if (signal.aborted) return Promise.reject(cancelled(signal));
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = (): void => {
-      signal.removeEventListener('abort', onAbort);
-      reject(cancelled(signal));
-    };
-    signal.addEventListener('abort', onAbort, { once: true });
-    void work.then(
-      (value) => {
-        signal.removeEventListener('abort', onAbort);
-        resolve(value);
-      },
-      (error: unknown) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(error);
-      }
-    );
-    if (signal.aborted) onAbort();
-  });
-}
-
 function readWord(bytes: Uint8Array, position: { at: number }, end: number): number {
   let value = 0;
   for (let index = 0; index < 5; index++) {
@@ -223,34 +203,63 @@ function inspectMemoryDeclaration(bytes: Uint8Array): number {
   return initialPages;
 }
 
-async function readBoundedAsset(response: Response, signal?: AbortSignal): Promise<Uint8Array> {
+function activeModuleLoadAccounting(owner: ModuleLoadOwner): OwnedVp8Accounting {
+  if (!owner.accounting || owner.signal?.aborted || owner.isCurrent?.() === false)
+    throw cancelled(owner.signal);
+  return owner.accounting;
+}
+
+function admitModuleLoad(owner: ModuleLoadOwner, bytes: number): void {
+  const accounting = activeModuleLoadAccounting(owner);
+  try {
+    accounting.assertModuleLoad(bytes);
+  } catch (error) {
+    throw new OwnedVp8MemoryAdmissionError('Owned VP8 WASM load memory reservation failed', {
+      cause: error,
+    });
+  }
+  ownedVp8ModuleState.loadBytes = bytes;
+}
+
+async function readBoundedAsset(response: Response, owner: ModuleLoadOwner): Promise<Uint8Array> {
+  const { signal } = owner;
   const reader = response.body?.getReader();
   if (!reader) throw new OwnedVp8LoadError('Owned VP8 WASM response has no body');
-  const bytes = new Uint8Array(MAX_ASSET_BYTES);
+  let stop: Promise<void> | undefined;
+  const cancelRead = (): void => {
+    stop ??= reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener('abort', cancelRead, { once: true });
   let length = 0;
   try {
+    admitModuleLoad(owner, MAX_ASSET_BYTES);
+    const bytes = new Uint8Array(MAX_ASSET_BYTES);
     for (;;) {
-      if (signal?.aborted) throw cancelled(signal);
-      const next = await awaitAbortable(reader.read(), signal);
+      const next = await reader.read();
       if (signal?.aborted) throw cancelled(signal);
       if (next.done) break;
       if (length + next.value.byteLength > bytes.length)
         throw new OwnedVp8LoadError('Owned VP8 WASM asset exceeds its byte limit');
-      bytes.set(next.value, length);
+      // The browser supplies the chunk. Charge the complete JS backing store
+      // while the loader borrows the view and copies its logical byte range.
+      admitModuleLoad(owner, MAX_ASSET_BYTES + next.value.buffer.byteLength);
+      try {
+        bytes.set(next.value, length);
+      } finally {
+        ownedVp8ModuleState.loadBytes = MAX_ASSET_BYTES;
+      }
       length += next.value.byteLength;
     }
+    if (length < 8) throw new OwnedVp8LoadError('Owned VP8 WASM asset is truncated');
+    return bytes.subarray(0, length);
   } catch (error) {
-    void reader.cancel().catch(() => undefined);
+    cancelRead();
     throw error;
   } finally {
-    try {
-      reader.releaseLock();
-    } catch {
-      // Aborted reads may still be unwinding in the browser.
-    }
+    signal?.removeEventListener('abort', cancelRead);
+    if (stop) await stop;
+    reader.releaseLock();
   }
-  if (length < 8) throw new OwnedVp8LoadError('Owned VP8 WASM asset is truncated');
-  return bytes.subarray(0, length);
 }
 
 const REQUIRED_EXPORTS = [
@@ -675,84 +684,85 @@ export class OwnedVp8Encoder {
 
 /** A compiled module may survive conversions; every conversion owns a fresh
  * mutable instance and keeps it until retire after all borrowed writes settle. */
-export async function createOwnedVp8Encoder(
-  options: OwnedVp8EncoderOptions
-): Promise<OwnedVp8Encoder> {
-  fixedWord(options.generation ?? 1, 'generation');
-  if ((options.generation ?? 1) === 0)
-    throw new OwnedVp8InvalidInputError('Owned VP8 generation is zero');
-  if (options.signal?.aborted || options.isCurrent?.() === false) throw cancelled(options.signal);
-  const assetUrl = new URL('../../crates/owned-vp8/owned-vp8.wasm', import.meta.url);
-  if (assetUrl.origin !== globalThis.location?.origin && assetUrl.protocol !== 'file:')
-    throw new OwnedVp8LoadError('Owned VP8 WASM asset is not same-origin');
-  while (compilerIdle) await awaitAbortable(compilerIdle, options.signal);
-  if (options.isCurrent?.() === false) throw cancelled(options.signal);
-  let compiled = compiledModule;
-  if (!compiled) {
+async function loadOwnedVp8Module(
+  assetUrl: URL,
+  owner: ModuleLoadOwner
+): Promise<CompiledOwnedVp8Module> {
+  const { signal } = owner;
+  let retainedModuleBytes = 0;
+  try {
     let response: Response;
     try {
-      response = await awaitAbortable(
-        fetch(assetUrl, {
-          ...(options.signal ? { signal: options.signal } : {}),
-          redirect: 'error',
-          credentials: 'same-origin',
-        }),
-        options.signal
-      );
+      response = await fetch(assetUrl, {
+        ...(signal ? { signal } : {}),
+        redirect: 'error',
+        credentials: 'same-origin',
+      });
     } catch (error) {
-      if (options.signal?.aborted) throw cancelled(options.signal);
+      activeModuleLoadAccounting(owner);
       throw new OwnedVp8LoadError('Owned VP8 WASM fetch failed', { cause: error });
     }
-    if (!response.ok)
-      throw new OwnedVp8LoadError(`Owned VP8 WASM request failed (HTTP ${response.status})`);
-    if (
-      response.redirected ||
-      response.type === 'opaque' ||
-      response.type === 'opaqueredirect' ||
-      response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !==
-        'application/wasm' ||
-      (response.url !== '' && new URL(response.url).origin !== assetUrl.origin)
-    )
-      throw new OwnedVp8LoadError('Owned VP8 WASM response is not a same-origin WASM asset');
-    const declaredLength = response.headers.get('content-length');
-    if (
-      declaredLength !== null &&
-      (!/^\d+$/.test(declaredLength) || Number(declaredLength) > MAX_ASSET_BYTES)
-    )
-      throw new OwnedVp8LoadError('Owned VP8 WASM declared size is invalid');
+    try {
+      activeModuleLoadAccounting(owner);
+      if (!response.ok)
+        throw new OwnedVp8LoadError(`Owned VP8 WASM request failed (HTTP ${response.status})`);
+      if (
+        response.redirected ||
+        response.type === 'opaque' ||
+        response.type === 'opaqueredirect' ||
+        response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !==
+          'application/wasm' ||
+        (response.url !== '' && new URL(response.url).origin !== assetUrl.origin)
+      )
+        throw new OwnedVp8LoadError('Owned VP8 WASM response is not a same-origin WASM asset');
+      const declaredLength = response.headers.get('content-length');
+      if (
+        declaredLength !== null &&
+        (!/^\d+$/.test(declaredLength) || Number(declaredLength) > MAX_ASSET_BYTES)
+      )
+        throw new OwnedVp8LoadError('Owned VP8 WASM declared size is invalid');
+    } catch (error) {
+      await response.body?.cancel().catch(() => undefined);
+      throw error;
+    }
     let bytes: Uint8Array;
     try {
-      bytes = await readBoundedAsset(response, options.signal);
+      bytes = await readBoundedAsset(response, owner);
     } catch (error) {
-      if (options.signal?.aborted) throw cancelled(options.signal);
-      if (error instanceof OwnedVp8LoadError) throw error;
+      activeModuleLoadAccounting(owner);
+      if (error instanceof OwnedVp8LoadError || error instanceof OwnedVp8MemoryAdmissionError)
+        throw error;
+      if (error instanceof RangeError) throw classifyFailure(error);
       throw new OwnedVp8LoadError('Owned VP8 WASM response stream failed', { cause: error });
     }
-    if (options.signal?.aborted || options.isCurrent?.() === false) throw cancelled(options.signal);
+    activeModuleLoadAccounting(owner);
     const initialPages = inspectMemoryDeclaration(bytes);
+    const sourceBytes = bytes.byteLength;
+    // The WebAssembly JS API takes a logical copy of the source view.
+    // Engine-native code, allocator and networking costs are outside this ledger.
+    admitModuleLoad(owner, MAX_ASSET_BYTES + sourceBytes);
     let module: WebAssembly.Module;
     try {
-      // Compilation cannot be aborted. Keep its realm slot until native settlement
-      // even if this caller has already observed cancellation.
-      while (compilerIdle) await awaitAbortable(compilerIdle, options.signal);
-      if (options.signal?.aborted || options.isCurrent?.() === false)
-        throw cancelled(options.signal);
-      const physical = WebAssembly.compile(bytes as BufferSource);
-      const release = (): void => {
-        compilerIdle = undefined;
-      };
-      compilerIdle = physical.then(release, release);
-      module = await awaitAbortable(physical, options.signal);
+      // The caller can stop waiting while the native compile holds this charge.
+      module = await WebAssembly.compile(bytes as BufferSource);
     } catch (error) {
-      if (options.signal?.aborted || options.isCurrent?.() === false)
-        throw cancelled(options.signal);
+      activeModuleLoadAccounting(owner);
       throw new OwnedVp8LoadError('Owned VP8 WASM compilation failed', { cause: error });
     }
-    if (options.signal?.aborted || options.isCurrent?.() === false) throw cancelled(options.signal);
+    activeModuleLoadAccounting(owner);
     if (WebAssembly.Module.imports(module).length !== 0)
       throw new OwnedVp8InitializationAbiError('Owned VP8 WASM has unexpected imports');
-    compiled = { module, initialPages };
+    retainedModuleBytes = sourceBytes;
+    return { module, initialPages, sourceBytes };
+  } finally {
+    ownedVp8ModuleState.loadBytes = retainedModuleBytes;
   }
+}
+
+async function instantiateOwnedVp8(
+  compiled: CompiledOwnedVp8Module,
+  options: OwnedVp8EncoderOptions
+): Promise<OwnedVp8Encoder> {
   const initialReservedBytes = compiled.initialPages * COPY_CHUNK_BYTES;
   try {
     await options.accounting.reserve(initialReservedBytes, 0);
@@ -793,6 +803,49 @@ export async function createOwnedVp8Encoder(
     encoder.retire();
     throw cancelled(options.signal);
   }
-  compiledModule = compiled;
+  ownedVp8ModuleState.cache = compiled;
   return encoder;
+}
+
+export async function createOwnedVp8Encoder(
+  options: OwnedVp8EncoderOptions
+): Promise<OwnedVp8Encoder> {
+  fixedWord(options.generation ?? 1, 'generation');
+  if ((options.generation ?? 1) === 0)
+    throw new OwnedVp8InvalidInputError('Owned VP8 generation is zero');
+  if (options.signal?.aborted || options.isCurrent?.() === false) throw cancelled(options.signal);
+  const assetUrl = new URL('../../crates/owned-vp8/owned-vp8.wasm', import.meta.url);
+  if (assetUrl.origin !== globalThis.location?.origin && assetUrl.protocol !== 'file:')
+    throw new OwnedVp8LoadError('Owned VP8 WASM asset is not same-origin');
+  while (ownedVp8ModuleState.loaderIdle)
+    await awaitAbortable(ownedVp8ModuleState.loaderIdle, options.signal);
+  if (options.signal?.aborted || options.isCurrent?.() === false) throw cancelled(options.signal);
+  const cached = ownedVp8ModuleState.cache;
+  if (cached) return instantiateOwnedVp8(cached, options);
+
+  const idle = Promise.withResolvers<void>();
+  ownedVp8ModuleState.loaderIdle = idle.promise;
+  const owner: ModuleLoadOwner = {
+    signal: options.signal,
+    isCurrent: options.isCurrent,
+    accounting: options.accounting,
+  };
+  const physicalLoad = loadOwnedVp8Module(assetUrl, owner);
+  try {
+    const compiled = await awaitAbortable(physicalLoad, options.signal);
+    return await instantiateOwnedVp8(compiled, options);
+  } finally {
+    // The persistent loader charge has realm ownership. Drop the old
+    // conversion's references even if its physical operation remains pending.
+    owner.accounting = undefined;
+    owner.isCurrent = undefined;
+    // Failed or cancelled callers can leave physical work behind. Other cold
+    // callers enter only after that work and the original initializer settle.
+    const releaseLoader = (): void => {
+      ownedVp8ModuleState.loadBytes = 0;
+      ownedVp8ModuleState.loaderIdle = undefined;
+      idle.resolve();
+    };
+    void physicalLoad.then(releaseLoader, releaseLoader);
+  }
 }

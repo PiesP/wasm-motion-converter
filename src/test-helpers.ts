@@ -423,6 +423,7 @@ function ownedVp8Pixels(
 
 function ownedVp8Accounting(): {
   accounting: {
+    assertModuleLoad(bytes: number): void;
     reserve(linearCapacityBytes: number, hostOutputCopyBytes: number): void;
     observe(actualCapacityBytes: number): void;
     release(): void;
@@ -432,6 +433,7 @@ function ownedVp8Accounting(): {
   let releaseCount = 0;
   return {
     accounting: {
+      assertModuleLoad: () => undefined,
       reserve: () => undefined,
       observe: () => undefined,
       release: () => {

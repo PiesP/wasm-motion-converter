@@ -5,8 +5,13 @@ import { globalBufferPool } from '@services/buffer-pool';
 import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
 import type { DemuxResult } from '@services/demuxer-service';
 import { WebpFrameMemoryBudget } from '@services/frame-memory';
-import { OwnedVp8MemoryAdmissionError } from '@services/owned-vp8-core';
+import {
+  createOwnedVp8Encoder,
+  OwnedVp8CancelledError,
+  OwnedVp8MemoryAdmissionError,
+} from '@services/owned-vp8-core';
 import { OwnedVp8MemoryBroker } from '@services/owned-vp8-memory';
+import { getOwnedVp8ModuleBytes } from '@services/owned-vp8-module-state';
 import { StreamingWebpMuxer } from '@services/streaming-webp-encoder';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
@@ -34,7 +39,11 @@ function fixture(inputBufferBytes = 0, indexSnapshotBytes = 0, maxOutputBytes?: 
   return { broker, frames, muxer, appGuard };
 }
 
-afterEach(() => globalBufferPool.clear());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  globalBufferPool.clear();
+});
 
 describe('owned VP8 conversion-wide admission', () => {
   function largeFixture(inputBufferBytes: number, muxBytes: number, guard = vi.fn()) {
@@ -288,5 +297,50 @@ describe('owned VP8 conversion-wide admission', () => {
     broker.assertFinalization();
     broker.dispose();
     frames.dispose();
+  });
+
+  it('preserves the cold charge during broker teardown and admits it once in a replacement', async () => {
+    const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 5, 5, 1, 1, 1, 128, 24]);
+    const entered = Promise.withResolvers<void>();
+    const physical = Promise.withResolvers<WebAssembly.Module>();
+    vi.spyOn(WebAssembly, 'compile').mockImplementationOnce(() => {
+      entered.resolve();
+      return physical.promise;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(bytes, {
+          headers: { 'content-type': 'application/wasm' },
+        })
+      )
+    );
+    const first = fixture();
+    const controller = new AbortController();
+    const task = createOwnedVp8Encoder({ accounting: first.broker, signal: controller.signal });
+    await entered.promise;
+    controller.abort();
+    await expect(task).rejects.toBeInstanceOf(OwnedVp8CancelledError);
+    first.broker.dispose();
+    first.frames.dispose();
+
+    const replacement = fixture();
+    try {
+      const stagingAndLogicalBytes = 482_273 + bytes.byteLength;
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(getOwnedVp8ModuleBytes()).toBe(stagingAndLogicalBytes);
+      const available = 384 * MIB - replacement.frames.usage.totalBytes;
+      expect(() => replacement.broker.reserve(available - stagingAndLogicalBytes + 1, 0)).toThrow(
+        OwnedVp8MemoryAdmissionError
+      );
+      replacement.broker.reserve(available - stagingAndLogicalBytes, 0);
+      expect(replacement.appGuard).toHaveBeenLastCalledWith(512 * MIB - stagingAndLogicalBytes);
+      physical.reject(new WebAssembly.CompileError('late compiler rejection'));
+      await vi.waitFor(() => expect(getOwnedVp8ModuleBytes()).toBe(0));
+      replacement.broker.reserve(available, 0);
+    } finally {
+      replacement.broker.dispose();
+      replacement.frames.dispose();
+    }
   });
 });
