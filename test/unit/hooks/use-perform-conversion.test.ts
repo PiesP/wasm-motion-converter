@@ -104,6 +104,9 @@ import {
   WorkerTimeoutError,
 } from '@services/conversion-worker/main-thread-proxy';
 import {
+  OwnedVp8AbiError,
+  OwnedVp8InitializationAbiError,
+  OwnedVp8InvalidInputError,
   OwnedVp8LoadError,
   OwnedVp8MemoryAdmissionError,
   OwnedVp8TrapError,
@@ -765,6 +768,67 @@ it('offers terminal recovery for initialization wrapped by frame processing, eve
   expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
     expect.objectContaining({ outputBlob: expect.any(Blob) }),
   ]);
+});
+
+it.each([
+  new OwnedVp8LoadError('Owned VP8 WASM request failed (HTTP 503)'),
+  new OwnedVp8InitializationAbiError('Owned VP8 WASM header is invalid'),
+])('offers an explicit new conversion for recoverable %s', async (reason) => {
+  mocks.settings = { ...mocks.settings, format: 'webp' };
+  mocks.validateVideoDuration.mockResolvedValue({ duration: 1000, warnings: [] });
+  mocks.runConversionPipeline.mockRejectedValueOnce(reason);
+  const runtime = createRuntime();
+
+  await handleConvert(runtime, localizedProgressT);
+
+  expect(mocks.runConversionPipeline).toHaveBeenCalledOnce();
+  expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
+  expect(mocks.setErrorContext).toHaveBeenCalledWith(
+    expect.objectContaining({
+      code: 'ENCODER_ERROR',
+      type: 'format',
+      phase: 'owned_vp8_initialization',
+      originalError: reason.message,
+      recovery: 'retry',
+    })
+  );
+  expect(mocks.setWebpReloadRequired).not.toHaveBeenCalled();
+  expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+
+  // The real conversion-store transition sets this before a click can reach Retry.
+  mocks.appState = 'error';
+  handleRetry(runtime, localizedProgressT);
+
+  await vi.waitFor(() => expect(mocks.transitionToState).toHaveBeenLastCalledWith('done'));
+  expect(mocks.runConversionPipeline).toHaveBeenCalledTimes(2);
+  expect(mocks.validateVideoDuration).toHaveBeenCalledOnce();
+  expect(mocks.setConversionResults).toHaveBeenCalledWith([
+    expect.objectContaining({ outputBlob: expect.any(Blob) }),
+  ]);
+  expect(mocks.setWebpReloadRequired).not.toHaveBeenCalled();
+  expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+});
+
+it.each([
+  new OwnedVp8AbiError('Owned VP8 raw keyframe header or geometry is invalid'),
+  new OwnedVp8TrapError('Owned VP8 WASM trapped'),
+  new OwnedVp8InvalidInputError('Owned VP8 rejected the input'),
+  new Error('The native WebP encoding failed'),
+])('keeps %s on the ordinary format failure path', async (reason) => {
+  mocks.settings = { ...mocks.settings, format: 'webp' };
+  mocks.validateVideoDuration.mockResolvedValue({ duration: 1000, warnings: [] });
+  mocks.runConversionPipeline.mockRejectedValueOnce(reason);
+
+  await handleConvert(createRuntime(), localizedProgressT);
+
+  expect(mocks.runConversionPipeline).toHaveBeenCalledOnce();
+  expect(mocks.setErrorContext).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'format', code: 'ENCODER_ERROR' })
+  );
+  expect(mocks.setErrorContext).not.toHaveBeenCalledWith(
+    expect.objectContaining({ recovery: 'retry' })
+  );
+  expect(mocks.setWebpReloadRequired).not.toHaveBeenCalled();
 });
 
 it.each([

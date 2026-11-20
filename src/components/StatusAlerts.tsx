@@ -51,6 +51,7 @@ const StatusAlerts: Component<StatusAlertsProps> = (props) => {
           suggestion={props.errorContext?.suggestion}
           errorType={props.errorContext?.type}
           canRetry={props.canRetry}
+          recovery={props.errorContext?.recovery}
           reloadRequired={props.errorContext?.phase === 'wasm_webp_initialization'}
           onRetry={props.onRetry}
           onSelectNewFile={props.onSelectNewFile}

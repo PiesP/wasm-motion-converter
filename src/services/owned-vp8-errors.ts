@@ -11,6 +11,9 @@ export class OwnedVp8LoadError extends Error {
 export class OwnedVp8AbiError extends Error {
   override name = 'OwnedVp8AbiError';
 }
+export class OwnedVp8InitializationAbiError extends OwnedVp8AbiError {
+  override name = 'OwnedVp8InitializationAbiError';
+}
 export class OwnedVp8InvalidInputError extends Error {
   override name = 'OwnedVp8InvalidInputError';
 }
@@ -44,6 +47,7 @@ export const OWNED_VP8_FAILURE_CODES = {
   'output-limit': 'OUT_OF_MEMORY',
   'partition-limit': 'ENCODER_ERROR',
   abi: 'ENCODER_ERROR',
+  'abi-initialization': 'ENCODER_ERROR',
   load: 'ENCODER_ERROR',
   trap: 'ENCODER_ERROR',
   busy: 'ENCODER_ERROR',
@@ -66,6 +70,7 @@ const failureTypes: ReadonlyArray<readonly [ErrorConstructor, OwnedVp8Failure]> 
   [OwnedVp8MemoryAdmissionError, 'resource'],
   [OwnedVp8OutputLimitError, 'output-limit'],
   [OwnedVp8PartitionLimitError, 'partition-limit'],
+  [OwnedVp8InitializationAbiError, 'abi-initialization'],
   [OwnedVp8AbiError, 'abi'],
   [OwnedVp8LoadError, 'load'],
   [OwnedVp8TrapError, 'trap'],

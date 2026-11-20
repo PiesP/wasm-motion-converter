@@ -7,6 +7,7 @@ import {
   OwnedVp8AbiError,
   OwnedVp8BusyError,
   OwnedVp8CancelledError,
+  OwnedVp8InitializationAbiError,
   OwnedVp8InvalidInputError,
   OwnedVp8LoadError,
   OwnedVp8MemoryAdmissionError,
@@ -21,6 +22,7 @@ export {
   OwnedVp8AbiError,
   OwnedVp8BusyError,
   OwnedVp8CancelledError,
+  OwnedVp8InitializationAbiError,
   OwnedVp8InvalidInputError,
   OwnedVp8LoadError,
   OwnedVp8MemoryAdmissionError,
@@ -164,14 +166,15 @@ function awaitAbortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
 function readWord(bytes: Uint8Array, position: { at: number }, end: number): number {
   let value = 0;
   for (let index = 0; index < 5; index++) {
-    if (position.at >= end) throw new OwnedVp8AbiError('Owned VP8 WASM integer is truncated');
+    if (position.at >= end)
+      throw new OwnedVp8InitializationAbiError('Owned VP8 WASM integer is truncated');
     const byte = bytes[position.at++]!;
     if (index === 4 && (byte & 0xf0) !== 0)
-      throw new OwnedVp8AbiError('Owned VP8 WASM integer exceeds u32');
+      throw new OwnedVp8InitializationAbiError('Owned VP8 WASM integer exceeds u32');
     value += (byte & 0x7f) * 2 ** (index * 7);
     if ((byte & 0x80) === 0) return value;
   }
-  throw new OwnedVp8AbiError('Owned VP8 WASM integer is unbounded');
+  throw new OwnedVp8InitializationAbiError('Owned VP8 WASM integer is unbounded');
 }
 
 /** Reject oversized, shared, memory64, or unbounded memory before instantiate. */
@@ -187,24 +190,26 @@ function inspectMemoryDeclaration(bytes: Uint8Array): number {
     bytes[6] !== 0 ||
     bytes[7] !== 0
   )
-    throw new OwnedVp8AbiError('Owned VP8 WASM header is invalid');
+    throw new OwnedVp8InitializationAbiError('Owned VP8 WASM header is invalid');
   const position = { at: 8 };
   let initialPages: number | undefined;
   while (position.at < bytes.length) {
     const section = bytes[position.at++]!;
     const size = readWord(bytes, position, bytes.length);
     const end = position.at + size;
-    if (end > bytes.length) throw new OwnedVp8AbiError('Owned VP8 WASM section is truncated');
-    if (section === 8) throw new OwnedVp8AbiError('Owned VP8 WASM start section is unsupported');
+    if (end > bytes.length)
+      throw new OwnedVp8InitializationAbiError('Owned VP8 WASM section is truncated');
+    if (section === 8)
+      throw new OwnedVp8InitializationAbiError('Owned VP8 WASM start section is unsupported');
     if (section === 5) {
       if (initialPages !== undefined)
-        throw new OwnedVp8AbiError('Owned VP8 WASM has duplicate memory sections');
+        throw new OwnedVp8InitializationAbiError('Owned VP8 WASM has duplicate memory sections');
       if (readWord(bytes, position, end) !== 1 || readWord(bytes, position, end) !== 1)
-        throw new OwnedVp8AbiError('Owned VP8 WASM memory shape is unsupported');
+        throw new OwnedVp8InitializationAbiError('Owned VP8 WASM memory shape is unsupported');
       const initial = readWord(bytes, position, end);
       const maximum = readWord(bytes, position, end);
       if (position.at !== end)
-        throw new OwnedVp8AbiError('Owned VP8 WASM memory record is malformed');
+        throw new OwnedVp8InitializationAbiError('Owned VP8 WASM memory record is malformed');
       if (initial > MAX_INITIAL_PAGES || maximum !== MAX_MEMORY_PAGES || initial > maximum)
         throw new OwnedVp8MemoryAdmissionError(
           'Owned VP8 WASM memory declaration exceeds admission'
@@ -214,7 +219,7 @@ function inspectMemoryDeclaration(bytes: Uint8Array): number {
     position.at = end;
   }
   if (initialPages === undefined)
-    throw new OwnedVp8AbiError('Owned VP8 WASM memory declaration is missing');
+    throw new OwnedVp8InitializationAbiError('Owned VP8 WASM memory declaration is missing');
   return initialPages;
 }
 
@@ -268,14 +273,14 @@ function checkedExports(instance: WebAssembly.Instance): Vp8Exports {
     !(exports.memory instanceof WebAssembly.Memory) ||
     !(exports.memory.buffer instanceof ArrayBuffer)
   )
-    throw new OwnedVp8AbiError('Owned VP8 WASM memory export is missing or shared');
+    throw new OwnedVp8InitializationAbiError('Owned VP8 WASM memory export is missing or shared');
   for (const name of REQUIRED_EXPORTS) {
     if (typeof exports[name] !== 'function')
-      throw new OwnedVp8AbiError(`Owned VP8 ABI2 export ${name} is missing`);
+      throw new OwnedVp8InitializationAbiError(`Owned VP8 ABI2 export ${name} is missing`);
   }
   const api = exports as unknown as Vp8Exports;
   if (api.vp8_v2_abi_version() !== ABI_VERSION)
-    throw new OwnedVp8AbiError('Owned VP8 ABI version mismatch');
+    throw new OwnedVp8InitializationAbiError('Owned VP8 ABI version mismatch');
   return api;
 }
 
@@ -698,8 +703,9 @@ export async function createOwnedVp8Encoder(
       if (options.signal?.aborted) throw cancelled(options.signal);
       throw new OwnedVp8LoadError('Owned VP8 WASM fetch failed', { cause: error });
     }
+    if (!response.ok)
+      throw new OwnedVp8LoadError(`Owned VP8 WASM request failed (HTTP ${response.status})`);
     if (
-      !response.ok ||
       response.redirected ||
       response.type === 'opaque' ||
       response.type === 'opaqueredirect' ||
@@ -744,7 +750,7 @@ export async function createOwnedVp8Encoder(
     }
     if (options.signal?.aborted || options.isCurrent?.() === false) throw cancelled(options.signal);
     if (WebAssembly.Module.imports(module).length !== 0)
-      throw new OwnedVp8AbiError('Owned VP8 WASM has unexpected imports');
+      throw new OwnedVp8InitializationAbiError('Owned VP8 WASM has unexpected imports');
     compiled = { module, initialPages };
   }
   const initialReservedBytes = compiled.initialPages * COPY_CHUNK_BYTES;
@@ -765,6 +771,8 @@ export async function createOwnedVp8Encoder(
     instance = new WebAssembly.Instance(compiled.module, {});
   } catch (error) {
     options.accounting.release();
+    if (error instanceof WebAssembly.LinkError)
+      throw new OwnedVp8InitializationAbiError('Owned VP8 WASM linkage failed', { cause: error });
     throw classifyFailure(error);
   }
   let encoder: OwnedVp8Encoder;

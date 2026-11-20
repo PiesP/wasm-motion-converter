@@ -3,7 +3,7 @@
 
 import Panel from '@components/ui/Panel';
 import { useLocale } from '@hooks/use-locale';
-import type { ConversionErrorType } from '@t/conversion-types';
+import type { ConversionErrorType, ErrorContext } from '@t/conversion-types';
 import type { TranslationKey } from '@t/i18n-types';
 import type { Component } from 'solid-js';
 import { createMemo, onMount, Show, splitProps } from 'solid-js';
@@ -19,6 +19,7 @@ interface ErrorDisplayProps {
   suggestion?: string | undefined;
   errorType?: ConversionErrorType | undefined;
   canRetry?: boolean | undefined;
+  recovery?: ErrorContext['recovery'];
   reloadRequired?: boolean;
   onRetry: () => void;
   onSelectNewFile: () => void;
@@ -32,6 +33,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     'suggestion',
     'errorType',
     'canRetry',
+    'recovery',
     'reloadRequired',
     'onRetry',
     'onSelectNewFile',
@@ -45,12 +47,15 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     });
   });
 
+  const retryConversion = () => local.recovery === 'retry';
   const canRetry = createMemo(
-    () => local.canRetry !== false && local.errorType !== 'format' && local.errorType !== 'codec'
+    () =>
+      local.canRetry !== false &&
+      (retryConversion() || (local.errorType !== 'format' && local.errorType !== 'codec'))
   );
 
   const userFriendlyMessage = createMemo((): string => {
-    if (!local.errorType || local.errorType === 'general') {
+    if (retryConversion() || !local.errorType || local.errorType === 'general') {
       return t('error.unknown');
     }
 
@@ -58,10 +63,12 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     return t(key);
   });
 
-  const errorIcon = createMemo(() => ERROR_ICONS[local.errorType ?? 'general'] ?? '');
+  const errorIcon = createMemo(() =>
+    retryConversion() ? '' : (ERROR_ICONS[local.errorType ?? 'general'] ?? '')
+  );
 
   const rawErrorMessage = createMemo(() => {
-    if (!local.errorType || local.errorType === 'general') {
+    if (retryConversion() || !local.errorType || local.errorType === 'general') {
       return local.message;
     }
     return null;

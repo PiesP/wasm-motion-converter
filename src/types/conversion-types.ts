@@ -204,6 +204,8 @@ export interface ErrorContext {
   type: ConversionErrorType;
   /** Structured error code for programmatic handling */
   code: ErrorCode;
+  /** An explicit recovery action for a failure with its own retry policy. */
+  recovery?: 'retry';
   /** Original error message */
   originalError: string;
   /** When error occurred (milliseconds since epoch) */

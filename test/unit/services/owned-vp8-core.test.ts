@@ -97,6 +97,32 @@ describe('owned VP8 conversion-owned host adapter', () => {
     expect(secondAccounting.release).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['http-failure', 'invalid-module'] as const)(
+    'types %s at initialization and recovers on a later explicit request',
+    async (mode) => {
+      const invalid =
+        mode === 'http-failure'
+          ? new Response('', { status: 503, headers: { 'content-type': 'application/wasm' } })
+          : wasmResponse(new TextEncoder().encode('invalid owned VP8 module'));
+      const fetchMock = vi.fn().mockResolvedValueOnce(invalid).mockResolvedValue(wasmResponse());
+      vi.stubGlobal('fetch', fetchMock);
+      const failedLedger = accounting();
+      const failure = core.createOwnedVp8Encoder({ accounting: failedLedger });
+      if (mode === 'http-failure') {
+        await expect(failure).rejects.toBeInstanceOf(core.OwnedVp8LoadError);
+        await expect(failure).rejects.toThrow('HTTP 503');
+      } else {
+        await expect(failure).rejects.toBeInstanceOf(core.OwnedVp8InitializationAbiError);
+      }
+      expect(fetchMock).toHaveBeenCalledOnce();
+      expect(failedLedger.reserve).not.toHaveBeenCalled();
+
+      const recovered = await core.createOwnedVp8Encoder({ accounting: accounting() });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      recovered.retire();
+    }
+  );
+
   it('does not retain an aborted fetch or a sticky load Promise', async () => {
     let finishFetch!: (response: Response) => void;
     const deferred = new Promise<Response>((resolve) => {

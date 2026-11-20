@@ -112,6 +112,7 @@ describe('conversion worker message security', () => {
   it.each([
     ['OwnedVp8LoadError', 'load', 'ENCODER_ERROR'],
     ['OwnedVp8AbiError', 'abi', 'ENCODER_ERROR'],
+    ['OwnedVp8InitializationAbiError', 'abi-initialization', 'ENCODER_ERROR'],
     ['OwnedVp8TrapError', 'trap', 'ENCODER_ERROR'],
     ['OwnedVp8InvalidInputError', 'invalid-input', 'ENCODER_ERROR'],
     ['OwnedVp8UnsupportedLayoutError', 'unsupported-layout', 'ENCODER_ERROR'],

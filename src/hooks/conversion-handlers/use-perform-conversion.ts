@@ -17,7 +17,11 @@ import type {
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
-import { ownedVp8FailureKind, OWNED_VP8_FAILURE_CODES } from '@services/owned-vp8-errors';
+import {
+  ownedVp8FailureKind,
+  OWNED_VP8_FAILURE_CODES,
+  type OwnedVp8FailureKind,
+} from '@services/owned-vp8-errors';
 import { findWasmWebpInitializationError } from '@services/wasm-webp-singleton';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
@@ -44,6 +48,7 @@ import type {
   ConversionResult,
   ConversionSettings,
   ErrorCode,
+  ErrorContext,
   ProgressCallback,
   ProgressPhase,
   VideoMetadata,
@@ -75,7 +80,21 @@ import { handleFileSelected } from './use-handle-file-selected';
 const focusDownloadButton = (): void =>
   focusElementUnlessUserIsEditing('[data-testid="download-result-button"]');
 
-function knownConversionErrorCode(error: unknown): ErrorCode | undefined {
+interface KnownConversionFailure {
+  code: ErrorCode;
+  recovery?: ErrorContext['recovery'];
+}
+
+function knownConversionFailure(
+  code: ErrorCode,
+  ownedVp8Kind?: OwnedVp8FailureKind
+): KnownConversionFailure {
+  if (ownedVp8Kind === 'load' || ownedVp8Kind === 'abi-initialization')
+    return { code, recovery: 'retry' };
+  return { code };
+}
+
+function findKnownConversionFailure(error: unknown): KnownConversionFailure | undefined {
   const seen = new Set<Error>();
   let current = error;
   for (let depth = 0; depth < 16 && current instanceof Error && !seen.has(current); depth++) {
@@ -85,14 +104,15 @@ function knownConversionErrorCode(error: unknown): ErrorCode | undefined {
       current instanceof WorkerMemoryLimitError ||
       current instanceof WorkerTimeoutError
     ) {
-      return current.code;
+      return { code: current.code };
     }
     if (current instanceof WorkerPipelineError && isKnownConversionErrorCode(current.code)) {
-      return current.code;
+      return knownConversionFailure(current.code, current.ownedVp8FailureKind);
     }
     const vp8Failure = ownedVp8FailureKind(current);
-    if (vp8Failure === 'cancelled') return 'CANCELLED';
-    if (vp8Failure !== undefined) return OWNED_VP8_FAILURE_CODES[vp8Failure];
+    if (vp8Failure === 'cancelled') return { code: 'CANCELLED' };
+    if (vp8Failure !== undefined)
+      return knownConversionFailure(OWNED_VP8_FAILURE_CODES[vp8Failure], vp8Failure);
     current = current.cause;
   }
   return undefined;
@@ -194,7 +214,7 @@ export async function handleConvert(
                     videoMetadata(),
                     settings,
                     t,
-                    knownConversionErrorCode(error)
+                    findKnownConversionFailure(error)?.code
                   );
                   setErrorMessage(context.originalError);
                   setErrorContext(context);
@@ -535,8 +555,8 @@ async function handleConversionError(
   const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
   const initializationError = findWasmWebpInitializationError(error);
 
-  const knownCode = knownConversionErrorCode(error);
-  if (!initializationError && knownCode === undefined && isCancellationError(error)) {
+  const knownFailure = findKnownConversionFailure(error);
+  if (!initializationError && knownFailure === undefined && isCancellationError(error)) {
     // The intent's finally owns the terminal transition after teardown settles.
     runtime.stopMemoryMonitoring();
     return;
@@ -547,10 +567,16 @@ async function handleConversionError(
     videoMetadata(),
     settings,
     t,
-    knownCode
+    knownFailure?.code
   );
   context.originalError = errorMessage_;
-  if (initializationError) setWebpReloadRequired(true);
+  if (initializationError) {
+    setWebpReloadRequired(true);
+  } else if (knownFailure?.recovery === 'retry') {
+    context.recovery = 'retry';
+    context.phase = 'owned_vp8_initialization';
+    delete context.suggestion;
+  }
 
   logger.error('conversion', 'Conversion failed', {
     error: errorMessage_,
