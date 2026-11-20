@@ -11892,8 +11892,14 @@ mod tests {
 
     #[test]
     fn q75_luma_ramp_feedback_covers_only_full_tiles_in_luma_dominant_ramps() {
-        let luma = segmentation::CurvatureTotals { sums: [448, 0, 0] };
-        let chroma = segmentation::CurvatureTotals { sums: [448, 97, 0] };
+        let luma = segmentation::CurvatureTotals {
+            sums: [448, 0, 0],
+            ..Default::default()
+        };
+        let chroma = segmentation::CurvatureTotals {
+            sums: [448, 97, 0],
+            ..Default::default()
+        };
         for (quality, neutral, smooth, counts, totals, visible, expected) in [
             (75, false, true, [0, 1, 2, 0], luma, (16, 16), true),
             (75, false, true, [0, 0, 1, 0], luma, (16, 16), true),
@@ -13627,7 +13633,15 @@ mod tests {
             (true, 0, [897, 0, 0], (16, 16), false),
         ] {
             assert_eq!(
-                q60_textured_with_smooth_chroma(ordinary, CurvatureTotals { sums }, count, visible,),
+                q60_textured_with_smooth_chroma(
+                    ordinary,
+                    CurvatureTotals {
+                        sums,
+                        ..Default::default()
+                    },
+                    count,
+                    visible,
+                ),
                 expected
             );
         }
@@ -13644,6 +13658,7 @@ mod tests {
         ] {
             let totals = segmentation::CurvatureTotals {
                 sums: [luma_sum, 0, 0],
+                ..Default::default()
             };
             assert_eq!(totals.luma_mean_at_most_twice_cutoff(blocks), expected);
         }

@@ -112,6 +112,7 @@ impl Activity {
         let cutoff = CURVATURE_CUTOFF * count as u64;
         if curvature.sums[0] <= cutoff * Y_TERMS
             || curvature.sums[1].min(curvature.sums[2]) <= cutoff * UV_TERMS
+            || !curvature.chroma_exceeds_cutoff_in_both_axes(count)
         {
             return Some(false);
         }
@@ -390,7 +391,20 @@ mod deferred_tests {
         let exact = [10 * 448, 10 * 96, 10 * 96];
         let rough = CurvatureTotals {
             sums: exact.map(|sum| sum + 1),
+            chroma_horizontal: 10 * 96 + 1,
         };
+        for horizontal in [0, 10 * 96, 10 * 96 + 2, 2 * (10 * 96 + 1)] {
+            let mut activity = Activity::new();
+            let stripe = CurvatureTotals {
+                chroma_horizontal: horizontal,
+                ..rough
+            };
+            assert_eq!(
+                activity.start(60, [0, 0, 0, 5], stripe, false, false),
+                Some(false)
+            );
+            assert_eq!(activity.map_state(), (0, 0));
+        }
         for quality in [60, 75, 85] {
             for axis in 0..3 {
                 let mut sums = rough.sums;
@@ -400,7 +414,7 @@ mod deferred_tests {
                     activity.start(
                         quality,
                         [0, 0, 0, 5],
-                        CurvatureTotals { sums },
+                        CurvatureTotals { sums, ..rough },
                         false,
                         false
                     ),

@@ -30,6 +30,7 @@ pub(crate) fn smooth_pair_only(counts: [usize; 4]) -> bool {
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(crate) struct CurvatureTotals {
     pub sums: [u64; 3],
+    pub chroma_horizontal: u64,
 }
 
 impl CurvatureTotals {
@@ -65,6 +66,16 @@ impl CurvatureTotals {
         // exactly after canceling that count, without rounding near equality.
         u128::from(u.max(v)) * u128::from(Y_DIFFERENCES_PER_BLOCK)
             <= u128::from(y) * u128::from(UV_DIFFERENCES_PER_BLOCK)
+    }
+
+    pub(crate) fn chroma_exceeds_cutoff_in_both_axes(self, blocks: usize) -> bool {
+        // Each chroma plane contributes 48 terms in either direction.
+        // The pooled mean therefore has 96 terms per block on each axis.
+        let [_, u, v] = self.sums;
+        let vertical = u + v - self.chroma_horizontal;
+        blocks > 0
+            && self.chroma_horizontal.min(vertical)
+                > CURVATURE_CUTOFF * UV_DIFFERENCES_PER_BLOCK * blocks as u64
     }
 
     pub(crate) fn one_chroma_plane_leads_rough_luma(self, blocks: usize) -> bool {
@@ -492,7 +503,7 @@ pub(crate) fn classify_with_curvature(
         x: usize,
         y: usize,
         size: usize,
-        sum: Option<&mut u64>,
+        sums: Option<&mut [u64; 2]>,
     ) -> bool {
         let mut tile_sum = 0u64;
         let mut smooth = true;
@@ -503,13 +514,14 @@ pub(crate) fn classify_with_curvature(
                     i32::from(plane[at - 1]) - 2 * i32::from(plane[at]) + i32::from(plane[at + 1]);
                 if curvature.unsigned_abs() as u64 > CURVATURE_CUTOFF {
                     smooth = false;
-                    if sum.is_none() {
+                    if sums.is_none() {
                         return false;
                     }
                 }
                 tile_sum += u64::from(curvature.unsigned_abs());
             }
         }
+        let horizontal = tile_sum;
         for row in 1..size - 1 {
             for col in 0..size {
                 let at = (y + row) * stride + x + col;
@@ -517,18 +529,18 @@ pub(crate) fn classify_with_curvature(
                     + i32::from(plane[at + stride]);
                 if curvature.unsigned_abs() as u64 > CURVATURE_CUTOFF {
                     smooth = false;
-                    if sum.is_none() {
+                    if sums.is_none() {
                         return false;
                     }
                 }
                 tile_sum += u64::from(curvature.unsigned_abs());
             }
         }
-        if let Some(sum) = sum {
+        if let Some(sums) = sums {
             // At most 448 terms for Y or 96 for U/V, each at most 510.
             // The owned path's MAX_DIMENSION=16,383 bounds a frame to
             // 1,024^2 macroblocks, keeping each u64 frame sum below 2^38.
-            *sum += tile_sum;
+            *sums = [tile_sum, horizontal];
         }
         smooth
     }
@@ -544,7 +556,7 @@ pub(crate) fn classify_with_curvature(
         }
         maximum - minimum
     }
-    let mut sums = [0u64; 3];
+    let mut sums = [[0; 2]; 3];
     let collecting = totals.is_some();
     let y_smooth = smooth_tile(
         y,
@@ -579,9 +591,10 @@ pub(crate) fn classify_with_curvature(
         false
     };
     if let Some(totals) = totals {
-        for (frame, tile) in totals.sums.iter_mut().zip(sums) {
-            *frame += tile;
+        for (frame, [sum, _]) in totals.sums.iter_mut().zip(sums) {
+            *frame += sum;
         }
+        totals.chroma_horizontal += sums[1][1] + sums[2][1];
     }
     if y_smooth && u_smooth && v_smooth {
         let uv_stride = y_stride / 2;
@@ -935,6 +948,37 @@ mod tests {
     }
 
     #[test]
+    fn chroma_axis_curvature_uses_both_directions_and_existing_cutoff() {
+        let y = [128; 256];
+        let uv_from = |sample: fn(usize, usize) -> bool| {
+            std::array::from_fn::<_, 64, _>(|i| if sample(i % 8, i / 8) { 140 } else { 130 })
+        };
+        let stripe_x = uv_from(|x, _| x % 2 == 0);
+        let stripe_y = uv_from(|_, y| y % 2 == 0);
+        let checker = uv_from(|x, y| (x + y) % 2 == 0);
+        for (uv, horizontal, expected) in [
+            (stripe_x, 1_920, false),
+            (stripe_y, 0, false),
+            (checker, 1_920, true),
+        ] {
+            let mut totals = CurvatureTotals::default();
+            assert_eq!(
+                classify_with_curvature(&y, &uv, &uv, 16, 0, 0, Some(&mut totals)),
+                TEXTURED
+            );
+            assert_eq!(totals.chroma_horizontal, horizontal);
+            assert_eq!(totals.chroma_exceeds_cutoff_in_both_axes(1), expected);
+        }
+        for (horizontal, expected) in [(191, false), (192, false), (193, true)] {
+            let totals = CurvatureTotals {
+                sums: [0, 200, 200],
+                chroma_horizontal: horizontal,
+            };
+            assert_eq!(totals.chroma_exceeds_cutoff_in_both_axes(1), expected);
+        }
+    }
+
+    #[test]
     fn frame_mean_curvature_uses_each_plane_and_inclusive_cutoff() {
         let mut y = vec![0; 16 * 16];
         let mut u = vec![0; 8 * 8];
@@ -989,7 +1033,11 @@ mod tests {
             ([0, 0, 0], true),
         ] {
             assert_eq!(
-                CurvatureTotals { sums }.luma_dominates(),
+                CurvatureTotals {
+                    sums,
+                    ..Default::default()
+                }
+                .luma_dominates(),
                 expected,
                 "{sums:?}"
             );
@@ -998,11 +1046,13 @@ mod tests {
         let y = u64::MAX;
         let chroma = (u128::from(y) * 96 / 448) as u64;
         assert!(CurvatureTotals {
-            sums: [y, chroma, chroma]
+            sums: [y, chroma, chroma],
+            ..Default::default()
         }
         .luma_dominates());
         assert!(!CurvatureTotals {
-            sums: [y, 0, chroma + 1]
+            sums: [y, 0, chroma + 1],
+            ..Default::default()
         }
         .luma_dominates());
     }
@@ -1025,11 +1075,19 @@ mod tests {
         assert_eq!(totals.sums, [4080, 0, 0]);
         assert!(!totals.within_cutoff(2));
         let at_cutoff = [1792, 384, 384];
-        assert!(CurvatureTotals { sums: at_cutoff }.within_cutoff(2));
+        assert!(CurvatureTotals {
+            sums: at_cutoff,
+            ..Default::default()
+        }
+        .within_cutoff(2));
         for plane in 0..3 {
             let mut above = at_cutoff;
             above[plane] += 1;
-            assert!(!CurvatureTotals { sums: above }.within_cutoff(2));
+            assert!(!CurvatureTotals {
+                sums: above,
+                ..Default::default()
+            }
+            .within_cutoff(2));
         }
     }
 

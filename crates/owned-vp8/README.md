@@ -233,7 +233,9 @@ attributed to the RFC; no external production Cargo crate is used.
 The pinned WASM build enables the `activity-allocation` Cargo feature. After
 intrinsic classification, ordinary colored frames with more than four macroblocks
 can use the source-activity map when Textured forms a strict majority and the
-mean absolute second difference on each of Y, U and V exceeds two. At q85 the
+mean absolute second difference on each of Y, U and V exceeds two. The pooled
+chroma mean must also exceed two on each axis, preserving the existing grid
+when the signal varies predominantly along one direction. At q85 the
 intrinsic map must be entirely Textured for the existing curvature sums to cover
 the frame. High-import preview and near-neutral inputs keep the original grid.
 On an admitted frame, ABI stage 62 analyzes one source macroblock per step and

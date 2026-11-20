@@ -473,6 +473,7 @@ mod tests {
         let qindex = textured_qindex(60, false) as u8;
         let luma_dominant = CurvatureTotals {
             sums: [3 * 448, 3 * 96, 3 * 96 - 1],
+            ..Default::default()
         };
         let ordinary = ordinary_q60_all_texture(60, [0, 0, 0, 1], 1, false, false);
         let visible = (5, 3);
@@ -508,7 +509,10 @@ mod tests {
                     before,
                     ordinary,
                     false,
-                    CurvatureTotals { sums },
+                    CurvatureTotals {
+                        sums,
+                        ..Default::default()
+                    },
                     8,
                     visible,
                 ),
@@ -522,6 +526,7 @@ mod tests {
                 true,
                 CurvatureTotals {
                     sums: [2 * 448, 2 * 96, 2 * 96],
+                    ..Default::default()
                 },
                 limit,
                 visible,
@@ -560,6 +565,7 @@ mod tests {
         let qindex = textured_qindex(60, false) as u8;
         let curvature = CurvatureTotals {
             sums: [3 * 448, 3 * 96 + 1, 3 * 96],
+            ..Default::default()
         };
         let apply = |error, visible| {
             high_curvature_q60_textured_deltas(before, true, false, curvature, error, visible)
@@ -691,12 +697,15 @@ mod tests {
         let textured = [0, 0, 0, 1];
         let at_cutoff = CurvatureTotals {
             sums: [2 * 448, 2 * 96, 2 * 96],
+            ..Default::default()
         };
         let chroma_edge = CurvatureTotals {
             sums: [2 * 448, 2 * 96 + 1, 2 * 96],
+            ..Default::default()
         };
         let luma_edge = CurvatureTotals {
             sums: [2 * 448 + 1, 2 * 96 + 1, 2 * 96],
+            ..Default::default()
         };
         for (quality, base, target) in [(60, 32, -4), (75, 26, 0), (85, 14, 0)] {
             let original = deltas(quality);
@@ -737,9 +746,11 @@ mod tests {
         let textured = [0, 0, 0, 1];
         let rough = CurvatureTotals {
             sums: [897, 192, 193],
+            ..Default::default()
         };
         let rough_u = CurvatureTotals {
             sums: [897, 193, 192],
+            ..Default::default()
         };
         for (quality, expected_ac) in [(60, -7), (75, -9), (85, -3)] {
             let original = deltas(quality);
@@ -758,6 +769,7 @@ mod tests {
                     textured,
                     CurvatureTotals {
                         sums: [896, 0, 193],
+                        ..Default::default()
                     },
                     false,
                     (16, 16),
@@ -766,6 +778,7 @@ mod tests {
                     textured,
                     CurvatureTotals {
                         sums: [897, 0, 192],
+                        ..Default::default()
                     },
                     false,
                     (16, 16),
@@ -774,6 +787,7 @@ mod tests {
                     textured,
                     CurvatureTotals {
                         sums: [903, 0, 193],
+                        ..Default::default()
                     },
                     false,
                     (16, 16),
@@ -782,6 +796,7 @@ mod tests {
                     textured,
                     CurvatureTotals {
                         sums: [897, 193, 193],
+                        ..Default::default()
                     },
                     false,
                     (16, 16),
@@ -815,6 +830,7 @@ mod tests {
     fn mixed_rough_chroma_uses_the_low_quality_ac_midpoint() {
         let rough = CurvatureTotals {
             sums: [1800, 500, 500],
+            ..Default::default()
         };
         for (quality, counts, high_loss, visible, expected) in [
             (60, [0, 0, 1, 1], false, (32, 16), -7),
