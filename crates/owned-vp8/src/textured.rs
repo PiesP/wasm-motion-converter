@@ -2659,13 +2659,15 @@ fn encode_observed(
         ordinary_q60_texture,
         low_curvature,
         curvature,
+        rgb_error_sum,
+        (width as u32, height as u32),
     );
     deltas = crate::presets::mixed_y1_ac_deltas(deltas, mixed_y1_ac);
     if medium_y1_ac {
         segments = segments.with_mixed_q75_allocation(class_counts);
         deltas = crate::presets::medium_y1_ac_deltas(deltas);
     } else if luma_bias {
-        segments = original_segments.with_q85_smooth_pair_allocation(class_counts);
+        segments = original_segments.with_q85_smooth_pair_allocation(class_counts, deltas);
     }
     deltas = crate::presets::medium_high_import_deltas(
         deltas,
@@ -2675,6 +2677,13 @@ fn encode_observed(
         rgb_error_sum,
         (width as u32, height as u32),
         segments.base_qindex,
+    );
+    deltas = crate::presets::q85_smooth_textured_deltas(
+        deltas,
+        quality,
+        class_counts,
+        neutral_chroma,
+        omit_display_refinement,
     );
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
@@ -4975,6 +4984,8 @@ impl FrameEncoder {
                 ordinary_q60_texture,
                 low_curvature,
                 self.curvature,
+                self.rgb_error_sum,
+                (self.request.width, self.request.height),
             );
             self.deltas = crate::presets::mixed_y1_ac_deltas(self.deltas, self.mixed_y1_ac);
             if self.medium_y1_ac {
@@ -4983,7 +4994,7 @@ impl FrameEncoder {
             } else if self.luma_bias {
                 self.segments = self
                     .segments
-                    .with_q85_smooth_pair_allocation(self.class_counts);
+                    .with_q85_smooth_pair_allocation(self.class_counts, self.deltas);
             }
             self.deltas = crate::presets::medium_high_import_deltas(
                 self.deltas,
@@ -4993,6 +5004,13 @@ impl FrameEncoder {
                 self.rgb_error_sum,
                 (self.request.width, self.request.height),
                 self.segments.base_qindex,
+            );
+            self.deltas = crate::presets::q85_smooth_textured_deltas(
+                self.deltas,
+                quality,
+                self.class_counts,
+                self.neutral_chroma,
+                self.omit_display_refinement,
             );
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
@@ -10688,8 +10706,8 @@ mod tests {
             assert_eq!(engine.output(), sync);
             if quality == 85 {
                 assert_eq!(engine.request, request);
-                assert_eq!(engine.segments.base_qindex, 11);
-                assert_eq!(engine.segments.qindex, [11; 4]);
+                assert_eq!(engine.segments.base_qindex, 12);
+                assert_eq!(engine.segments.qindex, [12; 4]);
                 assert_eq!(engine.rate_qindex(segmentation::FINE_SMOOTH), 6);
                 assert_eq!(engine.rate_qindex(segmentation::CHROMATIC_FLAT), 15);
                 assert_eq!(engine.deltas, crate::presets::deltas(85));
@@ -10732,6 +10750,52 @@ mod tests {
                 assert_eq!(engine.output(), run_engine(control).output());
             }
         }
+    }
+
+    #[test]
+    fn q85_smooth_textured_uv_ac_matches_sync_and_resumed_output() {
+        let (width, height) = (32, 16);
+        let stride = width * 4;
+        let mut input = Vec::with_capacity(height * stride);
+        for y in 0..height {
+            for x in 0..width {
+                input.extend_from_slice(&if x < 16 {
+                    [80, 80, 80, 255]
+                } else if (x + y) % 2 == 0 {
+                    [240, 32, 65, 255]
+                } else {
+                    [32, 140, 209, 255]
+                });
+            }
+        }
+        let request = Request {
+            quality: 85,
+            ..engine_request(width, height, 0, &input, stride)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+        assert_eq!(engine.class_counts, [1, 0, 0, 1]);
+        assert!(!engine.neutral_chroma && !engine.omit_display_refinement && !engine.luma_bias);
+        assert!(engine.segments.enabled);
+        assert_eq!(engine.segments.qindex, [6, 15, 15, 14]);
+        assert_eq!(engine.rate_qindex(segmentation::TEXTURED), 14);
+        assert_eq!(
+            engine.deltas,
+            Deltas {
+                uv_ac: -3,
+                ..crate::presets::deltas(85)
+            }
+        );
+        let sync = encode_textured(
+            &input,
+            request.width,
+            request.height,
+            request.stride,
+            0,
+            request.quality,
+        )
+        .unwrap();
+        assert_eq!(engine.output(), sync);
     }
 
     #[test]
@@ -12236,13 +12300,15 @@ mod tests {
         pixels
     }
 
-    fn chroma_dominant_texture_input() -> Vec<u8> {
+    fn chroma_dominant_texture_input(chroma_varies_within_cell: bool) -> Vec<u8> {
         (0..16 * 16)
             .flat_map(|i| {
-                if i % 8 < 4 {
-                    [255, 0, 0, 255]
-                } else {
-                    [0, 0, 255, 255]
+                let varied = chroma_varies_within_cell && (i / 16 + i % 16) % 2 != 0;
+                match (i % 8 < 4, varied) {
+                    (true, true) => [215, 0, 120, 255],
+                    (true, false) => [255, 0, 0, 255],
+                    (false, true) => [120, 0, 215, 255],
+                    (false, false) => [0, 0, 255, 255],
                 }
             })
             .collect()
@@ -12260,10 +12326,18 @@ mod tests {
                 Some(true),
             ),
             (
-                chroma_dominant_texture_input(),
+                chroma_dominant_texture_input(false),
                 60,
                 32,
                 (-4, -11),
+                false,
+                Some(false),
+            ),
+            (
+                chroma_dominant_texture_input(true),
+                60,
+                32,
+                (-4, -5),
                 false,
                 Some(false),
             ),

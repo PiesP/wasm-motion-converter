@@ -246,7 +246,7 @@ The complete set served its first frozen candidate evaluation: 51/54 conditions
 passed and the candidate was rejected; see
 [the retained result](501-owned-vp8-v7-result.md). Explicit acceptance subsets
 fail before evidence creation or codec initialization. All v1-v7 held-out inputs
-now require `--regression`; no fresh successor is currently frozen. The same
+require `--regression`. No successor had been frozen at the V7 decision. The same
 15 tuning inputs and every numeric gate remain unchanged. Preserve the original
 source-only freeze, candidate, inputs and failed results. Fixed-pixel evidence
 does not qualify a browser, Windows environment, or product route.

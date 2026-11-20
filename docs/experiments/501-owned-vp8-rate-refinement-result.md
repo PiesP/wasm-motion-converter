@@ -156,9 +156,8 @@ luma profile preview subsequently passed all 333 known conditions; its
 [prospective v7 freeze](501-owned-vp8-v7-candidate-freeze.md) records actual
 source/module identities and unchanged fresh gates. Its first evaluation passed
 51/54, with three new tiny-input SSIM failures at q60/75/85; see
-[the rejected result](501-owned-vp8-v7-result.md). V1-v7 are now regression-only,
-and no fresh successor is currently frozen. The expanded known matrix has 387
-conditions. Preserve
+[the rejected result](501-owned-vp8-v7-result.md). V1–V7 became regression-only at that decision. The known matrix then
+contained 387 conditions, and no successor had been frozen. Preserve
 unfiltered reconstruction, input/settings identity, deterministic output,
 resource ceilings and host-task cancellation. New source requires controlled
 evidence; native Canvas output cannot qualify the owned software route.
