@@ -71,7 +71,7 @@ describe('owned VP8 conversion-wide admission', () => {
     expect(frames.usage.sourceBytes).toBe(0);
     expect(frames.usage.targetBytes).toBeGreaterThan(0);
     target.release();
-    broker.release();
+    broker.dispose();
     frames.dispose();
   });
 
@@ -86,7 +86,7 @@ describe('owned VP8 conversion-wide admission', () => {
     expect(() => frames.tryReserveSource(63.28125 * MIB)).toThrow(ConversionMemoryLimitError);
     expect(frames.usage.sourceBytes).toBe(0);
     target.release();
-    broker.release();
+    broker.dispose();
     frames.dispose();
   });
 
@@ -98,7 +98,7 @@ describe('owned VP8 conversion-wide admission', () => {
     expect(source).not.toBeNull();
     source?.release();
     target.release();
-    broker.release();
+    broker.dispose();
     frames.dispose();
 
     const nearLimit = fixture(0);
@@ -109,7 +109,7 @@ describe('owned VP8 conversion-wide admission', () => {
       OwnedVp8MemoryAdmissionError
     );
     expect(globalBufferPool.totalRetainedMemory).toBe(0);
-    nearLimit.broker.release();
+    nearLimit.broker.dispose();
     nearLimit.frames.dispose();
     expect(globalBufferPool.acquire(2 * MIB).byteLength).toBe(2 * MIB);
   });
@@ -121,7 +121,7 @@ describe('owned VP8 conversion-wide admission', () => {
     expect(frames.usage.targetBytes).toBe(0);
     expect(() => frames.reserveAnalysis(2 * MIB)).toThrow(OwnedVp8MemoryAdmissionError);
     expect(frames.usage.analysisBytes).toBe(0);
-    broker.release();
+    broker.dispose();
     frames.dispose();
 
     const next = fixture();
@@ -130,7 +130,7 @@ describe('owned VP8 conversion-wide admission', () => {
     expect(() => target.reserveResultBytes(2 * MIB)).toThrow(OwnedVp8MemoryAdmissionError);
     expect(next.frames.usage.resultBytes).toBe(0);
     target.release();
-    next.broker.release();
+    next.broker.dispose();
     next.frames.dispose();
 
     const native = new WebpFrameMemoryBudget({
@@ -150,7 +150,7 @@ describe('owned VP8 conversion-wide admission', () => {
     globalBufferPool.release(idle);
     const { broker, frames } = fixture(180 * MIB);
     expect(() => broker.reserve(192 * MIB, 0)).toThrow(OwnedVp8MemoryAdmissionError);
-    broker.release();
+    broker.dispose();
     frames.dispose();
   });
 
@@ -164,7 +164,7 @@ describe('owned VP8 conversion-wide admission', () => {
     expect(appGuard).toHaveBeenLastCalledWith(fullEstimate - 120 * MIB - pixels.byteLength);
     target.release();
     globalBufferPool.release(pixels);
-    broker.release();
+    broker.dispose();
     frames.dispose();
   });
 
@@ -202,7 +202,7 @@ describe('owned VP8 conversion-wide admission', () => {
     globalBufferPool.release(rgb);
     // After the target reservation ends, both retained buffers remain charged.
     expect(broker.frameLiveBytes).toBe(frames.usage.totalBytes + 96 * MIB);
-    broker.release();
+    broker.dispose();
     frames.dispose();
   });
 
@@ -215,7 +215,29 @@ describe('owned VP8 conversion-wide admission', () => {
     expect(() => broker.observe(1)).toThrow(OwnedVp8MemoryAdmissionError);
     broker.reserve(65_536, 0);
     broker.observe(65_536);
+    broker.dispose();
+    frames.dispose();
+  });
+
+  it('charges the copied output once as ownership moves to the mux', () => {
+    const { broker, frames, muxer, appGuard } = fixture();
+    const raw = new Uint8Array([0x30, 0, 0, 0x9d, 1, 0x2a, 8, 0, 8, 0, 0, 0]);
+    broker.reserve(65_536, raw.byteLength);
+    const beforeCopy = appGuard.mock.lastCall?.[0];
+    muxer.addPresentationFrame(raw, { startUs: 0, endUs: 50_000 });
+    broker.presentationCopySettled();
+    broker.observe(65_536);
+    expect(appGuard).toHaveBeenLastCalledWith(beforeCopy);
     broker.release();
+    broker.assertFinishPresentation(50_000);
+    muxer.finishPresentation(50_000);
+    broker.assertFinalization();
+    const finalCharge = appGuard.mock.lastCall?.[0];
+    appGuard.mockClear();
+    const buffer = globalBufferPool.acquire(1);
+    expect(appGuard.mock.lastCall?.[0]).toBeGreaterThanOrEqual(finalCharge);
+    globalBufferPool.release(buffer);
+    broker.dispose();
     frames.dispose();
   });
 
@@ -237,6 +259,7 @@ describe('owned VP8 conversion-wide admission', () => {
     broker.assertFinishPresentation(100_000);
     muxer.finishPresentation(100_000);
     broker.assertFinalization();
+    broker.dispose();
     frames.dispose();
   });
 });

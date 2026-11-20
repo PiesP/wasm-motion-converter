@@ -608,10 +608,11 @@ export class OwnedVp8Encoder {
         throw new OwnedVp8AbiError('Owned VP8 finalized output extent is invalid');
       const rawVp8 = this.view(record.outputPointer, record.outputLength);
       const tag = rawVp8[0]! | (rawVp8[1]! << 8) | (rawVp8[2]! << 16);
-      const width = (rawVp8[6]! | (rawVp8[7]! << 8)) & 0x3fff;
-      const height = (rawVp8[8]! | (rawVp8[9]! << 8)) & 0x3fff;
+      // ABI2 emits version-zero displayed keyframes with unscaled dimensions.
+      const width = rawVp8[6]! | (rawVp8[7]! << 8);
+      const height = rawVp8[8]! | (rawVp8[9]! << 8);
       if (
-        (tag & 0x11) !== 0x10 ||
+        (tag & 0x1f) !== 0x10 ||
         tag >>> 5 === 0 ||
         (tag >>> 5) + 10 >= rawVp8.byteLength ||
         rawVp8[3] !== 0x9d ||
@@ -628,8 +629,9 @@ export class OwnedVp8Encoder {
       this.active();
       if (rawVp8.buffer !== api.memory.buffer)
         throw new OwnedVp8AbiError('Owned VP8 memory grew while output was leased');
-      this.status(api.vp8_v2_release_output(this.generation, frame), [0]);
-      lease = 'none';
+      const releaseStatus = api.vp8_v2_release_output(this.generation, frame);
+      if (releaseStatus === 0) lease = 'none';
+      this.status(releaseStatus, [0]);
       this.observePhysicalCapacity(api);
       const stats: OwnedVp8Stats = {
         frame,

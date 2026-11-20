@@ -177,6 +177,7 @@ export async function encodeWebpOwned(
                 (rawVp8) => {
                   broker.assertPresentationCopy(timing.startUs);
                   muxer.addPresentationFrame(rawVp8, timing);
+                  broker.presentationCopySettled();
                 }
               );
               if (encodingStart !== null)
@@ -275,7 +276,7 @@ export async function encodeWebpOwned(
     try {
       encoder?.retire();
     } finally {
-      broker.release();
+      broker.dispose();
       frameMemoryBudget.dispose();
     }
   }

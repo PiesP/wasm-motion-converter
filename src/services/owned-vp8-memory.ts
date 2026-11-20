@@ -137,6 +137,11 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
     );
   }
 
+  presentationCopySettled(): void {
+    // The mux now owns any new copy and reports it in retainedBytes.
+    this.hostCopyBytes = 0;
+  }
+
   assertFinishPresentation(endUs: number): void {
     this.assertTotal(this.muxer.retainedBeforeFinishPresentation(endUs), 0, 0);
   }
@@ -148,6 +153,7 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
       throw new OwnedVp8OutputLimitError('Owned VP8 final output copies exceed the byte limit');
     // The output copy is distinct from the retained Blob source.
     this.assertTotal(bytes, 0, bytes);
+    this.hostCopyBytes = bytes;
   }
 
   release(): void {
@@ -155,6 +161,11 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
     this.released = true;
     this.linearCapacityBytes = 0;
     this.hostCopyBytes = 0;
+  }
+
+  /** Keep conversion-wide guards until finalization and any late copy settle. */
+  dispose(): void {
+    this.release();
     this.removePoolGuard();
     this.removeFrameGuard();
   }
