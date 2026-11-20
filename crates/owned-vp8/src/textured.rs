@@ -2081,6 +2081,34 @@ fn medium_mixed_low_curvature(
     quality == 75 && omit_display_refinement && low_curvature
 }
 
+fn rate_profile_quality(
+    requested_quality: u32,
+    class_counts: [usize; 4],
+    neutral_chroma: bool,
+    low_curvature: bool,
+    rgb_error_sum: u64,
+    (width, height): (u32, u32),
+) -> u32 {
+    if requested_quality == 75
+        && !neutral_chroma
+        && low_curvature
+        && segmentation::smooth_pair_only(class_counts)
+        && !crate::presets::high_chroma_loss(60, rgb_error_sum, width, height)
+    {
+        60
+    } else {
+        requested_quality
+    }
+}
+
+fn rate_profile_filter(filter: FilterConfig, requested: u32, effective: u32) -> FilterConfig {
+    if effective != requested && filter == FilterConfig::for_quality(requested) {
+        FilterConfig::for_quality(effective)
+    } else {
+        filter
+    }
+}
+
 fn uv_dc_feedback_for_tile(
     enabled: bool,
     mx: usize,
@@ -2225,6 +2253,17 @@ fn encode_observed(
             segment_ids.push(id);
         }
     }
+    let low_curvature = curvature.within_cutoff(count);
+    let requested_quality = quality;
+    let quality = rate_profile_quality(
+        requested_quality,
+        class_counts,
+        neutral_chroma,
+        low_curvature,
+        rgb_error_sum,
+        (width as u32, height as u32),
+    );
+    let filter = rate_profile_filter(filter, requested_quality, quality);
     let high_chroma_loss =
         crate::presets::high_chroma_loss(quality, rgb_error_sum, width as u32, height as u32);
     let original_segments =
@@ -2237,7 +2276,6 @@ fn encode_observed(
         width as u32,
         height as u32,
     );
-    let low_curvature = curvature.within_cutoff(count);
     let ordinary_q60_texture = crate::presets::ordinary_q60_all_texture(
         quality,
         class_counts,
@@ -3783,6 +3821,7 @@ enum PreviewTrial {
 pub(crate) struct FrameEncoder {
     request: Request,
     plan: ResourcePlan,
+    effective_quality: u32,
     filter: FilterConfig,
     input: Vec<u8>,
     source_y: Vec<u8>,
@@ -3936,6 +3975,7 @@ impl FrameEncoder {
         Ok(Self {
             request,
             plan,
+            effective_quality: request.quality,
             filter,
             input,
             source_y: Vec::new(),
@@ -4287,27 +4327,6 @@ impl FrameEncoder {
         }
         self.cursor += 1;
         if self.cursor == self.plan.padded_height as usize / 2 {
-            self.high_chroma_loss = crate::presets::high_chroma_loss(
-                self.request.quality,
-                self.rgb_error_sum,
-                self.request.width,
-                self.request.height,
-            );
-            self.preview_trial = if self.high_chroma_loss {
-                PreviewTrial::Original
-            } else {
-                PreviewTrial::None
-            };
-            self.deltas = if self.high_chroma_loss {
-                crate::presets::original_high_chroma_loss_deltas()
-            } else {
-                crate::presets::frame_deltas(
-                    self.request.quality,
-                    self.rgb_error_sum,
-                    self.request.width,
-                    self.request.height,
-                )
-            };
             self.cursor = 0;
             self.stage = Stage::Classify;
         }
@@ -4655,7 +4674,7 @@ impl FrameEncoder {
 
     fn original_segments(&self) -> SegmentConfig {
         SegmentConfig::from_counts(
-            self.request.quality,
+            self.effective_quality,
             self.class_counts,
             self.blocks.len(),
             self.neutral_chroma,
@@ -4731,7 +4750,7 @@ impl FrameEncoder {
             .score(
                 self.preview_header_rate.cost,
                 original.base_qindex,
-                self.request.quality,
+                self.effective_quality,
             )
             .map_err(encode_status)?;
         match self.preview_trial {
@@ -4739,7 +4758,7 @@ impl FrameEncoder {
                 self.preview_original_score = score;
                 self.segments = original.with_high_chroma_loss_luma(true);
                 self.deltas = crate::presets::frame_deltas(
-                    self.request.quality,
+                    self.effective_quality,
                     self.rgb_error_sum,
                     self.request.width,
                     self.request.height,
@@ -4784,8 +4803,36 @@ impl FrameEncoder {
         });
         self.cursor += 1;
         if self.cursor == self.plan.macroblock_count as usize {
-            self.medium_textured_luma = crate::presets::medium_textured_luma(
+            let low_curvature = self.curvature.within_cutoff(self.blocks.len());
+            let quality = rate_profile_quality(
                 self.request.quality,
+                self.class_counts,
+                self.neutral_chroma,
+                low_curvature,
+                self.rgb_error_sum,
+                (self.request.width, self.request.height),
+            );
+            self.effective_quality = quality;
+            self.filter = rate_profile_filter(self.filter, self.request.quality, quality);
+            self.high_chroma_loss = crate::presets::high_chroma_loss(
+                quality,
+                self.rgb_error_sum,
+                self.request.width,
+                self.request.height,
+            );
+            if self.high_chroma_loss {
+                self.preview_trial = PreviewTrial::Original;
+                self.deltas = crate::presets::original_high_chroma_loss_deltas();
+            } else {
+                self.deltas = crate::presets::frame_deltas(
+                    quality,
+                    self.rgb_error_sum,
+                    self.request.width,
+                    self.request.height,
+                );
+            }
+            self.medium_textured_luma = crate::presets::medium_textured_luma(
+                quality,
                 self.class_counts,
                 self.blocks.len(),
                 self.rgb_error_sum,
@@ -4793,15 +4840,14 @@ impl FrameEncoder {
                 self.request.height,
             );
             self.segments = SegmentConfig::from_counts(
-                self.request.quality,
+                quality,
                 self.class_counts,
                 self.blocks.len(),
                 self.neutral_chroma,
             )
             .with_medium_textured_luma(self.medium_textured_luma);
-            let low_curvature = self.curvature.within_cutoff(self.blocks.len());
             let ordinary_q60_texture = crate::presets::ordinary_q60_all_texture(
-                self.request.quality,
+                quality,
                 self.class_counts,
                 self.blocks.len(),
                 self.neutral_chroma,
@@ -4809,24 +4855,21 @@ impl FrameEncoder {
             );
             self.photo_q60 = ordinary_q60_texture && low_curvature;
             self.mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
-                self.request.quality,
+                quality,
                 self.class_counts,
                 self.neutral_chroma,
                 self.high_chroma_loss,
                 low_curvature,
             );
             self.omit_display_refinement = omit_display_refinement(
-                self.request.quality,
+                quality,
                 self.mixed_y1_ac,
                 self.neutral_chroma,
                 self.segments,
                 self.class_counts,
             );
-            self.medium_y1_ac = medium_mixed_low_curvature(
-                self.request.quality,
-                self.omit_display_refinement,
-                low_curvature,
-            );
+            self.medium_y1_ac =
+                medium_mixed_low_curvature(quality, self.omit_display_refinement, low_curvature);
             self.uv_dc_feedback = self.mixed_y1_ac || self.medium_y1_ac;
             self.segments = self
                 .segments
@@ -4852,7 +4895,7 @@ impl FrameEncoder {
             }
             self.deltas = crate::presets::medium_high_import_deltas(
                 self.deltas,
-                self.request.quality,
+                quality,
                 self.class_counts,
                 self.blocks.len(),
                 self.rgb_error_sum,
@@ -4895,14 +4938,14 @@ impl FrameEncoder {
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
         let rate_qindex = if self.medium_y1_ac {
-            segmentation::class_qindices(self.request.quality, self.neutral_chroma)
+            segmentation::class_qindices(self.effective_quality, self.neutral_chroma)
                 [segment_id as usize]
         } else if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
             self.original_segments().qindex_for(segment_id)
         } else {
             qindex
         };
-        let lambda = crate::presets::lambda_for_quality(rate_qindex, self.request.quality);
+        let lambda = crate::presets::lambda_for_quality(rate_qindex, self.effective_quality);
         let original_rgb = (!self.omit_display_refinement).then_some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
@@ -4940,7 +4983,7 @@ impl FrameEncoder {
             &mut self.above_modes,
             &mut self.left_modes,
             lambda,
-            self.request.quality,
+            self.effective_quality,
             self.request.width as usize,
             self.request.height as usize,
             0,
@@ -5189,7 +5232,7 @@ impl FrameEncoder {
         )
         .map_err(encode_status)?;
         self.preview_comparison
-            .add_rate(rate, original_qindex, self.request.quality)
+            .add_rate(rate, original_qindex, self.effective_quality)
             .map_err(encode_status)?;
         self.cursor += 1;
         if self.cursor == self.blocks.len() {
@@ -5814,6 +5857,149 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn smooth_pair_rate_profile_requires_both_classes_and_low_import_error() {
+        let dimensions = (32, 16);
+        let cutoff = 4096 * 3 * u64::from(dimensions.0) * u64::from(dimensions.1);
+        for (quality, counts, neutral, low_curvature, rgb_error_sum, expected) in [
+            (75, [1, 1, 0, 0], false, true, 0, 60),
+            (75, [1, 4, 0, 0], false, true, cutoff, 60),
+            (75, [1, 1, 0, 0], false, true, cutoff + 1, 75),
+            (75, [1, 1, 0, 0], false, false, 0, 75),
+            (75, [1, 1, 0, 0], true, true, 0, 75),
+            (75, [2, 0, 0, 0], false, true, 0, 75),
+            (75, [0, 2, 0, 0], false, true, 0, 75),
+            (75, [1, 1, 1, 0], false, true, 0, 75),
+            (75, [1, 1, 0, 1], false, true, 0, 75),
+            (60, [1, 1, 0, 0], false, true, 0, 60),
+            (85, [1, 1, 0, 0], false, true, 0, 85),
+        ] {
+            assert_eq!(
+                rate_profile_quality(
+                    quality,
+                    counts,
+                    neutral,
+                    low_curvature,
+                    rgb_error_sum,
+                    dimensions
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn smooth_pair_q75_uses_exact_q60_packet_on_both_entry_paths() {
+        for (width, height, stride, layout, vertical) in
+            [(32, 16, 128, 0, false), (37, 33, 153, 1, true)]
+        {
+            let mut input = vec![13; stride * height];
+            for y in 0..height {
+                for x in 0..width {
+                    let flat = (x / 16 + y / 16) % 2 == 1;
+                    let axis = if vertical { y } else { x };
+                    let step = u8::from(flat && axis % 16 >= 8);
+                    let r = 96 + step;
+                    let b = 101 + step;
+                    let pixel = if layout == 0 {
+                        [r, r, b, 255]
+                    } else {
+                        [b, r, r, 255]
+                    };
+                    input[y * stride + 4 * x..][..4].copy_from_slice(&pixel);
+                }
+            }
+            let medium = engine_request(width, height, layout, &input, stride);
+            let low = Request {
+                quality: 60,
+                ..medium
+            };
+            let plan = ResourcePlan::checked(medium).unwrap();
+            let selected = run_engine(FrameEncoder::new(medium, input.clone(), plan).unwrap());
+            let low_engine = run_engine(
+                FrameEncoder::new(low, input.clone(), ResourcePlan::checked(low).unwrap()).unwrap(),
+            );
+            assert_eq!(selected.request, medium);
+            assert_eq!(selected.effective_quality, 60);
+            assert!(segmentation::smooth_pair_only(selected.class_counts));
+            assert!(
+                selected.mixed_y1_ac && selected.uv_dc_feedback && selected.omit_display_refinement
+            );
+            assert!(!selected.segments.enabled && !selected.high_chroma_loss);
+            assert_eq!(selected.preview_trial, PreviewTrial::None);
+            assert_eq!(selected.filter, FilterConfig::for_quality(60));
+            assert_eq!(selected.output(), low_engine.output());
+            assert_eq!(
+                selected.plan().frame_bytes as usize,
+                selected.output().len()
+            );
+            assert_eq!(
+                selected.plan().linear_capacity_bytes,
+                low_engine.plan().linear_capacity_bytes
+            );
+
+            let sync = |quality| {
+                encode_textured(
+                    &input,
+                    medium.width,
+                    medium.height,
+                    medium.stride,
+                    medium.layout,
+                    quality,
+                )
+                .unwrap()
+            };
+            assert_eq!(sync(75), sync(60));
+            assert_eq!(sync(75), selected.output());
+            assert_ne!(sync(85), selected.output());
+        }
+    }
+
+    #[test]
+    fn one_class_or_chromatic_ramps_keep_the_requested_q75_packet() {
+        for ramp in [false, true] {
+            let width = 32;
+            let height = 16;
+            let stride = width * 4;
+            let mut input = Vec::with_capacity(stride * height);
+            for _ in 0..height {
+                for x in 0..width {
+                    let step = if ramp && x >= 16 { (x % 16) as u8 } else { 0 };
+                    input.extend_from_slice(&[96 + step, 96 + step, 101 + step, 255]);
+                }
+            }
+            let medium = engine_request(width, height, 0, &input, stride);
+            let medium_engine = run_engine(
+                FrameEncoder::new(
+                    medium,
+                    input.clone(),
+                    ResourcePlan::checked(medium).unwrap(),
+                )
+                .unwrap(),
+            );
+            assert_eq!(medium_engine.effective_quality, 75);
+            assert_eq!(medium_engine.filter, FilterConfig::for_quality(75));
+            assert_eq!(
+                medium_engine.class_counts,
+                if ramp { [1, 0, 1, 0] } else { [2, 0, 0, 0] }
+            );
+            let sync = |quality| {
+                encode_textured(
+                    &input,
+                    medium.width,
+                    medium.height,
+                    medium.stride,
+                    medium.layout,
+                    quality,
+                )
+                .unwrap()
+            };
+            let q75 = sync(75);
+            assert_eq!(q75, medium_engine.output());
+            assert_ne!(q75, sync(60));
+        }
+    }
 
     #[test]
     fn y1_zero_bin_uses_exact_five_eighths_boundary_for_both_signs() {

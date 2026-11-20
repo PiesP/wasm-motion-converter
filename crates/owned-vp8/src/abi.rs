@@ -396,6 +396,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn smooth_pair_q75_keeps_abi_request_and_leases_with_exact_q60_work() {
+        let (width, height) = (32, 16);
+        let stride = width * 4;
+        let mut outputs = Vec::new();
+        for quality in [60, 75] {
+            let mut state = State::new();
+            state.request = [
+                2,
+                width,
+                height,
+                stride,
+                0,
+                quality,
+                stride * height,
+                4096,
+                41,
+                1,
+                stride * height,
+                0,
+            ];
+            assert_eq!(state.plan(), Ok(0));
+            reserve(&mut state);
+            for row in state.input.chunks_exact_mut(stride as usize) {
+                for (x, rgba) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                    let step = u8::from(x >= 24);
+                    rgba.copy_from_slice(&[96 + step, 96 + step, 101 + step, 255]);
+                }
+            }
+            assert_eq!(state.begin(41, 1), Ok(WORKING));
+            let mut steps = 0;
+            loop {
+                steps += 1;
+                assert!(
+                    steps < 4096,
+                    "smooth pair must finish within its small fixture bound"
+                );
+                let status = state.step(41, 1).unwrap();
+                if status == OUTPUT_READY {
+                    break;
+                }
+                assert_eq!(status, WORKING);
+                assert!(state.job.as_ref().unwrap().output().is_empty());
+            }
+            assert_eq!(state.phase, Phase::OutputLease);
+            assert_eq!(state.frozen_request.unwrap().quality, quality);
+            let bytes = state.job.as_ref().unwrap().output();
+            let plan = state.plan.unwrap();
+            assert_eq!(plan.frame_bytes as usize, bytes.len());
+            outputs.push((bytes.to_vec(), steps, plan.linear_capacity_bytes));
+            assert_eq!(state.release_output(41, 1), Ok(0));
+            assert_eq!(state.phase, Phase::Idle);
+        }
+        assert_eq!(outputs[0], outputs[1]);
+    }
+
+    #[test]
     fn stale_ticket_and_abort_at_refinement_count_replay_and_release_recover() {
         let (width, height) = (33usize, 33usize);
         let input: Vec<u8> = (0..height)
