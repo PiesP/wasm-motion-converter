@@ -302,16 +302,34 @@ impl Frame<'_> {
 }
 
 fn render(luma: u8, u_sum: i64, v_sum: i64) -> [u8; 3] {
+    let u = ((u_sum + (1 << 23)) >> 24).clamp(0, 255) as i32;
+    let v = ((v_sum + (1 << 23)) >> 24).clamp(0, 255) as i32;
+    render_from_terms(luma, chroma_terms(u, v))
+}
+
+fn chroma_terms(u: i32, v: i32) -> [i32; 3] {
+    let u = u - 128;
+    let v = v - 128;
+    [104597 * v, -25675 * u - 53279 * v, 132201 * u]
+}
+
+fn render_from_terms(luma: u8, chroma: [i32; 3]) -> [u8; 3] {
+    // These signed products and sums fit in i32 even before RGB clipping.
+    let rounded_y = 76309 * (i32::from(luma) - 16) + (1 << 15);
+    chroma.map(|term| ((rounded_y + term) >> 16).clamp(0, 255) as u8)
+}
+
+#[cfg(test)]
+fn render_scalar(luma: u8, u_sum: i64, v_sum: i64) -> [u8; 3] {
     let y = i32::from(luma) - 16;
     let u = (((u_sum + (1 << 23)) >> 24).clamp(0, 255) as i32) - 128;
     let v = (((v_sum + (1 << 23)) >> 24).clamp(0, 255) as i32) - 128;
-    let round = 1 << 15;
-    let rgb = [
+    [
         76309 * y + 104597 * v,
         76309 * y - 25675 * u - 53279 * v,
         76309 * y + 132201 * u,
-    ];
-    rgb.map(|channel| ((channel + round) >> 16).clamp(0, 255) as u8)
+    ]
+    .map(|channel| ((channel + (1 << 15)) >> 16).clamp(0, 255) as u8)
 }
 
 // FFmpeg's nearest metric enlargement is applied only while sampling SSIM.
@@ -500,12 +518,35 @@ impl<'a> CompleteFrame<'a> {
         render(self.y[y * self.stride_y + x], u_sum, v_sum)
     }
 
+    fn visit_direct_metric_block(
+        &self,
+        left: usize,
+        top: usize,
+        mut visit: impl FnMut(usize, usize, [u8; 3]),
+    ) {
+        // Each aligned pair of rows and columns selects one shared UV sample.
+        for dy in [0, 2] {
+            let y = top + dy;
+            let uv_row = (y / 2) * (self.stride_y / 2);
+            for dx in [0, 2] {
+                let x = left + dx;
+                let uv = uv_row + x / 2;
+                let chroma = chroma_terms(i32::from(self.u[uv]), i32::from(self.v[uv]));
+                for py in y..y + 2 {
+                    let at = py * self.stride_y + x;
+                    visit(x, py, render_from_terms(self.y[at], chroma));
+                    visit(x + 1, py, render_from_terms(self.y[at + 1], chroma));
+                }
+            }
+        }
+    }
+
     #[cfg(test)]
     fn rendered_scalar(&self, x: usize, y: usize) -> [u8; 3] {
         let direct = self.height.is_multiple_of(2);
         let h = Axis::chroma(x, self.width, true, direct);
         let v = Axis::chroma(y, self.height, false, direct);
-        render(
+        render_scalar(
             self.y[y * self.stride_y + x],
             self.chroma_sum(self.u, h, v),
             self.chroma_sum(self.v, h, v),
@@ -627,18 +668,31 @@ impl CompleteScore {
 
     pub(super) fn advance(&mut self, frame: &CompleteFrame<'_>) {
         let end = (self.next + 64).min(self.columns * self.rows);
+        // For physical dimensions >=8, metric_sample is the identity for
+        // every covered block. Even height makes both chroma axes direct.
+        let direct = frame.width >= 8
+            && frame.height >= 8
+            && frame.height.is_multiple_of(2)
+            && self.columns == frame.width / 4
+            && self.rows == frame.height / 4;
         while self.next < end {
             let bx = self.next % self.columns;
             let by = self.next / self.columns;
             let mut moments = [Moment::default(); 3];
-            for dy in 0..4 {
-                for dx in 0..4 {
-                    let x = metric_sample(bx * 4 + dx, frame.width);
-                    let y = metric_sample(by * 4 + dy, frame.height);
-                    let original = frame.original.at(x, y);
-                    let rendered = frame.rendered(x, y);
-                    for channel in 0..3 {
-                        moments[channel].add(original[channel], rendered[channel]);
+            let mut add_pixel = |x, y, rendered: [u8; 3]| {
+                let original = frame.original.at(x, y);
+                for channel in 0..3 {
+                    moments[channel].add(original[channel], rendered[channel]);
+                }
+            };
+            if direct {
+                frame.visit_direct_metric_block(bx * 4, by * 4, add_pixel);
+            } else {
+                for dy in 0..4 {
+                    for dx in 0..4 {
+                        let x = metric_sample(bx * 4 + dx, frame.width);
+                        let y = metric_sample(by * 4 + dy, frame.height);
+                        add_pixel(x, y, frame.rendered(x, y));
                     }
                 }
             }
@@ -932,17 +986,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn direct_chroma_terms_match_scalar_for_all_yuv_bytes() {
+        for u in 0..=255i32 {
+            for v in 0..=255i32 {
+                let chroma = chroma_terms(u, v);
+                for y in 0..=255u8 {
+                    assert_eq!(
+                        render_from_terms(y, chroma),
+                        render_scalar(y, i64::from(u) << 24, i64::from(v) << 24)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn completed_stream_matches_fresh_scalar_windows_and_checks_extents() {
         for (width, height) in [
             (1usize, 1usize),
             (5, 1),
+            (7, 8),
+            (9, 6),
             (2, 9),
             (1, 11),
+            (8, 8),
             (7, 9),
+            (11, 10),
             (11, 13),
             (15, 19),
             (17, 19),
             (33, 16),
+            (48, 26),
+            (49, 26),
         ] {
             let stride_y = width.div_ceil(16) * 16;
             let padded_h = height.div_ceil(16) * 16;
@@ -1013,6 +1088,39 @@ mod tests {
                             frame.rendered_scalar(col, row),
                             "{width}x{height} layout={layout} pixel={col},{row}"
                         );
+                    }
+                }
+                if width >= 8 && height >= 8 && height.is_multiple_of(2) {
+                    for by in 0..height / 4 {
+                        for bx in 0..width / 4 {
+                            let left = bx * 4;
+                            let top = by * 4;
+                            let mut seen = [false; 16];
+                            let mut direct = [Moment::default(); 3];
+                            frame.visit_direct_metric_block(left, top, |x, y, rgb| {
+                                assert!((left..left + 4).contains(&x));
+                                assert!((top..top + 4).contains(&y));
+                                let index = (y - top) * 4 + x - left;
+                                assert!(!std::mem::replace(&mut seen[index], true));
+                                assert_eq!(rgb, frame.rendered_scalar(x, y));
+                                let source = original.at(x, y);
+                                for channel in 0..3 {
+                                    direct[channel].add(source[channel], rgb[channel]);
+                                }
+                            });
+                            assert!(seen.into_iter().all(|pixel| pixel));
+                            let mut scalar = [Moment::default(); 3];
+                            for y in top..top + 4 {
+                                for x in left..left + 4 {
+                                    let source = original.at(x, y);
+                                    let rgb = frame.rendered_scalar(x, y);
+                                    for channel in 0..3 {
+                                        scalar[channel].add(source[channel], rgb[channel]);
+                                    }
+                                }
+                            }
+                            assert_eq!(direct, scalar, "{width}x{height} layout={layout}");
+                        }
                     }
                 }
                 let scalar = metric_ssim(
