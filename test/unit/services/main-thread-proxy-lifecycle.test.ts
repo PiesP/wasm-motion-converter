@@ -210,6 +210,38 @@ describe('runPipelineViaWorker lifecycle', () => {
     }
   );
 
+  it.each([
+    ['partition-limit', 'ENCODER_ERROR', 'WorkerPipelineError'],
+    ['output-limit', 'OUT_OF_MEMORY', 'WorkerMemoryLimitError'],
+    ['abi', 'ENCODER_ERROR', 'WorkerPipelineError'],
+    ['load', 'ENCODER_ERROR', 'WorkerPipelineError'],
+    ['trap', 'ENCODER_ERROR', 'WorkerPipelineError'],
+    ['resource', 'OUT_OF_MEMORY', 'WorkerMemoryLimitError'],
+  ] as const)(
+    'keeps owned VP8 %s terminal through the proxy',
+    async (ownedVp8FailureKind, code, name) => {
+      const message = 'Opaque diagnostic wording';
+      ThrowingWorker.response = {
+        type: 'error',
+        requestId: 'request-1',
+        message,
+        code,
+        ownedVp8FailureKind,
+      };
+
+      await expect(
+        runPipelineWithFallback(new Blob(['video']), validDecoderConfig, validOptions, vi.fn())
+      ).rejects.toMatchObject({
+        name,
+        code,
+        ownedVp8FailureKind,
+        message: expect.stringContaining(message),
+      });
+      expect(runConversionPipeline).not.toHaveBeenCalled();
+      expect(ThrowingWorker.instance?.terminate).toHaveBeenCalledOnce();
+    }
+  );
+
   it('keeps ordinary Worker memory failures in the existing memory class', async () => {
     ThrowingWorker.response = {
       type: 'error',

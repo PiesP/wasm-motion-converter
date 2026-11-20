@@ -541,6 +541,27 @@ describe('isWorkerResponse', () => {
     ).toBe(false);
   });
 
+  it.each([
+    ['resource', 'OUT_OF_MEMORY'],
+    ['partition-limit', 'ENCODER_ERROR'],
+    ['output-limit', 'OUT_OF_MEMORY'],
+    ['trap', 'ENCODER_ERROR'],
+  ])('accepts owned VP8 %s with compatible public code', (ownedVp8FailureKind, code) => {
+    expect(isWorkerResponse({ ...validError, code, ownedVp8FailureKind })).toBe(true);
+  });
+
+  it.each([
+    { code: 'OUT_OF_MEMORY', ownedVp8FailureKind: 'partition-limit' },
+    { code: 'ENCODER_ERROR', ownedVp8FailureKind: 'resource' },
+    { code: 'CANCELLED', ownedVp8FailureKind: 'cancelled' },
+    { code: 'ENCODER_ERROR', ownedVp8FailureKind: 'toString' },
+    { code: 'ENCODER_ERROR', ownedVp8FailureKind: 1 },
+    { code: 'ENCODER_ERROR', ownedVp8FailureKind: null },
+    { code: 'OUT_OF_MEMORY', ownedVp8FailureKind: 'resource', demuxFailureKind: 'resource' },
+  ])('rejects an incompatible or malformed owned VP8 diagnostic %j', (fields) => {
+    expect(isWorkerResponse({ ...validError, ...fields })).toBe(false);
+  });
+
   it('accepts valid log message', () => {
     expect(isWorkerResponse(validLog)).toBe(true);
   });

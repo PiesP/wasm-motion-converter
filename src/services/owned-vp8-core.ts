@@ -3,9 +3,33 @@
 
 import { schedulerYield } from '@piesp/browser-core/util';
 
-import { OwnedVp8MemoryAdmissionError } from './owned-vp8-memory-admission-error';
+import {
+  OwnedVp8AbiError,
+  OwnedVp8BusyError,
+  OwnedVp8CancelledError,
+  OwnedVp8InvalidInputError,
+  OwnedVp8LoadError,
+  OwnedVp8MemoryAdmissionError,
+  OwnedVp8OutputLimitError,
+  OwnedVp8PartitionLimitError,
+  OwnedVp8TrapError,
+  OwnedVp8UnsupportedLayoutError,
+  OwnedVp8UnsupportedPixelsError,
+} from './owned-vp8-errors';
 
-export { OwnedVp8MemoryAdmissionError };
+export {
+  OwnedVp8AbiError,
+  OwnedVp8BusyError,
+  OwnedVp8CancelledError,
+  OwnedVp8InvalidInputError,
+  OwnedVp8LoadError,
+  OwnedVp8MemoryAdmissionError,
+  OwnedVp8OutputLimitError,
+  OwnedVp8PartitionLimitError,
+  OwnedVp8TrapError,
+  OwnedVp8UnsupportedLayoutError,
+  OwnedVp8UnsupportedPixelsError,
+} from './owned-vp8-errors';
 
 const ABI_VERSION = 2;
 const REQUEST_BYTES = 48;
@@ -24,37 +48,6 @@ const U32_MAX = 0xffff_ffff;
 
 let compilerIdle: Promise<void> | undefined;
 let compiledModule: { module: WebAssembly.Module; initialPages: number } | undefined;
-
-export class OwnedVp8LoadError extends Error {
-  override name = 'OwnedVp8LoadError';
-}
-export class OwnedVp8AbiError extends Error {
-  override name = 'OwnedVp8AbiError';
-}
-export class OwnedVp8InvalidInputError extends Error {
-  override name = 'OwnedVp8InvalidInputError';
-}
-export class OwnedVp8UnsupportedLayoutError extends Error {
-  override name = 'OwnedVp8UnsupportedLayoutError';
-}
-export class OwnedVp8UnsupportedPixelsError extends Error {
-  override name = 'OwnedVp8UnsupportedPixelsError';
-}
-export class OwnedVp8OutputLimitError extends Error {
-  override name = 'OwnedVp8OutputLimitError';
-}
-export class OwnedVp8PartitionLimitError extends Error {
-  override name = 'OwnedVp8PartitionLimitError';
-}
-export class OwnedVp8TrapError extends Error {
-  override name = 'OwnedVp8TrapError';
-}
-export class OwnedVp8CancelledError extends Error {
-  override name = 'OwnedVp8CancelledError';
-}
-export class OwnedVp8BusyError extends Error {
-  override name = 'OwnedVp8BusyError';
-}
 
 export interface OwnedVp8Settings {
   width: number;

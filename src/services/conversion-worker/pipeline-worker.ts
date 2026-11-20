@@ -441,8 +441,8 @@ export async function runWorkerPipeline(
             onFrameDecoded: decodeProgressCb,
             onFrameEncoded: encodedProgressCb,
           },
-          // The legacy encoder progress count can represent muxed frames after
-          // hold splitting, so only its explicit producer callback is counted.
+          // Record encoder and mux frame counts through onEncodingComplete.
+          // Progress alone can report a mux count after presentation holds are split.
           () => undefined,
           signal
         );

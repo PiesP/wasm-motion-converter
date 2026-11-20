@@ -18,6 +18,7 @@ import {
   OwnedDemuxParseError,
   OwnedDemuxResourceError,
 } from '@services/owned-demux-core';
+import { findOwnedVp8FailureKind, OWNED_VP8_FAILURE_CODES } from '@services/owned-vp8-errors';
 
 import { classifyWorkerError } from './classify-worker-error';
 import { isWorkerRequest } from './guards';
@@ -124,21 +125,31 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
         );
       } catch (err) {
         const message = getErrorMessage(err);
-        const cancelled = abortController.signal.aborted || isCancellationError(err);
+        const vp8Failure = findOwnedVp8FailureKind(err);
+        const cancelled =
+          abortController.signal.aborted ||
+          vp8Failure === 'cancelled' ||
+          (vp8Failure === undefined && isCancellationError(err));
         const timedOut = err instanceof Error && err.name === 'TimeoutError';
-        // Cancellation and actual timeouts are terminal even if another error is present.
-        const demuxFailureKind = cancelled || timedOut ? undefined : ownedDemuxFailureKind(err);
+        const memoryLimit = err instanceof ConversionMemoryLimitError ? err : undefined;
+        // Cancellation, timeout, and the outer pipeline limit take priority over codec details.
+        const codecFailure = !cancelled && !timedOut && memoryLimit === undefined;
+        const demuxFailureKind = codecFailure ? ownedDemuxFailureKind(err) : undefined;
+        const ownedVp8FailureKind =
+          codecFailure && demuxFailureKind === undefined ? vp8Failure : undefined;
         const code = cancelled
           ? 'CANCELLED'
           : timedOut
             ? 'TIMEOUT'
-            : err instanceof ConversionMemoryLimitError
-              ? err.code
+            : memoryLimit
+              ? memoryLimit.code
               : demuxFailureKind === 'resource'
                 ? 'OUT_OF_MEMORY'
                 : demuxFailureKind !== undefined
                   ? 'DECODER_ERROR'
-                  : classifyWorkerError(message);
+                  : ownedVp8FailureKind !== undefined
+                    ? OWNED_VP8_FAILURE_CODES[ownedVp8FailureKind]
+                    : classifyWorkerError(message);
 
         respond({
           type: 'error',
@@ -146,6 +157,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
           message,
           code,
           ...(demuxFailureKind ? { demuxFailureKind } : {}),
+          ...(ownedVp8FailureKind ? { ownedVp8FailureKind } : {}),
         });
       } finally {
         activeConversion = undefined;

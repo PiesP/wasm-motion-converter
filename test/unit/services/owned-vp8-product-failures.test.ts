@@ -2,7 +2,12 @@
 // Copyright (c) 2026 PiesP
 
 import { globalBufferPool } from '@services/buffer-pool';
-import { OwnedVp8CancelledError, OwnedVp8TrapError } from '@services/owned-vp8-core';
+import { OutputLimitError } from '@services/output-limits';
+import {
+  OwnedVp8CancelledError,
+  OwnedVp8OutputLimitError,
+  OwnedVp8TrapError,
+} from '@services/owned-vp8-core';
 import { encodeWebpOwned } from '@services/webp-encoder-service';
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
@@ -63,6 +68,27 @@ describe('owned VP8 product failures', () => {
     const removeGuard = globalBufferPool.installGrowthGuard(() => undefined);
     removeGuard();
   });
+
+  it.each(['direct', 'frame processing'] as const)(
+    'preserves the %s output ceiling separately from memory admission',
+    async (origin) => {
+      const limit = new OutputLimitError('webp', 'byte', 1024);
+      const failure =
+        origin === 'direct'
+          ? limit
+          : new Error(`Frame processing failed: ${limit.message}`, { cause: limit });
+      mocks.encode.mockRejectedValueOnce(failure);
+
+      await expect(encodeWebpOwned(demux, options)).rejects.toMatchObject({
+        name: new OwnedVp8OutputLimitError().name,
+        message: failure.message,
+        cause: failure,
+      });
+      expect(mocks.targetReleased).toBe(true);
+      expect(mocks.retire).toHaveBeenCalledOnce();
+      expect(mocks.legacy).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([OwnedVp8TrapError, OwnedVp8CancelledError])(
     'propagates %s after retiring without a legacy retry',

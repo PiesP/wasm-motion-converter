@@ -92,10 +92,14 @@ export class OwnedVp8MemoryBroker implements OwnedVp8Accounting {
       copyBytes < 0 ||
       pooledBytes < 0 ||
       frameLiveBytes > FRAME_PIPELINE_MEMORY_BUDGET_BYTES ||
-      muxBytes > this.maxOutputBytes ||
       copyBytes > WEBP_MAX_OUTPUT_BYTES
     )
       throw new OwnedVp8MemoryAdmissionError('Owned VP8 host memory reservation is invalid');
+    // Includes overlapping pending and emitted bytes before a presentation is settled.
+    if (muxBytes > this.maxOutputBytes)
+      throw new OwnedVp8MemoryAdmissionError(
+        `Owned VP8 live mux memory exceeds ${this.maxOutputBytes} bytes (${muxBytes} bytes required)`
+      );
     const total =
       DEMUX_MEMORY_BUDGET_BYTES +
       (this.demux.inputBufferBytes ?? 0) +

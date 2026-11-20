@@ -14,6 +14,7 @@
  *   3. Finalize the animated RIFF/WEBP container
  */
 
+import { getErrorMessage } from '@piesp/browser-core/error';
 import type { ProgressCallback } from '@t/conversion-types';
 import { WEBP_QUALITY_PERCENT } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -24,8 +25,9 @@ import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
 import { WebpFrameMemoryBudget } from './frame-memory';
-import { resolveOutputLimits } from './output-limits';
-import { createOwnedVp8Encoder, OwnedVp8MemoryAdmissionError } from './owned-vp8-core';
+import { OutputLimitError, resolveOutputLimits } from './output-limits';
+import { createOwnedVp8Encoder } from './owned-vp8-core';
+import { OwnedVp8MemoryAdmissionError, OwnedVp8OutputLimitError } from './owned-vp8-errors';
 import { OwnedVp8MemoryBroker } from './owned-vp8-memory';
 import { withPooledBuffer } from './pooled-buffer';
 import { extractVP8Bitstream, StreamingWebpMuxer } from './streaming-webp-encoder';
@@ -272,6 +274,14 @@ export async function encodeWebpOwned(
     });
 
     return result;
+  } catch (error) {
+    // The decoder preserves an output-limit failure during frame delivery as its cause.
+    if (
+      error instanceof OutputLimitError ||
+      (error instanceof Error && error.cause instanceof OutputLimitError)
+    )
+      throw new OwnedVp8OutputLimitError(getErrorMessage(error), { cause: error });
+    throw error;
   } finally {
     try {
       encoder?.retire();

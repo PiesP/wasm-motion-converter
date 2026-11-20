@@ -17,6 +17,7 @@ import type {
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
+import { ownedVp8FailureKind, OWNED_VP8_FAILURE_CODES } from '@services/owned-vp8-errors';
 import { findWasmWebpInitializationError } from '@services/wasm-webp-singleton';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
@@ -89,6 +90,9 @@ function knownConversionErrorCode(error: unknown): ErrorCode | undefined {
     if (current instanceof WorkerPipelineError && isKnownConversionErrorCode(current.code)) {
       return current.code;
     }
+    const vp8Failure = ownedVp8FailureKind(current);
+    if (vp8Failure === 'cancelled') return 'CANCELLED';
+    if (vp8Failure !== undefined) return OWNED_VP8_FAILURE_CODES[vp8Failure];
     current = current.cause;
   }
   return undefined;
@@ -531,7 +535,8 @@ async function handleConversionError(
   const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
   const initializationError = findWasmWebpInitializationError(error);
 
-  if (!initializationError && isCancellationError(error)) {
+  const knownCode = knownConversionErrorCode(error);
+  if (!initializationError && knownCode === undefined && isCancellationError(error)) {
     // The intent's finally owns the terminal transition after teardown settles.
     runtime.stopMemoryMonitoring();
     return;
@@ -542,7 +547,7 @@ async function handleConversionError(
     videoMetadata(),
     settings,
     t,
-    knownConversionErrorCode(error)
+    knownCode
   );
   context.originalError = errorMessage_;
   if (initializationError) setWebpReloadRequired(true);

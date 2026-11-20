@@ -19,6 +19,7 @@ import {
   type StageMetrics,
 } from '@services/conversion-profiler';
 import { isOwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
+import { isOwnedVp8FailureKind, OWNED_VP8_FAILURE_CODES } from '@services/owned-vp8-errors';
 import { isConversionFormat, isConversionQuality, isSmartFrameSkipMode } from '@t/conversion-types';
 import { CONVERSION_MEMORY_BUDGET_BYTES } from '@utils/constants';
 
@@ -333,6 +334,14 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
       if (!isNonEmptyString(value.requestId)) return false;
       if (!isNonEmptyString(value.message)) return false;
       if (!isNonEmptyString(value.code)) return false;
+      if (value.ownedVp8FailureKind !== undefined) {
+        if (
+          value.demuxFailureKind !== undefined ||
+          !isOwnedVp8FailureKind(value.ownedVp8FailureKind) ||
+          value.code !== OWNED_VP8_FAILURE_CODES[value.ownedVp8FailureKind]
+        )
+          return false;
+      }
       if (value.demuxFailureKind !== undefined) {
         if (
           typeof value.demuxFailureKind !== 'string' ||

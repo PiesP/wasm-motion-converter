@@ -25,6 +25,7 @@ import {
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { copyOwnedInputIndex } from '@services/owned-input-index-cache';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
+import type { OwnedVp8FailureKind } from '@services/owned-vp8-errors';
 import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -54,7 +55,8 @@ export class WorkerMemoryLimitError extends Error {
   readonly code = 'OUT_OF_MEMORY' as const;
   constructor(
     message: string,
-    readonly demuxFailureKind?: 'resource'
+    readonly demuxFailureKind?: 'resource',
+    readonly ownedVp8FailureKind?: 'resource' | 'output-limit'
   ) {
     super(`Worker ran out of memory: ${message}`);
     this.name = 'WorkerMemoryLimitError';
@@ -74,7 +76,8 @@ export class WorkerPipelineError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    readonly demuxFailureKind?: OwnedDemuxFailureKind
+    readonly demuxFailureKind?: OwnedDemuxFailureKind,
+    readonly ownedVp8FailureKind?: OwnedVp8FailureKind
   ) {
     super(`Worker error: ${message}`);
     this.name = 'WorkerPipelineError';
@@ -268,15 +271,24 @@ export async function runPipelineViaWorker(
           if (response.code === 'CANCELLED') {
             reject(new DOMException('Cancelled', 'AbortError'));
           } else if (response.code === 'OUT_OF_MEMORY') {
+            const { ownedVp8FailureKind } = response;
             reject(
               new WorkerMemoryLimitError(
                 response.message,
-                response.demuxFailureKind === 'resource' ? 'resource' : undefined
+                response.demuxFailureKind === 'resource' ? 'resource' : undefined,
+                ownedVp8FailureKind === 'resource' || ownedVp8FailureKind === 'output-limit'
+                  ? ownedVp8FailureKind
+                  : undefined
               )
             );
           } else {
             reject(
-              new WorkerPipelineError(response.code, response.message, response.demuxFailureKind)
+              new WorkerPipelineError(
+                response.code,
+                response.message,
+                response.demuxFailureKind,
+                response.ownedVp8FailureKind
+              )
             );
           }
           break;

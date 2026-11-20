@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const MIB = 1024 * 1024;
 
-function fixture(inputBufferBytes = 0, indexSnapshotBytes = 0) {
+function fixture(inputBufferBytes = 0, indexSnapshotBytes = 0, maxOutputBytes?: number) {
   const frames = new WebpFrameMemoryBudget({
     codedWidth: 8,
     codedHeight: 8,
@@ -29,8 +29,8 @@ function fixture(inputBufferBytes = 0, indexSnapshotBytes = 0) {
     indexSnapshotBytes,
   } as DemuxResult;
   const appGuard = vi.fn();
-  const muxer = new StreamingWebpMuxer(8, 8);
-  const broker = new OwnedVp8MemoryBroker(demux, frames, muxer, appGuard);
+  const muxer = new StreamingWebpMuxer(8, 8, { maxOutputBytes });
+  const broker = new OwnedVp8MemoryBroker(demux, frames, muxer, appGuard, maxOutputBytes);
   return { broker, frames, muxer, appGuard };
 }
 
@@ -239,6 +239,33 @@ describe('owned VP8 conversion-wide admission', () => {
     globalBufferPool.release(buffer);
     broker.dispose();
     frames.dispose();
+  });
+
+  it('refuses the overlapping mux memory when the final container fits its byte limit', () => {
+    const { broker, frames, muxer } = fixture(0, 0, 1024);
+    const raw = new Uint8Array(600);
+    // A synthetic packet with a valid frame tag and geometry for the mux header check.
+    raw.set([0x30, 0, 0, 0x9d, 1, 0x2a, 8, 0, 8, 0]);
+    try {
+      broker.reserve(65_536, raw.byteLength);
+      broker.assertPresentationCopy(0);
+      muxer.addPresentationFrame(raw, { startUs: 0, endUs: 50_000 });
+      broker.presentationCopySettled();
+      broker.release();
+
+      expect(muxer.retainedBytes).toBe(600);
+      expect(muxer.retainedBeforeFinishPresentation(50_000)).toBe(1276);
+      const admit = () => broker.assertFinishPresentation(50_000);
+      expect(admit).toThrow(OwnedVp8MemoryAdmissionError);
+      expect(admit).toThrow('live mux memory exceeds 1024 bytes (1276 bytes required)');
+
+      // The file-only mux limit admits the frame when the broker is bypassed.
+      muxer.finishPresentation(50_000);
+      expect(muxer.retainedBytes).toBe(676);
+    } finally {
+      broker.dispose();
+      frames.dispose();
+    }
   });
 
   it('includes pending duplication, ANMF headers, and final emitted chunks in preflight', () => {

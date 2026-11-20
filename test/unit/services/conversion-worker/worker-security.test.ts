@@ -109,7 +109,75 @@ describe('conversion worker message security', () => {
     );
   });
 
-  it.each(['memory', 'parse'] as const)(
+  it.each([
+    ['OwnedVp8LoadError', 'load', 'ENCODER_ERROR'],
+    ['OwnedVp8AbiError', 'abi', 'ENCODER_ERROR'],
+    ['OwnedVp8TrapError', 'trap', 'ENCODER_ERROR'],
+    ['OwnedVp8InvalidInputError', 'invalid-input', 'ENCODER_ERROR'],
+    ['OwnedVp8UnsupportedLayoutError', 'unsupported-layout', 'ENCODER_ERROR'],
+    ['OwnedVp8UnsupportedPixelsError', 'unsupported-pixels', 'ENCODER_ERROR'],
+    ['OwnedVp8OutputLimitError', 'output-limit', 'OUT_OF_MEMORY'],
+    ['OwnedVp8PartitionLimitError', 'partition-limit', 'ENCODER_ERROR'],
+    ['OwnedVp8MemoryAdmissionError', 'resource', 'OUT_OF_MEMORY'],
+    ['OwnedVp8BusyError', 'busy', 'ENCODER_ERROR'],
+    ['OwnedVp8CancelledError', undefined, 'CANCELLED'],
+  ] as const)(
+    'preserves wrapped %s across the real Worker handler',
+    async (className, kind, code) => {
+      const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+      vi.stubGlobal('self', workerScope);
+      const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+      const vp8Core = await import('@services/owned-vp8-core');
+      const message = 'Frame processing failed: Opaque timeout abort marker';
+      vi.mocked(runWorkerPipeline).mockImplementationOnce(
+        async (_input, _options, _respond, _requestId, signal) => {
+          expect(signal?.aborted).toBe(false);
+          const transportCause =
+            kind === 'load'
+              ? new DOMException('Response body interrupted', 'AbortError')
+              : undefined;
+          throw new Error(message, {
+            cause: new vp8Core[className]('Opaque timeout abort marker', { cause: transportCause }),
+          });
+        }
+      );
+      await import('@services/conversion-worker/worker');
+      workerScope.postMessage.mockClear();
+
+      await workerScope.onmessage?.({
+        source: null,
+        data: {
+          type: 'start',
+          requestId: 'typed-vp8',
+          inputBlob: new Blob(['video']),
+          config: { codec: 'vp09', codedHeight: 16, codedWidth: 16 },
+          options: {
+            format: 'webp',
+            fps: 30,
+            maxFrames: 1,
+            maxOutputBytes: 1024,
+            quality: 'medium',
+            scale: 1,
+            trimEnd: 0,
+            trimStart: 0,
+          },
+        },
+      } as unknown as MessageEvent);
+
+      expect(workerScope.postMessage).toHaveBeenCalledExactlyOnceWith(
+        {
+          type: 'error',
+          requestId: 'typed-vp8',
+          message,
+          code,
+          ...(kind ? { ownedVp8FailureKind: kind } : {}),
+        },
+        []
+      );
+    }
+  );
+
+  it.each(['memory', 'parse', 'vp8-trap', 'vp8-load'] as const)(
     'gives an active cancellation priority over a %s failure',
     async (failure) => {
       const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
@@ -118,6 +186,15 @@ describe('conversion worker message security', () => {
       const { OwnedDemuxParseError } = await import('@services/owned-demux-core');
       const { ConversionMemoryLimitError: CurrentMemoryLimitError } =
         await import('@services/conversion-memory-limit-error');
+      const { OwnedVp8LoadError, OwnedVp8TrapError } = await import('@services/owned-vp8-errors');
+      const failures = {
+        memory: new CurrentMemoryLimitError('Budget exhausted'),
+        parse: new OwnedDemuxParseError('Malformed media'),
+        'vp8-trap': new OwnedVp8TrapError('Owned VP8 trapped'),
+        'vp8-load': new OwnedVp8LoadError('Owned VP8 response stream failed', {
+          cause: new DOMException('Response body interrupted', 'AbortError'),
+        }),
+      };
       let rejectPipeline!: (error: Error) => void;
       vi.mocked(runWorkerPipeline).mockImplementationOnce(
         () =>
@@ -151,11 +228,7 @@ describe('conversion worker message security', () => {
         source: null,
         data: { type: 'abort', requestId: 'cancel-first' },
       } as unknown as MessageEvent);
-      rejectPipeline(
-        failure === 'memory'
-          ? new CurrentMemoryLimitError('Budget exhausted')
-          : new OwnedDemuxParseError('Malformed media')
-      );
+      rejectPipeline(failures[failure]);
       await start;
 
       expect(workerScope.postMessage).toHaveBeenCalledWith(
@@ -170,12 +243,15 @@ describe('conversion worker message security', () => {
     }
   );
 
-  it('gives an actual TimeoutError name its terminal category without a demux kind', async () => {
+  it('gives an actual TimeoutError name its terminal category without a codec failure kind', async () => {
     const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
     vi.stubGlobal('self', workerScope);
     const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+    const { OwnedVp8LoadError } = await import('@services/owned-vp8-errors');
     vi.mocked(runWorkerPipeline).mockRejectedValueOnce(
-      new DOMException('Deadline expired', 'TimeoutError')
+      Object.assign(new DOMException('Deadline expired', 'TimeoutError'), {
+        cause: new OwnedVp8LoadError('Late VP8 load failure'),
+      })
     );
     await import('@services/conversion-worker/worker');
     workerScope.postMessage.mockClear();

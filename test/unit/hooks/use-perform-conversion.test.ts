@@ -103,6 +103,11 @@ import {
   WorkerPipelineError,
   WorkerTimeoutError,
 } from '@services/conversion-worker/main-thread-proxy';
+import {
+  OwnedVp8LoadError,
+  OwnedVp8MemoryAdmissionError,
+  OwnedVp8TrapError,
+} from '@services/owned-vp8-errors';
 
 const { handleCancelConversion, handleConvert, handleDismissError, handleRetry } = conversionModule;
 
@@ -296,6 +301,35 @@ describe('handleConvert conversion ownership', () => {
       }
     }
   );
+
+  it('keeps the Stop outcome when an owned VP8 load later rejects', async () => {
+    mocks.settings = { ...mocks.settings, format: 'webp' };
+    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
+    let rejectPipeline: ((error: Error) => void) | undefined;
+    mocks.runConversionPipeline.mockReturnValueOnce(
+      new Promise<ArrayBuffer>((_resolve, reject) => {
+        rejectPipeline = reject;
+      })
+    );
+    const runtime = createRuntime();
+
+    const conversion = handleConvert(runtime, localizedProgressT);
+    await vi.waitFor(() => expect(mocks.runConversionPipeline).toHaveBeenCalledOnce());
+    mocks.setErrorContext.mockClear();
+    handleCancelConversion(runtime);
+    expect(mocks.appState).toBe('cancelling');
+
+    rejectPipeline?.(
+      new OwnedVp8LoadError('Owned VP8 response stream failed', {
+        cause: new DOMException('Response body interrupted', 'AbortError'),
+      })
+    );
+    await conversion;
+
+    expect(mocks.appState).toBe('idle');
+    expect(mocks.setErrorContext).not.toHaveBeenCalled();
+    expect(mocks.transitionToState).not.toHaveBeenCalledWith('error');
+  });
 
   it('restores idle after a cancelled direct retry physically settles', async () => {
     mocks.appState = 'error';
@@ -741,6 +775,23 @@ it.each([
     'OUT_OF_MEMORY',
     'memory',
   ],
+  [
+    'webp',
+    new Error('Frame processing failed: Opaque timeout', {
+      cause: new OwnedVp8TrapError('Opaque timeout'),
+    }),
+    'ENCODER_ERROR',
+    'format',
+  ],
+  [
+    'webp',
+    new OwnedVp8LoadError('Owned VP8 response stream failed', {
+      cause: new DOMException('Response body interrupted', 'AbortError'),
+    }),
+    'ENCODER_ERROR',
+    'format',
+  ],
+  ['webp', new OwnedVp8MemoryAdmissionError('Diagnostic changed'), 'OUT_OF_MEMORY', 'memory'],
   ['gif', new WorkerTimeoutError(1000), 'TIMEOUT', 'timeout'],
   [
     'gif',
