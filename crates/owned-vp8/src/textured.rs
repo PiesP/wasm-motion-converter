@@ -2252,7 +2252,7 @@ fn encode_observed(
                     &source_y,
                     &source_u,
                     &source_v,
-                    Some(display_rgb::Original {
+                    (!mixed_y1_ac).then_some(display_rgb::Original {
                         pixels,
                         stride,
                         layout: format,
@@ -2289,7 +2289,7 @@ fn encode_observed(
                         })
                         .map_err(|_| EncodeError::OutputLimit)?;
                 }
-                let quota = if high_chroma_loss {
+                let quota = if high_chroma_loss || mixed_y1_ac {
                     0
                 } else {
                     extra_quota(my * blocks_x + mx, count)
@@ -4668,7 +4668,7 @@ impl FrameEncoder {
         let blocks_x = self.plan.padded_width as usize / 16;
         let mx = self.cursor % blocks_x;
         let my = self.cursor / blocks_x;
-        let quota = if self.high_chroma_loss {
+        let quota = if self.high_chroma_loss || self.mixed_y1_ac {
             0
         } else {
             extra_quota(self.cursor, self.plan.macroblock_count as usize)
@@ -4691,7 +4691,7 @@ impl FrameEncoder {
             qindex
         };
         let lambda = crate::presets::lambda_for_quality(rate_qindex, self.request.quality);
-        let original_rgb = Some(display_rgb::Original {
+        let original_rgb = (!self.mixed_y1_ac).then_some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
             layout: self.request.layout,
@@ -9710,6 +9710,10 @@ mod tests {
                     engine.step().unwrap();
                     if engine.stage == Stage::JointRefine {
                         saw_joint = true;
+                        assert!(
+                            !expected_profile,
+                            "mixed q60 must not enter display refinement"
+                        );
                         assert_eq!(
                             engine.joint_search[0].rgb_ssd_guard_enabled_for_test(),
                             expected_profile
@@ -9717,10 +9721,10 @@ mod tests {
                     }
                 }
                 if expected_profile {
-                    assert!(
-                        saw_joint,
-                        "eligible profile must reach the guarded joint path"
-                    );
+                    assert!(!saw_joint);
+                    assert!(engine.refinement_log.is_empty());
+                    assert!(engine.baseline_overrides.is_empty());
+                    assert_eq!(engine.joint_used_total, 0);
                 }
                 let engine = run_engine(engine);
                 assert_eq!(engine.mixed_y1_ac, expected_profile);
@@ -9758,6 +9762,48 @@ mod tests {
     }
 
     #[test]
+    fn mixed_q60_keeps_full_mode_and_residual_analysis_without_display_refinement() {
+        let input = mixed_low_curvature_input();
+        let request = Request {
+            quality: 60,
+            ..engine_request(32, 16, 0, &input, 128)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut candidate = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        let mut unrefined_control = FrameEncoder::new(request, input, plan).unwrap();
+        unrefined_control.disable_refinement = true;
+        for engine in [&mut candidate, &mut unrefined_control] {
+            while engine.stage != Stage::CollectStats {
+                engine.step().unwrap();
+            }
+            assert!(engine.mixed_y1_ac);
+            assert!(!engine.high_chroma_loss);
+            assert_eq!(engine.filter.level, 6);
+            assert_eq!(engine.deltas.uv_dc, -9);
+            assert_eq!(engine.deltas.uv_ac, -15);
+            assert!(engine.refinement_log.is_empty());
+            assert!(engine.baseline_overrides.is_empty());
+            assert_eq!(engine.joint_used_total, 0);
+        }
+        assert_eq!(candidate.blocks, unrefined_control.blocks);
+        assert_eq!(candidate.reconstructed_y, unrefined_control.reconstructed_y);
+        assert_eq!(candidate.reconstructed_u, unrefined_control.reconstructed_u);
+        assert_eq!(candidate.reconstructed_v, unrefined_control.reconstructed_v);
+        assert_eq!(candidate.contexts, unrefined_control.contexts);
+        assert_eq!(candidate.header_budget, unrefined_control.header_budget);
+        assert!(candidate.blocks.iter().any(|block| {
+            block
+                .y
+                .iter()
+                .flatten()
+                .chain(block.y2.iter())
+                .chain(block.u.iter().flatten())
+                .chain(block.v.iter().flatten())
+                .any(|&level| level != 0)
+        }));
+    }
+
+    #[test]
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
     fn independent_decoders_reconstruct_mixed_y1_ac_allocation() {
         let input = mixed_low_curvature_input();
@@ -9771,7 +9817,13 @@ mod tests {
         let (y, u, v, padded_w) = engine.reconstruction();
         let expected =
             filtered_visible_yuv(y, u, v, padded_w, 32, 16, &engine.blocks, engine.filter);
-        assert_decodes(engine.output(), 32, 16, &expected, "mixed Y1 AC allocation");
+        assert_decodes(
+            engine.output(),
+            32,
+            16,
+            &expected,
+            "mixed Y1 AC without display refinement",
+        );
     }
 
     #[test]

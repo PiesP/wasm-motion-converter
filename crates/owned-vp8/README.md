@@ -15,13 +15,17 @@ Separate component timing ratios must not be multiplied. Browser capability,
 product performance, physical resource peaks, and delivery remain unqualified.
 Changes to this README require a provenance refresh before prebuilt verification.
 
-The current UV quality trial adds a
+The historical UV quality trial added a
 [sampled RGB SSD guard](../../docs/experiments/501-owned-vp8-uv-rgb-ssd-guard.md)
 to single and joint UV refinements in the existing mixed-Y1 q60 profile.
-It retains the SSIM objective while rejecting increased squared error over
-its cached metric samples. The linked experiment owns the source identities,
-check results and measured outcome. This is a calibration trial; adoption
-remains governed by the global quality, performance and resource gates.
+That measured point retained the SSIM objective while rejecting increased
+squared error over its cached metric samples. The current
+[mixed refinement control](../../docs/experiments/501-owned-vp8-mixed-refinement-control.md)
+instead omits post-selection display-RGB/SSIM coefficient refinement for the
+eligible mixed q60 profile. It keeps the initial bounded I16/I4/UV rate-distortion
+selection and complete coefficient coding. The linked experiments retain their distinct source
+identities and measured outcomes; adoption remains governed by the global
+quality, performance and resource gates.
 
 Execution and acceptance are governed by [issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
 and the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
@@ -206,9 +210,11 @@ capacity can exceed logical input length and must be admitted explicitly.
 
 `FrameEncoder` in `src/textured.rs` stages initialization, color import,
 macroblock analysis, exact partition-length counting, frozen-decision emission,
-finalization and assembly. Visible UV refinement retains the mandatory one-edit
-choice per macroblock and spends at most 128 additional proposal evaluations per
-frame, assigned by uniform per-macroblock quotas. Its private search uses at most
+finalization and assembly. For profiles with display refinement enabled,
+visible UV refinement retains the mandatory one-edit choice per macroblock and
+spends at most 128 additional proposal evaluations per frame, assigned by
+uniform per-macroblock quotas. High-chroma-loss and eligible mixed q60 profiles
+have no display refinement proposals. The private search uses at most
 64 directed coefficient moves per macroblock, a two-path beam and four distinct
 coefficient positions per path. Each additional proposal takes one bounded ABI
 step. Complete trials score the combined U/V reconstruction; the search commits
