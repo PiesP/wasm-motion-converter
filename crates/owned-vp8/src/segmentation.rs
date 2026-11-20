@@ -150,7 +150,7 @@ impl Config {
         for (qindex, count) in weighted_indices {
             cumulative += count;
             if cumulative >= midpoint {
-                return Self::nonsegmented(qindex);
+                return Self::nonsegmented(qindex.max(presets::chromatic_ramp_qindex(60)));
             }
         }
         unreachable!("weighted rank must fall within classified macroblocks");
@@ -363,14 +363,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mixed_q60_uniform_selects_the_macroblock_weighted_lower_median() {
+    fn mixed_q60_uniform_floors_the_weighted_lower_median_at_the_ramp_index() {
         let original = Config::from_counts(60, [1, 1, 1, 1], 4, false);
         assert_eq!(original.base_qindex, 6);
         assert_eq!(original.qindex, [6, 18, 32, 32]);
+        let ramp = presets::chromatic_ramp_qindex(60);
         for (counts, qindex) in [
-            ([1, 1, 1, 1], 22),
-            ([3, 0, 3, 0], 10),
-            ([0, 3, 1, 1], 22),
+            ([1, 1, 1, 1], ramp),
+            ([3, 0, 3, 0], ramp),
+            ([0, 3, 1, 1], ramp),
             ([1, 2, 2, 2], 36),
         ] {
             let selected = original.with_mixed_q60_uniform(counts, true);
@@ -392,7 +393,7 @@ mod tests {
             unordered
                 .with_mixed_q60_uniform([1, 4, 3, 0], true)
                 .base_qindex,
-            10
+            ramp
         );
         assert_eq!(
             unordered

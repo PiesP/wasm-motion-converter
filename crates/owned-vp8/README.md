@@ -119,12 +119,15 @@ the measured mean for narrow or odd inputs.
 
 Eligible mixed low-curvature q60 frames use one wire quantizer chosen as the
 lower weighted median of the effective class indices, weighted by classified
-macroblock counts. The classifier IDs still determine the original rate
+macroblock counts. This trial floors that choice at the existing unshifted
+q60 chromatic-ramp index to test whether coarser quantization lowers residual
+cost on smooth frames. The classifier IDs still determine the original rate
 prices and UV AC-tail eligibility. On fully visible chroma tiles, each UV mode
 uses bounded DC error feedback inside the 8×8 tile. This compound ablation
 uses full I16/I4/UV analysis and skips both display-based chroma refinement
 and its extra search quota for these frames. Any failure in the frozen small
-screen rejects this candidate. See the [uniform quantizer experiment](../../docs/experiments/501-owned-vp8-mixed-q60-uniform-quantizer.md)
+screen rejects this candidate. Whole-product timing is a separate gate.
+See the [uniform quantizer experiment](../../docs/experiments/501-owned-vp8-mixed-q60-uniform-quantizer.md)
 and [chroma DC feedback experiment](../../docs/experiments/501-owned-vp8-chroma-dc-feedback.md).
 
 At q60, the existing source-derived high-chroma-loss predicate compares the

@@ -9565,8 +9565,8 @@ mod tests {
                         !engine.photo_q60 && !engine.high_chroma_loss && !engine.neutral_chroma
                     );
                     assert!(engine.curvature.within_cutoff(engine.blocks.len()));
-                    assert_eq!(engine.segments.qindex, [10; 4]);
-                    assert_eq!(engine.segments.base_qindex, 10);
+                    assert_eq!(engine.segments.qindex, [32; 4]);
+                    assert_eq!(engine.segments.base_qindex, 32);
                     assert_eq!(engine.original_segments().qindex, [6, 18, 32, 32]);
                     assert_eq!(
                         engine.deltas,
@@ -9610,7 +9610,7 @@ mod tests {
             }
             assert!(engine.mixed_y1_ac);
             assert!(!engine.segments.enabled);
-            assert_eq!(engine.segments.qindex, [10; 4]);
+            assert_eq!(engine.segments.qindex, [32; 4]);
             assert_eq!(engine.filter.level, 6);
             assert_eq!((engine.deltas.uv_dc, engine.deltas.uv_ac), (-8, -15));
             assert!(engine.refinement_log.is_empty());
@@ -9653,7 +9653,7 @@ mod tests {
         let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
         assert!(engine.mixed_y1_ac);
         assert!(!engine.segments.enabled);
-        assert_eq!(engine.segments.qindex, [10; 4]);
+        assert_eq!(engine.segments.qindex, [32; 4]);
         assert_eq!(engine.blocks[0].segment_id, segmentation::FINE_SMOOTH);
         assert_eq!(engine.blocks[1].segment_id, segmentation::TEXTURED);
         assert!(UvRatePolicy::for_source_class(60, engine.blocks[0].segment_id).is_none());
@@ -9900,7 +9900,7 @@ mod tests {
         assert!(!selected_header.0[2]); // Segmentation disabled.
         assert_eq!(
             &selected_header.0[16..23],
-            &[false, false, false, true, false, true, false] // Base qindex 10.
+            &[false, true, false, false, false, false, false] // Base qindex 32.
         );
         assert_eq!(
             &selected_header.0[selected_header.0.len() - 31..],
