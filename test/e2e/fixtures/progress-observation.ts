@@ -35,15 +35,79 @@ export interface ProgressObservation {
   limit: number;
   dropped: number;
   firstDroppedSequence: number | null;
+  gifCopyHeld: boolean;
+  gifCopyReleasedForProgress: boolean;
   cleanupErrors: string[];
   records: ProgressObservationRecord[];
 }
 
 interface ActiveObservation {
   finish(): ProgressObservation;
+  releaseGifCopyAfterProgress(totalFrames: number): boolean;
 }
 
-/** Self-contained so Playwright can serialize it into page.evaluate. */
+const gifCopyMessage = 'wmc-test:gif-progress-copy';
+const gifCopyCleanup = `${gifCopyMessage}:cleanup`;
+
+function paceGifFrameCopies(onHold: () => void): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(VideoFrame.prototype, 'copyTo');
+  if (!descriptor) throw new Error('Missing native VideoFrame.copyTo');
+  const nativeCopy = VideoFrame.prototype.copyTo;
+  const { promise: released, resolve: release } = Promise.withResolvers<void>();
+  let remaining = 7;
+  let active = true;
+  Object.defineProperty(VideoFrame.prototype, 'copyTo', {
+    ...descriptor,
+    value: async function (this: VideoFrame, ...args: Parameters<VideoFrame['copyTo']>) {
+      const planes = await nativeCopy.apply(this, args);
+      if (active && remaining > 0) {
+        // Give the real producer time to report intermediate progress across
+        // its 100 ms throttle. The seventh copy prevents terminal progress
+        // until the page has observed a genuine intermediate DOM update.
+        if (--remaining === 0) {
+          onHold();
+          await released;
+        } else {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              released,
+              new Promise<void>((resolve) => {
+                timer = setTimeout(resolve, 120);
+              }),
+            ]);
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+      }
+      return planes;
+    },
+  });
+  return () => {
+    if (!active) return;
+    active = false;
+    release();
+    Object.defineProperty(VideoFrame.prototype, 'copyTo', descriptor);
+  };
+}
+
+export function installGifProgressWorkerCopyGate(): void {
+  const release = paceGifFrameCopies(() => {
+    self.postMessage({ type: gifCopyMessage, state: 'held' });
+  });
+  const onMessage = (event: MessageEvent<unknown>) => {
+    if (event.data !== gifCopyMessage && event.data !== gifCopyCleanup) return;
+    event.stopImmediatePropagation();
+    self.removeEventListener('message', onMessage);
+    release();
+    if (event.data === gifCopyMessage)
+      self.postMessage({ type: gifCopyMessage, state: 'released' });
+  };
+  self.addEventListener('message', onMessage);
+  self.postMessage({ type: gifCopyMessage, state: 'armed' });
+}
+
 export function installProgressObservation(route: string): void {
   const host = globalThis as typeof globalThis & { __wmcProgressObservation?: ActiveObservation };
   if (host.__wmcProgressObservation) throw new Error('Progress observation is already active');
@@ -58,6 +122,9 @@ export function installProgressObservation(route: string): void {
   let requestId: string | null = null;
   let lastDomKey: string | null = null;
   let active = true;
+  let gifCopyStatus: 'waiting' | 'held' | 'releasing' | 'released' = 'waiting';
+  let releaseMainCopy: (() => void) | undefined;
+  let gifWorker: Worker | undefined;
   const cleanupErrors: string[] = [];
   const workerListeners: Array<{
     worker: Worker;
@@ -174,6 +241,14 @@ export function installProgressObservation(route: string): void {
   const cleanup = (): void => {
     active = false;
     observer.disconnect();
+    try {
+      releaseMainCopy?.();
+      if (gifWorker && (gifCopyStatus === 'waiting' || gifCopyStatus === 'held')) {
+        gifWorker.postMessage(gifCopyCleanup);
+      }
+    } catch (error) {
+      cleanupErrors.push(String(error));
+    }
     for (const { worker, listener } of workerListeners) {
       try {
         worker.removeEventListener('message', listener);
@@ -208,7 +283,11 @@ export function installProgressObservation(route: string): void {
     });
     captureDom('start');
 
-    if (route === 'gif-worker') {
+    if (route === 'gif-main') {
+      releaseMainCopy = paceGifFrameCopies(() => {
+        gifCopyStatus = 'held';
+      });
+    } else if (route === 'gif-worker') {
       const NativeWorker = globalThis.Worker;
       class ObservedWorker extends NativeWorker {
         constructor(url: string | URL, options?: WorkerOptions) {
@@ -216,6 +295,21 @@ export function installProgressObservation(route: string): void {
           const listener = (event: MessageEvent<unknown>): void => {
             if (!event.data || typeof event.data !== 'object') return;
             const message = event.data as Record<string, unknown>;
+            if (message.type === gifCopyMessage) {
+              event.stopImmediatePropagation();
+              if (message.state === 'armed' && !gifWorker) {
+                gifWorker = this;
+              } else if (message.state === 'held' && this === gifWorker) {
+                gifCopyStatus = 'held';
+              } else if (
+                message.state === 'released' &&
+                this === gifWorker &&
+                gifCopyStatus === 'releasing'
+              ) {
+                gifCopyStatus = 'released';
+              }
+              return;
+            }
             if (
               message.type !== 'progress' &&
               message.type !== 'complete' &&
@@ -253,6 +347,29 @@ export function installProgressObservation(route: string): void {
     }
 
     host.__wmcProgressObservation = {
+      releaseGifCopyAfterProgress(totalFrames) {
+        if (gifCopyStatus === 'released') return true;
+        if (gifCopyStatus !== 'held') return false;
+        const observed = records.some(
+          (sample) =>
+            sample.kind === 'dom' &&
+            sample.state === 'converting' &&
+            (sample.current ?? 0) > 1 &&
+            (sample.current ?? totalFrames) < totalFrames &&
+            (sample.percent ?? 100) < 100 &&
+            (sample.fps ?? 0) > 0
+        );
+        if (!observed) return false;
+        if (releaseMainCopy) {
+          releaseMainCopy();
+          gifCopyStatus = 'released';
+          return true;
+        } else if (gifWorker) {
+          gifWorker.postMessage(gifCopyMessage);
+          gifCopyStatus = 'releasing';
+        }
+        return false;
+      },
       finish: () => {
         try {
           captureMutations(observer.takeRecords());
@@ -264,6 +381,8 @@ export function installProgressObservation(route: string): void {
             limit,
             dropped,
             firstDroppedSequence,
+            gifCopyHeld: gifCopyStatus !== 'waiting',
+            gifCopyReleasedForProgress: gifCopyStatus === 'released',
             cleanupErrors,
             records,
           };
@@ -276,6 +395,13 @@ export function installProgressObservation(route: string): void {
     cleanup();
     throw error;
   }
+}
+
+/** Self-contained companion for page.waitForFunction. */
+export function releaseGifCopyAfterProgress(totalFrames: number): boolean {
+  const host = globalThis as typeof globalThis & { __wmcProgressObservation?: ActiveObservation };
+  if (!host.__wmcProgressObservation) throw new Error('Progress observation is not active');
+  return host.__wmcProgressObservation.releaseGifCopyAfterProgress(totalFrames);
 }
 
 /** Self-contained companion to installProgressObservation for page.evaluate. */

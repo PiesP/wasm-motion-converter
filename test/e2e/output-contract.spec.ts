@@ -16,6 +16,7 @@ import { exerciseWebpInitialization } from '../../validation/windows/webp-initia
 import {
   finishProgressObservation,
   installProgressObservation,
+  releaseGifCopyAfterProgress,
   type ProgressObservation,
   type ProgressObservationRecord,
 } from './fixtures/progress-observation';
@@ -35,6 +36,7 @@ import {
 
 const cases = contractData.cases as OutputContractCase[];
 const markers = contractData.markers as Record<string, number[]>;
+const progressFixture = '/test/e2e/fixtures/progress-observation.ts';
 
 async function configureContract(
   page: Parameters<typeof injectTestFile>[0],
@@ -148,6 +150,7 @@ test.describe('fractional pressure cadence through UI routing', () => {
       let progressObservation: ProgressObservation | null = null;
       let observationStatus: 'not-started' | 'installing' | 'active' | 'finished' = 'not-started';
       let observationError: string | null = null;
+      let workerEntry: ((url: URL) => boolean) | undefined;
       let step = 'page initialization';
       try {
         await page.addInitScript((backend) => {
@@ -252,11 +255,56 @@ test.describe('fractional pressure cadence through UI routing', () => {
         await setSmartFrameSkip(page, 'off');
         step = 'progress observation installation';
         observationStatus = 'installing';
-        await page.evaluate(installProgressObservation, route);
+        if (format === 'gif') {
+          await page.evaluate(
+            async ({ route, fixture }) => {
+              const { installProgressObservation } = await import(fixture);
+              installProgressObservation(route);
+            },
+            { route, fixture: progressFixture }
+          );
+        } else {
+          await page.evaluate(installProgressObservation, route);
+        }
+        if (route === 'gif-worker') {
+          // Instrument only this Vite test request. Keep the original Worker
+          // URL, application module body, imports, and browser execution realm.
+          const origin = new URL(page.url()).origin;
+          workerEntry = (url) =>
+            url.origin === origin &&
+            url.pathname === '/src/services/conversion-worker/worker.ts' &&
+            url.searchParams.has('worker_file') &&
+            url.searchParams.get('type') === 'module';
+          await page.context().route(
+            workerEntry,
+            async (intercepted) => {
+              const response = await intercepted.fetch();
+              if (!response.ok()) {
+                await intercepted.fulfill({ response });
+                return;
+              }
+              const headers = response.headers();
+              delete headers['content-length'];
+              delete headers['content-encoding'];
+              const prelude = `import { installGifProgressWorkerCopyGate } from '${progressFixture}';\ninstallGifProgressWorkerCopyGate();\n`;
+              await intercepted.fulfill({
+                response,
+                headers,
+                body: prelude + (await response.text()),
+              });
+            },
+            { times: 1 }
+          );
+        }
         observationStatus = 'active';
         step = 'long-stream conversion';
         await clickConvert(page);
         await dismissWarningDialog(page);
+        if (format === 'gif') {
+          step = 'held native copy and intermediate progress';
+          await page.waitForFunction(releaseGifCopyAfterProgress, 360, { timeout: 10_000 });
+          step = 'long-stream conversion';
+        }
         expect(await waitForConversionComplete(page, 120_000)).toBe('done');
         if (process.env.WMC_PROGRESS_FAILURE_PROBE === '1' && route === 'gif-worker') {
           throw new Error('Intentional progress evidence failure probe');
@@ -276,6 +324,7 @@ test.describe('fractional pressure cadence through UI routing', () => {
         if (longStage?.stage !== 'transcoding')
           throw new Error('Missing native long-stream counts');
         expect(longStage.decodedFrames).toBe(360);
+        if (format === 'gif') expect(longProfile?.encoderRoute).toBe(route);
         const progressSamples = progressObservation.records.filter(
           (sample): sample is ProgressObservationRecord & { current: number; percent: number } =>
             sample.kind === 'dom' &&
@@ -305,6 +354,13 @@ test.describe('fractional pressure cadence through UI routing', () => {
         expect(await page.evaluate(() => performance.timeOrigin)).toBe(timeOrigin);
       } finally {
         let observerActiveAfterCleanup: boolean | null = null;
+        if (workerEntry) {
+          try {
+            await page.context().unroute(workerEntry);
+          } catch (error) {
+            observationError = String(error);
+          }
+        }
         if (observationStatus === 'installing') {
           observationError ??= 'Progress observation installation did not complete';
         }
