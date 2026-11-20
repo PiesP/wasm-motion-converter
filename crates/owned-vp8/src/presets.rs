@@ -141,10 +141,30 @@ pub(crate) fn high_curvature_q60_textured_deltas(
     ordinary_q60_texture: bool,
     low_curvature: bool,
     curvature: CurvatureTotals,
+    rgb_error_sum: u64,
+    visible: (u32, u32),
 ) -> Deltas {
-    if ordinary_q60_texture && !low_curvature && curvature.luma_dominates() {
-        // Preserve the finer UV AC steps when either chroma plane carries more curvature.
+    if !ordinary_q60_texture || low_curvature {
+        return selected;
+    }
+    if curvature.luma_dominates() {
         selected.uv_ac = selected.uv_dc;
+    } else if visible.0 >= 16 && visible.1 >= 16 {
+        // The curvature class counts padded blocks; require at least one
+        // complete visible block before interpolating from visible import loss.
+        let Some(limit) = chroma_loss_limit(visible.0, visible.1) else {
+            return selected;
+        };
+        if rgb_error_sum > limit {
+            return selected;
+        }
+        // Use the existing ordinary and high-import UV AC endpoints. Scaling
+        // by measured import loss keeps small chroma errors
+        // on the finer grid and does not change the strict high-loss branch.
+        let ordinary_uv_ac = textured_qindex(60, false) as i8 + UV_AC_DELTA[0];
+        let span = (HIGH_IMPORT_UV_AC_QINDEX - ordinary_uv_ac) as u128;
+        let offset = u128::from(rgb_error_sum) * span / u128::from(limit);
+        selected.uv_ac += offset as i8;
     }
     selected
 }
@@ -375,8 +395,17 @@ mod tests {
             sums: [3 * 448, 3 * 96, 3 * 96 - 1],
         };
         let ordinary = ordinary_q60_all_texture(60, [0, 0, 0, 1], 1, false, false);
+        let visible = (5, 3);
+        let limit = chroma_loss_limit(visible.0, visible.1).unwrap();
         assert!(ordinary);
-        let after = high_curvature_q60_textured_deltas(before, ordinary, false, luma_dominant);
+        let after = high_curvature_q60_textured_deltas(
+            before,
+            ordinary,
+            false,
+            luma_dominant,
+            limit,
+            visible,
+        );
         assert_eq!(
             after,
             Deltas {
@@ -399,7 +428,9 @@ mod tests {
                     before,
                     ordinary,
                     false,
-                    CurvatureTotals { sums }
+                    CurvatureTotals { sums },
+                    8,
+                    visible,
                 ),
                 before
             );
@@ -411,7 +442,9 @@ mod tests {
                 true,
                 CurvatureTotals {
                     sums: [2 * 448, 2 * 96, 2 * 96],
-                }
+                },
+                limit,
+                visible,
             ),
             before
         );
@@ -426,10 +459,62 @@ mod tests {
             let ordinary = ordinary_q60_all_texture(quality, counts, total, neutral, high_loss);
             let unchanged = deltas(quality);
             assert_eq!(
-                high_curvature_q60_textured_deltas(unchanged, ordinary, false, luma_dominant),
+                high_curvature_q60_textured_deltas(
+                    unchanged,
+                    ordinary,
+                    false,
+                    luma_dominant,
+                    limit,
+                    visible,
+                ),
                 unchanged
             );
         }
+    }
+
+    #[test]
+    fn q60_chroma_dominant_uv_ac_floors_each_import_loss_step() {
+        use crate::ac_quant::{steps, Plane, AC_QUANT};
+
+        let before = deltas(60);
+        let qindex = textured_qindex(60, false) as u8;
+        let curvature = CurvatureTotals {
+            sums: [3 * 448, 3 * 96 + 1, 3 * 96],
+        };
+        let apply = |error, visible| {
+            high_curvature_q60_textured_deltas(before, true, false, curvature, error, visible)
+        };
+        let visible = (16, 16);
+        let limit = chroma_loss_limit(visible.0, visible.1).unwrap();
+        for offset in 1..=11u64 {
+            let first = (offset * limit).div_ceil(11);
+            assert_eq!(
+                apply(first - 1, visible).uv_ac,
+                before.uv_ac + offset as i8 - 1
+            );
+            let selected = apply(first, visible);
+            assert_eq!(
+                selected,
+                Deltas {
+                    uv_ac: before.uv_ac + offset as i8,
+                    ..before
+                }
+            );
+            assert_eq!(
+                steps(qindex, selected, Plane::UV).ac,
+                AC_QUANT[21 + offset as usize]
+            );
+        }
+        assert_eq!(apply(0, visible), before);
+        assert_eq!(apply(limit + 1, visible), before);
+        for partial in [(0, 3), (15, 16), (16, 15), (2, 9)] {
+            let loss = chroma_loss_limit(partial.0, partial.1).unwrap_or(0);
+            assert_eq!(apply(loss, partial), before);
+        }
+        assert_eq!(apply(u64::MAX, (u32::MAX, u32::MAX)), before);
+        let wide = (1 << 21, 1 << 28);
+        let wide_limit = chroma_loss_limit(wide.0, wide.1).unwrap();
+        assert_eq!(apply(wide_limit, wide).uv_ac, 0);
     }
 
     #[test]

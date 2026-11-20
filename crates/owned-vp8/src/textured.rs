@@ -2659,6 +2659,8 @@ fn encode_observed(
         ordinary_q60_texture,
         low_curvature,
         curvature,
+        rgb_error_sum,
+        (width as u32, height as u32),
     );
     deltas = crate::presets::mixed_y1_ac_deltas(deltas, mixed_y1_ac);
     if medium_y1_ac {
@@ -4975,6 +4977,8 @@ impl FrameEncoder {
                 ordinary_q60_texture,
                 low_curvature,
                 self.curvature,
+                self.rgb_error_sum,
+                (self.request.width, self.request.height),
             );
             self.deltas = crate::presets::mixed_y1_ac_deltas(self.deltas, self.mixed_y1_ac);
             if self.medium_y1_ac {
@@ -12236,13 +12240,15 @@ mod tests {
         pixels
     }
 
-    fn chroma_dominant_texture_input() -> Vec<u8> {
+    fn chroma_dominant_texture_input(chroma_varies_within_cell: bool) -> Vec<u8> {
         (0..16 * 16)
             .flat_map(|i| {
-                if i % 8 < 4 {
-                    [255, 0, 0, 255]
-                } else {
-                    [0, 0, 255, 255]
+                let varied = chroma_varies_within_cell && (i / 16 + i % 16) % 2 != 0;
+                match (i % 8 < 4, varied) {
+                    (true, true) => [215, 0, 120, 255],
+                    (true, false) => [255, 0, 0, 255],
+                    (false, true) => [120, 0, 215, 255],
+                    (false, false) => [0, 0, 255, 255],
                 }
             })
             .collect()
@@ -12260,10 +12266,18 @@ mod tests {
                 Some(true),
             ),
             (
-                chroma_dominant_texture_input(),
+                chroma_dominant_texture_input(false),
                 60,
                 32,
                 (-4, -11),
+                false,
+                Some(false),
+            ),
+            (
+                chroma_dominant_texture_input(true),
+                60,
+                32,
+                (-4, -8),
                 false,
                 Some(false),
             ),

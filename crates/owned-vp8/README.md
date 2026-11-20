@@ -118,17 +118,21 @@ do not receive this photo allocation. Padded edge replication can dilute
 the measured mean for narrow or odd inputs.
 
 The q60 UV AC rate control requires ordinary non-neutral all-Textured frames
-above the same per-plane mean curvature cutoff. It applies only when the mean
-curvature of each imported chroma plane is at most the imported luma mean.
-The encoder compares the existing padded plane sums using 448 Y and 96 U/V
-differences per macroblock. Chroma-dominant frames keep UV AC delta -11
-(effective qindex 21), and high-chroma-loss frames keep their existing profile
-selection. Eligible luma-dominant frames keep base qindex 32 and UV DC delta -4
-and match UV AC to UV DC (effective qindex 28 for both). Synchronous and
-resumable encoding use the same delta before analysis and header budgeting.
-The control retains the existing source import, rate weights, UV AC-tail
-processing, and padded variant selection. Its quality and rate require exposed
-evaluation before broader qualification.
+above the same per-plane mean curvature cutoff. The encoder compares the padded
+plane sums using 448 Y and 96 U/V differences per macroblock. When both chroma
+means are at most the luma mean, the encoder matches UV AC to UV DC at effective
+qindex 28. When either chroma mean exceeds luma and a complete 16×16 block fits in
+the visible frame, the encoder adds
+`floor(11 × visible nearest-chroma RGB SSE / high-chroma-loss cutoff)` to the
+ordinary UV AC qindex 21. The range ends at the existing high-import UV AC
+qindex 32. Errors below the first increment and narrow frames without a
+complete visible block retain qindex 21 in this branch. Frames above
+the strict high-chroma-loss cutoff use their existing profile selection.
+Both paths keep base qindex 32, UV DC delta -4, source import, rate weights,
+UV AC-tail processing, and padded variant selection. Synchronous and resumable
+encoding use the same delta before analysis and header budgeting, using source
+measurements already accumulated by the encoder. The interpolation requires
+exposed evaluation before broader qualification.
 
 Eligible mixed low-curvature q60 frames use one wire quantizer when the
 estimated segment ID map exceeds 128 bytes or when both FineSmooth and
