@@ -2569,6 +2569,15 @@ fn encode_observed(
         segments = segments.with_mixed_q75_allocation(class_counts);
         deltas = crate::presets::medium_y1_ac_deltas(deltas);
     }
+    deltas = crate::presets::medium_high_import_deltas(
+        deltas,
+        quality,
+        class_counts,
+        count,
+        rgb_error_sum,
+        (width as u32, height as u32),
+        segments.base_qindex,
+    );
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
         let reduced_segments = original_segments.with_high_chroma_loss_luma(true);
@@ -4831,6 +4840,15 @@ impl FrameEncoder {
                 self.segments = self.segments.with_mixed_q75_allocation(self.class_counts);
                 self.deltas = crate::presets::medium_y1_ac_deltas(self.deltas);
             }
+            self.deltas = crate::presets::medium_high_import_deltas(
+                self.deltas,
+                self.request.quality,
+                self.class_counts,
+                self.blocks.len(),
+                self.rgb_error_sum,
+                (self.request.width, self.request.height),
+                self.segments.base_qindex,
+            );
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
                 self.segments,
@@ -12006,6 +12024,48 @@ mod tests {
         assert!(!engine.high_chroma_loss);
         assert_eq!(engine.deltas, crate::presets::deltas(60));
         assert_eq!(engine.segments.qindex_for(segmentation::FINE_SMOOTH), 6);
+    }
+
+    #[test]
+    fn medium_high_import_ac_only_matches_sync_on_odd_visible_input() {
+        let (width, height) = (5, 3);
+        let colors = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255; 3]];
+        let mut input = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            for x in 0..width {
+                let [r, g, b] = colors[(y % 2) * 2 + x % 2];
+                input.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        let stride = width * 4;
+        let request = engine_request(width, height, 0, &input, stride);
+        let plan = ResourcePlan::checked(request).unwrap();
+        let expected = encode_textured(
+            &input,
+            request.width,
+            request.height,
+            request.stride,
+            request.layout,
+            request.quality,
+        )
+        .unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert!(engine.rgb_error_sum > 4096 * 3 * (width * height) as u64);
+        assert_eq!(engine.class_counts, [0, 0, 0, 1]);
+        assert_eq!(engine.preview_trial, PreviewTrial::None);
+        assert!(!engine.omit_display_refinement);
+        assert!(!engine.medium_textured_luma);
+        assert!(!engine.medium_y1_ac);
+        assert_eq!(engine.filter, FilterConfig::for_quality(75));
+        assert_eq!(engine.segments.base_qindex, 28);
+        assert_eq!(
+            engine.deltas,
+            Deltas {
+                uv_ac: 4,
+                ..crate::presets::deltas(75)
+            }
+        );
+        assert_eq!(engine.output(), expected);
     }
 
     // Frozen synthetic V9 control. This input exposed a profile decision whose
