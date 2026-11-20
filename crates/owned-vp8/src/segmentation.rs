@@ -131,14 +131,29 @@ impl Config {
         self
     }
 
-    pub(crate) fn with_mixed_y1_ac_allocation(mut self, selected: bool) -> Self {
-        if selected {
-            self.base_qindex += presets::MIXED_Y1_AC_QINDEX_INCREASE;
-            self.qindex = self
-                .qindex
-                .map(|qindex| qindex + presets::MIXED_Y1_AC_QINDEX_INCREASE);
+    pub(crate) fn with_mixed_q60_uniform(self, counts: [usize; 4], selected: bool) -> Self {
+        if !selected {
+            return self;
         }
-        self
+        let mut weighted_indices = std::array::from_fn::<_, 4, _>(|id| {
+            (
+                self.qindex[id] + presets::MIXED_Y1_AC_QINDEX_INCREASE,
+                counts[id],
+            )
+        });
+        weighted_indices.sort_unstable_by_key(|&(qindex, _)| qindex);
+        // Equal qindices contribute the same result regardless of their order.
+        // This one-based rank chooses the lower weighted median for even totals.
+        let midpoint = counts.into_iter().sum::<usize>().div_ceil(2);
+        debug_assert!(midpoint > 0);
+        let mut cumulative = 0;
+        for (qindex, count) in weighted_indices {
+            cumulative += count;
+            if cumulative >= midpoint {
+                return Self::nonsegmented(qindex);
+            }
+        }
+        unreachable!("weighted rank must fall within classified macroblocks");
     }
 
     pub(crate) fn write_header(
@@ -348,25 +363,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mixed_y1_ac_allocation_shifts_base_and_all_absolute_segment_indices() {
+    fn mixed_q60_uniform_selects_the_macroblock_weighted_lower_median() {
         let original = Config::from_counts(60, [1, 1, 1, 1], 4, false);
-        let selected = original.with_mixed_y1_ac_allocation(true);
-        assert!(selected.enabled);
         assert_eq!(original.base_qindex, 6);
         assert_eq!(original.qindex, [6, 18, 32, 32]);
-        assert_eq!(selected.base_qindex, 10);
-        assert_eq!(selected.qindex, [10, 22, 36, 36]);
-        assert_eq!(selected.map_probabilities, original.map_probabilities);
-        assert_eq!(selected.active, original.active);
+        for (counts, qindex) in [
+            ([1, 1, 1, 1], 22),
+            ([3, 0, 3, 0], 10),
+            ([0, 3, 1, 1], 22),
+            ([1, 2, 2, 2], 36),
+        ] {
+            let selected = original.with_mixed_q60_uniform(counts, true);
+            assert!(!selected.enabled);
+            assert_eq!(selected.base_qindex, qindex);
+            assert_eq!(selected.qindex, [qindex; 4]);
+            let mut symbols = crate::rate::SymbolCounter::default();
+            selected.write_header(&mut symbols, 6).unwrap();
+            for id in 0..4 {
+                selected.write_id(&mut symbols, id).unwrap();
+            }
+            assert_eq!(symbols.count, 1);
+        }
+        let unordered = Config {
+            qindex: [32, 6, 32, 18],
+            ..original
+        };
         assert_eq!(
-            original.with_mixed_y1_ac_allocation(false).qindex,
-            original.qindex
+            unordered
+                .with_mixed_q60_uniform([1, 4, 3, 0], true)
+                .base_qindex,
+            10
         );
-        let mut before = crate::rate::SymbolCounter::default();
-        let mut after = crate::rate::SymbolCounter::default();
-        original.write_header(&mut before, 6).unwrap();
-        selected.write_header(&mut after, 6).unwrap();
-        assert_eq!(after.count, before.count);
+        assert_eq!(
+            unordered
+                .with_mixed_q60_uniform([1, 3, 4, 0], true)
+                .base_qindex,
+            36
+        );
+        let inactive = original.with_mixed_q60_uniform([1, 1, 1, 1], false);
+        assert!(inactive.enabled);
+        assert_eq!(inactive.qindex, original.qindex);
+        assert_eq!(inactive.map_probabilities, original.map_probabilities);
     }
 
     #[test]

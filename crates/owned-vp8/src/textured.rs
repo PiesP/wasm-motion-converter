@@ -1492,6 +1492,16 @@ enum UvRatePolicy {
     FlatDcZero,
 }
 
+impl UvRatePolicy {
+    fn for_source_class(quality: u32, source_class: u8) -> Option<Self> {
+        match (quality, source_class) {
+            (60, segmentation::TEXTURED) => Some(Self::TexturedAcTail),
+            (75, segmentation::CHROMATIC_FLAT) => Some(Self::FlatDcZero),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct UvRdo<'a> {
     contexts: &'a CoeffContexts,
@@ -2501,7 +2511,7 @@ fn encode_observed(
     let mut segments = original_segments
         .with_medium_textured_luma(medium_textured_luma)
         .with_photo_q60_rebase(photo_q60)
-        .with_mixed_y1_ac_allocation(mixed_y1_ac);
+        .with_mixed_q60_uniform(class_counts, mixed_y1_ac);
     let mut deltas = if medium_textured_luma {
         crate::presets::medium_textured_deltas(original_deltas)
     } else {
@@ -2846,11 +2856,7 @@ fn analyze_one(
             mixed_y1_ac,
         )]
     };
-    let uv_policy = match (quality, segment_id) {
-        (60, segmentation::TEXTURED) => Some(UvRatePolicy::TexturedAcTail),
-        (75, segmentation::CHROMATIC_FLAT) => Some(UvRatePolicy::FlatDcZero),
-        _ => None,
-    };
+    let uv_policy = UvRatePolicy::for_source_class(quality, segment_id);
     let uv_width = visible_width.div_ceil(2);
     let uv_height = visible_height.div_ceil(2);
     let diffuse_uv_dc_error = mixed_y1_ac && mx * 8 + 8 <= uv_width && my * 8 + 8 <= uv_height;
@@ -4657,7 +4663,7 @@ impl FrameEncoder {
             self.segments = self
                 .segments
                 .with_photo_q60_rebase(self.photo_q60)
-                .with_mixed_y1_ac_allocation(self.mixed_y1_ac);
+                .with_mixed_q60_uniform(self.class_counts, self.mixed_y1_ac);
             if self.medium_textured_luma {
                 self.deltas = crate::presets::medium_textured_deltas(self.deltas);
             }
@@ -9466,17 +9472,8 @@ mod tests {
                                 engine.deltas,
                                 crate::presets::mixed_y1_ac_deltas(original_deltas, true)
                             );
-                            assert_eq!(qindex, original_qindex + 4);
-                            assert_eq!(
-                                y_steps.dc,
-                                ac_quant::steps(original_qindex, original_deltas, Plane::Y1).dc
-                            );
-                            for plane in [Plane::Y2, Plane::UV] {
-                                assert_eq!(
-                                    ac_quant::steps(qindex, engine.deltas, plane),
-                                    ac_quant::steps(original_qindex, original_deltas, plane)
-                                );
-                            }
+                            assert!(!engine.segments.enabled);
+                            assert_eq!(qindex, engine.segments.base_qindex as u8);
                         } else {
                             assert_eq!(qindex, original_qindex);
                             assert_eq!(engine.deltas, crate::presets::deltas(75));
@@ -9563,12 +9560,12 @@ mod tests {
                     run_engine(FrameEncoder::new(request, (*input).clone(), plan).unwrap());
                 assert_eq!(engine.mixed_y1_ac, expected_profile);
                 if expected_profile {
-                    assert!(engine.segments.enabled);
+                    assert!(!engine.segments.enabled);
                     assert!(
                         !engine.photo_q60 && !engine.high_chroma_loss && !engine.neutral_chroma
                     );
                     assert!(engine.curvature.within_cutoff(engine.blocks.len()));
-                    assert_eq!(engine.segments.qindex, [10, 22, 36, 36]);
+                    assert_eq!(engine.segments.qindex, [10; 4]);
                     assert_eq!(engine.segments.base_qindex, 10);
                     assert_eq!(engine.original_segments().qindex, [6, 18, 32, 32]);
                     assert_eq!(
@@ -9597,8 +9594,14 @@ mod tests {
 
     #[test]
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
-    fn independent_decoders_reconstruct_mixed_y1_ac_allocation() {
-        let input = mixed_low_curvature_input();
+    fn independent_decoders_reconstruct_uniform_mixed_q60_with_retained_source_classes() {
+        let mut input = mixed_low_curvature_input();
+        // An isolated luminance peak makes the right block textured while
+        // leaving the frame within the mixed low-curvature profile.
+        let peak = (8 * 32 + 24) * 4;
+        for channel in &mut input[peak..peak + 3] {
+            *channel += 12;
+        }
         let request = Request {
             quality: 60,
             ..engine_request(32, 16, 0, &input, 128)
@@ -9606,10 +9609,37 @@ mod tests {
         let plan = ResourcePlan::checked(request).unwrap();
         let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
         assert!(engine.mixed_y1_ac);
+        assert!(!engine.segments.enabled);
+        assert_eq!(engine.segments.qindex, [10; 4]);
+        assert_eq!(engine.blocks[0].segment_id, segmentation::FINE_SMOOTH);
+        assert_eq!(engine.blocks[1].segment_id, segmentation::TEXTURED);
+        assert!(UvRatePolicy::for_source_class(60, engine.blocks[0].segment_id).is_none());
+        assert!(matches!(
+            UvRatePolicy::for_source_class(60, engine.blocks[1].segment_id),
+            Some(UvRatePolicy::TexturedAcTail),
+        ));
+        assert_eq!(
+            engine
+                .original_segments()
+                .qindex_for(engine.blocks[0].segment_id),
+            6
+        );
+        assert_eq!(
+            engine
+                .original_segments()
+                .qindex_for(engine.blocks[1].segment_id),
+            32
+        );
         let (y, u, v, padded_w) = engine.reconstruction();
         let expected =
             filtered_visible_yuv(y, u, v, padded_w, 32, 16, &engine.blocks, engine.filter);
-        assert_decodes(engine.output(), 32, 16, &expected, "mixed Y1 AC allocation");
+        assert_decodes(
+            engine.output(),
+            32,
+            16,
+            &expected,
+            "uniform mixed q60 quantizer",
+        );
     }
 
     #[test]
@@ -9785,9 +9815,10 @@ mod tests {
     }
 
     #[test]
-    fn mixed_y1_ac_header_admits_three_signed_y_deltas() {
-        let original = SegmentConfig::from_counts(60, [1, 0, 1, 0], 2, false);
-        let selected = original.with_mixed_y1_ac_allocation(true);
+    fn uniform_mixed_q60_header_admits_three_signed_y_deltas() {
+        let original = SegmentConfig::nonsegmented(6);
+        let selected = SegmentConfig::from_counts(60, [1, 0, 1, 0], 2, false)
+            .with_mixed_q60_uniform([1, 0, 1, 0], true);
         let before_deltas = crate::presets::deltas(60);
         let after_deltas = crate::presets::mixed_y1_ac_deltas(before_deltas, true);
         let filter = FilterConfig::for_quality(60);
@@ -9823,6 +9854,11 @@ mod tests {
         write_header_prefix(&mut baseline_header, original, before_deltas, filter).unwrap();
         write_header_prefix(&mut selected_header, selected, after_deltas, filter).unwrap();
         assert_eq!(selected_header.0.len(), baseline_header.0.len() + 15);
+        assert!(!selected_header.0[2]); // Segmentation disabled.
+        assert_eq!(
+            &selected_header.0[16..23],
+            &[false, false, false, true, false, true, false] // Base qindex 10.
+        );
         assert_eq!(
             &selected_header.0[selected_header.0.len() - 31..],
             &[

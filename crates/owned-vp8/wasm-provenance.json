@@ -41,16 +41,16 @@
     "crates/owned-vp8/src/probability.rs": "eba444bff2dee219f86d4be35f569fe3d344a24176ea3f0e7d526d288750f3d2",
     "crates/owned-vp8/src/rate.rs": "8056f94b8e86cbdf6a9a99da1f22c7d08ef0e3bbd4f42c0afed0f980545ca882",
     "crates/owned-vp8/src/residual.rs": "4c06cec98e5278fcb5cfb6b42f7d191add296d0b66d78695be27697cba1151df",
-    "crates/owned-vp8/src/segmentation.rs": "bcd32e9ded5c2f9447f4603a1c14b75de9daaa1e8807142d5ad45c3cb179dc8c",
-    "crates/owned-vp8/src/textured.rs": "8b1e8346db8b3bca9c9078ac822b8373d92429ee2d8a5bcf620cdc83c569156b",
+    "crates/owned-vp8/src/segmentation.rs": "aec558abcbcbe0084980928be0465bcc8e3150ffae714d816b6e940ea37256e1",
+    "crates/owned-vp8/src/textured.rs": "52929a22697b69edacf36270df58a5eb06518f1f44c3090f33b6dd9af2703f37",
     "crates/owned-vp8/src/transform.rs": "fa418d388542f0a8b08b968b7ff7d4b0b30c5c7a2402e0bcaa49e9b6ab2a77a2",
     "scripts/build/build-owned-vp8-wasm.ts": "786e270ef74ebaebf17b229ecec5f471fc86e8982029efa063867fda60e0305a",
     "scripts/build/build-gif-scalar-wasm.ts": "1a24a58b72be880aa8b5f151b0acd0258772e8434f33517f614af53aa4a69439"
   },
   "artifact": {
-    "sha256": "54509c1250c48a976fa3bda3ab5b46ed5673587c2683fb46115047cf660cd24f",
-    "rawBytes": 247010,
-    "gzipBytes": 82357,
+    "sha256": "0966d8c750c904abf1c48435976cddbed5c3fec15b653d9add79732caee475dc",
+    "rawBytes": 247758,
+    "gzipBytes": 82800,
     "gzipMethod": "gzip level 9, mtime 0",
     "initialLinearBytes": 1114112,
     "maxLinearBytes": 201326592
