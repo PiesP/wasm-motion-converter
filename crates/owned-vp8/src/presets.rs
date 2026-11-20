@@ -116,6 +116,27 @@ pub(crate) fn medium_high_import_deltas(
     selected
 }
 
+pub(crate) fn chroma_edge_uv_ac_deltas(
+    mut selected: Deltas,
+    base_qindex: usize,
+    counts: [usize; 4],
+    curvature: CurvatureTotals,
+    (width, height): (u32, u32),
+) -> Deltas {
+    let total = counts.iter().sum();
+    if width >= 16
+        && height >= 16
+        && counts[crate::segmentation::TEXTURED as usize] == total
+        && curvature.only_chroma_exceeds_cutoff(total)
+    {
+        // Retain a coarser step already selected by the high-import profile.
+        let ceiling = textured_qindex(75, false) as i8;
+        let target = (ceiling - base_qindex as i8).min(0);
+        selected.uv_ac = selected.uv_ac.max(target);
+    }
+    selected
+}
+
 pub(crate) fn q85_smooth_textured_deltas(
     mut selected: Deltas,
     quality: u32,
@@ -267,7 +288,7 @@ pub(crate) fn high_chroma_loss(quality: u32, rgb_error_sum: u64, width: u32, hei
     quality == 60 && chroma_loss_limit(width, height).is_some_and(|limit| rgb_error_sum > limit)
 }
 
-fn chroma_loss_limit(width: u32, height: u32) -> Option<u64> {
+pub(crate) fn chroma_loss_limit(width: u32, height: u32) -> Option<u64> {
     u64::from(width)
         .checked_mul(u64::from(height))
         .and_then(|pixels| pixels.checked_mul(3 * CHROMA_LOSS_THRESHOLD_PER_RGB_CHANNEL))
@@ -629,6 +650,52 @@ mod tests {
             let selected_uv = steps(base as u8, selected, Plane::UV);
             assert_eq!(selected_uv.dc, original_uv.dc);
             assert!(selected_uv.ac > original_uv.ac);
+        }
+    }
+
+    #[test]
+    fn chroma_edge_control_changes_only_uv_ac_on_the_existing_plane_cutoff() {
+        let textured = [0, 0, 0, 1];
+        let at_cutoff = CurvatureTotals {
+            sums: [2 * 448, 2 * 96, 2 * 96],
+        };
+        let chroma_edge = CurvatureTotals {
+            sums: [2 * 448, 2 * 96 + 1, 2 * 96],
+        };
+        let luma_edge = CurvatureTotals {
+            sums: [2 * 448 + 1, 2 * 96 + 1, 2 * 96],
+        };
+        for (quality, base, target) in [(60, 32, -4), (75, 26, 0), (85, 14, 0)] {
+            let original = deltas(quality);
+            let expected = Deltas {
+                uv_ac: target,
+                ..original
+            };
+            assert_eq!(
+                chroma_edge_uv_ac_deltas(original, base, textured, chroma_edge, (16, 16)),
+                expected
+            );
+            let high_import = Deltas {
+                uv_ac: 4,
+                ..original
+            };
+            assert_eq!(
+                chroma_edge_uv_ac_deltas(high_import, base, textured, chroma_edge, (16, 16)),
+                high_import
+            );
+            for (counts, totals, visible) in [
+                (textured, at_cutoff, (16, 16)),
+                (textured, luma_edge, (16, 16)),
+                (textured, chroma_edge, (15, 16)),
+                (textured, chroma_edge, (16, 15)),
+                ([1, 0, 0, 0], chroma_edge, (16, 16)),
+                ([0; 4], chroma_edge, (16, 16)),
+            ] {
+                assert_eq!(
+                    chroma_edge_uv_ac_deltas(original, base, counts, totals, visible),
+                    original
+                );
+            }
         }
     }
 

@@ -1557,6 +1557,36 @@ fn uv_dc_error(source: &[u8], stride: usize, x: usize, y: usize, patch: &[u8; 16
     error
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UvDcFeedback {
+    Disabled,
+    WithinTile,
+    CommittedBoundaries,
+}
+
+// This is a bounded estimate from actual reconstructed neighbors. It does not
+// carry libwebp's quantization error state through rows or macroblocks.
+fn committed_uv_dc_error(
+    source: &[u8],
+    reconstructed: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+) -> i32 {
+    let mut error = 0;
+    for row in y..y + 4 {
+        for col in x..x + 4 {
+            let offset = row * stride + col;
+            let sample = source[offset];
+            if sample.abs_diff(128) > 1 {
+                return 0;
+            }
+            error += i32::from(sample) - i32::from(reconstructed[offset]);
+        }
+    }
+    error
+}
+
 #[allow(clippy::too_many_arguments)]
 fn make_uv(
     source_u: &[u8],
@@ -1569,8 +1599,10 @@ fn make_uv(
     mode: u8,
     steps: Steps,
     rdo: Option<UvRdo<'_>>,
-    diffuse_dc_error: bool,
+    dc_feedback: UvDcFeedback,
 ) -> UvCandidate {
+    let diffuse_dc_error = dc_feedback != UvDcFeedback::Disabled;
+    let use_committed_boundaries = dc_feedback == UvDcFeedback::CommittedBoundaries;
     let mut coeffs = [[[0i16; 16]; 4]; 2];
     let mut tiles = [[0u8; 64]; 2];
     for (index, (source, reconstructed)) in
@@ -1594,9 +1626,21 @@ fn make_uv(
         // Keep trial state within this plane and mode. Source-minus-reconstruction
         // sums project to forward DC at half scale. Divide by four to send
         // half of each neighbor's error into this patch.
-        let mut above_dc_error = [0; 2];
+        // The existing trial scratch holds the seeds. A missing top or left
+        // contributes zero, and the caller admits only a complete visible UV tile.
+        let mut above_dc_error = if use_committed_boundaries && y > 0 {
+            std::array::from_fn(|bx| {
+                committed_uv_dc_error(source, reconstructed, stride, x + bx * 4, y - 4)
+            })
+        } else {
+            [0; 2]
+        };
         for by in 0..2 {
-            let mut left_dc_error = 0;
+            let mut left_dc_error = if use_committed_boundaries && x > 0 {
+                committed_uv_dc_error(source, reconstructed, stride, x - 4, y + by * 4)
+            } else {
+                0
+            };
             for bx in 0..2 {
                 let patch_x = x + bx * 4;
                 let patch_y = y + by * 4;
@@ -2150,6 +2194,25 @@ fn q85_smooth_pair_luma_bias(
         && segmentation::smooth_pair_only(counts)
 }
 
+fn q75_luma_ramp_uv_feedback(
+    quality: u32,
+    neutral_chroma: bool,
+    low_curvature: bool,
+    counts: [usize; 4],
+    curvature: segmentation::CurvatureTotals,
+    (width, height): (u32, u32),
+) -> bool {
+    let ramps = counts[segmentation::CHROMATIC_RAMP as usize];
+    quality == 75
+        && !neutral_chroma
+        && low_curvature
+        && width >= 16
+        && height >= 16
+        && counts[segmentation::TEXTURED as usize] == 0
+        && ramps > counts.iter().sum::<usize>() - ramps
+        && curvature.luma_dominates()
+}
+
 fn uv_dc_feedback_for_tile(
     enabled: bool,
     mx: usize,
@@ -2158,6 +2221,45 @@ fn uv_dc_feedback_for_tile(
     uv_height: usize,
 ) -> bool {
     enabled && mx * 8 + 8 <= uv_width && my * 8 + 8 <= uv_height
+}
+
+// Observe only UV cells that contain visible samples. The imported lumas
+// for an odd edge repeat its visible sample, so they cannot introduce variation.
+#[derive(Clone, Copy)]
+struct SmoothGridSource {
+    near_neutral: bool,
+    first_luma: Option<u8>,
+    varied_luma: bool,
+}
+
+impl SmoothGridSource {
+    fn new() -> Self {
+        Self {
+            near_neutral: true,
+            first_luma: None,
+            varied_luma: false,
+        }
+    }
+
+    fn observe(&mut self, luma: [u8; 4], u: u8, v: u8, visible: bool) {
+        if !visible || !self.near_neutral {
+            return;
+        }
+        self.near_neutral = u.abs_diff(128) <= 1 && v.abs_diff(128) <= 1;
+        if self.near_neutral && !self.varied_luma {
+            let first = *self.first_luma.get_or_insert(luma[0]);
+            self.varied_luma = luma.iter().any(|&sample| sample != first);
+        }
+    }
+
+    fn allows_allocation(self, rgb_error_sum: u64, width: u32, height: u32) -> bool {
+        // A saturated RGB pattern can average to neutral in YUV420. Apply
+        // the existing import-loss bound at every preset before reducing rate.
+        self.near_neutral
+            && self.varied_luma
+            && crate::presets::chroma_loss_limit(width, height)
+                .is_some_and(|limit| rgb_error_sum <= limit)
+    }
 }
 
 pub fn encode_textured(
@@ -2225,6 +2327,7 @@ fn encode_observed(
     let mut reconstructed_u = allocated(uv_size)?;
     let mut reconstructed_v = allocated(uv_size)?;
     let mut neutral_chroma = true;
+    let mut smooth_grid_source = SmoothGridSource::new();
     let mut rgb_error_sum = 0u64;
     for cy in 0..padded_h / 2 {
         for cx in 0..uv_w {
@@ -2244,14 +2347,18 @@ fn encode_observed(
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
             neutral_chroma &= u == 128 && v == 128;
-            if quality == 60 || quality == 75 {
+            let visible_width = width.saturating_sub(cx * 2).min(2);
+            let visible_height = height.saturating_sub(cy * 2).min(2);
+            let visible = visible_width > 0 && visible_height > 0;
+            smooth_grid_source.observe(luma, u, v, visible);
+            if visible && (quality == 60 || quality == 75 || smooth_grid_source.near_neutral) {
                 rgb_error_sum += crate::color::nearest_chroma_rgb_error(
                     rgb,
                     luma,
                     u,
                     v,
-                    width.saturating_sub(cx * 2).min(2),
-                    height.saturating_sub(cy * 2).min(2),
+                    visible_width,
+                    visible_height,
                 );
             }
             for dy in 0..2 {
@@ -2278,9 +2385,10 @@ fn encode_observed(
         .map_err(|_| EncodeError::OutputLimit)?;
     let mut class_counts = [0; 4];
     let mut curvature = segmentation::CurvatureTotals::default();
-    let collect_curvature = quality == 60 || (quality == 75 && !neutral_chroma);
     for my in 0..blocks_y {
         for mx in 0..blocks_x {
+            let collect_curvature = quality == 60
+                || (!neutral_chroma && (quality == 75 || class_counts[..3] == [0; 3]));
             let id = segmentation::classify_with_curvature(
                 &source_y,
                 &source_u,
@@ -2307,8 +2415,13 @@ fn encode_observed(
     let filter = rate_profile_filter(filter, requested_quality, quality);
     let high_chroma_loss =
         crate::presets::high_chroma_loss(quality, rgb_error_sum, width as u32, height as u32);
-    let original_segments =
-        SegmentConfig::from_counts(quality, class_counts, count, neutral_chroma);
+    let original_segments = SegmentConfig::from_frame_counts(
+        quality,
+        class_counts,
+        count,
+        neutral_chroma,
+        smooth_grid_source.allows_allocation(rgb_error_sum, width as u32, height as u32),
+    );
     let medium_textured_luma = crate::presets::medium_textured_luma(
         quality,
         class_counts,
@@ -2346,7 +2459,16 @@ fn encode_observed(
         omit_display_refinement,
         class_counts,
     );
-    let uv_dc_feedback = mixed_y1_ac || medium_y1_ac;
+    let uv_dc_feedback = mixed_y1_ac
+        || medium_y1_ac
+        || q75_luma_ramp_uv_feedback(
+            quality,
+            neutral_chroma,
+            low_curvature,
+            class_counts,
+            curvature,
+            (width as u32, height as u32),
+        );
     let photo_q75 = medium_textured_luma && !neutral_chroma;
     let original_deltas = if high_chroma_loss {
         crate::presets::original_high_chroma_loss_deltas()
@@ -2678,6 +2800,13 @@ fn encode_observed(
         (width as u32, height as u32),
         segments.base_qindex,
     );
+    deltas = crate::presets::chroma_edge_uv_ac_deltas(
+        deltas,
+        segments.base_qindex,
+        class_counts,
+        curvature,
+        (width as u32, height as u32),
+    );
     deltas = crate::presets::q85_smooth_textured_deltas(
         deltas,
         quality,
@@ -2967,6 +3096,15 @@ fn analyze_one(
 ) -> Result<AnalyzedBlock, EncodeError> {
     let x = mx * 16;
     let y = my * 16;
+    let luma_policy = if luma_policy == 0
+        && !segments.enabled
+        && segment_id == segmentation::FINE_SMOOTH
+        && segments.neutral_smooth_grid
+    {
+        1
+    } else {
+        luma_policy
+    };
     let luma = if luma_policy == 0 {
         let mut options = Vec::with_capacity(5);
         for mode in 0..4 {
@@ -3032,7 +3170,17 @@ fn analyze_one(
     let uv_policy = UvRatePolicy::for_source_class(quality, segment_id);
     let uv_width = visible_width.div_ceil(2);
     let uv_height = visible_height.div_ceil(2);
-    let diffuse_uv_dc_error = uv_dc_feedback_for_tile(uv_dc_feedback, mx, my, uv_width, uv_height);
+    let complete_uv_tile = uv_dc_feedback_for_tile(true, mx, my, uv_width, uv_height);
+    let dc_feedback = if complete_uv_tile && uv_dc_feedback {
+        UvDcFeedback::WithinTile
+    } else if complete_uv_tile
+        && segments.neutral_smooth_grid
+        && segment_id == segmentation::FINE_SMOOTH
+    {
+        UvDcFeedback::CommittedBoundaries
+    } else {
+        UvDcFeedback::Disabled
+    };
     let uv: Vec<_> = (0..4)
         .map(|mode| {
             make_uv(
@@ -3053,7 +3201,7 @@ fn analyze_one(
                     visible_height: uv_height,
                     policy,
                 }),
-                diffuse_uv_dc_error,
+                dc_feedback,
             )
         })
         .collect();
@@ -3938,6 +4086,7 @@ pub(crate) struct FrameEncoder {
     luma_bias: bool,
     omit_display_refinement: bool,
     neutral_chroma: bool,
+    smooth_grid_source: SmoothGridSource,
     rgb_error_sum: u64,
     high_chroma_loss: bool,
     medium_textured_luma: bool,
@@ -4093,6 +4242,7 @@ impl FrameEncoder {
             luma_bias: false,
             omit_display_refinement: false,
             neutral_chroma: true,
+            smooth_grid_source: SmoothGridSource::new(),
             rgb_error_sum: 0,
             high_chroma_loss: false,
             medium_textured_luma: false,
@@ -4386,14 +4536,22 @@ impl FrameEncoder {
             }
             let (luma, u, v) = crate::color::convert_2x2(rgb);
             self.neutral_chroma &= u == 128 && v == 128;
-            if self.request.quality == 60 || self.request.quality == 75 {
+            let visible_width = width.saturating_sub(cx * 2).min(2);
+            let visible_height = height.saturating_sub(cy * 2).min(2);
+            let visible = visible_width > 0 && visible_height > 0;
+            self.smooth_grid_source.observe(luma, u, v, visible);
+            if visible
+                && (self.request.quality == 60
+                    || self.request.quality == 75
+                    || self.smooth_grid_source.near_neutral)
+            {
                 self.rgb_error_sum += crate::color::nearest_chroma_rgb_error(
                     rgb,
                     luma,
                     u,
                     v,
-                    width.saturating_sub(cx * 2).min(2),
-                    height.saturating_sub(cy * 2).min(2),
+                    visible_width,
+                    visible_height,
                 );
             }
             for dy in 0..2 {
@@ -4752,11 +4910,16 @@ impl FrameEncoder {
     }
 
     fn original_segments(&self) -> SegmentConfig {
-        SegmentConfig::from_counts(
+        SegmentConfig::from_frame_counts(
             self.effective_quality,
             self.class_counts,
             self.blocks.len(),
             self.neutral_chroma,
+            self.smooth_grid_source.allows_allocation(
+                self.rgb_error_sum,
+                self.request.width,
+                self.request.height,
+            ),
         )
     }
 
@@ -4875,8 +5038,9 @@ impl FrameEncoder {
         let blocks_x = self.plan.padded_width as usize / 16;
         let mx = self.cursor % blocks_x;
         let my = self.cursor / blocks_x;
-        let collect_curvature =
-            self.request.quality == 60 || (self.request.quality == 75 && !self.neutral_chroma);
+        let collect_curvature = self.request.quality == 60
+            || (!self.neutral_chroma
+                && (self.request.quality == 75 || self.class_counts[..3] == [0; 3]));
         let segment_id = segmentation::classify_with_curvature(
             &self.source_y,
             &self.source_u,
@@ -4929,13 +5093,9 @@ impl FrameEncoder {
                 self.request.width,
                 self.request.height,
             );
-            self.segments = SegmentConfig::from_counts(
-                quality,
-                self.class_counts,
-                self.blocks.len(),
-                self.neutral_chroma,
-            )
-            .with_medium_textured_luma(self.medium_textured_luma);
+            self.segments = self
+                .original_segments()
+                .with_medium_textured_luma(self.medium_textured_luma);
             let ordinary_q60_texture = crate::presets::ordinary_q60_all_texture(
                 quality,
                 self.class_counts,
@@ -4960,7 +5120,16 @@ impl FrameEncoder {
             );
             self.medium_y1_ac =
                 medium_mixed_low_curvature(quality, self.omit_display_refinement, low_curvature);
-            self.uv_dc_feedback = self.mixed_y1_ac || self.medium_y1_ac;
+            self.uv_dc_feedback = self.mixed_y1_ac
+                || self.medium_y1_ac
+                || q75_luma_ramp_uv_feedback(
+                    quality,
+                    self.neutral_chroma,
+                    low_curvature,
+                    self.class_counts,
+                    self.curvature,
+                    (self.request.width, self.request.height),
+                );
             self.luma_bias = q85_smooth_pair_luma_bias(
                 quality,
                 self.neutral_chroma,
@@ -5004,6 +5173,13 @@ impl FrameEncoder {
                 self.rgb_error_sum,
                 (self.request.width, self.request.height),
                 self.segments.base_qindex,
+            );
+            self.deltas = crate::presets::chroma_edge_uv_ac_deltas(
+                self.deltas,
+                self.segments.base_qindex,
+                self.class_counts,
+                self.curvature,
+                (self.request.width, self.request.height),
             );
             self.deltas = crate::presets::q85_smooth_textured_deltas(
                 self.deltas,
@@ -9034,6 +9210,73 @@ mod tests {
     }
 
     #[test]
+    fn committed_uv_feedback_recovers_substep_dc_from_visible_neighbors() {
+        let mut source_u = [129; 16 * 16];
+        let source_v = [128; 16 * 16];
+        let reconstructed = [128; 16 * 16];
+        let steps = Steps { dc: 18, ac: 30 };
+        let candidate = |source_u: &[u8], feedback| {
+            make_uv(
+                source_u,
+                &source_v,
+                &reconstructed,
+                &reconstructed,
+                16,
+                8,
+                8,
+                0,
+                steps,
+                None,
+                feedback,
+            )
+        };
+        let local = candidate(&source_u, UvDcFeedback::WithinTile);
+        let committed = candidate(&source_u, UvDcFeedback::CommittedBoundaries);
+        assert_eq!(local.u[0][0], 0);
+        assert_eq!(committed.u[0][0], 1);
+        assert_eq!(committed.v, local.v);
+        assert!(committed
+            .u
+            .iter()
+            .all(|coefficients| coefficients[1..] == [0; 15]));
+
+        // Both actual reconstructed neighbors must contribute their signed
+        // error. This otherwise legal out-of-range source contributes nothing.
+        source_u[4 * 16 + 8] = 130;
+        source_u[8 * 16 + 4] = 130;
+        let beyond_neutral = candidate(&source_u, UvDcFeedback::CommittedBoundaries);
+        assert_eq!(beyond_neutral.u[0][0], 0);
+        assert_eq!(committed_uv_dc_error(&[127; 16], &[128; 16], 4, 0, 0), -16);
+    }
+
+    #[test]
+    fn boundary_uv_feedback_preserves_sync_resume_and_independent_frame_state() {
+        let (width, height) = (33, 33);
+        let input: Vec<u8> = (0..height)
+            .flat_map(|y| {
+                (0..width).flat_map(move |x| {
+                    let n = 16 + ((2 * x + y) / 8) as u8;
+                    [n, n, n + 2, 255]
+                })
+            })
+            .collect::<Box<[_]>>()
+            .into_vec();
+        let request = Request {
+            quality: 60,
+            ..engine_request(width, height, 0, &input, width * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let first = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+        assert_eq!(first.class_counts, [9, 0, 0, 0]);
+        assert!(first.segments.base_qindex > crate::presets::smooth_qindex(60));
+        let sync =
+            encode_textured(&input, request.width, request.height, request.stride, 0, 60).unwrap();
+        let second = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert_eq!(first.output(), sync);
+        assert_eq!(first.output(), second.output());
+    }
+
+    #[test]
     fn chroma_dc_feedback_corrects_signed_rounding_within_one_mode_and_plane() {
         let source_u = [130; 64];
         let source_v = [128; 64];
@@ -9054,8 +9297,8 @@ mod tests {
                 feedback,
             )
         };
-        let baseline = trial(false);
-        let selected = trial(true);
+        let baseline = trial(UvDcFeedback::Disabled);
+        let selected = trial(UvDcFeedback::WithinTile);
         assert_eq!(baseline.u_tile, [131; 64]);
         assert_eq!(selected.u.map(|coefficients| coefficients[0]), [2, 1, 1, 2]);
         assert_eq!(selected.u[0], baseline.u[0]);
@@ -9072,8 +9315,8 @@ mod tests {
         );
         assert_eq!(selected.v, baseline.v);
         assert_eq!(selected.v_tile, source_v);
-        assert_eq!(trial(true).u, selected.u);
-        assert_eq!(trial(true).u_tile, selected.u_tile);
+        assert_eq!(trial(UvDcFeedback::WithinTile).u, selected.u);
+        assert_eq!(trial(UvDcFeedback::WithinTile).u_tile, selected.u_tile);
     }
 
     #[test]
@@ -9098,7 +9341,7 @@ mod tests {
             0,
             steps,
             None,
-            false,
+            UvDcFeedback::Disabled,
         );
         assert!(baseline.u.iter().all(|coeff| coeff[0] == 1));
         assert!(baseline.v.iter().all(|coeff| coeff[0] == 1));
@@ -9121,7 +9364,7 @@ mod tests {
                     visible_height,
                     policy: UvRatePolicy::FlatDcZero,
                 }),
-                false,
+                UvDcFeedback::Disabled,
             )
         };
         let visible = trial(8, 8);
@@ -9239,7 +9482,7 @@ mod tests {
                     mode,
                     steps,
                     None,
-                    false,
+                    UvDcFeedback::Disabled,
                 );
                 let trial = make_uv(
                     &source,
@@ -9259,7 +9502,7 @@ mod tests {
                         visible_height: 8,
                         policy: UvRatePolicy::TexturedAcTail,
                     }),
-                    false,
+                    UvDcFeedback::Disabled,
                 );
                 assert_eq!(contexts, before);
                 for (original, selected) in baseline.u.iter().zip(&trial.u) {
@@ -10796,6 +11039,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(engine.output(), sync);
+    }
+
+    #[test]
+    fn q75_luma_ramp_feedback_covers_only_full_tiles_in_luma_dominant_ramps() {
+        let luma = segmentation::CurvatureTotals { sums: [448, 0, 0] };
+        let chroma = segmentation::CurvatureTotals { sums: [448, 97, 0] };
+        for (quality, neutral, smooth, counts, totals, visible, expected) in [
+            (75, false, true, [0, 1, 2, 0], luma, (16, 16), true),
+            (75, false, true, [0, 0, 1, 0], luma, (16, 16), true),
+            (75, false, true, [1, 0, 1, 0], luma, (16, 16), false),
+            (75, false, true, [0, 0, 2, 1], luma, (16, 16), false),
+            (75, false, true, [0, 0, 1, 0], chroma, (16, 16), false),
+            (75, false, true, [0, 0, 1, 0], luma, (15, 16), false),
+            (75, false, false, [0, 0, 1, 0], luma, (16, 16), false),
+            (75, true, true, [0, 0, 1, 0], luma, (16, 16), false),
+            (60, false, true, [0, 0, 1, 0], luma, (16, 16), false),
+            (85, false, true, [0, 0, 1, 0], luma, (16, 16), false),
+        ] {
+            let enabled =
+                q75_luma_ramp_uv_feedback(quality, neutral, smooth, counts, totals, visible);
+            assert_eq!(enabled, expected);
+            assert_eq!(uv_dc_feedback_for_tile(enabled, 0, 0, 8, 8), expected);
+            assert!(!uv_dc_feedback_for_tile(enabled, 0, 0, 8, 7));
+        }
     }
 
     #[test]
@@ -12430,6 +12697,112 @@ mod tests {
     }
 
     #[test]
+    fn near_neutral_smooth_cutoff_preserves_padding_and_import_loss_bound() {
+        let mut source = SmoothGridSource::new();
+        source.observe([64, 65, 65, 66], 127, 129, true);
+        source.observe([0, 255, 1, 254], 0, 255, false);
+        let limit = crate::presets::chroma_loss_limit(2, 2).unwrap();
+        assert!(source.allows_allocation(limit, 2, 2));
+        assert!(!source.allows_allocation(limit + 1, 2, 2));
+        source.observe([80; 4], 126, 128, true);
+        source.observe([90; 4], 128, 128, true);
+        assert!(!source.allows_allocation(0, 2, 2));
+    }
+
+    #[test]
+    fn neutral_smooth_grid_is_shared_by_sync_and_resumable_paths() {
+        let (width, height) = (19, 17);
+        let ramp: Vec<u8> = (0..height)
+            .flat_map(|_| {
+                (0..width).flat_map(|x| {
+                    let n = 80 + (x / 4) as u8;
+                    [n, n, n - 2, 255]
+                })
+            })
+            .collect();
+        let constant = [80, 80, 78, 255].repeat(width * height);
+        let colored = [160, 64, 32, 255].repeat(width * height);
+        for quality in [60, 75, 85] {
+            for (input, eligible) in [(&ramp, true), (&constant, false), (&colored, false)] {
+                let request = Request {
+                    quality,
+                    ..engine_request(width, height, 0, input, width * 4)
+                };
+                let plan = ResourcePlan::checked(request).unwrap();
+                let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+                assert_eq!(
+                    engine.smooth_grid_source.allows_allocation(
+                        engine.rgb_error_sum,
+                        request.width,
+                        request.height,
+                    ),
+                    eligible,
+                );
+                assert_eq!(engine.class_counts, [4, 0, 0, 0]);
+                assert_eq!(
+                    engine.segments.base_qindex,
+                    if eligible {
+                        match quality {
+                            60 => 20,
+                            75 => 17,
+                            _ => 10,
+                        }
+                    } else {
+                        crate::presets::smooth_qindex(quality)
+                    },
+                );
+                assert_eq!(
+                    engine.output(),
+                    encode_textured(
+                        input,
+                        request.width,
+                        request.height,
+                        request.stride,
+                        0,
+                        quality,
+                    )
+                    .unwrap(),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn neutral_import_does_not_hide_high_chroma_loss_at_high_quality() {
+        let width = 16;
+        let height = 16;
+        let input: Vec<u8> = (0..height)
+            .flat_map(|y| {
+                (0..width).flat_map(move |x| {
+                    [
+                        [255, 0, 0, 255],
+                        [0, 255, 0, 255],
+                        [0, 0, 255, 255],
+                        [255; 4],
+                    ][2 * (y % 2) + x % 2]
+                })
+            })
+            .collect();
+        let request = Request {
+            quality: 85,
+            ..engine_request(width, height, 0, &input, width * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input, plan).unwrap();
+        while engine.stage != Stage::Classify {
+            engine.step().unwrap();
+        }
+        assert!(engine.neutral_chroma);
+        assert!(engine.smooth_grid_source.near_neutral);
+        assert!(engine.smooth_grid_source.varied_luma);
+        assert!(!engine.smooth_grid_source.allows_allocation(
+            engine.rgb_error_sum,
+            request.width,
+            request.height,
+        ));
+    }
+
+    #[test]
     fn exact_neutral_frame_allocation_and_repeated_frame_state() {
         let gray = textured_checker([64; 3], [192; 3]);
         let colored = textured_checker([7, 239, 117], [248, 18, 184]);
@@ -13244,7 +13617,7 @@ mod tests {
                 3,
                 uv_steps,
                 None,
-                false,
+                UvDcFeedback::Disabled,
             );
             (
                 i16.tile,
@@ -13878,7 +14251,7 @@ mod tests {
             0,
             steps,
             None,
-            false,
+            UvDcFeedback::Disabled,
         );
         let chosen = make_uv(
             &source,
@@ -13898,7 +14271,7 @@ mod tests {
                 visible_height: 8,
                 policy: UvRatePolicy::FlatDcZero,
             }),
-            false,
+            UvDcFeedback::Disabled,
         );
         assert_eq!(baseline.u[0][0], 1);
         assert_eq!(

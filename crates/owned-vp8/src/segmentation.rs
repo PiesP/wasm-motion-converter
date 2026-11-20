@@ -41,6 +41,12 @@ impl CurvatureTotals {
             && self.sums[2] <= CURVATURE_CUTOFF * UV_DIFFERENCES_PER_BLOCK * blocks
     }
 
+    pub(crate) fn only_chroma_exceeds_cutoff(self, blocks: usize) -> bool {
+        blocks > 0
+            && self.sums[0] <= CURVATURE_CUTOFF * Y_DIFFERENCES_PER_BLOCK * blocks as u64
+            && !self.within_cutoff(blocks)
+    }
+
     pub(crate) fn luma_dominates(self) -> bool {
         let [y, u, v] = self.sums;
         // All planes use the same number of macroblocks. Compare their means
@@ -58,6 +64,7 @@ pub(crate) struct Config {
     pub map_probabilities: [u8; 3],
     active: [bool; 4],
     alias_textured_to_ramp: bool,
+    pub neutral_smooth_grid: bool,
 }
 
 impl Config {
@@ -68,6 +75,7 @@ impl Config {
             qindex: [qindex; 4],
             map_probabilities: [255; 3],
             active: [false; 4],
+            neutral_smooth_grid: false,
             alias_textured_to_ramp: false,
         }
     }
@@ -78,8 +86,26 @@ impl Config {
         total: usize,
         neutral_chroma: bool,
     ) -> Self {
+        Self::from_frame_counts(quality, counts, total, neutral_chroma, false)
+    }
+
+    pub(crate) fn from_frame_counts(
+        quality: u32,
+        counts: [usize; 4],
+        total: usize,
+        neutral_chroma: bool,
+        near_neutral_smooth: bool,
+    ) -> Self {
         debug_assert_eq!(counts.iter().sum::<usize>(), total);
-        let qindex = class_qindices(quality, neutral_chroma);
+        let mut qindex = class_qindices(quality, neutral_chroma);
+        let [fine, flat, ramp, _] = counts;
+        let neutral_smooth_grid = near_neutral_smooth && fine > 0 && flat == 0 && ramp == 0;
+        if neutral_smooth_grid {
+            // Coherent I16 prediction and chroma DC feedback retain smooth-field
+            // precision at the midpoint of the fine and monochrome texture grids.
+            let index = FINE_SMOOTH as usize;
+            qindex[index] = (qindex[index] + presets::textured_qindex(quality, true)).div_ceil(2);
+        }
         let enabled = counts.iter().filter(|&&count| count > 0).count() > 1;
         let base_qindex = qindex[counts.iter().position(|&count| count > 0).unwrap_or(3)];
         let map_probabilities = if enabled {
@@ -93,6 +119,7 @@ impl Config {
             qindex,
             map_probabilities,
             active: counts.map(|count| count > 0),
+            neutral_smooth_grid,
             alias_textured_to_ramp: false,
         }
     }
