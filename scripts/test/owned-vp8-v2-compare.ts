@@ -85,6 +85,13 @@ import {
   v19Specs,
   type V19Manifest,
 } from './owned-vp8-v19-fixtures.ts';
+import {
+  V20B_MANIFEST,
+  V20B_PACK_READER,
+  v20bPackedReader,
+  v20bSpecs,
+  type V20BManifest,
+} from './owned-vp8-v20b-fixtures.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ORACLE_HASH = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
@@ -113,7 +120,8 @@ export type FixtureCohort =
   | 'corrected-v16'
   | 'corrected-v17'
   | 'corrected-v18'
-  | 'corrected-v19';
+  | 'corrected-v19'
+  | 'corrected-v20b';
 
 export function selectFixtureCohort(
   split: FixtureSplit,
@@ -121,8 +129,8 @@ export function selectFixtureCohort(
   regression = false,
   fixtureIds?: readonly string[]
 ) {
-  if (cohort === 'corrected-v19')
-    throw new Error('Use the source-bound V19 reservation and signed manifest');
+  if (cohort === 'corrected-v19' || cohort === 'corrected-v20b')
+    throw new Error('Use the source-bound reservation and signed manifest');
   if (fixtureIds !== undefined && split === 'held-out' && !regression)
     throw new Error('Fixture subsets are diagnostic only; acceptance requires the full cohort');
   const protectedCohort =
@@ -521,7 +529,7 @@ export function readV18Reservation(options: FreshReservationOptions & { sources:
 
 function readFreshReservation(
   options: FreshReservationOptions,
-  version: 'V16' | 'V17' | 'V18' | 'V19',
+  version: 'V16' | 'V17' | 'V18' | 'V19' | 'V20B',
   sources: readonly (string | undefined)[],
   manifest: string,
   exposedCount: number
@@ -583,7 +591,13 @@ function readFreshReservation(
     sourcesFromManifestMetadataOnly: Record<string, { path: string }>;
     bridgeSha256?: string;
     primary: { wasmSha256: string; jsSha256: string };
-    exposed: { scope: string; status: string; count: number; passed: number };
+    exposed: {
+      scope: string;
+      status: string;
+      count: number;
+      passed: number;
+      inventorySha256?: string;
+    };
     plannedUtc: string;
     development?: {
       earlier?: { count: number; passed: number };
@@ -606,7 +620,18 @@ function readFreshReservation(
     ['EXPOSED_REGRESSION_ONLY', 'PASS_EXPOSED_REGRESSION_ONLY', exposedCount, exposedCount],
     `${version} requires all ${exposedCount} exposed conditions`
   );
-  if (version === 'V18' || version === 'V19') {
+  if (version === 'V20B') {
+    assert.equal(
+      plan.exposed.inventorySha256,
+      'a0e2b41058fcf1a913e78c19688deaa40f9e318f33a0bdd7f7c2aa75a8e75bc8'
+    );
+    assert.notEqual(plan.candidate.source, 'f6bae9033f0c4cb9c093bcbb66068d2aa8cfed2a');
+    assert.notEqual(
+      plan.candidate.module,
+      'efbd6715ddf82b5274c7735456f951e685347cda8a2a86520b4a2c1a30550ed9'
+    );
+  }
+  if (version === 'V18' || version === 'V19' || version === 'V20B') {
     const earlier = plan.development?.earlier;
     const diagnostic = plan.development?.multiscale;
     assert.deepEqual(
@@ -644,7 +669,7 @@ function readFreshReservation(
   assert.deepEqual(plan.primary, { wasmSha256: ORACLE_HASH, jsSha256: ORACLE_JS_HASH });
   assert.deepEqual(
     sources,
-    (version === 'V19' ? ['packed'] : ['photo', 'video']).map(
+    (['V19', 'V20B'].includes(version) ? ['packed'] : ['photo', 'video']).map(
       (role) => plan.sourcesFromManifestMetadataOnly[role]?.path
     ),
     `${version} admission original paths differ`
@@ -663,7 +688,7 @@ function readFreshReservation(
   assert.equal(registration.url, request.registration, `${version} readback URL differs`);
   assert.equal(registration.author, 'PiesP', `${version} readback owner differs`);
   assert.match(registration.responseSha256, /^[a-f0-9]{64}$/);
-  if (version === 'V19') {
+  if (version === 'V19' || version === 'V20B') {
     assert.match(plan.bridgeSha256 ?? '', /^[a-f0-9]{64}$/);
     assert.equal(registration.planSha256, request.planSha256);
     assert.equal(registration.bridgeSha256, plan.bridgeSha256);
@@ -730,24 +755,31 @@ export async function compare(options: {
     V15SourcePaths &
     V16SourcePaths &
     V17SourcePaths &
-    V18SourcePaths & { v19Packed?: string };
+    V18SourcePaths & { v19Packed?: string; v20bPacked?: string };
   cohort?: FixtureCohort;
   regression?: boolean;
   fixtureIds?: readonly string[];
   candidateRoot?: string;
 }): Promise<object> {
   const cohort = options.cohort ?? 'initial-v1';
-  const v19ManifestBytes =
-    cohort === 'corrected-v19' ? readFileSync(join(ROOT, V19_MANIFEST)) : undefined;
-  const v19Manifest = v19ManifestBytes
-    ? (JSON.parse(v19ManifestBytes.toString('utf8')) as V19Manifest)
+  const useV20B = cohort === 'corrected-v20b';
+  const packedVersion = useV20B ? 'V20B' : 'V19';
+  const packedManifestPath = useV20B ? V20B_MANIFEST : V19_MANIFEST;
+  const packedManifestBytes =
+    useV20B || cohort === 'corrected-v19'
+      ? readFileSync(join(ROOT, packedManifestPath))
+      : undefined;
+  const packedManifest = packedManifestBytes
+    ? (JSON.parse(packedManifestBytes.toString('utf8')) as V19Manifest | V20BManifest)
     : undefined;
-  if (v19Manifest)
+  if (packedManifest)
     assert.ok(
       options.split === 'held-out' && !options.regression && options.fixtureIds === undefined
     );
-  const selected = v19Manifest
-    ? v19Specs(v19Manifest)
+  const selected = packedManifest
+    ? useV20B
+      ? v20bSpecs(packedManifest as V20BManifest)
+      : v19Specs(packedManifest as V19Manifest)
     : selectFixtureCohort(options.split, cohort, options.regression, options.fixtureIds);
   const selection = fixtureSelectionIdentity(
     selected,
@@ -818,37 +850,42 @@ export async function compare(options: {
       'V18 pixel pins are incomplete'
     );
   }
-  if (pinnedFreshManifest || v19Manifest) {
+  if (pinnedFreshManifest || packedManifest) {
     output = join(realpathSync(dirname(output)), basename(output));
     assert.ok(!lstatSync(output, { throwIfNoEntry: false }), 'Evidence directory already exists');
   }
   const v17ManifestSha256 = v17ManifestBytes && digest(v17ManifestBytes);
   const v18ManifestSha256 = v18ManifestBytes && digest(v18ManifestBytes);
-  const v19ManifestSha256 = v19ManifestBytes && digest(v19ManifestBytes);
-  const reservedSha = v19ManifestSha256 ?? v18ManifestSha256 ?? v17ManifestSha256;
-  const v19Packed = options.sources.v19Packed;
-  if (v19Manifest) {
+  const packedManifestSha256 = packedManifestBytes && digest(packedManifestBytes);
+  const reservedSha = packedManifestSha256 ?? v18ManifestSha256 ?? v17ManifestSha256;
+  const packedInput = useV20B ? options.sources.v20bPacked : options.sources.v19Packed;
+  if (packedManifest) {
     assert.ok(
-      v19Packed && realpathSync(v19Packed) === v19Packed && lstatSync(v19Packed).isDirectory()
+      packedInput &&
+        realpathSync(packedInput) === packedInput &&
+        lstatSync(packedInput).isDirectory()
     );
-    assert.equal(basename(v19Packed), 'packed-01');
-    assert.equal(basename(dirname(v19Packed)), 'fresh-v19-sources-01');
+    assert.equal(basename(packedInput), 'packed-01');
+    assert.equal(
+      basename(dirname(packedInput)),
+      useV20B ? 'fresh-v20b-sources-01' : 'fresh-v19-sources-01'
+    );
   }
   const admission =
-    v19Manifest && v19ManifestSha256 && v19Packed
+    packedManifest && packedManifestSha256 && packedInput
       ? readFreshReservation(
           {
             output,
             registryRoot: ROOT,
-            privateRegistry: dirname(v19Packed),
+            privateRegistry: dirname(packedInput),
             candidateRoot,
-            freezeId: v19Manifest.freezeId,
-            manifestSha256: v19ManifestSha256,
+            freezeId: packedManifest.freezeId,
+            manifestSha256: packedManifestSha256,
           },
-          'V19',
-          [v19Packed],
-          V19_MANIFEST,
-          1047
+          packedVersion,
+          [packedInput],
+          packedManifestPath,
+          useV20B ? 1107 : 1047
         )
       : reservedManifest && reservedSha && !options.regression
         ? readFreshReservation(
@@ -870,15 +907,15 @@ export async function compare(options: {
             v18Manifest ? 987 : 927
           )
         : undefined;
-  if (v15Manifest || v16Manifest || reservedManifest || v19Manifest) {
+  if (v15Manifest || v16Manifest || reservedManifest || packedManifest) {
     const roots = [realpathSync(ROOT), realpathSync(candidateRoot)];
     for (const root of roots)
       assert.ok(
         output !== root && !output.startsWith(root + sep),
         'Use private qualification evidence'
       );
-    const originals = v19Manifest
-      ? [v19Packed]
+    const originals = packedManifest
+      ? [packedInput]
       : v18Manifest
         ? [options.sources.v18Photo, options.sources.v18Video]
         : v17Manifest
@@ -906,10 +943,14 @@ export async function compare(options: {
     );
     assert.equal(registry.source, admission.registryCommit, 'V17 registry source differs');
     assert.equal(registry.tree, admission.registryTree, 'V17 registry tree differs');
+    if (useV20B)
+      assert.equal(gitAt(ROOT, 'rev-parse', 'HEAD^'), 'fd551b6b5eb4eda8ad49597f0bf3b47293aa0ac3');
     for (const path of [
-      v19Manifest ? V19_MANIFEST : v18Manifest ? V18_MANIFEST : V17_MANIFEST,
-      v19Manifest
-        ? V19_PACK_READER
+      packedManifest ? packedManifestPath : v18Manifest ? V18_MANIFEST : V17_MANIFEST,
+      packedManifest
+        ? useV20B
+          ? V20B_PACK_READER
+          : V19_PACK_READER
         : v18Manifest
           ? 'scripts/test/owned-vp8-v18-fixtures.ts'
           : 'scripts/test/owned-vp8-v17-fixtures.ts',
@@ -938,7 +979,7 @@ export async function compare(options: {
   const v14Fixtures = v14Manifest
     ? preflightV14(v14Manifest, options.sources, ROOT, true)
     : undefined;
-  if (!reservedManifest && !v19Manifest) mkdirSync(output, { recursive: !pinnedFreshManifest });
+  if (!reservedManifest && !packedManifest) mkdirSync(output, { recursive: !pinnedFreshManifest });
   const wasmFile = join(candidateRoot, 'crates/owned-vp8/owned-vp8.wasm');
   execFileSync(
     process.execPath,
@@ -964,7 +1005,7 @@ export async function compare(options: {
   const oracleWasm = readFileSync(join(ROOT, 'node_modules/wasm-webp/dist/esm/webp-wasm.wasm'));
   assert.equal(digest(oracleWasm), ORACLE_HASH, 'Primary shipped comparator changed');
   const oracleUrl = new URL('../../node_modules/wasm-webp/dist/esm/webp-wasm.js', import.meta.url);
-  if (pinnedFreshManifest || v19Manifest)
+  if (pinnedFreshManifest || packedManifest)
     assert.equal(digest(readFileSync(oracleUrl)), ORACLE_JS_HASH, 'Patched primary JS changed');
   const { default: createOracle } = (await import(oracleUrl.href)) as {
     default(): Promise<{
@@ -1113,7 +1154,7 @@ export async function compare(options: {
       );
     frozen.fixtures.push(...fresh.fixtures);
   }
-  const newestManifest = v19Manifest ?? pinnedFreshManifest ?? v13Manifest;
+  const newestManifest = packedManifest ?? pinnedFreshManifest ?? v13Manifest;
   if (newestManifest)
     frozen.fixtures.push(
       ...newestManifest.fixtures.map((row) => ({
@@ -1183,13 +1224,13 @@ export async function compare(options: {
           },
         }
       : {}),
-    ...(v19Manifest
+    ...(packedManifest
       ? {
           oracleJsSha256: ORACLE_JS_HASH,
-          freshFreezeId: v19Manifest.freezeId,
-          freshGeneratorSha256: v19Manifest.generatorSha256,
+          freshFreezeId: packedManifest.freezeId,
+          freshGeneratorSha256: packedManifest.generatorSha256,
           freshSourceSha256: Object.fromEntries(
-            v19Manifest.fixtures.map((row) => [row.id, row.sha256])
+            packedManifest.fixtures.map((row) => [row.id, row.sha256])
           ),
         }
       : {}),
@@ -1216,11 +1257,13 @@ export async function compare(options: {
   if (options.split === 'held-out' && (identities.dirty || identities.harnessDirty)) {
     throw new Error('Held-out acceptance requires committed candidate and harness identities');
   }
-  const readV19 =
-    v19Manifest && v19Packed
-      ? v19PackedReader(v19Packed, v19Manifest, readFreshReceipt, digest)
+  const readPacked =
+    packedManifest && packedInput
+      ? useV20B
+        ? v20bPackedReader(packedInput, packedManifest as V20BManifest, readFreshReceipt, digest)
+        : v19PackedReader(packedInput, packedManifest as V19Manifest, readFreshReceipt, digest)
       : undefined;
-  if (reservedManifest || v19Manifest) mkdirSync(output);
+  if (reservedManifest || packedManifest) mkdirSync(output);
   const v15Fixtures = v15Manifest
     ? preflightV15(v15Manifest, options.sources, ROOT, options.regression ?? false)
     : undefined;
@@ -1246,7 +1289,7 @@ export async function compare(options: {
       V3_TUNING.some((entry) => entry.id === spec.id) ||
       V3_HELDOUT.some((entry) => entry.id === spec.id);
     const fixture =
-      readV19?.(spec) ??
+      readPacked?.(spec) ??
       v18Fixtures?.get(spec.id) ??
       v17Fixtures?.get(spec.id) ??
       v16Fixtures?.get(spec.id) ??
@@ -1377,6 +1420,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const v19Packed = args.includes('--v19-packed')
     ? args[args.indexOf('--v19-packed') + 1]
     : undefined;
+  const v20bPacked = args.includes('--v20b-packed')
+    ? args[args.indexOf('--v20b-packed') + 1]
+    : undefined;
   const cohort = args.includes('--cohort') ? args[args.indexOf('--cohort') + 1] : 'initial-v1';
   if (
     cohort !== 'initial-v1' &&
@@ -1392,7 +1438,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     cohort !== 'corrected-v16' &&
     cohort !== 'corrected-v17' &&
     cohort !== 'corrected-v18' &&
-    cohort !== 'corrected-v19'
+    cohort !== 'corrected-v19' &&
+    cohort !== 'corrected-v20b'
   )
     throw new Error('Unknown fixture cohort');
   if (acceptance && regression) throw new Error('Choose acceptance or exposed regression');
@@ -1427,6 +1474,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       ...(v18Photo ? { v18Photo } : {}),
       ...(v18Video ? { v18Video } : {}),
       ...(v19Packed ? { v19Packed } : {}),
+      ...(v20bPacked ? { v20bPacked } : {}),
     },
     ...(candidateRoot ? { candidateRoot } : {}),
   });

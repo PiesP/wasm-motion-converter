@@ -1,0 +1,9 @@
+# #501 V20B fixed-pixel registry
+
+The original V19 attempt on signed f6bae9033f0c4cb9c093bcbb66068d2aa8cfed2a remains rejected at 56 of 60. All 60 later serve as exposed regression. Combined inputs use the immutable 1,107-condition ordered SHA-256 a0e2b41058fcf1a913e78c19688deaa40f9e318f33a0bdd7f7c2aa75a8e75bc8. No previous outcome is replaced by this registry.
+
+An independent custodian freezes a separate twenty-input population with ten digital, five licensed photo and five licensed video inputs. Each input contains opaque RGBA pixels with three fixed qualities, q60, q75 and q85. The data rules exclude known earlier original identities and previously packed exposed or development sources. Canonical manifest hashes and registry source identify the fixed-pixel evidence. The source-only original acquisition, licenses, digital seed, private pixel files and owner replies retain separate custody.
+
+The exact signed successor independently passes the complete 1,107 exposed rows, existing indicated first/warm checks and whole 77/115/192 original-reference checks before source work. Prior development criteria and the 72-row diagnostic, including misses, retain their original dispositions. The unedited owner selection and candidate admission are separate. The candidate admission exposes digests and source identities and its complete private plan remains bound by SHA-256.
+
+A source-sealed input remains inaccessible to the candidate run until the authenticated first-attempt reservation. At most one complete attempt can spend the corpus. Failed and interrupted cases stay recorded. Evaluate PSNR at least primary minus 1 dB, SSIM at least primary minus 0.01 and bytes at most max(1.25 × primary, primary + 128). A fixed-pixel pass is a separate result from production, browser, Stop-to-idle, resource and delivery qualification.
