@@ -240,6 +240,16 @@ remains owned Rust; these adapted arithmetic/table portions retain attribution. 
 and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
 
+For q60 and q75, the color-import pass tracks up to eight distinct visible
+RGB colors. A ninth color ends palette collection. In a non-neutral frame
+with two through eight colors, ordinary import loss, and only FineSmooth and
+Textured tiles, the existing textured segment gets an additional one eighth
+of its quantizer-index distance from FineSmooth, rounded up. This coarsens
+the texture grid for palette edges and preserves the smooth fill grid. An
+active source-activity allocation takes precedence. The exact palette uses a
+25-byte fixed state and the existing 2×2 import increments. q85 skips the
+palette observations.
+
 The pinned WASM build enables the `activity-allocation` Cargo feature. After
 intrinsic classification, ordinary colored frames with more than four macroblocks
 can use the source-activity map when Textured forms a strict majority and the
@@ -463,6 +473,21 @@ the signed UV AC delta one step toward a coarser step, from -4 to -3. The UV
 DC and luma deltas, class quantizers, segmentation, and refinement policy
 retain their usual settings. This uses existing class counts and requires no
 additional frame analysis or alternative encoding.
+
+Ordinary low-curvature frames mixing only ChromaticRamp and Textured may
+select normal filter level 15 at q60 or q75. This is the first threshold
+that tolerates a one-unit change next to a decoder-filtered boundary
+without taking the high-variance path. The encoder samples up to 32
+complete visible macroblocks at reconstruction completion. It compares
+isolated inner and macroblock luma edge taps against imported source luma,
+requiring strictly less total squared error and no loss on either axis.
+The sample estimates the local filter effect without modeling full raster
+order or RGB conversion. It changes the filter used for exact counting,
+completed reconstruction scoring and the packet header. The bounded tap
+comparison shares the last analysis step and needs no retained state,
+frame copy or replay. Explicit filters, adjusted quality, high-import
+replay, activity filtering and the compact filter's frame range are
+excluded. The q85 filter is unaffected.
 
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those

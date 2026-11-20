@@ -171,6 +171,86 @@ impl FilterConfig {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn sampled_reconstruction_filter(
+    filter: FilterConfig,
+    (requested, effective): (u32, u32),
+    (allow_selection, low_curvature, high_chroma_loss): (bool, bool, bool),
+    counts: [usize; 4],
+    segments: SegmentConfig,
+    (width, height, stride): (usize, usize, usize),
+    (source_y, reconstructed_y): (&[u8], &[u8]),
+    blocks: &[Macroblock],
+) -> FilterConfig {
+    let [fine, flat, ramp, textured] = counts;
+    if !allow_selection
+        || !matches!(requested, 60 | 75)
+        || requested != effective
+        || filter != FilterConfig::for_quality(effective)
+        || !low_curvature
+        || high_chroma_loss
+        || segments.uses_activity_filter()
+        || segments.neutral_smooth_grid
+        || fine != 0
+        || flat != 0
+        || ramp == 0
+        || textured == 0
+        || blocks.len() <= compact_filter::MAX_BLOCKS
+    {
+        return filter;
+    }
+
+    // Estimate the decoder's effect on weak luma seams without modifying
+    // predictor history, copying a plane, or building a second coefficient
+    // variant. The isolated taps do not model intersections or raster order.
+    const MAX_SAMPLES: usize = 32;
+    let complete_x = width / 16;
+    let complete_count = complete_x * (height / 16);
+    let samples = complete_count.min(MAX_SAMPLES);
+    let mut gain = [0; 2];
+    for sample in 0..samples {
+        let index = (2 * sample + 1) * complete_count / (2 * samples);
+        let mb_x = index % complete_x;
+        let mb_y = index / complete_x;
+        let start = 16 * (mb_y * stride + mb_x);
+        let block = &blocks[mb_y * (stride / 16) + mb_x];
+        let offset = 3 + (sample % 4) * 4;
+        let score = |position, step, macroblock_edge| {
+            filter::weak_edge_gain(
+                source_y,
+                reconstructed_y,
+                position,
+                step,
+                filter.level,
+                macroblock_edge,
+            )
+        };
+        if block
+            .y
+            .iter()
+            .flatten()
+            .chain(&block.y2)
+            .any(|&level| level != 0)
+        {
+            gain[0] += score(start + offset * stride + 8, 1, false);
+            gain[1] += score(start + 8 * stride + offset, stride, false);
+        }
+        if mb_x != 0 {
+            gain[0] += score(start + offset * stride, 1, true);
+        }
+        if mb_y != 0 {
+            gain[1] += score(start + offset, stride, true);
+        }
+    }
+    if gain[0] >= 0 && gain[1] >= 0 && gain != [0, 0] {
+        return FilterConfig {
+            level: filter::WEAK_EDGE_LEVEL,
+            ..filter
+        };
+    }
+    filter
+}
+
 fn compact_filter_radius(
     requested: u32,
     quality: u32,
@@ -2426,6 +2506,63 @@ fn uv_dc_feedback_for_tile(
     enabled && mx * 8 + 8 <= uv_width && my * 8 + 8 <= uv_height
 }
 
+// Determine whether an opaque image fits a three-bit palette during the existing
+// import. A ninth distinct color ends the search for the rest of the frame.
+#[derive(Default)]
+struct SmallPalette {
+    colors: [[u8; 3]; 8],
+    used: u8,
+}
+
+impl SmallPalette {
+    fn observe(&mut self, rgb: [[u8; 3]; 4]) {
+        if self.used > 8 {
+            return;
+        }
+        let first = rgb[0];
+        for (i, color) in rgb.into_iter().enumerate() {
+            // Solid 2x2 cells need just one palette lookup. Duplicated odd-edge
+            // samples cannot introduce colors that are absent from the source.
+            if (i != 0 && color == first) || self.colors[..usize::from(self.used)].contains(&color)
+            {
+                continue;
+            }
+            self.used += 1;
+            if self.used > 8 {
+                return;
+            }
+            self.colors[usize::from(self.used) - 1] = color;
+        }
+    }
+
+    fn allocate_texture(
+        &self,
+        segments: &mut SegmentConfig,
+        quality: u32,
+        counts: [usize; 4],
+        near_neutral: bool,
+        high_loss: bool,
+    ) {
+        if matches!(quality, 60 | 75)
+            && (2..=8).contains(&self.used)
+            && !near_neutral
+            && !high_loss
+            && counts[0] != 0
+            && counts[1] == 0
+            && counts[2] == 0
+            && counts[3] != 0
+        {
+            // In a palette drawing with only uniform/smooth fill and sharp
+            // texture, residual bits concentrate on the latter. Preserve the
+            // smooth grid and widen the edge grid by one eighth of their span.
+            let texture = segmentation::TEXTURED as usize;
+            let fine = segments.qindex[segmentation::FINE_SMOOTH as usize];
+            let span = segments.qindex[texture].saturating_sub(fine);
+            segments.qindex[texture] += span.div_ceil(8);
+        }
+    }
+}
+
 // Observe only UV cells that contain visible samples. The imported lumas
 // for an odd edge repeat its visible sample, so they cannot introduce variation.
 #[derive(Clone, Copy)]
@@ -2512,7 +2649,7 @@ fn encode_observed(
         quality,
         filter,
     } = spec;
-    let allow_compact_filter = filter.is_none();
+    let allow_filter_selection = filter.is_none();
     let filter = filter.unwrap_or_else(|| FilterConfig::for_quality(quality));
     filter.validate()?;
     let width = width as usize;
@@ -2532,6 +2669,7 @@ fn encode_observed(
     let mut reconstructed_u = allocated(uv_size)?;
     let mut reconstructed_v = allocated(uv_size)?;
     let mut neutral_chroma = true;
+    let mut small_palette = SmallPalette::default();
     let mut smooth_grid_source = SmoothGridSource::new();
     let mut rgb_error_sum = 0u64;
     for cy in 0..padded_h / 2 {
@@ -2555,6 +2693,9 @@ fn encode_observed(
             let visible_width = width.saturating_sub(cx * 2).min(2);
             let visible_height = height.saturating_sub(cy * 2).min(2);
             let visible = visible_width > 0 && visible_height > 0;
+            if visible && quality <= 75 {
+                small_palette.observe(rgb);
+            }
             smooth_grid_source.observe(luma, u, v, visible);
             if visible && (quality == 60 || quality == 75 || smooth_grid_source.near_neutral) {
                 rgb_error_sum += crate::color::nearest_chroma_rgb_error(
@@ -3084,6 +3225,15 @@ fn encode_observed(
     if let Some((config, allocation_deltas)) = activity_plan {
         segments = config;
         deltas = allocation_deltas;
+    } else {
+        small_palette.allocate_texture(
+            &mut segments,
+            requested_quality,
+            class_counts,
+            smooth_grid_source.near_neutral,
+            crate::presets::chroma_loss_limit(width as u32, height as u32)
+                .is_none_or(|limit| rgb_error_sum > limit),
+        );
     }
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
@@ -3104,6 +3254,16 @@ fn encode_observed(
     drop(run_profile);
     activity.release_map();
     segments = segments.with_activity_edges(activity_filter_edges, deltas);
+    let filter = sampled_reconstruction_filter(
+        filter,
+        (requested_quality, quality),
+        (allow_filter_selection, low_curvature, high_chroma_loss),
+        class_counts,
+        segments,
+        (width, height, padded_w),
+        (&source_y, &reconstructed_y),
+        &blocks,
+    );
     if !refinement_log.is_empty() || !baseline_overrides.is_empty() {
         let extended_sizes =
             count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
@@ -3324,7 +3484,7 @@ fn encode_observed(
     drop(refinement_log);
     let wire_alias = segments.mixed_q60_wire_alias(class_counts, mixed_y1_ac);
     let mut proposed_filter = None;
-    if allow_compact_filter {
+    if allow_filter_selection {
         if let Some(radius) = compact_filter_radius(
             requested_quality,
             quality,
@@ -4609,9 +4769,10 @@ enum PreviewTrial {
 
 /// One step initializes or copies at most 64 KiB, converts one YUV row pair,
 /// classifies, observes source activity for, analyzes or filters one
-/// macroblock, finalizes the bounded activity histogram, scores at most 1,024 profile pixels
-/// or 64 moment blocks, codes
-/// one macroblock, or assembles at most 64 KiB. Quality-cache chunks are
+/// macroblock, finalizes the bounded activity histogram, scores at most 1,024
+/// profile pixels or 64 moment blocks, codes one macroblock, or assembles at
+/// most 64 KiB. The final analysis step can also compare up to 128 luma edge
+/// samples for filter selection. Quality-cache chunks are
 /// allocated and released at most 64 KiB per step. The host owns scheduling
 /// and cancellation between calls.
 pub(crate) struct FrameEncoder {
@@ -4621,7 +4782,7 @@ pub(crate) struct FrameEncoder {
     activity_filter_edges: [u16; 4],
     effective_quality: u32,
     filter: FilterConfig,
-    allow_compact_filter: bool,
+    allow_filter_selection: bool,
     compact_filter_search: Option<compact_filter::Search>,
     compact_filter_recount: Option<CompactFilterRecount>,
     input: Vec<u8>,
@@ -4663,6 +4824,7 @@ pub(crate) struct FrameEncoder {
     luma_bias: bool,
     omit_display_refinement: bool,
     neutral_chroma: bool,
+    small_palette: SmallPalette,
     smooth_grid_source: SmoothGridSource,
     rgb_error_sum: u64,
     high_chroma_loss: bool,
@@ -4757,7 +4919,7 @@ impl FrameEncoder {
         plan: ResourcePlan,
         filter: Option<FilterConfig>,
     ) -> Result<Self, Status> {
-        let allow_compact_filter = filter.is_none();
+        let allow_filter_selection = filter.is_none();
         let filter = filter.unwrap_or_else(|| FilterConfig::for_quality(request.quality));
         filter.validate().map_err(encode_status)?;
         let input_capacity =
@@ -4792,7 +4954,7 @@ impl FrameEncoder {
             activity_filter_edges: [0; 4],
             effective_quality: request.quality,
             filter,
-            allow_compact_filter,
+            allow_filter_selection,
             compact_filter_search: None,
             compact_filter_recount: None,
             input,
@@ -4834,6 +4996,7 @@ impl FrameEncoder {
             luma_bias: false,
             omit_display_refinement: false,
             neutral_chroma: true,
+            small_palette: SmallPalette::default(),
             smooth_grid_source: SmoothGridSource::new(),
             rgb_error_sum: 0,
             high_chroma_loss: false,
@@ -5137,6 +5300,9 @@ impl FrameEncoder {
             let visible_width = width.saturating_sub(cx * 2).min(2);
             let visible_height = height.saturating_sub(cy * 2).min(2);
             let visible = visible_width > 0 && visible_height > 0;
+            if visible && self.request.quality <= 75 {
+                self.small_palette.observe(rgb);
+            }
             self.smooth_grid_source.observe(luma, u, v, visible);
             if visible
                 && (self.request.quality == 60
@@ -5860,6 +6026,16 @@ impl FrameEncoder {
     }
 
     fn prepare_analysis(&mut self) -> Result<(), Status> {
+        if !self.activity.selected() {
+            self.small_palette.allocate_texture(
+                &mut self.segments,
+                self.request.quality,
+                self.class_counts,
+                self.smooth_grid_source.near_neutral,
+                crate::presets::chroma_loss_limit(self.request.width, self.request.height)
+                    .is_none_or(|limit| self.rgb_error_sum > limit),
+            );
+        }
         self.method4 = activity_matrices(self.activity.selected(), self.segments, self.deltas);
         self.header_budget = HeaderBudget::new(
             self.blocks.len(),
@@ -6045,6 +6221,24 @@ impl FrameEncoder {
             self.segments = self
                 .segments
                 .with_activity_edges(self.activity_filter_edges, self.deltas);
+            self.filter = sampled_reconstruction_filter(
+                self.filter,
+                (self.request.quality, self.effective_quality),
+                (
+                    self.allow_filter_selection,
+                    self.curvature.within_cutoff(self.blocks.len()),
+                    self.high_chroma_loss,
+                ),
+                self.class_counts,
+                self.segments,
+                (
+                    self.request.width as usize,
+                    self.request.height as usize,
+                    self.plan.padded_width as usize,
+                ),
+                (&self.source_y, &self.reconstructed_y),
+                &self.blocks,
+            );
             self.activity_filter_edges = [0; 4];
             self.joint_search = Vec::new();
             if self.refinement_log.is_empty() {
@@ -6219,7 +6413,7 @@ impl FrameEncoder {
 
     fn settle_output_sizes(&mut self, first: u32, second: u32) -> Result<(), Status> {
         let plan = self.plan.with_output_sizes(first, second)?;
-        let radius = if self.allow_compact_filter {
+        let radius = if self.allow_filter_selection {
             compact_filter_radius(
                 self.request.quality,
                 self.effective_quality,
@@ -13351,6 +13545,95 @@ mod tests {
             .unwrap();
             assert!(header.pending());
             assert!(token.pending());
+        }
+    }
+
+    #[test]
+    fn small_palette_counts_source_colors_and_stops_on_overflow() {
+        let mut palette = SmallPalette::default();
+        for n in 0..8 {
+            palette.observe([[n, n + 1, 37]; 4]);
+        }
+        palette.observe([[2, 3, 37], [7, 8, 37], [0, 1, 37], [1, 2, 37]]);
+        assert_eq!(palette.used, 8);
+        palette.observe([[42, 0, 0]; 4]);
+        let retained = palette.colors;
+        palette.observe([[99, 42, 13]; 4]);
+        assert_eq!(palette.used, 9);
+        assert_eq!(palette.colors, retained);
+        assert_eq!(std::mem::size_of::<SmallPalette>(), 25);
+    }
+
+    #[test]
+    fn palette_texture_grid_matches_sync_and_abi_for_visible_rgb_in_every_layout() {
+        let (width, height) = (35, 19);
+        let color = |x: usize, y: usize| {
+            if x < 16 {
+                [84, 121, 149]
+            } else if (x + y / 3) % 8 < 3 {
+                [161, 91, 134]
+            } else {
+                [92, 141, 115]
+            }
+        };
+        let mut rgba = Vec::new();
+        for y in 0..height {
+            for x in 0..width {
+                let [r, g, b] = color(x, y);
+                rgba.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        for quality in [60, 75, 85] {
+            let expected = encode_textured(
+                &rgba,
+                width as u32,
+                height as u32,
+                (width * 4) as u32,
+                0,
+                quality,
+            )
+            .unwrap();
+            for layout in 0..=4 {
+                let stride = width * if layout == 4 { 3 } else { 4 } + 3;
+                let mut input = Vec::new();
+                for y in 0..height {
+                    for x in 0..width {
+                        let [r, g, b] = color(x, y);
+                        match layout {
+                            0 => input.extend_from_slice(&[r, g, b, 255]),
+                            1 => input.extend_from_slice(&[b, g, r, 255]),
+                            2 => input.extend_from_slice(&[r, g, b, x as u8]),
+                            3 => input.extend_from_slice(&[b, g, r, y as u8]),
+                            _ => input.extend_from_slice(&[r, g, b]),
+                        }
+                    }
+                    input.extend_from_slice(&[211, 213, 217]);
+                }
+                input.shrink_to_fit();
+                let request = Request {
+                    quality,
+                    ..engine_request(width, height, layout, &input, stride)
+                };
+                let plan = ResourcePlan::checked(request).unwrap();
+                let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+                assert_eq!(engine.small_palette.used, if quality == 85 { 0 } else { 3 });
+                assert!(engine.class_counts[0] > 0 && engine.class_counts[3] > 0);
+                assert_eq!(engine.class_counts[1..3], [0, 0]);
+                assert_eq!(engine.segments.qindex[0], 6);
+                assert_eq!(
+                    engine.segments.qindex[3],
+                    match quality {
+                        60 => 36,
+                        75 => 31,
+                        _ => 14,
+                    }
+                );
+                assert_eq!(
+                    engine.output(),
+                    expected,
+                    "layout={layout} quality={quality}"
+                );
+            }
         }
     }
 
