@@ -5,7 +5,7 @@
 
 use crate::ac_quant::{Deltas, AC_QUANT};
 use crate::prediction::{self, LargeMode};
-use crate::segmentation::Config;
+use crate::segmentation::{Config, CurvatureTotals, CURVATURE_CUTOFF, TEXTURED};
 use crate::transform;
 use std::array;
 
@@ -71,23 +71,62 @@ struct Allocation {
 }
 
 impl Activity {
-    pub(super) fn new(count: usize) -> Option<Self> {
-        let mut alpha = Vec::new();
-        if cfg!(feature = "activity-allocation") {
-            if count > MAP_CAPACITY_BYTES {
-                return None;
-            }
-            alpha.try_reserve_exact(count).ok()?;
-            if !(count..=MAP_CAPACITY_BYTES).contains(&alpha.capacity()) {
-                return None;
-            }
-        }
-        Some(Self {
-            alpha,
+    pub(super) fn new() -> Self {
+        Self {
+            alpha: Vec::new(),
             histogram: [0; 256],
             uv_total: 0,
             allocation: None,
-        })
+        }
+    }
+
+    /// Only the completed intrinsic source census can admit activity analysis.
+    pub(super) fn start(
+        &mut self,
+        quality: u32,
+        counts: [usize; 4],
+        curvature: CurvatureTotals,
+        near_neutral: bool,
+        high_chroma_loss: bool,
+    ) -> Option<bool> {
+        debug_assert!(self.alpha.capacity() == 0 && self.allocation.is_none());
+        let count = counts.iter().sum::<usize>();
+        let textured = counts[TEXTURED as usize];
+        if !cfg!(feature = "activity-allocation")
+            || near_neutral
+            || high_chroma_loss
+            || count <= 4
+            || textured <= count / 2
+            // At q85 the intrinsic classifier only guarantees the complete
+            // curvature census when every source block is Textured.
+            || (quality == 85 && textured != count)
+        {
+            return Some(false);
+        }
+        if count > MAP_CAPACITY_BYTES {
+            return None;
+        }
+        // Both axes exclude the two end samples in each padded tile.
+        const Y_TERMS: u64 = 2 * 16 * (16 - 2);
+        const UV_TERMS: u64 = 2 * 8 * (8 - 2);
+        let cutoff = CURVATURE_CUTOFF * count as u64;
+        if curvature.sums[0] <= cutoff * Y_TERMS
+            || curvature.sums[1].min(curvature.sums[2]) <= cutoff * UV_TERMS
+        {
+            return Some(false);
+        }
+        let mut alpha = Vec::new();
+        alpha.try_reserve_exact(count).ok()?;
+        if !(count..=MAP_CAPACITY_BYTES).contains(&alpha.capacity()) {
+            return None;
+        }
+        self.alpha = alpha;
+        Some(true)
+    }
+
+    #[cfg(test)]
+    pub(super) fn map_state(&self) -> (usize, usize) {
+        (self.alpha.len(), self.alpha.capacity())
     }
 
     pub(super) fn observe(
@@ -98,9 +137,11 @@ impl Activity {
         stride: usize,
         mx: usize,
         my: usize,
-    ) {
-        if self.alpha.capacity() == 0 {
-            return;
+    ) -> Option<()> {
+        // Observation must never grow the admitted storage, including when
+        // called outside the activity stage.
+        if self.alpha.len() == self.alpha.capacity() {
+            return None;
         }
         let mut y_alpha = 0;
         let mut uv_alpha = 0;
@@ -125,24 +166,15 @@ impl Activity {
             uv_alpha = uv_alpha.max(susceptibility(&chroma));
         }
         let alpha = (255 - ((3 * y_alpha + uv_alpha + 2) >> 2)).clamp(0, 255) as u8;
-        debug_assert!(self.alpha.len() < self.alpha.capacity());
         self.alpha.push(alpha);
         self.histogram[alpha as usize] += 1;
         self.uv_total += i64::from(uv_alpha);
+        Some(())
     }
 
-    pub(super) fn finish(
-        &mut self,
-        quality: u32,
-        allow: bool,
-        near_neutral: bool,
-        native_filter: bool,
-    ) -> Option<(Config, Deltas)> {
-        if !allow || self.alpha.is_empty() {
-            self.alpha = Vec::new();
-            return None;
-        }
-        self.allocation = self.plan(quality, near_neutral, native_filter);
+    pub(super) fn finish(&mut self, quality: u32, native_filter: bool) -> Option<(Config, Deltas)> {
+        debug_assert!(!self.alpha.is_empty());
+        self.allocation = self.plan(quality, native_filter);
         if self.allocation.is_none() {
             self.alpha = Vec::new();
         }
@@ -166,7 +198,7 @@ impl Activity {
         self.allocation = None;
     }
 
-    fn plan(&self, quality: u32, near_neutral: bool, native_filter: bool) -> Option<Allocation> {
+    fn plan(&self, quality: u32, native_filter: bool) -> Option<Allocation> {
         let Cluster { alpha, beta, map } = cluster(&self.histogram);
         let qtable = &QUANTIZERS[match quality {
             60 => 0,
@@ -218,7 +250,7 @@ impl Activity {
             return None;
         }
         let levels = native_filter.then(|| groups.map(|(_, level)| level));
-        let config = Config::from_activity(quantizers, counts, near_neutral, levels);
+        let config = Config::from_activity(quantizers, counts, false, levels);
         let uv_alpha = (self.uv_total / self.alpha.len() as i64) as i32;
         let deltas = Deltas {
             uv_dc: -2,
@@ -346,5 +378,65 @@ fn cluster(histogram: &[u32; 256]) -> Cluster {
         alpha: centers.map(|a| (255 * (a - weighted_center) / span).clamp(-127, 127)),
         beta: centers.map(|a| (255 * (a - lo) / span).clamp(0, 255)),
         map,
+    }
+}
+
+#[cfg(all(test, feature = "activity-allocation"))]
+mod deferred_tests {
+    use super::*;
+
+    #[test]
+    fn deferred_activity_admission_requires_strict_curvature_and_complete_q85_census() {
+        let exact = [10 * 448, 10 * 96, 10 * 96];
+        let rough = CurvatureTotals {
+            sums: exact.map(|sum| sum + 1),
+        };
+        for quality in [60, 75, 85] {
+            for axis in 0..3 {
+                let mut sums = rough.sums;
+                sums[axis] = exact[axis];
+                let mut activity = Activity::new();
+                assert_eq!(
+                    activity.start(
+                        quality,
+                        [0, 0, 0, 5],
+                        CurvatureTotals { sums },
+                        false,
+                        false
+                    ),
+                    Some(false)
+                );
+                assert_eq!(activity.map_state(), (0, 0));
+            }
+            let mut full = Activity::new();
+            assert_eq!(
+                full.start(quality, [0, 0, 0, 5], rough, false, false),
+                Some(true)
+            );
+            let (len, capacity) = full.map_state();
+            assert_eq!(len, 0);
+            assert!((5..=MAP_CAPACITY_BYTES).contains(&capacity));
+            let mut mixed = Activity::new();
+            assert_eq!(
+                mixed.start(quality, [0, 0, 1, 4], rough, false, false),
+                Some(quality != 85)
+            );
+            if quality == 85 {
+                assert_eq!(mixed.map_state(), (0, 0));
+            }
+        }
+        for counts in [[0, 0, 0, 4], [0, 0, 3, 3]] {
+            let mut activity = Activity::new();
+            assert_eq!(activity.start(60, counts, rough, false, false), Some(false));
+            assert_eq!(activity.map_state(), (0, 0));
+        }
+        for (near_neutral, high_loss) in [(true, false), (false, true)] {
+            let mut activity = Activity::new();
+            assert_eq!(
+                activity.start(60, [0, 0, 0, 5], rough, near_neutral, high_loss),
+                Some(false)
+            );
+            assert_eq!(activity.map_state(), (0, 0));
+        }
     }
 }

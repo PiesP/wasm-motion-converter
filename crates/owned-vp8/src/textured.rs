@@ -1153,7 +1153,7 @@ fn make_i16(
     reconstruct_i16(source, stride, x, y, block, &predicted, y_steps, y2_steps)
 }
 
-fn trimmed_y2_tail(mut coefficients: [i16; 16]) -> Option<[i16; 16]> {
+fn trimmed_unit_ac_tail(mut coefficients: [i16; 16]) -> Option<[i16; 16]> {
     let mut changed = false;
     for &index in residual::SCAN[1..].iter().rev() {
         match coefficients[index] {
@@ -1167,6 +1167,22 @@ fn trimmed_y2_tail(mut coefficients: [i16; 16]) -> Option<[i16; 16]> {
     }
     // The leading DC and any units preceding a larger level are retained.
     changed.then_some(coefficients)
+}
+
+fn compact_selected_smooth_i16(mut block: Macroblock) -> Option<Macroblock> {
+    if block.y.iter().flatten().all(|&level| level == 0) {
+        block.y2 = trimmed_unit_ac_tail(block.y2)?;
+        return Some(block);
+    }
+
+    let mut changed = false;
+    for coefficients in &mut block.y {
+        if let Some(trimmed) = trimmed_unit_ac_tail(*coefficients) {
+            *coefficients = trimmed;
+            changed = true;
+        }
+    }
+    changed.then_some(block)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2502,13 +2518,8 @@ fn encode_observed(
         .map_err(|_| EncodeError::OutputLimit)?;
     let mut class_counts = [0; 4];
     let mut curvature = segmentation::CurvatureTotals::default();
-    let mut activity = Activity::new(count).ok_or(EncodeError::OutputLimit)?;
-    if crate::presets::high_chroma_loss(quality, rgb_error_sum, width as u32, height as u32) {
-        activity.release_map();
-    }
     for my in 0..blocks_y {
         for mx in 0..blocks_x {
-            activity.observe(&source_y, &source_u, &source_v, padded_w, mx, my);
             let collect_curvature = quality == 60
                 || (!neutral_chroma && (quality == 75 || class_counts[..3] == [0; 3]));
             let id = segmentation::classify_with_curvature(
@@ -2544,12 +2555,28 @@ fn encode_observed(
         neutral_chroma,
         smooth_grid_source.allows_allocation(rgb_error_sum, width as u32, height as u32),
     );
-    let activity_plan = activity.finish(
-        quality,
-        !high_chroma_loss,
-        original_segments.neutral_smooth_grid,
-        filter == FilterConfig::for_quality(quality),
-    );
+    let mut activity = Activity::new();
+    let activity_plan = if activity
+        .start(
+            quality,
+            class_counts,
+            curvature,
+            smooth_grid_source.near_neutral,
+            high_chroma_loss,
+        )
+        .ok_or(EncodeError::OutputLimit)?
+    {
+        for my in 0..blocks_y {
+            for mx in 0..blocks_x {
+                activity
+                    .observe(&source_y, &source_u, &source_v, padded_w, mx, my)
+                    .ok_or(EncodeError::InvalidInput)?;
+            }
+        }
+        activity.finish(quality, filter == FilterConfig::for_quality(quality))
+    } else {
+        None
+    };
     let medium_textured_luma = crate::presets::medium_textured_luma(
         quality,
         class_counts,
@@ -3544,24 +3571,15 @@ fn analyze_one(
     let (score, li, ui) = best.ok_or(EncodeError::OutputLimit)?;
     let mut selected_luma = &luma[li];
     let mut selected_uv = uv[ui].clone();
-    // On the uniform smooth grid, try one shorter Y2 tail for an I16 tile whose Y1 AC is
-    // already empty. Keep the existing I16 and UV prediction modes and test
-    // with the same reconstructed boundaries, rate, skip and header budget.
+    // Keep a single extra candidate. When Y1 has AC, price shorter Y1
+    // tails with the original Y2. Already-empty Y1 keeps its Y2 trial.
     let compact_luma = if !segments.enabled
         && segments.neutral_smooth_grid
         && selected_luma.block.i16
         && x + 16 <= visible_width
         && y + 16 <= visible_height
-        && selected_luma
-            .block
-            .y
-            .iter()
-            .flatten()
-            .all(|&level| level == 0)
     {
-        trimmed_y2_tail(selected_luma.block.y2).map(|y2| {
-            let mut compact = selected_luma.block;
-            compact.y2 = y2;
+        compact_selected_smooth_i16(selected_luma.block).map(|compact| {
             let (top, left, corner) = edge::<16>(reconstructed_y, padded_w, x, y);
             let predicted = prediction::predict_large(
                 &top,
@@ -4257,7 +4275,7 @@ fn count_partitions(
     Ok((first.finish_size()?, second.finish_size()?))
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 enum Stage {
     Initialize = 0,
@@ -4306,6 +4324,7 @@ enum Stage {
     CountAliasUpdates = 59,
     CountAliasSuffix = 60,
     CountAliasBlocks = 61,
+    SourceActivity = 62,
 }
 
 struct RefinedCheckpoint {
@@ -4393,7 +4412,8 @@ enum PreviewTrial {
 }
 
 /// One step initializes or copies at most 64 KiB, converts one YUV row pair,
-/// analyzes or filters one macroblock, scores at most 1,024 profile pixels
+/// classifies, observes source activity for, analyzes or filters one
+/// macroblock, finalizes the bounded activity histogram, scores at most 1,024 profile pixels
 /// or 64 moment blocks, codes
 /// one macroblock, or assembles at most 64 KiB. Quality-cache chunks are
 /// allocated and released at most 64 KiB per step. The host owns scheduling
@@ -4562,8 +4582,7 @@ impl FrameEncoder {
         Ok(Self {
             request,
             plan,
-            activity: Activity::new(plan.macroblock_count as usize)
-                .ok_or(Status::MemoryAdmission)?,
+            activity: Activity::new(),
             activity_filter_edges: [0; 4],
             effective_quality: request.quality,
             filter,
@@ -4717,6 +4736,7 @@ impl FrameEncoder {
             }
             Stage::Color => (self.cursor as u32, pairs),
             Stage::Classify
+            | Stage::SourceActivity
             | Stage::Analyze
             | Stage::CollectStats
             | Stage::PreviewCollectStats
@@ -4930,14 +4950,6 @@ impl FrameEncoder {
         self.cursor += 1;
         if self.cursor == self.plan.padded_height as usize / 2 {
             self.cursor = 0;
-            if crate::presets::high_chroma_loss(
-                self.request.quality,
-                self.rgb_error_sum,
-                self.request.width,
-                self.request.height,
-            ) {
-                self.activity.release_map();
-            }
             self.stage = Stage::Classify;
         }
         Ok(())
@@ -5415,14 +5427,6 @@ impl FrameEncoder {
         let collect_curvature = self.request.quality == 60
             || (!self.neutral_chroma
                 && (self.request.quality == 75 || self.class_counts[..3] == [0; 3]));
-        self.activity.observe(
-            &self.source_y,
-            &self.source_u,
-            &self.source_v,
-            self.plan.padded_width as usize,
-            mx,
-            my,
-        );
         let segment_id = segmentation::classify_with_curvature(
             &self.source_y,
             &self.source_u,
@@ -5594,28 +5598,67 @@ impl FrameEncoder {
                 self.neutral_chroma,
                 self.omit_display_refinement,
             );
-            let near_neutral = self.original_segments().neutral_smooth_grid;
+            if self
+                .activity
+                .start(
+                    quality,
+                    self.class_counts,
+                    self.curvature,
+                    self.smooth_grid_source.near_neutral,
+                    self.high_chroma_loss,
+                )
+                .ok_or(Status::MemoryAdmission)?
+            {
+                self.cursor = 0;
+                self.stage = Stage::SourceActivity;
+            } else {
+                self.prepare_analysis()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn source_activity_one_step(&mut self) -> Result<(), Status> {
+        if self.cursor == self.blocks.len() {
+            // Finalize separately so a single step does not accumulate both
+            // macroblock transform work and the bounded histogram traversal.
             if let Some((config, deltas)) = self.activity.finish(
-                quality,
-                !self.high_chroma_loss,
-                near_neutral,
-                self.filter == FilterConfig::for_quality(quality),
+                self.effective_quality,
+                self.filter == FilterConfig::for_quality(self.effective_quality),
             ) {
                 self.segments = config;
                 self.deltas = deltas;
             }
-            self.method4 = activity_matrices(self.activity.selected(), self.segments, self.deltas);
-            self.header_budget = HeaderBudget::new(
-                self.blocks.len(),
-                self.segments,
-                self.deltas,
-                self.filter,
-                MAX_FIRST_PARTITION_BYTES as usize,
-            )
-            .map_err(encode_status)?;
-            self.cursor = 0;
-            self.stage = Stage::Analyze;
+            return self.prepare_analysis();
         }
+        let stride = self.plan.padded_width as usize;
+        let blocks_x = stride / 16;
+        self.activity
+            .observe(
+                &self.source_y,
+                &self.source_u,
+                &self.source_v,
+                stride,
+                self.cursor % blocks_x,
+                self.cursor / blocks_x,
+            )
+            .ok_or(Status::InvalidInput)?;
+        self.cursor += 1;
+        Ok(())
+    }
+
+    fn prepare_analysis(&mut self) -> Result<(), Status> {
+        self.method4 = activity_matrices(self.activity.selected(), self.segments, self.deltas);
+        self.header_budget = HeaderBudget::new(
+            self.blocks.len(),
+            self.segments,
+            self.deltas,
+            self.filter,
+            MAX_FIRST_PARTITION_BYTES as usize,
+        )
+        .map_err(encode_status)?;
+        self.cursor = 0;
+        self.stage = Stage::Analyze;
         Ok(())
     }
 
@@ -6195,6 +6238,7 @@ impl FrameEncoder {
             Stage::Initialize => self.initialize_one_chunk()?,
             Stage::Color => self.color_one_pair()?,
             Stage::Classify => self.classify_one_step()?,
+            Stage::SourceActivity => self.source_activity_one_step()?,
             Stage::Analyze => self.analyze_one_step()?,
             Stage::JointRefine => self.joint_one_step()?,
             Stage::PreviewPrefix => {
@@ -6899,18 +6943,44 @@ mod tests {
     }
 
     #[test]
+    fn selected_smooth_i16_keeps_y1_and_y2_tail_alternatives_separate() {
+        let mut block = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        block.y[0][residual::SCAN[1]] = -1;
+        block.y[0][residual::SCAN[3]] = 2;
+        block.y[0][residual::SCAN[5]] = 1;
+        block.y[1][residual::SCAN[8]] = -1;
+        block.y2[0] = 9;
+        block.y2[residual::SCAN[8]] = 1;
+
+        let trimmed = compact_selected_smooth_i16(block).unwrap();
+        let mut expected = block;
+        expected.y[0][residual::SCAN[5]] = 0;
+        expected.y[1][residual::SCAN[8]] = 0;
+        assert_eq!(trimmed, expected);
+        assert!(compact_selected_smooth_i16(trimmed).is_none());
+
+        block.y = [[0; 16]; 16];
+        let trimmed = compact_selected_smooth_i16(block).unwrap();
+        block.y2[residual::SCAN[8]] = 0;
+        assert_eq!(trimmed, block);
+    }
+
+    #[test]
     fn y2_tail_trimming_retains_dc_and_earlier_units() {
         let mut coefficients = [0; 16];
         coefficients[0] = -1;
         coefficients[residual::SCAN[2]] = 1;
         coefficients[residual::SCAN[3]] = -2;
-        assert!(trimmed_y2_tail(coefficients).is_none());
+        assert!(trimmed_unit_ac_tail(coefficients).is_none());
 
         let mut longer = coefficients;
         longer[residual::SCAN[5]] = -1;
         longer[residual::SCAN[8]] = 1;
-        assert_eq!(trimmed_y2_tail(longer), Some(coefficients));
-        assert_eq!(trimmed_y2_tail([0; 16]), None);
+        assert_eq!(trimmed_unit_ac_tail(longer), Some(coefficients));
+        assert_eq!(trimmed_unit_ac_tail([0; 16]), None);
     }
 
     #[test]
@@ -13453,17 +13523,193 @@ mod tests {
     }
 
     #[cfg(feature = "activity-allocation")]
+    fn deferred_activity_rough_pixel(x: usize, y: usize) -> [u8; 3] {
+        let tile = (x / 16 + 3 * (y / 16)) % 5;
+        let amplitude = [6, 13, 23, 37, 56][tile];
+        let signal = (x * 3 + y * 5 + x * y) % 11;
+        let value = (76 + (x + y) % 12 + amplitude * usize::from(signal < 5)) as u8;
+        let u = (amplitude / 2 + 12) as u8;
+        let v = (amplitude / 2 + 9) as u8;
+        let blue = if (x / 2 + 2 * (y / 2)) % 7 < 3 {
+            value + u
+        } else {
+            value - u
+        };
+        let red = if (3 * (x / 2) + 5 * (y / 2)) % 13 < 7 {
+            value + v
+        } else {
+            value - v
+        };
+        [red, value, blue]
+    }
+
+    #[cfg(feature = "activity-allocation")]
     #[test]
     fn activity_allocation_matches_sync_and_resumable_with_odd_edges() {
-        let (width, height) = (65, 49);
-        let mut input = Vec::with_capacity(width * height * 4);
-        for y in 0..height {
-            for x in 0..width {
-                let value = 35 + ((x * x + 3 * y * y + 2 * x * y) / 112) as u8;
-                input.extend_from_slice(&[value, value, value, 255]);
+        for (width, height, quality) in [(65, 49, 60), (65, 49, 75), (64, 48, 85)] {
+            let mut input = Vec::with_capacity(width * height * 4);
+            for y in 0..height {
+                for x in 0..width {
+                    let [r, g, b] = deferred_activity_rough_pixel(x, y);
+                    input.extend([r, g, b, 255]);
+                }
             }
+            let request = Request {
+                quality,
+                ..engine_request(width, height, 0, &input, width * 4)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while engine.stage != Stage::SourceActivity {
+                assert_eq!(engine.activity.map_state(), (0, 0));
+                assert!(!engine.step().unwrap());
+            }
+            let count = engine.plan.macroblock_count;
+            let classes: Vec<u8> = engine.blocks.iter().map(|block| block.segment_id).collect();
+            assert!(engine.class_counts[segmentation::TEXTURED as usize] > count as usize / 2);
+            assert_eq!(engine.stage(), 62);
+            let (initial, capacity) = engine.activity.map_state();
+            assert_eq!(initial, 0);
+            assert!((count as usize..=crate::activity::MAP_CAPACITY_BYTES).contains(&capacity));
+            for observed in 0..count {
+                assert_eq!(engine.progress(), (observed, count));
+                assert!(!engine.step().unwrap());
+                assert_eq!(engine.stage, Stage::SourceActivity);
+                assert_eq!(
+                    engine.activity.map_state(),
+                    (observed as usize + 1, capacity)
+                );
+            }
+            assert_eq!(engine.progress(), (count, count));
+            assert!(!engine.step().unwrap());
+            assert_eq!(engine.stage, Stage::Analyze);
+            assert!(engine.activity.selected());
+            assert!(engine.method4.is_some());
+            assert!(engine
+                .blocks
+                .iter()
+                .map(|block| block.segment_id)
+                .eq(classes));
+            let expected_ids: Vec<u8> = engine
+                .blocks
+                .iter()
+                .enumerate()
+                .map(|(index, block)| engine.activity.id(index, block.segment_id))
+                .collect();
+            let actual = run_engine(engine);
+            assert!(!actual.activity.selected());
+            assert_eq!(actual.activity.map_state(), (0, 0));
+            for (block, &id) in actual.blocks.iter().zip(&expected_ids) {
+                assert_eq!(block.segment_id, id);
+            }
+            let expected = encode_textured(
+                &input,
+                request.width,
+                request.height,
+                request.stride,
+                0,
+                quality,
+            )
+            .unwrap();
+            assert_eq!(actual.output(), expected);
         }
-        for quality in [60, 75, 85] {
+    }
+
+    #[cfg(feature = "activity-allocation")]
+    #[test]
+    fn deferred_activity_skips_protected_sources_without_allocation() {
+        for (width, height, quality, kind) in [
+            (65, 49, 75, 0),
+            (64, 32, 85, 1),
+            (32, 32, 60, 2),
+            (64, 32, 60, 3),
+            (64, 48, 85, 4),
+        ] {
+            let mut input = Vec::with_capacity(width * height * 4);
+            for y in 0..height {
+                for x in 0..width {
+                    let rgb = match kind {
+                        0 => {
+                            let value = 35 + ((x * x + 3 * y * y + 2 * x * y) / 112) as u8;
+                            [value, value, value]
+                        }
+                        1 => [160, 64, 32],
+                        2 => {
+                            let value = 99 + ((3 * x + 7 * y) % 31) as u8;
+                            [value + 21, value, value - 18]
+                        }
+                        3 if (x + y) % 2 == 0 => [255, 0, 0],
+                        3 => [0, 255, 255],
+                        _ if x >= 48 && y >= 32 => [160, 64, 32],
+                        _ => deferred_activity_rough_pixel(x, y),
+                    };
+                    input.extend([rgb[0], rgb[1], rgb[2], 255]);
+                }
+            }
+            let request = Request {
+                quality,
+                ..engine_request(width, height, 0, &input, width * 4)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while engine.stage != Stage::Analyze {
+                assert_ne!(engine.stage, Stage::SourceActivity);
+                assert_eq!(engine.activity.map_state(), (0, 0));
+                assert!(!engine.step().unwrap());
+            }
+            assert_eq!(engine.activity.map_state(), (0, 0));
+            assert!(!engine.activity.selected());
+            match kind {
+                0 => assert!(engine.smooth_grid_source.near_neutral),
+                1 => {
+                    assert!(!engine.smooth_grid_source.near_neutral);
+                    assert_eq!(engine.class_counts[segmentation::TEXTURED as usize], 0);
+                }
+                2 => {
+                    assert!(!engine.smooth_grid_source.near_neutral);
+                    assert_eq!(engine.class_counts[segmentation::TEXTURED as usize], 4);
+                    assert_eq!(engine.plan.macroblock_count, 4);
+                }
+                3 => assert!(engine.high_chroma_loss),
+                _ => {
+                    let count = engine.blocks.len();
+                    let textured = engine.class_counts[segmentation::TEXTURED as usize];
+                    assert!(textured > count / 2 && textured < count);
+                    assert!(!engine.smooth_grid_source.near_neutral);
+                }
+            }
+            let expected = encode_textured(
+                &input,
+                request.width,
+                request.height,
+                request.stride,
+                0,
+                quality,
+            )
+            .unwrap();
+            assert_eq!(run_engine(engine).output(), expected);
+        }
+    }
+
+    #[test]
+    fn mixed_neutral_direction_pruning_matches_exhaustive_in_both_encoder_paths() {
+        let (width, height) = (32, 32);
+        for (quality, chroma_offset, texture, mixed_grid) in [
+            (60, 0, true, true),
+            (60, 2, true, true),
+            (85, 0, true, true),
+            (85, 0, false, false),
+            (85, 12, true, false),
+        ] {
+            let mut input = Vec::with_capacity(width * height * 4);
+            for y in 0..height {
+                for x in 0..width {
+                    let textured =
+                        texture && (x / 16 + y / 16) % 2 == 1 && x % 16 == 8 && y % 16 == 8;
+                    let n = 80 + (x / 4 % 2) as u8 + 4 * u8::from(textured);
+                    input.extend_from_slice(&[n, n, n - chroma_offset, 255]);
+                }
+            }
             let request = Request {
                 quality,
                 ..engine_request(width, height, 0, &input, width * 4)
@@ -13473,19 +13719,86 @@ mod tests {
             while engine.stage != Stage::Analyze {
                 engine.step().unwrap();
             }
-            assert!(engine.activity.selected());
-            assert!(engine.method4.is_some());
-            let expected_ids: Vec<u8> = engine
-                .blocks
-                .iter()
-                .enumerate()
-                .map(|(index, block)| engine.activity.id(index, block.segment_id))
-                .collect();
-            let actual = run_engine(engine);
-            assert!(!actual.activity.selected());
-            for (block, &id) in actual.blocks.iter().zip(&expected_ids) {
-                assert_eq!(block.segment_id, id);
+            let counts = if texture { [2, 0, 0, 2] } else { [4, 0, 0, 0] };
+            assert_eq!(engine.class_counts, counts);
+            let segments = engine.segments;
+            assert_eq!(segments.enabled, texture);
+            assert_eq!(segments.neutral_smooth_grid, chroma_offset <= 2);
+            assert_eq!(segments.enabled && segments.neutral_smooth_grid, mixed_grid);
+            assert_eq!(engine.mixed_y1_ac, quality == 60 && chroma_offset == 2);
+
+            assert!(engine.method4.is_none());
+            let fine = segmentation::FINE_SMOOTH;
+            if quality == 85 {
+                let expected_qindex = if mixed_grid {
+                    14
+                } else if !texture {
+                    10
+                } else {
+                    6
+                };
+                assert_eq!(segments.qindex_for(fine), expected_qindex);
             }
+            if mixed_grid {
+                // Cover both physical segment steps with the actual raster
+                // contexts. The textured tile inherits the committed first tile.
+                for (mx, source_class) in [fine, segmentation::TEXTURED].into_iter().enumerate() {
+                    assert_eq!(engine.cursor, mx);
+                    assert_eq!(engine.blocks[mx].segment_id, source_class);
+                    let qindex = segments.qindex_for(source_class);
+                    let y_steps = ac_quant::steps(qindex as u8, engine.deltas, Plane::Y1);
+                    let mean = (y_steps.dc + 15 * y_steps.ac + 8) / 16;
+                    let direction_lambda = (3 * (mean as u64).pow(2) / 128).max(1);
+                    let outer_lambda = crate::presets::lambda_for_quality(
+                        engine.rate_qindex(source_class),
+                        quality,
+                    );
+                    assert_ne!(direction_lambda, outer_lambda);
+                    let pruned = make_i4_with_pruning::<true>(
+                        &engine.source_y,
+                        &engine.reconstructed_y,
+                        width,
+                        mx,
+                        0,
+                        y_steps,
+                        &engine.above_modes,
+                        &engine.left_modes,
+                        &engine.contexts,
+                        direction_lambda,
+                        engine.mixed_y1_ac,
+                        engine.mixed_y1_ac,
+                        None,
+                    );
+                    let exhaustive = make_i4_with_pruning::<false>(
+                        &engine.source_y,
+                        &engine.reconstructed_y,
+                        width,
+                        mx,
+                        0,
+                        y_steps,
+                        &engine.above_modes,
+                        &engine.left_modes,
+                        &engine.contexts,
+                        direction_lambda,
+                        engine.mixed_y1_ac,
+                        engine.mixed_y1_ac,
+                        None,
+                    );
+                    assert_eq!(pruned.0.block, exhaustive.0.block);
+                    assert_eq!(pruned.0.tile, exhaustive.0.tile);
+                    assert_eq!(pruned.0.distortion, exhaustive.0.distortion);
+                    assert_eq!(pruned.1, exhaustive.1);
+                    for _ in 0..10_000 {
+                        assert!(!engine.step().unwrap());
+                        if engine.stage == Stage::Analyze && engine.cursor == mx + 1 {
+                            break;
+                        }
+                    }
+                    assert!(engine.stage == Stage::Analyze);
+                    assert_eq!(engine.cursor, mx + 1);
+                }
+            }
+            let actual = run_engine(engine);
             let expected = encode_textured(
                 &input,
                 request.width,

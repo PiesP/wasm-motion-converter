@@ -313,23 +313,31 @@ ChromaticRamp blocks. It refines the UV DC index by one and keeps the ordinary Y
 
 For a frame with varied visible imported luma, U and V both within one unit
 of 128, and visible RGB import error within the existing chroma-loss bound,
-the FineSmooth class uses the rounded-up midpoint between q6 and the
-preset's monochrome texture index if only FineSmooth and Textured classes
-are occupied. Mixed q85 uses the monochrome texture index for FineSmooth.
-A wholly FineSmooth field uses I16 prediction. A mixed field keeps I4
-and I16 and uses the mean physical Y1 quantizer to price I4 direction
-trials. The final macroblock comparison keeps its complete ordinary cost. Eligible full chroma tiles can seed local
-UV DC feedback from the actual committed top and left reconstruction
-errors. The physical grid and the separately selected mode-cost reference
-are shared by the synchronous encoder and the resumable ABI.
+the FineSmooth class can use a modified grid when FlatSmooth and
+ChromaticRamp are absent. Its initial qindex is the rounded-up midpoint between q6
+and the preset's monochrome texture index. At q85, a field with Textured
+blocks uses the monochrome texture index for FineSmooth.
+A wholly FineSmooth field uses I16 prediction. While segmentation remains
+active on a mixed near-neutral grid, the encoder prices I4 direction and
+residual trials using the mean physical Y1 quantizer. At q60, a field
+eligible for the mixed Y1 AC profile also uses half of this weight for the
+selected I4 subblock's AC-neighbor trial. The final macroblock comparison
+uses its ordinary weight and full cost. Eligible full chroma tiles can
+seed local UV DC feedback from the committed top and left reconstruction
+errors. The synchronous encoder and the resumable ABI share these rules.
 
-On a wholly FineSmooth near-neutral grid, the selected I16 mode can
-drop a trailing unit Y2 AC coefficient when the reconstructed tile and
-context-dependent token cost improve the local score. Mixed rough
-q60 fields with ramp and texture classes and chroma leading luma move
-the UV AC delta halfway toward UV DC. In the low-curvature q75 rate
-selector, an expensive map with fine and flat blocks, no ramps, and
-at most one textured block per 32 can also use the shared q60 profile.
+On a wholly FineSmooth near-neutral grid, a selected full I16 tile with
+empty Y1 residuals can trim a scan-order suffix of unit Y2 AC levels,
+preserving the DC and every level through the last AC magnitude above one.
+The trial must strictly lower the combined reconstruction distortion and
+context-dependent syntax cost under the existing skip and header limits.
+Mixed q60 fields with ramp and texture classes can move UV AC halfway
+toward UV DC when both luma and chroma exceed the curvature cutoff and
+chroma leads luma. This requires at least one full tile and import error
+within the q60 bound. In the low-curvature q75 rate selector, an expensive
+map with fine and flat blocks, no ramps, and up to one textured block per
+32 can also use the shared q60 profile when chroma is non-neutral and
+the import error is within the q60 bound.
 
 For mixed low-curvature frames that retain the q75 rate profile, the first
 rate point raised the four segment qindices by four and compensated

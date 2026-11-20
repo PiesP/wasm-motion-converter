@@ -470,7 +470,8 @@ pub(crate) fn class_qindices(quality: u32, neutral_chroma: bool) -> [usize; 4] {
 
 /// Curvature selects smooth tiles. Chroma neutrality or three constant planes
 /// select the finest class; otherwise range separates flat colors from ramps. Tile
-/// boundaries are excluded so padding cannot create edges.
+/// boundaries are excluded. A partial tile includes replicated samples beyond
+/// the visible edge, so its interior second differences can reflect that transition.
 #[cfg(test)]
 pub(crate) fn classify(y: &[u8], u: &[u8], v: &[u8], y_stride: usize, mx: usize, my: usize) -> u8 {
     classify_with_curvature(y, u, v, y_stride, mx, my, None)
