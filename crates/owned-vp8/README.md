@@ -290,12 +290,20 @@ already-generated luma choice in a ChromaticFlat macroblock, it adds the
 visible luma residual's constant-component energy to ordinary distortion.
 This is the square of the signed residual sum divided by the visible sample
 count, rounded down. The score uses the existing joint header and token
-costs, rate weights, trial order, and strict tie rule. All quantizers and
-filter settings keep their existing values. A different winning mode can
-change reconstructed neighbors and output bytes. The trial adds one
-frame-local boolean and at most five visible-tile scans of 256 additions
-each inside an existing analysis step, with no added allocation or replay.
-The whole-frame quality and size gates still apply.
+costs, rate weights, trial order, and strict tie rule. The original luma
+ranking trial used the existing two-class wire map.
+
+The single-quantizer q85 rate trial uses that exact source gate and bias.
+It selects the weighted lower median of the original class qindices, with
+no additional floor, and omits VP8 segmentation. Equal populations choose
+the finer index. Source IDs and class-specific rate weights stay intact.
+Every coded block uses the selected base index with the existing UV deltas,
+mode analysis, filter, and display-refinement competition. Blocks with a
+different original qindex use different luma and chroma steps, so the trial
+requires requalification. Classification, partition preflight, final output limits,
+and the padded variant selector otherwise follow the existing paths. The
+frame-local bias takes at most five visible-tile scans of 256 additions
+inside an existing analysis step, with no added allocation or replay.
 
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those

@@ -2344,12 +2344,16 @@ fn encode_observed(
                 let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
                 let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-                let rate_qindex =
-                    if medium_textured_luma || photo_q60 || mixed_y1_ac || medium_y1_ac {
-                        original_segments.qindex_for(segment_id)
-                    } else {
-                        qindex
-                    };
+                let rate_qindex = if medium_textured_luma
+                    || photo_q60
+                    || mixed_y1_ac
+                    || medium_y1_ac
+                    || luma_bias
+                {
+                    original_segments.qindex_for(segment_id)
+                } else {
+                    qindex
+                };
                 let lambda = crate::presets::lambda_for_quality(rate_qindex, quality);
                 if !high_chroma_loss {
                     refinement_log
@@ -2609,6 +2613,9 @@ fn encode_observed(
     if medium_y1_ac {
         segments = segments.with_mixed_q75_allocation(class_counts);
         deltas = crate::presets::medium_y1_ac_deltas(deltas);
+    } else if luma_bias {
+        // Preserve class weights while coding every block at the lower median.
+        segments = original_segments.with_uniform_qindex(class_counts, 0);
     }
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
@@ -4704,6 +4711,17 @@ impl FrameEncoder {
         )
     }
 
+    fn rate_qindex(&self, source_class: u8) -> usize {
+        if self.medium_y1_ac || self.luma_bias {
+            segmentation::class_qindices(self.request.quality, self.neutral_chroma)
+                [source_class as usize]
+        } else if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
+            self.original_segments().qindex_for(source_class)
+        } else {
+            self.segments.qindex_for(source_class)
+        }
+    }
+
     fn begin_preview_reset(&mut self) {
         self.reset_plane = 0;
         self.cursor = 0;
@@ -4892,6 +4910,8 @@ impl FrameEncoder {
             if self.medium_y1_ac {
                 self.segments = self.segments.with_mixed_q75_allocation(self.class_counts);
                 self.deltas = crate::presets::medium_y1_ac_deltas(self.deltas);
+            } else if self.luma_bias {
+                self.segments = self.segments.with_uniform_qindex(self.class_counts, 0);
             }
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
@@ -4928,15 +4948,8 @@ impl FrameEncoder {
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-        let rate_qindex = if self.medium_y1_ac {
-            segmentation::class_qindices(self.request.quality, self.neutral_chroma)
-                [segment_id as usize]
-        } else if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
-            self.original_segments().qindex_for(segment_id)
-        } else {
-            qindex
-        };
-        let lambda = crate::presets::lambda_for_quality(rate_qindex, self.request.quality);
+        let lambda =
+            crate::presets::lambda_for_quality(self.rate_qindex(segment_id), self.request.quality);
         let original_rgb = (!self.omit_display_refinement).then_some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
@@ -10258,7 +10271,7 @@ mod tests {
     }
 
     #[test]
-    fn q85_smooth_pair_luma_bias_matches_sync_and_preserves_other_presets() {
+    fn q85_smooth_pair_uniform_luma_bias_matches_sync_and_preserves_other_presets() {
         let (width, height) = (31, 15);
         let stride = width * 4;
         let input: Vec<_> = mixed_segment_input()
@@ -10280,7 +10293,7 @@ mod tests {
             assert_eq!(engine.filter.level, crate::presets::filter_level(quality));
             assert_eq!(engine.omit_display_refinement, quality == 60);
             assert_eq!(engine.uv_dc_feedback, quality == 60);
-            assert!(engine.segments.enabled);
+            assert_eq!(engine.segments.enabled, quality != 85);
             let sync = encode_textured(
                 &input,
                 request.width,
@@ -10292,8 +10305,41 @@ mod tests {
             .unwrap();
             assert_eq!(engine.output(), sync);
             if quality == 85 {
-                assert_eq!(engine.segments.qindex, engine.original_segments().qindex);
+                assert_eq!(engine.segments.base_qindex, 6);
+                assert_eq!(engine.segments.qindex, [6; 4]);
+                assert_eq!(engine.rate_qindex(segmentation::FINE_SMOOTH), 6);
+                assert_eq!(engine.rate_qindex(segmentation::CHROMATIC_FLAT), 15);
                 assert_eq!(engine.deltas, crate::presets::deltas(85));
+                assert_eq!(engine.blocks[0].segment_id, segmentation::FINE_SMOOTH);
+                assert_eq!(engine.blocks[1].segment_id, segmentation::CHROMATIC_FLAT);
+                let packet = engine.output();
+                let first_partition = u32::from_le_bytes([packet[0], packet[1], packet[2], 0]) >> 5;
+                let final_plan = engine.plan();
+                assert_eq!(first_partition, final_plan.first_partition_bytes);
+                assert_eq!(
+                    first_partition + final_plan.coefficient_partition_bytes + 10,
+                    final_plan.frame_bytes
+                );
+                assert_eq!(final_plan.host_output_copy_bytes, final_plan.frame_bytes);
+                assert_eq!(packet.len(), final_plan.frame_bytes as usize);
+                assert_eq!(
+                    plan.with_output_sizes(MAX_FIRST_PARTITION_BYTES as u32 + 1, 1),
+                    Err(Status::PartitionLimit)
+                );
+
+                let tight = Request {
+                    output_limit: 1,
+                    ..request
+                };
+                let tight_plan = ResourcePlan::checked(tight).unwrap();
+                let mut job = FrameEncoder::new(tight, input.clone(), tight_plan).unwrap();
+                let failure = (0..10_000).find_map(|_| match job.step() {
+                    Ok(false) => None,
+                    Ok(true) => panic!("undersized request published an output"),
+                    Err(error) => Some(error),
+                });
+                assert_eq!(failure, Some(Status::OutputLimit));
+                assert!(job.output().is_empty());
             } else {
                 let mut control = FrameEncoder::new(request, input.clone(), plan).unwrap();
                 while control.stage != Stage::Analyze {

@@ -213,7 +213,7 @@ impl Config {
         cost
     }
 
-    fn with_uniform_qindex(self, counts: [usize; 4], minimum_qindex: usize) -> Self {
+    pub(crate) fn with_uniform_qindex(self, counts: [usize; 4], minimum_qindex: usize) -> Self {
         let mut weighted_indices =
             std::array::from_fn::<_, 4, _>(|id| (self.qindex[id], counts[id]));
         weighted_indices.sort_unstable_by_key(|&(qindex, _)| qindex);
@@ -517,6 +517,31 @@ mod tests {
             assert!(!selected.enabled);
             assert_eq!(selected.base_qindex, expected);
             assert_eq!(selected.qindex, [expected; 4]);
+        }
+    }
+
+    #[test]
+    fn q85_unfloored_weighted_lower_median_keeps_the_majority_grid_and_breaks_ties_low() {
+        for (counts, expected) in [([1, 1, 0, 0], 6), ([3, 1, 0, 0], 6), ([113, 287, 0, 0], 15)] {
+            let original = Config::from_counts(85, counts, counts.iter().sum(), false);
+            assert!(original.enabled && !original.map_exceeds_rate_allowance(counts));
+            assert_eq!(
+                (
+                    original.qindex_for(FINE_SMOOTH),
+                    original.qindex_for(CHROMATIC_FLAT)
+                ),
+                (6, 15)
+            );
+            let selected = original.with_uniform_qindex(counts, 0);
+            assert!(!selected.enabled);
+            assert_eq!(selected.base_qindex, expected);
+            assert_eq!(selected.qindex, [expected; 4]);
+            let mut header = crate::rate::SymbolCounter::default();
+            selected.write_header(&mut header, 4).unwrap();
+            for id in [FINE_SMOOTH, CHROMATIC_FLAT] {
+                selected.write_id(&mut header, id).unwrap();
+            }
+            assert_eq!(header.count, 1);
         }
     }
 
