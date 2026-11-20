@@ -122,20 +122,30 @@ pub(crate) fn medium_textured_deltas(mut original: Deltas) -> Deltas {
     original
 }
 
-pub(crate) fn photo_q60_all_texture(
+pub(crate) fn ordinary_q60_all_texture(
     quality: u32,
     counts: [usize; 4],
     total: usize,
     neutral_chroma: bool,
     high_chroma_loss: bool,
-    low_curvature: bool,
 ) -> bool {
     quality == 60
         && !neutral_chroma
         && !high_chroma_loss
         && total > 0
         && counts[crate::segmentation::TEXTURED as usize] == total
-        && low_curvature
+}
+
+pub(crate) fn high_curvature_q60_textured_deltas(
+    mut selected: Deltas,
+    ordinary_q60_texture: bool,
+    low_curvature: bool,
+) -> Deltas {
+    if ordinary_q60_texture && !low_curvature {
+        // Keep the ordinary q60 base and UV DC grid. Use the same qindex for UV AC.
+        selected.uv_ac = selected.uv_dc;
+    }
+    selected
 }
 
 pub(crate) fn mixed_y1_ac_profile(
@@ -325,7 +335,7 @@ mod tests {
     #[test]
     fn photo_allocation_requires_exact_source_profile() {
         let all = [0, 0, 0, 4];
-        assert!(photo_q60_all_texture(60, all, 4, false, false, true));
+        assert!(ordinary_q60_all_texture(60, all, 4, false, false));
         for (quality, counts, total, neutral, high_loss) in [
             (75, all, 4, false, false),
             (85, all, 4, false, false),
@@ -334,11 +344,10 @@ mod tests {
             (60, all, 4, true, false),
             (60, all, 4, false, true),
         ] {
-            assert!(!photo_q60_all_texture(
-                quality, counts, total, neutral, high_loss, true
+            assert!(!ordinary_q60_all_texture(
+                quality, counts, total, neutral, high_loss
             ));
         }
-        assert!(!photo_q60_all_texture(60, all, 4, false, false, false));
 
         let q60 = photo_allocation_deltas(deltas(60), true, false);
         assert_eq!(
@@ -353,6 +362,39 @@ mod tests {
         let q75 = photo_allocation_deltas(medium, false, true);
         assert_eq!((q75.uv_dc, q75.uv_ac), (-11, -7));
         assert_eq!(photo_allocation_deltas(medium, false, false), medium);
+    }
+
+    #[test]
+    fn ordinary_q60_high_curvature_changes_only_uv_ac_steps() {
+        use crate::ac_quant::{steps, Plane, AC_QUANT};
+
+        let before = deltas(60);
+        let qindex = textured_qindex(60, false) as u8;
+        let after = high_curvature_q60_textured_deltas(before, true, false);
+        assert_eq!(
+            after,
+            Deltas {
+                uv_ac: before.uv_dc,
+                ..before
+            }
+        );
+        assert_eq!(steps(qindex, before, Plane::UV).ac, AC_QUANT[21]);
+        assert_eq!(steps(qindex, after, Plane::UV).ac, AC_QUANT[28]);
+        assert_eq!(
+            steps(qindex, after, Plane::UV).dc,
+            steps(qindex, before, Plane::UV).dc
+        );
+        for plane in [Plane::Y1, Plane::Y2] {
+            assert_eq!(steps(qindex, after, plane), steps(qindex, before, plane));
+        }
+        assert_eq!(
+            high_curvature_q60_textured_deltas(before, true, true),
+            before
+        );
+        assert_eq!(
+            high_curvature_q60_textured_deltas(before, false, false),
+            before
+        );
     }
 
     #[test]
