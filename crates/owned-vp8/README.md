@@ -284,6 +284,16 @@ frame-local flags and scratch bound cover the trial. Its common quantizer
 changes effective luma and chroma steps, so the frozen frame quality and size
 gates apply.
 
+A separate q75 rate trial covers the ordinary at-or-below-budget map path.
+It requires non-neutral low-curvature source planes and both FineSmooth and
+ChromaticFlat, with no other class present. The wire uses one quantizer at
+the existing q75 chromatic-ramp index. It keeps the ordinary luma and UV
+deltas, source-class rate weights, filter, and display refinement policy.
+The full analysis and exact final selector still run. Quantized steps can
+change the selected modes and reconstructed pixels. One frame-local boolean
+preserves the source rate reference inside the existing engine scratch bound.
+This trial does not apply to q60 or q85.
+
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction

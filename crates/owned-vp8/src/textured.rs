@@ -2081,6 +2081,21 @@ fn medium_mixed_low_curvature(
     quality == 75 && omit_display_refinement && low_curvature
 }
 
+fn q75_smooth_pair_wire_config(
+    quality: u32,
+    neutral_chroma: bool,
+    low_curvature: bool,
+    omit_display_refinement: bool,
+    class_counts: [usize; 4],
+) -> Option<SegmentConfig> {
+    (quality == 75
+        && !neutral_chroma
+        && low_curvature
+        && !omit_display_refinement
+        && matches!(class_counts, [fine, flat, 0, 0] if fine > 0 && flat > 0))
+    .then(|| SegmentConfig::nonsegmented(crate::presets::chromatic_ramp_qindex(75)))
+}
+
 fn uv_dc_feedback_for_tile(
     enabled: bool,
     mx: usize,
@@ -2261,6 +2276,13 @@ fn encode_observed(
         class_counts,
     );
     let medium_y1_ac = medium_mixed_low_curvature(quality, omit_display_refinement, low_curvature);
+    let q75_smooth_pair = q75_smooth_pair_wire_config(
+        quality,
+        neutral_chroma,
+        low_curvature,
+        omit_display_refinement,
+        class_counts,
+    );
     let uv_dc_feedback = mixed_y1_ac || medium_y1_ac;
     let photo_q75 = medium_textured_luma && !neutral_chroma;
     let original_deltas = if high_chroma_loss {
@@ -2304,12 +2326,16 @@ fn encode_observed(
                 let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
                 let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-                let rate_qindex =
-                    if medium_textured_luma || photo_q60 || mixed_y1_ac || medium_y1_ac {
-                        original_segments.qindex_for(segment_id)
-                    } else {
-                        qindex
-                    };
+                let rate_qindex = if medium_textured_luma
+                    || photo_q60
+                    || mixed_y1_ac
+                    || medium_y1_ac
+                    || q75_smooth_pair.is_some()
+                {
+                    original_segments.qindex_for(segment_id)
+                } else {
+                    qindex
+                };
                 let lambda = crate::presets::lambda_for_quality(rate_qindex, quality);
                 if !high_chroma_loss {
                     refinement_log
@@ -2568,6 +2594,8 @@ fn encode_observed(
     if medium_y1_ac {
         segments = segments.with_mixed_q75_allocation(class_counts);
         deltas = crate::presets::medium_y1_ac_deltas(deltas);
+    } else if let Some(wire) = q75_smooth_pair {
+        segments = wire;
     }
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
@@ -3804,6 +3832,7 @@ pub(crate) struct FrameEncoder {
     photo_q60: bool,
     mixed_y1_ac: bool,
     medium_y1_ac: bool,
+    q75_smooth_pair: bool,
     uv_dc_feedback: bool,
     omit_display_refinement: bool,
     neutral_chroma: bool,
@@ -3957,6 +3986,7 @@ impl FrameEncoder {
             photo_q60: false,
             mixed_y1_ac: false,
             medium_y1_ac: false,
+            q75_smooth_pair: false,
             uv_dc_feedback: false,
             omit_display_refinement: false,
             neutral_chroma: true,
@@ -4648,6 +4678,17 @@ impl FrameEncoder {
         )
     }
 
+    fn rate_qindex(&self, source_class: u8) -> usize {
+        if self.medium_y1_ac || self.q75_smooth_pair {
+            segmentation::class_qindices(self.request.quality, self.neutral_chroma)
+                [source_class as usize]
+        } else if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
+            self.original_segments().qindex_for(source_class)
+        } else {
+            self.segments.qindex_for(source_class)
+        }
+    }
+
     fn begin_preview_reset(&mut self) {
         self.reset_plane = 0;
         self.cursor = 0;
@@ -4813,6 +4854,14 @@ impl FrameEncoder {
                 self.omit_display_refinement,
                 low_curvature,
             );
+            let q75_smooth_pair = q75_smooth_pair_wire_config(
+                self.request.quality,
+                self.neutral_chroma,
+                low_curvature,
+                self.omit_display_refinement,
+                self.class_counts,
+            );
+            self.q75_smooth_pair = q75_smooth_pair.is_some();
             self.uv_dc_feedback = self.mixed_y1_ac || self.medium_y1_ac;
             self.segments = self
                 .segments
@@ -4830,6 +4879,8 @@ impl FrameEncoder {
             if self.medium_y1_ac {
                 self.segments = self.segments.with_mixed_q75_allocation(self.class_counts);
                 self.deltas = crate::presets::medium_y1_ac_deltas(self.deltas);
+            } else if let Some(wire) = q75_smooth_pair {
+                self.segments = wire;
             }
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
@@ -4866,15 +4917,8 @@ impl FrameEncoder {
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-        let rate_qindex = if self.medium_y1_ac {
-            segmentation::class_qindices(self.request.quality, self.neutral_chroma)
-                [segment_id as usize]
-        } else if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
-            self.original_segments().qindex_for(segment_id)
-        } else {
-            qindex
-        };
-        let lambda = crate::presets::lambda_for_quality(rate_qindex, self.request.quality);
+        let lambda =
+            crate::presets::lambda_for_quality(self.rate_qindex(segment_id), self.request.quality);
         let original_rgb = (!self.omit_display_refinement).then_some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
@@ -10143,6 +10187,107 @@ mod tests {
         assert!(omit_display_refinement(
             60, true, false, segments, expensive,
         ));
+    }
+
+    #[test]
+    fn q75_smooth_pair_wire_config_requires_the_ordinary_cheap_map_path() {
+        let counts = [3, 5, 0, 0];
+        let wire = q75_smooth_pair_wire_config(75, false, true, false, counts).unwrap();
+        assert!(!wire.enabled);
+        assert_eq!(wire.qindex, [crate::presets::chromatic_ramp_qindex(75); 4]);
+        for quality in [60, 85] {
+            assert!(q75_smooth_pair_wire_config(quality, false, true, false, counts).is_none());
+        }
+        assert!(q75_smooth_pair_wire_config(75, true, true, false, counts).is_none());
+        assert!(q75_smooth_pair_wire_config(75, false, false, false, counts).is_none());
+        assert!(q75_smooth_pair_wire_config(75, false, true, true, counts).is_none());
+        for counts in [[3, 5, 1, 0], [3, 5, 0, 1], [0, 5, 0, 0], [3, 0, 0, 0]] {
+            assert!(q75_smooth_pair_wire_config(75, false, true, false, counts).is_none());
+        }
+    }
+
+    #[test]
+    fn q75_smooth_pair_preserves_ordinary_policies_and_other_preset_packets() {
+        let (width, height) = (31, 15);
+        let stride = width * 4;
+        let input: Vec<_> = mixed_segment_input()
+            .as_chunks::<{ 64 * 4 }>()
+            .0
+            .iter()
+            .take(height)
+            .flat_map(|row| row[..stride].iter().copied())
+            .collect();
+        for quality in [60, 75, 85] {
+            let request = Request {
+                quality,
+                ..engine_request(width, height, 0, &input, stride)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while engine.stage != Stage::Analyze {
+                engine.step().unwrap();
+            }
+            let counts = [1, 1, 0, 0];
+            assert_eq!(engine.class_counts, counts);
+            let original = engine.original_segments();
+            assert!(!original.map_exceeds_rate_allowance(counts));
+            let expected_wire = match quality {
+                60 => original.with_mixed_q60_allocation(counts, true),
+                75 => SegmentConfig::nonsegmented(crate::presets::chromatic_ramp_qindex(75)),
+                _ => original,
+            };
+            assert_eq!(engine.segments.enabled, expected_wire.enabled);
+            assert_eq!(engine.segments.base_qindex, expected_wire.base_qindex);
+            assert_eq!(engine.segments.qindex, expected_wire.qindex);
+            assert_eq!(
+                engine.segments.map_probabilities,
+                expected_wire.map_probabilities
+            );
+            assert_eq!(engine.q75_smooth_pair, quality == 75);
+            assert_eq!(engine.uv_dc_feedback, quality == 60);
+            assert_eq!(engine.omit_display_refinement, quality == 60);
+            assert!(!engine.medium_y1_ac);
+            assert_eq!(engine.filter.level, crate::presets::filter_level(quality));
+            assert_eq!(
+                engine.deltas,
+                crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(quality), quality == 60,)
+            );
+            for id in [segmentation::FINE_SMOOTH, segmentation::CHROMATIC_FLAT] {
+                assert_eq!(engine.rate_qindex(id), original.qindex_for(id));
+            }
+
+            let mut control = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while control.stage != Stage::Analyze {
+                control.step().unwrap();
+            }
+            control.q75_smooth_pair = false;
+            control.segments = original.with_mixed_q60_allocation(counts, quality == 60);
+            control.header_budget = HeaderBudget::new(
+                control.blocks.len(),
+                control.segments,
+                control.deltas,
+                control.filter,
+                MAX_FIRST_PARTITION_BYTES as usize,
+            )
+            .unwrap();
+            let control = run_engine(control);
+            let engine = run_engine(engine);
+            let sync = encode_textured(
+                &input,
+                request.width,
+                request.height,
+                request.stride,
+                0,
+                quality,
+            )
+            .unwrap();
+            assert_eq!(engine.output(), sync);
+            if quality == 75 {
+                assert_ne!(engine.output(), control.output());
+            } else {
+                assert_eq!(engine.output(), control.output());
+            }
+        }
     }
 
     #[test]
