@@ -1,4 +1,4 @@
-# #501 mixed q60 display-refinement ablation: static candidate
+# #501 mixed q60 display-refinement ablation result
 
 ## Hypothesis and retained controls
 
@@ -47,7 +47,7 @@ profile Rust tests, full ordinary crate tests, explicitly enabled independent
 native VP8/libvpx decoder tests, formatting, and Clippy. Regenerate and audit
 the owned WASM provenance, rebuild independently, verify prebuilt identity,
 and run compiled ABI2 engineering cases before a frozen source-bound measurement.
-These checks have **not run** for this static candidate.
+The engineering checkpoint below records these checks on Rust 1.99.1.
 
 Keep all 45 tuning rows and the five exposed actual-browser-RGB rows, with
 per-row PSNR at least primary minus 1 dB, SSIM at least primary minus 0.01,
@@ -75,7 +75,23 @@ is246720 raw/81997 Node gzip level-9 bytes, with initial
 All28 source pins and the artifact were independently rehashed. Provenance:
 `27ae471967d3b91f6e918b69b20a29990e30beeb14e4d59d880624bc4bf455f7`.
 
-No quality/size, product performance/resource, browser, freshV13 or delivery
-acceptance measurement has run for this point. Freeze clean signed source
-and exact module before the same exposed50 plus five original-reference
-controls. Full source-bound product qualification remains required.
+## Exposed screen result
+
+The signed implementation was measured at `5aff1357b3cbc2da95f99f2d1798b350a37e22c7`
+against the shipped patched wasm-webp module `4d438a73`. The frozen lock
+was `eeccae7df4118e285db7f8dc773e2c45d9f16c592e4585fbfa49d5392007e2b2`.
+All 45 tuning rows passed. Of the five actual q60 browser inputs, all passed
+input-relative PSNR and SSIM, and three passed the raw VP8 size limit.
+Frame 38 used 33,554 bytes against 33,402.5 allowed. Frame 76 used 12,028
+against 10,815. On the separate original-reference comparison, frame 76
+missed the PSNR floor with a delta of −1.183832 dB. All five passed SSIM.
+The five-row result digest is
+`0145c05ab69cc320299003ce61c5618e7bcc8eb38fe4c50684c15eef07a7f35b`.
+Native VP8 and libvpx independently decoded the 100 saved streams to
+matching RGB. The 45-row paired decoder receipt is
+`02828b51610ef01f61c01afa8993d353f9f8cb840d19e17c429f62867e71496e`.
+
+**RETAIN_CURRENT.** The ablation reduces the fixed-input frame 76 step count
+from 103,310 for the UV DC −9 control to 57,857. Whole-product speed remains
+unmeasured for this candidate. Its size and original-reference failures rule
+out escalation to the fresh cohort or replacement of the production fallback.
