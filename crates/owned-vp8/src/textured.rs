@@ -1039,6 +1039,28 @@ fn squared_error<const N: usize, const LEN: usize>(
     result
 }
 
+fn visible_luma_bias_energy(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    tile: &[u8; 256],
+) -> u64 {
+    debug_assert!((1..=16).contains(&width) && (1..=16).contains(&height));
+    let mut sum = 0i32;
+    for row in 0..height {
+        let offset = (y + row) * stride + x;
+        for col in 0..width {
+            sum += i32::from(tile[row * 16 + col]) - i32::from(source[offset + col]);
+        }
+    }
+    // This is the squared error of the constant component of the residual.
+    // The sum has magnitude at most 256 * 255, so its square fits in i64.
+    i64::from(sum).pow(2) as u64 / (width * height) as u64
+}
+
 fn commit_tile<const N: usize, const LEN: usize>(
     destination: &mut [u8],
     stride: usize,
@@ -2109,6 +2131,18 @@ fn rate_profile_filter(filter: FilterConfig, requested: u32, effective: u32) -> 
     }
 }
 
+fn q85_smooth_pair_luma_bias(
+    quality: u32,
+    neutral_chroma: bool,
+    omit_display_refinement: bool,
+    counts: [usize; 4],
+) -> bool {
+    quality == 85
+        && !neutral_chroma
+        && !omit_display_refinement
+        && segmentation::smooth_pair_only(counts)
+}
+
 fn uv_dc_feedback_for_tile(
     enabled: bool,
     mx: usize,
@@ -2299,6 +2333,12 @@ fn encode_observed(
         class_counts,
     );
     let medium_y1_ac = medium_mixed_low_curvature(quality, omit_display_refinement, low_curvature);
+    let luma_bias = q85_smooth_pair_luma_bias(
+        quality,
+        neutral_chroma,
+        omit_display_refinement,
+        class_counts,
+    );
     let uv_dc_feedback = mixed_y1_ac || medium_y1_ac;
     let photo_q75 = medium_textured_luma && !neutral_chroma;
     let original_deltas = if high_chroma_loss {
@@ -2342,12 +2382,16 @@ fn encode_observed(
                 let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
                 let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-                let rate_qindex =
-                    if medium_textured_luma || photo_q60 || mixed_y1_ac || medium_y1_ac {
-                        original_segments.qindex_for(segment_id)
-                    } else {
-                        qindex
-                    };
+                let rate_qindex = if medium_textured_luma
+                    || photo_q60
+                    || mixed_y1_ac
+                    || medium_y1_ac
+                    || luma_bias
+                {
+                    original_segments.qindex_for(segment_id)
+                } else {
+                    qindex
+                };
                 let lambda = crate::presets::lambda_for_quality(rate_qindex, quality);
                 if !high_chroma_loss {
                     refinement_log
@@ -2366,6 +2410,7 @@ fn encode_observed(
                     high_chroma_loss,
                     mixed_y1_ac,
                     uv_dc_feedback,
+                    luma_bias,
                     &mut reconstructed_y,
                     &mut reconstructed_u,
                     &mut reconstructed_v,
@@ -2611,6 +2656,8 @@ fn encode_observed(
     if medium_y1_ac {
         segments = segments.with_mixed_q75_allocation(class_counts);
         deltas = crate::presets::medium_y1_ac_deltas(deltas);
+    } else if luma_bias {
+        segments = original_segments.with_q85_smooth_pair_allocation(class_counts);
     }
     deltas = crate::presets::medium_high_import_deltas(
         deltas,
@@ -2878,6 +2925,7 @@ fn analyze_one(
     high_chroma_loss: bool,
     mixed_y1_ac: bool,
     uv_dc_feedback: bool,
+    luma_bias: bool,
     reconstructed_y: &mut [u8],
     reconstructed_u: &mut [u8],
     reconstructed_v: &mut [u8],
@@ -2996,6 +3044,18 @@ fn analyze_one(
     let mut luma_costs = [None; 5];
     let mut uv_costs = [None; 4];
     for (li, luma_candidate) in luma.iter().enumerate() {
+        let mut luma_distortion = luma_candidate.distortion;
+        if luma_bias && segment_id == segmentation::CHROMATIC_FLAT {
+            luma_distortion += visible_luma_bias_energy(
+                source_y,
+                padded_w,
+                x,
+                y,
+                visible_width.saturating_sub(x).min(16),
+                visible_height.saturating_sub(y).min(16),
+                &luma_candidate.tile,
+            );
+        }
         for (ui, uv_candidate) in uv.iter().enumerate() {
             let candidate = Macroblock {
                 y: luma_candidate.block.y,
@@ -3008,7 +3068,7 @@ fn analyze_one(
                 u: uv_candidate.u,
                 v: uv_candidate.v,
             };
-            let distortion = luma_candidate.distortion + uv_candidate.distortion;
+            let distortion = luma_distortion + uv_candidate.distortion;
             let Some(score) = selected_cost(
                 &candidate,
                 mx,
@@ -3858,6 +3918,7 @@ pub(crate) struct FrameEncoder {
     mixed_y1_ac: bool,
     medium_y1_ac: bool,
     uv_dc_feedback: bool,
+    luma_bias: bool,
     omit_display_refinement: bool,
     neutral_chroma: bool,
     rgb_error_sum: u64,
@@ -4012,6 +4073,7 @@ impl FrameEncoder {
             mixed_y1_ac: false,
             medium_y1_ac: false,
             uv_dc_feedback: false,
+            luma_bias: false,
             omit_display_refinement: false,
             neutral_chroma: true,
             rgb_error_sum: 0,
@@ -4681,6 +4743,17 @@ impl FrameEncoder {
         )
     }
 
+    fn rate_qindex(&self, source_class: u8) -> usize {
+        if self.medium_y1_ac || self.luma_bias {
+            segmentation::class_qindices(self.effective_quality, self.neutral_chroma)
+                [source_class as usize]
+        } else if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
+            self.original_segments().qindex_for(source_class)
+        } else {
+            self.segments.qindex_for(source_class)
+        }
+    }
+
     fn begin_preview_reset(&mut self) {
         self.reset_plane = 0;
         self.cursor = 0;
@@ -4871,6 +4944,12 @@ impl FrameEncoder {
             self.medium_y1_ac =
                 medium_mixed_low_curvature(quality, self.omit_display_refinement, low_curvature);
             self.uv_dc_feedback = self.mixed_y1_ac || self.medium_y1_ac;
+            self.luma_bias = q85_smooth_pair_luma_bias(
+                quality,
+                self.neutral_chroma,
+                self.omit_display_refinement,
+                self.class_counts,
+            );
             self.segments = self
                 .segments
                 .with_photo_q60_rebase(self.photo_q60)
@@ -4892,6 +4971,10 @@ impl FrameEncoder {
             if self.medium_y1_ac {
                 self.segments = self.segments.with_mixed_q75_allocation(self.class_counts);
                 self.deltas = crate::presets::medium_y1_ac_deltas(self.deltas);
+            } else if self.luma_bias {
+                self.segments = self
+                    .segments
+                    .with_q85_smooth_pair_allocation(self.class_counts);
             }
             self.deltas = crate::presets::medium_high_import_deltas(
                 self.deltas,
@@ -4937,15 +5020,10 @@ impl FrameEncoder {
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-        let rate_qindex = if self.medium_y1_ac {
-            segmentation::class_qindices(self.effective_quality, self.neutral_chroma)
-                [segment_id as usize]
-        } else if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
-            self.original_segments().qindex_for(segment_id)
-        } else {
-            qindex
-        };
-        let lambda = crate::presets::lambda_for_quality(rate_qindex, self.effective_quality);
+        let lambda = crate::presets::lambda_for_quality(
+            self.rate_qindex(segment_id),
+            self.effective_quality,
+        );
         let original_rgb = (!self.omit_display_refinement).then_some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
@@ -4969,6 +5047,7 @@ impl FrameEncoder {
             self.high_chroma_loss,
             self.mixed_y1_ac,
             self.uv_dc_feedback,
+            self.luma_bias,
             &mut self.reconstructed_y,
             &mut self.reconstructed_u,
             &mut self.reconstructed_v,
@@ -8203,6 +8282,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    false,
                     &mut probe_y,
                     &mut probe_u,
                     &mut probe_v,
@@ -8231,6 +8311,7 @@ mod tests {
                     &baseline.source_u,
                     &baseline.source_v,
                     None,
+                    false,
                     false,
                     false,
                     false,
@@ -9704,6 +9785,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    false,
                     &mut reconstructed_y,
                     &mut reconstructed_u,
                     &mut reconstructed_v,
@@ -10455,6 +10537,144 @@ mod tests {
         assert!(omit_display_refinement(
             60, true, false, segments, expensive,
         ));
+    }
+
+    #[test]
+    fn q85_luma_bias_energy_is_symmetric_and_counts_visible_pixels() {
+        let source = [80; 256];
+        let low = [79; 256];
+        let high = [81; 256];
+        assert_eq!(
+            visible_luma_bias_energy(&source, 16, 0, 0, 16, 16, &low),
+            256
+        );
+        assert_eq!(
+            visible_luma_bias_energy(&source, 16, 0, 0, 16, 16, &high),
+            256
+        );
+        let mut balanced = [79; 256];
+        for x in (0..256).step_by(2) {
+            balanced[x] = 81;
+        }
+        assert_eq!(squared_error::<16, 256>(&source, 16, 0, 0, &balanced), 256);
+        assert_eq!(
+            visible_luma_bias_energy(&source, 16, 0, 0, 16, 16, &balanced),
+            0
+        );
+        let mut padded = [255; 256];
+        for row in padded.as_chunks_mut::<16>().0.iter_mut().take(2) {
+            row[..3].fill(78);
+        }
+        assert_eq!(
+            visible_luma_bias_energy(&source, 16, 0, 0, 3, 2, &padded),
+            24
+        );
+    }
+
+    #[test]
+    fn q85_smooth_pair_luma_bias_only_admits_the_ordinary_cheap_map_path() {
+        let counts = [1, 1, 0, 0];
+        assert!(q85_smooth_pair_luma_bias(85, false, false, counts));
+        for quality in [60, 75] {
+            assert!(!q85_smooth_pair_luma_bias(quality, false, false, counts));
+        }
+        assert!(!q85_smooth_pair_luma_bias(85, true, false, counts));
+        assert!(!q85_smooth_pair_luma_bias(85, false, true, counts));
+        let expensive = [1024, 1024, 0, 0];
+        let segments = SegmentConfig::from_counts(85, expensive, expensive.iter().sum(), false);
+        let omit = omit_display_refinement(85, false, false, segments, expensive);
+        assert!(omit);
+        assert!(!q85_smooth_pair_luma_bias(85, false, omit, expensive));
+        for counts in [[1, 0, 0, 0], [0, 1, 0, 0], [1, 1, 1, 0], [1, 1, 0, 1]] {
+            assert!(!q85_smooth_pair_luma_bias(85, false, false, counts));
+        }
+    }
+
+    #[test]
+    fn q85_smooth_pair_uniform_luma_bias_matches_sync_and_preserves_other_presets() {
+        let (width, height) = (31, 15);
+        let stride = width * 4;
+        let input: Vec<_> = mixed_segment_input()
+            .as_chunks::<{ 64 * 4 }>()
+            .0
+            .iter()
+            .take(height)
+            .flat_map(|row| row[..stride].iter().copied())
+            .collect();
+        for quality in [60, 75, 85] {
+            let request = Request {
+                quality,
+                ..engine_request(width, height, 0, &input, stride)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            assert_eq!(engine.class_counts, [1, 1, 0, 0]);
+            assert_eq!(engine.luma_bias, quality == 85);
+            let expected_quality = if quality == 85 { 85 } else { 60 };
+            assert_eq!(engine.effective_quality, expected_quality);
+            assert_eq!(
+                engine.filter.level,
+                crate::presets::filter_level(expected_quality)
+            );
+            assert_eq!(engine.omit_display_refinement, expected_quality == 60);
+            assert_eq!(engine.uv_dc_feedback, expected_quality == 60);
+            assert!(!engine.segments.enabled);
+            let sync = encode_textured(
+                &input,
+                request.width,
+                request.height,
+                request.stride,
+                0,
+                quality,
+            )
+            .unwrap();
+            assert_eq!(engine.output(), sync);
+            if quality == 85 {
+                assert_eq!(engine.request, request);
+                assert_eq!(engine.segments.base_qindex, 11);
+                assert_eq!(engine.segments.qindex, [11; 4]);
+                assert_eq!(engine.rate_qindex(segmentation::FINE_SMOOTH), 6);
+                assert_eq!(engine.rate_qindex(segmentation::CHROMATIC_FLAT), 15);
+                assert_eq!(engine.deltas, crate::presets::deltas(85));
+                assert_eq!(engine.blocks[0].segment_id, segmentation::FINE_SMOOTH);
+                assert_eq!(engine.blocks[1].segment_id, segmentation::CHROMATIC_FLAT);
+                let packet = engine.output();
+                let first_partition = u32::from_le_bytes([packet[0], packet[1], packet[2], 0]) >> 5;
+                let final_plan = engine.plan();
+                assert_eq!(first_partition, final_plan.first_partition_bytes);
+                assert_eq!(
+                    first_partition + final_plan.coefficient_partition_bytes + 10,
+                    final_plan.frame_bytes
+                );
+                assert_eq!(final_plan.host_output_copy_bytes, final_plan.frame_bytes);
+                assert_eq!(packet.len(), final_plan.frame_bytes as usize);
+                assert_eq!(
+                    plan.with_output_sizes(MAX_FIRST_PARTITION_BYTES as u32 + 1, 1),
+                    Err(Status::PartitionLimit)
+                );
+
+                let tight = Request {
+                    output_limit: 1,
+                    ..request
+                };
+                let tight_plan = ResourcePlan::checked(tight).unwrap();
+                let mut job = FrameEncoder::new(tight, input.clone(), tight_plan).unwrap();
+                let failure = (0..10_000).find_map(|_| match job.step() {
+                    Ok(false) => None,
+                    Ok(true) => panic!("undersized request published an output"),
+                    Err(error) => Some(error),
+                });
+                assert_eq!(failure, Some(Status::OutputLimit));
+                assert!(job.output().is_empty());
+            } else {
+                let mut control = FrameEncoder::new(request, input.clone(), plan).unwrap();
+                while control.stage != Stage::Analyze {
+                    control.step().unwrap();
+                }
+                control.luma_bias = false;
+                assert_eq!(engine.output(), run_engine(control).output());
+            }
+        }
     }
 
     #[test]

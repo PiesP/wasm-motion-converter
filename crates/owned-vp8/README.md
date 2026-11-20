@@ -328,6 +328,28 @@ quantizer remain signaled in the ordinary VP8 header, with no extra wire
 metadata. This exposed trial requires separate packet and product
 qualification before adoption.
 
+A q85 luma ranking trial covers non-neutral, at-or-below-budget maps with
+both FineSmooth and ChromaticFlat as their only source classes. For each
+already-generated luma choice in a ChromaticFlat macroblock, it adds the
+visible luma residual's constant-component energy to ordinary distortion.
+This is the square of the signed residual sum divided by the visible sample
+count, rounded down. The score uses the existing joint header and token
+costs, rate weights, trial order, and strict tie rule. The original luma
+ranking trial used the existing two-class wire map.
+
+The single-quantizer q85 rate trial uses that exact source gate and bias.
+It rounds the mean of the original FineSmooth and ChromaticFlat qindices,
+weighted by their source macroblock counts, to the nearest integer. Exact
+half-integer ties round up. The resulting base index omits VP8 segmentation.
+Source IDs and class-specific rate weights stay intact.
+Every coded block uses the selected base index with the existing UV deltas,
+mode analysis, filter, and display-refinement competition. Blocks with a
+different original qindex use different luma and chroma steps, so the trial
+requires requalification. Classification, partition preflight, final output limits,
+and the padded variant selector otherwise follow the existing paths. The
+frame-local bias takes at most five visible-tile scans of 256 additions
+inside an existing analysis step, with no added allocation or replay.
+
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction
