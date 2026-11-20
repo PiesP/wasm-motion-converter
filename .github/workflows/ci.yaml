@@ -170,8 +170,8 @@ jobs:
       - name: 🦀 Prepare pinned owned WASM compiler
         if: ${{ needs.changes.outputs.unit == 'true' }}
         run: |
-          rustup toolchain install 1.99.1 --profile minimal
-          rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.100.0
 
       - name: 🔒 Rebuild and compare owned WASM
         if: ${{ needs.changes.outputs.unit == 'true' }}
@@ -180,12 +180,12 @@ jobs:
       - name: 🦀 Verify experimental VP8 engineering correctness
         if: ${{ needs.changes.outputs.unit == 'true' }}
         run: |
-          rustup component add clippy rustfmt --toolchain 1.99.1
+          rustup component add clippy rustfmt --toolchain 1.100.0
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg
-          cargo +1.99.1 fmt --manifest-path crates/owned-vp8/Cargo.toml --check
-          cargo +1.99.1 clippy --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --all-targets -- -D warnings
-          cargo +1.99.1 test --manifest-path crates/owned-vp8/Cargo.toml --locked --offline -- --include-ignored
+          cargo +1.100.0 fmt --manifest-path crates/owned-vp8/Cargo.toml --check
+          cargo +1.100.0 clippy --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --all-targets -- -D warnings
+          cargo +1.100.0 test --manifest-path crates/owned-vp8/Cargo.toml --locked --offline -- --include-ignored
           node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --check
           node --experimental-strip-types scripts/test/owned-vp8-compiled.ts
 
@@ -250,8 +250,8 @@ jobs:
       - name: 🦀 Prepare pinned owned WASM compiler
         if: ${{ needs.changes.outputs.e2e == 'true' }}
         run: |
-          rustup toolchain install 1.99.1 --profile minimal
-          rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.100.0
 
       - name: 🔒 Rebuild and compare owned WASM
         if: ${{ needs.changes.outputs.e2e == 'true' }}
@@ -321,8 +321,8 @@ jobs:
       - name: 🦀 Prepare pinned owned WASM compiler
         if: ${{ needs.changes.outputs.build == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/master') }}
         run: |
-          rustup toolchain install 1.99.1 --profile minimal
-          rustup target add wasm32-unknown-unknown --toolchain 1.99.1
+          rustup toolchain install 1.100.0 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.100.0
 
       - name: 🔒 Rebuild and compare owned WASM
         if: ${{ needs.changes.outputs.build == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/master') }}

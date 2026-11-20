@@ -130,9 +130,9 @@ describe('GIF WASM source bootstrap', () => {
     );
     expect(() => assertPinnedToolchain(pinned)).not.toThrow();
     for (const altered of [
-      pinned.replace('channel = "1.99.1"', '# channel = "1.99.1"\nchannel = "1.98.0"'),
-      pinned.replace('channel = "1.99.1"', 'channel = "1.98.0"'),
-      pinned.replace('channel = "1.99.1"', 'channel = "1.99.1"\nchannel = "1.98.0"'),
+      pinned.replace('channel = "1.100.0"', '# channel = "1.100.0"\nchannel = "1.98.0"'),
+      pinned.replace('channel = "1.100.0"', 'channel = "1.98.0"'),
+      pinned.replace('channel = "1.100.0"', 'channel = "1.100.0"\nchannel = "1.98.0"'),
     ]) {
       expect(() => assertPinnedToolchain(altered)).toThrow('toolchain pin differs');
     }
@@ -183,7 +183,7 @@ describe('GIF WASM source bootstrap', () => {
     expect(env.HOME).toBe('/private-home');
     expect(env.TASK_CREDENTIAL).toBe('private');
     expect(env.RUSTUP_HOME).toBe('/rustup');
-    expect(env.RUSTUP_TOOLCHAIN).toBe('1.99.1');
+    expect(env.RUSTUP_TOOLCHAIN).toBe('1.100.0');
     expect(env.RUSTFLAGS).toBe(
       '-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd'
     );

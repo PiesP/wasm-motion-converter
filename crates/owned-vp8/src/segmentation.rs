@@ -88,15 +88,15 @@ impl Config {
         sink.bit(true)?; // Fresh keyframe segmentation map.
         sink.bit(true)?; // Fresh segment feature data.
         sink.bit(true)?; // Absolute quantizer values (SEGMENT_ABSDATA).
-        for id in 0..4 {
+        for &qindex in &self.qindex {
             sink.bit(true)?;
-            sink.literal(self.qindex[id] as u32, 7)?;
+            sink.literal(qindex as u32, 7)?;
             sink.bit(false)?; // Positive value.
         }
         // Absolute segmentation replaces the frame's filter level. Signal
         // the same level for each active ID, leaving unused IDs at zero.
-        for id in 0..4 {
-            let active = self.active[id] && filter_level > 0;
+        for &segment_active in &self.active {
+            let active = segment_active && filter_level > 0;
             sink.bit(active)?;
             if active {
                 sink.literal(u32::from(filter_level), 6)?;
