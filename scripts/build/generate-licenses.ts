@@ -166,7 +166,7 @@ function collectOwnedVp8Attribution(): LicenseEntry {
     license: 'MIT AND BSD-3-Clause',
     url: 'https://github.com/PiesP/wasm-motion-converter/tree/master/crates/owned-vp8',
     purpose:
-      'Conversion-owned Rust VP8 candidate: original MIT code, attributed libwebp arithmetic and color tables, and RFC 6386 format constants',
+      'Conversion-owned Rust VP8 candidate: original MIT code, attributed libwebp transform, color, source-activity, quantization and filter calculations, and RFC 6386 format constants',
     notices: [
       notice('LICENSE'),
       notice('crates/owned-vp8/LICENSE.libwebp'),

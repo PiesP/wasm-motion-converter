@@ -184,8 +184,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends ffmpeg
           cargo +1.100.0 fmt --manifest-path crates/owned-vp8/Cargo.toml --check
-          cargo +1.100.0 clippy --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --all-targets -- -D warnings
-          cargo +1.100.0 test --manifest-path crates/owned-vp8/Cargo.toml --locked --offline -- --include-ignored
+          cargo +1.100.0 clippy --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --all-targets --features activity-allocation -- -D warnings
+          cargo +1.100.0 test --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --lib
+          cargo +1.100.0 test --manifest-path crates/owned-vp8/Cargo.toml --locked --offline --features activity-allocation -- --include-ignored
           node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --check
           node --experimental-strip-types scripts/test/owned-vp8-compiled.ts
 

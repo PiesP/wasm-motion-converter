@@ -124,7 +124,7 @@ impl Activity {
         Some(true)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "activity-allocation"))]
     pub(super) fn map_state(&self) -> (usize, usize) {
         (self.alpha.len(), self.alpha.capacity())
     }

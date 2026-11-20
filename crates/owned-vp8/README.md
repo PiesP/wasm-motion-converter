@@ -230,6 +230,21 @@ remains owned Rust; these adapted arithmetic/table portions retain attribution. 
 and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
 
+The pinned WASM build enables the `activity-allocation` Cargo feature. After
+intrinsic classification, ordinary colored frames with more than four macroblocks
+can use the source-activity map when Textured forms a strict majority and the
+mean absolute second difference on each of Y, U and V exceeds two. At q85 the
+intrinsic map must be entirely Textured for the existing curvature sums to cover
+the frame. High-import preview and near-neutral inputs keep the original grid.
+On an admitted frame, ABI stage 62 analyzes one source macroblock per step and
+finalizes the histogram separately. It reserves one byte per macroblock, up to
+40,280 bytes. Both coding entry points retain each intrinsic class for prediction
+policy and use the separately computed wire ID for the physical quantizer,
+plane-specific scalar matrices and filter. The best admissible I16 edge witness
+can increase its segment's initial filter strength before final size and display
+scoring. The activity, quantization and filter calculations adapt the attributed
+libwebp 1.3.2 source. Mode search and candidate selection use the owned encoder.
+
 The q75 engineering calibration applies only when every admitted macroblock is
 Textured and the visible source RGB error from nearest-chroma import is at most
 4,096 per channel. It lowers every base and segment luma qindex by two, including
@@ -327,8 +342,10 @@ seed local UV DC feedback from the committed top and left reconstruction
 errors. The synchronous encoder and the resumable ABI share these rules.
 
 On a wholly FineSmooth near-neutral grid, a selected full I16 tile with
-empty Y1 residuals can trim a scan-order suffix of unit Y2 AC levels,
-preserving the DC and every level through the last AC magnitude above one.
+empty Y1 residuals can trim a scan-order suffix of unit Y2 AC levels. When
+Y1 AC is present, the alternative trims unit AC tails independently on its
+4×4 Y1 blocks and retains Y2. Each operation preserves DC and every level
+through the last AC magnitude above one.
 The trial must strictly lower the combined reconstruction distortion and
 context-dependent syntax cost under the existing skip and header limits.
 Mixed q60 fields with ramp and texture classes can move UV AC halfway
@@ -451,6 +468,29 @@ symbols and 64 KiB of carry per step, and then yields through its host. Browser
 cancellation/resource qualification is unfinished. These plans and Node/Rust tests do not establish
 browser/GPU peak, physical zero-copy or product adoption.
 
+The compact filter trial starts after the ordinary reconstruction variant is
+settled. It admits requested q60 with the built-in filter, at most four padded
+macroblocks, and both ChromaticRamp and Textured on the same effective qindex.
+Explicit filters, high-import replay and wire aliases bypass the trial. The
+ordinary level is scored first. The trial then scores legal positive levels
+within the common qindex radius, at four-level intervals. It selects a strictly
+better complete RGB proxy SSIM only within 0.1 dB of the incumbent's RGB squared
+error. Every level filters a copy in the former source slots. Predictor history
+and the selected coefficient variant stay intact.
+
+The search reuses the existing completed-frame moment cache after variant
+scoring has released it. A resumable search step initializes or releases one
+cache chunk, copies one plane, filters one macroblock, scores at most 1,024
+visible RGB pixels for squared error, or scores at most 64 moment blocks.
+ABI stage 63 reports completed levels and the fixed trial count. When the
+search proposes a different level, the encoder recounts both normal coefficient
+models in existing bounded stages and applies the existing model tie rule.
+The incumbent remains available if the exact new packet would increase the
+raw byte count. The chosen level goes to both the frame and occupied absolute
+segment fields, with exact partition sizes at the normal output preparation
+barrier. The RGB metric is a selection proxy and requires independent decoder,
+quality and product qualification.
+
 Macroblock mode selection reserves the worst-case remaining I16 header syntax,
 all possible coefficient-update literals, and the arithmetic tail against VP8's
 first-partition limit. I4 remains eligible while its exact syntax fits that
@@ -464,10 +504,10 @@ Run from this crate with the pinned Rust toolchain:
 
 ```sh
 cargo test --locked --offline
-cargo test --locked --offline -- --ignored
+cargo test --locked --offline --features activity-allocation -- --include-ignored
 cargo fmt --check
-cargo clippy --locked --offline --all-targets -- -D warnings
-cargo build --locked --offline --release --target wasm32-unknown-unknown
+cargo clippy --locked --offline --all-targets --features activity-allocation -- -D warnings
+cargo build --locked --offline --release --features activity-allocation --target wasm32-unknown-unknown
 ```
 
 From the repository root, use the project-selected Node to generate or verify

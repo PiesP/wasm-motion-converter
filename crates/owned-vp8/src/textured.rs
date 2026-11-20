@@ -111,6 +111,9 @@ fn score_completed_sync(
     score.finish().ok_or(EncodeError::InvalidInput)
 }
 
+#[path = "compact_filter.rs"]
+mod compact_filter;
+
 #[path = "joint_refinement.rs"]
 mod joint_refinement;
 use joint_refinement::{extra_quota, JointSearch};
@@ -166,6 +169,32 @@ impl FilterConfig {
         sink.bit(false)?; // Macroblock filter deltas disabled.
         Ok(())
     }
+}
+
+fn compact_filter_radius(
+    requested: u32,
+    quality: u32,
+    high_chroma_loss: bool,
+    counts: [usize; 4],
+    segments: SegmentConfig,
+    has_wire_alias: bool,
+) -> Option<u8> {
+    let [fine, flat, ramp, textured] = counts;
+    if requested != 60
+        || quality != 60
+        || high_chroma_loss
+        || has_wire_alias
+        || fine != 0
+        || flat != 0
+        || ramp == 0
+        || textured == 0
+        || ramp + textured > compact_filter::MAX_BLOCKS
+        || !segments.enabled
+    {
+        return None;
+    }
+    let qindex = segments.qindex_for(segmentation::CHROMATIC_RAMP);
+    (qindex == segments.qindex_for(segmentation::TEXTURED)).then_some(qindex as u8)
 }
 
 const _: () = assert!(std::mem::size_of::<Macroblock>() <= 832);
@@ -2411,7 +2440,7 @@ pub fn encode_textured(
             stride,
             format,
             quality,
-            filter: FilterConfig::for_quality(quality),
+            filter: None,
         },
         0,
         |_, _, _, _, _| {},
@@ -2425,7 +2454,7 @@ struct FrameSpec {
     stride: u32,
     format: u32,
     quality: u32,
-    filter: FilterConfig,
+    filter: Option<FilterConfig>,
 }
 
 fn encode_observed(
@@ -2442,6 +2471,8 @@ fn encode_observed(
         quality,
         filter,
     } = spec;
+    let allow_compact_filter = filter.is_none();
+    let filter = filter.unwrap_or_else(|| FilterConfig::for_quality(quality));
     filter.validate()?;
     let width = width as usize;
     let height = height as usize;
@@ -3249,11 +3280,57 @@ fn encode_observed(
         }
     }
     drop(refinement_log);
-    let wire_alias = segments
-        .mixed_q60_wire_alias(class_counts, mixed_y1_ac)
-        .map(|alias| (alias, above_modes.as_mut_slice()));
+    let wire_alias = segments.mixed_q60_wire_alias(class_counts, mixed_y1_ac);
+    let mut proposed_filter = None;
+    if allow_compact_filter {
+        if let Some(radius) = compact_filter_radius(
+            requested_quality,
+            quality,
+            high_chroma_loss,
+            class_counts,
+            segments,
+            wire_alias.is_some(),
+        ) {
+            let mut search = compact_filter::Search::new(filter, radius, width, height)
+                .map_err(|_| EncodeError::OutputLimit)?;
+            loop {
+                let trial = search.advance(compact_filter::Frame {
+                    visible: (width, height),
+                    padded: (padded_w, padded_h),
+                    original: display_rgb::Original {
+                        pixels,
+                        stride,
+                        layout: format,
+                    },
+                    reconstructed: [&reconstructed_y, &reconstructed_u, &reconstructed_v],
+                    scratch: [&mut source_y, &mut source_u, &mut source_v],
+                    blocks: &blocks,
+                    segments,
+                });
+                match trial {
+                    Ok(Some(selected)) => {
+                        proposed_filter = (selected != filter).then_some(selected);
+                        break;
+                    }
+                    Ok(None) => {}
+                    Err(Status::MemoryAdmission | Status::OutputLimit) => {
+                        return Err(EncodeError::OutputLimit);
+                    }
+                    Err(_) => return Err(EncodeError::InvalidInput),
+                }
+            }
+        }
+    }
+    let wire_alias = wire_alias.map(|alias| (alias, above_modes.as_mut_slice()));
     let result = emit_segmented_frame_with_alias(
-        &blocks, width, height, segments, deltas, filter, wire_alias,
+        &blocks,
+        width,
+        height,
+        segments,
+        deltas,
+        filter,
+        wire_alias,
+        proposed_filter,
     )?;
     observe(
         &reconstructed_y,
@@ -4006,34 +4083,46 @@ fn emit_segmented_frame(
     deltas: Deltas,
     filter: FilterConfig,
 ) -> Result<Vec<u8>, EncodeError> {
-    emit_segmented_frame_with_alias(blocks, width, height, segments, deltas, filter, None)
+    emit_segmented_frame_with_alias(blocks, width, height, segments, deltas, filter, None, None)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_segmented_frame_with_alias(
     blocks: &[Macroblock],
     width: usize,
     height: usize,
     mut segments: SegmentConfig,
     deltas: Deltas,
-    filter: FilterConfig,
+    mut filter: FilterConfig,
     wire_alias: Option<(SegmentConfig, &mut [u8])>,
+    proposed_filter: Option<FilterConfig>,
 ) -> Result<Vec<u8>, EncodeError> {
     filter.validate()?;
     let blocks_x = width.div_ceil(16);
     let blocks_y = height.div_ceil(16);
+    let mut frozen = count_frozen_variant(blocks, blocks_x, blocks_y, segments, deltas, filter)?;
+    let mut total = 10usize
+        .checked_add(frozen.sizes.0)
+        .and_then(|n| n.checked_add(frozen.sizes.1))
+        .ok_or(EncodeError::OutputLimit)?;
+    if frozen.sizes.0 > 0x7ffff || total > MAX_OUTPUT_BYTES {
+        return Err(EncodeError::OutputLimit);
+    }
+    if let Some(candidate) = proposed_filter {
+        let trial = count_frozen_variant(blocks, blocks_x, blocks_y, segments, deltas, candidate)?;
+        let (first, second) = trial.sizes;
+        if first <= 0x7ffff && 10 + first + second <= total {
+            filter = candidate;
+            total = 10 + first + second;
+            frozen = trial;
+        }
+    }
     let FrozenVariant {
         model,
         skip_probability,
         sizes: mut selected,
         use_model,
-    } = count_frozen_variant(blocks, blocks_x, blocks_y, segments, deltas, filter)?;
-    let total = 10usize
-        .checked_add(selected.0)
-        .and_then(|n| n.checked_add(selected.1))
-        .ok_or(EncodeError::OutputLimit)?;
-    if selected.0 > 0x7ffff || total > MAX_OUTPUT_BYTES {
-        return Err(EncodeError::OutputLimit);
-    }
+    } = frozen;
     let selected_model = use_model.then_some(&model);
     let total = if let Some((alias, above)) = wire_alias {
         let first = count_alias_header(
@@ -4325,6 +4414,7 @@ enum Stage {
     CountAliasSuffix = 60,
     CountAliasBlocks = 61,
     SourceActivity = 62,
+    CompactFilter = 63,
 }
 
 struct RefinedCheckpoint {
@@ -4337,6 +4427,16 @@ struct RefinedCheckpoint {
     use_model: bool,
     legality: Result<(), Status>,
     quality: f64,
+}
+
+struct CompactFilterRecount {
+    incumbent: FilterConfig,
+    incumbent_sizes: (u32, u32),
+    default_sizes: (u32, u32),
+    default_frame_bytes: u32,
+    selected_frame_bytes: u32,
+    update_count: u32,
+    use_model: bool,
 }
 
 fn aligned_payload_cost(bytes: u32) -> u64 {
@@ -4425,6 +4525,9 @@ pub(crate) struct FrameEncoder {
     activity_filter_edges: [u16; 4],
     effective_quality: u32,
     filter: FilterConfig,
+    allow_compact_filter: bool,
+    compact_filter_search: Option<compact_filter::Search>,
+    compact_filter_recount: Option<CompactFilterRecount>,
     input: Vec<u8>,
     source_y: Vec<u8>,
     source_u: Vec<u8>,
@@ -4539,20 +4642,27 @@ impl FrameEncoder {
         input: Vec<u8>,
         plan: ResourcePlan,
     ) -> Result<Self, Status> {
-        Self::new_with_filter(
-            request,
-            input,
-            plan,
-            FilterConfig::for_quality(request.quality),
-        )
+        Self::new_configured(request, input, plan, None)
     }
 
+    #[cfg(test)]
     fn new_with_filter(
         request: Request,
         input: Vec<u8>,
         plan: ResourcePlan,
         filter: FilterConfig,
     ) -> Result<Self, Status> {
+        Self::new_configured(request, input, plan, Some(filter))
+    }
+
+    fn new_configured(
+        request: Request,
+        input: Vec<u8>,
+        plan: ResourcePlan,
+        filter: Option<FilterConfig>,
+    ) -> Result<Self, Status> {
+        let allow_compact_filter = filter.is_none();
+        let filter = filter.unwrap_or_else(|| FilterConfig::for_quality(request.quality));
         filter.validate().map_err(encode_status)?;
         let input_capacity =
             u32::try_from(input.capacity()).map_err(|_| Status::MemoryAdmission)?;
@@ -4586,6 +4696,9 @@ impl FrameEncoder {
             activity_filter_edges: [0; 4],
             effective_quality: request.quality,
             filter,
+            allow_compact_filter,
+            compact_filter_search: None,
+            compact_filter_recount: None,
             input,
             source_y: Vec::new(),
             source_u: Vec::new(),
@@ -4788,6 +4901,10 @@ impl FrameEncoder {
                 let (done, total) = score.progress();
                 (done as u32, total as u32)
             }),
+            Stage::CompactFilter => self
+                .compact_filter_search
+                .as_ref()
+                .map_or((0, 1), |trial| trial.progress()),
             Stage::QualityRelease => self.quality_score.as_ref().map_or((1, 1), |score| {
                 let (done, total) = score.release_progress();
                 (done as u32, total as u32)
@@ -5999,6 +6116,130 @@ impl FrameEncoder {
         Ok(())
     }
 
+    fn settle_output_sizes(&mut self, first: u32, second: u32) -> Result<(), Status> {
+        let plan = self.plan.with_output_sizes(first, second)?;
+        let radius = if self.allow_compact_filter {
+            compact_filter_radius(
+                self.request.quality,
+                self.effective_quality,
+                self.high_chroma_loss,
+                self.class_counts,
+                self.segments,
+                self.segments
+                    .mixed_q60_wire_alias(self.class_counts, self.mixed_y1_ac)
+                    .is_some(),
+            )
+        } else {
+            None
+        };
+        if let Some(radius) = radius {
+            self.compact_filter_search = Some(compact_filter::Search::new(
+                self.filter,
+                radius,
+                self.request.width as usize,
+                self.request.height as usize,
+            )?);
+            self.pending_output_sizes = Some((first, second));
+        } else {
+            self.plan = plan;
+        }
+        self.stage = if self.quality_score.is_some() {
+            Stage::QualityRelease
+        } else {
+            self.after_quality_release()
+        };
+        Ok(())
+    }
+
+    fn after_quality_release(&self) -> Stage {
+        if self.compact_filter_search.is_some() {
+            Stage::CompactFilter
+        } else {
+            Stage::PrepareOutput
+        }
+    }
+
+    fn compact_filter_one_step(&mut self) -> Result<(), Status> {
+        let trial = self
+            .compact_filter_search
+            .as_mut()
+            .ok_or(Status::InvalidInput)?;
+        let Some(candidate) = trial.advance(compact_filter::Frame {
+            visible: (self.request.width as usize, self.request.height as usize),
+            padded: (
+                self.plan.padded_width as usize,
+                self.plan.padded_height as usize,
+            ),
+            original: display_rgb::Original {
+                pixels: &self.input,
+                stride: self.request.stride as usize,
+                layout: self.request.layout,
+            },
+            reconstructed: [
+                &self.reconstructed_y,
+                &self.reconstructed_u,
+                &self.reconstructed_v,
+            ],
+            scratch: [&mut self.source_y, &mut self.source_u, &mut self.source_v],
+            blocks: &self.blocks,
+            segments: self.segments,
+        })?
+        else {
+            return Ok(());
+        };
+        self.compact_filter_search = None;
+        let incumbent_sizes = self
+            .pending_output_sizes
+            .take()
+            .ok_or(Status::InvalidInput)?;
+        if candidate != self.filter {
+            self.compact_filter_recount = Some(CompactFilterRecount {
+                incumbent: self.filter,
+                incumbent_sizes,
+                default_sizes: self.default_sizes,
+                default_frame_bytes: self.default_frame_bytes,
+                selected_frame_bytes: self.selected_frame_bytes,
+                update_count: self.update_count,
+                use_model: self.use_model,
+            });
+            self.filter = candidate;
+            self.reset_coding_state();
+            self.count_header = CountingBoolSink::default();
+            self.count_token = CountingBoolSink::default();
+            self.model_count_pass = false;
+            self.stage = Stage::CountPrefix;
+        } else {
+            let (first, second) = incumbent_sizes;
+            self.plan = self.plan.with_output_sizes(first, second)?;
+            self.stage = Stage::PrepareOutput;
+        }
+        Ok(())
+    }
+
+    fn finish_compact_filter_recount(
+        &mut self,
+        incumbent: CompactFilterRecount,
+        first: u32,
+        second: u32,
+    ) -> Result<(), Status> {
+        if u64::from(first) <= MAX_FIRST_PARTITION_BYTES
+            && self.selected_frame_bytes <= incumbent.selected_frame_bytes
+        {
+            self.plan = self.plan.with_output_sizes(first, second)?;
+        } else {
+            let (first, second) = incumbent.incumbent_sizes;
+            self.plan = self.plan.with_output_sizes(first, second)?;
+            self.filter = incumbent.incumbent;
+            self.default_sizes = incumbent.default_sizes;
+            self.default_frame_bytes = incumbent.default_frame_bytes;
+            self.selected_frame_bytes = incumbent.selected_frame_bytes;
+            self.update_count = incumbent.update_count;
+            self.use_model = incumbent.use_model;
+        }
+        self.stage = Stage::PrepareOutput;
+        Ok(())
+    }
+
     fn code_one_step(&mut self, counting: bool) -> Result<(), Status> {
         let blocks_x = self.plan.padded_width as usize / 16;
         let mx = self.cursor % blocks_x;
@@ -6084,17 +6325,19 @@ impl FrameEncoder {
                 } else {
                     0
                 };
-                if self.refinement_log.is_empty() && self.baseline_overrides.is_empty() {
-                    self.plan = self.plan.with_output_sizes(first, second)?;
+                if let Some(incumbent) = self.compact_filter_recount.take() {
+                    self.finish_compact_filter_recount(incumbent, first, second)?;
+                } else if self.refinement_log.is_empty() && self.baseline_overrides.is_empty() {
                     self.wire_alias = self
                         .segments
                         .mixed_q60_wire_alias(self.class_counts, self.mixed_y1_ac);
-                    self.stage = if self.wire_alias.is_some() {
+                    if self.wire_alias.is_some() {
+                        self.plan = self.plan.with_output_sizes(first, second)?;
                         self.count_header = CountingBoolSink::default();
-                        Stage::CountAliasPrefix
+                        self.stage = Stage::CountAliasPrefix;
                     } else {
-                        Stage::PrepareOutput
-                    };
+                        self.settle_output_sizes(first, second)?;
+                    }
                 } else if !self.base_count {
                     let legality = match self.plan.with_output_sizes(first, second) {
                         Ok(_) => Ok(()),
@@ -6432,7 +6675,7 @@ impl FrameEncoder {
                 let score = self.quality_score.as_mut().ok_or(Status::InvalidInput)?;
                 if score.release_one_chunk() {
                     self.quality_score = None;
-                    self.stage = Stage::PrepareOutput;
+                    self.stage = self.after_quality_release();
                 }
             }
             Stage::ReverseRefinements => {
@@ -6469,12 +6712,7 @@ impl FrameEncoder {
                         .pending_output_sizes
                         .take()
                         .ok_or(Status::InvalidInput)?;
-                    self.plan = self.plan.with_output_sizes(first, second)?;
-                    self.stage = if self.quality_score.is_some() {
-                        Stage::QualityRelease
-                    } else {
-                        Stage::PrepareOutput
-                    };
+                    self.settle_output_sizes(first, second)?;
                 }
             }
             Stage::CountAliasPrefix => {
@@ -6509,6 +6747,7 @@ impl FrameEncoder {
                 self.stage = Stage::CountAliasBlocks;
             }
             Stage::CountAliasBlocks => self.count_alias_block()?,
+            Stage::CompactFilter => self.compact_filter_one_step()?,
             Stage::PrepareOutput => {
                 let header = BoolWriter::with_capacity(self.plan.first_partition_bytes as usize)
                     .map_err(|_| Status::MemoryAdmission)?;
@@ -12918,12 +13157,102 @@ mod tests {
                     43 | 47 | 51 => 1,
                     44 | 48 | 52 => 64,
                     53 => 64 * 1024 / (3 * 5 * 8),
+                    55 | 57 => 1_024,
                     _ => 1,
                 };
                 assert!(after >= before && after - before <= bound, "stage={stage}");
             }
             if done {
                 return engine;
+            }
+        }
+    }
+
+    #[test]
+    fn compact_filter_requires_ordinary_equal_ramp_and_texture_and_no_alias() {
+        let mixed = [0, 0, 1, 3];
+        let segments = SegmentConfig::from_counts(60, mixed, 4, false);
+        assert_eq!(
+            compact_filter_radius(60, 60, false, mixed, segments, false),
+            Some(32)
+        );
+        for (requested, quality, high_loss, counts, alias) in [
+            (75, 60, false, mixed, false),
+            (60, 75, false, mixed, false),
+            (60, 60, true, mixed, false),
+            (60, 60, false, mixed, true),
+            (60, 60, false, [0, 0, 1, 4], false),
+            (60, 60, false, [0, 0, 0, 4], false),
+            (60, 60, false, [1, 0, 1, 2], false),
+        ] {
+            assert_eq!(
+                compact_filter_radius(requested, quality, high_loss, counts, segments, alias),
+                None
+            );
+        }
+        let unequal = SegmentConfig::from_counts(60, mixed, 4, true);
+        assert_eq!(
+            compact_filter_radius(60, 60, false, mixed, unequal, false),
+            None
+        );
+    }
+
+    #[test]
+    fn compact_filter_progress_and_sync_parity_at_padded_cutoff() {
+        let height = 19;
+        for (width, expected_blocks, search_expected) in [(31, 4, true), (33, 6, false)] {
+            let mut input = Vec::with_capacity(width * height * 4);
+            for row in 0..height {
+                for column in 0..width {
+                    let value = if column < 16 {
+                        column as u8
+                    } else {
+                        32 + ((row + column) % 2 * 48) as u8
+                    };
+                    input.extend_from_slice(&[40 + value, 80 + value, 120 + value, 255]);
+                }
+            }
+            let request = Request {
+                quality: 60,
+                ..engine_request(width, height, 0, &input, width * 4)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            assert_eq!(plan.macroblock_count, expected_blocks);
+            let incumbent = FilterConfig::for_quality(60);
+            let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            let mut last_trial = None;
+            loop {
+                if engine.stage() == Stage::CompactFilter as u32 {
+                    let (done, total) = engine.progress();
+                    assert_eq!(total, 10);
+                    assert!(last_trial.is_none_or(|last| done >= last && done - last <= 1));
+                    last_trial = Some(done);
+                }
+                if engine.step().unwrap() {
+                    break;
+                }
+                assert!(engine.output().is_empty());
+            }
+            assert_eq!(last_trial, search_expected.then_some(10));
+            let synchronous = encode_textured(
+                &input,
+                request.width,
+                request.height,
+                request.stride,
+                request.layout,
+                60,
+            )
+            .unwrap();
+            assert_eq!(engine.output(), synchronous);
+            assert_eq!(engine.output().len(), engine.plan().frame_bytes as usize);
+            let explicit =
+                run_engine(FrameEncoder::new_with_filter(request, input, plan, incumbent).unwrap());
+            assert_eq!(explicit.filter, incumbent);
+            assert_eq!(engine.reconstruction(), explicit.reconstruction());
+            assert_eq!(engine.blocks, explicit.blocks);
+            assert!(engine.output().len() <= explicit.output().len());
+            if !search_expected {
+                assert_eq!(engine.output(), explicit.output());
             }
         }
     }
@@ -14897,7 +15226,7 @@ mod tests {
                     stride: (width * 4) as u32,
                     format: 0,
                     quality: 75,
-                    filter,
+                    filter: Some(filter),
                 },
                 0,
                 |y, u, v, padded_w, blocks| {
@@ -15014,7 +15343,7 @@ mod tests {
                             stride: (width * 4) as u32,
                             format: 0,
                             quality: 75,
-                            filter,
+                            filter: Some(filter),
                         },
                         policy,
                         |y, u, v, padded_w, blocks| {
@@ -15451,7 +15780,7 @@ mod tests {
                             stride: width as u32 * 4,
                             format: 0,
                             quality,
-                            filter: FilterConfig::DISABLED,
+                            filter: Some(FilterConfig::DISABLED),
                         },
                         pattern,
                         |y, u, v, padded_w, _| {
@@ -15478,7 +15807,7 @@ mod tests {
                                 stride: width as u32 * 4,
                                 format: 0,
                                 quality,
-                                filter: FilterConfig::DISABLED,
+                                filter: Some(FilterConfig::DISABLED),
                             },
                             pattern,
                             |_, _, _, _, _| {}
