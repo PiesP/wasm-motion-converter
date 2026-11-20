@@ -334,8 +334,8 @@ full visible 8×8 chroma tiles.
 The first q75 feedback experiment isolated the effect of that tile-local
 correction on original-reference PSNR. Under the retained q75 profile, it
 also applies to low-curvature luma-dominant frames with a strict majority
-of ChromaticRamp blocks, no Textured blocks, non-neutral chroma and at least
-one full visible block. At q85, the experiment also enables local feedback
+of ChromaticRamp blocks, no more than one Textured block per 32 padded
+blocks, non-neutral chroma and at least one full visible block. At q85, the experiment also enables local feedback
 on entirely smooth chromatic-majority fields containing both FineSmooth and
 ChromaticRamp blocks. It refines the UV DC index by one and keeps the ordinary Y2 and UV AC factors.
 
@@ -354,14 +354,15 @@ uses its ordinary weight and full cost. Eligible full chroma tiles can
 seed local UV DC feedback from the committed top and left reconstruction
 errors. The synchronous encoder and the resumable ABI share these rules.
 
-On ordinary mixed grids, a complete Textured tile with a small luma range
-and at most two codes of variation on each chroma plane can use two further
-preset-specific trials. At q60 it evaluates within-tile chroma DC feedback
-when the frame's mean luma curvature exceeds the smoothness cutoff and is
-at most twice that cutoff, and both chroma means stay within the cutoff. At q85 it prices a sparse reconstruction of the best regular
-I16 pair against the incumbent, including when I4 won the regular search.
-The sparse trial trims trailing unit Y1 AC coefficients, preserves Y2, and
-prices all four UV modes under the same context and header constraints.
+On ordinary mixed grids, both presets inspect complete Textured tiles with
+a small luma range and at most two codes of variation on each chroma plane.
+At q60, the encoder applies within-tile chroma DC feedback to all four UV
+prediction candidates when the frame's mean luma curvature exceeds the
+smoothness cutoff and is at most twice that cutoff, and both chroma means
+stay within the cutoff. At q85, it prices a sparse reconstruction of the best
+regular I16 pair against the incumbent, including when I4 won the regular
+search. The sparse trial trims trailing unit Y1 AC coefficients, preserves
+Y2, and prices all four UV modes under the same context and header limits.
 
 On a wholly FineSmooth near-neutral grid, a selected full I16 tile with
 empty Y1 residuals can trim a scan-order suffix of unit Y2 AC levels. When

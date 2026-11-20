@@ -2268,6 +2268,8 @@ fn medium_mixed_low_curvature(
     quality == 75 && omit_display_refinement && low_curvature
 }
 
+const SPARSE_TEXTURE_TILE_DIVISOR: usize = 32;
+
 // Exploratory occupancy bound. Measure the expensive map and the source
 // curvature independently before adopting this shared-rate extension.
 fn smooth_pair_with_sparse_texture(counts: [usize; 4]) -> bool {
@@ -2276,7 +2278,7 @@ fn smooth_pair_with_sparse_texture(counts: [usize; 4]) -> bool {
         && flat > 0
         && ramp == 0
         && textured > 0
-        && textured <= counts.iter().sum::<usize>() / 32
+        && textured <= counts.iter().sum::<usize>() / SPARSE_TEXTURE_TILE_DIVISOR
 }
 
 // Each wire ID has its own physical dequantization grid. Build its scalar
@@ -2361,13 +2363,14 @@ fn q75_luma_ramp_uv_feedback(
     (width, height): (u32, u32),
 ) -> bool {
     let ramps = counts[segmentation::CHROMATIC_RAMP as usize];
+    let tiles: usize = counts.iter().sum();
     quality == 75
         && !neutral_chroma
         && low_curvature
         && width >= 16
         && height >= 16
-        && counts[segmentation::TEXTURED as usize] == 0
-        && ramps > counts.iter().sum::<usize>() - ramps
+        && counts[segmentation::TEXTURED as usize] <= tiles / SPARSE_TEXTURE_TILE_DIVISOR
+        && ramps > tiles - ramps
         && curvature.luma_dominates()
 }
 
@@ -12132,6 +12135,11 @@ mod tests {
             (75, false, true, [0, 0, 1, 0], luma, (16, 16), true),
             (75, false, true, [1, 0, 1, 0], luma, (16, 16), false),
             (75, false, true, [0, 0, 2, 1], luma, (16, 16), false),
+            (75, false, true, [0, 0, 30, 1], luma, (16, 16), false),
+            (75, false, true, [0, 0, 31, 1], luma, (16, 16), true),
+            (75, false, true, [0, 15, 16, 1], luma, (16, 16), false),
+            (75, false, true, [0, 30, 32, 2], luma, (16, 16), false),
+            (75, false, true, [0, 29, 33, 2], luma, (16, 16), true),
             (75, false, true, [0, 0, 1, 0], chroma, (16, 16), false),
             (75, false, true, [0, 0, 1, 0], luma, (15, 16), false),
             (75, false, false, [0, 0, 1, 0], luma, (16, 16), false),
