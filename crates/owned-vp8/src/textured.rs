@@ -7166,9 +7166,9 @@ mod tests {
                 assert!(!baseline_only.photo_q60);
                 assert_eq!(
                     (baseline_only.deltas.uv_dc, baseline_only.deltas.uv_ac),
-                    (-4, -7)
+                    (-4, -4)
                 );
-                assert_eq!(baseline_only.output().len(), 96);
+                assert_eq!(baseline_only.output().len(), 91);
             }
             assert_ne!(candidate.output(), baseline_only.output());
         }
@@ -7201,8 +7201,8 @@ mod tests {
             baseline.selected_frame_bytes
         );
         assert!(!candidate.photo_q60);
-        assert_eq!((candidate.deltas.uv_dc, candidate.deltas.uv_ac), (-4, -7));
-        assert_eq!(baseline.selected_frame_bytes, 96);
+        assert_eq!((candidate.deltas.uv_dc, candidate.deltas.uv_ac), (-4, -4));
+        assert_eq!(baseline.selected_frame_bytes, 91);
         while !(candidate.stage == Stage::CollectStats
             && candidate.base_count
             && !candidate.baseline_count)
@@ -7225,7 +7225,7 @@ mod tests {
         let candidate = run_engine(candidate);
         let base = run_engine(base);
         assert_eq!(candidate.output().len(), extended_bytes as usize);
-        assert_eq!(candidate.output().len(), 96);
+        assert_eq!(candidate.output().len(), 91);
         assert_eq!(candidate.plan.first_partition_bytes, extended_sizes.0);
         assert_eq!(candidate.plan.coefficient_partition_bytes, extended_sizes.1);
         assert!(
@@ -11598,7 +11598,7 @@ mod tests {
     #[test]
     fn textured_allocation_profiles_match_sync_and_resumable_encoders() {
         for (input, quality, active_q, uv_deltas, selected) in [
-            (photo_allocation_input(), 60, 32, (-4, -7), false),
+            (photo_allocation_input(), 60, 32, (-4, -4), false),
             (low_curvature_photo_input(), 60, 28, (-15, -7), true),
             (photo_allocation_input(), 75, 26, (-11, -7), false),
             (photo_allocation_input(), 85, 14, (-4, -4), false),

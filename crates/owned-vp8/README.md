@@ -121,7 +121,7 @@ The q60 UV AC rate control applies to the complementary ordinary non-neutral
 all-Textured frames that exceed the same per-plane mean curvature cutoff.
 High-chroma-loss frames retain their existing profile selection. This
 control keeps base qindex 32 and UV DC delta -4, while increasing the UV AC
-delta from -11 to -7 (effective qindex 21 to 25). Synchronous and resumable
+delta to match UV DC (effective qindex 28 for both). Synchronous and resumable
 encoding use the same delta before analysis and header budgeting. The control
 retains the existing source import, rate weights, UV AC-tail processing,
 and padded variant selection. Its quality and rate require exposed evaluation

@@ -120,8 +120,8 @@ pub(crate) fn high_curvature_q60_textured_deltas(
     low_curvature: bool,
 ) -> Deltas {
     if ordinary_q60_texture && !low_curvature {
-        // Keep the ordinary q60 base and UV DC grid. Coarsen just UV AC.
-        selected.uv_ac = -7;
+        // Keep the ordinary q60 base and UV DC grid. Use the same qindex for UV AC.
+        selected.uv_ac = selected.uv_dc;
     }
     selected
 }
@@ -352,12 +352,12 @@ mod tests {
         assert_eq!(
             after,
             Deltas {
-                uv_ac: -7,
+                uv_ac: before.uv_dc,
                 ..before
             }
         );
         assert_eq!(steps(qindex, before, Plane::UV).ac, AC_QUANT[21]);
-        assert_eq!(steps(qindex, after, Plane::UV).ac, AC_QUANT[25]);
+        assert_eq!(steps(qindex, after, Plane::UV).ac, AC_QUANT[28]);
         assert_eq!(
             steps(qindex, after, Plane::UV).dc,
             steps(qindex, before, Plane::UV).dc
