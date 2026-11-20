@@ -13198,6 +13198,61 @@ mod tests {
     }
 
     #[test]
+    fn larger_compact_recount_restores_the_incumbent_model_and_emits_its_bytes() {
+        let width = 24;
+        let height = 17;
+        let input: Vec<u8> = (0..width * height)
+            .flat_map(|i| [i as u8, (i / 4) as u8, (i / width) as u8, 255])
+            .collect();
+        let request = Request {
+            quality: 60,
+            ..engine_request(width, height, 0, &input, width * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let filter = FilterConfig::for_quality(request.quality);
+        let baseline = run_engine(
+            FrameEncoder::new_with_filter(request, input.clone(), plan, filter).unwrap(),
+        );
+        let mut trial =
+            FrameEncoder::new_with_filter(request, input.clone(), plan, filter).unwrap();
+        while trial.stage != Stage::PrepareOutput {
+            assert!(!trial.step().unwrap());
+        }
+        let sizes = (
+            trial.plan.first_partition_bytes,
+            trial.plan.coefficient_partition_bytes,
+        );
+        let incumbent = CompactFilterRecount {
+            incumbent: trial.filter,
+            incumbent_sizes: sizes,
+            default_sizes: trial.default_sizes,
+            default_frame_bytes: trial.default_frame_bytes,
+            selected_frame_bytes: trial.selected_frame_bytes,
+            update_count: trial.update_count,
+            use_model: trial.use_model,
+        };
+        // Drive the larger-count branch independently of entropy-coder rounding.
+        trial.filter.level += 4;
+        trial.selected_frame_bytes += 1;
+        trial.default_frame_bytes += 1;
+        trial.default_sizes.0 += 1;
+        trial.update_count += 1;
+        trial.use_model = !trial.use_model;
+        trial
+            .finish_compact_filter_recount(incumbent, sizes.0 + 1, sizes.1)
+            .unwrap();
+        assert_eq!(trial.stage, Stage::PrepareOutput);
+        assert_eq!(trial.plan, baseline.plan);
+        assert_eq!(trial.filter, baseline.filter);
+        assert_eq!(trial.default_sizes, baseline.default_sizes);
+        assert_eq!(trial.default_frame_bytes, baseline.default_frame_bytes);
+        assert_eq!(trial.selected_frame_bytes, baseline.selected_frame_bytes);
+        assert_eq!(trial.update_count, baseline.update_count);
+        assert_eq!(trial.use_model, baseline.use_model);
+        assert_eq!(run_engine(trial).output(), baseline.output());
+    }
+
+    #[test]
     fn compact_filter_progress_and_sync_parity_at_padded_cutoff() {
         let height = 19;
         for (width, expected_blocks, search_expected) in [(31, 4, true), (33, 6, false)] {

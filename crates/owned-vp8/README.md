@@ -478,8 +478,9 @@ better complete RGB proxy SSIM only within 0.1 dB of the incumbent's RGB squared
 error. Every level filters a copy in the former source slots. Predictor history
 and the selected coefficient variant stay intact.
 
-The search reuses the existing completed-frame moment cache after variant
-scoring has released it. A resumable search step initializes or releases one
+The search reserves its own small cache table when the incumbent is selected.
+It allocates moment chunks after the prior scoring cache releases its storage.
+A resumable search step initializes or releases one
 cache chunk, copies one plane, filters one macroblock, scores at most 1,024
 visible RGB pixels for squared error, or scores at most 64 moment blocks.
 ABI stage 63 reports completed levels and the fixed trial count. When the
