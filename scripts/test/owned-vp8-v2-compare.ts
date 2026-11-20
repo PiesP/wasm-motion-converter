@@ -64,6 +64,13 @@ import {
   type V16Manifest,
   type V16SourcePaths,
 } from './owned-vp8-v16-fixtures.ts';
+import {
+  V17_HELDOUT,
+  assertV17Shape,
+  preflightV17,
+  type V17Manifest,
+  type V17SourcePaths,
+} from './owned-vp8-v17-fixtures.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ORACLE_HASH = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
@@ -72,6 +79,8 @@ const V14_DISPOSITION_SHA256 = 'fbbbdc806239de9311b4d5d5ce4d3aae617d2c1a222a9eb6
 const V15_MANIFEST = 'docs/experiments/501-owned-vp8-v15-fixtures.json';
 const V15_DISPOSITION_SHA256 = '4da3ccd677592efacffd85990c4bff73864685260f90abf653b10f5ad4cb236b';
 const V16_MANIFEST = 'docs/experiments/501-owned-vp8-v16-fixtures.json';
+const V16_DISPOSITION_SHA256 = 'a02f0d6e6afa461f7e1788fc96a74a271bd17763868b7dc057b10928e99a4d46';
+const V17_MANIFEST = 'docs/experiments/501-owned-vp8-v17-fixtures.json';
 const QUALIFICATION_SIGNER = 'G FD87CD5C91355D3303289847E1AA71ED041B25DF';
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
@@ -86,7 +95,8 @@ export type FixtureCohort =
   | 'corrected-v13'
   | 'corrected-v14'
   | 'corrected-v15'
-  | 'corrected-v16';
+  | 'corrected-v16'
+  | 'corrected-v17';
 
 export function selectFixtureCohort(
   split: FixtureSplit,
@@ -100,10 +110,13 @@ export function selectFixtureCohort(
     cohort === 'corrected-v13' ||
     cohort === 'corrected-v14' ||
     cohort === 'corrected-v15' ||
-    cohort === 'corrected-v16';
+    cohort === 'corrected-v16' ||
+    cohort === 'corrected-v17';
   if (protectedCohort && split === 'tuning')
     throw new Error(`${cohort} has no tuning inputs; use a prior exposed tuning cohort`);
-  if (split === 'held-out' && !regression && cohort !== 'corrected-v16')
+  if (cohort === 'corrected-v17' && regression)
+    throw new Error('V17 requires its reserved first acceptance attempt');
+  if (split === 'held-out' && !regression && cohort !== 'corrected-v17')
     throw new Error(`${cohort} is exposed: use --regression; this cohort is not fresh`);
   const exposedEntries =
     cohort === 'corrected-v13'
@@ -150,15 +163,13 @@ export function selectFixtureCohort(
                       ...CORRECTION_HELDOUT,
                     ]
                   : FIXTURES;
-  const available = (
-    cohort === 'corrected-v16'
-      ? V16_HELDOUT
-      : cohort === 'corrected-v15'
-        ? V15_HELDOUT
-        : cohort === 'corrected-v14'
-          ? V14_HELDOUT
-          : exposedEntries
-  ).filter((item) => item.split === split);
+  const cohorts: Partial<Record<FixtureCohort, readonly FixtureSpec[]>> = {
+    'corrected-v14': V14_HELDOUT,
+    'corrected-v15': V15_HELDOUT,
+    'corrected-v16': V16_HELDOUT,
+    'corrected-v17': V17_HELDOUT,
+  };
+  const available = (cohorts[cohort] ?? exposedEntries).filter((item) => item.split === split);
   if (fixtureIds === undefined) return available;
   if (fixtureIds.length === 0) throw new Error('Fixture subset must contain at least one ID');
   const requested = new Set<string>();
@@ -374,7 +385,29 @@ function readV15ExposedManifest(path: string): V15Manifest {
   return { ...manifest, status: disposition.status };
 }
 
-type V16CandidateIdentity = {
+function readV16ExposedManifest(path: string): V16Manifest {
+  const dispositionBytes = readFileSync(
+    join(ROOT, 'docs/experiments/501-owned-vp8-v16-disposition.json')
+  );
+  assert.equal(digest(dispositionBytes), V16_DISPOSITION_SHA256, 'V16 first disposition changed');
+  const disposition = JSON.parse(dispositionBytes.toString('utf8')) as {
+    freezeId: string;
+    originalFrozenManifestSha256: string;
+    status: 'EXPOSED_REGRESSION';
+  };
+  const bytes = readFileSync(path);
+  assert.equal(
+    digest(bytes),
+    disposition.originalFrozenManifestSha256,
+    'V16 original manifest changed'
+  );
+  const manifest = JSON.parse(bytes.toString('utf8')) as V16Manifest;
+  assert.equal(manifest.freezeId, disposition.freezeId, 'V16 freeze identity changed');
+  assert.equal(manifest.status, 'FROZEN_UNEXECUTED', 'V16 historical source freeze changed');
+  return { ...manifest, status: disposition.status };
+}
+
+type FreshCandidateIdentity = {
   repo: string;
   source: string;
   tree: string;
@@ -383,14 +416,14 @@ type V16CandidateIdentity = {
   provenance: { path: string; sha256: string };
 };
 
-function readV16Receipt(path: string, byteLimit: number): Buffer {
-  assert.equal(resolve(path), path, 'Use an absolute normalized V16 receipt');
+function readFreshReceipt(path: string, byteLimit: number): Buffer {
+  assert.equal(resolve(path), path, 'Use an absolute normalized qualification receipt');
   const parent = dirname(path);
-  assert.equal(realpathSync(parent), parent, 'Use a canonical V16 receipt directory');
+  assert.equal(realpathSync(parent), parent, 'Use a canonical qualification receipt directory');
   const owner = process.geteuid?.();
   assert.ok(
     owner !== undefined && fsConstants.O_NOFOLLOW > 0 && fsConstants.O_NONBLOCK > 0,
-    'V16 receipt verification requires POSIX ownership and no-follow opens'
+    'Qualification receipt verification requires POSIX ownership and no-follow opens'
   );
 
   const fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
@@ -398,9 +431,12 @@ function readV16Receipt(path: string, byteLimit: number): Buffer {
     const info = fstatSync(fd);
     assert.ok(
       info.isFile() && info.uid === owner && info.nlink === 1 && (info.mode & 0o777) === 0o400,
-      'V16 receipt must be a single-link read-only regular file owned by this user'
+      'Qualification receipt must be a single-link read-only regular file owned by this user'
     );
-    assert.ok(info.size > 0 && info.size <= byteLimit, 'V16 receipt exceeds its byte bounds');
+    assert.ok(
+      info.size > 0 && info.size <= byteLimit,
+      'Qualification receipt exceeds its byte bounds'
+    );
 
     // One extra byte detects growth while keeping the descriptor read bounded.
     const data = Buffer.alloc(info.size + 1);
@@ -410,37 +446,70 @@ function readV16Receipt(path: string, byteLimit: number): Buffer {
       if (count === 0) break;
       offset += count;
     }
-    assert.equal(offset, info.size, 'V16 receipt length changed during read');
+    assert.equal(offset, info.size, 'Qualification receipt length changed during read');
     return data.subarray(0, offset);
   } finally {
     closeSync(fd);
   }
 }
 
-export function readV16Reservation(options: {
+type FreshReservationOptions = {
   output: string;
   registryRoot: string;
   privateRegistry: string;
   candidateRoot: string;
-  sources: V16SourcePaths;
   freezeId: string;
   manifestSha256: string;
-}) {
+};
+
+export function readV16Reservation(options: FreshReservationOptions & { sources: V16SourcePaths }) {
+  const { sources } = options;
+  return readFreshReservation(
+    options,
+    'V16',
+    [sources.v16Photo, sources.v16Video],
+    V16_MANIFEST,
+    867
+  );
+}
+
+export function readV17Reservation(options: FreshReservationOptions & { sources: V17SourcePaths }) {
+  const { sources } = options;
+  return readFreshReservation(
+    options,
+    'V17',
+    [sources.v17Photo, sources.v17Video],
+    V17_MANIFEST,
+    927
+  );
+}
+
+function readFreshReservation(
+  options: FreshReservationOptions,
+  version: 'V16' | 'V17',
+  sources: readonly (string | undefined)[],
+  manifest: string,
+  exposedCount: number
+) {
   const attempt = dirname(options.output);
-  assert.equal(basename(options.output), 'rows', 'V16 acceptance output must be reserved rows');
-  assert.equal(basename(attempt), 'first-candidate-attempt-01', 'V16 attempt name differs');
+  assert.equal(
+    basename(options.output),
+    'rows',
+    `${version} acceptance output must be reserved rows`
+  );
+  assert.equal(basename(attempt), 'first-candidate-attempt-01', `${version} attempt name differs`);
   assert.equal(
     attempt,
     join(options.privateRegistry, 'first-candidate-attempt-01'),
-    'V16 canonical custody root differs'
+    `${version} canonical custody root differs`
   );
-  assert.equal(realpathSync(attempt), attempt, 'Use the canonical V16 attempt directory');
+  assert.equal(realpathSync(attempt), attempt, `Use the canonical ${version} attempt directory`);
   assert.ok(
     !lstatSync(join(attempt, 'outcome.json'), { throwIfNoEntry: false }),
-    'V16 attempt is settled'
+    `${version} attempt is settled`
   );
   const request = JSON.parse(
-    readV16Receipt(join(attempt, 'request.json'), 16 * 1024).toString('utf8')
+    readFreshReceipt(join(attempt, 'request.json'), 16 * 1024).toString('utf8')
   ) as {
     freezeId: string;
     budget: number;
@@ -450,22 +519,22 @@ export function readV16Reservation(options: {
     registration: string;
     startedUtc: string;
   };
-  assert.equal(request.freezeId, options.freezeId, 'V16 request freeze ID differs');
-  assert.equal(request.budget, 1, 'V16 request attempt budget differs');
-  assert.equal(request.canonicalAttempt, attempt, 'V16 request canonical attempt differs');
+  assert.equal(request.freezeId, options.freezeId, `${version} request freeze ID differs`);
+  assert.equal(request.budget, 1, `${version} request attempt budget differs`);
+  assert.equal(request.canonicalAttempt, attempt, `${version} request canonical attempt differs`);
   assert.match(request.planSha256, /^[a-f0-9]{64}$/);
   assert.match(
     request.registration,
     /^https:\/\/github\.com\/PiesP\/wasm-motion-converter\/issues\/501#issuecomment-[1-9][0-9]{0,20}$/,
-    'V16 request registration is outside issue #501'
+    `${version} request registration is outside issue #501`
   );
   assert.match(
     basename(request.plan),
     /^admission-[a-z0-9-]+\.json$/,
-    'V16 admission filename differs'
+    `${version} admission filename differs`
   );
-  const planBytes = readV16Receipt(request.plan, 1024 * 1024);
-  assert.equal(digest(planBytes), request.planSha256, 'V16 admission digest differs');
+  const planBytes = readFreshReceipt(request.plan, 1024 * 1024);
+  assert.equal(digest(planBytes), request.planSha256, `${version} admission digest differs`);
   const plan = JSON.parse(planBytes.toString('utf8')) as {
     status: string;
     freezeId: string;
@@ -474,36 +543,48 @@ export function readV16Reservation(options: {
     registryRoot: string;
     registryCommit: string;
     registryTree: string;
-    candidate: V16CandidateIdentity;
+    candidate: FreshCandidateIdentity;
     repoPins: Record<string, string>;
     sourcesFromManifestMetadataOnly: { photo: { path: string }; video: { path: string } };
     primary: { wasmSha256: string; jsSha256: string };
     exposed: { scope: string; status: string; count: number; passed: number };
     plannedUtc: string;
   };
-  assert.equal(plan.status, 'V16_FIRST_ADMISSION_FROZEN', 'V16 admission status differs');
+  assert.equal(
+    plan.status,
+    `${version}_FIRST_ADMISSION_FROZEN`,
+    `${version} admission status differs`
+  );
   assert.deepEqual(
     [plan.exposed?.scope, plan.exposed?.status, plan.exposed?.count, plan.exposed?.passed],
-    ['EXPOSED_REGRESSION_ONLY', 'PASS_EXPOSED_REGRESSION_ONLY', 867, 867],
-    'V16 requires all 867 exposed conditions'
+    ['EXPOSED_REGRESSION_ONLY', 'PASS_EXPOSED_REGRESSION_ONLY', exposedCount, exposedCount],
+    `${version} requires all ${exposedCount} exposed conditions`
   );
-  assert.equal(plan.freezeId, request.freezeId, 'V16 admission freeze ID differs');
-  assert.equal(plan.budget, request.budget, 'V16 admission attempt budget differs');
-  assert.equal(plan.canonicalAttempt, request.canonicalAttempt, 'V16 admission attempt differs');
-  assert.equal(plan.registryRoot, options.registryRoot, 'V16 registry root differs');
-  assert.equal(plan.candidate.repo, options.candidateRoot, 'V16 candidate root differs');
-  assert.equal(plan.repoPins[V16_MANIFEST], options.manifestSha256, 'V16 manifest digest differs');
+  assert.equal(plan.freezeId, request.freezeId, `${version} admission freeze ID differs`);
+  assert.equal(plan.budget, request.budget, `${version} admission attempt budget differs`);
+  assert.equal(
+    plan.canonicalAttempt,
+    request.canonicalAttempt,
+    `${version} admission attempt differs`
+  );
+  assert.equal(plan.registryRoot, options.registryRoot, `${version} registry root differs`);
+  assert.equal(plan.candidate.repo, options.candidateRoot, `${version} candidate root differs`);
+  assert.equal(
+    plan.repoPins[manifest],
+    options.manifestSha256,
+    `${version} manifest digest differs`
+  );
   assert.deepEqual(plan.primary, { wasmSha256: ORACLE_HASH, jsSha256: ORACLE_JS_HASH });
   assert.deepEqual(
-    [options.sources.v16Photo, options.sources.v16Video],
+    sources,
     [
       plan.sourcesFromManifestMetadataOnly.photo.path,
       plan.sourcesFromManifestMetadataOnly.video.path,
     ],
-    'V16 admission original paths differ'
+    `${version} admission original paths differ`
   );
   const registration = JSON.parse(
-    readV16Receipt(join(attempt, 'registration-readback.json'), 16 * 1024).toString('utf8')
+    readFreshReceipt(join(attempt, 'registration-readback.json'), 16 * 1024).toString('utf8')
   ) as {
     url: string;
     author: string;
@@ -511,16 +592,22 @@ export function readV16Reservation(options: {
     updatedUtc: string;
     responseSha256: string;
   };
-  assert.equal(registration.url, request.registration, 'V16 readback URL differs');
-  assert.equal(registration.author, 'PiesP', 'V16 readback owner differs');
+  assert.equal(registration.url, request.registration, `${version} readback URL differs`);
+  assert.equal(registration.author, 'PiesP', `${version} readback owner differs`);
   assert.match(registration.responseSha256, /^[a-f0-9]{64}$/);
+  if (version === 'V17')
+    assert.equal(
+      registration.createdUtc,
+      registration.updatedUtc,
+      'V17 registration must be unedited'
+    );
   const frozen = Date.parse(plan.plannedUtc);
   const created = Date.parse(registration.createdUtc);
   const updated = Date.parse(registration.updatedUtc);
   const started = Date.parse(request.startedUtc);
   assert.ok(
     frozen <= created && created <= updated && updated <= started,
-    'V16 registration dates differ'
+    `${version} registration dates differ`
   );
   return plan;
 }
@@ -530,11 +617,11 @@ function gitAt(root: string, ...args: string[]): string {
 }
 
 function cleanCommit(root: string) {
-  assert.equal(gitAt(root, 'rev-parse', '--show-toplevel'), root, 'V16 checkout root differs');
+  assert.equal(gitAt(root, 'rev-parse', '--show-toplevel'), root, 'V17 checkout root differs');
   assert.equal(
     gitAt(root, 'status', '--porcelain=v1', '--untracked-files=all'),
     '',
-    'V16 checkout is dirty'
+    'V17 checkout is dirty'
   );
   return {
     source: gitAt(root, 'rev-parse', 'HEAD'),
@@ -542,17 +629,17 @@ function cleanCommit(root: string) {
   };
 }
 
-function v16CustodyRoot(sources: V16SourcePaths) {
-  assert.ok(sources.v16Photo && sources.v16Video, 'V16 acceptance requires both private originals');
-  const acquisition = dirname(sources.v16Photo);
+function v17CustodyRoot(sources: V17SourcePaths) {
+  assert.ok(sources.v17Photo && sources.v17Video, 'V17 acceptance requires both private originals');
+  const acquisition = dirname(sources.v17Photo);
   const custody = dirname(acquisition);
-  assert.equal(resolve(custody), custody, 'Use an absolute normalized V16 custody root');
-  assert.equal(basename(custody), 'fresh-v16-sources-01', 'V16 custody directory differs');
-  assert.equal(basename(acquisition), 'acquire-01', 'V16 acquisition directory differs');
+  assert.equal(resolve(custody), custody, 'Use an absolute normalized V17 custody root');
+  assert.equal(basename(custody), 'fresh-v17-sources-01', 'V17 custody directory differs');
+  assert.equal(basename(acquisition), 'acquire-01', 'V17 acquisition directory differs');
   assert.deepEqual(
-    [sources.v16Photo, sources.v16Video],
+    [sources.v17Photo, sources.v17Video],
     [join(acquisition, 'photo-original.jpg'), join(acquisition, 'video-original.webm')],
-    'V16 original paths are outside the fixed acquisition'
+    'V17 original paths are outside the fixed acquisition'
   );
   return custody;
 }
@@ -560,7 +647,12 @@ function v16CustodyRoot(sources: V16SourcePaths) {
 export async function compare(options: {
   output: string;
   split: FixtureSplit;
-  sources: V5SourcePaths & V13SourcePaths & V14SourcePaths & V15SourcePaths & V16SourcePaths;
+  sources: V5SourcePaths &
+    V13SourcePaths &
+    V14SourcePaths &
+    V15SourcePaths &
+    V16SourcePaths &
+    V17SourcePaths;
   cohort?: FixtureCohort;
   regression?: boolean;
   fixtureIds?: readonly string[];
@@ -598,55 +690,66 @@ export async function compare(options: {
   const v15ManifestFile = join(ROOT, V15_MANIFEST);
   const v15Manifest =
     cohort === 'corrected-v15' ? readV15ExposedManifest(v15ManifestFile) : undefined;
-  const v16ManifestBytes =
-    cohort === 'corrected-v16' ? readFileSync(join(ROOT, V16_MANIFEST)) : undefined;
-  const v16Manifest = v16ManifestBytes
-    ? (JSON.parse(v16ManifestBytes.toString('utf8')) as V16Manifest)
+  const v16Manifest =
+    cohort === 'corrected-v16' ? readV16ExposedManifest(join(ROOT, V16_MANIFEST)) : undefined;
+  const v17ManifestBytes =
+    cohort === 'corrected-v17' ? readFileSync(join(ROOT, V17_MANIFEST)) : undefined;
+  const v17Manifest = v17ManifestBytes
+    ? (JSON.parse(v17ManifestBytes.toString('utf8')) as V17Manifest)
     : undefined;
-  const pinnedFreshManifest = v16Manifest ?? v15Manifest ?? v14Manifest;
+  const pinnedFreshManifest = v17Manifest ?? v16Manifest ?? v15Manifest ?? v14Manifest;
   if (v15Manifest) assertV15Shape(v15Manifest);
   if (v16Manifest) {
     assertV16Shape(v16Manifest);
     assert.ok(
-      !options.regression && v16Manifest.status === 'FROZEN_UNEXECUTED',
-      'V16 draft or wrong-purpose cohort is not acceptance ready'
+      options.sources.v16Photo && options.sources.v16Video,
+      'V16 exposed replay needs both private originals'
+    );
+  }
+  if (v17Manifest) {
+    assertV17Shape(v17Manifest);
+    assert.ok(
+      !options.regression && v17Manifest.status === 'FROZEN_UNEXECUTED',
+      'V17 draft or wrong-purpose cohort is not acceptance ready'
     );
     assert.ok(
-      v16Manifest.fixtures.every((row) => row.sha256),
-      'V16 pixel pins are incomplete'
+      v17Manifest.fixtures.every((row) => row.sha256),
+      'V17 pixel pins are incomplete'
     );
   }
   if (pinnedFreshManifest) {
     output = join(realpathSync(dirname(output)), basename(output));
     assert.ok(!lstatSync(output, { throwIfNoEntry: false }), 'Evidence directory already exists');
   }
-  const v16ManifestSha256 = v16ManifestBytes && digest(v16ManifestBytes);
+  const v17ManifestSha256 = v17ManifestBytes && digest(v17ManifestBytes);
   const admission =
-    v16Manifest && v16ManifestSha256 && !options.regression
-      ? readV16Reservation({
+    v17Manifest && v17ManifestSha256 && !options.regression
+      ? readV17Reservation({
           output,
           registryRoot: ROOT,
-          privateRegistry: v16CustodyRoot(options.sources),
+          privateRegistry: v17CustodyRoot(options.sources),
           candidateRoot,
           sources: options.sources,
-          freezeId: v16Manifest.freezeId,
-          manifestSha256: v16ManifestSha256,
+          freezeId: v17Manifest.freezeId,
+          manifestSha256: v17ManifestSha256,
         })
       : undefined;
-  if (v15Manifest || v16Manifest) {
+  if (v15Manifest || v16Manifest || v17Manifest) {
     const roots = [realpathSync(ROOT), realpathSync(candidateRoot)];
     for (const root of roots)
       assert.ok(
         output !== root && !output.startsWith(root + sep),
         'Use private qualification evidence'
       );
-    const originals = v16Manifest
-      ? [options.sources.v16Photo, options.sources.v16Video]
-      : [options.sources.v15Photo, options.sources.v15Video];
+    const originals = v17Manifest
+      ? [options.sources.v17Photo, options.sources.v17Video]
+      : v16Manifest
+        ? [options.sources.v16Photo, options.sources.v16Video]
+        : [options.sources.v15Photo, options.sources.v15Video];
     for (const original of originals) {
       if (!original) continue;
       const path = realpathSync(original);
-      if (v16Manifest) assert.equal(path, original, 'Use canonical V16 originals');
+      if (v17Manifest) assert.equal(path, original, 'Use canonical V17 originals');
       for (const root of roots)
         assert.ok(
           path !== root && !path.startsWith(root + sep),
@@ -659,30 +762,39 @@ export async function compare(options: {
     assert.equal(
       gitAt(ROOT, 'show', '-s', '--format=%G? %GF'),
       QUALIFICATION_SIGNER,
-      'V16 registry signature differs'
+      'V17 registry signature differs'
     );
-    assert.equal(registry.source, admission.registryCommit, 'V16 registry source differs');
-    assert.equal(registry.tree, admission.registryTree, 'V16 registry tree differs');
+    assert.equal(registry.source, admission.registryCommit, 'V17 registry source differs');
+    assert.equal(registry.tree, admission.registryTree, 'V17 registry tree differs');
+    for (const path of [
+      V17_MANIFEST,
+      'scripts/test/owned-vp8-v17-fixtures.ts',
+      'scripts/test/owned-vp8-v2-compare.ts',
+      'scripts/test/owned-vp8-v2-abi.ts',
+    ]) {
+      assert.equal(digest(readFileSync(join(ROOT, path))), admission.repoPins[path], path);
+    }
+
     const candidate = cleanCommit(candidateRoot);
     assert.equal(
       gitAt(candidateRoot, 'show', '-s', '--format=%G? %GF'),
       QUALIFICATION_SIGNER,
-      'V16 candidate signature differs'
+      'V17 candidate signature differs'
     );
-    assert.equal(candidate.source, admission.candidate.source, 'V16 candidate source differs');
-    assert.equal(candidate.tree, admission.candidate.tree, 'V16 candidate tree differs');
+    assert.equal(candidate.source, admission.candidate.source, 'V17 candidate source differs');
+    assert.equal(candidate.tree, admission.candidate.tree, 'V17 candidate tree differs');
     const core = gitAt(candidateRoot, 'rev-parse', 'HEAD:packages/core');
-    assert.equal(core, admission.candidate.core, 'V16 candidate core gitlink differs');
+    assert.equal(core, admission.candidate.core, 'V17 candidate core gitlink differs');
     assert.equal(
       cleanCommit(join(candidateRoot, 'packages/core')).source,
       core,
-      'V16 actual candidate core differs'
+      'V17 actual candidate core differs'
     );
   }
   const v14Fixtures = v14Manifest
     ? preflightV14(v14Manifest, options.sources, ROOT, true)
     : undefined;
-  if (!v16Manifest) mkdirSync(output, { recursive: !pinnedFreshManifest });
+  if (!v17Manifest) mkdirSync(output, { recursive: !pinnedFreshManifest });
   const wasmFile = join(candidateRoot, 'crates/owned-vp8/owned-vp8.wasm');
   execFileSync(
     process.execPath,
@@ -698,11 +810,11 @@ export async function compare(options: {
   const candidateProvenancePath = join(candidateRoot, 'crates/owned-vp8/wasm-provenance.json');
   const candidateProvenanceSha256 = digest(readFileSync(candidateProvenancePath));
   if (admission) {
-    assert.equal(candidateWasmSha256, admission.candidate.module, 'V16 candidate module differs');
+    assert.equal(candidateWasmSha256, admission.candidate.module, 'V17 candidate module differs');
     assert.deepEqual(
       { path: candidateProvenancePath, sha256: candidateProvenanceSha256 },
       admission.candidate.provenance,
-      'V16 candidate provenance differs'
+      'V17 candidate provenance differs'
     );
   }
   const oracleWasm = readFileSync(join(ROOT, 'node_modules/wasm-webp/dist/esm/webp-wasm.wasm'));
@@ -867,7 +979,8 @@ export async function compare(options: {
     );
   assert.equal(new Set(frozen.fixtures.map((entry) => entry.id)).size, frozen.fixtures.length);
   const freshManifestSha256 =
-    v16ManifestSha256 ??
+    v17ManifestSha256 ??
+    (v16Manifest ? digest(readFileSync(join(ROOT, V16_MANIFEST))) : undefined) ??
     (v15Manifest ? digest(readFileSync(v15ManifestFile)) : undefined) ??
     (v14Manifest ? digest(readFileSync(v14ManifestFile)) : undefined);
   const identities = {
@@ -928,6 +1041,7 @@ export async function compare(options: {
       : {}),
     ...(v14Manifest ? { freshDispositionSha256: V14_DISPOSITION_SHA256 } : {}),
     ...(v15Manifest ? { freshDispositionSha256: V15_DISPOSITION_SHA256 } : {}),
+    ...(v16Manifest ? { freshDispositionSha256: V16_DISPOSITION_SHA256 } : {}),
     candidateWasmSha256,
     candidateProvenanceSha256,
     harnessSource: execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -948,13 +1062,14 @@ export async function compare(options: {
   if (options.split === 'held-out' && (identities.dirty || identities.harnessDirty)) {
     throw new Error('Held-out acceptance requires committed candidate and harness identities');
   }
-  if (v16Manifest) mkdirSync(output);
+  if (v17Manifest) mkdirSync(output);
   const v15Fixtures = v15Manifest
     ? preflightV15(v15Manifest, options.sources, ROOT, options.regression ?? false)
     : undefined;
   const v16Fixtures = v16Manifest
-    ? preflightV16(v16Manifest, options.sources, ROOT, false)
+    ? preflightV16(v16Manifest, options.sources, ROOT, true)
     : undefined;
+  const v17Fixtures = v17Manifest ? preflightV17(v17Manifest, options.sources, ROOT) : undefined;
   writeFileSync(join(output, 'identities.json'), `${JSON.stringify(identities, null, 2)}\n`, {
     flag: 'wx',
   });
@@ -972,6 +1087,7 @@ export async function compare(options: {
       V3_TUNING.some((entry) => entry.id === spec.id) ||
       V3_HELDOUT.some((entry) => entry.id === spec.id);
     const fixture =
+      v17Fixtures?.get(spec.id) ??
       v16Fixtures?.get(spec.id) ??
       v15Fixtures?.get(spec.id) ??
       v14Fixtures?.get(spec.id) ??
@@ -1093,6 +1209,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const v15Video = args.includes('--v15-video') ? args[args.indexOf('--v15-video') + 1] : undefined;
   const v16Photo = args.includes('--v16-photo') ? args[args.indexOf('--v16-photo') + 1] : undefined;
   const v16Video = args.includes('--v16-video') ? args[args.indexOf('--v16-video') + 1] : undefined;
+  const v17Photo = args.includes('--v17-photo') ? args[args.indexOf('--v17-photo') + 1] : undefined;
+  const v17Video = args.includes('--v17-video') ? args[args.indexOf('--v17-video') + 1] : undefined;
   const cohort = args.includes('--cohort') ? args[args.indexOf('--cohort') + 1] : 'initial-v1';
   if (
     cohort !== 'initial-v1' &&
@@ -1105,7 +1223,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     cohort !== 'corrected-v13' &&
     cohort !== 'corrected-v14' &&
     cohort !== 'corrected-v15' &&
-    cohort !== 'corrected-v16'
+    cohort !== 'corrected-v16' &&
+    cohort !== 'corrected-v17'
   )
     throw new Error('Unknown fixture cohort');
   if (acceptance && regression) throw new Error('Choose acceptance or exposed regression');
@@ -1114,7 +1233,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     : undefined;
   if (!args.includes('--output') || !output)
     throw new Error(
-      'Use --output NEW_EVIDENCE_DIRECTORY [--photo-a PATH --photo-b PATH for V13] [--v14-photo PATH --v14-video PATH for V14] [--v15-photo PATH --v15-video PATH for V15] [--v16-photo PATH --v16-video PATH for V16] [--fixture ID ... for tuning or --regression only]'
+      'Use --output NEW_EVIDENCE_DIRECTORY [--photo-a PATH --photo-b PATH for V13] [--v14-photo PATH --v14-video PATH for V14] [--v15-photo PATH --v15-video PATH for V15] [--v16-photo PATH --v16-video PATH for V16] [--v17-photo PATH --v17-video PATH for V17] [--fixture ID ... for tuning or --regression only]'
     );
   const report = await compare({
     output,
@@ -1135,6 +1254,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       ...(v15Video ? { v15Video } : {}),
       ...(v16Photo ? { v16Photo } : {}),
       ...(v16Video ? { v16Video } : {}),
+      ...(v17Photo ? { v17Photo } : {}),
+      ...(v17Video ? { v17Video } : {}),
     },
     ...(candidateRoot ? { candidateRoot } : {}),
   });
