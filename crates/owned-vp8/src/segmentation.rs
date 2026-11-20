@@ -181,7 +181,11 @@ impl Config {
             return self;
         }
         let raised = self.with_raised_qindices();
-        if raised.map_exceeds_rate_allowance(counts) {
+        let smooth_pair = counts[FINE_SMOOTH as usize] > 0
+            && counts[CHROMATIC_FLAT as usize] > 0
+            && counts[CHROMATIC_RAMP as usize] == 0
+            && counts[TEXTURED as usize] == 0;
+        if smooth_pair || raised.map_exceeds_rate_allowance(counts) {
             raised.with_uniform_qindex(counts, presets::chromatic_ramp_qindex(60))
         } else {
             raised
@@ -501,6 +505,45 @@ mod tests {
         assert!(inactive.enabled);
         assert_eq!(inactive.qindex, original.qindex);
         assert_eq!(inactive.map_probabilities, original.map_probabilities);
+    }
+
+    #[test]
+    fn mixed_q60_uniform_with_only_fine_smooth_and_chromatic_flat() {
+        for counts in [[1, 1, 0, 0], [1, 2, 0, 0], [2, 1, 0, 0]] {
+            let source = Config::from_counts(60, counts, counts.iter().sum(), false);
+            assert!(!source.map_exceeds_rate_allowance(counts));
+            let wire = source.with_mixed_q60_allocation(counts, true);
+            assert!(!wire.enabled);
+            assert_eq!(wire.qindex, [presets::chromatic_ramp_qindex(60); 4]);
+            assert_eq!(source.qindex, [6, 18, 32, 32]);
+            let inactive = source.with_mixed_q60_allocation(counts, false);
+            assert!(inactive.enabled);
+            assert_eq!(inactive.qindex, source.qindex);
+        }
+    }
+
+    #[test]
+    fn mixed_q60_single_ramp_or_textured_macroblock_keeps_original_cheap_map_bytes() {
+        for counts in [[1, 2, 1, 0], [1, 2, 0, 1], [1, 0, 1, 0], [0, 1, 0, 1]] {
+            let source = Config::from_counts(60, counts, counts.iter().sum(), false);
+            assert!(!source.map_exceeds_rate_allowance(counts));
+            let chosen = source.with_mixed_q60_allocation(counts, true);
+            let previous = source.with_raised_qindices();
+            let emit = |config: Config| {
+                let mut writer = crate::BoolWriter::new();
+                config.write_header(&mut writer, 6).unwrap();
+                for (id, count) in counts.into_iter().enumerate() {
+                    for _ in 0..count {
+                        config.write_id(&mut writer, id as u8).unwrap();
+                    }
+                }
+                writer.finish().unwrap()
+            };
+            assert!(chosen.enabled);
+            assert_eq!(emit(chosen), emit(previous));
+            assert_eq!(chosen.base_qindex, previous.base_qindex);
+            assert_eq!(chosen.qindex, previous.qindex);
+        }
     }
 
     #[test]

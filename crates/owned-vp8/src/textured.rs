@@ -9667,6 +9667,93 @@ mod tests {
         pixels
     }
 
+    fn mixed_q60_smooth_pair_input(width: usize, height: usize) -> Vec<u8> {
+        let mut pixels = Vec::with_capacity(width * height * 4);
+        for _ in 0..height {
+            for x in 0..width {
+                let step = if x < 16 {
+                    0
+                } else if x < 32 {
+                    u8::from(x >= 24)
+                } else {
+                    (x - 32) as u8
+                };
+                pixels.extend_from_slice(&[40 + step, 80 + step, 120 + step, 255]);
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn mixed_q60_smooth_pair_matches_sync_and_retains_source_class_rates() {
+        let height = 15;
+        for (width, counts, segmented) in [(31, [1, 1, 0, 0], false), (47, [1, 1, 1, 0], true)] {
+            let input = mixed_q60_smooth_pair_input(width, height);
+            let stride = width * 4;
+            let request = Request {
+                quality: 60,
+                ..engine_request(width, height, 0, &input, stride)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let sync =
+                encode_textured(&input, request.width, request.height, request.stride, 0, 60)
+                    .unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+            assert_eq!(engine.class_counts, counts);
+            assert!(engine.mixed_y1_ac && engine.uv_dc_feedback);
+            assert!(engine.omit_display_refinement);
+            assert_eq!(engine.joint_used_total, 0);
+            assert_eq!(engine.segments.enabled, segmented);
+            if segmented {
+                assert_eq!(engine.segments.qindex, [10, 22, 36, 36]);
+            } else {
+                assert_eq!(
+                    engine.segments.qindex,
+                    [crate::presets::chromatic_ramp_qindex(60); 4]
+                );
+            }
+            assert_eq!(engine.original_segments().qindex, [6, 18, 32, 32]);
+            assert_eq!(engine.blocks[0].segment_id, segmentation::FINE_SMOOTH);
+            assert_eq!(engine.blocks[1].segment_id, segmentation::CHROMATIC_FLAT);
+            assert_eq!(engine.filter.level, 6);
+            assert_eq!((engine.deltas.uv_dc, engine.deltas.uv_ac), (-8, -15));
+            assert_eq!(engine.output(), sync);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_reconstruct_uniform_mixed_q60_smooth_pair() {
+        let (width, height) = (31, 15);
+        let input = mixed_q60_smooth_pair_input(width, height);
+        let request = Request {
+            quality: 60,
+            ..engine_request(width, height, 0, &input, width * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
+        assert_eq!(engine.class_counts, [1, 1, 0, 0]);
+        assert!(!engine.segments.enabled);
+        let (y, u, v, padded_width) = engine.reconstruction();
+        let expected = filtered_visible_yuv(
+            y,
+            u,
+            v,
+            padded_width,
+            width,
+            height,
+            &engine.blocks,
+            engine.filter,
+        );
+        assert_decodes(
+            engine.output(),
+            width,
+            height,
+            &expected,
+            "uniform mixed q60 smooth pair",
+        );
+    }
+
     #[test]
     fn y1_zero_bin_activates_on_selected_eligible_block_and_excludes_q75() {
         for (quality, eligible) in [(60u32, true), (75, false)] {
