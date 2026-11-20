@@ -241,6 +241,19 @@ This quality-changing hypothesis targets the macroblock analysis cost observed
 in the whole-job medium-preset comparison. It needs the unchanged 687-condition,
 frame-level and whole-product gates before adoption.
 
+A separate q75 experiment applies the existing tile-local UV DC error feedback
+to those non-neutral, expensive mixed-map frames only when the existing padded
+mean curvature test passes on all three source planes. The encoder accumulates
+those totals during its existing classification traversal. Each non-neutral
+q75 macroblock adds 448 Y and 96 differences for each of U and V to the
+existing accumulators. One frame-local boolean retains the policy within the
+engine scratch bound. As at q60, feedback applies inside each UV mode trial on
+full visible 8×8 chroma tiles.
+The q75 experiment keeps its established luma analysis, quantizer and UV
+deltas, filter and display-search eligibility. This experiment tests the
+direction of the original-reference PSNR change. The frame-size gate still
+applies.
+
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction
