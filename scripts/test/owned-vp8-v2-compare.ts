@@ -32,9 +32,16 @@ import {
   type V13Manifest,
   type V13SourcePaths,
 } from './owned-vp8-v13-fixtures.ts';
+import {
+  V14_HELDOUT,
+  preflightV14,
+  type V14Manifest,
+  type V14SourcePaths,
+} from './owned-vp8-v14-fixtures.ts';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const ORACLE_HASH = '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22';
+const ORACLE_JS_HASH = '75b19521738cd76144ae58442dbcdf7da3ff61ca0574a334f0079afc705f741c';
 const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
 export type FixtureCohort =
@@ -45,7 +52,8 @@ export type FixtureCohort =
   | 'corrected-v5'
   | 'corrected-v6'
   | 'corrected-v7'
-  | 'corrected-v13';
+  | 'corrected-v13'
+  | 'corrected-v14';
 
 export function selectFixtureCohort(
   split: FixtureSplit,
@@ -55,11 +63,12 @@ export function selectFixtureCohort(
 ) {
   if (fixtureIds !== undefined && split === 'held-out' && !regression)
     throw new Error('Fixture subsets are diagnostic only; acceptance requires the full cohort');
-  if (cohort === 'corrected-v13' && split === 'tuning')
-    throw new Error('V13 has no tuning inputs; use a prior exposed tuning cohort');
-  if (split === 'held-out' && !regression && cohort !== 'corrected-v13')
+  const protectedCohort = cohort === 'corrected-v13' || cohort === 'corrected-v14';
+  if (protectedCohort && split === 'tuning')
+    throw new Error(`${cohort} has no tuning inputs; use a prior exposed tuning cohort`);
+  if (split === 'held-out' && !regression && cohort !== 'corrected-v14')
     throw new Error(`${cohort} is exposed: use --regression; this cohort is not fresh`);
-  const entries =
+  const exposedEntries =
     cohort === 'corrected-v13'
       ? V13_HELDOUT
       : cohort === 'corrected-v7'
@@ -104,7 +113,9 @@ export function selectFixtureCohort(
                       ...CORRECTION_HELDOUT,
                     ]
                   : FIXTURES;
-  const available = entries.filter((item) => item.split === split);
+  const available = (cohort === 'corrected-v14' ? V14_HELDOUT : exposedEntries).filter(
+    (item) => item.split === split
+  );
   if (fixtureIds === undefined) return available;
   if (fixtureIds.length === 0) throw new Error('Fixture subset must contain at least one ID');
   const requested = new Set<string>();
@@ -279,7 +290,7 @@ function decode(file: string, width: number, height: number): Uint8Array {
 export async function compare(options: {
   output: string;
   split: FixtureSplit;
-  sources: V5SourcePaths & V13SourcePaths;
+  sources: V5SourcePaths & V13SourcePaths & V14SourcePaths;
   cohort?: FixtureCohort;
   regression?: boolean;
   fixtureIds?: readonly string[];
@@ -311,6 +322,14 @@ export async function compare(options: {
       ? (JSON.parse(readFileSync(v13ManifestFile, 'utf8')) as V13Manifest)
       : undefined;
   if (v13Manifest) preflightV13(v13Manifest, options.sources, ROOT, options.regression ?? false);
+  const v14ManifestFile = join(ROOT, 'docs/experiments/501-owned-vp8-v14-fixtures.json');
+  const v14Manifest =
+    cohort === 'corrected-v14'
+      ? (JSON.parse(readFileSync(v14ManifestFile, 'utf8')) as V14Manifest)
+      : undefined;
+  const v14Fixtures = v14Manifest
+    ? preflightV14(v14Manifest, options.sources, ROOT, options.regression ?? false)
+    : undefined;
   mkdirSync(output, { recursive: true });
   const wasmFile = join(candidateRoot, 'crates/owned-vp8/owned-vp8.wasm');
   execFileSync(
@@ -326,6 +345,8 @@ export async function compare(options: {
   const oracleWasm = readFileSync(join(ROOT, 'node_modules/wasm-webp/dist/esm/webp-wasm.wasm'));
   assert.equal(digest(oracleWasm), ORACLE_HASH, 'Primary shipped comparator changed');
   const oracleUrl = new URL('../../node_modules/wasm-webp/dist/esm/webp-wasm.js', import.meta.url);
+  if (v14Manifest)
+    assert.equal(digest(readFileSync(oracleUrl)), ORACLE_JS_HASH, 'Patched primary JS changed');
   const { default: createOracle } = (await import(oracleUrl.href)) as {
     default(): Promise<{
       encodeRGB(rgb: Uint8Array, w: number, h: number, quality: number): Uint8Array | null;
@@ -473,14 +494,16 @@ export async function compare(options: {
       );
     frozen.fixtures.push(...fresh.fixtures);
   }
-  if (v13Manifest)
+  const newestManifest = v14Manifest ?? v13Manifest;
+  if (newestManifest)
     frozen.fixtures.push(
-      ...v13Manifest.fixtures.map((row) => ({
+      ...newestManifest.fixtures.map((row) => ({
         id: row.id,
         sha256: row.sha256 ?? '',
       }))
     );
   assert.equal(new Set(frozen.fixtures.map((entry) => entry.id)).size, frozen.fixtures.length);
+  const freshManifestSha256 = v14Manifest ? digest(readFileSync(v14ManifestFile)) : undefined;
   const identities = {
     ...selection,
     cohort,
@@ -488,7 +511,8 @@ export async function compare(options: {
     correctionManifestSha256:
       cohort !== 'initial-v1' ? digest(readFileSync(correctionManifestFile)) : null,
     freshManifestSha256:
-      cohort === 'corrected-v13'
+      freshManifestSha256 ??
+      (cohort === 'corrected-v13'
         ? digest(readFileSync(v13ManifestFile))
         : cohort === 'corrected-v7'
           ? digest(readFileSync(v7ManifestFile))
@@ -500,7 +524,7 @@ export async function compare(options: {
                 ? digest(readFileSync(v4ManifestFile))
                 : cohort === 'corrected-v3'
                   ? digest(readFileSync(v3ManifestFile))
-                  : null,
+                  : null),
     source: execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: candidateRoot,
       encoding: 'utf8',
@@ -525,6 +549,17 @@ export async function compare(options: {
     ffmpeg: execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0],
     oracleVersion: oracle.encoder_version(),
     oracleWasmSha256: digest(oracleWasm),
+    ...(v14Manifest
+      ? {
+          oracleJsSha256: ORACLE_JS_HASH,
+          freshFreezeId: v14Manifest.freezeId,
+          freshGeneratorSha256: v14Manifest.generatorSha256,
+          freshSourceSha256: {
+            photo: v14Manifest.sources.photo.sha256,
+            video: v14Manifest.sources.video.sha256,
+          },
+        }
+      : {}),
     candidateWasmSha256: digest(candidateBytes),
     candidateProvenanceSha256: digest(
       readFileSync(join(candidateRoot, 'crates/owned-vp8/wasm-provenance.json'))
@@ -563,21 +598,23 @@ export async function compare(options: {
     const fresh =
       V3_TUNING.some((entry) => entry.id === spec.id) ||
       V3_HELDOUT.some((entry) => entry.id === spec.id);
-    const fixture = freshV13
-      ? generateV13Fixture(spec.id, options.sources, v13Manifest!)
-      : freshV7
-        ? generateV7Fixture(spec.id, options.sources)
-        : freshV6
-          ? generateV6Fixture(spec.id, options.sources)
-          : freshV5
-            ? generateV5Fixture(spec.id, options.sources)
-            : freshV4
-              ? generateV4Fixture(spec.id, options.sources)
-              : fresh
-                ? generateV3Fixture(spec.id, options.sources)
-                : correction
-                  ? generateCorrectionFixture(spec.id, options.sources)
-                  : generateFixture(spec.id, options.sources);
+    const fixture =
+      v14Fixtures?.get(spec.id) ??
+      (freshV13
+        ? generateV13Fixture(spec.id, options.sources, v13Manifest!)
+        : freshV7
+          ? generateV7Fixture(spec.id, options.sources)
+          : freshV6
+            ? generateV6Fixture(spec.id, options.sources)
+            : freshV5
+              ? generateV5Fixture(spec.id, options.sources)
+              : freshV4
+                ? generateV4Fixture(spec.id, options.sources)
+                : fresh
+                  ? generateV3Fixture(spec.id, options.sources)
+                  : correction
+                    ? generateCorrectionFixture(spec.id, options.sources)
+                    : generateFixture(spec.id, options.sources));
     assert.equal(
       digest(fixture.pixels),
       frozen.fixtures.find((entry) => entry.id === spec.id)?.sha256
@@ -675,6 +712,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     : undefined;
   const photoA = args.includes('--photo-a') ? args[args.indexOf('--photo-a') + 1] : undefined;
   const photoB = args.includes('--photo-b') ? args[args.indexOf('--photo-b') + 1] : undefined;
+  const v14Photo = args.includes('--v14-photo') ? args[args.indexOf('--v14-photo') + 1] : undefined;
+  const v14Video = args.includes('--v14-video') ? args[args.indexOf('--v14-video') + 1] : undefined;
   const cohort = args.includes('--cohort') ? args[args.indexOf('--cohort') + 1] : 'initial-v1';
   if (
     cohort !== 'initial-v1' &&
@@ -684,7 +723,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     cohort !== 'corrected-v5' &&
     cohort !== 'corrected-v6' &&
     cohort !== 'corrected-v7' &&
-    cohort !== 'corrected-v13'
+    cohort !== 'corrected-v13' &&
+    cohort !== 'corrected-v14'
   )
     throw new Error('Unknown fixture cohort');
   if (acceptance && regression) throw new Error('Choose acceptance or exposed regression');
@@ -693,7 +733,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     : undefined;
   if (!args.includes('--output') || !output)
     throw new Error(
-      'Use --output NEW_EVIDENCE_DIRECTORY [--photo-a PATH --photo-b PATH for V13] [--fixture ID ... for tuning or --regression only]'
+      'Use --output NEW_EVIDENCE_DIRECTORY [--photo-a PATH --photo-b PATH for V13] [--v14-photo PATH --v14-video PATH for V14] [--fixture ID ... for tuning or --regression only]'
     );
   const report = await compare({
     output,
@@ -708,6 +748,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       ...(freshPhoto ? { freshPhoto } : {}),
       ...(photoA ? { photoA } : {}),
       ...(photoB ? { photoB } : {}),
+      ...(v14Photo ? { v14Photo } : {}),
+      ...(v14Video ? { v14Video } : {}),
     },
     ...(candidateRoot ? { candidateRoot } : {}),
   });
