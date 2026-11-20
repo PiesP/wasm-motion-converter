@@ -137,18 +137,24 @@ impl Config {
         self
     }
 
-    pub(crate) fn with_mixed_q60_allocation(mut self, counts: [usize; 4], selected: bool) -> Self {
-        if !selected {
-            return self;
-        }
+    pub(crate) fn with_raised_qindices(mut self) -> Self {
         self.base_qindex += presets::MIXED_Y1_AC_QINDEX_INCREASE;
         self.qindex = self
             .qindex
             .map(|qindex| qindex + presets::MIXED_Y1_AC_QINDEX_INCREASE);
-        if !self.map_exceeds_rate_allowance(counts) {
+        self
+    }
+
+    pub(crate) fn with_mixed_q60_allocation(self, counts: [usize; 4], selected: bool) -> Self {
+        if !selected {
             return self;
         }
-        self.uniform_mixed_q60(counts)
+        let raised = self.with_raised_qindices();
+        if raised.map_exceeds_rate_allowance(counts) {
+            raised.uniform_mixed_q60(counts)
+        } else {
+            raised
+        }
     }
 
     pub(crate) fn map_exceeds_rate_allowance(self, counts: [usize; 4]) -> bool {
@@ -432,6 +438,60 @@ mod tests {
         assert!(inactive.enabled);
         assert_eq!(inactive.qindex, original.qindex);
         assert_eq!(inactive.map_probabilities, original.map_probabilities);
+    }
+
+    #[test]
+    fn q75_raised_qindices_only_coarsen_y1_ac_and_keep_the_map() {
+        use crate::ac_quant::{steps, Deltas, Plane};
+
+        for counts in [[136; 4], [512, 0, 512, 0]] {
+            let original = Config::from_counts(75, counts, counts.iter().sum(), false);
+            let raised = original.with_raised_qindices();
+            let deltas = presets::deltas(75);
+            let compensated = presets::medium_y1_ac_deltas(deltas);
+            assert_eq!(original.qindex, [6, 19, 27, 28]);
+            assert_eq!(raised.qindex, [10, 23, 31, 32]);
+            assert_eq!(raised.base_qindex, original.base_qindex + 4);
+            assert_eq!(raised.active, original.active);
+            assert_eq!(raised.map_probabilities, original.map_probabilities);
+            assert!(raised.enabled);
+            assert_eq!(original.map_rate_cost(counts), raised.map_rate_cost(counts));
+            assert_eq!(
+                compensated,
+                Deltas {
+                    y1_dc: -4,
+                    y2_dc: -4,
+                    y2_ac: -4,
+                    uv_dc: -13,
+                    uv_ac: -13,
+                }
+            );
+            for (before, after) in original.qindex.into_iter().zip(raised.qindex) {
+                let (before, after) = (before as u8, after as u8);
+                let y1 = steps(before, deltas, Plane::Y1);
+                let raised_y1 = steps(after, compensated, Plane::Y1);
+                assert_eq!(y1.dc, raised_y1.dc);
+                assert!(raised_y1.ac > y1.ac);
+                for plane in [Plane::Y2, Plane::UV] {
+                    assert_eq!(
+                        steps(before, deltas, plane),
+                        steps(after, compensated, plane)
+                    );
+                }
+                for (old, new) in [
+                    (deltas.y1_dc, compensated.y1_dc),
+                    (deltas.y2_dc, compensated.y2_dc),
+                    (deltas.y2_ac, compensated.y2_ac),
+                    (deltas.uv_dc, compensated.uv_dc),
+                    (deltas.uv_ac, compensated.uv_ac),
+                ] {
+                    assert_eq!(
+                        i16::from(before) + i16::from(old),
+                        i16::from(after) + i16::from(new)
+                    );
+                }
+            }
+        }
     }
 
     #[test]

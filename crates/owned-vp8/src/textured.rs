@@ -2071,15 +2071,14 @@ fn omit_display_refinement(
             && segments.map_exceeds_rate_allowance(class_counts))
 }
 
-fn uv_dc_feedback_enabled(
+fn medium_mixed_low_curvature(
     quality: u32,
-    mixed_y1_ac: bool,
     omit_display_refinement: bool,
     low_curvature: bool,
 ) -> bool {
     // At q75 the display policy already requires non-neutral chroma and an
     // enabled map above the rate allowance. Reuse that per-frame estimate.
-    mixed_y1_ac || (quality == 75 && omit_display_refinement && low_curvature)
+    quality == 75 && omit_display_refinement && low_curvature
 }
 
 fn uv_dc_feedback_for_tile(
@@ -2261,8 +2260,8 @@ fn encode_observed(
         original_segments,
         class_counts,
     );
-    let uv_dc_feedback =
-        uv_dc_feedback_enabled(quality, mixed_y1_ac, omit_display_refinement, low_curvature);
+    let medium_y1_ac = medium_mixed_low_curvature(quality, omit_display_refinement, low_curvature);
+    let uv_dc_feedback = mixed_y1_ac || medium_y1_ac;
     let photo_q75 = medium_textured_luma && !neutral_chroma;
     let original_deltas = if high_chroma_loss {
         crate::presets::original_high_chroma_loss_deltas()
@@ -2305,11 +2304,12 @@ fn encode_observed(
                 let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
                 let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-                let rate_qindex = if medium_textured_luma || photo_q60 || mixed_y1_ac {
-                    original_segments.qindex_for(segment_id)
-                } else {
-                    qindex
-                };
+                let rate_qindex =
+                    if medium_textured_luma || photo_q60 || mixed_y1_ac || medium_y1_ac {
+                        original_segments.qindex_for(segment_id)
+                    } else {
+                        qindex
+                    };
                 let lambda = crate::presets::lambda_for_quality(rate_qindex, quality);
                 if !high_chroma_loss {
                     refinement_log
@@ -2565,6 +2565,10 @@ fn encode_observed(
     };
     deltas = crate::presets::photo_allocation_deltas(deltas, photo_q60, photo_q75);
     deltas = crate::presets::mixed_y1_ac_deltas(deltas, mixed_y1_ac);
+    if medium_y1_ac {
+        segments = segments.with_raised_qindices();
+        deltas = crate::presets::medium_y1_ac_deltas(deltas);
+    }
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
         let reduced_segments = original_segments.with_high_chroma_loss_luma(true);
@@ -3722,6 +3726,7 @@ pub(crate) struct FrameEncoder {
     curvature: segmentation::CurvatureTotals,
     photo_q60: bool,
     mixed_y1_ac: bool,
+    medium_y1_ac: bool,
     uv_dc_feedback: bool,
     omit_display_refinement: bool,
     neutral_chroma: bool,
@@ -3873,6 +3878,7 @@ impl FrameEncoder {
             curvature: segmentation::CurvatureTotals::default(),
             photo_q60: false,
             mixed_y1_ac: false,
+            medium_y1_ac: false,
             uv_dc_feedback: false,
             omit_display_refinement: false,
             neutral_chroma: true,
@@ -4721,12 +4727,12 @@ impl FrameEncoder {
                 self.segments,
                 self.class_counts,
             );
-            self.uv_dc_feedback = uv_dc_feedback_enabled(
+            self.medium_y1_ac = medium_mixed_low_curvature(
                 self.request.quality,
-                self.mixed_y1_ac,
                 self.omit_display_refinement,
                 low_curvature,
             );
+            self.uv_dc_feedback = self.mixed_y1_ac || self.medium_y1_ac;
             self.segments = self
                 .segments
                 .with_photo_q60_rebase(self.photo_q60)
@@ -4740,6 +4746,10 @@ impl FrameEncoder {
                 self.medium_textured_luma && !self.neutral_chroma,
             );
             self.deltas = crate::presets::mixed_y1_ac_deltas(self.deltas, self.mixed_y1_ac);
+            if self.medium_y1_ac {
+                self.segments = self.segments.with_raised_qindices();
+                self.deltas = crate::presets::medium_y1_ac_deltas(self.deltas);
+            }
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
                 self.segments,
@@ -4775,7 +4785,9 @@ impl FrameEncoder {
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-        let rate_qindex = if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
+        let rate_qindex = if self.medium_y1_ac {
+            qindex - crate::presets::MIXED_Y1_AC_QINDEX_INCREASE
+        } else if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
             self.original_segments().qindex_for(segment_id)
         } else {
             qindex
@@ -9861,11 +9873,10 @@ mod tests {
                 SegmentConfig::from_counts(quality, counts, counts.iter().sum(), neutral);
             let omit = omit_display_refinement(quality, false, neutral, segments, counts);
             assert_eq!(
-                uv_dc_feedback_enabled(quality, false, omit, low_curvature),
+                medium_mixed_low_curvature(quality, omit, low_curvature),
                 expected
             );
         }
-        assert!(uv_dc_feedback_enabled(60, true, true, true));
         assert!(uv_dc_feedback_for_tile(true, 1, 1, 16, 16));
         assert!(!uv_dc_feedback_for_tile(false, 1, 1, 16, 16));
         assert!(!uv_dc_feedback_for_tile(true, 1, 1, 15, 16));
@@ -9878,11 +9889,16 @@ mod tests {
         // The blue offset gives the ramp tiles an imported U close to 130,
         // between reconstructed levels at the q75 ramp's UV DC step of 20.
         let mut input = Vec::with_capacity(Q75_FEEDBACK_AXIS * Q75_FEEDBACK_AXIS * 4);
-        for _ in 0..Q75_FEEDBACK_AXIS {
+        for y in 0..Q75_FEEDBACK_AXIS {
             for x in 0..Q75_FEEDBACK_AXIS {
-                let offset = x % 32;
-                let ramp = if offset < 16 { offset as u8 } else { 0 };
-                input.extend_from_slice(&[96 + ramp, 96 + ramp, 101 + ramp, 255]);
+                let local_x = x % 16;
+                let step = match x / 16 % 4 {
+                    0 => local_x as u8,                              // Chromatic ramp.
+                    1 => 0,                                          // Fine constant.
+                    2 => u8::from(local_x >= 8),                     // Chromatic flat.
+                    _ => 12 * u8::from(local_x == 8 && y % 16 == 8), // Texture.
+                };
+                input.extend_from_slice(&[96 + step, 96 + step, 101 + step, 255]);
             }
         }
         input
@@ -9898,23 +9914,30 @@ mod tests {
             assert!(!engine.step().unwrap());
         }
         assert!(engine.uv_dc_feedback && engine.omit_display_refinement);
+        assert!(engine.medium_y1_ac);
         assert!(!engine.mixed_y1_ac && !engine.neutral_chroma && !engine.medium_textured_luma);
         assert!(engine.curvature.within_cutoff(engine.blocks.len()));
+        assert!(engine.class_counts.iter().all(|&count| count > 0));
         assert!(engine
             .segments
             .map_exceeds_rate_allowance(engine.class_counts));
-        assert_eq!(engine.segments.qindex, engine.original_segments().qindex);
+        let original = engine.original_segments();
+        assert_eq!(engine.segments.qindex, [10, 23, 31, 32]);
+        assert_eq!(engine.segments.base_qindex, original.base_qindex + 4);
         assert_eq!(
-            engine.segments.base_qindex,
-            engine.original_segments().base_qindex
+            engine.segments.map_probabilities,
+            original.map_probabilities
         );
-        assert_eq!(engine.deltas, crate::presets::deltas(75));
+        assert_eq!(
+            engine.deltas,
+            crate::presets::medium_y1_ac_deltas(crate::presets::deltas(75))
+        );
         assert_eq!(engine.filter.level, 4);
         engine
     }
 
     #[test]
-    fn q75_uv_dc_feedback_matches_sync_and_resumable_on_padded_input() {
+    fn q75_y1_ac_and_uv_dc_feedback_match_sync_and_resumable_on_padded_input() {
         let input = q75_uv_dc_feedback_input();
         let selected = run_engine(q75_uv_dc_feedback_engine(input.clone()));
         let mut base = q75_uv_dc_feedback_engine(input.clone());
@@ -9932,7 +9955,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
-    fn independent_decoders_reconstruct_q75_uv_dc_feedback_on_padded_input() {
+    fn independent_decoders_reconstruct_q75_y1_ac_and_uv_dc_feedback_on_padded_input() {
         let side = Q75_FEEDBACK_AXIS;
         let engine = run_engine(q75_uv_dc_feedback_engine(q75_uv_dc_feedback_input()));
         let (y, u, v, padded_w) = engine.reconstruction();
@@ -9991,7 +10014,7 @@ mod tests {
             }
         }
         assert!(engine.omit_display_refinement);
-        assert!(!engine.uv_dc_feedback);
+        assert!(!engine.uv_dc_feedback && !engine.medium_y1_ac);
         assert!(engine.segments.enabled);
         assert!(!engine.neutral_chroma);
         assert_eq!(engine.class_counts, [136; 4]);

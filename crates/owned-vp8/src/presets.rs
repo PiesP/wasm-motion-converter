@@ -141,6 +141,18 @@ pub(crate) fn mixed_y1_ac_deltas(mut selected: Deltas, enabled: bool) -> Deltas 
     selected
 }
 
+pub(crate) fn medium_y1_ac_deltas(mut selected: Deltas) -> Deltas {
+    // Applies only to mixed q75. Its ordinary UV deltas are both -9, so
+    // compensating by four stays inside the signed VP8 header range.
+    let increase = MIXED_Y1_AC_QINDEX_INCREASE as i8;
+    selected.y1_dc -= increase;
+    selected.y2_dc -= increase;
+    selected.y2_ac -= increase;
+    selected.uv_dc -= increase;
+    selected.uv_ac -= increase;
+    selected
+}
+
 pub(crate) fn photo_allocation_deltas(
     mut selected: Deltas,
     q60_all_texture: bool,

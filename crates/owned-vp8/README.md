@@ -254,6 +254,17 @@ deltas, filter and display-search eligibility. This experiment tests the
 direction of the original-reference PSNR change. The frame-size gate still
 applies.
 
+A separate q75 rate point applies to the same mixed low-curvature profile.
+It raises the base and all four segment qindices by the existing four-index
+step, then applies compensating deltas of −4 for Y1 DC and Y2 DC/AC and −13 for
+UV DC/AC. This coarsens Y1 AC alone. The other five quantizer operands are
+identical to the UV DC experiment, including the UV clamp on the fine class.
+Rate prices use the original segment qindices. The step preserves the segment
+map and probabilities, filter, and the normal skip and selection policies.
+One additional frame-local boolean tracks the rate point separately from the
+UV feedback flag. The existing engine scratch bound includes both flags.
+The wider Y1 AC step must pass the frozen frame quality and size gates.
+
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction
