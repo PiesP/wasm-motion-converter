@@ -48,7 +48,6 @@ import type {
   ConversionResult,
   ConversionSettings,
   ErrorCode,
-  ErrorContext,
   ProgressCallback,
   ProgressPhase,
   VideoMetadata,
@@ -82,7 +81,7 @@ const focusDownloadButton = (): void =>
 
 interface KnownConversionFailure {
   code: ErrorCode;
-  recovery?: ErrorContext['recovery'];
+  retryPhase?: 'owned_vp8_initialization' | 'owned_vp8_runtime';
 }
 
 function knownConversionFailure(
@@ -90,7 +89,8 @@ function knownConversionFailure(
   ownedVp8Kind?: OwnedVp8FailureKind
 ): KnownConversionFailure {
   if (ownedVp8Kind === 'load' || ownedVp8Kind === 'abi-initialization')
-    return { code, recovery: 'retry' };
+    return { code, retryPhase: 'owned_vp8_initialization' };
+  if (ownedVp8Kind === 'trap') return { code, retryPhase: 'owned_vp8_runtime' };
   return { code };
 }
 
@@ -572,9 +572,9 @@ async function handleConversionError(
   context.originalError = errorMessage_;
   if (initializationError) {
     setWebpReloadRequired(true);
-  } else if (knownFailure?.recovery === 'retry') {
+  } else if (knownFailure?.retryPhase) {
     context.recovery = 'retry';
-    context.phase = 'owned_vp8_initialization';
+    context.phase = knownFailure.retryPhase;
     delete context.suggestion;
   }
 

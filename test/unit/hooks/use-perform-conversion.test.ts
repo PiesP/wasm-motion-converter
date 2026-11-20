@@ -771,9 +771,17 @@ it('offers terminal recovery for initialization wrapped by frame processing, eve
 });
 
 it.each([
-  new OwnedVp8LoadError('Owned VP8 WASM request failed (HTTP 503)'),
-  new OwnedVp8InitializationAbiError('Owned VP8 WASM header is invalid'),
-])('offers an explicit new conversion for recoverable %s', async (reason) => {
+  [new OwnedVp8LoadError('Owned VP8 WASM request failed (HTTP 503)'), 'owned_vp8_initialization'],
+  [
+    new OwnedVp8InitializationAbiError('Owned VP8 WASM header is invalid'),
+    'owned_vp8_initialization',
+  ],
+  [new OwnedVp8TrapError('Owned VP8 WASM trapped'), 'owned_vp8_runtime'],
+  [
+    new WorkerPipelineError('ENCODER_ERROR', 'Owned VP8 WASM trapped', undefined, 'trap'),
+    'owned_vp8_runtime',
+  ],
+] as const)('offers an explicit new conversion for recoverable %s', async (reason, phase) => {
   mocks.settings = { ...mocks.settings, format: 'webp' };
   mocks.validateVideoDuration.mockResolvedValue({ duration: 1000, warnings: [] });
   mocks.runConversionPipeline.mockRejectedValueOnce(reason);
@@ -787,7 +795,7 @@ it.each([
     expect.objectContaining({
       code: 'ENCODER_ERROR',
       type: 'format',
-      phase: 'owned_vp8_initialization',
+      phase,
       originalError: reason.message,
       recovery: 'retry',
     })
@@ -811,7 +819,6 @@ it.each([
 
 it.each([
   new OwnedVp8AbiError('Owned VP8 raw keyframe header or geometry is invalid'),
-  new OwnedVp8TrapError('Owned VP8 WASM trapped'),
   new OwnedVp8InvalidInputError('Owned VP8 rejected the input'),
   new Error('The native WebP encoding failed'),
 ])('keeps %s on the ordinary format failure path', async (reason) => {
