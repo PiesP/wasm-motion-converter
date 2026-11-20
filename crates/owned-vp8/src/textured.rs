@@ -4,7 +4,7 @@
 // static format tables are documented in RFC 6386 sections 9, 11, 13 and 14.
 
 use super::{BoolWriter, EncodeError, MAX_OUTPUT_BYTES};
-use crate::ac_quant::{self, Deltas, Plane, Steps};
+use crate::ac_quant::{self, Deltas, Method4Matrices, Method4Matrix, Plane, Steps};
 use crate::{
     activity::Activity,
     bmode_probs::BMODE_PROBS,
@@ -221,8 +221,13 @@ fn predictor_dc(reconstructed: &[u8], stride: usize, x: usize, y: usize, size: u
     (sum + count / 2) / count
 }
 
-fn quantize_y1_zero_bin(transformed: &[i32; 16], steps: Steps, enabled: bool) -> [i16; 16] {
-    let mut coefficients = ac_quant::quantize_block(transformed, steps);
+fn quantize_y1_zero_bin(
+    transformed: &[i32; 16],
+    steps: Steps,
+    enabled: bool,
+    matrix: Option<&Method4Matrix>,
+) -> [i16; 16] {
+    let mut coefficients = ac_quant::quantize_block_with_matrix(transformed, steps, matrix);
     if enabled {
         // Only marginal Y1 AC units change. Wide products also admit i32::MIN
         // fixture values without overflowing their unsigned magnitude.
@@ -255,6 +260,7 @@ fn transform_predicted_block(
     transform::forward(&residual)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn code_predicted_block(
     source: &[u8],
     stride: usize,
@@ -263,9 +269,10 @@ fn code_predicted_block(
     predictor: &[u8; 16],
     steps: Steps,
     y1_zero_bin: bool,
+    matrix: Option<&Method4Matrix>,
 ) -> ([i16; 16], [u8; 16]) {
     let transformed = transform_predicted_block(source, stride, x, y, predictor);
-    let coefficients = quantize_y1_zero_bin(&transformed, steps, y1_zero_bin);
+    let coefficients = quantize_y1_zero_bin(&transformed, steps, y1_zero_bin, matrix);
     let inverse = transform::inverse(&ac_quant::dequantize_block(&coefficients, steps));
     let mut reconstructed = [0u8; 16];
     for i in 0..16 {
@@ -1101,6 +1108,7 @@ fn make_i16(
     y_steps: Steps,
     y2_steps: Steps,
     y1_zero_bin: bool,
+    matrices: Option<&Method4Matrices>,
 ) -> LumaCandidate {
     let (top, left, corner) = edge::<16>(reconstructed, stride, x, y);
     let predicted =
@@ -1126,10 +1134,19 @@ fn make_i16(
             let mut transformed = transform::forward(&samples);
             dc[index] = transformed[0] as i16;
             transformed[0] = 0;
-            block.y[index] = quantize_y1_zero_bin(&transformed, y_steps, y1_zero_bin);
+            block.y[index] = quantize_y1_zero_bin(
+                &transformed,
+                y_steps,
+                y1_zero_bin,
+                matrices.map(|matrix| &matrix.y1),
+            );
         }
     }
-    block.y2 = ac_quant::quantize_block(&transform::forward_wht(&dc), y2_steps);
+    block.y2 = ac_quant::quantize_block_with_matrix(
+        &transform::forward_wht(&dc),
+        y2_steps,
+        matrices.map(|matrix| &matrix.y2),
+    );
     reconstruct_i16(source, stride, x, y, block, &predicted, y_steps, y2_steps)
 }
 
@@ -1401,6 +1418,7 @@ fn make_i4(
     lambda: u64,
     i4_ac_tail_rdo: bool,
     y1_zero_bin: bool,
+    matrix: Option<&Method4Matrix>,
 ) -> LumaCandidate {
     make_i4_with_pruning::<true>(
         source,
@@ -1415,6 +1433,7 @@ fn make_i4(
         lambda,
         i4_ac_tail_rdo,
         y1_zero_bin,
+        matrix,
     )
     .0
 }
@@ -1433,6 +1452,7 @@ fn make_i4_with_pruning<const PRUNE: bool>(
     lambda: u64,
     i4_ac_tail_rdo: bool,
     y1_zero_bin: bool,
+    matrix: Option<&Method4Matrix>,
 ) -> (LumaCandidate, u64) {
     let mut tile = [0u8; 256];
     let mut block = Macroblock::default();
@@ -1473,8 +1493,16 @@ fn make_i4_with_pruning<const PRUNE: bool>(
                     continue;
                 }
                 let predicted = prediction::predict_i4(&top, &left, corner, bmode_from_u8(mode));
-                let (coeff, patch) =
-                    code_predicted_block(source, stride, x, y, &predicted, y_steps, y1_zero_bin);
+                let (coeff, patch) = code_predicted_block(
+                    source,
+                    stride,
+                    x,
+                    y,
+                    &predicted,
+                    y_steps,
+                    y1_zero_bin,
+                    matrix,
+                );
                 let distortion = patch_error(source, stride, x, y, &patch);
                 if PRUNE
                     && best
@@ -1631,6 +1659,7 @@ fn make_uv(
     steps: Steps,
     rdo: Option<UvRdo<'_>>,
     dc_feedback: UvDcFeedback,
+    matrix: Option<&Method4Matrix>,
 ) -> UvCandidate {
     let diffuse_dc_error = dc_feedback != UvDcFeedback::Disabled;
     let use_committed_boundaries = dc_feedback == UvDcFeedback::CommittedBoundaries;
@@ -1682,7 +1711,15 @@ fn make_uv(
                     let correction = (above_dc_error[bx] + left_dc_error) / 4;
                     transformed[0] += correction.clamp(-steps.dc, steps.dc);
                 }
-                let coefficients = ac_quant::quantize_block(&transformed, steps);
+                let coefficients = match matrix {
+                    Some(matrix) => {
+                        // Feedback continues using its original DC decision.
+                        let dc =
+                            diffuse_dc_error.then(|| ac_quant::quantize(transformed[0], steps.dc));
+                        matrix.quantize_block(&transformed, dc)
+                    }
+                    None => ac_quant::quantize_block(&transformed, steps),
+                };
                 let baseline = (
                     coefficients,
                     reconstructed_patch(&coefficients, &predictor, steps),
@@ -2189,6 +2226,20 @@ fn smooth_pair_with_sparse_texture(counts: [usize; 4]) -> bool {
         && textured <= counts.iter().sum::<usize>() / 32
 }
 
+// Each wire ID has its own physical dequantization grid. Build its scalar
+// descriptors once and retain the original quantizer when no activity map exists.
+fn activity_matrices(
+    selected: bool,
+    segments: SegmentConfig,
+    deltas: Deltas,
+) -> Option<[Method4Matrices; 4]> {
+    selected.then(|| {
+        std::array::from_fn(|id| {
+            Method4Matrices::on_grid(segments.qindex_for(id as u8) as u8, deltas)
+        })
+    })
+}
+
 fn rate_profile_quality(
     requested_quality: u32,
     class_counts: [usize; 4],
@@ -2589,6 +2640,7 @@ fn encode_observed(
             MAX_FIRST_PARTITION_BYTES as usize,
         )?;
         let mut comparison = ProfileComparison::default();
+        let method4 = activity_matrices(activity.selected(), segments, deltas);
         let rate_qindices = if medium_y1_ac || luma_bias {
             segmentation::class_qindices(quality, neutral_chroma)
         } else if medium_textured_luma || photo_q60 || mixed_y1_ac {
@@ -2655,6 +2707,9 @@ fn encode_observed(
                     segments,
                     &mut header_budget,
                     textured_i16_zero_bin,
+                    method4
+                        .as_ref()
+                        .map(|planes| &planes[usize::from(segment_id)]),
                 )?;
                 if let Some(change) = analyzed.refinement {
                     refinement_log
@@ -3203,6 +3258,7 @@ fn analyze_one(
     segments: SegmentConfig,
     header_budget: &mut HeaderBudget,
     textured_i16_zero_bin: bool,
+    matrices: Option<&Method4Matrices>,
 ) -> Result<AnalyzedBlock, EncodeError> {
     let x = mx * 16;
     let y = my * 16;
@@ -3237,6 +3293,7 @@ fn analyze_one(
                 y_steps,
                 y2_steps,
                 i16_zero_bin,
+                matrices,
             ));
         }
         options.push(make_i4(
@@ -3252,6 +3309,7 @@ fn analyze_one(
             i4_search_lambda,
             mixed_y1_ac,
             mixed_y1_ac,
+            matrices.map(|matrix| &matrix.y1),
         ));
         options
     } else if luma_policy == 1 {
@@ -3267,6 +3325,7 @@ fn analyze_one(
                     y_steps,
                     y2_steps,
                     i16_zero_bin,
+                    matrices,
                 )
             })
             .collect()
@@ -3284,6 +3343,7 @@ fn analyze_one(
             i4_search_lambda,
             mixed_y1_ac,
             mixed_y1_ac,
+            matrices.map(|matrix| &matrix.y1),
         )]
     };
     let uv_policy = UvRatePolicy::for_source_class(quality, source_class);
@@ -3321,6 +3381,7 @@ fn analyze_one(
                     policy,
                 }),
                 dc_feedback,
+                matrices.map(|matrix| &matrix.uv),
             )
         })
         .collect();
@@ -4281,6 +4342,7 @@ pub(crate) struct FrameEncoder {
     reset_plane: usize,
     deltas: Deltas,
     segments: SegmentConfig,
+    method4: Option<[Method4Matrices; 4]>,
     wire_alias: Option<SegmentConfig>,
     header_budget: HeaderBudget,
     contexts: CoeffContexts,
@@ -4441,6 +4503,7 @@ impl FrameEncoder {
             reset_plane: 0,
             deltas: crate::presets::deltas(request.quality),
             segments: SegmentConfig::nonsegmented(crate::presets::qindex(request.quality)),
+            method4: None,
             wire_alias: None,
             header_budget: HeaderBudget::new(
                 plan.macroblock_count as usize,
@@ -5424,6 +5487,7 @@ impl FrameEncoder {
                 self.segments = config;
                 self.deltas = deltas;
             }
+            self.method4 = activity_matrices(self.activity.selected(), self.segments, self.deltas);
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
                 self.segments,
@@ -5513,6 +5577,9 @@ impl FrameEncoder {
             self.segments,
             &mut self.header_budget,
             self.textured_i16_zero_bin,
+            self.method4
+                .as_ref()
+                .map(|planes| &planes[usize::from(segment_id)]),
         )
         .map_err(encode_status)?;
         if let Some(change) = analyzed.refinement {
@@ -6619,8 +6686,11 @@ mod tests {
                     transformed[2] = sign * expected_step * 2;
                     transformed[3] = i32::MIN;
                     let canonical = ac_quant::quantize_block(&transformed, steps);
-                    assert_eq!(quantize_y1_zero_bin(&transformed, steps, false), canonical);
-                    let chosen = quantize_y1_zero_bin(&transformed, steps, true);
+                    assert_eq!(
+                        quantize_y1_zero_bin(&transformed, steps, false, None),
+                        canonical
+                    );
+                    let chosen = quantize_y1_zero_bin(&transformed, steps, true, None);
                     assert_eq!(chosen[0], canonical[0]);
                     assert_eq!(chosen[2..], canonical[2..]);
                     if magnitude < first_nonzero {
@@ -6635,11 +6705,11 @@ mod tests {
         let steps = ac_quant::steps(36, deltas, Plane::Y1);
         let mut transformed = [0i32; 16];
         transformed[1] = 24;
-        assert_eq!(quantize_y1_zero_bin(&transformed, steps, true)[1], 0);
+        assert_eq!(quantize_y1_zero_bin(&transformed, steps, true, None)[1], 0);
         transformed[1] = 25; // Exact 5/8 equality retains the canonical +1.
-        assert_eq!(quantize_y1_zero_bin(&transformed, steps, true)[1], 1);
+        assert_eq!(quantize_y1_zero_bin(&transformed, steps, true, None)[1], 1);
         transformed[1] = -25;
-        assert_eq!(quantize_y1_zero_bin(&transformed, steps, true)[1], -1);
+        assert_eq!(quantize_y1_zero_bin(&transformed, steps, true, None)[1], -1);
     }
 
     #[test]
@@ -6667,7 +6737,7 @@ mod tests {
             for qindex in [0u8, 6, 10, 22, 36, 80, 127] {
                 let steps = ac_quant::steps(qindex, deltas, Plane::Y1);
                 assert_eq!(
-                    quantize_y1_zero_bin(&transformed, steps, false),
+                    quantize_y1_zero_bin(&transformed, steps, false, None),
                     ac_quant::quantize_block(&transformed, steps),
                     "quality={quality} qindex={qindex}"
                 );
@@ -6680,8 +6750,8 @@ mod tests {
         let steps = Steps { dc: 20, ac: 40 };
         let mut transformed = [0i32; 16];
         transformed[residual::SCAN[1]] = 24;
-        let canonical = quantize_y1_zero_bin(&transformed, steps, false);
-        let biased = quantize_y1_zero_bin(&transformed, steps, true);
+        let canonical = quantize_y1_zero_bin(&transformed, steps, false, None);
+        let biased = quantize_y1_zero_bin(&transformed, steps, true, None);
         assert_eq!(canonical[residual::SCAN[1]], 1);
         assert_eq!(biased, [0i16; 16]);
         let mut before = Macroblock::default();
@@ -6732,9 +6802,9 @@ mod tests {
             let mut patch_source = [128u8; 16];
             patch_source[0] += magnitude;
             let (canonical, canonical_patch) =
-                code_predicted_block(&patch_source, 4, 0, 0, &predictor, y_steps, false);
+                code_predicted_block(&patch_source, 4, 0, 0, &predictor, y_steps, false, None);
             let (biased, biased_patch) =
-                code_predicted_block(&patch_source, 4, 0, 0, &predictor, y_steps, true);
+                code_predicted_block(&patch_source, 4, 0, 0, &predictor, y_steps, true, None);
             if canonical != biased {
                 assert_eq!(biased[0], canonical[0]);
                 assert_eq!(
@@ -6764,6 +6834,7 @@ mod tests {
                 225,
                 false,
                 false,
+                None,
             );
             let after_i4 = make_i4(
                 &source,
@@ -6778,6 +6849,7 @@ mod tests {
                 225,
                 false,
                 true,
+                None,
             );
             if before_i4.block.y != after_i4.block.y {
                 assert_ne!(before_i4.tile, after_i4.tile);
@@ -6793,6 +6865,7 @@ mod tests {
                 y_steps,
                 y2_steps,
                 false,
+                None,
             );
             let after = make_i16(
                 &source,
@@ -6804,6 +6877,7 @@ mod tests {
                 y_steps,
                 y2_steps,
                 true,
+                None,
             );
             if before.block.y != after.block.y {
                 assert_eq!(before.block.y2, after.block.y2);
@@ -7007,6 +7081,7 @@ mod tests {
                             lambda,
                             false,
                             y1_zero_bin,
+                            None,
                         );
                         let neighbors = make_i4_with_pruning::<false>(
                             &source,
@@ -7021,6 +7096,7 @@ mod tests {
                             lambda,
                             true,
                             y1_zero_bin,
+                            None,
                         );
                         assert_eq!(neighbors.0.block.b_modes[0], plain.0.block.b_modes[0]);
                     }
@@ -7640,6 +7716,7 @@ mod tests {
                                 lambda,
                                 tail_rdo,
                                 y1_zero_bin,
+                                None,
                             );
                             let exhaustive = make_i4_with_pruning::<false>(
                                 &source,
@@ -7654,6 +7731,7 @@ mod tests {
                                 lambda,
                                 tail_rdo,
                                 y1_zero_bin,
+                                None,
                             );
                             assert_eq!(pruned.0.block, exhaustive.0.block);
                             assert_eq!(pruned.0.tile, exhaustive.0.tile);
@@ -7696,6 +7774,7 @@ mod tests {
                 mode_lambda,
                 tail_rdo,
                 y1_zero_bin,
+                None,
             );
             let mut above_context = [false; 4];
             above_context.copy_from_slice(&contexts.y[..4]);
@@ -8839,6 +8918,7 @@ mod tests {
                     guarded.segments,
                     &mut probe_budget,
                     false,
+                    None,
                 )
                 .unwrap();
                 let selected = analyze_one(
@@ -8873,6 +8953,7 @@ mod tests {
                     baseline.segments,
                     &mut baseline.header_budget,
                     false,
+                    None,
                 )
                 .unwrap();
                 assert_eq!(
@@ -9514,6 +9595,7 @@ mod tests {
                 steps,
                 None,
                 feedback,
+                None,
             )
         };
         let local = candidate(&source_u, UvDcFeedback::WithinTile);
@@ -9581,6 +9663,7 @@ mod tests {
                 steps,
                 None,
                 feedback,
+                None,
             )
         };
         let baseline = trial(UvDcFeedback::Disabled);
@@ -9628,6 +9711,7 @@ mod tests {
             steps,
             None,
             UvDcFeedback::Disabled,
+            None,
         );
         assert!(baseline.u.iter().all(|coeff| coeff[0] == 1));
         assert!(baseline.v.iter().all(|coeff| coeff[0] == 1));
@@ -9651,6 +9735,7 @@ mod tests {
                     policy: UvRatePolicy::FlatDcZero,
                 }),
                 UvDcFeedback::Disabled,
+                None,
             )
         };
         let visible = trial(8, 8);
@@ -9769,6 +9854,7 @@ mod tests {
                     steps,
                     None,
                     UvDcFeedback::Disabled,
+                    None,
                 );
                 let trial = make_uv(
                     &source,
@@ -9789,6 +9875,7 @@ mod tests {
                         policy: UvRatePolicy::TexturedAcTail,
                     }),
                     UvDcFeedback::Disabled,
+                    None,
                 );
                 assert_eq!(contexts, before);
                 for (original, selected) in baseline.u.iter().zip(&trial.u) {
@@ -10413,6 +10500,7 @@ mod tests {
                     segments,
                     &mut budget,
                     false,
+                    None,
                 )
                 .unwrap();
                 blocks.push(block.block);
@@ -10734,6 +10822,7 @@ mod tests {
                             y_steps,
                             y2_steps,
                             false,
+                            None,
                         );
                         let biased = make_i16(
                             &engine.source_y,
@@ -10745,6 +10834,7 @@ mod tests {
                             y_steps,
                             y2_steps,
                             true,
+                            None,
                         );
                         if canonical.block.y == biased.block.y {
                             continue;
@@ -13220,6 +13310,7 @@ mod tests {
                 engine.step().unwrap();
             }
             assert!(engine.activity.selected());
+            assert!(engine.method4.is_some());
             let expected_ids: Vec<u8> = engine
                 .blocks
                 .iter()
@@ -14126,6 +14217,7 @@ mod tests {
                 y_steps,
                 y2_steps,
                 false,
+                None,
             );
             let i4 = make_i4(
                 &source_y,
@@ -14140,6 +14232,7 @@ mod tests {
                 225,
                 true,
                 false,
+                None,
             );
             let uv = make_uv(
                 &source_uv,
@@ -14153,6 +14246,7 @@ mod tests {
                 uv_steps,
                 None,
                 UvDcFeedback::Disabled,
+                None,
             );
             (
                 i16.tile,
@@ -14787,6 +14881,7 @@ mod tests {
             steps,
             None,
             UvDcFeedback::Disabled,
+            None,
         );
         let chosen = make_uv(
             &source,
@@ -14807,6 +14902,7 @@ mod tests {
                 policy: UvRatePolicy::FlatDcZero,
             }),
             UvDcFeedback::Disabled,
+            None,
         );
         assert_eq!(baseline.u[0][0], 1);
         assert_eq!(

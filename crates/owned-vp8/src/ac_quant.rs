@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 // RFC 6386 section 14.1 AC lookup values, checked against the reference
-// decoder's dequant_data.h in RFC 6386 attachment 20.3. No encoder code is
-// imported; these are VP8 format constants.
+// decoder's dequant_data.h in RFC 6386 attachment 20.3.
+// The method-4 quantizer parameters derive from libwebp commit
+// 6c484cbf92e81a5673b24485ac02d211f69be5b7 (Copyright 2011 Google Inc.),
+// src/enc/quant_enc.c, src/enc/vp8i_enc.h and src/dsp/enc.c.
+// See ../LICENSE.libwebp and ../PATENTS.libwebp.
 use crate::dc_quant::DC_QUANT;
 
 pub(crate) const AC_QUANT: [i32; 128] = [
@@ -84,6 +87,117 @@ pub(crate) fn quantize_block(coefficients: &[i32; 16], steps: Steps) -> [i16; 16
     output
 }
 
+const MATRIX_PRECISION: u32 = 17;
+
+#[derive(Clone, Copy)]
+struct MatrixCoefficient {
+    reciprocal: u32,
+    bias: u32,
+    zero_threshold: u32,
+    level_limit: u32,
+}
+
+impl MatrixCoefficient {
+    fn new(step: i32, weight: u32) -> Self {
+        let step = step as u32;
+        let reciprocal = (1 << MATRIX_PRECISION) / step;
+        let bias = weight << (MATRIX_PRECISION - 8);
+        Self {
+            reciprocal,
+            bias,
+            zero_threshold: ((1 << MATRIX_PRECISION) - 1 - bias) / reciprocal,
+            level_limit: 2047.min(i16::MAX as u32 / step),
+        }
+    }
+
+    fn quantize(self, value: i32, sharpen: u8) -> i16 {
+        let magnitude = value.unsigned_abs() + u32::from(sharpen);
+        if magnitude <= self.zero_threshold {
+            return 0;
+        }
+        // A full signed i32 coefficient is permitted by the owned scalar
+        // contract. Use a wide product before the existing signed-level cap.
+        let scaled = u64::from(magnitude) * u64::from(self.reciprocal) + u64::from(self.bias);
+        let level = (scaled >> MATRIX_PRECISION).min(u64::from(self.level_limit)) as i16;
+        if value < 0 {
+            -level
+        } else {
+            level
+        }
+    }
+}
+
+pub(crate) struct Method4Matrix {
+    dc: MatrixCoefficient,
+    ac: MatrixCoefficient,
+    sharpen: [u8; 16],
+}
+
+impl Method4Matrix {
+    fn new(steps: Steps, plane: Plane) -> Self {
+        let (dc_bias, ac_bias) = match plane {
+            Plane::Y1 => (96, 110),
+            Plane::Y2 => (96, 108),
+            Plane::UV => (110, 115),
+        };
+        let sharpen = if plane == Plane::Y1 {
+            // Natural order, as used by the transform. All luma AC weights
+            // are at most 90 and all physical Y1 AC steps at most 284.
+            [
+                0, 30, 60, 90, 30, 60, 90, 90, 60, 90, 90, 90, 90, 90, 90, 90,
+            ]
+            .map(|weight| ((weight * steps.ac) >> 11) as u8)
+        } else {
+            [0; 16]
+        };
+        Self {
+            dc: MatrixCoefficient::new(steps.dc, dc_bias),
+            ac: MatrixCoefficient::new(steps.ac, ac_bias),
+            sharpen,
+        }
+    }
+
+    pub(crate) fn quantize_block(
+        &self,
+        coefficients: &[i32; 16],
+        preserved_dc: Option<i16>,
+    ) -> [i16; 16] {
+        let mut levels = [0; 16];
+        levels[0] = preserved_dc.unwrap_or_else(|| self.dc.quantize(coefficients[0], 0));
+        for index in 1..16 {
+            levels[index] = self.ac.quantize(coefficients[index], self.sharpen[index]);
+        }
+        levels
+    }
+}
+
+pub(crate) struct Method4Matrices {
+    pub y1: Method4Matrix,
+    pub y2: Method4Matrix,
+    pub uv: Method4Matrix,
+}
+
+impl Method4Matrices {
+    pub(crate) fn on_grid(qindex: u8, deltas: Deltas) -> Self {
+        Self {
+            y1: Method4Matrix::new(steps(qindex, deltas, Plane::Y1), Plane::Y1),
+            y2: Method4Matrix::new(steps(qindex, deltas, Plane::Y2), Plane::Y2),
+            uv: Method4Matrix::new(steps(qindex, deltas, Plane::UV), Plane::UV),
+        }
+    }
+}
+
+pub(crate) fn quantize_block_with_matrix(
+    coefficients: &[i32; 16],
+    steps: Steps,
+    matrix: Option<&Method4Matrix>,
+) -> [i16; 16] {
+    match matrix {
+        Some(matrix) => matrix.quantize_block(coefficients, None),
+        None => quantize_block(coefficients, steps),
+    }
+}
+
 pub(crate) fn dequantize_block(coefficients: &[i16; 16], steps: Steps) -> [i32; 16] {
     let mut output = [0; 16];
     for (index, &coefficient) in coefficients.iter().enumerate() {
@@ -95,6 +209,75 @@ pub(crate) fn dequantize_block(coefficients: &[i16; 16], steps: Steps) -> [i32; 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Direct C arithmetic oracle, independent of precomputed thresholds.
+    fn native_level(value: i32, step: i32, weight: u32, sharpen: u8) -> i16 {
+        let q17 = 131_072u64;
+        let reciprocal = q17 / step as u64;
+        let scaled = (u64::from(value.unsigned_abs()) + u64::from(sharpen)) * reciprocal
+            + (u64::from(weight) * 512);
+        let bound = (32_767 / step as u64).min(2_047);
+        let level = (scaled / q17).min(bound) as i16;
+        if value < 0 {
+            -level
+        } else {
+            level
+        }
+    }
+
+    #[test]
+    fn method4_matrix_matches_native_bias_threshold_and_owned_limits() {
+        let mut changed_from_nearest = 0;
+        for (plane, dc_bias, ac_bias) in [
+            (Plane::Y1, 96, 110),
+            (Plane::Y2, 96, 108),
+            (Plane::UV, 110, 115),
+        ] {
+            let frequency = [
+                0, 30, 60, 90, 30, 60, 90, 90, 60, 90, 90, 90, 90, 90, 90, 90,
+            ];
+            for q in 0..=127 {
+                let steps = steps(q, Deltas::default(), plane);
+                let matrix = Method4Matrix::new(steps, plane);
+                for (index, sharpening_weight) in frequency.into_iter().enumerate() {
+                    let (step, bias) = if index == 0 {
+                        (steps.dc, dc_bias)
+                    } else {
+                        (steps.ac, ac_bias)
+                    };
+                    let sharpen = if plane == Plane::Y1 {
+                        ((sharpening_weight * step) >> 11) as u8
+                    } else {
+                        0
+                    };
+                    for value in (-2 * step..=2 * step).chain([i32::MIN, i32::MAX]) {
+                        let mut values = [0; 16];
+                        values[index] = value;
+                        let chosen = matrix.quantize_block(&values, None)[index];
+                        assert_eq!(chosen, native_level(value, step, bias, sharpen));
+                        assert!(
+                            i32::from(chosen).abs() <= 2047
+                                && (i32::from(chosen) * step).abs() <= 32767
+                        );
+                        changed_from_nearest += usize::from(chosen != quantize(value, step));
+                    }
+                }
+            }
+        }
+        assert!(changed_from_nearest > 0);
+    }
+
+    #[test]
+    fn method4_matrix_can_preserve_corrected_chroma_dc_alone() {
+        let steps = Steps { dc: 40, ac: 40 };
+        let matrix = Method4Matrix::new(steps, Plane::UV);
+        let mut values = [-20; 16];
+        values[15] = -21;
+        let ordinary = matrix.quantize_block(&values, None);
+        let retained = matrix.quantize_block(&values, Some(quantize(values[0], steps.dc)));
+        assert_eq!((ordinary[0], retained[0]), (0, -1));
+        assert_eq!(ordinary[1..], retained[1..]);
+    }
 
     #[test]
     fn decoder_steps_match_boundaries_and_plane_rules() {
