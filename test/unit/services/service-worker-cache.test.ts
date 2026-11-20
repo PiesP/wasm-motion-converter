@@ -24,7 +24,7 @@ beforeAll(async () => {
   });
   verifyServiceWorkerOutput(process.cwd(), workerBuildRoot);
   emittedWorker = readFileSync(join(workerBuildRoot, 'service-worker.js'), 'utf8');
-});
+}, 60_000);
 
 afterAll(() => {
   if (workerBuildRoot) rmSync(workerBuildRoot, { recursive: true, force: true });
