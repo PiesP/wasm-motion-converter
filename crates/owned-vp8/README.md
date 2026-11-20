@@ -254,9 +254,9 @@ enabled segment ID map costs more than the same 128-byte estimate. The encoder
 evaluates the estimate once per frame from the original map probabilities and
 four class counts, after classification. The display policy governs the search.
 The q75 trials below govern quantization and map signaling for a subset of
-those frames. Monochrome, one-class and at-or-below-budget maps retain the full
-search. With no refinement edits the encoder follows the single-variant
-counting and emission path.
+those frames. Within the higher-preset profiles, monochrome, one-class and
+at-or-below-budget maps retain the full search. With no refinement edits the
+encoder follows the single-variant counting and emission path.
 
 This quality-changing hypothesis targets the macroblock analysis cost observed
 in the whole-job medium-preset comparison. It needs the unchanged 687-condition,
@@ -285,6 +285,27 @@ uses its original qindex for mode and coefficient rate weighting. The existing
 frame-local flags and scratch bound cover the trial. Its common quantizer
 changes effective luma and chroma steps, so the frozen frame quality and size
 gates apply.
+
+The exposed q75 smooth-pair experiment also selects the complete q60 rate
+profile for a frame whose imported chroma is non-neutral, whose padded
+mean curvature passes the existing three-plane cutoff, and whose only
+occupied source classes are FineSmooth and ChromaticFlat. Both classes
+must be present. The visible RGB import error must also be at or below the
+existing q60 high-chroma-loss cutoff. Single-class frames, chromatic ramps,
+textured blocks, high import error, and other requested presets keep their
+usual profiles.
+
+The decision reuses the existing color import and classification in both the
+synchronous oracle and the resumable ABI2 encoder. It selects the q60
+quantizers, coefficient deltas, rate weights, mode search, refinement policy
+and signaled filter before encoding begins. The same RGB bytes follow the
+same analysis, counting and output path as an explicit q60 request. No
+additional input traversal or alternate encoding is used. The request still
+records q75; the admitted extents, output ceiling, partitions, stage bounds,
+and lease protocol retain their existing contract. The selected filter and
+quantizer remain signaled in the ordinary VP8 header, with no extra wire
+metadata. This exposed trial requires separate packet and product
+qualification before adoption.
 
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those

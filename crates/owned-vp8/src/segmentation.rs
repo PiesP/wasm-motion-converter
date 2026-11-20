@@ -19,6 +19,13 @@ const UV_DIFFERENCES_PER_BLOCK: u64 = 96;
 // Existing absolute size allowance, in RateCounter units of 1/256 bit.
 const MAP_RATE_ALLOWANCE: u64 = 128 * 8 * 256;
 
+pub(crate) fn smooth_pair_only(counts: [usize; 4]) -> bool {
+    counts[FINE_SMOOTH as usize] > 0
+        && counts[CHROMATIC_FLAT as usize] > 0
+        && counts[CHROMATIC_RAMP as usize] == 0
+        && counts[TEXTURED as usize] == 0
+}
+
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(crate) struct CurvatureTotals {
     pub sums: [u64; 3],
@@ -181,11 +188,7 @@ impl Config {
             return self;
         }
         let raised = self.with_raised_qindices();
-        let smooth_pair = counts[FINE_SMOOTH as usize] > 0
-            && counts[CHROMATIC_FLAT as usize] > 0
-            && counts[CHROMATIC_RAMP as usize] == 0
-            && counts[TEXTURED as usize] == 0;
-        if smooth_pair || raised.map_exceeds_rate_allowance(counts) {
+        if smooth_pair_only(counts) || raised.map_exceeds_rate_allowance(counts) {
             raised.with_uniform_qindex(counts, presets::chromatic_ramp_qindex(60))
         } else {
             raised
