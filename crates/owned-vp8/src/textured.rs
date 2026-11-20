@@ -237,6 +237,23 @@ fn quantize_y1_zero_bin(transformed: &[i32; 16], steps: Steps, enabled: bool) ->
     coefficients
 }
 
+fn transform_predicted_block(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    predictor: &[u8; 16],
+) -> [i32; 16] {
+    let mut residual = [0i16; 16];
+    for row in 0..4 {
+        for col in 0..4 {
+            residual[row * 4 + col] = (i32::from(source[(y + row) * stride + x + col])
+                - i32::from(predictor[row * 4 + col])) as i16;
+        }
+    }
+    transform::forward(&residual)
+}
+
 fn code_predicted_block(
     source: &[u8],
     stride: usize,
@@ -246,14 +263,7 @@ fn code_predicted_block(
     steps: Steps,
     y1_zero_bin: bool,
 ) -> ([i16; 16], [u8; 16]) {
-    let mut residual = [0i16; 16];
-    for row in 0..4 {
-        for col in 0..4 {
-            residual[row * 4 + col] = (i32::from(source[(y + row) * stride + x + col])
-                - i32::from(predictor[row * 4 + col])) as i16;
-        }
-    }
-    let transformed = transform::forward(&residual);
+    let transformed = transform_predicted_block(source, stride, x, y, predictor);
     let coefficients = quantize_y1_zero_bin(&transformed, steps, y1_zero_bin);
     let inverse = transform::inverse(&ac_quant::dequantize_block(&coefficients, steps));
     let mut reconstructed = [0u8; 16];
@@ -1505,6 +1515,16 @@ impl UvRdo<'_> {
     }
 }
 
+fn uv_dc_error(source: &[u8], stride: usize, x: usize, y: usize, patch: &[u8; 16]) -> i32 {
+    let mut error = 0;
+    for (row, patch_row) in patch.as_chunks::<4>().0.iter().enumerate() {
+        for (col, &reconstructed) in patch_row.iter().enumerate() {
+            error += i32::from(source[(y + row) * stride + x + col]) - i32::from(reconstructed);
+        }
+    }
+    error
+}
+
 #[allow(clippy::too_many_arguments)]
 fn make_uv(
     source_u: &[u8],
@@ -1517,6 +1537,7 @@ fn make_uv(
     mode: u8,
     steps: Steps,
     rdo: Option<UvRdo<'_>>,
+    diffuse_dc_error: bool,
 ) -> UvCandidate {
     let mut coeffs = [[[0i16; 16]; 4]; 2];
     let mut tiles = [[0u8; 64]; 2];
@@ -1538,48 +1559,49 @@ fn make_uv(
         let (top, left, corner) = edge::<8>(reconstructed, stride, x, y);
         let predicted =
             prediction::predict_uv(&top, &left, corner, y > 0, x > 0, mode_from_u8(mode));
+        // Keep trial state within this plane and mode. Source-minus-reconstruction
+        // sums project to forward DC at half scale. Divide by four to send
+        // half of each neighbor's error into this patch.
+        let mut above_dc_error = [0; 2];
         for by in 0..2 {
+            let mut left_dc_error = 0;
             for bx in 0..2 {
+                let patch_x = x + bx * 4;
+                let patch_y = y + by * 4;
                 let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
-                let baseline = code_predicted_block(
-                    source,
-                    stride,
-                    x + bx * 4,
-                    y + by * 4,
-                    &predictor,
-                    steps,
-                    false,
+                let mut transformed =
+                    transform_predicted_block(source, stride, patch_x, patch_y, &predictor);
+                if diffuse_dc_error {
+                    let correction = (above_dc_error[bx] + left_dc_error) / 4;
+                    transformed[0] += correction.clamp(-steps.dc, steps.dc);
+                }
+                let coefficients = ac_quant::quantize_block(&transformed, steps);
+                let baseline = (
+                    coefficients,
+                    reconstructed_patch(&coefficients, &predictor, steps),
                 );
                 let (coeff, patch) = if let Some((rdo, lambda)) = rdo.and_then(|rdo| {
-                    rdo.block_lambda(x + bx * 4, y + by * 4)
+                    rdo.block_lambda(patch_x, patch_y)
                         .map(|lambda| (rdo, lambda))
                 }) {
                     let context = usize::from(local_above[bx]) + usize::from(local_left[by]);
                     match rdo.policy {
                         UvRatePolicy::TexturedAcTail => optimize_uv_block(
-                            source,
-                            stride,
-                            x + bx * 4,
-                            y + by * 4,
-                            &predictor,
-                            steps,
-                            context,
-                            lambda,
+                            source, stride, patch_x, patch_y, &predictor, steps, context, lambda,
                             baseline,
                         ),
                         UvRatePolicy::FlatDcZero => optimize_uv_dc_zero(
-                            source,
-                            stride,
-                            x + bx * 4,
-                            y + by * 4,
-                            &predictor,
-                            context,
-                            baseline,
+                            source, stride, patch_x, patch_y, &predictor, context, baseline,
                         ),
                     }
                 } else {
                     baseline
                 };
+                if diffuse_dc_error && (bx == 0 || by == 0) {
+                    let error = uv_dc_error(source, stride, patch_x, patch_y, &patch);
+                    above_dc_error[bx] = error;
+                    left_dc_error = error;
+                }
                 coeffs[index][by * 2 + bx] = coeff;
                 store_patch::<8, 64>(&mut tiles[index], bx, by, &patch);
                 let nonzero = coeff.iter().any(|&coefficient| coefficient != 0);
@@ -2829,6 +2851,9 @@ fn analyze_one(
         (75, segmentation::CHROMATIC_FLAT) => Some(UvRatePolicy::FlatDcZero),
         _ => None,
     };
+    let uv_width = visible_width.div_ceil(2);
+    let uv_height = visible_height.div_ceil(2);
+    let diffuse_uv_dc_error = mixed_y1_ac && mx * 8 + 8 <= uv_width && my * 8 + 8 <= uv_height;
     let uv: Vec<_> = (0..4)
         .map(|mode| {
             make_uv(
@@ -2845,10 +2870,11 @@ fn analyze_one(
                     contexts: coeff_contexts,
                     mx,
                     lambda,
-                    visible_width: visible_width.div_ceil(2),
-                    visible_height: visible_height.div_ceil(2),
+                    visible_width: uv_width,
+                    visible_height: uv_height,
                     policy,
                 }),
+                diffuse_uv_dc_error,
             )
         })
         .collect();
@@ -3694,6 +3720,7 @@ const _: () = assert!(
         + BASELINE_OVERRIDE_BUDGET_BYTES
         + 2 * crate::rate::MAX_BUFFERED_OPS * 2
         + 65_536
+        + 3 * std::mem::size_of::<i32>() // Local chroma DC feedback.
         + std::mem::size_of::<FrameEncoder>()
         + 1024 * 1024
         + display_rgb::MAX_QUALITY_CACHE_BYTES
@@ -8379,6 +8406,49 @@ mod tests {
     }
 
     #[test]
+    fn chroma_dc_feedback_corrects_signed_rounding_within_one_mode_and_plane() {
+        let source_u = [130; 64];
+        let source_v = [128; 64];
+        let reconstructed = [0; 64];
+        let steps = Steps { dc: 10, ac: 17 };
+        let trial = |feedback| {
+            make_uv(
+                &source_u,
+                &source_v,
+                &reconstructed,
+                &reconstructed,
+                8,
+                0,
+                0,
+                0,
+                steps,
+                None,
+                feedback,
+            )
+        };
+        let baseline = trial(false);
+        let selected = trial(true);
+        assert_eq!(baseline.u_tile, [131; 64]);
+        assert_eq!(selected.u.map(|coefficients| coefficients[0]), [2, 1, 1, 2]);
+        assert_eq!(selected.u[0], baseline.u[0]);
+        for (before, after) in baseline.u.iter().zip(&selected.u) {
+            assert_eq!(before[1..], after[1..]);
+        }
+        assert_eq!(
+            selected
+                .u_tile
+                .iter()
+                .map(|&sample| u32::from(sample))
+                .sum::<u32>(),
+            130 * 64
+        );
+        assert_eq!(selected.v, baseline.v);
+        assert_eq!(selected.v_tile, source_v);
+        assert_eq!(trial(true).u, selected.u);
+        assert_eq!(trial(true).u_tile, selected.u_tile);
+    }
+
+    #[test]
     fn flat_uv_dc_zero_keeps_mode_trials_and_hidden_patches_isolated() {
         let source = [129u8; 64];
         let reconstructed = [0u8; 64];
@@ -8400,6 +8470,7 @@ mod tests {
             0,
             steps,
             None,
+            false,
         );
         assert!(baseline.u.iter().all(|coeff| coeff[0] == 1));
         assert!(baseline.v.iter().all(|coeff| coeff[0] == 1));
@@ -8422,6 +8493,7 @@ mod tests {
                     visible_height,
                     policy: UvRatePolicy::FlatDcZero,
                 }),
+                false,
             )
         };
         let visible = trial(8, 8);
@@ -8539,6 +8611,7 @@ mod tests {
                     mode,
                     steps,
                     None,
+                    false,
                 );
                 let trial = make_uv(
                     &source,
@@ -8558,6 +8631,7 @@ mod tests {
                         visible_height: 8,
                         policy: UvRatePolicy::TexturedAcTail,
                     }),
+                    false,
                 );
                 assert_eq!(contexts, before);
                 for (original, selected) in baseline.u.iter().zip(&trial.u) {
@@ -11551,6 +11625,7 @@ mod tests {
                 3,
                 uv_steps,
                 None,
+                false,
             );
             (
                 i16.tile,
@@ -12184,6 +12259,7 @@ mod tests {
             0,
             steps,
             None,
+            false,
         );
         let chosen = make_uv(
             &source,
@@ -12203,6 +12279,7 @@ mod tests {
                 visible_height: 8,
                 policy: UvRatePolicy::FlatDcZero,
             }),
+            false,
         );
         assert_eq!(baseline.u[0][0], 1);
         assert_eq!(
