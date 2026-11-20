@@ -6964,6 +6964,8 @@ impl FrameEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    use std::io::Read;
     use std::io::Write;
     use std::process::{Command, Stdio};
 
@@ -13375,6 +13377,157 @@ mod tests {
             external_live_bytes: 0,
             retained_output_bytes: 0,
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "requires one private, source-bound V8 browser RGB frame"]
+    fn v8_private_rgb_classification_diagnostic() {
+        const WIDTH: usize = 1920;
+        const HEIGHT: usize = 1080;
+        const RGB_BYTES: usize = WIDTH * HEIGHT * 3;
+        const MAX_CLASSIFY_STEPS: usize = 20_000;
+
+        let ordinal: u32 = std::env::var("WMC_501_V8_ORDINAL")
+            .expect("set WMC_501_V8_ORDINAL to 57 or 76")
+            .parse()
+            .expect("V8 ordinal must be an integer");
+        assert!(ordinal == 57 || ordinal == 76);
+        let path = std::path::PathBuf::from(
+            std::env::var_os("WMC_501_V8_RGB").expect("set WMC_501_V8_RGB"),
+        );
+        let mut file = std::fs::File::open(&path).expect("open private V8 RGB file");
+        let before = file.metadata().expect("read opened RGB metadata");
+        assert!(before.is_file() && before.len() == RGB_BYTES as u64);
+        let mut rgb = vec![0u8; RGB_BYTES];
+        file.read_exact(&mut rgb).expect("read exact V8 RGB extent");
+        let mut extra = [0u8; 1];
+        assert_eq!(file.read(&mut extra).expect("check V8 RGB EOF"), 0);
+        assert_eq!(
+            file.metadata().expect("recheck opened RGB extent").len(),
+            before.len()
+        );
+
+        let mut rgba = vec![0u8; WIDTH * HEIGHT * 4];
+        for (source, destination) in rgb.chunks_exact(3).zip(rgba.chunks_exact_mut(4)) {
+            destination.copy_from_slice(&[source[0], source[1], source[2], 255]);
+        }
+        drop(rgb);
+        let request = Request {
+            quality: 60,
+            ..engine_request(WIDTH, HEIGHT, 0, &rgba, WIDTH * 4)
+        };
+        let plan = ResourcePlan::checked(request).expect("plan V8 classification only");
+        let mut engine = FrameEncoder::new(request, rgba, plan).expect("create V8 classifier");
+        let mut steps = 0;
+        while engine.stage != Stage::Analyze {
+            assert!(matches!(
+                engine.stage,
+                Stage::Initialize | Stage::Color | Stage::Classify
+            ));
+            assert!(
+                steps < MAX_CLASSIFY_STEPS,
+                "V8 classification step bound exceeded"
+            );
+            assert!(!engine.step().expect("V8 classification step failed"));
+            steps += 1;
+        }
+        assert_eq!(
+            engine.class_counts.iter().sum::<usize>(),
+            engine.blocks.len()
+        );
+        assert_eq!(engine.blocks.len(), engine.plan.macroblock_count as usize);
+        assert!(engine.output().is_empty());
+
+        fn plane_stats(plane: &[u8], width: usize, height: usize, stride: usize) -> (f64, u8, u8) {
+            let mut sum = 0u64;
+            let mut low = u8::MAX;
+            let mut high = u8::MIN;
+            for row in 0..height {
+                for &value in &plane[row * stride..row * stride + width] {
+                    sum += u64::from(value);
+                    low = low.min(value);
+                    high = high.max(value);
+                }
+            }
+            (sum as f64 / (width * height) as f64, low, high)
+        }
+        let y = plane_stats(
+            &engine.source_y,
+            WIDTH,
+            HEIGHT,
+            engine.plan.padded_width as usize,
+        );
+        let uv_stride = engine.plan.padded_width as usize / 2;
+        let u = plane_stats(&engine.source_u, WIDTH / 2, HEIGHT / 2, uv_stride);
+        let v = plane_stats(&engine.source_v, WIDTH / 2, HEIGHT / 2, uv_stride);
+        let dominant = engine
+            .class_counts
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, count)| *count)
+            .map(|(index, _)| index)
+            .expect("nonempty V8 class counts");
+        let class_names = [
+            "fine_smooth",
+            "chromatic_flat",
+            "chromatic_ramp",
+            "textured",
+        ];
+        let branch = if engine.high_chroma_loss {
+            "high_chroma_preview_pending"
+        } else {
+            "standard"
+        };
+        let deltas = engine.deltas;
+        println!(
+            concat!(
+                "V8_PROFILE_JSON={{\"ordinal\":{ordinal},\"stage\":\"analyze_not_run\",",
+                "\"steps\":{steps},\"branch\":\"{branch}\",",
+                "\"dominant_class\":\"{dominant_class}\",\"class_counts\":{class_counts:?},",
+                "\"segment_enabled\":{segment_enabled},\"segment_base_qindex\":{base_qindex},",
+                "\"segment_qindex\":{segment_qindex:?},",
+                "\"deltas\":{{\"y1_dc\":{y1_dc},\"y2_dc\":{y2_dc},",
+                "\"y2_ac\":{y2_ac},\"uv_dc\":{uv_dc},\"uv_ac\":{uv_ac}}},",
+                "\"neutral_chroma\":{neutral},\"high_chroma_loss\":{high_chroma_loss},",
+                "\"medium_textured_luma\":{medium_textured},\"photo_q60\":{photo},",
+                "\"mixed_y1_ac\":{mixed},\"curvature_sums\":{curvature:?},",
+                "\"curvature_within_cutoff\":{curvature_cutoff},\"rgb_error_sum\":{rgb_error_sum},",
+                "\"source_y\":{{\"mean\":{y_mean:.6},\"min\":{y_min},\"max\":{y_max}}},",
+                "\"source_u\":{{\"mean\":{u_mean:.6},\"min\":{u_min},\"max\":{u_max}}},",
+                "\"source_v\":{{\"mean\":{v_mean:.6},\"min\":{v_min},\"max\":{v_max}}}}}"
+            ),
+            ordinal = ordinal,
+            steps = steps,
+            branch = branch,
+            dominant_class = class_names[dominant],
+            class_counts = engine.class_counts,
+            segment_enabled = engine.segments.enabled,
+            base_qindex = engine.segments.base_qindex,
+            segment_qindex = engine.segments.qindex,
+            y1_dc = deltas.y1_dc,
+            y2_dc = deltas.y2_dc,
+            y2_ac = deltas.y2_ac,
+            uv_dc = deltas.uv_dc,
+            uv_ac = deltas.uv_ac,
+            neutral = engine.neutral_chroma,
+            high_chroma_loss = engine.high_chroma_loss,
+            medium_textured = engine.medium_textured_luma,
+            photo = engine.photo_q60,
+            mixed = engine.mixed_y1_ac,
+            curvature = engine.curvature.sums,
+            curvature_cutoff = engine.curvature.within_cutoff(engine.blocks.len()),
+            rgb_error_sum = engine.rgb_error_sum,
+            y_mean = y.0,
+            y_min = y.1,
+            y_max = y.2,
+            u_mean = u.0,
+            u_min = u.1,
+            u_max = u.2,
+            v_mean = v.0,
+            v_min = v.1,
+            v_max = v.2,
+        );
     }
 
     fn run_engine(mut engine: FrameEncoder) -> FrameEncoder {
