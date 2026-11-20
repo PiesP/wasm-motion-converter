@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// Four absolute VP8 quantizer segments. Bit syntax follows RFC 6386 section 9.3
-// and the reference decoder's SEGMENT_ABSDATA=1 definition.
+// VP8 quantizer segments and post-coding wire layout. Bit syntax follows
+// the RFC 6386 section 19.2 syntax and the reference decoder's abs/delta flag.
 
 use crate::{
     ac_quant::{steps, Deltas, Plane},
@@ -90,13 +90,20 @@ impl CurvatureTotals {
 }
 
 #[derive(Clone, Copy)]
+enum WireMap {
+    Original,
+    TexturedToRamp,
+    RelativePair([u8; 2]),
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct Config {
     pub enabled: bool,
     pub base_qindex: usize,
     pub qindex: [usize; 4],
     pub map_probabilities: [u8; 3],
     active: [bool; 4],
-    alias_textured_to_ramp: bool,
+    wire_map: WireMap,
     activity_grid: bool,
     activity_levels: Option<[u8; 4]>,
     pub neutral_smooth_grid: bool,
@@ -111,7 +118,7 @@ impl Config {
             map_probabilities: [255; 3],
             active: [false; 4],
             neutral_smooth_grid: false,
-            alias_textured_to_ramp: false,
+            wire_map: WireMap::Original,
             activity_grid: false,
             activity_levels: None,
         }
@@ -161,7 +168,7 @@ impl Config {
             map_probabilities,
             active: counts.map(|count| count > 0),
             neutral_smooth_grid,
-            alias_textured_to_ramp: false,
+            wire_map: WireMap::Original,
             activity_grid: false,
             activity_levels: None,
         }
@@ -181,7 +188,7 @@ impl Config {
             map_probabilities: Self::map_probabilities(counts, total),
             active: counts.map(|count| count > 0),
             neutral_smooth_grid,
-            alias_textured_to_ramp: false,
+            wire_map: WireMap::Original,
             activity_grid: true,
             activity_levels,
         }
@@ -260,7 +267,31 @@ impl Config {
         Some(Self {
             map_probabilities: Self::map_probabilities(counts, counts.iter().sum()),
             active,
-            alias_textured_to_ramp: true,
+            wire_map: WireMap::TexturedToRamp,
+            ..self
+        })
+    }
+
+    pub(crate) fn two_segment_wire(self, counts: [usize; 4]) -> Option<Self> {
+        if !self.enabled || self.activity_grid || !matches!(self.wire_map, WireMap::Original) {
+            return None;
+        }
+        if counts.map(|count| count != 0) != self.active {
+            return None;
+        }
+        let mut ids = (FINE_SMOOTH..=TEXTURED).filter(|&id| self.active[id as usize]);
+        let first = ids.next()?;
+        let second = ids.next()?;
+        if ids.next().is_some() || self.qindex_for(first) == self.qindex_for(second) {
+            return None;
+        }
+        // Both occupied slots already use the common frame filter. Keep
+        // their coding class and Q indices while relabeling only wire IDs.
+        let lo = counts[first as usize];
+        let hi = counts[second as usize];
+        Some(Self {
+            wire_map: WireMap::RelativePair([first, second]),
+            map_probabilities: Self::map_probabilities([lo, hi, 0, 0], lo + hi),
             ..self
         })
     }
@@ -421,9 +452,30 @@ impl Config {
         }
         sink.bit(true)?; // Fresh keyframe segmentation map.
         sink.bit(true)?; // Fresh segment feature data.
+        if let WireMap::RelativePair(ids) = self.wire_map {
+            sink.bit(false)?; // Signed deltas from the common frame values.
+            for id in ids {
+                let delta = self.qindex_for(id) as i32 - self.base_qindex as i32;
+                sink.bit(delta != 0)?;
+                if delta != 0 {
+                    sink.literal(delta.unsigned_abs(), 7)?;
+                    sink.bit(delta < 0)?;
+                }
+            }
+            sink.literal(0, 2)?; // No quantizer features on unoccupied IDs.
+            sink.literal(0, 4)?; // All levels already match the frame filter.
+            for probability in self.map_probabilities {
+                sink.bit(probability != 255)?;
+                if probability != 255 {
+                    sink.literal(u32::from(probability), 8)?;
+                }
+            }
+            return Ok(());
+        }
         sink.bit(true)?; // Absolute quantizer values (SEGMENT_ABSDATA).
         for (id, &qindex) in self.qindex.iter().enumerate() {
-            let write_quantizer = !(self.alias_textured_to_ramp && id == TEXTURED as usize);
+            let write_quantizer =
+                !(matches!(self.wire_map, WireMap::TexturedToRamp) && id == TEXTURED as usize);
             sink.bit(write_quantizer)?;
             if write_quantizer {
                 sink.literal(qindex as u32, 7)?;
@@ -454,10 +506,12 @@ impl Config {
             if id > TEXTURED {
                 return Err(EncodeError::InvalidInput);
             }
-            let id = if self.alias_textured_to_ramp && id == TEXTURED {
-                CHROMATIC_RAMP
-            } else {
-                id
+            let id = match self.wire_map {
+                WireMap::TexturedToRamp if id == TEXTURED => CHROMATIC_RAMP,
+                WireMap::RelativePair([first, _]) if id == first => FINE_SMOOTH,
+                WireMap::RelativePair([_, second]) if id == second => CHROMATIC_FLAT,
+                WireMap::RelativePair(_) => return Err(EncodeError::InvalidInput),
+                _ => id,
             };
             sink.write(self.map_probabilities[0], id >= CHROMATIC_RAMP)?;
             if id >= CHROMATIC_RAMP {
@@ -1333,6 +1387,68 @@ mod tests {
             config.write_id(&mut Operations(Vec::new()), 4),
             Err(EncodeError::InvalidInput)
         );
+    }
+
+    #[test]
+    fn two_segment_wire_represents_negative_and_positive_quantizer_deltas() {
+        struct Operations(Vec<(u8, bool)>);
+        impl BoolSink for Operations {
+            fn write(&mut self, probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push((probability, bit));
+                Ok(())
+            }
+        }
+        let counts = [70, 0, 0, 38];
+        let mut original = Config::from_counts(75, counts, 108, false);
+        original.qindex = [6, 19, 27, 28];
+        original.base_qindex = 16;
+        let wire = original.two_segment_wire(counts).unwrap();
+        assert_eq!(wire.map_probabilities, [255, 166, 255]);
+        assert_eq!(wire.base_qindex, original.base_qindex);
+        assert_eq!(wire.qindex, original.qindex);
+        assert_eq!(wire.filter_for(FINE_SMOOTH, 4), 4);
+        assert_eq!(wire.filter_for(TEXTURED, 4), 4);
+        let mut header = Operations(Vec::new());
+        wire.write_header(&mut header, 4).unwrap();
+        let mut expected = Operations(Vec::new());
+        for bit in [true, true, true, false, true] {
+            expected.bit(bit).unwrap();
+        }
+        expected.literal(10, 7).unwrap();
+        expected.bit(true).unwrap();
+        expected.bit(true).unwrap();
+        expected.literal(12, 7).unwrap();
+        expected.bit(false).unwrap();
+        expected.literal(0, 6).unwrap();
+        expected.bit(false).unwrap();
+        expected.bit(true).unwrap();
+        expected.literal(166, 8).unwrap();
+        expected.bit(false).unwrap();
+        assert_eq!(header.0, expected.0);
+
+        for (id, second) in [(FINE_SMOOTH, false), (TEXTURED, true)] {
+            let mut id_ops = Operations(Vec::new());
+            wire.write_id(&mut id_ops, id).unwrap();
+            assert_eq!(id_ops.0, [(255, false), (166, second)]);
+        }
+        assert_eq!(
+            wire.write_id(&mut Operations(Vec::new()), CHROMATIC_RAMP),
+            Err(EncodeError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn two_segment_wire_keeps_nonpair_equal_and_activity_grids() {
+        for counts in [[1, 0, 0, 0], [1, 1, 0, 1], [1; 4]] {
+            let original = Config::from_counts(75, counts, counts.iter().sum(), false);
+            assert!(original.two_segment_wire(counts).is_none());
+        }
+        let counts = [70, 0, 0, 38];
+        let mut equal = Config::from_counts(75, counts, 108, false);
+        equal.qindex[3] = equal.qindex[0];
+        assert!(equal.two_segment_wire(counts).is_none());
+        let activity = Config::from_activity([6, 19, 27, 28], counts, false, Some([4; 4]));
+        assert!(activity.two_segment_wire(counts).is_none());
     }
 
     #[test]

@@ -1204,6 +1204,11 @@ fn compact_selected_smooth_i16(mut block: Macroblock) -> Option<Macroblock> {
         return Some(block);
     }
 
+    compact_i16_y1_tail(block)
+}
+
+// Keep the separately coded Y2 predictor residual exactly as signalled.
+fn compact_i16_y1_tail(mut block: Macroblock) -> Option<Macroblock> {
     let mut changed = false;
     for coefficients in &mut block.y {
         if let Some(trimmed) = trimmed_unit_ac_tail(*coefficients) {
@@ -2375,6 +2380,39 @@ fn q60_textured_with_smooth_chroma(
     ordinary_q60_texture && width >= 16 && height >= 16 && curvature.only_luma_exceeds_cutoff(count)
 }
 
+// q60 gathers complete padded frame curvature during the original source pass.
+fn low_amplitude_chroma_feedback(
+    quality: u32,
+    curvature: segmentation::CurvatureTotals,
+    blocks: usize,
+) -> bool {
+    quality == 60
+        && curvature.only_luma_exceeds_cutoff(blocks)
+        && curvature.luma_mean_at_most_twice_cutoff(blocks)
+}
+
+// The caller admits a full visible macroblock and the common padded strides.
+fn tile_range_at_most<const N: usize>(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    limit: u8,
+) -> bool {
+    let mut minimum = u8::MAX;
+    let mut maximum = u8::MIN;
+    for row in y..y + N {
+        for &value in &source[row * stride + x..row * stride + x + N] {
+            minimum = minimum.min(value);
+            maximum = maximum.max(value);
+            if maximum - minimum > limit {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn uv_dc_feedback_for_tile(
     enabled: bool,
     mx: usize,
@@ -2589,7 +2627,6 @@ fn encode_observed(
     let mut activity = Activity::new();
     let activity_plan = if activity
         .start(
-            quality,
             class_counts,
             curvature,
             smooth_grid_source.near_neutral,
@@ -2632,6 +2669,7 @@ fn encode_observed(
         count,
         (width as u32, height as u32),
     ) && curvature.luma_mean_at_most_twice_cutoff(count);
+    let low_amplitude_feedback = low_amplitude_chroma_feedback(quality, curvature, count);
     let mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
         quality,
         class_counts,
@@ -2747,6 +2785,7 @@ fn encode_observed(
                     high_chroma_loss,
                     mixed_y1_ac,
                     uv_dc_feedback,
+                    low_amplitude_feedback,
                     luma_bias,
                     &mut reconstructed_y,
                     &mut reconstructed_u,
@@ -3321,7 +3360,9 @@ fn encode_observed(
             }
         }
     }
-    let wire_alias = wire_alias.map(|alias| (alias, above_modes.as_mut_slice()));
+    let wire_alias = wire_alias
+        .or_else(|| segments.two_segment_wire(class_counts))
+        .map(|alias| (alias, above_modes.as_mut_slice()));
     let result = emit_segmented_frame_with_alias(
         &blocks,
         width,
@@ -3422,6 +3463,7 @@ fn analyze_one(
     high_chroma_loss: bool,
     mixed_y1_ac: bool,
     uv_dc_feedback: bool,
+    low_amplitude_feedback: bool,
     luma_bias: bool,
     reconstructed_y: &mut [u8],
     reconstructed_u: &mut [u8],
@@ -3538,16 +3580,51 @@ fn analyze_one(
     let uv_width = visible_width.div_ceil(2);
     let uv_height = visible_height.div_ceil(2);
     let complete_uv_tile = uv_dc_feedback_for_tile(true, mx, my, uv_width, uv_height);
-    let dc_feedback = if complete_uv_tile && uv_dc_feedback {
-        UvDcFeedback::WithinTile
-    } else if complete_uv_tile
-        && segments.neutral_smooth_grid
-        && source_class == segmentation::FINE_SMOOTH
-    {
-        UvDcFeedback::CommittedBoundaries
-    } else {
-        UvDcFeedback::Disabled
-    };
+    // Small luma variation can classify a field with nearly constant chroma
+    // as Textured. Admit complete tiles on the ordinary mixed physical grid.
+    let low_amplitude_texture = (quality == 85 || low_amplitude_feedback)
+        && luma_policy == 0
+        && source_class == segmentation::TEXTURED
+        && segments.enabled
+        && !segments.neutral_smooth_grid
+        && matrices.is_none()
+        && !mixed_y1_ac
+        && !high_chroma_loss
+        && x + 16 <= visible_width
+        && y + 16 <= visible_height
+        && tile_range_at_most::<16>(
+            source_y,
+            padded_w,
+            x,
+            y,
+            ac_quant::AC_QUANT[crate::presets::textured_qindex(85, false)] as u8,
+        )
+        && tile_range_at_most::<8>(
+            source_u,
+            uv_w,
+            mx * 8,
+            my * 8,
+            segmentation::CURVATURE_CUTOFF as u8,
+        )
+        && tile_range_at_most::<8>(
+            source_v,
+            uv_w,
+            mx * 8,
+            my * 8,
+            segmentation::CURVATURE_CUTOFF as u8,
+        );
+    let sparse_i16_trial = quality == 85 && low_amplitude_texture;
+    let dc_feedback =
+        if complete_uv_tile && (uv_dc_feedback || (quality == 60 && low_amplitude_texture)) {
+            UvDcFeedback::WithinTile
+        } else if complete_uv_tile
+            && segments.neutral_smooth_grid
+            && source_class == segmentation::FINE_SMOOTH
+        {
+            UvDcFeedback::CommittedBoundaries
+        } else {
+            UvDcFeedback::Disabled
+        };
     let uv: Vec<_> = (0..4)
         .map(|mode| {
             make_uv(
@@ -3574,6 +3651,7 @@ fn analyze_one(
         })
         .collect();
     let mut best: Option<(u64, usize, usize)> = None;
+    let mut best_i16 = None;
     let mut luma_costs = [None; 5];
     let activity_filter_edge = if segments.uses_activity_filter() {
         best_i16_filter_edge(
@@ -3641,63 +3719,78 @@ fn analyze_one(
             if best.is_none_or(|previous| score < previous.0) {
                 best = Some((score, li, ui));
             }
+            if sparse_i16_trial && candidate.i16 && best_i16.is_none_or(|(last, _)| score < last) {
+                best_i16 = Some((score, li));
+            }
             // Trials own only stack/tile state. No committed neighbor,
             // context, mode or coefficient statistic changes here.
         }
     }
-    let (score, li, ui) = best.ok_or(EncodeError::OutputLimit)?;
+    let (mut score, li, mut ui) = best.ok_or(EncodeError::OutputLimit)?;
     let mut selected_luma = &luma[li];
-    let mut selected_uv = uv[ui].clone();
-    // Keep a single extra candidate. When Y1 has AC, price shorter Y1
-    // tails with the original Y2. Already-empty Y1 keeps its Y2 trial.
-    let compact_luma = if !segments.enabled
+    let compact = if !segments.enabled
         && segments.neutral_smooth_grid
         && selected_luma.block.i16
         && x + 16 <= visible_width
         && y + 16 <= visible_height
     {
-        compact_selected_smooth_i16(selected_luma.block).map(|compact| {
-            let (top, left, corner) = edge::<16>(reconstructed_y, padded_w, x, y);
-            let predicted = prediction::predict_large(
-                &top,
-                &left,
-                corner,
-                y > 0,
-                x > 0,
-                mode_from_u8(compact.y_mode),
-            );
-            reconstruct_i16(
-                source_y, padded_w, x, y, compact, &predicted, y_steps, y2_steps,
-            )
-        })
+        compact_selected_smooth_i16(selected_luma.block)
     } else {
-        None
+        best_i16.and_then(|(_, index)| compact_i16_y1_tail(luma[index].block))
     };
+    let compact_luma = compact.map(|compact| {
+        let (top, left, corner) = edge::<16>(reconstructed_y, padded_w, x, y);
+        let predicted = prediction::predict_large(
+            &top,
+            &left,
+            corner,
+            y > 0,
+            x > 0,
+            mode_from_u8(compact.y_mode),
+        );
+        reconstruct_i16(
+            source_y, padded_w, x, y, compact, &predicted, y_steps, y2_steps,
+        )
+    });
     if let Some(compact) = &compact_luma {
-        let mut candidate = compact.block;
-        candidate.uv_mode = ui as u8;
-        candidate.segment_id = segment_id;
-        candidate.u = selected_uv.u;
-        candidate.v = selected_uv.v;
-        let distortion = score_luma_distortion(compact) + selected_uv.distortion;
-        if selected_cost(
-            &candidate,
-            mx,
-            coeff_contexts,
-            above_modes,
-            left_modes,
-            distortion,
-            lambda,
-            segments,
-            header_budget,
-            &mut None,
-            &mut uv_costs[ui],
-        )?
-        .is_some_and(|alternative| alternative < score)
-        {
-            selected_luma = compact;
+        let mut compact_cost = None;
+        // The existing smooth-grid trial retains its selected UV. The sparse
+        // I16 challenger can affect skip, so price all four original UV modes.
+        let modes = if sparse_i16_trial {
+            0..uv.len()
+        } else {
+            ui..ui + 1
+        };
+        let luma_distortion = score_luma_distortion(compact);
+        for alternative_ui in modes {
+            let chroma = &uv[alternative_ui];
+            let mut candidate = compact.block;
+            candidate.uv_mode = alternative_ui as u8;
+            candidate.segment_id = segment_id;
+            candidate.u = chroma.u;
+            candidate.v = chroma.v;
+            if let Some(alternative) = selected_cost(
+                &candidate,
+                mx,
+                coeff_contexts,
+                above_modes,
+                left_modes,
+                luma_distortion + chroma.distortion,
+                lambda,
+                segments,
+                header_budget,
+                &mut compact_cost,
+                &mut uv_costs[alternative_ui],
+            )? {
+                if alternative < score {
+                    score = alternative;
+                    selected_luma = compact;
+                    ui = alternative_ui;
+                }
+            }
         }
     }
+    let mut selected_uv = uv[ui].clone();
     let mut block = Macroblock {
         y: selected_luma.block.y,
         y2: selected_luma.block.y2,
@@ -5718,7 +5811,6 @@ impl FrameEncoder {
             if self
                 .activity
                 .start(
-                    quality,
                     self.class_counts,
                     self.curvature,
                     self.smooth_grid_source.near_neutral,
@@ -5822,6 +5914,11 @@ impl FrameEncoder {
             self.refinement_log
                 .reserve_one(self.plan.macroblock_count as usize + 128)?;
         }
+        let low_amplitude_feedback = low_amplitude_chroma_feedback(
+            self.effective_quality,
+            self.curvature,
+            self.blocks.len(),
+        );
         let analyzed = analyze_one(
             &self.source_y,
             &self.source_u,
@@ -5830,6 +5927,7 @@ impl FrameEncoder {
             self.high_chroma_loss,
             self.mixed_y1_ac,
             self.uv_dc_feedback,
+            low_amplitude_feedback,
             self.luma_bias,
             &mut self.reconstructed_y,
             &mut self.reconstructed_u,
@@ -6142,6 +6240,14 @@ impl FrameEncoder {
             self.pending_output_sizes = Some((first, second));
         } else {
             self.plan = plan;
+            // Refined candidates reach here only after their winning packet
+            // has settled. Reuse the header-only count with that packet's
+            // model and skip decisions.
+            self.wire_alias = self.segments.two_segment_wire(self.class_counts);
+            if self.wire_alias.is_some() {
+                self.count_header = CountingBoolSink::default();
+                self.cursor = 0;
+            }
         }
         self.stage = if self.quality_score.is_some() {
             Stage::QualityRelease
@@ -6154,6 +6260,8 @@ impl FrameEncoder {
     fn after_quality_release(&self) -> Stage {
         if self.compact_filter_search.is_some() {
             Stage::CompactFilter
+        } else if self.wire_alias.is_some() {
+            Stage::CountAliasPrefix
         } else {
             Stage::PrepareOutput
         }
@@ -7179,6 +7287,51 @@ mod tests {
         assert!(before_contexts.left_y[3]);
         assert!(!after_contexts.y[3]);
         assert!(!after_contexts.left_y[3]);
+    }
+
+    #[test]
+    fn low_amplitude_feedback_requires_moderately_rough_luma_and_smooth_chroma() {
+        let allow = |quality, sums, blocks| {
+            low_amplitude_chroma_feedback(
+                quality,
+                segmentation::CurvatureTotals {
+                    sums,
+                    ..Default::default()
+                },
+                blocks,
+            )
+        };
+        for quality in [60, 75, 85] {
+            assert_eq!(allow(quality, [897, 192, 192], 1), quality == 60);
+        }
+        assert!(!allow(60, [896, 192, 192], 1));
+        assert!(allow(60, [1792, 192, 192], 1));
+        assert!(!allow(60, [1793, 192, 192], 1));
+        assert!(!allow(60, [897, 193, 192], 1));
+        assert!(!allow(60, [897, 192, 193], 1));
+        assert!(!allow(60, [0; 3], 0));
+    }
+
+    #[test]
+    fn sparse_i16_trial_retains_y2_and_bounds_source_coordinates() {
+        let mut samples = [99; 32];
+        samples[1] = 0;
+        samples[2 * 8 + 4] = 117;
+        assert!(tile_range_at_most::<3>(&samples, 8, 2, 1, 18));
+        assert!(!tile_range_at_most::<3>(&samples, 8, 2, 1, 17));
+        let mut block = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        block.y2[residual::SCAN[15]] = -1;
+        assert!(compact_i16_y1_tail(block).is_none());
+        block.y[3][residual::SCAN[1]] = 2;
+        block.y[3][residual::SCAN[2]] = -1;
+        let compact = compact_i16_y1_tail(block).unwrap();
+        assert_eq!(compact.y2, block.y2);
+        assert_eq!(compact.y[3][residual::SCAN[1]], 2);
+        assert_eq!(compact.y[3][residual::SCAN[2]], 0);
+        assert!(!compact.skip());
     }
 
     #[test]
@@ -9328,6 +9481,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    false,
                     &mut probe_y,
                     &mut probe_u,
                     &mut probe_v,
@@ -9359,6 +9513,7 @@ mod tests {
                     &baseline.source_u,
                     &baseline.source_v,
                     None,
+                    false,
                     false,
                     false,
                     false,
@@ -10910,6 +11065,7 @@ mod tests {
                     false,
                     false,
                     false,
+                    false,
                     &mut reconstructed_y,
                     &mut reconstructed_u,
                     &mut reconstructed_v,
@@ -11638,6 +11794,77 @@ mod tests {
             16,
             &expected,
             "alias of equivalent mixed q60 segments",
+        );
+    }
+
+    fn two_segment_header_packets() -> (FrameEncoder, Vec<u8>) {
+        let mut input = Vec::with_capacity(32 * 16 * 4);
+        for row in mixed_segment_input().as_chunks::<{ 64 * 4 }>().0 {
+            input.extend_from_slice(&row[..16 * 4]);
+            input.extend_from_slice(&row[48 * 4..]);
+        }
+        let request = engine_request(32, 16, 0, &input, 128);
+        let mut engine = FrameEncoder::new(
+            request,
+            input.clone(),
+            ResourcePlan::checked(request).unwrap(),
+        )
+        .unwrap();
+        while engine.stage != Stage::CountAliasPrefix {
+            assert!(!engine.step().unwrap());
+        }
+        assert_eq!(engine.class_counts, [1, 0, 0, 1]);
+        let initial = engine.plan;
+        let original = emit_segmented_frame(
+            &engine.blocks,
+            32,
+            16,
+            engine.segments,
+            engine.deltas,
+            engine.filter,
+        )
+        .unwrap();
+        let original_first = first_partition_bytes(&original);
+        assert_eq!(initial.frame_bytes as usize, original.len());
+        assert_eq!(initial.first_partition_bytes as usize, original_first);
+
+        let engine = run_engine(engine);
+        let packet = engine.output();
+        let selected_first = first_partition_bytes(packet);
+        assert!(selected_first < original_first);
+        assert_eq!(
+            &packet[10 + selected_first..],
+            &original[10 + original_first..]
+        );
+        assert_eq!(packet, encode_textured(&input, 32, 16, 128, 0, 75).unwrap());
+        assert_eq!(packet.len(), engine.plan.frame_bytes as usize);
+        assert_eq!(packet.len(), engine.plan.host_output_copy_bytes as usize);
+        assert_eq!(
+            engine.plan.linear_capacity_bytes,
+            initial.linear_capacity_bytes
+        );
+        (engine, original)
+    }
+
+    #[test]
+    fn distinct_two_segment_wire_header_is_lossless_and_matches_sync() {
+        two_segment_header_packets();
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_match_distinct_two_segment_wire_headers() {
+        let (engine, original) = two_segment_header_packets();
+        let (y, u, v, padded_w) = engine.reconstruction();
+        let expected =
+            filtered_visible_yuv(y, u, v, padded_w, 32, 16, &engine.blocks, engine.filter);
+        assert_decodes(&original, 32, 16, &expected, "original two-segment map");
+        assert_decodes(
+            engine.output(),
+            32,
+            16,
+            &expected,
+            "relative two-segment map",
         );
     }
 
@@ -13484,8 +13711,11 @@ mod tests {
         assert!(engine.base_quality > refined_quality.unwrap());
         assert!(engine.refined_checkpoint.is_none()); // B0 won the complete filtered score.
         assert!(engine.baseline_checkpoint.is_none());
+        let (first, second) = engine.pending_output_sizes.unwrap();
+        assert_eq!(10 + first + second, 1301);
         let engine = run_engine(engine);
-        assert_eq!(engine.output().len(), 1301);
+        assert_eq!(engine.plan.coefficient_partition_bytes, second);
+        assert!(engine.output().len() <= 1301);
     }
 
     #[test]
@@ -13945,11 +14175,20 @@ mod tests {
     #[cfg(feature = "activity-allocation")]
     #[test]
     fn activity_allocation_matches_sync_and_resumable_with_odd_edges() {
-        for (width, height, quality) in [(65, 49, 60), (65, 49, 75), (64, 48, 85)] {
+        for (width, height, quality, smooth_suffix) in [
+            (65, 49, 60, false),
+            (65, 49, 75, false),
+            (64, 48, 85, false),
+            (64, 48, 85, true),
+        ] {
             let mut input = Vec::with_capacity(width * height * 4);
             for y in 0..height {
                 for x in 0..width {
-                    let [r, g, b] = deferred_activity_rough_pixel(x, y);
+                    let [r, g, b] = if smooth_suffix && x >= 48 && y >= 32 {
+                        [160, 64, 32]
+                    } else {
+                        deferred_activity_rough_pixel(x, y)
+                    };
                     input.extend([r, g, b, 255]);
                 }
             }
@@ -13965,7 +14204,11 @@ mod tests {
             }
             let count = engine.plan.macroblock_count;
             let classes: Vec<u8> = engine.blocks.iter().map(|block| block.segment_id).collect();
-            assert!(engine.class_counts[segmentation::TEXTURED as usize] > count as usize / 2);
+            let textured = engine.class_counts[segmentation::TEXTURED as usize];
+            assert!(textured > count as usize / 2);
+            if smooth_suffix {
+                assert!(textured < count as usize);
+            }
             assert_eq!(engine.stage(), 62);
             let (initial, capacity) = engine.activity.map_state();
             assert_eq!(initial, 0);
@@ -14039,7 +14282,9 @@ mod tests {
                         }
                         3 if (x + y) % 2 == 0 => [255, 0, 0],
                         3 => [0, 255, 255],
-                        _ if x >= 48 && y >= 32 => [160, 64, 32],
+                        // q85 stops collecting curvature at the first smooth
+                        // macroblock. An unobserved rough suffix cannot certify it.
+                        _ if x < 16 && y < 16 => [160, 64, 32],
                         _ => deferred_activity_rough_pixel(x, y),
                     };
                     input.extend([rgb[0], rgb[1], rgb[2], 255]);

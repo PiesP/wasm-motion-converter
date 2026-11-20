@@ -191,6 +191,16 @@ within the original reserved linear capacity. The additional configuration
 is charged within the fixed engine scratch bound. The frame needs no
 additional pixel pass or frame buffer.
 
+After the normal variant, filter and coefficient model have settled, an
+ordinary two-segment map with distinct quantizers can also use a shorter
+lossless header. It assigns the two occupied IDs to 0 and 1 in their original
+order, emits signed quantizer deltas relative to the existing base and inherits
+the common frame filter. Activity grids, equal quantizers and maps with more
+occupied IDs keep their existing paths. The existing header-only count uses
+the frozen modes and skip decisions and selects the shorter first partition
+only on a strict byte improvement. Coefficient bytes, reconstruction, display
+variant decisions and the original capacity floor are preserved.
+
 At q60, the existing source-derived high-chroma-loss predicate compares the
 Original and Reduced profiles. Each completed trial is filtered after its
 analysis and rate statistics are finished. Its visible owned-renderer RGB
@@ -235,9 +245,10 @@ intrinsic classification, ordinary colored frames with more than four macroblock
 can use the source-activity map when Textured forms a strict majority and the
 mean absolute second difference on each of Y, U and V exceeds two. The pooled
 chroma mean must also exceed two on each axis, preserving the existing grid
-when the signal varies predominantly along one direction. At q85 the
-intrinsic map must be entirely Textured for the existing curvature sums to cover
-the frame. High-import preview and near-neutral inputs keep the original grid.
+when the signal varies predominantly along one direction. At q85 classification may stop accumulating curvature after the first
+non-Textured macroblock. Each accumulated term is nonnegative. The prefix
+can therefore certify the same lower bounds against the full frame denominator
+without scanning the remaining pixels. High-import preview and near-neutral inputs keep the original grid.
 On an admitted frame, ABI stage 62 analyzes one source macroblock per step and
 finalizes the histogram separately. It reserves one byte per macroblock, up to
 40,280 bytes. Both coding entry points retain each intrinsic class for prediction
@@ -342,6 +353,15 @@ selected I4 subblock's AC-neighbor trial. The final macroblock comparison
 uses its ordinary weight and full cost. Eligible full chroma tiles can
 seed local UV DC feedback from the committed top and left reconstruction
 errors. The synchronous encoder and the resumable ABI share these rules.
+
+On ordinary mixed grids, a complete Textured tile with a small luma range
+and at most two codes of variation on each chroma plane can use two further
+preset-specific trials. At q60 it evaluates within-tile chroma DC feedback
+when the frame's mean luma curvature exceeds the smoothness cutoff and is
+at most twice that cutoff, and both chroma means stay within the cutoff. At q85 it prices a sparse reconstruction of the best regular
+I16 pair against the incumbent, including when I4 won the regular search.
+The sparse trial trims trailing unit Y1 AC coefficients, preserves Y2, and
+prices all four UV modes under the same context and header constraints.
 
 On a wholly FineSmooth near-neutral grid, a selected full I16 tile with
 empty Y1 residuals can trim a scan-order suffix of unit Y2 AC levels. When

@@ -173,7 +173,7 @@ function collectOwnedVp8Attribution(): LicenseEntry {
       notice('crates/owned-vp8/PATENTS.libwebp'),
       {
         file: 'RFC 6386 format reference',
-        text: 'RFC 6386 (VP8 Data Format and Decoding Guide), sections 7, 9, 11, 13 and 14, Copyright (c) 2011 IETF Trust and the identified contributors. Numeric format tables and bitstream semantics are referenced independently of libwebp source code. https://www.rfc-editor.org/rfc/rfc6386.html',
+        text: 'RFC 6386 (VP8 Data Format and Decoding Guide), sections 7, 9, 11, 13, 14 and 19.2, Copyright (c) 2011 IETF Trust and the identified contributors. Numeric format tables and bitstream semantics are referenced independently of libwebp source code. https://www.rfc-editor.org/rfc/rfc6386.html',
       },
     ],
   };

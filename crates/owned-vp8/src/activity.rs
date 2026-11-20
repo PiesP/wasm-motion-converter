@@ -80,10 +80,11 @@ impl Activity {
         }
     }
 
-    /// Only the completed intrinsic source census can admit activity analysis.
+    /// Occupancy must be complete. Curvature can be a lower bound from the
+    /// classifier's prefix: it sums nonnegative terms, so crossing every
+    /// cutoff with the full-frame count certifies roughness without a rescan.
     pub(super) fn start(
         &mut self,
-        quality: u32,
         counts: [usize; 4],
         curvature: CurvatureTotals,
         near_neutral: bool,
@@ -97,9 +98,6 @@ impl Activity {
             || high_chroma_loss
             || count <= 4
             || textured <= count / 2
-            // At q85 the intrinsic classifier only guarantees the complete
-            // curvature census when every source block is Textured.
-            || (quality == 85 && textured != count)
         {
             return Some(false);
         }
@@ -387,7 +385,7 @@ mod deferred_tests {
     use super::*;
 
     #[test]
-    fn deferred_activity_admission_requires_strict_curvature_and_complete_q85_census() {
+    fn deferred_activity_admission_accepts_only_a_certifying_lower_bound() {
         let exact = [10 * 448, 10 * 96, 10 * 96];
         let rough = CurvatureTotals {
             sums: exact.map(|sum| sum + 1),
@@ -400,54 +398,42 @@ mod deferred_tests {
                 ..rough
             };
             assert_eq!(
-                activity.start(60, [0, 0, 0, 5], stripe, false, false),
+                activity.start([0, 0, 0, 5], stripe, false, false),
                 Some(false)
             );
             assert_eq!(activity.map_state(), (0, 0));
         }
-        for quality in [60, 75, 85] {
-            for axis in 0..3 {
-                let mut sums = rough.sums;
-                sums[axis] = exact[axis];
-                let mut activity = Activity::new();
-                assert_eq!(
-                    activity.start(
-                        quality,
-                        [0, 0, 0, 5],
-                        CurvatureTotals { sums, ..rough },
-                        false,
-                        false
-                    ),
-                    Some(false)
-                );
-                assert_eq!(activity.map_state(), (0, 0));
-            }
-            let mut full = Activity::new();
+        for axis in 0..3 {
+            let mut sums = rough.sums;
+            sums[axis] = exact[axis];
+            let mut activity = Activity::new();
             assert_eq!(
-                full.start(quality, [0, 0, 0, 5], rough, false, false),
-                Some(true)
+                activity.start(
+                    [0, 0, 1, 4],
+                    CurvatureTotals { sums, ..rough },
+                    false,
+                    false
+                ),
+                Some(false)
             );
-            let (len, capacity) = full.map_state();
+            assert_eq!(activity.map_state(), (0, 0));
+        }
+        for counts in [[0, 0, 0, 5], [0, 0, 1, 4]] {
+            let mut activity = Activity::new();
+            assert_eq!(activity.start(counts, rough, false, false), Some(true));
+            let (len, capacity) = activity.map_state();
             assert_eq!(len, 0);
             assert!((5..=MAP_CAPACITY_BYTES).contains(&capacity));
-            let mut mixed = Activity::new();
-            assert_eq!(
-                mixed.start(quality, [0, 0, 1, 4], rough, false, false),
-                Some(quality != 85)
-            );
-            if quality == 85 {
-                assert_eq!(mixed.map_state(), (0, 0));
-            }
         }
         for counts in [[0, 0, 0, 4], [0, 0, 3, 3]] {
             let mut activity = Activity::new();
-            assert_eq!(activity.start(60, counts, rough, false, false), Some(false));
+            assert_eq!(activity.start(counts, rough, false, false), Some(false));
             assert_eq!(activity.map_state(), (0, 0));
         }
         for (near_neutral, high_loss) in [(true, false), (false, true)] {
             let mut activity = Activity::new();
             assert_eq!(
-                activity.start(60, [0, 0, 0, 5], rough, near_neutral, high_loss),
+                activity.start([0, 0, 0, 5], rough, near_neutral, high_loss),
                 Some(false)
             );
             assert_eq!(activity.map_state(), (0, 0));
