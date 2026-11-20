@@ -163,7 +163,12 @@ pub(crate) fn high_curvature_q60_textured_deltas(
         // on the finer grid and does not change the strict high-loss branch.
         let ordinary_uv_ac = textured_qindex(60, false) as i8 + UV_AC_DELTA[0];
         let span = (HIGH_IMPORT_UV_AC_QINDEX - ordinary_uv_ac) as u128;
-        let offset = u128::from(rgb_error_sum) * span / u128::from(limit);
+        // The quantization step is an amplitude. Compare squared offsets
+        // against squared error to floor the RMS interpolation exactly.
+        let scaled_error = u128::from(rgb_error_sum) * span * span;
+        let offset = (1..=span)
+            .take_while(|step| step * step * u128::from(limit) <= scaled_error)
+            .count();
         selected.uv_ac += offset as i8;
     }
     selected
@@ -487,7 +492,7 @@ mod tests {
         let visible = (16, 16);
         let limit = chroma_loss_limit(visible.0, visible.1).unwrap();
         for offset in 1..=11u64 {
-            let first = (offset * limit).div_ceil(11);
+            let first = (offset * offset * limit).div_ceil(11 * 11);
             assert_eq!(
                 apply(first - 1, visible).uv_ac,
                 before.uv_ac + offset as i8 - 1

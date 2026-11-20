@@ -123,7 +123,7 @@ plane sums using 448 Y and 96 U/V differences per macroblock. When both chroma
 means are at most the luma mean, the encoder matches UV AC to UV DC at effective
 qindex 28. When either chroma mean exceeds luma and a complete 16×16 block fits in
 the visible frame, the encoder adds
-`floor(11 × visible nearest-chroma RGB SSE / high-chroma-loss cutoff)` to the
+`floor(11 × sqrt(visible nearest-chroma RGB SSE / high-chroma-loss cutoff))` to the
 ordinary UV AC qindex 21. The range ends at the existing high-import UV AC
 qindex 32. Errors below the first increment and narrow frames without a
 complete visible block retain qindex 21 in this branch. Frames above

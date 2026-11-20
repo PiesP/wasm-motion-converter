@@ -12277,7 +12277,7 @@ mod tests {
                 chroma_dominant_texture_input(true),
                 60,
                 32,
-                (-4, -8),
+                (-4, -5),
                 false,
                 Some(false),
             ),
