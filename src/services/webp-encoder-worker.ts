@@ -10,7 +10,8 @@
  *
  * Protocol:
  *   Main → Worker: { id, rgbaData, width, height, quality, durationMs }
- *   Worker → Main: { id, bitstream } or { id, error }
+ *   Worker → Main: { id, bitstream, iccProfile } or { id, error }
+ *   iccProfile is null when absent. Transfer the bitstream and any ICC profile.
  */
 
 import { getErrorMessage } from '@piesp/browser-core/error';
@@ -157,7 +158,7 @@ self.onmessage = async (event: MessageEvent) => {
 
   try {
     const result = await handleEncode(request);
-    // Transfer the bitstream's underlying ArrayBuffer back
+    // Transfer the VP8 payload and any ICC profile.
     self.postMessage(
       result,
       result.iccProfile

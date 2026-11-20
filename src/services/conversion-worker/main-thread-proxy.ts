@@ -12,7 +12,7 @@
  * - Clones Blob handles for lazy reads or transfers owned ArrayBuffers
  * - Throttled progress callbacks to the main thread
  * - Main-thread fallback only when Worker construction or bootstrap is unavailable
- * - AbortController propagation to the worker
+ * - Aborting the request terminates its dedicated Worker
  * - Timeout protection: terminates worker and rejects if conversion hangs
  */
 
@@ -115,8 +115,7 @@ export async function runPipelineViaWorker(
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const requestId = crypto.randomUUID();
 
-    // Create the worker. Construction failures are capability/bootstrap
-    // failures and are the only class eligible for main-thread fallback.
+    // Classify synchronous Worker construction failures as unavailability.
     let worker: Worker;
     try {
       worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
@@ -371,8 +370,9 @@ export async function runPipelineViaWorker(
  * Use this as a drop-in replacement for runConversionPipeline when you want
  * to offload the conversion to a Web Worker.
  *
- * Falls back to the main-thread pipeline if Worker creation fails
- * (e.g., CSP violations, file:// protocol).
+ * Falls back to the main-thread pipeline after a construction failure,
+ * an error before the ready message, or failure to send the start message.
+ * Fallback requires an attached input buffer or the original Blob.
  */
 export async function runPipelineWithFallback(
   input: ArrayBuffer | Blob,
