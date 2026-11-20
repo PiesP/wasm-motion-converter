@@ -8815,8 +8815,8 @@ mod tests {
                             _ => i.is_multiple_of(3),
                         };
                         contexts.y2[0] = flag(0);
-                        for i in 0..4 {
-                            contexts.y[i] = flag(i + 1);
+                        for (i, value) in contexts.y[..4].iter_mut().enumerate() {
+                            *value = flag(i + 1);
                         }
                         for i in 0..2 {
                             contexts.u[i] = flag(i + 5);
