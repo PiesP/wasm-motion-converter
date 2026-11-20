@@ -172,12 +172,14 @@ campaign receipt. Do not commit generated distributions or the selector file.
 
 ## WebP initialization recovery
 
-For the focused built-app failure/reload/output scenario, create ignored
+For the built-app initialization recovery scenario, create ignored
 `webp-initialization.json` containing `{"scenario":"webp-initialization"}`.
-This selector runs before the older migration/recovery selectors. It injects
-one failed WASM fetch and a separate dependency-module evaluation failure,
-verifies the locked factory's retained dependency watcher, tests cancelled late
-work, uses the real protected Reload page action and decodes the recovered WebP.
+This selector runs before the older migration/recovery selectors. It exercises
+an HTTP failure, an invalid owned VP8 module and cancellation of a pending
+module request. After a load error, Retry starts a new module request in the
+same document. After cancellation, the scenario checks for a stale result or
+error before starting a new conversion. It downloads and decodes each recovered
+WebP.
 Run with installed Edge through the existing artifact profile. Remove only this
 selector after collection. This is controlled fixture evidence, not a production
 incident or a broad codec/browser campaign.
