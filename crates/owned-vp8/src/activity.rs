@@ -136,12 +136,13 @@ impl Activity {
         quality: u32,
         allow: bool,
         near_neutral: bool,
+        native_filter: bool,
     ) -> Option<(Config, Deltas)> {
         if !allow || self.alpha.is_empty() {
             self.alpha = Vec::new();
             return None;
         }
-        self.allocation = self.plan(quality, near_neutral);
+        self.allocation = self.plan(quality, near_neutral, native_filter);
         if self.allocation.is_none() {
             self.alpha = Vec::new();
         }
@@ -165,7 +166,7 @@ impl Activity {
         self.allocation = None;
     }
 
-    fn plan(&self, quality: u32, near_neutral: bool) -> Option<Allocation> {
+    fn plan(&self, quality: u32, near_neutral: bool, native_filter: bool) -> Option<Allocation> {
         let Cluster { alpha, beta, map } = cluster(&self.histogram);
         let qtable = &QUANTIZERS[match quality {
             60 => 0,
@@ -177,8 +178,8 @@ impl Activity {
         let mut quantizers = [0usize; 4];
         let mut remap = [0u8; 4];
         let mut len = 0;
-        // Native cluster equivalence includes initial filter strength as well
-        // as Q. The isolated coding arm still uses the owned uniform filter.
+        // Native group equivalence uses both the quantizer and the initial
+        // filter. Retain these initial levels for the selected coding IDs.
         for i in 0..4 {
             let q = qtable[(alpha[i] + 127) as usize] as usize;
             let strength = (AC_QUANT[q] >> 2).min(63) * 300 / (256 + beta[i]);
@@ -201,6 +202,8 @@ impl Activity {
         }
         let last = quantizers[len - 1];
         quantizers[len..].fill(last);
+        let last = groups[len - 1];
+        groups[len..].fill(last);
         let map = map.map(|group| remap[group as usize]);
         let mut counts = [0usize; 4];
         for (value, samples) in self.histogram.into_iter().enumerate() {
@@ -214,7 +217,8 @@ impl Activity {
         {
             return None;
         }
-        let config = Config::from_activity(quantizers, counts, near_neutral);
+        let levels = native_filter.then(|| groups.map(|(_, level)| level));
+        let config = Config::from_activity(quantizers, counts, near_neutral, levels);
         let uv_alpha = (self.uv_total / self.alpha.len() as i64) as i32;
         let deltas = Deltas {
             uv_dc: -2,

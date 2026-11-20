@@ -30,6 +30,7 @@ fn filter_completed_one(
     padded_h: usize,
     index: usize,
     blocks: &[Macroblock],
+    segments: SegmentConfig,
     config: FilterConfig,
 ) -> Result<(), EncodeError> {
     let block = blocks.get(index).ok_or(EncodeError::InvalidInput)?;
@@ -58,7 +59,7 @@ fn filter_completed_one(
         index % (padded_w / 16),
         index / (padded_w / 16),
         filter::FilterParams {
-            level: config.level,
+            level: segments.filter_for(block.segment_id, config.level),
             sharpness: config.sharpness,
             simple: config.simple,
             i4: !block.i16,
@@ -82,6 +83,7 @@ fn score_completed_sync(
     height: usize,
     original: display_rgb::Original<'_>,
     blocks: &[Macroblock],
+    segments: SegmentConfig,
     config: FilterConfig,
 ) -> Result<f64, EncodeError> {
     work_y.copy_from_slice(reconstructed_y);
@@ -89,7 +91,7 @@ fn score_completed_sync(
     work_v.copy_from_slice(reconstructed_v);
     for index in 0..blocks.len() {
         filter_completed_one(
-            work_y, work_u, work_v, padded_w, padded_h, index, blocks, config,
+            work_y, work_u, work_v, padded_w, padded_h, index, blocks, segments, config,
         )?;
     }
     let view = display_rgb::CompleteFrame::checked(
@@ -720,6 +722,7 @@ struct AnalyzedBlock {
     block: Macroblock,
     refinement: Option<RefinementChange>,
     refinement_gain: f64,
+    activity_filter_edge: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2545,6 +2548,7 @@ fn encode_observed(
         quality,
         !high_chroma_loss,
         original_segments.neutral_smooth_grid,
+        filter == FilterConfig::for_quality(quality),
     );
     let medium_textured_luma = crate::presets::medium_textured_luma(
         quality,
@@ -2619,6 +2623,7 @@ fn encode_observed(
     let mut left_modes = [0u8; 4];
     let mut refinement_log = RefinementLog::default();
     let mut baseline_overrides = Vec::new();
+    let mut activity_filter_edges = [0u16; 4];
     let mut run_profile = |segments: SegmentConfig,
                            deltas: Deltas,
                            score_required: bool|
@@ -2629,6 +2634,7 @@ fn encode_observed(
         blocks.clear();
         refinement_log = RefinementLog::default();
         baseline_overrides.clear();
+        activity_filter_edges.fill(0);
         coeff_contexts.reset();
         above_modes.fill(0);
         left_modes.fill(0);
@@ -2711,6 +2717,8 @@ fn encode_observed(
                         .as_ref()
                         .map(|planes| &planes[usize::from(segment_id)]),
                 )?;
+                let edge = &mut activity_filter_edges[segment_id as usize];
+                *edge = (*edge).max(analyzed.activity_filter_edge);
                 if let Some(change) = analyzed.refinement {
                     refinement_log
                         .push_reserved(RefinementEdit {
@@ -2886,6 +2894,7 @@ fn encode_observed(
                 padded_h,
                 index,
                 &blocks,
+                segments,
                 filter,
             )?;
         }
@@ -2994,6 +3003,7 @@ fn encode_observed(
     }
     drop(run_profile);
     activity.release_map();
+    segments = segments.with_activity_edges(activity_filter_edges, deltas);
     if !refinement_log.is_empty() || !baseline_overrides.is_empty() {
         let extended_sizes =
             count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
@@ -3015,6 +3025,7 @@ fn encode_observed(
             height,
             original,
             &blocks,
+            segments,
             filter,
         )?;
         let mut baseline_quality = None;
@@ -3070,6 +3081,7 @@ fn encode_observed(
                 height,
                 original,
                 &blocks,
+                segments,
                 filter,
             )?);
             for item in baseline_overrides.iter().rev() {
@@ -3123,6 +3135,7 @@ fn encode_observed(
             height,
             original,
             &blocks,
+            segments,
             filter,
         )?;
         let legal = |sizes: (usize, usize)| {
@@ -3223,6 +3236,77 @@ fn encode_observed(
         &blocks,
     );
     Ok(result)
+}
+
+// libwebp 1.3.2 quant_enc.c:975–1057 and src/dsp/quant.h. Use the
+// owned candidate bank and luma RD/token estimate to find the witness.
+// Preserve the native pre-I4 stage, mode order and blocky-edge predicates.
+#[allow(clippy::too_many_arguments)]
+fn best_i16_filter_edge(
+    luma: &[LumaCandidate],
+    source_y: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    mx: usize,
+    y_steps: Steps,
+    contexts: &CoeffContexts,
+    luma_costs: &mut [Option<u64>; 5],
+    lambda: u64,
+) -> Result<u16, EncodeError> {
+    let first = source_y[y * stride + x];
+    let mut flat = (y..y + 16).all(|r| {
+        source_y[r * stride + x..r * stride + x + 16]
+            .iter()
+            .all(|&pixel| pixel == first)
+    });
+    let mut best = None;
+    // Owned numbering is DC, V, H, TM. Native tests DC, TM, V, H.
+    for mode in [0, 3, 1, 2] {
+        let Some((index, candidate)) = luma
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.block.i16 && c.block.y_mode == mode)
+        else {
+            continue;
+        };
+        let y1_empty = candidate
+            .block
+            .y
+            .iter()
+            .all(|c| c[1..].iter().all(|&v| v == 0));
+        flat &= y1_empty;
+        let distortion = candidate.distortion * if flat { 2 } else { 1 };
+        let mut rate = RateCounter::default();
+        write_y_mode(&mut rate, true, mode)?;
+        let tokens = contexts.measure_luma(&candidate.block, mx)?;
+        luma_costs[index] = Some(tokens);
+        let score = distortion * 256 + lambda * (rate.cost + tokens);
+        if best.is_none_or(|(previous, _)| score < previous) {
+            best = Some((
+                score,
+                i16_filter_witness(candidate, distortion, y1_empty, y_steps.dc),
+            ));
+        }
+    }
+    Ok(best.map_or(0, |(_, edge)| edge))
+}
+
+fn i16_filter_witness(
+    candidate: &LumaCandidate,
+    distortion: u64,
+    y1_empty: bool,
+    y1_dc_step: i32,
+) -> u16 {
+    if !y1_empty || distortion <= 20 * y1_dc_step as u64 {
+        return 0;
+    }
+    // C's y_dc_levels are already in scan order; our coefficients are not.
+    [1, 2, 4]
+        .map(|s| candidate.block.y2[residual::SCAN[s]].unsigned_abs())
+        .into_iter()
+        .max()
+        .unwrap()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3387,6 +3471,22 @@ fn analyze_one(
         .collect();
     let mut best: Option<(u64, usize, usize)> = None;
     let mut luma_costs = [None; 5];
+    let activity_filter_edge = if segments.uses_activity_filter() {
+        best_i16_filter_edge(
+            &luma,
+            source_y,
+            padded_w,
+            x,
+            y,
+            mx,
+            y_steps,
+            coeff_contexts,
+            &mut luma_costs,
+            lambda,
+        )?
+    } else {
+        0
+    };
     let mut uv_costs = [None; 4];
     let score_luma_distortion = |luma_candidate: &LumaCandidate| {
         let mut distortion = luma_candidate.distortion;
@@ -3557,6 +3657,7 @@ fn analyze_one(
         block,
         refinement,
         refinement_gain,
+        activity_filter_edge,
     })
 }
 
@@ -3570,7 +3671,11 @@ fn write_header_prefix(
     sink.bit(false)?; // YUV color space.
     sink.bit(false)?; // Decoder clamps output pixels.
     segments.write_header(sink, filter.level)?;
-    filter.write(sink)?;
+    FilterConfig {
+        level: segments.frame_filter(filter.level),
+        ..filter
+    }
+    .write(sink)?;
     sink.literal(0, 2)?; // One coefficient partition.
     sink.literal(segments.base_qindex as u32, 7)?;
     for delta in [
@@ -3698,7 +3803,14 @@ impl HeaderBudget {
         limit: usize,
     ) -> Result<Self, EncodeError> {
         let mut fixed = SymbolCounter::default();
-        write_header_prefix(&mut fixed, segments, deltas, filter)?;
+        // Analysis can promote an initially zero activity level, adding
+        // an optional signed six-bit field. Reserve its worst-case prefix.
+        write_header_prefix(
+            &mut fixed,
+            segments.reserve_activity_filters(),
+            deltas,
+            filter,
+        )?;
         write_header_suffix(&mut fixed, Some(128))?;
         // Each of the 1056 update nodes emits one flag and at most eight
         // literal bits. The model is frozen only after mode analysis.
@@ -4290,6 +4402,7 @@ pub(crate) struct FrameEncoder {
     request: Request,
     plan: ResourcePlan,
     activity: Activity,
+    activity_filter_edges: [u16; 4],
     effective_quality: u32,
     filter: FilterConfig,
     input: Vec<u8>,
@@ -4451,6 +4564,7 @@ impl FrameEncoder {
             plan,
             activity: Activity::new(plan.macroblock_count as usize)
                 .ok_or(Status::MemoryAdmission)?,
+            activity_filter_edges: [0; 4],
             effective_quality: request.quality,
             filter,
             input,
@@ -4916,6 +5030,7 @@ impl FrameEncoder {
                         self.plan.padded_height as usize,
                         index,
                         &self.blocks,
+                        self.segments,
                         self.filter,
                     )
                     .map_err(encode_status)?;
@@ -5480,10 +5595,12 @@ impl FrameEncoder {
                 self.omit_display_refinement,
             );
             let near_neutral = self.original_segments().neutral_smooth_grid;
-            if let Some((config, deltas)) =
-                self.activity
-                    .finish(quality, !self.high_chroma_loss, near_neutral)
-            {
+            if let Some((config, deltas)) = self.activity.finish(
+                quality,
+                !self.high_chroma_loss,
+                near_neutral,
+                self.filter == FilterConfig::for_quality(quality),
+            ) {
                 self.segments = config;
                 self.deltas = deltas;
             }
@@ -5582,6 +5699,8 @@ impl FrameEncoder {
                 .map(|planes| &planes[usize::from(segment_id)]),
         )
         .map_err(encode_status)?;
+        let edge = &mut self.activity_filter_edges[segment_id as usize];
+        *edge = (*edge).max(analyzed.activity_filter_edge);
         if let Some(change) = analyzed.refinement {
             self.refinement_log.push_reserved(RefinementEdit {
                 block: self.cursor as u32,
@@ -5662,6 +5781,10 @@ impl FrameEncoder {
         self.cursor += 1;
         if self.cursor == self.plan.macroblock_count as usize {
             self.activity.release_map();
+            self.segments = self
+                .segments
+                .with_activity_edges(self.activity_filter_edges, self.deltas);
+            self.activity_filter_edges = [0; 4];
             self.joint_search = Vec::new();
             if self.refinement_log.is_empty() {
                 self.refinement_log = RefinementLog::default();
@@ -6152,6 +6275,7 @@ impl FrameEncoder {
                     self.plan.padded_height as usize,
                     self.cursor,
                     &self.blocks,
+                    self.segments,
                     self.filter,
                 )
                 .map_err(encode_status)?;
@@ -13286,6 +13410,46 @@ mod tests {
         let expected =
             encode_textured(&input, request.width, request.height, request.stride, 0, 75).unwrap();
         assert_eq!(actual.output(), expected);
+    }
+
+    #[test]
+    fn activity_filter_edge_reads_scan_indices_and_reserves_optional_level_fields() {
+        let mut block = Macroblock {
+            i16: true,
+            ..Macroblock::default()
+        };
+        block.y2[residual::SCAN[1]] = -7;
+        block.y2[residual::SCAN[2]] = 9;
+        block.y2[residual::SCAN[3]] = 71;
+        block.y2[residual::SCAN[4]] = -11;
+        let witness = LumaCandidate {
+            block,
+            tile: [0; 256],
+            distortion: 201,
+        };
+        assert_eq!(i16_filter_witness(&witness, 200, true, 10), 0);
+        assert_eq!(i16_filter_witness(&witness, 201, false, 10), 0);
+        assert_eq!(i16_filter_witness(&witness, 201, true, 10), 11);
+
+        let deltas = Deltas::default();
+        let filter = FilterConfig::for_quality(75);
+        let baseline =
+            SegmentConfig::from_activity([18, 10, 10, 10], [2, 2, 0, 0], false, Some([0, 0, 0, 0]));
+        let adjusted = baseline.with_activity_edges([11, 0, 0, 0], deltas);
+        assert!(adjusted.filter_for(0, filter.level) > 0);
+        assert_eq!(adjusted.filter_for(1, filter.level), 0);
+        assert_eq!(
+            adjusted.frame_filter(filter.level),
+            adjusted.filter_for(0, filter.level)
+        );
+        let first = HeaderBudget::new(4, baseline, deltas, filter, 12_000).unwrap();
+        let last = HeaderBudget::new(4, adjusted, deltas, filter, 12_000).unwrap();
+        assert_eq!(first.fixed_symbols_and_tail, last.fixed_symbols_and_tail);
+        let mut begin = SymbolCounter::default();
+        let mut end = SymbolCounter::default();
+        write_header_prefix(&mut begin, baseline, deltas, filter).unwrap();
+        write_header_prefix(&mut end, adjusted, deltas, filter).unwrap();
+        assert_eq!(end.count - begin.count, 7);
     }
 
     #[cfg(feature = "activity-allocation")]

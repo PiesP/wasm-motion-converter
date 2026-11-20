@@ -87,6 +87,7 @@ pub(crate) struct Config {
     active: [bool; 4],
     alias_textured_to_ramp: bool,
     activity_grid: bool,
+    activity_levels: Option<[u8; 4]>,
     pub neutral_smooth_grid: bool,
 }
 
@@ -101,6 +102,7 @@ impl Config {
             neutral_smooth_grid: false,
             alias_textured_to_ramp: false,
             activity_grid: false,
+            activity_levels: None,
         }
     }
 
@@ -150,6 +152,7 @@ impl Config {
             neutral_smooth_grid,
             alias_textured_to_ramp: false,
             activity_grid: false,
+            activity_levels: None,
         }
     }
 
@@ -157,6 +160,7 @@ impl Config {
         qindex: [usize; 4],
         counts: [usize; 4],
         neutral_smooth_grid: bool,
+        activity_levels: Option<[u8; 4]>,
     ) -> Self {
         let total = counts.iter().sum();
         Self {
@@ -168,7 +172,42 @@ impl Config {
             neutral_smooth_grid,
             alias_textured_to_ramp: false,
             activity_grid: true,
+            activity_levels,
         }
+    }
+
+    pub(crate) fn uses_activity_filter(self) -> bool {
+        self.activity_levels.is_some()
+    }
+
+    pub(crate) fn filter_for(self, segment: u8, frame_fallback: u8) -> u8 {
+        self.activity_levels
+            .map_or(frame_fallback, |levels| levels[segment as usize])
+    }
+
+    pub(crate) fn frame_filter(self, fallback: u8) -> u8 {
+        self.activity_levels
+            .map_or(fallback, |levels| levels.into_iter().max().unwrap())
+    }
+
+    pub(crate) fn reserve_activity_filters(mut self) -> Self {
+        if let Some(levels) = &mut self.activity_levels {
+            *levels = [63; 4];
+        }
+        self
+    }
+
+    pub(crate) fn with_activity_edges(mut self, edges: [u16; 4], deltas: Deltas) -> Self {
+        if let Some(levels) = &mut self.activity_levels {
+            for (id, (level, edge)) in levels.iter_mut().zip(edges).enumerate() {
+                let y2_step = steps(self.qindex[id] as u8, deltas, Plane::Y2).ac;
+                // libwebp 1.3.2 filter_enc.c uses identity at sharpness
+                // zero, capped by the VP8 maximum. See LICENSE.libwebp.
+                let required = ((i32::from(edge) * y2_step) >> 3).min(63) as u8;
+                *level = (*level).max(required);
+            }
+        }
+        self
     }
 
     fn map_probabilities(counts: [usize; 4], total: usize) -> [u8; 3] {
@@ -380,13 +419,13 @@ impl Config {
                 sink.bit(false)?; // Positive value.
             }
         }
-        // Absolute segmentation replaces the frame's filter level. Signal
-        // the same level for each active ID, leaving unused IDs at zero.
-        for &segment_active in &self.active {
-            let active = segment_active && filter_level > 0;
+        // Absolute segment features replace the frame's filter level.
+        for (id, &segment_active) in self.active.iter().enumerate() {
+            let level = self.filter_for(id as u8, filter_level);
+            let active = segment_active && level > 0;
             sink.bit(active)?;
             if active {
-                sink.literal(u32::from(filter_level), 6)?;
+                sink.literal(u32::from(level), 6)?;
                 sink.bit(false)?; // Positive absolute value.
             }
         }
