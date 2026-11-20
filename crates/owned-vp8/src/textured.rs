@@ -2238,14 +2238,14 @@ fn encode_observed(
         height as u32,
     );
     let low_curvature = curvature.within_cutoff(count);
-    let photo_q60 = crate::presets::photo_q60_all_texture(
+    let ordinary_q60_texture = crate::presets::ordinary_q60_all_texture(
         quality,
         class_counts,
         count,
         neutral_chroma,
         high_chroma_loss,
-        low_curvature,
     );
+    let photo_q60 = ordinary_q60_texture && low_curvature;
     let mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
         quality,
         class_counts,
@@ -2564,6 +2564,11 @@ fn encode_observed(
         original_deltas
     };
     deltas = crate::presets::photo_allocation_deltas(deltas, photo_q60, photo_q75);
+    deltas = crate::presets::high_curvature_q60_textured_deltas(
+        deltas,
+        ordinary_q60_texture,
+        low_curvature,
+    );
     deltas = crate::presets::mixed_y1_ac_deltas(deltas, mixed_y1_ac);
     if medium_y1_ac {
         segments = segments.with_mixed_q75_allocation(class_counts);
@@ -4786,14 +4791,14 @@ impl FrameEncoder {
             )
             .with_medium_textured_luma(self.medium_textured_luma);
             let low_curvature = self.curvature.within_cutoff(self.blocks.len());
-            self.photo_q60 = crate::presets::photo_q60_all_texture(
+            let ordinary_q60_texture = crate::presets::ordinary_q60_all_texture(
                 self.request.quality,
                 self.class_counts,
                 self.blocks.len(),
                 self.neutral_chroma,
                 self.high_chroma_loss,
-                low_curvature,
             );
+            self.photo_q60 = ordinary_q60_texture && low_curvature;
             self.mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
                 self.request.quality,
                 self.class_counts,
@@ -4825,6 +4830,11 @@ impl FrameEncoder {
                 self.deltas,
                 self.photo_q60,
                 self.medium_textured_luma && !self.neutral_chroma,
+            );
+            self.deltas = crate::presets::high_curvature_q60_textured_deltas(
+                self.deltas,
+                ordinary_q60_texture,
+                low_curvature,
             );
             self.deltas = crate::presets::mixed_y1_ac_deltas(self.deltas, self.mixed_y1_ac);
             if self.medium_y1_ac {
@@ -7154,7 +7164,11 @@ mod tests {
             if (width, height) == (2, 9) {
                 assert_eq!(candidate_edits, 3);
                 assert!(!baseline_only.photo_q60);
-                assert_eq!(baseline_only.output().len(), 98);
+                assert_eq!(
+                    (baseline_only.deltas.uv_dc, baseline_only.deltas.uv_ac),
+                    (-4, -7)
+                );
+                assert_eq!(baseline_only.output().len(), 96);
             }
             assert_ne!(candidate.output(), baseline_only.output());
         }
@@ -7171,10 +7185,9 @@ mod tests {
             candidate.step().unwrap();
         }
         let extended = candidate.refined_checkpoint.as_ref().unwrap();
-        assert_eq!(
-            extended.sizes.0 + extended.sizes.1 + 10,
-            extended.selected_frame_bytes
-        );
+        let extended_sizes = extended.sizes;
+        let extended_bytes = extended.selected_frame_bytes;
+        assert_eq!(extended_sizes.0 + extended_sizes.1 + 10, extended_bytes);
         assert_eq!(candidate.baseline_overrides.len(), 1);
         assert_eq!(candidate.baseline_overrides[0].len, 3);
         assert!(candidate.baseline_overrides[0].baseline.is_some());
@@ -7188,7 +7201,8 @@ mod tests {
             baseline.selected_frame_bytes
         );
         assert!(!candidate.photo_q60);
-        assert_eq!(baseline.selected_frame_bytes, 98);
+        assert_eq!((candidate.deltas.uv_dc, candidate.deltas.uv_ac), (-4, -7));
+        assert_eq!(baseline.selected_frame_bytes, 96);
         while !(candidate.stage == Stage::CollectStats
             && candidate.base_count
             && !candidate.baseline_count)
@@ -7209,8 +7223,15 @@ mod tests {
         }
         assert!(!candidate.baseline_reapply);
         let candidate = run_engine(candidate);
-        assert_eq!(candidate.output().len(), 99);
-        assert_ne!(candidate.output(), run_engine(base).output());
+        let base = run_engine(base);
+        assert_eq!(candidate.output().len(), extended_bytes as usize);
+        assert_eq!(candidate.output().len(), 96);
+        assert_eq!(candidate.plan.first_partition_bytes, extended_sizes.0);
+        assert_eq!(candidate.plan.coefficient_partition_bytes, extended_sizes.1);
+        assert!(
+            aligned_payload_cost(extended_bytes) <= aligned_payload_cost(base.plan.frame_bytes) + 2
+        );
+        assert_ne!(candidate.output(), base.output());
     }
 
     #[test]
@@ -11575,11 +11596,12 @@ mod tests {
     }
 
     #[test]
-    fn photo_allocation_profiles_match_sync_and_resumable_encoders() {
-        for (input, quality, active_q, uv_dc, selected) in [
-            (photo_allocation_input(), 60, 32, -4, false),
-            (low_curvature_photo_input(), 60, 28, -15, true),
-            (photo_allocation_input(), 75, 26, -11, false),
+    fn textured_allocation_profiles_match_sync_and_resumable_encoders() {
+        for (input, quality, active_q, uv_deltas, selected) in [
+            (photo_allocation_input(), 60, 32, (-4, -7), false),
+            (low_curvature_photo_input(), 60, 28, (-15, -7), true),
+            (photo_allocation_input(), 75, 26, (-11, -7), false),
+            (photo_allocation_input(), 85, 14, (-4, -4), false),
         ] {
             let request = Request {
                 quality,
@@ -11594,12 +11616,12 @@ mod tests {
             assert_eq!(engine.medium_textured_luma, quality == 75);
             assert_eq!(engine.segments.base_qindex, active_q);
             assert_eq!(engine.segments.qindex_for(segmentation::TEXTURED), active_q);
-            assert_eq!(engine.deltas.uv_dc, uv_dc);
+            assert_eq!((engine.deltas.uv_dc, engine.deltas.uv_ac), uv_deltas);
             assert_eq!(
                 engine
                     .original_segments()
                     .qindex_for(segmentation::TEXTURED),
-                if quality == 60 { 32 } else { 28 }
+                crate::presets::textured_qindex(quality, false)
             );
             assert_eq!(
                 engine.output(),
