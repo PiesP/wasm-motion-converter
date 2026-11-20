@@ -33,9 +33,8 @@ function ownedDemuxFailureKind(error: unknown): OwnedDemuxFailureKind | undefine
   return undefined;
 }
 
-// ─── AbortController registry ────────────────────────────────────────────
-
-const activeControllers = new Map<string, AbortController>();
+// The pipeline owns realm-wide buffer and canvas resources until it settles.
+let activeConversion: { requestId: string; controller: AbortController } | undefined;
 
 // ─── Message handler ────────────────────────────────────────────────────
 
@@ -57,7 +56,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
   // caller does not wait for the proxy timeout when numeric fields are invalid.
   if (!isWorkerRequest(event.data)) {
     const requestId = getInvalidStartRequestId(event.data);
-    if (requestId !== null) {
+    if (requestId !== null && requestId !== activeConversion?.requestId) {
       self.postMessage({
         type: 'error',
         requestId,
@@ -73,15 +72,26 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
   switch (request.type) {
     case 'start': {
       const { requestId, config, options, duration, framerate, indexSnapshot } = request;
+      if (activeConversion) {
+        // A second terminal response for this ID would be attributed to its owner.
+        if (requestId === activeConversion.requestId) return;
+        self.postMessage({
+          type: 'error',
+          requestId,
+          message: 'Conversion worker is busy',
+          code: 'BUSY',
+        } satisfies WorkerResponse);
+        return;
+      }
       const input = request.inputBlob ?? request.inputBuffer;
       const pipelineStart = performance.now();
 
-      // Create AbortController for this conversion
       const abortController = new AbortController();
-      activeControllers.set(requestId, abortController);
+      activeConversion = { requestId, controller: abortController };
 
       // Prepare postMessage helper with response encoding
       const respond = (msg: WorkerResponse, transferables?: Transferable[]) => {
+        if (abortController.signal.aborted && msg.type !== 'error') return;
         self.postMessage(msg, transferables ?? []);
       };
 
@@ -97,6 +107,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
           framerate,
           indexSnapshot
         );
+        abortController.signal.throwIfAborted();
 
         const durationMs = Math.round(performance.now() - pipelineStart);
 
@@ -137,17 +148,13 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
           ...(demuxFailureKind ? { demuxFailureKind } : {}),
         });
       } finally {
-        activeControllers.delete(requestId);
+        activeConversion = undefined;
       }
       break;
     }
 
     case 'abort': {
-      const controller = activeControllers.get(request.requestId);
-      if (controller) {
-        controller.abort();
-        activeControllers.delete(request.requestId);
-      }
+      if (activeConversion?.requestId === request.requestId) activeConversion.controller.abort();
       break;
     }
 

@@ -180,11 +180,8 @@ export async function runPipelineViaWorker(
       );
     };
 
-    // Set up abort signal forwarding.
-    // The listener is registered BEFORE checking signal.aborted to eliminate
-    // the timing window where the signal becomes aborted between the check
-    // and listener registration (the handler would never fire, causing a
-    // permanent hang).
+    // Abort terminates this request's dedicated Worker. Register the listener
+    // before checking for a signal that has already been aborted.
     let settled = false;
     const onAbort = () => {
       if (settled || timedOut) return;
