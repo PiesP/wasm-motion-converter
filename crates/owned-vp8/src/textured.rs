@@ -2213,6 +2213,15 @@ fn q75_luma_ramp_uv_feedback(
         && curvature.luma_dominates()
 }
 
+fn q60_textured_with_smooth_chroma(
+    ordinary_q60_texture: bool,
+    curvature: segmentation::CurvatureTotals,
+    count: usize,
+    (width, height): (u32, u32),
+) -> bool {
+    ordinary_q60_texture && width >= 16 && height >= 16 && curvature.only_luma_exceeds_cutoff(count)
+}
+
 fn uv_dc_feedback_for_tile(
     enabled: bool,
     mx: usize,
@@ -2438,6 +2447,12 @@ fn encode_observed(
         high_chroma_loss,
     );
     let photo_q60 = ordinary_q60_texture && low_curvature;
+    let textured_i16_zero_bin = q60_textured_with_smooth_chroma(
+        ordinary_q60_texture,
+        curvature,
+        count,
+        (width as u32, height as u32),
+    );
     let mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
         quality,
         class_counts,
@@ -2501,6 +2516,13 @@ fn encode_observed(
             MAX_FIRST_PARTITION_BYTES as usize,
         )?;
         let mut comparison = ProfileComparison::default();
+        let rate_qindices = if medium_y1_ac || luma_bias {
+            segmentation::class_qindices(quality, neutral_chroma)
+        } else if medium_textured_luma || photo_q60 || mixed_y1_ac {
+            original_segments.qindex
+        } else {
+            segments.qindex
+        };
         let mut extra_used = 0usize;
         for my in 0..blocks_y {
             coeff_contexts.row();
@@ -2511,16 +2533,7 @@ fn encode_observed(
                 let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
                 let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-                let rate_qindex = if medium_textured_luma
-                    || photo_q60
-                    || mixed_y1_ac
-                    || medium_y1_ac
-                    || luma_bias
-                {
-                    original_segments.qindex_for(segment_id)
-                } else {
-                    qindex
-                };
+                let rate_qindex = rate_qindices[segment_id as usize];
                 let lambda = crate::presets::lambda_for_quality(rate_qindex, quality);
                 if !high_chroma_loss {
                     refinement_log
@@ -2561,6 +2574,7 @@ fn encode_observed(
                     segment_id,
                     segments,
                     &mut header_budget,
+                    textured_i16_zero_bin,
                 )?;
                 if let Some(change) = analyzed.refinement {
                     refinement_log
@@ -2806,6 +2820,20 @@ fn encode_observed(
         class_counts,
         curvature,
         (width as u32, height as u32),
+    );
+    deltas = crate::presets::one_rough_chroma_plane_deltas(
+        deltas,
+        quality,
+        class_counts,
+        curvature,
+        high_chroma_loss,
+        (width as u32, height as u32),
+    );
+    deltas = crate::presets::q85_chromatic_ramp_y2_dc_deltas(
+        deltas,
+        quality,
+        class_counts,
+        segments.enabled,
     );
     deltas = crate::presets::q85_smooth_textured_deltas(
         deltas,
@@ -3093,6 +3121,7 @@ fn analyze_one(
     segment_id: u8,
     segments: SegmentConfig,
     header_budget: &mut HeaderBudget,
+    textured_i16_zero_bin: bool,
 ) -> Result<AnalyzedBlock, EncodeError> {
     let x = mx * 16;
     let y = my * 16;
@@ -3105,6 +3134,7 @@ fn analyze_one(
     } else {
         luma_policy
     };
+    let i16_zero_bin = mixed_y1_ac || textured_i16_zero_bin;
     let luma = if luma_policy == 0 {
         let mut options = Vec::with_capacity(5);
         for mode in 0..4 {
@@ -3117,7 +3147,7 @@ fn analyze_one(
                 mode,
                 y_steps,
                 y2_steps,
-                mixed_y1_ac,
+                i16_zero_bin,
             ));
         }
         options.push(make_i4(
@@ -3147,7 +3177,7 @@ fn analyze_one(
                     mode,
                     y_steps,
                     y2_steps,
-                    mixed_y1_ac,
+                    i16_zero_bin,
                 )
             })
             .collect()
@@ -4082,6 +4112,7 @@ pub(crate) struct FrameEncoder {
     photo_q60: bool,
     mixed_y1_ac: bool,
     medium_y1_ac: bool,
+    textured_i16_zero_bin: bool,
     uv_dc_feedback: bool,
     luma_bias: bool,
     omit_display_refinement: bool,
@@ -4238,6 +4269,7 @@ impl FrameEncoder {
             photo_q60: false,
             mixed_y1_ac: false,
             medium_y1_ac: false,
+            textured_i16_zero_bin: false,
             uv_dc_feedback: false,
             luma_bias: false,
             omit_display_refinement: false,
@@ -5104,6 +5136,12 @@ impl FrameEncoder {
                 self.high_chroma_loss,
             );
             self.photo_q60 = ordinary_q60_texture && low_curvature;
+            self.textured_i16_zero_bin = q60_textured_with_smooth_chroma(
+                ordinary_q60_texture,
+                self.curvature,
+                self.blocks.len(),
+                (self.request.width, self.request.height),
+            );
             self.mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
                 quality,
                 self.class_counts,
@@ -5180,6 +5218,20 @@ impl FrameEncoder {
                 self.class_counts,
                 self.curvature,
                 (self.request.width, self.request.height),
+            );
+            self.deltas = crate::presets::one_rough_chroma_plane_deltas(
+                self.deltas,
+                quality,
+                self.class_counts,
+                self.curvature,
+                self.high_chroma_loss,
+                (self.request.width, self.request.height),
+            );
+            self.deltas = crate::presets::q85_chromatic_ramp_y2_dc_deltas(
+                self.deltas,
+                quality,
+                self.class_counts,
+                self.segments.enabled,
             );
             self.deltas = crate::presets::q85_smooth_textured_deltas(
                 self.deltas,
@@ -5272,6 +5324,7 @@ impl FrameEncoder {
             segment_id,
             self.segments,
             &mut self.header_budget,
+            self.textured_i16_zero_bin,
         )
         .map_err(encode_status)?;
         if let Some(change) = analyzed.refinement {
@@ -8555,6 +8608,7 @@ mod tests {
                     segment_id,
                     guarded.segments,
                     &mut probe_budget,
+                    false,
                 )
                 .unwrap();
                 let selected = analyze_one(
@@ -8587,6 +8641,7 @@ mod tests {
                     segment_id,
                     baseline.segments,
                     &mut baseline.header_budget,
+                    false,
                 )
                 .unwrap();
                 assert_eq!(
@@ -10125,6 +10180,7 @@ mod tests {
                     0,
                     segments,
                     &mut budget,
+                    false,
                 )
                 .unwrap();
                 blocks.push(block.block);
@@ -12582,6 +12638,60 @@ mod tests {
     }
 
     #[test]
+    fn q60_textured_i16_zero_bin_reuses_the_inclusive_plane_cutoff() {
+        use segmentation::CurvatureTotals;
+
+        for (ordinary, count, sums, visible, expected) in [
+            (true, 1, [897, 192, 192], (16, 16), true),
+            (true, 2, [1793, 384, 384], (31, 16), true),
+            (true, 1, [896, 192, 192], (16, 16), false),
+            (true, 1, [897, 193, 0], (16, 16), false),
+            (true, 1, [897, 0, 193], (16, 16), false),
+            (true, 1, [897, 0, 0], (15, 16), false),
+            (true, 1, [897, 0, 0], (16, 15), false),
+            (false, 1, [897, 0, 0], (16, 16), false),
+            (true, 0, [897, 0, 0], (16, 16), false),
+        ] {
+            assert_eq!(
+                q60_textured_with_smooth_chroma(ordinary, CurvatureTotals { sums }, count, visible,),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn textured_i16_zero_bin_uses_the_existing_wire_profile_in_both_encoders() {
+        let input = photo_allocation_input();
+        for quality in [60, 75, 85] {
+            let request = Request {
+                quality,
+                ..engine_request(16, 16, 0, &input, 64)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            assert_eq!(engine.textured_i16_zero_bin, quality == 60);
+            assert!(!engine.mixed_y1_ac);
+            assert!(!engine.omit_display_refinement);
+            if quality == 60 {
+                assert_eq!(engine.segments.base_qindex, 32);
+                assert_eq!(engine.rate_qindex(segmentation::TEXTURED), 32);
+                assert_eq!(
+                    engine.deltas,
+                    Deltas {
+                        uv_dc: -4,
+                        uv_ac: -4,
+                        ..Deltas::default()
+                    }
+                );
+            }
+            assert_eq!(
+                engine.output(),
+                encode_textured(&input, 16, 16, 64, 0, quality).unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn textured_allocation_profiles_match_sync_and_resumable_encoders() {
         for (input, quality, active_q, uv_deltas, selected, luma_dominates) in [
             (
@@ -12707,6 +12817,41 @@ mod tests {
         source.observe([80; 4], 126, 128, true);
         source.observe([90; 4], 128, 128, true);
         assert!(!source.allows_allocation(0, 2, 2));
+    }
+
+    #[test]
+    fn expensive_q75_neutral_smooth_map_preserves_the_static_mode_rate() {
+        let (width, height) = (768, 352);
+        let mut input = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            for x in 0..width {
+                let textured = ((x / 16 + y / 16) % 2 == 1) && x % 16 == 8 && y % 16 == 8;
+                let n = 80 + (x / 4 % 2) as u8 + 4 * u8::from(textured);
+                input.extend_from_slice(&[n, n, n - 2, 255]);
+            }
+        }
+        let request = Request {
+            quality: 75,
+            ..engine_request(width, height, 0, &input, width * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        while engine.stage != Stage::Analyze {
+            engine.step().unwrap();
+        }
+        assert_eq!(engine.class_counts, [528, 0, 0, 528]);
+        assert!(engine.medium_y1_ac && engine.original_segments().neutral_smooth_grid);
+        assert_eq!(
+            engine
+                .original_segments()
+                .qindex_for(segmentation::FINE_SMOOTH),
+            17
+        );
+        assert_eq!(engine.rate_qindex(segmentation::FINE_SMOOTH), 6);
+        let actual = run_engine(engine);
+        let expected =
+            encode_textured(&input, request.width, request.height, request.stride, 0, 75).unwrap();
+        assert_eq!(actual.output(), expected);
     }
 
     #[test]

@@ -137,6 +137,56 @@ pub(crate) fn chroma_edge_uv_ac_deltas(
     selected
 }
 
+pub(crate) fn one_rough_chroma_plane_deltas(
+    mut selected: Deltas,
+    quality: u32,
+    counts: [usize; 4],
+    curvature: CurvatureTotals,
+    high_chroma_loss: bool,
+    (width, height): (u32, u32),
+) -> Deltas {
+    let total = counts.iter().sum();
+    if !high_chroma_loss
+        && width >= 16
+        && height >= 16
+        && counts[crate::segmentation::TEXTURED as usize] == total
+        && curvature.one_chroma_plane_leads_rough_luma(total)
+    {
+        if quality == 60 {
+            // Move halfway toward the existing luma-leading UV AC setting.
+            let span = (i16::from(selected.uv_dc) - i16::from(selected.uv_ac)).max(0);
+            selected.uv_ac += ((span + 1) / 2) as i8;
+        } else if quality == 85 && selected.uv_ac < 0 {
+            selected.uv_ac += 1;
+        }
+    }
+    selected
+}
+
+pub(crate) fn q85_chromatic_ramp_y2_dc_deltas(
+    mut selected: Deltas,
+    quality: u32,
+    counts: [usize; 4],
+    segmented: bool,
+) -> Deltas {
+    use crate::segmentation::{CHROMATIC_FLAT, CHROMATIC_RAMP, FINE_SMOOTH, TEXTURED};
+
+    let fine = counts[FINE_SMOOTH as usize];
+    let ramps = counts[CHROMATIC_RAMP as usize];
+    if quality == 85
+        && segmented
+        && fine > 0
+        && ramps > 0
+        && counts[TEXTURED as usize] == 0
+        && counts[CHROMATIC_FLAT as usize] + ramps > fine
+    {
+        // The q14/q15 DC table plateau requires a delta of -2 to refine
+        // the q15 chromatic segments by one Y2 DC quantization step.
+        selected.y2_dc = selected.y2_dc.min(-2);
+    }
+    selected
+}
+
 pub(crate) fn q85_smooth_textured_deltas(
     mut selected: Deltas,
     quality: u32,
@@ -317,6 +367,66 @@ pub(crate) fn lambda_for_quality(qindex: usize, quality: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn q85_chromatic_ramp_y2_dc_requires_a_segmented_color_majority_without_texture() {
+        let original = deltas(85);
+        let selected = Deltas {
+            y2_dc: -2,
+            ..original
+        };
+        for (quality, counts, segmented, expected) in [
+            (85, [3, 57, 57, 0], true, selected),
+            (85, [3, 0, 4, 0], true, selected),
+            (85, [4, 1, 3, 0], true, original),
+            (85, [95, 20, 2, 0], true, original),
+            (85, [0, 4, 104, 0], true, original),
+            (85, [4, 7, 0, 0], true, original),
+            (85, [3, 57, 57, 1], true, original),
+            (85, [3, 57, 57, 0], false, original),
+            (60, [3, 57, 57, 0], true, original),
+            (75, [3, 57, 57, 0], true, original),
+        ] {
+            assert_eq!(
+                q85_chromatic_ramp_y2_dc_deltas(original, quality, counts, segmented),
+                expected
+            );
+        }
+        let already_finer = Deltas {
+            y2_dc: -3,
+            ..original
+        };
+        assert_eq!(
+            q85_chromatic_ramp_y2_dc_deltas(already_finer, 85, [3, 57, 57, 0], true),
+            already_finer
+        );
+    }
+
+    #[test]
+    fn q85_chromatic_ramp_y2_dc_moves_the_physical_quantizer_one_step_for_color() {
+        use crate::ac_quant::{steps, Plane};
+
+        let original = deltas(85);
+        let refined = q85_chromatic_ramp_y2_dc_deltas(original, 85, [3, 57, 57, 0], true);
+        for (qindex, before, after) in [
+            (smooth_qindex(85) as u8, 20, 16),
+            (chromatic_flat_qindex(85) as u8, 34, 32),
+            (chromatic_ramp_qindex(85) as u8, 34, 32),
+        ] {
+            assert_eq!(steps(qindex, original, Plane::Y2).dc, before);
+            assert_eq!(steps(qindex, refined, Plane::Y2).dc, after);
+            assert_eq!(
+                steps(qindex, original, Plane::Y2).ac,
+                steps(qindex, refined, Plane::Y2).ac
+            );
+            for plane in [Plane::Y1, Plane::UV] {
+                assert_eq!(
+                    steps(qindex, original, plane),
+                    steps(qindex, refined, plane)
+                );
+            }
+        }
+    }
 
     #[test]
     fn mixed_y1_ac_profile_requires_colored_low_curvature_q60_and_multiple_ids() {
@@ -696,6 +806,101 @@ mod tests {
                     original
                 );
             }
+        }
+    }
+
+    #[test]
+    fn one_rough_chroma_plane_coarsens_only_uv_ac_at_two_presets() {
+        let textured = [0, 0, 0, 1];
+        let rough = CurvatureTotals {
+            sums: [897, 192, 193],
+        };
+        let rough_u = CurvatureTotals {
+            sums: [897, 193, 192],
+        };
+        for (quality, expected_ac) in [(60, -7), (75, -9), (85, -3)] {
+            let original = deltas(quality);
+            let expected = Deltas {
+                uv_ac: expected_ac,
+                ..original
+            };
+            for totals in [rough, rough_u] {
+                assert_eq!(
+                    one_rough_chroma_plane_deltas(
+                        original,
+                        quality,
+                        textured,
+                        totals,
+                        false,
+                        (16, 16)
+                    ),
+                    expected
+                );
+            }
+            for (counts, totals, high_loss, visible) in [
+                (
+                    textured,
+                    CurvatureTotals {
+                        sums: [896, 0, 193],
+                    },
+                    false,
+                    (16, 16),
+                ),
+                (
+                    textured,
+                    CurvatureTotals {
+                        sums: [897, 0, 192],
+                    },
+                    false,
+                    (16, 16),
+                ),
+                (
+                    textured,
+                    CurvatureTotals {
+                        sums: [903, 0, 193],
+                    },
+                    false,
+                    (16, 16),
+                ),
+                (
+                    textured,
+                    CurvatureTotals {
+                        sums: [897, 193, 193],
+                    },
+                    false,
+                    (16, 16),
+                ),
+                (textured, rough, false, (15, 16)),
+                (textured, rough, false, (16, 15)),
+                (textured, rough, true, (16, 16)),
+                ([0; 4], rough, false, (16, 16)),
+                ([1, 0, 0, 1], rough, false, (32, 16)),
+            ] {
+                assert_eq!(
+                    one_rough_chroma_plane_deltas(
+                        original, quality, counts, totals, high_loss, visible
+                    ),
+                    original
+                );
+            }
+        }
+        let already_coarse = Deltas {
+            uv_dc: -4,
+            uv_ac: 4,
+            ..Deltas::default()
+        };
+        for quality in [60, 75, 85] {
+            assert_eq!(
+                one_rough_chroma_plane_deltas(
+                    already_coarse,
+                    quality,
+                    textured,
+                    rough,
+                    false,
+                    (16, 16)
+                ),
+                already_coarse
+            );
         }
     }
 

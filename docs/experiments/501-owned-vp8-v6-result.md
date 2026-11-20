@@ -56,7 +56,7 @@ acceptance. Old product PR #505 evidence uses an earlier module.
 
 V6 is exposed and every later use requires `--regression`. Preserve the original
 source-only manifest, generator, photo/video originals and frozen candidate.
-No successor is currently frozen. Diagnose the failed q60 chroma condition using
+At the V6 decision, the next cohort had yet to be frozen. Diagnose the failed q60 chroma condition using
 input-only loss, independent import-only/plane-mixed decoded RGB controls and
 the actual selected UV profile before choosing one bounded correction.
 Recheck the expanded 333-condition known matrix before properly controlled new

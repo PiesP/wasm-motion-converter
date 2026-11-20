@@ -131,8 +131,24 @@ the strict high-chroma-loss cutoff use their existing profile selection.
 Both paths keep base qindex 32, UV DC delta -4, source import, rate weights,
 UV AC-tail processing, and padded variant selection. Synchronous and resumable
 encoding use the same delta before analysis and header budgeting, using source
-measurements already accumulated by the encoder. The interpolation requires
-exposed evaluation before broader qualification.
+measurements already accumulated by the encoder. The later plane-specific AC adjustment also applies when the entire map is
+Textured, at least one full block is visible, the luma mean is at most 2 and a
+chroma mean exceeds 2. It raises the selected UV AC index to at least the
+smaller of the frame base and the medium texture index (28), preserving an
+already coarser high-import choice. The q85 classifier collects these sums
+only until it encounters a source class other than Textured.
+
+For ordinary all-Textured q60 with high luma curvature and both chroma
+means at most 2, the current residual experiment also uses the existing
+Y1 AC zero bin for I16. I4 retains its ordinary quantization. If luma
+itself exceeds the cutoff but one chroma plane has higher mean curvature
+than luma and the other stays within the cutoff, the experiment moves
+the q60 UV AC delta halfway toward UV DC and raises q85 UV AC by one.
+These choices require at least one complete visible block. A separate
+q85 experiment refines only Y2 DC on segmented, entirely smooth fields
+that contain FineSmooth and ChromaticRamp classes and have a majority
+of chromatic blocks. Its −2 index adjustment moves the q15 chromatic
+segment one physical Y2 DC step across the q14/q15 plateau.
 
 Eligible mixed low-curvature q60 frames use one wire quantizer when the
 estimated segment ID map exceeds 128 bytes or when both FineSmooth and
@@ -288,7 +304,20 @@ existing accumulators. One frame-local boolean retains the policy within the
 engine scratch bound. As at q60, feedback applies inside each UV mode trial on
 full visible 8×8 chroma tiles.
 The first q75 feedback experiment isolated the effect of that tile-local
-correction on original-reference PSNR.
+correction on original-reference PSNR. Under the retained q75 profile, it
+also applies to low-curvature luma-dominant frames with a strict majority
+of ChromaticRamp blocks, no Textured blocks, non-neutral chroma and at least
+one full visible block.
+
+For a frame with varied visible imported luma, U and V both within one unit
+of 128, and visible RGB import error within the existing chroma-loss bound,
+the FineSmooth class uses the rounded-up midpoint between q6 and the
+preset's monochrome texture index if only FineSmooth and Textured classes
+are occupied. A wholly FineSmooth field uses I16 prediction for its luma.
+A mixed field keeps I4 and I16. Eligible full chroma tiles can seed local
+UV DC feedback from the actual committed top and left reconstruction
+errors. The physical grid and the separately selected mode-cost reference
+are shared by the synchronous encoder and the resumable ABI.
 
 For mixed low-curvature frames that retain the q75 rate profile, the first
 rate point raised the four segment qindices by four and compensated

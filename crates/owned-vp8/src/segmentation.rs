@@ -47,12 +47,30 @@ impl CurvatureTotals {
             && !self.within_cutoff(blocks)
     }
 
+    pub(crate) fn only_luma_exceeds_cutoff(self, blocks: usize) -> bool {
+        let blocks = blocks as u64;
+        self.sums[0] > CURVATURE_CUTOFF * Y_DIFFERENCES_PER_BLOCK * blocks
+            && self.sums[1].max(self.sums[2])
+                <= CURVATURE_CUTOFF * UV_DIFFERENCES_PER_BLOCK * blocks
+            && blocks > 0
+    }
+
     pub(crate) fn luma_dominates(self) -> bool {
         let [y, u, v] = self.sums;
         // All planes use the same number of macroblocks. Compare their means
         // exactly after canceling that count, without rounding near equality.
         u128::from(u.max(v)) * u128::from(Y_DIFFERENCES_PER_BLOCK)
             <= u128::from(y) * u128::from(UV_DIFFERENCES_PER_BLOCK)
+    }
+
+    pub(crate) fn one_chroma_plane_leads_rough_luma(self, blocks: usize) -> bool {
+        let blocks = blocks as u64;
+        let [y, u, v] = self.sums;
+        let chroma_cutoff = CURVATURE_CUTOFF * UV_DIFFERENCES_PER_BLOCK * blocks;
+        blocks > 0
+            && y > CURVATURE_CUTOFF * Y_DIFFERENCES_PER_BLOCK * blocks
+            && u.min(v) <= chroma_cutoff
+            && !self.luma_dominates()
     }
 }
 
@@ -101,8 +119,7 @@ impl Config {
         let [fine, flat, ramp, _] = counts;
         let neutral_smooth_grid = near_neutral_smooth && fine > 0 && flat == 0 && ramp == 0;
         if neutral_smooth_grid {
-            // Coherent I16 prediction and chroma DC feedback retain smooth-field
-            // precision at the midpoint of the fine and monochrome texture grids.
+            // Apply the midpoint to the fine class. Mixed maps keep both luma mode families.
             let index = FINE_SMOOTH as usize;
             qindex[index] = (qindex[index] + presets::textured_qindex(quality, true)).div_ceil(2);
         }
