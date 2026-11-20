@@ -215,7 +215,6 @@ describe('owned read-credit model traces', () => {
 
       controller.abort(reason);
       await expect(first).rejects.toBe(reason);
-      firstCredit.release();
       expect(ownedReadCreditStats()).toEqual({
         liveBytes: CAP_BYTES,
         retiredBytes: CAP_BYTES,
