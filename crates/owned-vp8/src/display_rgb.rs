@@ -372,6 +372,7 @@ impl Frame<'_> {
 // Original scalar expression of FFmpeg 7.1.5 vf_ssim.c's 8-bit 8x8
 // moment contract. Each window is rounded to float before double aggregation.
 #[derive(Clone, Copy, Default)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 struct Moment {
     source: i64,
     source_sq: i64,
@@ -699,7 +700,10 @@ pub(super) struct LocalCache {
 }
 
 const _: () = assert!(
-    std::mem::size_of::<LocalCache>() + std::mem::size_of::<[[Moment; 3]; 7 * 7]>() <= 64 * 1024
+    std::mem::size_of::<LocalCache>()
+        + std::mem::size_of::<[[Moment; 3]; 7 * 7]>()
+        + std::mem::size_of::<[[Moment; 3]; 8 + 3]>()
+        <= 64 * 1024
 );
 
 impl LocalCache {
@@ -764,20 +768,33 @@ impl LocalCache {
                 };
             }
         }
-        for wy in windows.y0..windows.y1 {
-            for wx in windows.x0..windows.x1 {
-                let index = (wy - windows.y0) * 7 + wx - windows.x0;
-                for dy in 0..8 {
-                    for dx in 0..8 {
-                        let x = wx * 4 + dx;
-                        let y = wy * 4 + dy;
-                        let pixel = cache.pixels[(y - y0) * 32 + x - x0];
-                        for channel in 0..3 {
-                            cache.baseline[index][channel]
-                                .add(pixel.original[channel], pixel.baseline[channel]);
+        // Four neighboring windows share a 4x4 block. Its moments contain only
+        // integer sums, so combining the blocks preserves every baseline SSIM.
+        let mut previous_row = [[Moment::default(); 3]; 8];
+        let columns = (right - x0) / 4;
+        for by in 0..(bottom - y0) / 4 {
+            let mut left = [Moment::default(); 3];
+            let mut upper_left = left;
+            for (bx, above) in previous_row[..columns].iter_mut().enumerate() {
+                let mut block = [Moment::default(); 3];
+                for dy in 0..4 {
+                    let offset = (by * 4 + dy) * 32 + bx * 4;
+                    for pixel in &cache.pixels[offset..offset + 4] {
+                        for (channel, moment) in block.iter_mut().enumerate() {
+                            moment.add(pixel.original[channel], pixel.baseline[channel]);
                         }
                     }
                 }
+                if bx > 0 && by > 0 {
+                    cache.baseline[(by - 1) * 7 + bx - 1] = std::array::from_fn(|c| {
+                        upper_left[c]
+                            .combine(above[c])
+                            .combine(left[c])
+                            .combine(block[c])
+                    });
+                }
+                upper_left = std::mem::replace(above, block);
+                left = block;
             }
         }
         cache
@@ -1566,6 +1583,32 @@ mod tests {
                         }
                         let cache = LocalCache::new(&frame);
                         let scalar_cache = LocalCache::new_scalar(&frame);
+                        let bounds = (
+                            (mx * 16).saturating_sub(4),
+                            (mx * 16 + 20).min(width),
+                            (my * 16).saturating_sub(4),
+                            (my * 16 + 20).min(height),
+                        );
+                        let windows = intersecting_windows(&frame, bounds).unwrap();
+                        for wy in windows.y0..windows.y1 {
+                            for wx in windows.x0..windows.x1 {
+                                let mut expected = [Moment::default(); 3];
+                                for dy in 0..8 {
+                                    for dx in 0..8 {
+                                        let px = metric_sample(wx * 4 + dx, width);
+                                        let py = metric_sample(wy * 4 + dy, height);
+                                        let original = frame.original.at(px, py);
+                                        let rendered = frame.rendered(px, py, None);
+                                        for channel in 0..3 {
+                                            expected[channel]
+                                                .add(original[channel], rendered[channel]);
+                                        }
+                                    }
+                                }
+                                let index = (wy - cache.wy0) * 7 + wx - cache.wx0;
+                                assert_eq!(cache.baseline[index], expected);
+                            }
+                        }
                         for (paired, scalar) in cache.pixels.iter().zip(scalar_cache.pixels.iter())
                         {
                             assert_eq!(
