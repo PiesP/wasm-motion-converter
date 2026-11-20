@@ -6,11 +6,11 @@
  *
  * Manages a pool of Web Workers that each encode frames to WebP via
  * OffscreenCanvas.convertToBlob(). The pool distributes frames to idle
- * workers, collects results in order, and handles worker lifecycle.
+ * workers, resolves each task independently, and handles Worker lifecycle.
  *
  * Features:
  * - Automatic worker count based on navigator.hardwareConcurrency
- * - In-order result collection (frames may complete out-of-order)
+ * - Results can arrive out of order. The streaming encoder orders them for muxing.
  * - Graceful fallback: if Worker is unavailable, encode on main thread
  * - Transferable RGBA data (zero-copy transfer to worker)
  * - Timeout-based task retirement for stalled workers
@@ -143,11 +143,9 @@ export class WebpWorkerPool {
   }
 
   /**
-   * Number of workers that were successfully initialized.
-   * May be 0 if all Worker() constructor calls failed (e.g. CSP blocks,
-   * network errors, or module load failures). Callers should check this
-   * before routing tasks to the pool — a pool with 0 workers cannot
-   * process any tasks and will reject every submission immediately.
+   * Number of Worker instances currently retained by the pool.
+   * Construction adds an instance immediately. The error handler processes
+   * asynchronous module startup failures later. An empty pool rejects submissions.
    */
   get activeWorkers(): number {
     return this.workers.length;
@@ -164,8 +162,8 @@ export class WebpWorkerPool {
           index: i,
           error: getErrorMessage(err),
         });
-        // Continue with fewer workers — the caller (encodeWebpParallel) falls back
-        // to main-thread encoding when pool is unavailable or has no workers.
+        // Keep the workers already constructed. The conversion pipeline selects
+        // a main-thread encoder when the pool has no workers at route selection.
       }
     }
 

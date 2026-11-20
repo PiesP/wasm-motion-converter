@@ -67,9 +67,9 @@ interface OutstandingTask {
 }
 
 /**
- * Streaming variant of encodeWebpParallel: frames are submitted one at a time
- * instead of collecting all into an array first. submit() resolves after bounded
- * ownership is accepted; finish() awaits encoding and ordered mux completion.
+ * Accepts one frame at a time during decode. submit() resolves after the
+ * encoder accepts ownership within its limits. finish() waits for encoding
+ * and ordered mux completion.
  *
  * @returns { submit, finish } — submit frames during decode, call finish after
  */
