@@ -284,6 +284,19 @@ frame-local flags and scratch bound cover the trial. Its common quantizer
 changes effective luma and chroma steps, so the frozen frame quality and size
 gates apply.
 
+A q85 luma ranking trial covers non-neutral, at-or-below-budget maps with
+both FineSmooth and ChromaticFlat as their only source classes. For each
+already-generated luma choice in a ChromaticFlat macroblock, it adds the
+visible luma residual's constant-component energy to ordinary distortion.
+This is the square of the signed residual sum divided by the visible sample
+count, rounded down. The score uses the existing joint header and token
+costs, rate weights, trial order, and strict tie rule. All quantizers and
+filter settings keep their existing values. A different winning mode can
+change reconstructed neighbors and output bytes. The trial adds one
+frame-local boolean and at most five visible-tile scans of 256 additions
+each inside an existing analysis step, with no added allocation or replay.
+The whole-frame quality and size gates still apply.
+
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those
 variants differ. After each count, the encoder copies completed reconstruction
