@@ -184,7 +184,8 @@ unused classes and neutral inputs. UV DC and AC deltas increase by two so scalar
 UV quantizer steps remain unchanged for neutral inputs, including clamping. For
 non-neutral inputs satisfying that same policy, UV DC delta then decreases by
 four, to -11; UV AC remains -7. Mode and coefficient rate weights use original
-qindices. Other q75 frames retain the previous q75 quantizers and rate weights.
+qindices. The all-Textured condition is separate from the mixed-map q75
+experiments below.
 Mode choices and UV reconstruction may still change. The condition reuses the
 q60 import-error reference and does not change q85, geometry, cadence or
 acceptance thresholds. The [fixed-pixel result](../../docs/experiments/501-owned-vp8-low-curvature-result.md)
@@ -231,11 +232,11 @@ For q75 and q85, the higher-preset speed experiment omits the local display
 refinement and its extra quota when imported chroma is non-neutral and the
 enabled segment ID map costs more than the same 128-byte estimate. The encoder
 evaluates the estimate once per frame from the original map probabilities and
-four class counts, after classification. It still signals that map and uses the
-same quantizers, deltas and normal luma/chroma analysis. Monochrome, one-class and
-at-or-below-budget maps retain the full search. With no edits the encoder follows
-the existing single-variant counting and emission path. The q60 policies above
-apply as before.
+four class counts, after classification. The display policy governs the search.
+The q75 trials below govern quantization and map signaling for a subset of
+those frames. Monochrome, one-class and at-or-below-budget maps retain the full
+search. With no refinement edits the encoder follows the single-variant
+counting and emission path.
 
 This quality-changing hypothesis targets the macroblock analysis cost observed
 in the whole-job medium-preset comparison. It needs the unchanged 687-condition,
@@ -249,21 +250,21 @@ q75 macroblock adds 448 Y and 96 differences for each of U and V to the
 existing accumulators. One frame-local boolean retains the policy within the
 engine scratch bound. As at q60, feedback applies inside each UV mode trial on
 full visible 8×8 chroma tiles.
-The q75 experiment keeps its established luma analysis, quantizer and UV
-deltas, filter and display-search eligibility. This experiment tests the
-direction of the original-reference PSNR change. The frame-size gate still
-applies.
+The first q75 feedback experiment isolated the effect of that tile-local
+correction on original-reference PSNR.
 
-A separate q75 rate point applies to the same mixed low-curvature profile.
-It raises the base and all four segment qindices by the existing four-index
-step, then applies compensating deltas of −4 for Y1 DC and Y2 DC/AC and −13 for
-UV DC/AC. This coarsens Y1 AC alone. The other five quantizer operands are
-identical to the UV DC experiment, including the UV clamp on the fine class.
-Rate prices use the original segment qindices. The step preserves the segment
-map and probabilities, filter, and the normal skip and selection policies.
-One additional frame-local boolean tracks the rate point separately from the
-UV feedback flag. The existing engine scratch bound includes both flags.
-The wider Y1 AC step must pass the frozen frame quality and size gates.
+The q75 rate experiment applies to the same mixed low-curvature profile.
+The first rate point raised the four segment qindices by four and compensated
+with deltas of −4 for Y1 DC and Y2 DC/AC and −13 for UV DC/AC. The current
+trial keeps those deltas and uses the lower weighted median of the raised
+indices, weighted by the original class counts and floored at the q75 chromatic
+ramp index of 27. This base index supplies the quantizer for every macroblock.
+The frame disables VP8 segmentation and retains the frame filter, tile-local
+UV DC feedback, and normal skip and selection rules. Each source class still
+uses its original qindex for mode and coefficient rate weighting. The existing
+frame-local flags and scratch bound cover the trial. Its common quantizer
+changes effective luma and chroma steps, so the frozen frame quality and size
+gates apply.
 
 Exact byte counting independently evaluates the extended choice, the mandatory
 choices captured during the same analysis, and the unrefined records when those

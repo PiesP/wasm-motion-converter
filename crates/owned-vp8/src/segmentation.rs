@@ -61,12 +61,7 @@ impl Config {
         neutral_chroma: bool,
     ) -> Self {
         debug_assert_eq!(counts.iter().sum::<usize>(), total);
-        let qindex = [
-            presets::smooth_qindex(quality),
-            presets::chromatic_flat_qindex(quality),
-            presets::chromatic_ramp_qindex(quality),
-            presets::textured_qindex(quality, neutral_chroma),
-        ];
+        let qindex = class_qindices(quality, neutral_chroma);
         let enabled = counts.iter().filter(|&&count| count > 0).count() > 1;
         let base_qindex = qindex[counts.iter().position(|&count| count > 0).unwrap_or(3)];
         let probability = |numerator: usize, denominator: usize| {
@@ -137,7 +132,7 @@ impl Config {
         self
     }
 
-    pub(crate) fn with_raised_qindices(mut self) -> Self {
+    fn with_raised_qindices(mut self) -> Self {
         self.base_qindex += presets::MIXED_Y1_AC_QINDEX_INCREASE;
         self.qindex = self
             .qindex
@@ -151,10 +146,15 @@ impl Config {
         }
         let raised = self.with_raised_qindices();
         if raised.map_exceeds_rate_allowance(counts) {
-            raised.uniform_mixed_q60(counts)
+            raised.with_uniform_qindex(counts, presets::chromatic_ramp_qindex(60))
         } else {
             raised
         }
+    }
+
+    pub(crate) fn with_mixed_q75_allocation(self, counts: [usize; 4]) -> Self {
+        self.with_raised_qindices()
+            .with_uniform_qindex(counts, presets::chromatic_ramp_qindex(75))
     }
 
     pub(crate) fn map_exceeds_rate_allowance(self, counts: [usize; 4]) -> bool {
@@ -177,7 +177,7 @@ impl Config {
         cost
     }
 
-    fn uniform_mixed_q60(self, counts: [usize; 4]) -> Self {
+    fn with_uniform_qindex(self, counts: [usize; 4], minimum_qindex: usize) -> Self {
         let mut weighted_indices =
             std::array::from_fn::<_, 4, _>(|id| (self.qindex[id], counts[id]));
         weighted_indices.sort_unstable_by_key(|&(qindex, _)| qindex);
@@ -189,7 +189,7 @@ impl Config {
         for (qindex, count) in weighted_indices {
             cumulative += count;
             if cumulative >= midpoint {
-                return Self::nonsegmented(qindex.max(presets::chromatic_ramp_qindex(60)));
+                return Self::nonsegmented(qindex.max(minimum_qindex));
             }
         }
         unreachable!("weighted rank must fall within classified macroblocks");
@@ -248,6 +248,15 @@ impl Config {
         }
         Ok(())
     }
+}
+
+pub(crate) fn class_qindices(quality: u32, neutral_chroma: bool) -> [usize; 4] {
+    [
+        presets::smooth_qindex(quality),
+        presets::chromatic_flat_qindex(quality),
+        presets::chromatic_ramp_qindex(quality),
+        presets::textured_qindex(quality, neutral_chroma),
+    ]
 }
 
 /// Curvature selects smooth tiles. Chroma neutrality or three constant planes
@@ -417,7 +426,7 @@ mod tests {
             ([0, 3, 1, 1], ramp),
             ([1, 2, 2, 2], 36),
         ] {
-            let selected = shifted.uniform_mixed_q60(counts);
+            let selected = shifted.with_uniform_qindex(counts, ramp);
             assert!(!selected.enabled);
             assert_eq!(selected.base_qindex, qindex);
             assert_eq!(selected.qindex, [qindex; 4]);
@@ -432,12 +441,39 @@ mod tests {
             qindex: [36, 10, 36, 22],
             ..shifted
         };
-        assert_eq!(unordered.uniform_mixed_q60([1, 4, 3, 0]).base_qindex, ramp);
-        assert_eq!(unordered.uniform_mixed_q60([1, 3, 4, 0]).base_qindex, 36);
+        assert_eq!(
+            unordered
+                .with_uniform_qindex([1, 4, 3, 0], ramp)
+                .base_qindex,
+            ramp
+        );
+        assert_eq!(
+            unordered
+                .with_uniform_qindex([1, 3, 4, 0], ramp)
+                .base_qindex,
+            36
+        );
         let inactive = original.with_mixed_q60_allocation([1, 1, 1, 1], false);
         assert!(inactive.enabled);
         assert_eq!(inactive.qindex, original.qindex);
         assert_eq!(inactive.map_probabilities, original.map_probabilities);
+    }
+
+    #[test]
+    fn mixed_q75_uniform_allocation_uses_the_raised_lower_median_with_the_ramp_floor() {
+        for (counts, expected) in [
+            ([256, 256, 256, 256], 27),
+            ([256, 255, 257, 256], 31),
+            ([128, 128, 128, 640], 32),
+        ] {
+            let original = Config::from_counts(75, counts, counts.iter().sum(), false);
+            assert_eq!(original.qindex, [6, 19, 27, 28]);
+            assert!(original.map_exceeds_rate_allowance(counts));
+            let selected = original.with_mixed_q75_allocation(counts);
+            assert!(!selected.enabled);
+            assert_eq!(selected.base_qindex, expected);
+            assert_eq!(selected.qindex, [expected; 4]);
+        }
     }
 
     #[test]

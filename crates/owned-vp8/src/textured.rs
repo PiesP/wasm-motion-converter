@@ -2566,7 +2566,7 @@ fn encode_observed(
     deltas = crate::presets::photo_allocation_deltas(deltas, photo_q60, photo_q75);
     deltas = crate::presets::mixed_y1_ac_deltas(deltas, mixed_y1_ac);
     if medium_y1_ac {
-        segments = segments.with_raised_qindices();
+        segments = segments.with_mixed_q75_allocation(class_counts);
         deltas = crate::presets::medium_y1_ac_deltas(deltas);
     }
     if high_chroma_loss {
@@ -4747,7 +4747,7 @@ impl FrameEncoder {
             );
             self.deltas = crate::presets::mixed_y1_ac_deltas(self.deltas, self.mixed_y1_ac);
             if self.medium_y1_ac {
-                self.segments = self.segments.with_raised_qindices();
+                self.segments = self.segments.with_mixed_q75_allocation(self.class_counts);
                 self.deltas = crate::presets::medium_y1_ac_deltas(self.deltas);
             }
             self.header_budget = HeaderBudget::new(
@@ -4786,7 +4786,8 @@ impl FrameEncoder {
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
         let rate_qindex = if self.medium_y1_ac {
-            qindex - crate::presets::MIXED_Y1_AC_QINDEX_INCREASE
+            segmentation::class_qindices(self.request.quality, self.neutral_chroma)
+                [segment_id as usize]
         } else if self.medium_textured_luma || self.photo_q60 || self.mixed_y1_ac {
             self.original_segments().qindex_for(segment_id)
         } else {
@@ -9918,16 +9919,15 @@ mod tests {
         assert!(!engine.mixed_y1_ac && !engine.neutral_chroma && !engine.medium_textured_luma);
         assert!(engine.curvature.within_cutoff(engine.blocks.len()));
         assert!(engine.class_counts.iter().all(|&count| count > 0));
-        assert!(engine
-            .segments
-            .map_exceeds_rate_allowance(engine.class_counts));
         let original = engine.original_segments();
-        assert_eq!(engine.segments.qindex, [10, 23, 31, 32]);
-        assert_eq!(engine.segments.base_qindex, original.base_qindex + 4);
-        assert_eq!(
-            engine.segments.map_probabilities,
-            original.map_probabilities
-        );
+        assert!(original.map_exceeds_rate_allowance(engine.class_counts));
+        assert_eq!(original.qindex, [6, 19, 27, 28]);
+        assert!(!engine.segments.enabled);
+        assert_eq!(engine.segments.qindex, [engine.segments.base_qindex; 4]);
+        assert_eq!(engine.segments.map_probabilities, [255; 3]);
+        for id in 0..4 {
+            assert!(engine.blocks.iter().any(|block| block.segment_id == id));
+        }
         assert_eq!(
             engine.deltas,
             crate::presets::medium_y1_ac_deltas(crate::presets::deltas(75))
@@ -9937,7 +9937,7 @@ mod tests {
     }
 
     #[test]
-    fn q75_y1_ac_and_uv_dc_feedback_match_sync_and_resumable_on_padded_input() {
+    fn uniform_mixed_q75_and_uv_dc_feedback_match_sync_and_resumable_on_padded_input() {
         let input = q75_uv_dc_feedback_input();
         let selected = run_engine(q75_uv_dc_feedback_engine(input.clone()));
         let mut base = q75_uv_dc_feedback_engine(input.clone());
@@ -9955,7 +9955,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
-    fn independent_decoders_reconstruct_q75_y1_ac_and_uv_dc_feedback_on_padded_input() {
+    fn independent_decoders_reconstruct_uniform_mixed_q75_with_uv_dc_feedback() {
         let side = Q75_FEEDBACK_AXIS;
         let engine = run_engine(q75_uv_dc_feedback_engine(q75_uv_dc_feedback_input()));
         let (y, u, v, padded_w) = engine.reconstruction();
@@ -9966,7 +9966,7 @@ mod tests {
             side,
             side,
             &expected,
-            "q75 UV DC feedback with padded edges",
+            "uniform mixed q75 with UV DC feedback and padded edges",
         );
     }
 
@@ -10308,6 +10308,39 @@ mod tests {
                 true, false, true, false, false, true, // Y2 AC -4.
                 true, true, false, false, false, true, // UV DC -8.
                 true, true, true, true, true, true,  // UV AC -15.
+                false, // Entropy updates are not retained.
+            ]
+        );
+    }
+
+    #[test]
+    fn uniform_mixed_q75_header_signals_one_base_index_and_compensated_deltas() {
+        struct Bits(Vec<bool>);
+        impl BoolSink for Bits {
+            fn write(&mut self, _probability: u8, bit: bool) -> Result<(), EncodeError> {
+                self.0.push(bit);
+                Ok(())
+            }
+        }
+        let counts = [256; 4];
+        let selected =
+            SegmentConfig::from_counts(75, counts, 1024, false).with_mixed_q75_allocation(counts);
+        let deltas = crate::presets::medium_y1_ac_deltas(crate::presets::deltas(75));
+        let mut header = Bits(Vec::new());
+        write_header_prefix(&mut header, selected, deltas, FilterConfig::for_quality(75)).unwrap();
+        assert!(!header.0[2]); // Segmentation disabled.
+        assert_eq!(
+            &header.0[16..23],
+            &[false, false, true, true, false, true, true] // Base qindex 27.
+        );
+        assert_eq!(
+            &header.0[23..],
+            &[
+                true, false, true, false, false, true, // Y1 DC -4.
+                true, false, true, false, false, true, // Y2 DC -4.
+                true, false, true, false, false, true, // Y2 AC -4.
+                true, true, true, false, true, true, // UV DC -13.
+                true, true, true, false, true, true,  // UV AC -13.
                 false, // Entropy updates are not retained.
             ]
         );
