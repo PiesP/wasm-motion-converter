@@ -5,6 +5,12 @@ conditions. Each condition requires PSNR at least primary minus 1 dB, SSIM
 at least primary minus 0.01, and VP8 bytes at most
 `max(primary × 1.25, primary + 128)`. The first candidate attempt budget is one.
 
+The first V15 result passed 57 of 60 conditions. The immutable [V15
+disposition](501-owned-vp8-v15-disposition.json) binds that rejection and the
+unchanged original source freeze. The current comparator accepts V15 only
+with `--regression`. The procedure below describes the consumed first attempt
+on its original signed qualification registry.
+
 V13's first 55/60 and V14's first 59/60 remain historical exposed results.
 The V14 original source freeze stays byte-identical. Its separate
 [disposition](501-owned-vp8-v14-disposition.json) binds the consumed

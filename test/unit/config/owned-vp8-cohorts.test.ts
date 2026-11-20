@@ -18,7 +18,7 @@ import {
   compare,
   fixtureSelectionIdentity,
   parseFixtureIds,
-  readV15Reservation,
+  readV16Reservation,
   selectFixtureCohort,
 } from '../../../scripts/test/owned-vp8-v2-compare';
 import {
@@ -72,9 +72,15 @@ import {
 import {
   V15_HELDOUT,
   assertV15Shape,
-  preflightV15,
   type V15Manifest,
 } from '../../../scripts/test/owned-vp8-v15-fixtures';
+import {
+  V16_HELDOUT,
+  assertV16Shape,
+  draftV16Manifest,
+  preflightV16,
+  type V16Manifest,
+} from '../../../scripts/test/owned-vp8-v16-fixtures';
 
 describe('owned VP8 prospective cohort isolation', () => {
   const root = resolve(import.meta.dirname, '../../..');
@@ -214,7 +220,7 @@ describe('owned VP8 prospective cohort isolation', () => {
     }
   });
 
-  it('binds exactly 60 fresh V15 conditions to the reviewed source recipe', () => {
+  it('preserves V15 as a 60-condition exposed regression', () => {
     const manifest = JSON.parse(
       readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v15-fixtures.json'), 'utf8')
     ) as V15Manifest;
@@ -225,12 +231,13 @@ describe('owned VP8 prospective cohort isolation', () => {
     expect(manifest.priorV14.sha256).toBe(sha256(manifest.priorV14.path));
     expect(new Set(manifest.fixtures.map((item) => item.sha256)).size).toBe(20);
     expect(manifest.fixtures.every((item) => /^[a-f0-9]{64}$/.test(item.sha256 ?? ''))).toBe(true);
-    const selected = selectFixtureCohort('held-out', 'corrected-v15');
+    expect(() => selectFixtureCohort('held-out', 'corrected-v15')).toThrow('exposed');
+    const selected = selectFixtureCohort('held-out', 'corrected-v15', true);
     expect(selected).toEqual(V15_HELDOUT);
-    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+    expect(fixtureSelectionIdentity(selected, 'held-out', true, false)).toMatchObject({
       expectedConditionCount: 60,
       completeCohort: true,
-      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+      scope: 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE',
     });
     expect(selected.filter((item) => item.source === 'generated')).toHaveLength(12);
     expect(selected.filter((item) => item.source === 'photo')).toHaveLength(4);
@@ -239,66 +246,131 @@ describe('owned VP8 prospective cohort isolation', () => {
     expect(() =>
       selectFixtureCohort('held-out', 'corrected-v15', false, ['fresh15-neutral'])
     ).toThrow('diagnostic only');
+    const disposition = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v15-disposition.json'), 'utf8')
+    );
+    expect(disposition.status).toBe('EXPOSED_REGRESSION');
+    expect(disposition.originalFrozenManifestSha256).toBe(
+      sha256('docs/experiments/501-owned-vp8-v15-fixtures.json')
+    );
+    expect(disposition.firstAttempt).toMatchObject({
+      passed: 57,
+      conditions: 60,
+      status: 'REJECTED_HELDOUT',
+    });
     const drift = structuredClone(manifest);
     drift.sources.photo.revision = manifest.sources.video.revision;
     expect(() => assertV15Shape(drift)).toThrow();
   });
 
-  it('rejects V15 wrong-purpose or missing-pins runs before candidate work', async () => {
+  it('binds exactly 60 fresh V16 conditions to the reviewed source recipe', () => {
     const manifest = JSON.parse(
-      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v15-fixtures.json'), 'utf8')
-    ) as V15Manifest;
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v16-fixtures.json'), 'utf8')
+    ) as V16Manifest;
+    expect(() => assertV16Shape(manifest)).not.toThrow();
+    expect(manifest.status).toBe('FROZEN_UNEXECUTED');
+    expect(manifest.generatorSha256).toBe(sha256('scripts/test/owned-vp8-v16-fixtures.ts'));
+    expect(manifest.priorV13.sha256).toBe(sha256(manifest.priorV13.path));
+    expect(manifest.priorV14.sha256).toBe(sha256(manifest.priorV14.path));
+    expect(new Set(manifest.fixtures.map((item) => item.sha256)).size).toBe(20);
+    expect(manifest.fixtures.every((item) => /^[a-f0-9]{64}$/.test(item.sha256 ?? ''))).toBe(true);
+    const selected = selectFixtureCohort('held-out', 'corrected-v16');
+    expect(selected).toEqual(V16_HELDOUT);
+    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+      expectedConditionCount: 60,
+      completeCohort: true,
+      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+    });
+    expect(selected.filter((item) => item.source === 'generated')).toHaveLength(12);
+    expect(selected.filter((item) => item.source === 'photo')).toHaveLength(4);
+    expect(manifest.priorV15.sha256).toBe(sha256(manifest.priorV15.path));
+    expect(manifest.fixtures.flatMap((item) => item.pts ?? [])).toEqual([1407, 4774, 7907, 11140]);
+    expect({
+      ...manifest,
+      status: 'PROSPECTIVE_UNFROZEN',
+      fixtures: manifest.fixtures.map((row) => ({ ...row, sha256: null })),
+    }).toEqual(draftV16Manifest());
+    expect(() => selectFixtureCohort('tuning', 'corrected-v16')).toThrow('no tuning');
+    expect(() =>
+      selectFixtureCohort('held-out', 'corrected-v16', false, ['fresh16-neutral'])
+    ).toThrow('diagnostic only');
+    const drift = structuredClone(manifest);
+    drift.sources.photo.revision = manifest.sources.video.revision;
+    expect(() => assertV16Shape(drift)).toThrow();
+    const shifted = structuredClone(manifest);
+    shifted.fixtures.at(-1)!.pts!++;
+    expect(() => assertV16Shape(shifted)).toThrow();
+  });
+
+  it('rejects V16 wrong-purpose or missing-pins runs before candidate work', async () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v16-fixtures.json'), 'utf8')
+    ) as V16Manifest;
     const draft = { ...manifest, status: 'PROSPECTIVE_UNFROZEN' } as const;
-    expect(() => preflightV15(draft, {}, root, false)).toThrow('not acceptance ready');
-    expect(() => preflightV15(manifest, {}, root, true)).toThrow('not acceptance ready');
+    expect(() => preflightV16(draft, {}, root, false)).toThrow('not acceptance ready');
+    expect(() => preflightV16(manifest, {}, root, true)).toThrow('not acceptance ready');
     const incomplete = {
       ...manifest,
       fixtures: manifest.fixtures.map((row) => ({ ...row, sha256: null })),
     };
-    expect(() => preflightV15(incomplete, {}, root, false)).toThrow('pixel pins are incomplete');
-    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v15-preflight-'));
+    expect(() => preflightV16(incomplete, {}, root, false)).toThrow('pixel pins are incomplete');
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v16-preflight-'));
     const output = join(parent, 'rows');
     try {
-      const options = { split: 'held-out', cohort: 'corrected-v15', sources: {} } as const;
+      const options = { split: 'held-out', cohort: 'corrected-v16', sources: {} } as const;
       await expect(compare({ ...options, output, regression: true })).rejects.toThrow(
         'not acceptance ready'
       );
       await expect(compare({ ...options, output: parent })).rejects.toThrow('already exists');
-      await expect(compare({ ...options, output })).rejects.toThrow('V15 attempt name differs');
+      await expect(compare({ ...options, output })).rejects.toThrow('both private originals');
       expect(existsSync(output)).toBe(false);
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
   });
 
-  it('binds V15 reservation, exact plan and issue readback before source access', () => {
-    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v15-reservation-'));
+  it('binds V16 reservation, exact plan and issue readback before source access', () => {
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v16-reservation-'));
     const attempt = join(parent, 'first-candidate-attempt-01');
     const output = join(attempt, 'rows');
-    const freezeId = 'vp8-v15-first-heldout-20261120-01';
+    const freezeId = 'vp8-v16-first-heldout-20261120-01';
     const manifestSha256 = 'a'.repeat(64);
     const candidateRoot = join(parent, 'candidate');
     const registryRoot = join(parent, 'registry');
-    const sources = { v15Photo: join(parent, 'no-photo'), v15Video: join(parent, 'no-video') };
-    const fields = { output, freezeId, manifestSha256, candidateRoot, registryRoot, sources };
+    const sources = { v16Photo: join(parent, 'no-photo'), v16Video: join(parent, 'no-video') };
+    const fields = {
+      output,
+      freezeId,
+      manifestSha256,
+      candidateRoot,
+      registryRoot,
+      privateRegistry: parent,
+      sources,
+    };
     const registration =
       'https://github.com/PiesP/wasm-motion-converter/issues/501#issuecomment-123';
     const planFile = join(parent, 'admission-test.json');
     const plan = {
-      status: 'V15_FIRST_ADMISSION_FROZEN',
+      status: 'V16_FIRST_ADMISSION_FROZEN',
       freezeId,
       budget: 1,
       canonicalAttempt: attempt,
       registryRoot,
       candidate: { repo: candidateRoot },
-      repoPins: { 'docs/experiments/501-owned-vp8-v15-fixtures.json': manifestSha256 },
+      repoPins: { 'docs/experiments/501-owned-vp8-v16-fixtures.json': manifestSha256 },
       sourcesFromManifestMetadataOnly: {
-        photo: { path: sources.v15Photo },
-        video: { path: sources.v15Video },
+        photo: { path: sources.v16Photo },
+        video: { path: sources.v16Video },
       },
       primary: {
         wasmSha256: '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22',
         jsSha256: '75b19521738cd76144ae58442dbcdf7da3ff61ca0574a334f0079afc705f741c',
+      },
+      exposed: {
+        scope: 'EXPOSED_REGRESSION_ONLY',
+        status: 'PASS_EXPOSED_REGRESSION_ONLY',
+        count: 867,
+        passed: 867,
       },
       plannedUtc: '2026-11-20T10:00:00Z',
     };
@@ -317,7 +389,7 @@ describe('owned VP8 prospective cohort isolation', () => {
       mkdirSync(attempt);
       const requestFile = join(attempt, 'request.json');
       const readbackFile = join(attempt, 'registration-readback.json');
-      expect(() => readV15Reservation(fields)).toThrow('request.json');
+      expect(() => readV16Reservation(fields)).toThrow('request.json');
       writeReceipt(planFile, plan);
       const request = {
         freezeId,
@@ -329,35 +401,47 @@ describe('owned VP8 prospective cohort isolation', () => {
         startedUtc: '2026-11-20T10:00:03Z',
       };
       writeReceipt(requestFile, request, 0o600);
-      expect(() => readV15Reservation(fields)).toThrow('read-only regular file');
+      expect(() => readV16Reservation(fields)).toThrow('read-only regular file');
       const linkedPlan = join(parent, 'admission-linked.json');
       symlinkSync(planFile, linkedPlan);
       writeReceipt(requestFile, { ...request, plan: linkedPlan });
-      expect(() => readV15Reservation(fields)).toThrow(expect.objectContaining({ code: 'ELOOP' }));
+      expect(() => readV16Reservation(fields)).toThrow(expect.objectContaining({ code: 'ELOOP' }));
       rmSync(linkedPlan);
       linkSync(planFile, linkedPlan);
-      expect(() => readV15Reservation(fields)).toThrow('single-link');
+      expect(() => readV16Reservation(fields)).toThrow('single-link');
       rmSync(linkedPlan);
       const oversizedPlan = join(parent, 'admission-oversized.json');
       writeFileSync(oversizedPlan, Buffer.alloc(1024 * 1024 + 1), { mode: 0o400, flag: 'wx' });
       writeReceipt(requestFile, { ...request, plan: oversizedPlan });
-      expect(() => readV15Reservation(fields)).toThrow('byte bounds');
+      expect(() => readV16Reservation(fields)).toThrow('byte bounds');
       writeReceipt(requestFile, { ...request, planSha256: 'c'.repeat(64) });
-      expect(() => readV15Reservation(fields)).toThrow('admission digest differs');
+      expect(() => readV16Reservation(fields)).toThrow('admission digest differs');
       writeReceipt(requestFile, request);
       writeReceipt(readbackFile, { ...owner, author: 'Other' });
-      expect(() => readV15Reservation(fields)).toThrow('readback owner differs');
+      expect(() => readV16Reservation(fields)).toThrow('readback owner differs');
       writeReceipt(readbackFile, owner);
-      expect(() => readV15Reservation({ ...fields, candidateRoot: parent })).toThrow(
+      expect(() => readV16Reservation({ ...fields, candidateRoot: parent })).toThrow(
         'candidate root differs'
       );
-      expect(() => readV15Reservation({ ...fields, manifestSha256: 'd'.repeat(64) })).toThrow(
+      expect(() => readV16Reservation({ ...fields, manifestSha256: 'd'.repeat(64) })).toThrow(
         'manifest digest differs'
       );
-      expect(readV15Reservation(fields).candidate.repo).toBe(candidateRoot);
+      expect(() => readV16Reservation({ ...fields, privateRegistry: candidateRoot })).toThrow(
+        'canonical custody root differs'
+      );
+      const priorCount = { ...plan, exposed: { ...plan.exposed, count: 807, passed: 807 } };
+      writeReceipt(planFile, priorCount);
+      writeReceipt(requestFile, {
+        ...request,
+        planSha256: createHash('sha256').update(readFileSync(planFile)).digest('hex'),
+      });
+      expect(() => readV16Reservation(fields)).toThrow('all 867 exposed conditions');
+      writeReceipt(planFile, plan);
+      writeReceipt(requestFile, request);
+      expect(readV16Reservation(fields).candidate.repo).toBe(candidateRoot);
       expect(existsSync(output)).toBe(false);
       writeReceipt(join(attempt, 'outcome.json'), { status: 'FAILED_ATTEMPT_CONSUMED' });
-      expect(() => readV15Reservation(fields)).toThrow('attempt is settled');
+      expect(() => readV16Reservation(fields)).toThrow('attempt is settled');
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
