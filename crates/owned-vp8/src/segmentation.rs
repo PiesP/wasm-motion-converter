@@ -39,6 +39,14 @@ impl CurvatureTotals {
             && self.sums[1] <= CURVATURE_CUTOFF * UV_DIFFERENCES_PER_BLOCK * blocks
             && self.sums[2] <= CURVATURE_CUTOFF * UV_DIFFERENCES_PER_BLOCK * blocks
     }
+
+    pub(crate) fn luma_dominates(self) -> bool {
+        let [y, u, v] = self.sums;
+        // All planes use the same number of macroblocks. Compare their means
+        // exactly after canceling that count, without rounding near equality.
+        u128::from(u.max(v)) * u128::from(Y_DIFFERENCES_PER_BLOCK)
+            <= u128::from(y) * u128::from(UV_DIFFERENCES_PER_BLOCK)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -795,6 +803,35 @@ mod tests {
             assert!(above.sums[plane] > totals.sums[plane]);
             assert!(!above.within_cutoff(1));
         }
+    }
+
+    #[test]
+    fn luma_dominance_normalizes_both_chroma_planes_without_rounding() {
+        for (sums, expected) in [
+            ([448, 96, 96], true),
+            ([448, 97, 0], false),
+            ([448, 0, 97], false),
+            ([447, 96, 96], false),
+            ([449, 96, 96], true),
+            ([0, 0, 0], true),
+        ] {
+            assert_eq!(
+                CurvatureTotals { sums }.luma_dominates(),
+                expected,
+                "{sums:?}"
+            );
+        }
+        // Even frame sums outside the admitted geometry cannot wrap the comparison.
+        let y = u64::MAX;
+        let chroma = (u128::from(y) * 96 / 448) as u64;
+        assert!(CurvatureTotals {
+            sums: [y, chroma, chroma]
+        }
+        .luma_dominates());
+        assert!(!CurvatureTotals {
+            sums: [y, 0, chroma + 1]
+        }
+        .luma_dominates());
     }
 
     #[test]

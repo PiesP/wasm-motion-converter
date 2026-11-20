@@ -510,7 +510,7 @@ try {
       results
         .filter((entry) => (entry as { id: string }).id.startsWith('fresh7-tiny-'))
         .map((entry) => (entry as { rawBytes: number }).rawBytes),
-      [91, 81, 96]
+      [99, 81, 96]
     );
     for (const stage of [36, 37, 38, 39, 40, 27, 28, 29, 35, 42, 44, 46, 48, 50, 52, 53])
       assert.ok(refinementStages.has(stage), `Compiled ABI2 must reach refinement stage ${stage}`);

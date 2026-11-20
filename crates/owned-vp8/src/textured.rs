@@ -2651,6 +2651,7 @@ fn encode_observed(
         deltas,
         ordinary_q60_texture,
         low_curvature,
+        curvature,
     );
     deltas = crate::presets::mixed_y1_ac_deltas(deltas, mixed_y1_ac);
     if medium_y1_ac {
@@ -4966,6 +4967,7 @@ impl FrameEncoder {
                 self.deltas,
                 ordinary_q60_texture,
                 low_curvature,
+                self.curvature,
             );
             self.deltas = crate::presets::mixed_y1_ac_deltas(self.deltas, self.mixed_y1_ac);
             if self.medium_y1_ac {
@@ -7447,11 +7449,12 @@ mod tests {
             if (width, height) == (2, 9) {
                 assert_eq!(candidate_edits, 3);
                 assert!(!baseline_only.photo_q60);
+                assert!(!baseline_only.curvature.luma_dominates());
                 assert_eq!(
                     (baseline_only.deltas.uv_dc, baseline_only.deltas.uv_ac),
-                    (-4, -4)
+                    (-4, -11)
                 );
-                assert_eq!(baseline_only.output().len(), 91);
+                assert_eq!(baseline_only.output().len(), 98);
             }
             assert_ne!(candidate.output(), baseline_only.output());
         }
@@ -7484,8 +7487,9 @@ mod tests {
             baseline.selected_frame_bytes
         );
         assert!(!candidate.photo_q60);
-        assert_eq!((candidate.deltas.uv_dc, candidate.deltas.uv_ac), (-4, -4));
-        assert_eq!(baseline.selected_frame_bytes, 91);
+        assert!(!candidate.curvature.luma_dominates());
+        assert_eq!((candidate.deltas.uv_dc, candidate.deltas.uv_ac), (-4, -11));
+        assert_eq!(baseline.selected_frame_bytes, 98);
         while !(candidate.stage == Stage::CollectStats
             && candidate.base_count
             && !candidate.baseline_count)
@@ -7508,7 +7512,7 @@ mod tests {
         let candidate = run_engine(candidate);
         let base = run_engine(base);
         assert_eq!(candidate.output().len(), extended_bytes as usize);
-        assert_eq!(candidate.output().len(), 91);
+        assert_eq!(candidate.output().len(), 99);
         assert_eq!(candidate.plan.first_partition_bytes, extended_sizes.0);
         assert_eq!(candidate.plan.coefficient_partition_bytes, extended_sizes.1);
         assert!(
@@ -12106,13 +12110,40 @@ mod tests {
         pixels
     }
 
+    fn chroma_dominant_texture_input() -> Vec<u8> {
+        (0..16 * 16)
+            .flat_map(|i| {
+                if i % 8 < 4 {
+                    [255, 0, 0, 255]
+                } else {
+                    [0, 0, 255, 255]
+                }
+            })
+            .collect()
+    }
+
     #[test]
     fn textured_allocation_profiles_match_sync_and_resumable_encoders() {
-        for (input, quality, active_q, uv_deltas, selected) in [
-            (photo_allocation_input(), 60, 32, (-4, -4), false),
-            (low_curvature_photo_input(), 60, 28, (-15, -7), true),
-            (photo_allocation_input(), 75, 26, (-11, -7), false),
-            (photo_allocation_input(), 85, 14, (-4, -4), false),
+        for (input, quality, active_q, uv_deltas, selected, luma_dominates) in [
+            (
+                photo_allocation_input(),
+                60,
+                32,
+                (-4, -4),
+                false,
+                Some(true),
+            ),
+            (
+                chroma_dominant_texture_input(),
+                60,
+                32,
+                (-4, -11),
+                false,
+                Some(false),
+            ),
+            (low_curvature_photo_input(), 60, 28, (-15, -7), true, None),
+            (photo_allocation_input(), 75, 26, (-11, -7), false, None),
+            (photo_allocation_input(), 85, 14, (-4, -4), false, None),
         ] {
             let request = Request {
                 quality,
@@ -12123,6 +12154,10 @@ mod tests {
             assert_eq!(engine.class_counts, [0, 0, 0, 1]);
             assert!(!engine.neutral_chroma);
             assert!(!engine.high_chroma_loss);
+            if let Some(dominates) = luma_dominates {
+                assert!(!engine.curvature.within_cutoff(1));
+                assert_eq!(engine.curvature.luma_dominates(), dominates);
+            }
             assert_eq!(engine.photo_q60, selected);
             assert_eq!(engine.medium_textured_luma, quality == 75);
             assert_eq!(engine.segments.base_qindex, active_q);

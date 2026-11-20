@@ -117,15 +117,18 @@ and high-chroma-loss q60 frames, or frames above the per-plane mean cutoff,
 do not receive this photo allocation. Padded edge replication can dilute
 the measured mean for narrow or odd inputs.
 
-The q60 UV AC rate control applies to the complementary ordinary non-neutral
-all-Textured frames that exceed the same per-plane mean curvature cutoff.
-High-chroma-loss frames retain their existing profile selection. This
-control keeps base qindex 32 and UV DC delta -4, while increasing the UV AC
-delta to match UV DC (effective qindex 28 for both). Synchronous and resumable
-encoding use the same delta before analysis and header budgeting. The control
-retains the existing source import, rate weights, UV AC-tail processing,
-and padded variant selection. Its quality and rate require exposed evaluation
-before broader qualification.
+The q60 UV AC rate control requires ordinary non-neutral all-Textured frames
+above the same per-plane mean curvature cutoff. It applies only when the mean
+curvature of each imported chroma plane is at most the imported luma mean.
+The encoder compares the existing padded plane sums using 448 Y and 96 U/V
+differences per macroblock. Chroma-dominant frames keep UV AC delta -11
+(effective qindex 21), and high-chroma-loss frames keep their existing profile
+selection. Eligible luma-dominant frames keep base qindex 32 and UV DC delta -4
+and match UV AC to UV DC (effective qindex 28 for both). Synchronous and
+resumable encoding use the same delta before analysis and header budgeting.
+The control retains the existing source import, rate weights, UV AC-tail
+processing, and padded variant selection. Its quality and rate require exposed
+evaluation before broader qualification.
 
 Eligible mixed low-curvature q60 frames use one wire quantizer when the
 estimated segment ID map exceeds 128 bytes or when both FineSmooth and

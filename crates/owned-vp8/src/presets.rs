@@ -2,7 +2,7 @@
 // Copyright (c) 2026 PiesP
 // Exploratory knobs calibrated on tuning and explicitly exposed regressions.
 // Only a prospectively frozen fresh cohort can establish acceptance.
-use crate::ac_quant::Deltas;
+use crate::{ac_quant::Deltas, segmentation::CurvatureTotals};
 
 pub(crate) const QINDEX: [usize; 3] = [40, 22, 8];
 const SMOOTH_QINDEX: usize = 6;
@@ -140,9 +140,10 @@ pub(crate) fn high_curvature_q60_textured_deltas(
     mut selected: Deltas,
     ordinary_q60_texture: bool,
     low_curvature: bool,
+    curvature: CurvatureTotals,
 ) -> Deltas {
-    if ordinary_q60_texture && !low_curvature {
-        // Keep the ordinary q60 base and UV DC grid. Use the same qindex for UV AC.
+    if ordinary_q60_texture && !low_curvature && curvature.luma_dominates() {
+        // Preserve the finer UV AC steps when either chroma plane carries more curvature.
         selected.uv_ac = selected.uv_dc;
     }
     selected
@@ -365,12 +366,17 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_q60_high_curvature_changes_only_uv_ac_steps() {
+    fn ordinary_q60_luma_dominant_high_curvature_changes_only_uv_ac_steps() {
         use crate::ac_quant::{steps, Plane, AC_QUANT};
 
         let before = deltas(60);
         let qindex = textured_qindex(60, false) as u8;
-        let after = high_curvature_q60_textured_deltas(before, true, false);
+        let luma_dominant = CurvatureTotals {
+            sums: [3 * 448, 3 * 96, 3 * 96 - 1],
+        };
+        let ordinary = ordinary_q60_all_texture(60, [0, 0, 0, 1], 1, false, false);
+        assert!(ordinary);
+        let after = high_curvature_q60_textured_deltas(before, ordinary, false, luma_dominant);
         assert_eq!(
             after,
             Deltas {
@@ -387,14 +393,43 @@ mod tests {
         for plane in [Plane::Y1, Plane::Y2] {
             assert_eq!(steps(qindex, after, plane), steps(qindex, before, plane));
         }
+        for sums in [[3 * 448, 3 * 96 + 1, 0], [3 * 448, 0, 3 * 96 + 1]] {
+            assert_eq!(
+                high_curvature_q60_textured_deltas(
+                    before,
+                    ordinary,
+                    false,
+                    CurvatureTotals { sums }
+                ),
+                before
+            );
+        }
         assert_eq!(
-            high_curvature_q60_textured_deltas(before, true, true),
+            high_curvature_q60_textured_deltas(
+                before,
+                ordinary,
+                true,
+                CurvatureTotals {
+                    sums: [2 * 448, 2 * 96, 2 * 96],
+                }
+            ),
             before
         );
-        assert_eq!(
-            high_curvature_q60_textured_deltas(before, false, false),
-            before
-        );
+        for (quality, counts, total, neutral, high_loss) in [
+            (75, [0, 0, 0, 1], 1, false, false),
+            (85, [0, 0, 0, 1], 1, false, false),
+            (60, [0, 0, 0, 1], 1, true, false),
+            (60, [0, 0, 0, 1], 1, false, true),
+            (60, [0, 1, 0, 1], 2, false, false),
+            (60, [0; 4], 0, false, false),
+        ] {
+            let ordinary = ordinary_q60_all_texture(quality, counts, total, neutral, high_loss);
+            let unchanged = deltas(quality);
+            assert_eq!(
+                high_curvature_q60_textured_deltas(unchanged, ordinary, false, luma_dominant),
+                unchanged
+            );
+        }
     }
 
     #[test]
