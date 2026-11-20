@@ -1,0 +1,38 @@
+name: Owned read-credit model
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/owned-read-credit-model.yaml'
+      - 'test/unit/services/owned-read-credit-model/**'
+      - 'test/unit/services/owned-demux-source-reads.test.ts'
+      - 'src/services/owned-demux-source-reads.ts'
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/owned-read-credit-model.yaml'
+      - 'test/unit/services/owned-read-credit-model/**'
+      - 'test/unit/services/owned-demux-source-reads.test.ts'
+      - 'src/services/owned-demux-source-reads.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check finite read-credit protocol
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run pinned TLC and early-return control
+        shell: bash
+        run: |
+          export PATH="${JAVA_HOME_21_X64:?Missing JDK 21}/bin:$PATH"
+          java -version
+          bash test/unit/services/owned-read-credit-model/check.sh

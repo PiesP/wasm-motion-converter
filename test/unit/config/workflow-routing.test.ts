@@ -227,6 +227,21 @@ esac
 }
 
 describe('Workflow change routing', () => {
+  it.each([
+    'test/unit/services/owned-read-credit-model/OwnedReadCredit.tla',
+    'test/unit/services/owned-read-credit-model/OwnedReadCredit.cfg',
+    'test/unit/services/owned-read-credit-model/check.sh',
+    'test/unit/services/owned-demux-source-reads.test.ts',
+  ])('routes %s to quality and unit without selecting E2E or builds', (path) => {
+    expect(classify([path])).toMatchObject({
+      all: 'false',
+      quality: 'true',
+      unit: 'true',
+      e2e: 'false',
+      build: 'false',
+    });
+  });
+
   it('executes the maintained quality and unit policy commands once for each normal routing pair', () => {
     const f = policyOwnershipFixture();
     try {
