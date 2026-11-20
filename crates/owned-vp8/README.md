@@ -256,9 +256,10 @@ policy and use the separately computed wire ID for the physical quantizer,
 plane-specific scalar matrices and filter. The best admissible I16 edge witness
 can increase its segment's initial filter strength before final size and display
 scoring. The activity, quantization and filter calculations adapt the attributed
-libwebp 1.3.2 source. For an active map, the owned chroma calibration subtracts
-10 from both UV quantizer deltas at q60 and 6 at q75. This provides finer UV
-steps while retaining the existing luma grid and activity IDs. The q85
+libwebp 1.3.2 source. When an active map already selects a negative UV AC
+delta, the owned chroma calibration subtracts 10 from both UV quantizer deltas
+at q60 and 6 at q75. Zero and positive UV AC deltas keep the activity-selected
+grid. The calibration retains the existing luma grid and activity IDs. The q85
 activity grid keeps its original chroma deltas. Mode search and candidate
 selection use the owned encoder.
 

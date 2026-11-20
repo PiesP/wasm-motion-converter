@@ -269,6 +269,11 @@ fn refine_activity_uv_grid(quality: u32, mut deltas: Deltas) -> Deltas {
     // coarser presets with the largest original UV reconstruction steps.
     // The original UV AC adjustment is in -4..=6, keeping both deltas
     // representable in the VP8 header's four-bit magnitude plus sign.
+    // Respect the activity estimate when it selects an unchanged or coarser
+    // chroma AC grid. A reserve there can spend extra bits and reduce SSIM.
+    if deltas.uv_ac >= 0 {
+        return deltas;
+    }
     let reserve = match quality {
         60 => 10,
         75 => 6,
@@ -409,6 +414,7 @@ mod deferred_tests {
             };
             for (quality, reserve) in [(60, 10), (75, 6), (85, 0)] {
                 let selected = refine_activity_uv_grid(quality, native);
+                let reserve = if uv_ac < 0 { reserve } else { 0 };
                 assert_eq!(selected.y1_dc, native.y1_dc);
                 assert_eq!(selected.y2_dc, native.y2_dc);
                 assert_eq!(selected.y2_ac, native.y2_ac);
