@@ -553,10 +553,11 @@ const cancelOwnedVp8AfterStep = async (
       word(3) !== generation ||
       word(4) !== frame ||
       word(9) !== buffer.byteLength ||
-      stage > 18 ||
+      // Initialize, Color, Classify and optional SourceActivity can precede Analyze.
+      ![0, 1, 18, 62, 2].includes(stage) ||
       total === 0 ||
       done > total ||
-      (stage === 2 && total !== word(17)) ||
+      ([18, 62, 2].includes(stage) && total !== word(17)) ||
       [20, 21, 22, 23].some((index) => word(index) !== 0)
     )
       throw new Error('Owned VP8 test response is inconsistent');
