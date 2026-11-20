@@ -117,13 +117,15 @@ and high-chroma-loss q60 frames, or frames above the per-plane mean cutoff,
 do not receive this photo allocation. Padded edge replication can dilute
 the measured mean for narrow or odd inputs.
 
-Eligible mixed low-curvature q60 frames retain the four class quantizers,
-shifted by four, when the estimated segment ID map costs at most 128 bytes.
-The estimate uses the existing map probabilities and the classified
-macroblock counts. It excludes the frame header and arithmetic termination.
-When the estimate exceeds 128 bytes, the encoder uses the lower weighted
-median of the shifted indices with the existing unshifted q60 chromatic-ramp
-index as a floor and omits the map. The classifier IDs determine the
+Eligible mixed low-curvature q60 frames use one wire quantizer when the
+estimated segment ID map exceeds 128 bytes or when both FineSmooth and
+ChromaticFlat are present and no other source class occurs. The smooth pair
+can over-allocate residuals even when its map is cheap. The encoder takes the
+lower weighted median of the indices shifted by four, floors it at the
+unshifted q60 chromatic-ramp index, and omits the map. Other eligible frames
+retain the shifted class quantizers. The map estimate uses the existing map
+probabilities and macroblock counts and excludes the frame header and
+arithmetic termination. The classifier IDs determine the
 original rate prices and UV AC-tail eligibility in both cases. On fully
 visible chroma tiles, each UV mode uses bounded DC error feedback inside the
 8×8 tile. Both paths use full I16/I4/UV analysis without display-based chroma
