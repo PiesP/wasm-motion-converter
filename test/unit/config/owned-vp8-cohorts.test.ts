@@ -20,6 +20,7 @@ import {
   parseFixtureIds,
   readV16Reservation,
   readV17Reservation,
+  readV18Reservation,
   selectFixtureCohort,
 } from '../../../scripts/test/owned-vp8-v2-compare';
 import {
@@ -89,6 +90,13 @@ import {
   preflightV17,
   type V17Manifest,
 } from '../../../scripts/test/owned-vp8-v17-fixtures.ts';
+import {
+  V18_HELDOUT,
+  assertV18Shape,
+  draftV18Manifest,
+  preflightV18,
+  type V18Manifest,
+} from '../../../scripts/test/owned-vp8-v18-fixtures.ts';
 
 describe('owned VP8 prospective cohort isolation', () => {
   const root = resolve(import.meta.dirname, '../../..');
@@ -380,9 +388,55 @@ describe('owned VP8 prospective cohort isolation', () => {
     }
   });
 
+  it('binds the complete fresh V18 source registry without running either encoder', async () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v18-fixtures.json'), 'utf8')
+    ) as V18Manifest;
+    const prior = JSON.parse(
+      readFileSync(resolve(root, manifest.priorV17.path), 'utf8')
+    ) as V17Manifest;
+    expect(() => assertV18Shape(manifest)).not.toThrow();
+    expect(manifest.status).toBe('FROZEN_UNEXECUTED');
+    expect(manifest.priorV17.sha256).toBe(sha256(manifest.priorV17.path));
+    expect(manifest.generatorSha256).toBe(sha256('scripts/test/owned-vp8-v18-fixtures.ts'));
+    const inputs = new Set(manifest.fixtures.map((item) => item.sha256));
+    expect(inputs.size).toBe(20);
+    expect([...inputs].every((sha) => /^[a-f0-9]{64}$/.test(sha ?? ''))).toBe(true);
+    expect(prior.fixtures.every((row) => !inputs.has(row.sha256))).toBe(true);
+    const draft = {
+      ...manifest,
+      status: 'PROSPECTIVE_UNFROZEN',
+      fixtures: manifest.fixtures.map((row) => ({ ...row, sha256: null })),
+    } as const;
+    expect(draft).toEqual(draftV18Manifest());
+    expect(() => preflightV18(draft, {}, root)).toThrow('not acceptance ready');
+    const selected = selectFixtureCohort('held-out', 'corrected-v18');
+    expect(selected).toEqual(V18_HELDOUT);
+    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+      expectedConditionCount: 60,
+      completeCohort: true,
+      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+    });
+    expect(() => selectFixtureCohort('held-out', 'corrected-v18', true)).toThrow('reserved');
+    expect(() =>
+      selectFixtureCohort('held-out', 'corrected-v18', false, ['fresh18-dark-sine'])
+    ).toThrow('diagnostic only');
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v18-preflight-'));
+    const output = join(parent, 'rows');
+    try {
+      const options = { split: 'held-out', cohort: 'corrected-v18', sources: {} } as const;
+      await expect(compare({ ...options, output: parent })).rejects.toThrow('already exists');
+      await expect(compare({ ...options, output })).rejects.toThrow('both private originals');
+      expect(existsSync(output)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ['V16', 867],
     ['V17', 927],
+    ['V18', 987],
   ] as const)(
     'binds %s reservation, exact plan and issue readback before source access',
     (version, count) => {
@@ -407,7 +461,9 @@ describe('owned VP8 prospective cohort isolation', () => {
       const readReservation = (override = fields) =>
         version === 'V16'
           ? readV16Reservation({ ...override, sources: { v16Photo: photo, v16Video: video } })
-          : readV17Reservation({ ...override, sources: { v17Photo: photo, v17Video: video } });
+          : version === 'V17'
+            ? readV17Reservation({ ...override, sources: { v17Photo: photo, v17Video: video } })
+            : readV18Reservation({ ...override, sources: { v18Photo: photo, v18Video: video } });
       const registration =
         'https://github.com/PiesP/wasm-motion-converter/issues/501#issuecomment-123';
       const planFile = join(parent, 'admission-test.json');
@@ -434,6 +490,22 @@ describe('owned VP8 prospective cohort isolation', () => {
           passed: count,
         },
         plannedUtc: '2026-11-20T10:00:00Z',
+        ...(version === 'V18'
+          ? {
+              development: {
+                earlier: { count: 90, passed: 90 },
+                multiscale: {
+                  scope: 'DEVELOPMENT_ONLY',
+                  status: 'DEVELOPMENT_GATES_FAILED',
+                  count: 72,
+                  passed: 71,
+                  failedRows: [
+                    { fixture: 'diagnostic-synthetic', quality: 85, gates: { size: false } },
+                  ],
+                },
+              },
+            }
+          : {}),
       };
       const owner = {
         url: registration,
@@ -480,11 +552,33 @@ describe('owned VP8 prospective cohort isolation', () => {
         writeReceipt(requestFile, request);
         writeReceipt(readbackFile, { ...owner, author: 'Other' });
         expect(() => readReservation()).toThrow('readback owner differs');
-        if (version === 'V17') {
+        if (version !== 'V16') {
           writeReceipt(readbackFile, { ...owner, updatedUtc: '2026-11-20T10:00:02Z' });
           expect(() => readReservation()).toThrow('must be unedited');
         }
         writeReceipt(readbackFile, owner);
+        if (version === 'V18') {
+          writeReceipt(planFile, {
+            ...plan,
+            development: {
+              earlier: { count: 90, passed: 90 },
+              multiscale: {
+                scope: 'DEVELOPMENT_ONLY',
+                status: 'DEVELOPMENT_GATES_FAILED',
+                count: 72,
+                passed: 71,
+                failedRows: [],
+              },
+            },
+          });
+          writeReceipt(requestFile, {
+            ...request,
+            planSha256: createHash('sha256').update(readFileSync(planFile)).digest('hex'),
+          });
+          expect(() => readReservation()).toThrow('complete multiscale diagnostic');
+          writeReceipt(planFile, plan);
+          writeReceipt(requestFile, request);
+        }
         expect(() => readReservation({ ...fields, candidateRoot: parent })).toThrow(
           'candidate root differs'
         );

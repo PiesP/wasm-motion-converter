@@ -1,0 +1,421 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v18",
+  "status": "FROZEN_UNEXECUTED",
+  "freezeId": "vp8-v18-first-heldout-20261121-01",
+  "attemptBudget": 1,
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "generatorSha256": "d458645ba480aec5ce61efc90fe1fffb0053204ff60a1a85df43391c57ad20ae",
+  "ffmpegVersion": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "sourceSelectionSha256": "51266f44e6c0cab308d358f787f517163bdfa6eb93233ab07335801a04c54488",
+  "sourceMetadataSha256": "a9c3268f63ecf1a6f6c5d977e7d65d2f3909dd4028bc2542ec0bc7b9e8ff56af",
+  "sources": {
+    "photo": {
+      "page": "https://commons.wikimedia.org/wiki/File:Wallowa_Mountains.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Wallowa_Mountains.jpg&oldid=1254755557",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/5/55/Wallowa_Mountains.jpg",
+      "author": "Marc Shandro",
+      "license": "CC-BY-2.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/2.0/",
+      "width": 3008,
+      "height": 2000,
+      "bytes": 1566343,
+      "publisherSha1": "ac1461ba768f03db1f9a24653bb92c53c4755ebc",
+      "sha256": "30cee00fb1d7ae9cb915d755d73a37a64c95734886973991647fe71457f9c305"
+    },
+    "video": {
+      "page": "https://commons.wikimedia.org/wiki/File:Future_USS_Omaha_(LCS_12)_Transits_the_Panama_Canal_(105250195).webm",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Future_USS_Omaha_(LCS_12)_Transits_the_Panama_Canal_(105250195).webm&oldid=1010574993",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/9/94/Future_USS_Omaha_%28LCS_12%29_Transits_the_Panama_Canal_%28105250195%29.webm",
+      "author": "Lt. Chris Krokus, U.S. Navy",
+      "license": "Public-Domain-US",
+      "licenseUrl": "https://creativecommons.org/publicdomain/mark/1.0/",
+      "width": 640,
+      "height": 480,
+      "bytes": 5838561,
+      "publisherSha1": "2166fd2c324da394e14a277c40763731a9a73a4f",
+      "sha256": "51294e9655615409442ceb01a14627b5bc36b019ada9235a13a5bc456136f22b",
+      "streamIndex": 0,
+      "timeBase": "1/1000"
+    }
+  },
+  "priorV13": {
+    "path": "docs/experiments/501-owned-vp8-v13-fixtures.json",
+    "sha256": "eedc528acbeaf09faf94330ef4f2501d2209ad628fa92c8fd0b6e6e8ed49df3d"
+  },
+  "priorV14": {
+    "path": "docs/experiments/501-owned-vp8-v14-fixtures.json",
+    "sha256": "f4f096225a12d56ebba36b5e1f8676fff508022865049e232f1d38a603bdae59"
+  },
+  "priorV15": {
+    "path": "docs/experiments/501-owned-vp8-v15-fixtures.json",
+    "sha256": "2025389427eaac1f938b827410156f89149df91556141b97a7bcd2cee4a55d05"
+  },
+  "priorV16": {
+    "path": "docs/experiments/501-owned-vp8-v16-fixtures.json",
+    "sha256": "a3760f36a26c821677becdddb87732f04a77327dfe445072ddc046e4d101a2be"
+  },
+  "priorV17": {
+    "path": "docs/experiments/501-owned-vp8-v17-fixtures.json",
+    "sha256": "f8bff775eb17f720b8284b669526799b09c6d5c596b330861d72e684cbb5ed56"
+  },
+  "fixtures": [
+    {
+      "id": "fresh18-folded-light",
+      "split": "held-out",
+      "class": "neutral",
+      "width": 521,
+      "height": 373,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2084,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "93c015d3545cd660da97d5a0a603f692f8cadb71cd2bfd198b8375f342b1b35c"
+    },
+    {
+      "id": "fresh18-luminance-stair",
+      "split": "held-out",
+      "class": "near-neutral",
+      "width": 457,
+      "height": 341,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1828,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "b3cdc7b49e86ee46a89e4523d0dfdf54acc9ea9f5c960eeb3a2fca07d2dc6281"
+    },
+    {
+      "id": "fresh18-type-marks",
+      "split": "held-out",
+      "class": "glyph-edge",
+      "width": 479,
+      "height": 329,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1916,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "65010883e0b3bdee05ab04dff741642c2af87cbe1d9970772ee8af3bacf7949a"
+    },
+    {
+      "id": "fresh18-oblique-pairs",
+      "split": "held-out",
+      "class": "diagonal-chroma",
+      "width": 419,
+      "height": 307,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1676,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "4c6bafa99cf76aaaa3ac72ed1553b4e23e8b345028c2fa2d3ee345ae36a1eae0"
+    },
+    {
+      "id": "fresh18-dark-sine",
+      "split": "held-out",
+      "class": "dark-gradient",
+      "width": 379,
+      "height": 283,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1516,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "b60276b6dca7e97ec80573b5dbcc2113b485ee7e230647444781e1b81293b72a"
+    },
+    {
+      "id": "fresh18-fan-boundary",
+      "split": "held-out",
+      "class": "saturated-boundary",
+      "width": 421,
+      "height": 317,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1684,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "8bdfd6fc8028bdffed7fd58b8b4ac93d965526c8ca115d1cf82179c55d8ec355"
+    },
+    {
+      "id": "fresh18-grouped-grain",
+      "split": "held-out",
+      "class": "deterministic-noise",
+      "width": 337,
+      "height": 257,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1348,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "4daac2abe991aee48ed54af7140ef50a8d510b322e81e1c170adf13399653984"
+    },
+    {
+      "id": "fresh18-cells",
+      "split": "held-out",
+      "class": "mixed-curvature",
+      "width": 463,
+      "height": 323,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1852,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "2c0353fe991925477715d453bbc9a2b58b27e46ee2ab90646eb1b434c4120858"
+    },
+    {
+      "id": "fresh18-tiny-cross",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 9,
+      "height": 13,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 36,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "72f34ad4e79f18db8690055891eddce42ebc1f7bc206ca844af8437f3a294afa"
+    },
+    {
+      "id": "fresh18-odd-rim",
+      "split": "held-out",
+      "class": "odd",
+      "width": 29,
+      "height": 21,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 116,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "6056dfeeb1172f7f09520b1ad7cb2d97471a92502fdacc1e390a189e2f77ad39"
+    },
+    {
+      "id": "fresh18-wide-bars",
+      "split": "held-out",
+      "class": "wide-shallow",
+      "width": 2441,
+      "height": 47,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 9764,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "824c572d8b8c5761cb3bc287aa14ff3ddc9d22a6b275b256d71c953643bf605f"
+    },
+    {
+      "id": "fresh18-large-mesh",
+      "split": "held-out",
+      "class": "large-admitted",
+      "width": 3179,
+      "height": 1957,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 12716,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "4da18356031ebf33733b2a00377166658489bca6710ee99b45bcd034f749f1a3"
+    },
+    {
+      "id": "fresh18-photo-nw",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 541,
+      "height": 353,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        65,
+        103,
+        1321,
+        849
+      ],
+      "stride": 2164,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "94fc6a6f231d01c35c650df6009ed7d5510900b19a438392670f933235d44b35"
+    },
+    {
+      "id": "fresh18-photo-ne",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 591,
+      "height": 383,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        1531,
+        117,
+        1367,
+        889
+      ],
+      "stride": 2364,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "daba244e638f3c23907a4e5db0ca8bcf7c16eb12680fac6c44d5534022783f98"
+    },
+    {
+      "id": "fresh18-photo-sw",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 499,
+      "height": 327,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        81,
+        1029,
+        1397,
+        903
+      ],
+      "stride": 1996,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "e53584c196ae04808dfe9359f87d5eceae85a30fcf451526bd8484ab80937b36"
+    },
+    {
+      "id": "fresh18-photo-se",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 559,
+      "height": 349,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        1613,
+        1097,
+        1293,
+        811
+      ],
+      "stride": 2236,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "b9855ab1ec1e99a60a34cb788e3b8502fe5225185fe7edc8cb323f5587b0d1f2"
+    },
+    {
+      "id": "fresh18-video-a",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 503,
+      "height": 377,
+      "layout": "RGBA",
+      "source": "video",
+      "minimumMs": 2271,
+      "stride": 2012,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "pts": 2302,
+      "sha256": "e5d2b425bb1f7cf4acec6ee558abaa8965569d7e4ef6ec1421cf1177801cd25a"
+    },
+    {
+      "id": "fresh18-video-b",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 597,
+      "height": 449,
+      "layout": "RGBA",
+      "source": "video",
+      "minimumMs": 8817,
+      "stride": 2388,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "pts": 8842,
+      "sha256": "5059e5599e514dc628275018045979173a8e3aea777e3d1c927df6a57a21b448"
+    },
+    {
+      "id": "fresh18-video-c",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 545,
+      "height": 409,
+      "layout": "RGBA",
+      "source": "video",
+      "minimumMs": 17389,
+      "stride": 2180,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "pts": 17417,
+      "sha256": "f04bd6c7316ac30a7752be6d9c01ad95f9a090fe9cefec54b2ef06905d04d834"
+    },
+    {
+      "id": "fresh18-video-d",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 629,
+      "height": 471,
+      "layout": "RGBA",
+      "source": "video",
+      "minimumMs": 26749,
+      "stride": 2516,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "pts": 26760,
+      "sha256": "4ede0a34458a422f734843e71380e2bd3e310695de6f991841e4530a42b36253"
+    }
+  ]
+}

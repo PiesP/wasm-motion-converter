@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "status": "EXPOSED_REGRESSION",
+  "cohort": "corrected-v17",
+  "freezeId": "vp8-v17-first-heldout-20261120-01",
+  "originalFrozenManifestSha256": "f8bff775eb17f720b8284b669526799b09c6d5c596b330861d72e684cbb5ed56",
+  "originalAdmissionSha256": "29cde9e15ce1180439c1b2a9e7b04034f6f76b4e743ccaf8f329f8962db6d367",
+  "originalOutcomeSha256": "e63f63b03937ab6750f7ed472656ee6ff5a7651ab022ae12a543b2a197daaee7",
+  "originalResultsSha256": "a3b7af8b823327cadd41c6bd24398cfea191adac01737fb2c8bebc196e6c2834",
+  "originalIdentitiesSha256": "9e53361a6e0be735bd678f711aafcff4240291dc4fb6d7542492b537c3cac4cc",
+  "originalPassCount": 52,
+  "originalConditionCount": 60,
+  "originalOwnerDisposition": {
+    "url": "https://github.com/PiesP/wasm-motion-converter/issues/501#issuecomment-7044129162",
+    "sha256": "70d1e0c7186b79ca47e842f76c7588977715312373e924096226d68688a0491d",
+    "createdUtc": "2026-11-20T15:59:08Z"
+  },
+  "failedRows": [
+    {
+      "fixture": "fresh17-near-neutral",
+      "quality": 60,
+      "gates": {
+        "psnr": false,
+        "ssim": false,
+        "size": true
+      }
+    },
+    {
+      "fixture": "fresh17-near-neutral",
+      "quality": 75,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh17-near-neutral",
+      "quality": 85,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh17-dark",
+      "quality": 60,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh17-dark",
+      "quality": 75,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh17-dark",
+      "quality": 85,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh17-curvature",
+      "quality": 60,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh17-large",
+      "quality": 75,
+      "gates": {
+        "psnr": false,
+        "ssim": true,
+        "size": true
+      }
+    }
+  ]
+}
