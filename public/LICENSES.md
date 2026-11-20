@@ -895,7 +895,7 @@ The declared Vite development dependency emits browser helpers in the production
 
 ### @voidzero-dev/vite-plus-core
 
-- **Version:** 1.5.1
+- **Version:** 1.6.0
 - **License:** MIT
 - **Repository:** https://github.com/voidzero-dev/vite-plus
 - **Purpose:** Build-generated Vite/Rolldown browser helpers

@@ -28,8 +28,9 @@ selects bounded I16/I4/UV modes using distortion and estimated
 mode/coefficient/skip bit costs. Trials isolate reconstruction and contexts.
 Per-frame coefficient statistics follow frozen mode/coefficient decisions. A
 bounded optimizer proposes updates, and exact whole-frame counting includes
-update flags and literals. The encoder adopts updates only when the complete
-frame is strictly smaller; count and emission use the same frozen model.
+update flags and literals. The encoder uses the proposed model when its first partition fits and either
+the default first partition exceeds the limit or the complete frame shrinks.
+Counting and emission use the same frozen model.
 The bounded resumable ABI2 core is implemented. The earlier low-curvature module
 `e918f3016451b60f04dfa551e5ae57820bcbc65c8c8834f01c8426b72355e584`
 passed 627 exposed and 60 first-V12 fixed-pixel quality/size conditions, as

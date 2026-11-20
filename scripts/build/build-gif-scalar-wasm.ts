@@ -34,7 +34,7 @@ const sourcePaths = [
   'crates/gif-scalar-quantizer/src/lib.rs',
   'scripts/build/build-gif-scalar-wasm.ts',
 ] as const;
-const compiler = '1.99.1';
+const compiler = '1.100.0';
 const target = 'wasm32-unknown-unknown';
 const cargoArgs = ['build', '--release', '--target', target, '--locked', '--offline'];
 const rustflags = '-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd';

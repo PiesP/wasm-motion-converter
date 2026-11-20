@@ -8,7 +8,7 @@ network/HLS client or replacement third-party codec wrapper.
 
 ## Source and regeneration
 
-Use the pinned Rust1.99.1 toolchain and locked/offline build through
+Use the pinned Rust1.100.0 toolchain and locked/offline build through
 `scripts/build/build-owned-demux-wasm.ts`. `vp run build:demux-wasm` verifies the
 checked-in source/manifest/ABI/asset without installing Rust; `:check` regenerates
 and compares exact bytes; `:generate` deliberately updates the owned artifact.

@@ -11958,10 +11958,10 @@ mod tests {
                         i16,
                         ..Macroblock::default()
                     };
-                    for position in 0..16 {
-                        block.y[position][position] = sign * magnitude;
+                    for (position, row) in block.y.iter_mut().enumerate() {
+                        row[position] = sign * magnitude;
                         if i16 {
-                            block.y[position][0] = 0;
+                            row[0] = 0;
                         }
                     }
                     for index in 0..4 {

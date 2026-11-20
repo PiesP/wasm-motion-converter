@@ -50,7 +50,7 @@ jobs:
       - name: 📥 Checkout reviewed pin source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 328ac2c633268cfb525e49b2af67e621ce75a258
+          ref: 6e79420a94a8b4663d16a9b7419a79647d4d8a95
           persist-credentials: false
           submodules: false
 
@@ -61,7 +61,7 @@ jobs:
 
       - name: 🔐 Prepare reviewed scanner pin helper
         id: scanner_helper
-        uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@a85cc07e89fe0c0517b98aa5c15b9a83dcb82bcd
+        uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@4a5b22d012896fda0541b54104288da8d4a1bd75
 
       - name: 🔐 Export validated scanner images
         id: pins
@@ -175,7 +175,7 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 328ac2c633268cfb525e49b2af67e621ce75a258
+          ref: 6e79420a94a8b4663d16a9b7419a79647d4d8a95
           persist-credentials: false
           submodules: false
 
@@ -186,7 +186,7 @@ jobs:
 
       - name: 🔐 Prepare reviewed scanner pin helper
         id: scanner_helper
-        uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@a85cc07e89fe0c0517b98aa5c15b9a83dcb82bcd
+        uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@4a5b22d012896fda0541b54104288da8d4a1bd75
 
       - name: 🔎 Check pinned tools after the cooling window
         env:

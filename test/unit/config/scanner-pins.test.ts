@@ -11,8 +11,8 @@ const metadata = JSON.parse(metadataBytes.toString('utf8')) as {
   semgrep: { version: string; image: string };
 };
 const security = readFileSync(resolve(root, '.github/workflows/security.yaml'), 'utf8');
-const reviewedConsumerSha = '328ac2c633268cfb525e49b2af67e621ce75a258';
-const reviewedProviderSha = 'a85cc07e89fe0c0517b98aa5c15b9a83dcb82bcd';
+const reviewedConsumerSha = '6e79420a94a8b4663d16a9b7419a79647d4d8a95';
+const reviewedProviderSha = '4a5b22d012896fda0541b54104288da8d4a1bd75';
 const action = `uses: PiesP/browser-core/automation/actions/prepare-scanner-pins@${reviewedProviderSha}`;
 
 function job(name: string): string {
@@ -26,7 +26,7 @@ function job(name: string): string {
 describe('scanner pin workflow contracts', () => {
   it('retains the consumer-owned scanner data byte-for-byte', () => {
     expect(createHash('sha256').update(metadataBytes).digest('hex')).toBe(
-      'bb8f394930fa948bc32f4fc7592bf75111418da8ddd7bd597bd0edded45a1fa7'
+      '65aa3be10be4e488fe36999b861a410b4901c5ea7c0929ec8edd3d0996dcfc15'
     );
     expect(metadata.osv.version).toMatch(/^\d+\.\d+\.\d+$/u);
     expect(metadata.osv.image).toMatch(
