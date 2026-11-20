@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -300,9 +309,9 @@ describe('owned VP8 prospective cohort isolation', () => {
       createdUtc: '2026-11-20T10:00:01Z',
       updatedUtc: '2026-11-20T10:00:02Z',
     };
-    const writeReceipt = (path: string, value: object) => {
+    const writeReceipt = (path: string, value: object, mode = 0o400) => {
       rmSync(path, { force: true });
-      writeFileSync(path, JSON.stringify(value), { mode: 0o400, flag: 'wx' });
+      writeFileSync(path, JSON.stringify(value), { mode, flag: 'wx' });
     };
     try {
       mkdirSync(attempt);
@@ -319,6 +328,20 @@ describe('owned VP8 prospective cohort isolation', () => {
         registration,
         startedUtc: '2026-11-20T10:00:03Z',
       };
+      writeReceipt(requestFile, request, 0o600);
+      expect(() => readV15Reservation(fields)).toThrow('read-only regular file');
+      const linkedPlan = join(parent, 'admission-linked.json');
+      symlinkSync(planFile, linkedPlan);
+      writeReceipt(requestFile, { ...request, plan: linkedPlan });
+      expect(() => readV15Reservation(fields)).toThrow(expect.objectContaining({ code: 'ELOOP' }));
+      rmSync(linkedPlan);
+      linkSync(planFile, linkedPlan);
+      expect(() => readV15Reservation(fields)).toThrow('single-link');
+      rmSync(linkedPlan);
+      const oversizedPlan = join(parent, 'admission-oversized.json');
+      writeFileSync(oversizedPlan, Buffer.alloc(1024 * 1024 + 1), { mode: 0o400, flag: 'wx' });
+      writeReceipt(requestFile, { ...request, plan: oversizedPlan });
+      expect(() => readV15Reservation(fields)).toThrow('byte bounds');
       writeReceipt(requestFile, { ...request, planSha256: 'c'.repeat(64) });
       expect(() => readV15Reservation(fields)).toThrow('admission digest differs');
       writeReceipt(requestFile, request);

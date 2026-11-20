@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
+  readSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -340,11 +345,38 @@ type V15CandidateIdentity = {
   provenance: { path: string; sha256: string };
 };
 
-function readV15Receipt(path: string): Buffer {
-  assert.equal(realpathSync(path), path, 'Use an absolute nonsymlink V15 receipt');
-  const info = lstatSync(path);
-  assert.ok(info.isFile() && (info.mode & 0o777) === 0o400, 'V15 receipt must be read-only');
-  return readFileSync(path);
+function readV15Receipt(path: string, byteLimit: number): Buffer {
+  assert.equal(resolve(path), path, 'Use an absolute normalized V15 receipt');
+  const parent = dirname(path);
+  assert.equal(realpathSync(parent), parent, 'Use a canonical V15 receipt directory');
+  const owner = process.geteuid?.();
+  assert.ok(
+    owner !== undefined && fsConstants.O_NOFOLLOW > 0 && fsConstants.O_NONBLOCK > 0,
+    'V15 receipt verification requires POSIX ownership and no-follow opens'
+  );
+
+  const fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  try {
+    const info = fstatSync(fd);
+    assert.ok(
+      info.isFile() && info.uid === owner && info.nlink === 1 && (info.mode & 0o777) === 0o400,
+      'V15 receipt must be a single-link read-only regular file owned by this user'
+    );
+    assert.ok(info.size > 0 && info.size <= byteLimit, 'V15 receipt exceeds its byte bounds');
+
+    // One extra byte detects growth while keeping the descriptor read bounded.
+    const data = Buffer.alloc(info.size + 1);
+    let offset = 0;
+    while (offset < data.length) {
+      const count = readSync(fd, data, offset, data.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    assert.equal(offset, info.size, 'V15 receipt length changed during read');
+    return data.subarray(0, offset);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export function readV15Reservation(options: {
@@ -363,7 +395,9 @@ export function readV15Reservation(options: {
     !lstatSync(join(attempt, 'outcome.json'), { throwIfNoEntry: false }),
     'V15 attempt is settled'
   );
-  const request = JSON.parse(readV15Receipt(join(attempt, 'request.json')).toString('utf8')) as {
+  const request = JSON.parse(
+    readV15Receipt(join(attempt, 'request.json'), 16 * 1024).toString('utf8')
+  ) as {
     freezeId: string;
     budget: number;
     canonicalAttempt: string;
@@ -381,7 +415,12 @@ export function readV15Reservation(options: {
     /^https:\/\/github\.com\/PiesP\/wasm-motion-converter\/issues\/501#issuecomment-[1-9][0-9]{0,20}$/,
     'V15 request registration is outside issue #501'
   );
-  const planBytes = readV15Receipt(request.plan);
+  assert.match(
+    basename(request.plan),
+    /^admission-[a-z0-9-]+\.json$/,
+    'V15 admission filename differs'
+  );
+  const planBytes = readV15Receipt(request.plan, 1024 * 1024);
   assert.equal(digest(planBytes), request.planSha256, 'V15 admission digest differs');
   const plan = JSON.parse(planBytes.toString('utf8')) as {
     status: string;
@@ -414,7 +453,7 @@ export function readV15Reservation(options: {
     'V15 admission original paths differ'
   );
   const registration = JSON.parse(
-    readV15Receipt(join(attempt, 'registration-readback.json')).toString('utf8')
+    readV15Receipt(join(attempt, 'registration-readback.json'), 16 * 1024).toString('utf8')
   ) as {
     url: string;
     author: string;

@@ -68,6 +68,10 @@ as the output. Before reading originals, the comparator verifies the
 reservation, admission lock and owner readback, checks the committed
 candidate and registry identities, verifies the candidate prebuilt and
 both patched primary files, and creates the output directory exclusively.
+On the qualification host, each receipt is opened without following its
+leaf symlink. The comparator validates the owner, mode, file type and length
+on that same descriptor before reading it. Requests and owner readbacks
+are capped at 16 KiB each, and the admission lock is capped at 1 MiB.
 It rejects V15 tuning, acceptance subsets, wrong-purpose manifests,
 existing output and foreign fixture inputs.
 
