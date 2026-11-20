@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "cohort": "corrected-v13",
-  "status": "FROZEN_UNEXECUTED",
+  "status": "EXPOSED_REGRESSION",
   "freezeId": "vp8-v13-first-heldout-20261116-01",
   "attemptBudget": 1,
   "generatorSha256": "7207b4b112f7fba5b07c51899459bdd4628d64c0e497c25eddf3006cbd9c5141",

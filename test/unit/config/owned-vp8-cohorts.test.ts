@@ -53,6 +53,12 @@ import {
   preflightV13,
   type V13Manifest,
 } from '../../../scripts/test/owned-vp8-v13-fixtures';
+import {
+  V14_HELDOUT,
+  assertV14Shape,
+  preflightV14,
+  type V14Manifest,
+} from '../../../scripts/test/owned-vp8-v14-fixtures';
 
 describe('owned VP8 prospective cohort isolation', () => {
   const root = resolve(import.meta.dirname, '../../..');
@@ -61,20 +67,21 @@ describe('owned VP8 prospective cohort isolation', () => {
       .update(readFileSync(resolve(root, path)))
       .digest('hex');
 
-  it('keeps V13 bounded to 20/60 and rejects draft or wrong-purpose execution', async () => {
+  it('keeps V13 as a 20-input / 60-condition exposed regression', async () => {
     const manifest = JSON.parse(
       readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v13-fixtures.json'), 'utf8')
     ) as V13Manifest;
-    expect(['FROZEN_UNEXECUTED', 'EXPOSED_REGRESSION']).toContain(manifest.status);
+    expect(manifest.status).toBe('EXPOSED_REGRESSION');
     expect(manifest.freezeId).toBe('vp8-v13-first-heldout-20261116-01');
     expect(manifest.attemptBudget).toBe(1);
-    const selected = selectFixtureCohort('held-out', 'corrected-v13');
+    expect(() => selectFixtureCohort('held-out', 'corrected-v13')).toThrow('exposed');
+    const selected = selectFixtureCohort('held-out', 'corrected-v13', true);
     expect(selected).toEqual(V13_HELDOUT);
     expect(selected).toHaveLength(20);
-    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+    expect(fixtureSelectionIdentity(selected, 'held-out', true, false)).toMatchObject({
       expectedConditionCount: 60,
       completeCohort: true,
-      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+      scope: 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE',
     });
     expect(manifest.fixtures.map((row) => row.id)).toEqual(selected.map((row) => row.id));
     expect(manifest.fixtures.filter((row) => row.source === 'generated')).toHaveLength(13);
@@ -95,11 +102,63 @@ describe('owned VP8 prospective cohort isolation', () => {
           output,
           split: 'held-out',
           cohort: 'corrected-v13',
-          regression: manifest.status === 'FROZEN_UNEXECUTED',
           sources: {},
           candidateRoot: join(parent, 'missing-candidate'),
         })
-      ).rejects.toThrow('not acceptance ready');
+      ).rejects.toThrow('exposed');
+      expect(existsSync(output)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('binds all 60 V14 recipes and blocks tuning and acceptance subsets', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v14-fixtures.json'), 'utf8')
+    ) as V14Manifest;
+    expect(() => assertV14Shape(manifest)).not.toThrow();
+    expect(manifest.generatorSha256).toBe(sha256('scripts/test/owned-vp8-v14-fixtures.ts'));
+    expect(manifest.priorV13.sha256).toBe(sha256(manifest.priorV13.path));
+    const selected = selectFixtureCohort('held-out', 'corrected-v14');
+    expect(selected).toEqual(V14_HELDOUT);
+    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+      expectedConditionCount: 60,
+      completeCohort: true,
+      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+    });
+    expect(selected.filter((item) => item.source === 'generated')).toHaveLength(12);
+    expect(selected.filter((item) => item.source === 'photo')).toHaveLength(4);
+    expect(V14_HELDOUT.flatMap((item) => item.pts ?? [])).toEqual([1000, 4000, 6000, 8000]);
+    expect(() => selectFixtureCohort('tuning', 'corrected-v14')).toThrow('no tuning');
+    expect(() =>
+      selectFixtureCohort('held-out', 'corrected-v14', false, ['fresh14-neutral'])
+    ).toThrow('diagnostic only');
+    const video = manifest.fixtures.find((item) => item.pts === 1000)!;
+    video.pts = 1001;
+    expect(() => assertV14Shape(manifest)).toThrow();
+  });
+
+  it('rejects unfrozen V14 inputs or incomplete pins before initializing a codec', async () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v14-fixtures.json'), 'utf8')
+    ) as V14Manifest;
+    const draft = { ...manifest, status: 'PROSPECTIVE_UNFROZEN' } as const;
+    expect(() => preflightV14(draft, {}, root, false)).toThrow('not acceptance ready');
+    expect(() => preflightV14(draft, {}, root, true)).toThrow('not acceptance ready');
+    const missingPins = {
+      ...manifest,
+      status: 'FROZEN_UNEXECUTED',
+      fixtures: manifest.fixtures.map((row) => ({ ...row, sha256: null })),
+    } as const;
+    expect(() => preflightV14(missingPins, {}, root, false)).toThrow('pixel pins are incomplete');
+    if (manifest.status !== 'PROSPECTIVE_UNFROZEN') return;
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v14-draft-'));
+    const output = join(parent, 'evidence');
+    try {
+      for (const regression of [false, true])
+        await expect(
+          compare({ output, split: 'held-out', cohort: 'corrected-v14', regression, sources: {} })
+        ).rejects.toThrow('not acceptance ready');
       expect(existsSync(output)).toBe(false);
     } finally {
       rmSync(parent, { recursive: true, force: true });

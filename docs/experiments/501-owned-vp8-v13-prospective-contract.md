@@ -1,11 +1,12 @@
 # #501 V13 fixed-pixel successor: source freeze
 
-V1-V12 inputs have been exposed to candidate development. V13 has a
-**prospectively frozen source-only manifest** with 20 input rows and q60/q75/q85
-for 60 fixed-pixel conditions. No V13 candidate encoding or acceptance run has
-occurred. Acceptance requires a clean committed harness and candidate,
-source-pin preflight, and a separate exclusive candidate attempt before it can
-emit acceptance evidence.
+V13's source-only freeze reserved 20 input rows and q60/q75/q85 for 60
+fixed-pixel conditions. Its sole fresh evaluation on signed candidate
+`bab8e9a5537f5af86bede155793ad25d61ce4d5d` passed 55 of 60 conditions. The
+result SHA-256 is
+`4477e272c19688e0c63aa522a4c7857b6ab0a87a33ddd9fa2c715be18738fdf8`.
+The manifest status is now `EXPOSED_REGRESSION`. This outcome keeps fallback
+removal on hold and serves as an exposed regression check for successors.
 
 ## Frozen 20-input / 60-condition source cohort
 
@@ -85,14 +86,13 @@ the current revision has not run source generation.
 
 ## Freeze and execution boundary
 
-The current source manifest is `FROZEN_UNEXECUTED` with freeze ID
-`vp8-v13-first-heldout-20261116-01` and `attemptBudget=1`. Before first
-candidate encoding, review and commit the exact source-only manifest and
-generator as a clean harness, then revalidate all 20 pixel hashes against the
-V1-V12 manifest/input chain. Separately bind candidate source, Rust inputs,
-WASM, comparator, patched
+The first-attempt manifest was `FROZEN_UNEXECUTED` with freeze ID
+`vp8-v13-first-heldout-20261116-01` and `attemptBudget=1`. The source-only
+manifest and generator were committed before candidate evaluation. The first
+attempt bound candidate source, Rust inputs, WASM, comparator, patched
 wasm-webp primary, original bytes, FFmpeg, frozen manifest, and the exclusive
-output directory to the one attempt. A failed preflight or encoding receipt
+output directory. The historical first-attempt manifest SHA-256 remains
+`433ca0e360cc7f15c5bd8e8db6282878c337753f0fee90723c6868bc68a8a2ea`. A failed preflight or encoding receipt
 must be retained. An input exposed to a diagnostic candidate run cannot later
 be described as fresh for that candidate. A selected subset is diagnostic only;
 the first fresh fixed-pixel decision requires all 20 inputs and 60 conditions.
@@ -116,8 +116,8 @@ or Windows acceptance. V1-V12 stay exposed regression evidence and must retain
 their original harnesses and receipts; no historical generator import is needed
 for the independent V13 first attempt.
 
-Entry point after freeze: `scripts/test/owned-vp8-v2-compare.ts --cohort corrected-v13
---acceptance --photo-a ORIGINAL_A --photo-b ORIGINAL_B --candidate-root CANDIDATE
+Exposed regression entry point is `scripts/test/owned-vp8-v2-compare.ts --cohort corrected-v13
+--regression --photo-a ORIGINAL_A --photo-b ORIGINAL_B --candidate-root CANDIDATE
 --output EXCLUSIVE_EVIDENCE_DIRECTORY`. The preflight validates manifest shape,
 source and pixel pins, prior manifest hashes and input collisions before codec
-setup. A later regression run must use `--regression` and report exposed scope.
+setup. Later results report exposed scope.
