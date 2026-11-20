@@ -1129,6 +1129,36 @@ fn make_i16(
         }
     }
     block.y2 = ac_quant::quantize_block(&transform::forward_wht(&dc), y2_steps);
+    reconstruct_i16(source, stride, x, y, block, &predicted, y_steps, y2_steps)
+}
+
+fn trimmed_y2_tail(mut coefficients: [i16; 16]) -> Option<[i16; 16]> {
+    let mut changed = false;
+    for &index in residual::SCAN[1..].iter().rev() {
+        match coefficients[index] {
+            0 => {}
+            -1 | 1 => {
+                coefficients[index] = 0;
+                changed = true;
+            }
+            _ => break,
+        }
+    }
+    // The leading DC and any units preceding a larger level are retained.
+    changed.then_some(coefficients)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reconstruct_i16(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    block: Macroblock,
+    predicted: &[u8; 256],
+    y_steps: Steps,
+    y2_steps: Steps,
+) -> LumaCandidate {
     let dc = transform::inverse_wht(&ac_quant::dequantize_block(&block.y2, y2_steps));
     let mut tile = [0u8; 256];
     for by in 0..4 {
@@ -2147,6 +2177,17 @@ fn medium_mixed_low_curvature(
     quality == 75 && omit_display_refinement && low_curvature
 }
 
+// Exploratory occupancy bound. Measure the expensive map and the source
+// curvature independently before adopting this shared-rate extension.
+fn smooth_pair_with_sparse_texture(counts: [usize; 4]) -> bool {
+    let [fine, flat, ramp, textured] = counts;
+    fine > 0
+        && flat > 0
+        && ramp == 0
+        && textured > 0
+        && textured <= counts.iter().sum::<usize>() / 32
+}
+
 fn rate_profile_quality(
     requested_quality: u32,
     class_counts: [usize; 4],
@@ -2163,7 +2204,7 @@ fn rate_profile_quality(
     } else {
         let total: usize = class_counts.iter().sum();
         let ramps = class_counts[segmentation::CHROMATIC_RAMP as usize];
-        ramps > total - ramps
+        (ramps > total - ramps || smooth_pair_with_sparse_texture(class_counts))
             && SegmentConfig::from_counts(requested_quality, class_counts, total, neutral_chroma)
                 .map_exceeds_rate_allowance(class_counts)
     };
@@ -2842,7 +2883,7 @@ fn encode_observed(
         curvature,
         (width as u32, height as u32),
     );
-    deltas = crate::presets::one_rough_chroma_plane_deltas(
+    deltas = crate::presets::rough_chroma_deltas(
         deltas,
         quality,
         class_counts,
@@ -3254,10 +3295,10 @@ fn analyze_one(
     let mut best: Option<(u64, usize, usize)> = None;
     let mut luma_costs = [None; 5];
     let mut uv_costs = [None; 4];
-    for (li, luma_candidate) in luma.iter().enumerate() {
-        let mut luma_distortion = luma_candidate.distortion;
+    let score_luma_distortion = |luma_candidate: &LumaCandidate| {
+        let mut distortion = luma_candidate.distortion;
         if luma_bias && segment_id == segmentation::CHROMATIC_FLAT {
-            luma_distortion += visible_luma_bias_energy(
+            distortion += visible_luma_bias_energy(
                 source_y,
                 padded_w,
                 x,
@@ -3267,6 +3308,10 @@ fn analyze_one(
                 &luma_candidate.tile,
             );
         }
+        distortion
+    };
+    for (li, luma_candidate) in luma.iter().enumerate() {
+        let luma_distortion = score_luma_distortion(luma_candidate);
         for (ui, uv_candidate) in uv.iter().enumerate() {
             let candidate = Macroblock {
                 y: luma_candidate.block.y,
@@ -3303,9 +3348,68 @@ fn analyze_one(
             // context, mode or coefficient statistic changes here.
         }
     }
-    let (_, li, ui) = best.ok_or(EncodeError::OutputLimit)?;
-    let selected_luma = &luma[li];
+    let (score, li, ui) = best.ok_or(EncodeError::OutputLimit)?;
+    let mut selected_luma = &luma[li];
     let mut selected_uv = uv[ui].clone();
+    // On the uniform smooth grid, try one shorter Y2 tail for an I16 tile whose Y1 AC is
+    // already empty. Keep the existing I16 and UV prediction modes and test
+    // with the same reconstructed boundaries, rate, skip and header budget.
+    let compact_luma = if !segments.enabled
+        && segments.neutral_smooth_grid
+        && selected_luma.block.i16
+        && x + 16 <= visible_width
+        && y + 16 <= visible_height
+        && selected_luma
+            .block
+            .y
+            .iter()
+            .flatten()
+            .all(|&level| level == 0)
+    {
+        trimmed_y2_tail(selected_luma.block.y2).map(|y2| {
+            let mut compact = selected_luma.block;
+            compact.y2 = y2;
+            let (top, left, corner) = edge::<16>(reconstructed_y, padded_w, x, y);
+            let predicted = prediction::predict_large(
+                &top,
+                &left,
+                corner,
+                y > 0,
+                x > 0,
+                mode_from_u8(compact.y_mode),
+            );
+            reconstruct_i16(
+                source_y, padded_w, x, y, compact, &predicted, y_steps, y2_steps,
+            )
+        })
+    } else {
+        None
+    };
+    if let Some(compact) = &compact_luma {
+        let mut candidate = compact.block;
+        candidate.uv_mode = ui as u8;
+        candidate.segment_id = segment_id;
+        candidate.u = selected_uv.u;
+        candidate.v = selected_uv.v;
+        let distortion = score_luma_distortion(compact) + selected_uv.distortion;
+        if selected_cost(
+            &candidate,
+            mx,
+            coeff_contexts,
+            above_modes,
+            left_modes,
+            distortion,
+            lambda,
+            segments,
+            header_budget,
+            &mut None,
+            &mut uv_costs[ui],
+        )?
+        .is_some_and(|alternative| alternative < score)
+        {
+            selected_luma = compact;
+        }
+    }
     let mut block = Macroblock {
         y: selected_luma.block.y,
         y2: selected_luma.block.y2,
@@ -5244,7 +5348,7 @@ impl FrameEncoder {
                 self.curvature,
                 (self.request.width, self.request.height),
             );
-            self.deltas = crate::presets::one_rough_chroma_plane_deltas(
+            self.deltas = crate::presets::rough_chroma_deltas(
                 self.deltas,
                 quality,
                 self.class_counts,
@@ -6291,6 +6395,31 @@ mod tests {
     }
 
     #[test]
+    fn sparse_textured_smooth_pair_needs_expensive_map_and_low_import_error() {
+        let visible = (1024, 512);
+        let cutoff = crate::presets::chroma_loss_limit(visible.0, visible.1).unwrap();
+        let boundary = [512, 1472, 0, 64];
+        for (quality, counts, neutral, low_curvature, rgb_error, expected) in [
+            (75, boundary, false, true, cutoff, 60),
+            (75, [512, 1471, 0, 65], false, true, cutoff, 75),
+            (75, [512, 1471, 1, 64], false, true, cutoff, 75),
+            (75, [0, 1984, 0, 64], false, true, cutoff, 75),
+            (75, [16, 47, 0, 1], false, true, 0, 75),
+            (75, boundary, false, true, cutoff + 1, 75),
+            (75, boundary, false, false, 0, 75),
+            (75, boundary, true, true, 0, 75),
+            (60, boundary, false, true, 0, 60),
+            (85, boundary, false, true, 0, 85),
+        ] {
+            assert_eq!(
+                rate_profile_quality(quality, counts, neutral, low_curvature, rgb_error, visible),
+                expected,
+                "{quality} {counts:?}"
+            );
+        }
+    }
+
+    #[test]
     fn smooth_pair_q75_uses_exact_q60_packet_on_both_entry_paths() {
         for (width, height, stride, layout, vertical) in
             [(32, 16, 128, 0, false), (37, 33, 153, 1, true)]
@@ -6508,6 +6637,21 @@ mod tests {
         assert!(before_contexts.left_y[3]);
         assert!(!after_contexts.y[3]);
         assert!(!after_contexts.left_y[3]);
+    }
+
+    #[test]
+    fn y2_tail_trimming_retains_dc_and_earlier_units() {
+        let mut coefficients = [0; 16];
+        coefficients[0] = -1;
+        coefficients[residual::SCAN[2]] = 1;
+        coefficients[residual::SCAN[3]] = -2;
+        assert!(trimmed_y2_tail(coefficients).is_none());
+
+        let mut longer = coefficients;
+        longer[residual::SCAN[5]] = -1;
+        longer[residual::SCAN[8]] = 1;
+        assert_eq!(trimmed_y2_tail(longer), Some(coefficients));
+        assert_eq!(trimmed_y2_tail([0; 16]), None);
     }
 
     #[test]

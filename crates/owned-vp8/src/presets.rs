@@ -137,7 +137,7 @@ pub(crate) fn chroma_edge_uv_ac_deltas(
     selected
 }
 
-pub(crate) fn one_rough_chroma_plane_deltas(
+pub(crate) fn rough_chroma_deltas(
     mut selected: Deltas,
     quality: u32,
     counts: [usize; 4],
@@ -146,11 +146,18 @@ pub(crate) fn one_rough_chroma_plane_deltas(
     (width, height): (u32, u32),
 ) -> Deltas {
     let total = counts.iter().sum();
+    let textured = counts[crate::segmentation::TEXTURED as usize];
+    let mixed_rough_chroma = quality == 60
+        && textured > 0
+        && counts[crate::segmentation::CHROMATIC_RAMP as usize] > 0
+        && !curvature.within_cutoff(total)
+        && !curvature.only_chroma_exceeds_cutoff(total)
+        && !curvature.luma_dominates();
     if !high_chroma_loss
         && width >= 16
         && height >= 16
-        && counts[crate::segmentation::TEXTURED as usize] == total
-        && curvature.one_chroma_plane_leads_rough_luma(total)
+        && (mixed_rough_chroma
+            || (textured == total && curvature.one_chroma_plane_leads_rough_luma(total)))
     {
         if quality == 60 {
             // Move halfway toward the existing luma-leading UV AC setting.
@@ -742,14 +749,7 @@ mod tests {
             };
             for totals in [rough, rough_u] {
                 assert_eq!(
-                    one_rough_chroma_plane_deltas(
-                        original,
-                        quality,
-                        textured,
-                        totals,
-                        false,
-                        (16, 16)
-                    ),
+                    rough_chroma_deltas(original, quality, textured, totals, false, (16, 16)),
                     expected
                 );
             }
@@ -793,9 +793,7 @@ mod tests {
                 ([1, 0, 0, 1], rough, false, (32, 16)),
             ] {
                 assert_eq!(
-                    one_rough_chroma_plane_deltas(
-                        original, quality, counts, totals, high_loss, visible
-                    ),
+                    rough_chroma_deltas(original, quality, counts, totals, high_loss, visible),
                     original
                 );
             }
@@ -807,15 +805,33 @@ mod tests {
         };
         for quality in [60, 75, 85] {
             assert_eq!(
-                one_rough_chroma_plane_deltas(
-                    already_coarse,
-                    quality,
-                    textured,
-                    rough,
-                    false,
-                    (16, 16)
-                ),
+                rough_chroma_deltas(already_coarse, quality, textured, rough, false, (16, 16)),
                 already_coarse
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_rough_chroma_uses_the_low_quality_ac_midpoint() {
+        let rough = CurvatureTotals {
+            sums: [1800, 500, 500],
+        };
+        for (quality, counts, high_loss, visible, expected) in [
+            (60, [0, 0, 1, 1], false, (32, 16), -7),
+            (60, [0, 0, 1, 1], true, (32, 16), -11),
+            (60, [0, 0, 1, 1], false, (32, 15), -11),
+            (60, [1, 0, 0, 1], false, (32, 16), -11),
+            (75, [0, 0, 1, 1], false, (32, 16), -9),
+            (85, [0, 0, 1, 1], false, (32, 16), -4),
+        ] {
+            let before = deltas(quality);
+            let actual = rough_chroma_deltas(before, quality, counts, rough, high_loss, visible);
+            assert_eq!(
+                actual,
+                Deltas {
+                    uv_ac: expected,
+                    ..before
+                }
             );
         }
     }
