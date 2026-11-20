@@ -237,6 +237,23 @@ fn quantize_y1_zero_bin(transformed: &[i32; 16], steps: Steps, enabled: bool) ->
     coefficients
 }
 
+fn transform_predicted_block(
+    source: &[u8],
+    stride: usize,
+    x: usize,
+    y: usize,
+    predictor: &[u8; 16],
+) -> [i32; 16] {
+    let mut residual = [0i16; 16];
+    for row in 0..4 {
+        for col in 0..4 {
+            residual[row * 4 + col] = (i32::from(source[(y + row) * stride + x + col])
+                - i32::from(predictor[row * 4 + col])) as i16;
+        }
+    }
+    transform::forward(&residual)
+}
+
 fn code_predicted_block(
     source: &[u8],
     stride: usize,
@@ -246,14 +263,7 @@ fn code_predicted_block(
     steps: Steps,
     y1_zero_bin: bool,
 ) -> ([i16; 16], [u8; 16]) {
-    let mut residual = [0i16; 16];
-    for row in 0..4 {
-        for col in 0..4 {
-            residual[row * 4 + col] = (i32::from(source[(y + row) * stride + x + col])
-                - i32::from(predictor[row * 4 + col])) as i16;
-        }
-    }
-    let transformed = transform::forward(&residual);
+    let transformed = transform_predicted_block(source, stride, x, y, predictor);
     let coefficients = quantize_y1_zero_bin(&transformed, steps, y1_zero_bin);
     let inverse = transform::inverse(&ac_quant::dequantize_block(&coefficients, steps));
     let mut reconstructed = [0u8; 16];
@@ -1482,6 +1492,16 @@ enum UvRatePolicy {
     FlatDcZero,
 }
 
+impl UvRatePolicy {
+    fn for_source_class(quality: u32, source_class: u8) -> Option<Self> {
+        match (quality, source_class) {
+            (60, segmentation::TEXTURED) => Some(Self::TexturedAcTail),
+            (75, segmentation::CHROMATIC_FLAT) => Some(Self::FlatDcZero),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct UvRdo<'a> {
     contexts: &'a CoeffContexts,
@@ -1505,6 +1525,16 @@ impl UvRdo<'_> {
     }
 }
 
+fn uv_dc_error(source: &[u8], stride: usize, x: usize, y: usize, patch: &[u8; 16]) -> i32 {
+    let mut error = 0;
+    for (row, patch_row) in patch.as_chunks::<4>().0.iter().enumerate() {
+        for (col, &reconstructed) in patch_row.iter().enumerate() {
+            error += i32::from(source[(y + row) * stride + x + col]) - i32::from(reconstructed);
+        }
+    }
+    error
+}
+
 #[allow(clippy::too_many_arguments)]
 fn make_uv(
     source_u: &[u8],
@@ -1517,6 +1547,7 @@ fn make_uv(
     mode: u8,
     steps: Steps,
     rdo: Option<UvRdo<'_>>,
+    diffuse_dc_error: bool,
 ) -> UvCandidate {
     let mut coeffs = [[[0i16; 16]; 4]; 2];
     let mut tiles = [[0u8; 64]; 2];
@@ -1538,48 +1569,49 @@ fn make_uv(
         let (top, left, corner) = edge::<8>(reconstructed, stride, x, y);
         let predicted =
             prediction::predict_uv(&top, &left, corner, y > 0, x > 0, mode_from_u8(mode));
+        // Keep trial state within this plane and mode. Source-minus-reconstruction
+        // sums project to forward DC at half scale. Divide by four to send
+        // half of each neighbor's error into this patch.
+        let mut above_dc_error = [0; 2];
         for by in 0..2 {
+            let mut left_dc_error = 0;
             for bx in 0..2 {
+                let patch_x = x + bx * 4;
+                let patch_y = y + by * 4;
                 let predictor = prediction_patch::<8, 64>(&predicted, bx, by);
-                let baseline = code_predicted_block(
-                    source,
-                    stride,
-                    x + bx * 4,
-                    y + by * 4,
-                    &predictor,
-                    steps,
-                    false,
+                let mut transformed =
+                    transform_predicted_block(source, stride, patch_x, patch_y, &predictor);
+                if diffuse_dc_error {
+                    let correction = (above_dc_error[bx] + left_dc_error) / 4;
+                    transformed[0] += correction.clamp(-steps.dc, steps.dc);
+                }
+                let coefficients = ac_quant::quantize_block(&transformed, steps);
+                let baseline = (
+                    coefficients,
+                    reconstructed_patch(&coefficients, &predictor, steps),
                 );
                 let (coeff, patch) = if let Some((rdo, lambda)) = rdo.and_then(|rdo| {
-                    rdo.block_lambda(x + bx * 4, y + by * 4)
+                    rdo.block_lambda(patch_x, patch_y)
                         .map(|lambda| (rdo, lambda))
                 }) {
                     let context = usize::from(local_above[bx]) + usize::from(local_left[by]);
                     match rdo.policy {
                         UvRatePolicy::TexturedAcTail => optimize_uv_block(
-                            source,
-                            stride,
-                            x + bx * 4,
-                            y + by * 4,
-                            &predictor,
-                            steps,
-                            context,
-                            lambda,
+                            source, stride, patch_x, patch_y, &predictor, steps, context, lambda,
                             baseline,
                         ),
                         UvRatePolicy::FlatDcZero => optimize_uv_dc_zero(
-                            source,
-                            stride,
-                            x + bx * 4,
-                            y + by * 4,
-                            &predictor,
-                            context,
-                            baseline,
+                            source, stride, patch_x, patch_y, &predictor, context, baseline,
                         ),
                     }
                 } else {
                     baseline
                 };
+                if diffuse_dc_error && (bx == 0 || by == 0) {
+                    let error = uv_dc_error(source, stride, patch_x, patch_y, &patch);
+                    above_dc_error[bx] = error;
+                    left_dc_error = error;
+                }
                 coeffs[index][by * 2 + bx] = coeff;
                 store_patch::<8, 64>(&mut tiles[index], bx, by, &patch);
                 let nonzero = coeff.iter().any(|&coefficient| coefficient != 0);
@@ -2243,7 +2275,7 @@ fn encode_observed(
                     &source_y,
                     &source_u,
                     &source_v,
-                    Some(display_rgb::Original {
+                    (!mixed_y1_ac).then_some(display_rgb::Original {
                         pixels,
                         stride,
                         layout: format,
@@ -2280,7 +2312,7 @@ fn encode_observed(
                         })
                         .map_err(|_| EncodeError::OutputLimit)?;
                 }
-                let quota = if high_chroma_loss {
+                let quota = if high_chroma_loss || mixed_y1_ac {
                     0
                 } else {
                     extra_quota(my * blocks_x + mx, count)
@@ -2479,7 +2511,7 @@ fn encode_observed(
     let mut segments = original_segments
         .with_medium_textured_luma(medium_textured_luma)
         .with_photo_q60_rebase(photo_q60)
-        .with_mixed_y1_ac_allocation(mixed_y1_ac);
+        .with_mixed_q60_uniform(class_counts, mixed_y1_ac);
     let mut deltas = if medium_textured_luma {
         crate::presets::medium_textured_deltas(original_deltas)
     } else {
@@ -2824,11 +2856,10 @@ fn analyze_one(
             mixed_y1_ac,
         )]
     };
-    let uv_policy = match (quality, segment_id) {
-        (60, segmentation::TEXTURED) => Some(UvRatePolicy::TexturedAcTail),
-        (75, segmentation::CHROMATIC_FLAT) => Some(UvRatePolicy::FlatDcZero),
-        _ => None,
-    };
+    let uv_policy = UvRatePolicy::for_source_class(quality, segment_id);
+    let uv_width = visible_width.div_ceil(2);
+    let uv_height = visible_height.div_ceil(2);
+    let diffuse_uv_dc_error = mixed_y1_ac && mx * 8 + 8 <= uv_width && my * 8 + 8 <= uv_height;
     let uv: Vec<_> = (0..4)
         .map(|mode| {
             make_uv(
@@ -2845,10 +2876,11 @@ fn analyze_one(
                     contexts: coeff_contexts,
                     mx,
                     lambda,
-                    visible_width: visible_width.div_ceil(2),
-                    visible_height: visible_height.div_ceil(2),
+                    visible_width: uv_width,
+                    visible_height: uv_height,
                     policy,
                 }),
+                diffuse_uv_dc_error,
             )
         })
         .collect();
@@ -3694,6 +3726,7 @@ const _: () = assert!(
         + BASELINE_OVERRIDE_BUDGET_BYTES
         + 2 * crate::rate::MAX_BUFFERED_OPS * 2
         + 65_536
+        + 3 * std::mem::size_of::<i32>() // Local chroma DC feedback.
         + std::mem::size_of::<FrameEncoder>()
         + 1024 * 1024
         + display_rgb::MAX_QUALITY_CACHE_BYTES
@@ -4630,7 +4663,7 @@ impl FrameEncoder {
             self.segments = self
                 .segments
                 .with_photo_q60_rebase(self.photo_q60)
-                .with_mixed_y1_ac_allocation(self.mixed_y1_ac);
+                .with_mixed_q60_uniform(self.class_counts, self.mixed_y1_ac);
             if self.medium_textured_luma {
                 self.deltas = crate::presets::medium_textured_deltas(self.deltas);
             }
@@ -4658,7 +4691,7 @@ impl FrameEncoder {
         let blocks_x = self.plan.padded_width as usize / 16;
         let mx = self.cursor % blocks_x;
         let my = self.cursor / blocks_x;
-        let quota = if self.high_chroma_loss {
+        let quota = if self.high_chroma_loss || self.mixed_y1_ac {
             0
         } else {
             extra_quota(self.cursor, self.plan.macroblock_count as usize)
@@ -4681,7 +4714,7 @@ impl FrameEncoder {
             qindex
         };
         let lambda = crate::presets::lambda_for_quality(rate_qindex, self.request.quality);
-        let original_rgb = Some(display_rgb::Original {
+        let original_rgb = (!self.mixed_y1_ac).then_some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
             layout: self.request.layout,
@@ -8379,6 +8412,49 @@ mod tests {
     }
 
     #[test]
+    fn chroma_dc_feedback_corrects_signed_rounding_within_one_mode_and_plane() {
+        let source_u = [130; 64];
+        let source_v = [128; 64];
+        let reconstructed = [0; 64];
+        let steps = Steps { dc: 10, ac: 17 };
+        let trial = |feedback| {
+            make_uv(
+                &source_u,
+                &source_v,
+                &reconstructed,
+                &reconstructed,
+                8,
+                0,
+                0,
+                0,
+                steps,
+                None,
+                feedback,
+            )
+        };
+        let baseline = trial(false);
+        let selected = trial(true);
+        assert_eq!(baseline.u_tile, [131; 64]);
+        assert_eq!(selected.u.map(|coefficients| coefficients[0]), [2, 1, 1, 2]);
+        assert_eq!(selected.u[0], baseline.u[0]);
+        for (before, after) in baseline.u.iter().zip(&selected.u) {
+            assert_eq!(before[1..], after[1..]);
+        }
+        assert_eq!(
+            selected
+                .u_tile
+                .iter()
+                .map(|&sample| u32::from(sample))
+                .sum::<u32>(),
+            130 * 64
+        );
+        assert_eq!(selected.v, baseline.v);
+        assert_eq!(selected.v_tile, source_v);
+        assert_eq!(trial(true).u, selected.u);
+        assert_eq!(trial(true).u_tile, selected.u_tile);
+    }
+
+    #[test]
     fn flat_uv_dc_zero_keeps_mode_trials_and_hidden_patches_isolated() {
         let source = [129u8; 64];
         let reconstructed = [0u8; 64];
@@ -8400,6 +8476,7 @@ mod tests {
             0,
             steps,
             None,
+            false,
         );
         assert!(baseline.u.iter().all(|coeff| coeff[0] == 1));
         assert!(baseline.v.iter().all(|coeff| coeff[0] == 1));
@@ -8422,6 +8499,7 @@ mod tests {
                     visible_height,
                     policy: UvRatePolicy::FlatDcZero,
                 }),
+                false,
             )
         };
         let visible = trial(8, 8);
@@ -8539,6 +8617,7 @@ mod tests {
                     mode,
                     steps,
                     None,
+                    false,
                 );
                 let trial = make_uv(
                     &source,
@@ -8558,6 +8637,7 @@ mod tests {
                         visible_height: 8,
                         policy: UvRatePolicy::TexturedAcTail,
                     }),
+                    false,
                 );
                 assert_eq!(contexts, before);
                 for (original, selected) in baseline.u.iter().zip(&trial.u) {
@@ -9392,17 +9472,8 @@ mod tests {
                                 engine.deltas,
                                 crate::presets::mixed_y1_ac_deltas(original_deltas, true)
                             );
-                            assert_eq!(qindex, original_qindex + 4);
-                            assert_eq!(
-                                y_steps.dc,
-                                ac_quant::steps(original_qindex, original_deltas, Plane::Y1).dc
-                            );
-                            for plane in [Plane::Y2, Plane::UV] {
-                                assert_eq!(
-                                    ac_quant::steps(qindex, engine.deltas, plane),
-                                    ac_quant::steps(original_qindex, original_deltas, plane)
-                                );
-                            }
+                            assert!(!engine.segments.enabled);
+                            assert_eq!(qindex, engine.segments.base_qindex as u8);
                         } else {
                             assert_eq!(qindex, original_qindex);
                             assert_eq!(engine.deltas, crate::presets::deltas(75));
@@ -9489,13 +9560,13 @@ mod tests {
                     run_engine(FrameEncoder::new(request, (*input).clone(), plan).unwrap());
                 assert_eq!(engine.mixed_y1_ac, expected_profile);
                 if expected_profile {
-                    assert!(engine.segments.enabled);
+                    assert!(!engine.segments.enabled);
                     assert!(
                         !engine.photo_q60 && !engine.high_chroma_loss && !engine.neutral_chroma
                     );
                     assert!(engine.curvature.within_cutoff(engine.blocks.len()));
-                    assert_eq!(engine.segments.qindex, [10, 22, 36, 36]);
-                    assert_eq!(engine.segments.base_qindex, 10);
+                    assert_eq!(engine.segments.qindex, [32; 4]);
+                    assert_eq!(engine.segments.base_qindex, 32);
                     assert_eq!(engine.original_segments().qindex, [6, 18, 32, 32]);
                     assert_eq!(
                         engine.deltas,
@@ -9522,9 +9593,58 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
-    fn independent_decoders_reconstruct_mixed_y1_ac_allocation() {
+    fn mixed_q60_keeps_uniform_quantizer_and_residual_analysis_without_display_refinement() {
         let input = mixed_low_curvature_input();
+        let request = Request {
+            quality: 60,
+            ..engine_request(32, 16, 0, &input, 128)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut candidate = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        let mut unrefined = FrameEncoder::new(request, input, plan).unwrap();
+        unrefined.disable_refinement = true;
+        for engine in [&mut candidate, &mut unrefined] {
+            while engine.stage != Stage::CollectStats {
+                assert!(engine.stage != Stage::JointRefine);
+                engine.step().unwrap();
+            }
+            assert!(engine.mixed_y1_ac);
+            assert!(!engine.segments.enabled);
+            assert_eq!(engine.segments.qindex, [32; 4]);
+            assert_eq!(engine.filter.level, 6);
+            assert_eq!((engine.deltas.uv_dc, engine.deltas.uv_ac), (-8, -15));
+            assert!(engine.refinement_log.is_empty());
+            assert!(engine.baseline_overrides.is_empty());
+            assert_eq!(engine.joint_used_total, 0);
+        }
+        assert_eq!(candidate.blocks, unrefined.blocks);
+        assert_eq!(candidate.reconstructed_y, unrefined.reconstructed_y);
+        assert_eq!(candidate.reconstructed_u, unrefined.reconstructed_u);
+        assert_eq!(candidate.reconstructed_v, unrefined.reconstructed_v);
+        assert_eq!(candidate.contexts, unrefined.contexts);
+        assert_eq!(candidate.header_budget, unrefined.header_budget);
+        assert!(candidate.blocks.iter().any(|block| {
+            block
+                .y
+                .iter()
+                .flatten()
+                .chain(block.y2.iter())
+                .chain(block.u.iter().flatten())
+                .chain(block.v.iter().flatten())
+                .any(|&level| level != 0)
+        }));
+    }
+
+    #[test]
+    #[ignore = "requires FFmpeg with native vp8 and libvpx decoders"]
+    fn independent_decoders_reconstruct_uniform_mixed_q60_with_retained_source_classes() {
+        let mut input = mixed_low_curvature_input();
+        // An isolated luminance peak makes the right block textured while
+        // leaving the frame within the mixed low-curvature profile.
+        let peak = (8 * 32 + 24) * 4;
+        for channel in &mut input[peak..peak + 3] {
+            *channel += 12;
+        }
         let request = Request {
             quality: 60,
             ..engine_request(32, 16, 0, &input, 128)
@@ -9532,10 +9652,37 @@ mod tests {
         let plan = ResourcePlan::checked(request).unwrap();
         let engine = run_engine(FrameEncoder::new(request, input, plan).unwrap());
         assert!(engine.mixed_y1_ac);
+        assert!(!engine.segments.enabled);
+        assert_eq!(engine.segments.qindex, [32; 4]);
+        assert_eq!(engine.blocks[0].segment_id, segmentation::FINE_SMOOTH);
+        assert_eq!(engine.blocks[1].segment_id, segmentation::TEXTURED);
+        assert!(UvRatePolicy::for_source_class(60, engine.blocks[0].segment_id).is_none());
+        assert!(matches!(
+            UvRatePolicy::for_source_class(60, engine.blocks[1].segment_id),
+            Some(UvRatePolicy::TexturedAcTail),
+        ));
+        assert_eq!(
+            engine
+                .original_segments()
+                .qindex_for(engine.blocks[0].segment_id),
+            6
+        );
+        assert_eq!(
+            engine
+                .original_segments()
+                .qindex_for(engine.blocks[1].segment_id),
+            32
+        );
         let (y, u, v, padded_w) = engine.reconstruction();
         let expected =
             filtered_visible_yuv(y, u, v, padded_w, 32, 16, &engine.blocks, engine.filter);
-        assert_decodes(engine.output(), 32, 16, &expected, "mixed Y1 AC allocation");
+        assert_decodes(
+            engine.output(),
+            32,
+            16,
+            &expected,
+            "uniform mixed q60 quantizer",
+        );
     }
 
     #[test]
@@ -9711,9 +9858,10 @@ mod tests {
     }
 
     #[test]
-    fn mixed_y1_ac_header_admits_three_signed_y_deltas() {
-        let original = SegmentConfig::from_counts(60, [1, 0, 1, 0], 2, false);
-        let selected = original.with_mixed_y1_ac_allocation(true);
+    fn uniform_mixed_q60_header_admits_three_signed_y_deltas() {
+        let original = SegmentConfig::nonsegmented(6);
+        let selected = SegmentConfig::from_counts(60, [1, 0, 1, 0], 2, false)
+            .with_mixed_q60_uniform([1, 0, 1, 0], true);
         let before_deltas = crate::presets::deltas(60);
         let after_deltas = crate::presets::mixed_y1_ac_deltas(before_deltas, true);
         let filter = FilterConfig::for_quality(60);
@@ -9749,6 +9897,11 @@ mod tests {
         write_header_prefix(&mut baseline_header, original, before_deltas, filter).unwrap();
         write_header_prefix(&mut selected_header, selected, after_deltas, filter).unwrap();
         assert_eq!(selected_header.0.len(), baseline_header.0.len() + 15);
+        assert!(!selected_header.0[2]); // Segmentation disabled.
+        assert_eq!(
+            &selected_header.0[16..23],
+            &[false, true, false, false, false, false, false] // Base qindex 32.
+        );
         assert_eq!(
             &selected_header.0[selected_header.0.len() - 31..],
             &[
@@ -11551,6 +11704,7 @@ mod tests {
                 3,
                 uv_steps,
                 None,
+                false,
             );
             (
                 i16.tile,
@@ -12184,6 +12338,7 @@ mod tests {
             0,
             steps,
             None,
+            false,
         );
         let chosen = make_uv(
             &source,
@@ -12203,6 +12358,7 @@ mod tests {
                 visible_height: 8,
                 policy: UvRatePolicy::FlatDcZero,
             }),
+            false,
         );
         assert_eq!(baseline.u[0][0], 1);
         assert_eq!(
