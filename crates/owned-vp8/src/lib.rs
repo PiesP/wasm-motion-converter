@@ -5,6 +5,7 @@
 
 mod abi;
 mod ac_quant;
+mod activity;
 mod bmode_probs;
 mod coeff_update_probs;
 mod color;

@@ -6,6 +6,7 @@
 use super::{BoolWriter, EncodeError, MAX_OUTPUT_BYTES};
 use crate::ac_quant::{self, Deltas, Plane, Steps};
 use crate::{
+    activity::Activity,
     bmode_probs::BMODE_PROBS,
     display_rgb, filter,
     limits::{
@@ -2447,8 +2448,13 @@ fn encode_observed(
         .map_err(|_| EncodeError::OutputLimit)?;
     let mut class_counts = [0; 4];
     let mut curvature = segmentation::CurvatureTotals::default();
+    let mut activity = Activity::new(count).ok_or(EncodeError::OutputLimit)?;
+    if crate::presets::high_chroma_loss(quality, rgb_error_sum, width as u32, height as u32) {
+        activity.release_map();
+    }
     for my in 0..blocks_y {
         for mx in 0..blocks_x {
+            activity.observe(&source_y, &source_u, &source_v, padded_w, mx, my);
             let collect_curvature = quality == 60
                 || (!neutral_chroma && (quality == 75 || class_counts[..3] == [0; 3]));
             let id = segmentation::classify_with_curvature(
@@ -2483,6 +2489,11 @@ fn encode_observed(
         count,
         neutral_chroma,
         smooth_grid_source.allows_allocation(rgb_error_sum, width as u32, height as u32),
+    );
+    let activity_plan = activity.finish(
+        quality,
+        !high_chroma_loss,
+        original_segments.neutral_smooth_grid,
     );
     let medium_textured_luma = crate::presets::medium_textured_luma(
         quality,
@@ -2590,12 +2601,18 @@ fn encode_observed(
             coeff_contexts.row();
             left_modes.fill(0);
             for mx in 0..blocks_x {
-                let segment_id = segment_ids[my * blocks_x + mx];
+                let index = my * blocks_x + mx;
+                let source_class = segment_ids[index];
+                let segment_id = activity.id(index, source_class);
                 let qindex = segments.qindex_for(segment_id);
                 let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
                 let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
                 let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-                let rate_qindex = rate_qindices[segment_id as usize];
+                let rate_qindex = if activity.selected() {
+                    qindex
+                } else {
+                    rate_qindices[source_class as usize]
+                };
                 let lambda = crate::presets::lambda_for_quality(rate_qindex, quality);
                 if !high_chroma_loss {
                     refinement_log
@@ -2633,6 +2650,7 @@ fn encode_observed(
                     width,
                     height,
                     luma_policy,
+                    source_class,
                     segment_id,
                     segments,
                     &mut header_budget,
@@ -2899,6 +2917,10 @@ fn encode_observed(
         neutral_chroma,
         omit_display_refinement,
     );
+    if let Some((config, allocation_deltas)) = activity_plan {
+        segments = config;
+        deltas = allocation_deltas;
+    }
     if high_chroma_loss {
         let original_score = run_profile(original_segments, original_deltas, true)?;
         let reduced_segments = original_segments.with_high_chroma_loss_luma(true);
@@ -2916,6 +2938,7 @@ fn encode_observed(
         run_profile(segments, deltas, false)?;
     }
     drop(run_profile);
+    activity.release_map();
     if !refinement_log.is_empty() || !baseline_overrides.is_empty() {
         let extended_sizes =
             count_frozen_variant(&blocks, blocks_x, blocks_y, segments, deltas, filter)?.sizes;
@@ -3175,6 +3198,7 @@ fn analyze_one(
     visible_width: usize,
     visible_height: usize,
     luma_policy: u8,
+    source_class: u8,
     segment_id: u8,
     segments: SegmentConfig,
     header_budget: &mut HeaderBudget,
@@ -3184,7 +3208,7 @@ fn analyze_one(
     let y = my * 16;
     let luma_policy = if luma_policy == 0
         && !segments.enabled
-        && segment_id == segmentation::FINE_SMOOTH
+        && source_class == segmentation::FINE_SMOOTH
         && segments.neutral_smooth_grid
     {
         1
@@ -3262,7 +3286,7 @@ fn analyze_one(
             mixed_y1_ac,
         )]
     };
-    let uv_policy = UvRatePolicy::for_source_class(quality, segment_id);
+    let uv_policy = UvRatePolicy::for_source_class(quality, source_class);
     let uv_width = visible_width.div_ceil(2);
     let uv_height = visible_height.div_ceil(2);
     let complete_uv_tile = uv_dc_feedback_for_tile(true, mx, my, uv_width, uv_height);
@@ -3270,7 +3294,7 @@ fn analyze_one(
         UvDcFeedback::WithinTile
     } else if complete_uv_tile
         && segments.neutral_smooth_grid
-        && segment_id == segmentation::FINE_SMOOTH
+        && source_class == segmentation::FINE_SMOOTH
     {
         UvDcFeedback::CommittedBoundaries
     } else {
@@ -3305,7 +3329,7 @@ fn analyze_one(
     let mut uv_costs = [None; 4];
     let score_luma_distortion = |luma_candidate: &LumaCandidate| {
         let mut distortion = luma_candidate.distortion;
-        if luma_bias && segment_id == segmentation::CHROMATIC_FLAT {
+        if luma_bias && source_class == segmentation::CHROMATIC_FLAT {
             distortion += visible_luma_bias_energy(
                 source_y,
                 padded_w,
@@ -4204,6 +4228,7 @@ enum PreviewTrial {
 pub(crate) struct FrameEncoder {
     request: Request,
     plan: ResourcePlan,
+    activity: Activity,
     effective_quality: u32,
     filter: FilterConfig,
     input: Vec<u8>,
@@ -4299,6 +4324,7 @@ const _: () = assert!(
         + 65_536
         + 3 * std::mem::size_of::<i32>() // Local chroma DC feedback.
         + std::mem::size_of::<FrameEncoder>()
+        + crate::activity::MAP_CAPACITY_BYTES
         + 1024 * 1024
         + display_rgb::MAX_QUALITY_CACHE_BYTES
         <= SCRATCH_ALLOWANCE_BYTES as usize
@@ -4361,6 +4387,8 @@ impl FrameEncoder {
         Ok(Self {
             request,
             plan,
+            activity: Activity::new(plan.macroblock_count as usize)
+                .ok_or(Status::MemoryAdmission)?,
             effective_quality: request.quality,
             filter,
             input,
@@ -4725,6 +4753,14 @@ impl FrameEncoder {
         self.cursor += 1;
         if self.cursor == self.plan.padded_height as usize / 2 {
             self.cursor = 0;
+            if crate::presets::high_chroma_loss(
+                self.request.quality,
+                self.rgb_error_sum,
+                self.request.width,
+                self.request.height,
+            ) {
+                self.activity.release_map();
+            }
             self.stage = Stage::Classify;
         }
         Ok(())
@@ -5201,6 +5237,14 @@ impl FrameEncoder {
         let collect_curvature = self.request.quality == 60
             || (!self.neutral_chroma
                 && (self.request.quality == 75 || self.class_counts[..3] == [0; 3]));
+        self.activity.observe(
+            &self.source_y,
+            &self.source_u,
+            &self.source_v,
+            self.plan.padded_width as usize,
+            mx,
+            my,
+        );
         let segment_id = segmentation::classify_with_curvature(
             &self.source_y,
             &self.source_u,
@@ -5372,6 +5416,14 @@ impl FrameEncoder {
                 self.neutral_chroma,
                 self.omit_display_refinement,
             );
+            let near_neutral = self.original_segments().neutral_smooth_grid;
+            if let Some((config, deltas)) =
+                self.activity
+                    .finish(quality, !self.high_chroma_loss, near_neutral)
+            {
+                self.segments = config;
+                self.deltas = deltas;
+            }
             self.header_budget = HeaderBudget::new(
                 self.blocks.len(),
                 self.segments,
@@ -5401,16 +5453,19 @@ impl FrameEncoder {
             self.contexts.row();
             self.left_modes.fill(0);
         }
-        let segment_id = self.blocks[self.cursor].segment_id;
+        let source_class = self.blocks[self.cursor].segment_id;
+        let segment_id = self.activity.id(self.cursor, source_class);
         let qindex = self.segments.qindex_for(segment_id);
         let deltas = self.deltas;
         let y_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y1);
         let uv_steps = ac_quant::steps(qindex as u8, deltas, Plane::UV);
         let y2_steps = ac_quant::steps(qindex as u8, deltas, Plane::Y2);
-        let lambda = crate::presets::lambda_for_quality(
-            self.rate_qindex(segment_id),
-            self.effective_quality,
-        );
+        let rate_qindex = if self.activity.selected() {
+            qindex
+        } else {
+            self.rate_qindex(source_class)
+        };
+        let lambda = crate::presets::lambda_for_quality(rate_qindex, self.effective_quality);
         let original_rgb = (!self.omit_display_refinement).then_some(display_rgb::Original {
             pixels: &self.input,
             stride: self.request.stride as usize,
@@ -5453,6 +5508,7 @@ impl FrameEncoder {
             self.request.width as usize,
             self.request.height as usize,
             0,
+            source_class,
             segment_id,
             self.segments,
             &mut self.header_budget,
@@ -5538,6 +5594,7 @@ impl FrameEncoder {
     fn finish_analyzed_block(&mut self) {
         self.cursor += 1;
         if self.cursor == self.plan.macroblock_count as usize {
+            self.activity.release_map();
             self.joint_search = Vec::new();
             if self.refinement_log.is_empty() {
                 self.refinement_log = RefinementLog::default();
@@ -8778,6 +8835,7 @@ mod tests {
                     height,
                     0,
                     segment_id,
+                    segment_id,
                     guarded.segments,
                     &mut probe_budget,
                     false,
@@ -8810,6 +8868,7 @@ mod tests {
                     width,
                     height,
                     0,
+                    segment_id,
                     segment_id,
                     baseline.segments,
                     &mut baseline.header_budget,
@@ -10349,6 +10408,7 @@ mod tests {
                     32,
                     16,
                     if mx == 0 { 2 } else { 0 },
+                    0,
                     0,
                     segments,
                     &mut budget,
@@ -13136,6 +13196,52 @@ mod tests {
         let expected =
             encode_textured(&input, request.width, request.height, request.stride, 0, 75).unwrap();
         assert_eq!(actual.output(), expected);
+    }
+
+    #[cfg(feature = "activity-allocation")]
+    #[test]
+    fn activity_allocation_matches_sync_and_resumable_with_odd_edges() {
+        let (width, height) = (65, 49);
+        let mut input = Vec::with_capacity(width * height * 4);
+        for y in 0..height {
+            for x in 0..width {
+                let value = 35 + ((x * x + 3 * y * y + 2 * x * y) / 112) as u8;
+                input.extend_from_slice(&[value, value, value, 255]);
+            }
+        }
+        for quality in [60, 75, 85] {
+            let request = Request {
+                quality,
+                ..engine_request(width, height, 0, &input, width * 4)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+            while engine.stage != Stage::Analyze {
+                engine.step().unwrap();
+            }
+            assert!(engine.activity.selected());
+            let expected_ids: Vec<u8> = engine
+                .blocks
+                .iter()
+                .enumerate()
+                .map(|(index, block)| engine.activity.id(index, block.segment_id))
+                .collect();
+            let actual = run_engine(engine);
+            assert!(!actual.activity.selected());
+            for (block, &id) in actual.blocks.iter().zip(&expected_ids) {
+                assert_eq!(block.segment_id, id);
+            }
+            let expected = encode_textured(
+                &input,
+                request.width,
+                request.height,
+                request.stride,
+                0,
+                quality,
+            )
+            .unwrap();
+            assert_eq!(actual.output(), expected);
+        }
     }
 
     #[test]

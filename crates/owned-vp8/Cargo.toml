@@ -5,6 +5,9 @@ edition = "2021"
 license = "MIT AND BSD-3-Clause"
 publish = false
 
+[features]
+activity-allocation = []
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

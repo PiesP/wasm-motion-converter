@@ -86,6 +86,7 @@ pub(crate) struct Config {
     pub map_probabilities: [u8; 3],
     active: [bool; 4],
     alias_textured_to_ramp: bool,
+    activity_grid: bool,
     pub neutral_smooth_grid: bool,
 }
 
@@ -99,6 +100,7 @@ impl Config {
             active: [false; 4],
             neutral_smooth_grid: false,
             alias_textured_to_ramp: false,
+            activity_grid: false,
         }
     }
 
@@ -147,6 +149,25 @@ impl Config {
             active: counts.map(|count| count > 0),
             neutral_smooth_grid,
             alias_textured_to_ramp: false,
+            activity_grid: false,
+        }
+    }
+
+    pub(crate) fn from_activity(
+        qindex: [usize; 4],
+        counts: [usize; 4],
+        neutral_smooth_grid: bool,
+    ) -> Self {
+        let total = counts.iter().sum();
+        Self {
+            enabled: true,
+            base_qindex: qindex[0],
+            qindex,
+            map_probabilities: Self::map_probabilities(counts, total),
+            active: counts.map(|count| count > 0),
+            neutral_smooth_grid,
+            alias_textured_to_ramp: false,
+            activity_grid: true,
         }
     }
 
@@ -172,6 +193,7 @@ impl Config {
         let ramp = CHROMATIC_RAMP as usize;
         let textured = TEXTURED as usize;
         if !selected
+            || self.activity_grid
             || !self.enabled
             || !self.active[ramp]
             || !self.active[textured]
