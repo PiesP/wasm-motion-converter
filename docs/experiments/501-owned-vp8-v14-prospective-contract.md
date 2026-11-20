@@ -47,7 +47,10 @@ source URLs' byte identities, prior V1–V13 source and input collisions, distin
 V14 inputs, dimensions, and the exact FFmpeg version. The source-only operation
 consumes no candidate attempt and supplies no tuning results.
 
-## Sole first evaluation
+## Historical first evaluation
+
+This section records the first-evaluation procedure on signed registry
+`21d27f9b`. The first result was 59/60 and consumed the sole attempt.
 
 After the current candidate clears its exposed regression, original-reference,
 and indicative timing admissions, bind the clean signed candidate and harness
@@ -63,8 +66,21 @@ node --experimental-strip-types scripts/test/owned-vp8-v2-compare.ts \
   --v14-video "$V14_VIDEO" --candidate-root "$CANDIDATE" --output "$EVIDENCE"
 ```
 
-The harness rejects an unfrozen draft, incomplete pins, tuning, acceptance
-subsets, and premature regression use. Require 60 complete condition results
-and check each gate before the decision. Preserve every receipt and move the
-manifest to `EXPOSED_REGRESSION` after exposure. Any later evaluation requires
-`--regression` and contributes exposed evidence only.
+The original harness rejected an unfrozen draft, incomplete pins, tuning,
+acceptance subsets, and premature regression use. The first attempt retained
+60 complete condition results and checked every gate.
+
+## Current exposed regression
+
+The current comparator preserves the original frozen manifest bytes and
+requires the exact [exposed disposition](501-owned-vp8-v14-disposition.json).
+Supply `--regression` and a new private evidence directory for either the full
+cohort or a diagnostic subset. The comparator refuses existing evidence before
+reading originals. This protects partial receipts alongside the exclusive
+individual writes that already protect completed receipts.
+
+```sh
+node --experimental-strip-types scripts/test/owned-vp8-v2-compare.ts \
+  --cohort corrected-v14 --regression --v14-photo "$V14_PHOTO" \
+  --v14-video "$V14_VIDEO" --candidate-root "$CANDIDATE" --output "$NEW_EVIDENCE"
+```

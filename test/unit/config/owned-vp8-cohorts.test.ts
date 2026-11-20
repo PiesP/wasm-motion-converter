@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -9,6 +9,7 @@ import {
   compare,
   fixtureSelectionIdentity,
   parseFixtureIds,
+  readV15Reservation,
   selectFixtureCohort,
 } from '../../../scripts/test/owned-vp8-v2-compare';
 import {
@@ -59,6 +60,12 @@ import {
   preflightV14,
   type V14Manifest,
 } from '../../../scripts/test/owned-vp8-v14-fixtures';
+import {
+  V15_HELDOUT,
+  assertV15Shape,
+  preflightV15,
+  type V15Manifest,
+} from '../../../scripts/test/owned-vp8-v15-fixtures';
 
 describe('owned VP8 prospective cohort isolation', () => {
   const root = resolve(import.meta.dirname, '../../..');
@@ -112,24 +119,37 @@ describe('owned VP8 prospective cohort isolation', () => {
     }
   });
 
-  it('binds all 60 V14 recipes and blocks tuning and acceptance subsets', () => {
+  it('binds all 60 exposed V14 recipes while preserving the original freeze', () => {
     const manifest = JSON.parse(
       readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v14-fixtures.json'), 'utf8')
     ) as V14Manifest;
     expect(() => assertV14Shape(manifest)).not.toThrow();
     expect(manifest.generatorSha256).toBe(sha256('scripts/test/owned-vp8-v14-fixtures.ts'));
     expect(manifest.priorV13.sha256).toBe(sha256(manifest.priorV13.path));
-    const selected = selectFixtureCohort('held-out', 'corrected-v14');
+    expect(manifest.status).toBe('FROZEN_UNEXECUTED');
+    const dispositionPath = 'docs/experiments/501-owned-vp8-v14-disposition.json';
+    const disposition = JSON.parse(readFileSync(resolve(root, dispositionPath), 'utf8'));
+    expect(disposition).toMatchObject({
+      status: 'EXPOSED_REGRESSION',
+      freezeId: manifest.freezeId,
+      originalFrozenManifestSha256: sha256('docs/experiments/501-owned-vp8-v14-fixtures.json'),
+      firstAttempt: { status: 'REJECTED_HELDOUT', passed: 59, conditions: 60 },
+    });
+    const selected = selectFixtureCohort('held-out', 'corrected-v14', true);
     expect(selected).toEqual(V14_HELDOUT);
-    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+    expect(fixtureSelectionIdentity(selected, 'held-out', true, false)).toMatchObject({
       expectedConditionCount: 60,
       completeCohort: true,
-      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+      scope: 'EXPOSED_REGRESSION_ONLY_NOT_FRESH_ACCEPTANCE',
     });
     expect(selected.filter((item) => item.source === 'generated')).toHaveLength(12);
     expect(selected.filter((item) => item.source === 'photo')).toHaveLength(4);
     expect(V14_HELDOUT.flatMap((item) => item.pts ?? [])).toEqual([1000, 4000, 6000, 8000]);
     expect(() => selectFixtureCohort('tuning', 'corrected-v14')).toThrow('no tuning');
+    expect(() => selectFixtureCohort('held-out', 'corrected-v14')).toThrow('exposed');
+    expect(selectFixtureCohort('held-out', 'corrected-v14', true, ['fresh14-neutral'])).toEqual([
+      V14_HELDOUT[0],
+    ]);
     expect(() =>
       selectFixtureCohort('held-out', 'corrected-v14', false, ['fresh14-neutral'])
     ).toThrow('diagnostic only');
@@ -138,7 +158,7 @@ describe('owned VP8 prospective cohort isolation', () => {
     expect(() => assertV14Shape(manifest)).toThrow();
   });
 
-  it('rejects unfrozen V14 inputs or incomplete pins before initializing a codec', async () => {
+  it('requires an exposed purpose for V14 before touching any codec or output', async () => {
     const manifest = JSON.parse(
       readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v14-fixtures.json'), 'utf8')
     ) as V14Manifest;
@@ -151,15 +171,170 @@ describe('owned VP8 prospective cohort isolation', () => {
       fixtures: manifest.fixtures.map((row) => ({ ...row, sha256: null })),
     } as const;
     expect(() => preflightV14(missingPins, {}, root, false)).toThrow('pixel pins are incomplete');
-    if (manifest.status !== 'PROSPECTIVE_UNFROZEN') return;
     const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v14-draft-'));
     const output = join(parent, 'evidence');
     try {
-      for (const regression of [false, true])
-        await expect(
-          compare({ output, split: 'held-out', cohort: 'corrected-v14', regression, sources: {} })
-        ).rejects.toThrow('not acceptance ready');
+      await expect(
+        compare({ output, split: 'held-out', cohort: 'corrected-v14', sources: {} })
+      ).rejects.toThrow('exposed');
+      await expect(
+        compare({
+          output,
+          split: 'held-out',
+          cohort: 'corrected-v14',
+          regression: true,
+          sources: {},
+        })
+      ).rejects.toThrow('V14 needs --v14-photo and --v14-video');
       expect(existsSync(output)).toBe(false);
+      mkdirSync(output);
+      const prior = join(output, 'identities.json');
+      writeFileSync(prior, 'retained partial V14 receipt');
+      await expect(
+        compare({
+          output,
+          split: 'held-out',
+          cohort: 'corrected-v14',
+          regression: true,
+          sources: {},
+        })
+      ).rejects.toThrow('already exists');
+      expect(readFileSync(prior, 'utf8')).toBe('retained partial V14 receipt');
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('binds exactly 60 fresh V15 conditions to the reviewed source recipe', () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v15-fixtures.json'), 'utf8')
+    ) as V15Manifest;
+    expect(() => assertV15Shape(manifest)).not.toThrow();
+    expect(manifest.status).toBe('FROZEN_UNEXECUTED');
+    expect(manifest.generatorSha256).toBe(sha256('scripts/test/owned-vp8-v15-fixtures.ts'));
+    expect(manifest.priorV13.sha256).toBe(sha256(manifest.priorV13.path));
+    expect(manifest.priorV14.sha256).toBe(sha256(manifest.priorV14.path));
+    expect(new Set(manifest.fixtures.map((item) => item.sha256)).size).toBe(20);
+    expect(manifest.fixtures.every((item) => /^[a-f0-9]{64}$/.test(item.sha256 ?? ''))).toBe(true);
+    const selected = selectFixtureCohort('held-out', 'corrected-v15');
+    expect(selected).toEqual(V15_HELDOUT);
+    expect(fixtureSelectionIdentity(selected, 'held-out', false, false)).toMatchObject({
+      expectedConditionCount: 60,
+      completeCohort: true,
+      scope: 'FIXED_PIXEL_ACCEPTANCE_ONLY_NOT_PRODUCT_QUALIFICATION',
+    });
+    expect(selected.filter((item) => item.source === 'generated')).toHaveLength(12);
+    expect(selected.filter((item) => item.source === 'photo')).toHaveLength(4);
+    expect(V15_HELDOUT.flatMap((item) => item.pts ?? [])).toEqual([1001, 4004, 6006, 8008]);
+    expect(() => selectFixtureCohort('tuning', 'corrected-v15')).toThrow('no tuning');
+    expect(() =>
+      selectFixtureCohort('held-out', 'corrected-v15', false, ['fresh15-neutral'])
+    ).toThrow('diagnostic only');
+    const drift = structuredClone(manifest);
+    drift.sources.photo.revision = manifest.sources.video.revision;
+    expect(() => assertV15Shape(drift)).toThrow();
+  });
+
+  it('rejects V15 wrong-purpose or missing-pins runs before candidate work', async () => {
+    const manifest = JSON.parse(
+      readFileSync(resolve(root, 'docs/experiments/501-owned-vp8-v15-fixtures.json'), 'utf8')
+    ) as V15Manifest;
+    const draft = { ...manifest, status: 'PROSPECTIVE_UNFROZEN' } as const;
+    expect(() => preflightV15(draft, {}, root, false)).toThrow('not acceptance ready');
+    expect(() => preflightV15(manifest, {}, root, true)).toThrow('not acceptance ready');
+    const incomplete = {
+      ...manifest,
+      fixtures: manifest.fixtures.map((row) => ({ ...row, sha256: null })),
+    };
+    expect(() => preflightV15(incomplete, {}, root, false)).toThrow('pixel pins are incomplete');
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v15-preflight-'));
+    const output = join(parent, 'rows');
+    try {
+      const options = { split: 'held-out', cohort: 'corrected-v15', sources: {} } as const;
+      await expect(compare({ ...options, output, regression: true })).rejects.toThrow(
+        'not acceptance ready'
+      );
+      await expect(compare({ ...options, output: parent })).rejects.toThrow('already exists');
+      await expect(compare({ ...options, output })).rejects.toThrow('V15 attempt name differs');
+      expect(existsSync(output)).toBe(false);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('binds V15 reservation, exact plan and issue readback before source access', () => {
+    const parent = mkdtempSync(join(tmpdir(), 'owned-vp8-v15-reservation-'));
+    const attempt = join(parent, 'first-candidate-attempt-01');
+    const output = join(attempt, 'rows');
+    const freezeId = 'vp8-v15-first-heldout-20261120-01';
+    const manifestSha256 = 'a'.repeat(64);
+    const candidateRoot = join(parent, 'candidate');
+    const registryRoot = join(parent, 'registry');
+    const sources = { v15Photo: join(parent, 'no-photo'), v15Video: join(parent, 'no-video') };
+    const fields = { output, freezeId, manifestSha256, candidateRoot, registryRoot, sources };
+    const registration =
+      'https://github.com/PiesP/wasm-motion-converter/issues/501#issuecomment-123';
+    const planFile = join(parent, 'admission-test.json');
+    const plan = {
+      status: 'V15_FIRST_ADMISSION_FROZEN',
+      freezeId,
+      budget: 1,
+      canonicalAttempt: attempt,
+      registryRoot,
+      candidate: { repo: candidateRoot },
+      repoPins: { 'docs/experiments/501-owned-vp8-v15-fixtures.json': manifestSha256 },
+      sourcesFromManifestMetadataOnly: {
+        photo: { path: sources.v15Photo },
+        video: { path: sources.v15Video },
+      },
+      primary: {
+        wasmSha256: '4d438a73dfe550d608d6b89eee34ea9374d58d3ffa0355218766281fc9a76c22',
+        jsSha256: '75b19521738cd76144ae58442dbcdf7da3ff61ca0574a334f0079afc705f741c',
+      },
+      plannedUtc: '2026-11-20T10:00:00Z',
+    };
+    const owner = {
+      url: registration,
+      author: 'PiesP',
+      responseSha256: 'b'.repeat(64),
+      createdUtc: '2026-11-20T10:00:01Z',
+      updatedUtc: '2026-11-20T10:00:02Z',
+    };
+    const writeReceipt = (path: string, value: object) => {
+      rmSync(path, { force: true });
+      writeFileSync(path, JSON.stringify(value), { mode: 0o400, flag: 'wx' });
+    };
+    try {
+      mkdirSync(attempt);
+      const requestFile = join(attempt, 'request.json');
+      const readbackFile = join(attempt, 'registration-readback.json');
+      expect(() => readV15Reservation(fields)).toThrow('request.json');
+      writeReceipt(planFile, plan);
+      const request = {
+        freezeId,
+        budget: 1,
+        canonicalAttempt: attempt,
+        plan: planFile,
+        planSha256: createHash('sha256').update(readFileSync(planFile)).digest('hex'),
+        registration,
+        startedUtc: '2026-11-20T10:00:03Z',
+      };
+      writeReceipt(requestFile, { ...request, planSha256: 'c'.repeat(64) });
+      expect(() => readV15Reservation(fields)).toThrow('admission digest differs');
+      writeReceipt(requestFile, request);
+      writeReceipt(readbackFile, { ...owner, author: 'Other' });
+      expect(() => readV15Reservation(fields)).toThrow('readback owner differs');
+      writeReceipt(readbackFile, owner);
+      expect(() => readV15Reservation({ ...fields, candidateRoot: parent })).toThrow(
+        'candidate root differs'
+      );
+      expect(() => readV15Reservation({ ...fields, manifestSha256: 'd'.repeat(64) })).toThrow(
+        'manifest digest differs'
+      );
+      expect(readV15Reservation(fields).candidate.repo).toBe(candidateRoot);
+      expect(existsSync(output)).toBe(false);
+      writeReceipt(join(attempt, 'outcome.json'), { status: 'FAILED_ATTEMPT_CONSUMED' });
+      expect(() => readV15Reservation(fields)).toThrow('attempt is settled');
     } finally {
       rmSync(parent, { recursive: true, force: true });
     }
