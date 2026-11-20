@@ -71,7 +71,11 @@ import {
   NARROW_OUTPUT_SCENARIO,
 } from './narrow-output.ts';
 import { exerciseNativeTooltipZoom, exerciseNativeUi } from './native-ui.ts';
-import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
+import {
+  exerciseOfflineRecovery,
+  type RemovalVerification,
+  runRecoveryBuilds,
+} from './offline-recovery.ts';
 import type { OutputContractCase } from './output-contract.ts';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
 import {
@@ -3794,6 +3798,24 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const handoffSelector = 'service-worker-handoff.json';
+  const inputs = 'validation/windows/inputs';
+  const handoffConfigPath = `${inputs}/${handoffSelector}`;
+  let handoffConfig: unknown;
+  try {
+    if ((await stat(resolve(bundleRoot, handoffConfigPath))).isFile()) {
+      const configPath = await validateBundleFile(bundleRoot, handoffConfigPath);
+      handoffConfig = JSON.parse(await readFile(configPath, 'utf8'));
+    }
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (isRecord(handoffConfig) && handoffConfig.mode === 'm5-legacy-removal') {
+    const competingSelectors = (await readdir(resolve(bundleRoot, inputs))).filter(
+      (name) => name.endsWith('.json') && name !== handoffSelector
+    );
+    assert.deepEqual(competingSelectors, [], 'Owned-only removal requires an exclusive selector');
+  }
   const pixelScenario = 'owned-vp8-product-v8-low-inputs';
   const pixelSelector = resolve(
     bundleRoot,
@@ -5988,17 +6010,13 @@ export async function run({
       );
     }
   }
-  const handoffConfigPath = 'validation/windows/inputs/service-worker-handoff.json';
-  let handoffPresent = false;
-  try {
-    handoffPresent = (await stat(resolve(bundleRoot, handoffConfigPath))).isFile();
-  } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-  }
-  if (handoffPresent) {
-    const configPath = await validateBundleFile(bundleRoot, handoffConfigPath);
-    const config: unknown = JSON.parse(await readFile(configPath, 'utf8'));
+  if (handoffConfig !== undefined) {
+    const config = handoffConfig;
     assert(isRecord(config), 'Invalid service-worker handoff selector');
+    const finalRemoval = config.mode === 'm5-legacy-removal';
+    assert(
+      config.schemaVersion === 1 && (finalRemoval || config.mode === 'service-worker-handoff')
+    );
     assert.deepEqual(
       Object.keys(config).sort(),
       [
@@ -6008,9 +6026,9 @@ export async function run({
         'baselineTreeSha',
         'candidateSourceSha',
         'candidateTreeSha',
+        ...(finalRemoval ? ['candidateCoreSha', 'candidateWasmSha256'] : []),
       ].sort()
     );
-    assert(config.schemaVersion === 1 && config.mode === 'service-worker-handoff');
     for (const key of [
       'baselineSourceSha',
       'baselineTreeSha',
@@ -6019,11 +6037,28 @@ export async function run({
     ]) {
       assert(typeof config[key] === 'string' && /^[a-f0-9]{40}$/.test(config[key]));
     }
+    let removal: RemovalVerification | undefined;
+    if (finalRemoval) {
+      const { candidateCoreSha, candidateWasmSha256 } = config;
+      assert(typeof candidateCoreSha === 'string' && /^[a-f0-9]{40}$/.test(candidateCoreSha));
+      assert(typeof candidateWasmSha256 === 'string' && /^[a-f0-9]{64}$/.test(candidateWasmSha256));
+      const bundle: unknown = JSON.parse(await readFile(join(bundleRoot, 'bundle.json'), 'utf8'));
+      assert(isRecord(bundle));
+      assert.equal(
+        bundle.mode,
+        'desktop',
+        'Owned-only removal needs the installed desktop controller'
+      );
+      removal = {
+        coreSha: candidateCoreSha,
+        wasmSha256: candidateWasmSha256,
+      };
+    }
     const baselinePath = 'validation/windows/inputs/service-worker-baseline';
     const outputRoot = resolve(output);
     await mkdir(outputRoot, { recursive: true });
     const diagnostics: Record<string, unknown> = {
-      id: 'service-worker-handoff',
+      id: config.mode,
       status: 'running',
       browserVersion: browser.version(),
       nodeVersion: process.version,
@@ -6097,7 +6132,8 @@ export async function run({
         smallFixture,
         activeFixture,
         baselinePath,
-        true
+        true,
+        removal
       );
       diagnostics.check = check;
       diagnostics.status = 'passed';

@@ -13,6 +13,10 @@ import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 import type { DeploymentState } from '../../../scripts/build/deployment-state';
 import { preserveDeploymentDiagnostics } from '../../../scripts/test/deployment-diagnostics';
+import {
+  LEGACY_WEBP_DEPLOYMENT,
+  RETIRED_REQUEST_MODES,
+} from '../../../scripts/test/retired-webp-assets';
 
 const target = new URL('https://wasm-motion-converter.pages.dev/');
 const asset = 'assets/app-12345678.js';
@@ -27,6 +31,44 @@ const state: DeploymentState = {
   sourceDirty: false,
   files: [{ path: asset, size: 1, sha256: 'e'.repeat(64) }],
 };
+const module = {
+  path: 'assets/owned-vp8-AbCdEf01.wasm',
+  size: 129,
+  sha256: 'f'.repeat(64),
+};
+const finalState = { ...state, files: [...state.files, module] };
+const manifestSha256 = '1'.repeat(64);
+const finalMode = { requireOwnedVp8Only: true, expectedManifestSha256: manifestSha256 };
+const forcedEncoder = {
+  sourceSha: state.sourceSha,
+  treeSha: state.treeSha,
+  coreSha: state.coreSha,
+  manifestSha256,
+  ownedOnlyInventory: true,
+  legacyExecutables: [],
+  unexpectedWasm: [],
+  software: {
+    family: 'owned-vp8',
+    asset: module,
+    abi: { successfulBeginCalls: 3, stepCalls: 9 },
+    requested: [`/${module.path}`],
+    fromServiceWorker: false,
+    decodedFrames: 3,
+    outputBytes: 1024,
+    outputSha256: '2'.repeat(64),
+  },
+};
+const retiredUrls = RETIRED_REQUEST_MODES.flatMap((mode) =>
+  LEGACY_WEBP_DEPLOYMENT.files.map((file) => ({
+    mode,
+    url: new URL(`/${file.path}`, target).href,
+    priorSha256: file.sha256,
+    responseSha256: '3'.repeat(64),
+    status: 404,
+    cacheControl: 'public, max-age=0, must-revalidate',
+    contentType: 'text/html; charset=utf-8',
+  }))
+);
 const conditional = [
   {
     path: asset,
@@ -85,9 +127,23 @@ function traffic(scenario = 'normal-gif') {
 }
 
 function report(
-  options: { missing?: string; target?: string; status?: string; traffic?: unknown } = {}
+  options: {
+    missing?: string;
+    target?: string;
+    status?: string;
+    traffic?: unknown;
+    final?: boolean;
+    forcedEncoder?: unknown;
+    retiredUrls?: unknown;
+  } = {}
 ) {
-  function suite(file: string, title: string, name: string, value: unknown) {
+  function suite(
+    file: string,
+    title: string,
+    name: string,
+    value: unknown,
+    extra: [string, unknown][] = []
+  ) {
     return {
       file,
       specs: [
@@ -102,16 +158,13 @@ function report(
                 {
                   retry: 0,
                   status: options.status ?? 'passed',
-                  attachments:
-                    options.missing === name
-                      ? []
-                      : [
-                          {
-                            name,
-                            contentType: 'application/json',
-                            body: Buffer.from(JSON.stringify(value)).toString('base64'),
-                          },
-                        ],
+                  attachments: ([[name, value], ...extra] as [string, unknown][])
+                    .filter(([attachment]) => attachment !== options.missing)
+                    .map(([attachment, observation]) => ({
+                      name: attachment,
+                      contentType: 'application/json',
+                      body: Buffer.from(JSON.stringify(observation)).toString('base64'),
+                    })),
                 },
               ],
             },
@@ -134,7 +187,8 @@ function report(
         'e2e/deploy-smoke.spec.ts',
         'Pages serves one security and cache policy per document, metadata, and fingerprinted asset',
         'conditional-header-observations',
-        conditional
+        options.final ? [...conditional, { ...conditional[0], path: module.path }] : conditional,
+        options.final ? [['retired-webp-urls', options.retiredUrls ?? retiredUrls]] : []
       ),
       suite('e2e/dogfood-qa.spec.ts', 'total JS transfer size under 150KB', 'js-transfer-timing', {
         ...timing,
@@ -148,9 +202,12 @@ function report(
       ),
       suite(
         'e2e/deploy-smoke.spec.ts',
-        'WebP conversion uses real WASM fallback and downloads valid bytes',
+        options.final
+          ? 'Forced WebP downloads a decodable animation from the inventoried software encoder'
+          : 'WebP conversion uses real WASM fallback and downloads valid bytes',
         'first-webp-traffic',
-        traffic('forced-webp-wasm')
+        traffic('forced-webp-wasm'),
+        options.final ? [['forced-webp-encoder', options.forcedEncoder ?? forcedEncoder]] : []
       ),
     ],
   };
@@ -171,6 +228,76 @@ afterEach(() => {
 });
 
 describe('deployment diagnostic artifact', () => {
+  it('binds the final software route and all three archived Pages URLs to the validated artifact', () => {
+    const { file, output } = fixture(report({ final: true }));
+    const path = preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode);
+    const artifact = JSON.parse(readFileSync(path, 'utf8'));
+    expect(artifact.diagnostics[3].attempts[0].forcedEncoder).toEqual(forcedEncoder);
+    expect(artifact.diagnostics[0].attempts[0].retiredUrls).toEqual(retiredUrls);
+  });
+
+  it('rejects final evidence with the historical title or either attachment absent', () => {
+    for (const options of [
+      {},
+      { final: true, missing: 'forced-webp-encoder' },
+      { final: true, missing: 'retired-webp-urls' },
+    ]) {
+      const { file, output } = fixture(report(options));
+      expect(() =>
+        preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode)
+      ).toThrow();
+    }
+  });
+
+  it.each([
+    { ...forcedEncoder, coreSha: '0'.repeat(40) },
+    { ...forcedEncoder, manifestSha256: '0'.repeat(64) },
+    {
+      ...forcedEncoder,
+      software: { ...forcedEncoder.software, asset: { ...module, sha256: '0'.repeat(64) } },
+    },
+    { ...forcedEncoder, software: { ...forcedEncoder.software, fromServiceWorker: true } },
+    {
+      ...forcedEncoder,
+      software: { ...forcedEncoder.software, abi: { successfulBeginCalls: 0, stepCalls: 9 } },
+    },
+  ])('rejects stale, unbound or non-executed final software evidence', (observation) => {
+    const { file, output } = fixture(report({ final: true, forcedEncoder: observation }));
+    expect(() =>
+      preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode)
+    ).toThrow('Invalid or unbound forced WebP encoder observation');
+  });
+
+  it.each(
+    [
+      retiredUrls.slice(1),
+      retiredUrls.slice(3),
+      [{ ...retiredUrls[0], mode: 'revalidated' }, ...retiredUrls.slice(1)],
+      [{ ...retiredUrls[0], status: 302 }, ...retiredUrls.slice(1)],
+      [{ ...retiredUrls[0], cacheControl: 'immutable' }, ...retiredUrls.slice(1)],
+      [{ ...retiredUrls[0], contentType: 'application/wasm' }, ...retiredUrls.slice(1)],
+      [{ ...retiredUrls[0], responseSha256: retiredUrls[0]?.priorSha256 }, ...retiredUrls.slice(1)],
+    ].map((rows) => ({ rows }))
+  )('rejects incomplete or unsafe archived URL responses', ({ rows }) => {
+    const { file, output } = fixture(report({ final: true, retiredUrls: rows }));
+    expect(() =>
+      preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode)
+    ).toThrow(/retired WebP URL observation/);
+  });
+
+  it('keeps a flaky public run outside the final owned-only receipt', () => {
+    const value = report({ final: true });
+    const test = value.suites[3]!.specs[0]!.tests[0]!;
+    test.status = 'flaky';
+    test.results[0]!.retry = 1;
+    test.results.unshift({ retry: 0, status: 'failed', attachments: [] });
+    value.stats.flaky = 1;
+    const { file, output } = fixture(value);
+    expect(() =>
+      preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode)
+    ).toThrow('complete, single-attempt pass');
+  });
+
   it('accepts the exact report byte limit and rejects overflow before writing evidence', () => {
     const { file, output } = fixture(report());
     const content = readFileSync(file);

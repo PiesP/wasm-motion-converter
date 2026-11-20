@@ -568,6 +568,7 @@
     "public/test-video-contract-vp9.webm",
     "public/test-video-matroska-metadata.mkv",
     "validation/windows/offline-recovery.ts",
+    "scripts/test/retired-webp-assets.ts",
     "public/test-video-contract-short-tail.mp4",
     "public/test-video-contract-integer-vfr.mp4",
     "public/test-video-contract-pressure-21fps.mp4",

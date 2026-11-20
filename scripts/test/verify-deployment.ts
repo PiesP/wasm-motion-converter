@@ -1,7 +1,15 @@
 /** Verify a source-built Pages deployment against the exact CI build artifact. */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -112,10 +120,7 @@ async function bytes(response: Response, limit: number): Promise<Uint8Array> {
   return result;
 }
 
-export async function readDeploymentState(
-  target: URL,
-  fetcher: Fetch = fetch
-): Promise<DeploymentState> {
+async function readMetadata(target: URL, fetcher: Fetch) {
   const response = await fetcher(new URL('/deployment-state.json', target), {
     redirect: 'error',
     signal: AbortSignal.timeout(20_000),
@@ -125,17 +130,30 @@ export async function readDeploymentState(
     response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/json'
   )
     throw new Error('Deployment metadata is not successful JSON');
-  return parseDeploymentState(
-    JSON.parse(new TextDecoder().decode(await bytes(response, MAX_METADATA_BYTES)))
-  );
+  const metadata = await bytes(response, MAX_METADATA_BYTES);
+  return {
+    state: parseDeploymentState(JSON.parse(new TextDecoder().decode(metadata))),
+    sha256: createHash('sha256').update(metadata).digest('hex'),
+  };
+}
+
+export async function readDeploymentState(
+  target: URL,
+  fetcher: Fetch = fetch
+): Promise<DeploymentState> {
+  return (await readMetadata(target, fetcher)).state;
 }
 
 export async function verifyDeploymentBytes(
   target: URL,
   expected: DeploymentState,
-  fetcher: Fetch = fetch
+  fetcher: Fetch = fetch,
+  expectedManifestSha256?: string
 ): Promise<unknown> {
-  const actual = await readDeploymentState(target, fetcher);
+  const metadata = await readMetadata(target, fetcher);
+  const { state: actual } = metadata;
+  if (expectedManifestSha256 !== undefined && metadata.sha256 !== expectedManifestSha256)
+    throw new Error('Served deployment metadata bytes differ from build artifact');
   for (const key of ['sourceSha', 'treeSha', 'coreSha', 'version', 'headersSha256'] as const) {
     if (actual[key] !== expected[key])
       throw new Error(`Deployment ${key} differs from build artifact`);
@@ -165,9 +183,44 @@ export async function verifyDeploymentBytes(
     target: target.href,
     sourceSha: actual.sourceSha,
     treeSha: actual.treeSha,
+    coreSha: actual.coreSha,
+    manifestSha256: metadata.sha256,
     observedAt: new Date().toISOString(),
     files,
   };
+}
+
+function verifyLocalArtifact(directory: string, expected: DeploymentState): void {
+  const root = resolve(directory);
+  if (!lstatSync(root).isDirectory()) throw new Error('Deployment artifact is not a directory');
+  const inventory = new Map(expected.files.map((file) => [file.path, file]));
+  const remaining = new Set([...inventory.keys(), '_headers', 'deployment-state.json']);
+  const pending = [''];
+  let visited = 0;
+  for (const prefix of pending) {
+    for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
+      if (++visited > 128) throw new Error('Deployment artifact has too many entries');
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        pending.push(path);
+        continue;
+      }
+      if (!entry.isFile() || !remaining.delete(path))
+        throw new Error(`Unaccounted deployment artifact file: ${path}`);
+      const file = inventory.get(path);
+      if (!file) continue;
+      const localPath = join(root, path);
+      if (
+        lstatSync(localPath).size !== file.size ||
+        createHash('sha256').update(readFileSync(localPath)).digest('hex') !== file.sha256
+      )
+        throw new Error(`Local deployment artifact bytes differ: ${path}`);
+    }
+  }
+  if (remaining.size) throw new Error(`Missing deployment artifact file: ${[...remaining][0]}`);
+  const headers = readFileSync(join(root, '_headers'));
+  if (createHash('sha256').update(headers).digest('hex') !== expected.headersSha256)
+    throw new Error('Expected CSP artifact differs from deployment metadata');
 }
 
 function currentMaster(): string {
@@ -180,11 +233,14 @@ function currentMaster(): string {
 }
 
 export async function verifyPublication(): Promise<void> {
-  const expected = parseDeploymentState(
-    JSON.parse(
-      readFileSync(resolve(process.env.DEPLOY_DIST || 'dist', 'deployment-state.json'), 'utf8')
-    )
-  );
+  const artifactDirectory = process.env.DEPLOY_DIST || 'dist';
+  const artifact = readFileSync(resolve(artifactDirectory, 'deployment-state.json'));
+  const expected = parseDeploymentState(JSON.parse(artifact.toString('utf8')));
+  const requireOwnedVp8Only = process.env.DEPLOY_REQUIRE_OWNED_VP8_ONLY === '1';
+  if (requireOwnedVp8Only && (!process.env.EXPECTED_SOURCE_SHA || !process.env.DEPLOY_DIST))
+    throw new Error(
+      'Owned-only verification requires explicit EXPECTED_SOURCE_SHA and DEPLOY_DIST'
+    );
   const expectedSha =
     process.env.EXPECTED_SOURCE_SHA ||
     execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -193,6 +249,22 @@ export async function verifyPublication(): Promise<void> {
   const target = deploymentUrl(
     process.env.DEPLOY_URL || 'https://wasm-motion-converter.pages.dev/'
   );
+  if (
+    requireOwnedVp8Only &&
+    target.protocol === 'https:' &&
+    (target.href !== 'https://wasm-motion-converter.pages.dev/' ||
+      process.env.VERIFY_CURRENT_MASTER !== '1')
+  )
+    throw new Error(
+      'Public owned-only verification requires the canonical Pages URL and VERIFY_CURRENT_MASTER=1'
+    );
+  const diagnosticMode = requireOwnedVp8Only
+    ? {
+        requireOwnedVp8Only,
+        expectedManifestSha256: createHash('sha256').update(artifact).digest('hex'),
+      }
+    : {};
+  if (requireOwnedVp8Only) verifyLocalArtifact(artifactDirectory, expected);
   const attempts = process.env.VERIFY_CURRENT_MASTER === '1' ? 8 : 1;
   let matched = false;
   let lastObservation = 'expected source not observed';
@@ -218,7 +290,12 @@ export async function verifyPublication(): Promise<void> {
     throw new Error(
       `Expected Pages source unavailable (${lastObservation}); inspect provider pending, failed or skipped deployment before retrying`
     );
-  const evidence = await verifyDeploymentBytes(target, expected);
+  const evidence = await verifyDeploymentBytes(
+    target,
+    expected,
+    fetch,
+    diagnosticMode.expectedManifestSha256
+  );
   writeFileSync('deployment-verification.json', `${JSON.stringify(evidence, null, 2)}\n`);
   // The deploy profile never enables a local web server. Keeping SKIP_WEB_SERVER
   // unset ensures its production-only dogfood assertions execute.
@@ -227,19 +304,29 @@ export async function verifyPublication(): Promise<void> {
   const reportDirectory = mkdtempSync(join(tmpdir(), 'wmc-deployment-playwright-'));
   try {
     const reportFile = join(reportDirectory, 'results.json');
-    const result = await runPlaywright('deploy', ['--reporter=list,json'], runChild, {
+    const args = requireOwnedVp8Only
+      ? ['--reporter=list,json', '--retries=0', '--forbid-only']
+      : ['--reporter=list,json'];
+    const result = await runPlaywright('deploy', args, runChild, {
       PLAYWRIGHT_JSON_OUTPUT_FILE: reportFile,
     });
     if (result !== 0) {
       // Keep the browser failure primary if setup failed before a report existed.
       try {
-        preserveDeploymentDiagnostics(reportFile, expected, target, result);
+        preserveDeploymentDiagnostics(
+          reportFile,
+          expected,
+          target,
+          result,
+          undefined,
+          diagnosticMode
+        );
       } catch {
         console.warn('Deployment diagnostic inventory unavailable after browser failure');
       }
       throw new Error(`Public deployment browser checks failed (${result})`);
     }
-    preserveDeploymentDiagnostics(reportFile, expected, target, result);
+    preserveDeploymentDiagnostics(reportFile, expected, target, result, undefined, diagnosticMode);
   } finally {
     try {
       rmSync(reportDirectory, { recursive: true, force: true });
@@ -251,7 +338,11 @@ export async function verifyPublication(): Promise<void> {
     throw new Error(
       'Source was superseded during public verification; this result does not accept current production'
     );
-  if ((await readDeploymentState(target)).sourceSha !== expectedSha)
+  const finalMetadata = await readMetadata(target, fetch);
+  if (
+    finalMetadata.state.sourceSha !== expectedSha ||
+    (requireOwnedVp8Only && finalMetadata.sha256 !== diagnosticMode.expectedManifestSha256)
+  )
     throw new Error('Public deployment changed during verification');
   if (process.env.GITHUB_STEP_SUMMARY)
     appendFileSync(

@@ -4,13 +4,29 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { join } from 'node:path';
 
-import type { Browser, Page } from '@playwright/test';
+import type {
+  APIResponse,
+  Browser,
+  BrowserContext,
+  Page,
+  Request as BrowserRequest,
+  Response as BrowserResponse,
+} from '@playwright/test';
 
+import {
+  isExecutableMediaType,
+  isRetiredWebpExecutable,
+  isUnexpectedWasm,
+  LEGACY_WEBP_DEPLOYMENT,
+  LEGACY_WEBP_WASM_ASSET,
+  OWNED_VP8_ASSET,
+} from '../../scripts/test/retired-webp-assets.ts';
 import { measureColdTransfer, readBuild } from './app-update.ts';
+import { instrumentOwnedInstance, parseAnimatedWebp } from './helpers/owned-vp8-product.ts';
 
 type Build = Awaited<ReturnType<typeof readBuild>>;
 type AssetFailure = { path: string; mode: '404' | 'wrong-mime' | 'network' };
@@ -107,6 +123,214 @@ function sha256(bytes: Buffer | string) {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+type InventoryFile = Build['state']['files'][number];
+const LEGACY_WEBP_MODULE_REFERENCE =
+  /(?:\.\/|\/assets\/)(?:webp-wasm|wasm-webp)[-.][\w-]+\.(?:wasm|[cm]?js)\b/i;
+
+export function softwareWebpInventory(files: readonly InventoryFile[]) {
+  const owned = files.filter(({ path }) => OWNED_VP8_ASSET.test(path));
+  const legacyWasm = files.filter(({ path }) => LEGACY_WEBP_WASM_ASSET.test(path));
+  assert(owned.length <= 1 && legacyWasm.length <= 1, 'Ambiguous software WebP WASM inventory');
+  const asset = owned[0] ?? legacyWasm[0];
+  assert(asset, 'No inventoried software WebP encoder WASM');
+  assert.equal(
+    files.filter(({ sha256 }) => sha256 === asset.sha256).length,
+    1,
+    'Software WebP module bytes appear more than once in the executable inventory'
+  );
+  const legacyExecutables = files.filter(({ path, sha256 }) =>
+    isRetiredWebpExecutable(path, sha256)
+  );
+  const unexpectedWasm = files.filter(({ path }) => isUnexpectedWasm(path));
+  const family = owned.length ? 'owned-vp8' : 'wasm-webp';
+  return {
+    family,
+    asset,
+    wasmPaths: files.filter(({ path }) => path.endsWith('.wasm')).map(({ path }) => `/${path}`),
+    legacyExecutables,
+    unexpectedWasm,
+    ownedOnly: family === 'owned-vp8' && !legacyExecutables.length && !unexpectedWasm.length,
+  };
+}
+
+export function hasLegacyWebpLoader(bytes: Uint8Array): boolean {
+  const js = Buffer.from(bytes).toString('utf8');
+  // Frozen legacy builds expose all three Emscripten symbols even after minification.
+  return (
+    LEGACY_WEBP_MODULE_REFERENCE.test(js) ||
+    ['emscripten_resize_heap', 'wasmMemory', '__wasm_call_ctors'].every((marker) =>
+      js.includes(marker)
+    )
+  );
+}
+
+export async function forceMainSoftwareWebp(page: Page) {
+  await page.addInitScript(() => {
+    if (typeof OffscreenCanvas !== 'undefined')
+      Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+        configurable: true,
+        value: undefined,
+      });
+    Object.defineProperty(globalThis, 'Worker', { configurable: true, value: undefined });
+  });
+  await page.addInitScript(instrumentOwnedInstance);
+}
+
+export function observeSoftwareWebp(page: Page, origin: string) {
+  const requests: string[] = [];
+  const foreignRequests: string[] = [];
+  const responses: BrowserResponse[] = [];
+  const observeRequest = (request: BrowserRequest) => {
+    const url = new URL(request.url());
+    if (!url.pathname.endsWith('.wasm') && !isRetiredWebpExecutable(url.pathname)) return;
+    if (url.origin === origin) requests.push(url.pathname);
+    else foreignRequests.push(url.href);
+  };
+  const observeResponse = (response: BrowserResponse) => {
+    const url = new URL(response.url());
+    if (
+      url.origin === origin &&
+      (url.pathname.endsWith('.wasm') || isRetiredWebpExecutable(url.pathname))
+    ) {
+      responses.push(response);
+    }
+  };
+  page.on('request', observeRequest);
+  page.on('response', observeResponse);
+  return {
+    requests,
+    foreignRequests,
+    responses,
+    stop() {
+      page.off('request', observeRequest);
+      page.off('response', observeResponse);
+    },
+  };
+}
+
+export async function verifySoftwareWebp(
+  page: Page,
+  bytes: Buffer,
+  inventory: ReturnType<typeof softwareWebpInventory>,
+  traffic: ReturnType<typeof observeSoftwareWebp>,
+  { offline = false, exactLegacyLoader = false } = {}
+) {
+  const { asset, family } = inventory;
+  const path = `/${asset.path}`;
+  assert.deepEqual(
+    traffic.foreignRequests,
+    [],
+    'Forced conversion requested a foreign encoder asset'
+  );
+  assert(
+    traffic.requests.every(
+      (request) => !request.endsWith('.wasm') || inventory.wasmPaths.includes(request)
+    ),
+    'Forced conversion requested WASM absent from the verified inventory'
+  );
+  assert(traffic.requests.includes(path), `${family} was not requested by the forced conversion`);
+  const responses = traffic.responses.filter((entry) => new URL(entry.url()).pathname === path);
+  assert(responses.length > 0, `Forced conversion got no response for ${path}`);
+  for (const response of responses) {
+    assert.equal(response.status(), 200);
+    assert.equal(response.request().redirectedFrom(), null);
+    assert.match(response.headers()['content-type'] ?? '', /^application\/wasm(?:\s*;|$)/i);
+    const wasm = await response.body();
+    assert.equal(wasm.subarray(0, 8).toString('hex'), '0061736d01000000');
+    assert.equal(wasm.length, asset.size, 'Requested encoder WASM size differs from inventory');
+    assert.equal(
+      sha256(wasm),
+      asset.sha256,
+      'Requested encoder WASM digest differs from inventory'
+    );
+    if (offline)
+      assert(response.fromServiceWorker(), 'Offline encoder WASM bypassed the service worker');
+  }
+  const legacyLoader = exactLegacyLoader ? await verifyLegacyLoader(traffic) : undefined;
+  const abi = await page.evaluate(() => {
+    const probe = Reflect.get(globalThis, '__wmcVp8AbiProbe');
+    if (!probe) throw new Error('The main-document ABI observer did not run');
+    const { successfulBeginCalls, stepCalls } = probe;
+    return { successfulBeginCalls, stepCalls } as {
+      successfulBeginCalls: number;
+      stepCalls: number;
+    };
+  });
+  if (family === 'owned-vp8') {
+    assert(
+      abi.successfulBeginCalls > 0 && abi.stepCalls > 0,
+      'Owned VP8 did not execute begin/step'
+    );
+    assert(
+      traffic.requests.every((request) => !isRetiredWebpExecutable(request)),
+      'Owned conversion requested a legacy WebP executable'
+    );
+  } else {
+    assert.equal(abi.successfulBeginCalls, 0);
+    assert.equal(abi.stepCalls, 0);
+  }
+  const parsed = parseAnimatedWebp(bytes);
+  assert(parsed.frames.length > 1, 'Forced software output is not a multi-frame animation');
+  const decoded = await page.evaluate(
+    async ({ data, frameCount }) => {
+      const decoder = new ImageDecoder({
+        data: new Uint8Array(data),
+        type: 'image/webp',
+        preferAnimation: true,
+      });
+      try {
+        await decoder.tracks.ready;
+        if (decoder.tracks.selectedTrack?.frameCount !== frameCount)
+          throw new Error('Decoder did not expose every parsed frame');
+        for (let frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+          const { complete, image } = await decoder.decode({
+            frameIndex,
+            completeFramesOnly: true,
+          });
+          image.close();
+          if (!complete) throw new Error(`Software WebP frame ${frameIndex} was incomplete`);
+        }
+        return frameCount;
+      } finally {
+        decoder.close();
+      }
+    },
+    { data: [...bytes], frameCount: parsed.frames.length }
+  );
+  return {
+    family,
+    asset,
+    abi,
+    requested: [...new Set(traffic.requests)],
+    fromServiceWorker: responses.every((response) => response.fromServiceWorker()),
+    ...(legacyLoader ? { legacyLoader } : {}),
+    decodedFrames: decoded,
+    outputBytes: bytes.length,
+    outputSha256: sha256(bytes),
+  };
+}
+
+async function verifyLegacyLoader(traffic: ReturnType<typeof observeSoftwareWebp>) {
+  const asset = LEGACY_WEBP_DEPLOYMENT.files[0];
+  const path = `/${asset.path}`;
+  const responses = traffic.responses.filter(
+    (response) => new URL(response.url()).pathname === path
+  );
+  assert(
+    responses.length > 0 && traffic.requests.includes(path),
+    'No archived main WebP loader response'
+  );
+  for (const response of responses) {
+    assert.equal(response.status(), 200);
+    assert.equal(response.request().redirectedFrom(), null);
+    assert.match(response.headers()['content-type'] ?? '', /(?:javascript|ecmascript)/i);
+    const bytes = await response.body();
+    assert.equal(bytes.length, asset.size);
+    assert.equal(sha256(bytes), asset.sha256, 'Archived main WebP loader bytes changed');
+  }
+  return asset;
+}
+
 export function assertWorkerUpdateOutcome(
   priorWorkerSha256: string,
   currentWorkerSha256: string,
@@ -144,6 +368,228 @@ async function readResultDownload(page: Page, selector = '[data-testid="download
   return Buffer.concat(chunks);
 }
 
+async function startForcedWebp(page: Page, fixture: string) {
+  await page.locator('[data-testid="option-format-webp"]').click();
+  await page.locator('[data-testid="file-input"]').setInputFiles(fixture);
+  await page.locator('[data-testid="convert-button"]').click();
+  const proceed = page.locator('[data-testid="modal-confirm-button"]');
+  if (await proceed.isVisible()) await proceed.click();
+}
+
+async function convertAndVerifySoftwareWebp(
+  page: Page,
+  origin: string,
+  fixture: string,
+  inventory: ReturnType<typeof softwareWebpInventory>,
+  offline = false,
+  exactLegacyLoader = false
+) {
+  const traffic = observeSoftwareWebp(page, origin);
+  try {
+    await startForcedWebp(page, fixture);
+    await page
+      .locator('[data-testid="result-section"]')
+      .waitFor({ state: 'visible', timeout: 120_000 });
+    return await verifySoftwareWebp(page, await readResultDownload(page), inventory, traffic, {
+      offline,
+      exactLegacyLoader,
+    });
+  } finally {
+    traffic.stop();
+  }
+}
+
+async function cachedLegacyExecutablePaths(page: Page, knownPaths: string[] = []) {
+  const paths = await page.evaluate(async () => {
+    const entries = [];
+    for (const name of await caches.keys()) {
+      if (!name.startsWith('dropconvert-')) continue;
+      for (const request of await (await caches.open(name)).keys())
+        entries.push(new URL(request.url).pathname);
+    }
+    return entries;
+  });
+  return [...new Set(paths)]
+    .filter((path) => isRetiredWebpExecutable(path) || knownPaths.includes(path))
+    .sort();
+}
+
+export type RemovalVerification = {
+  coreSha: string;
+  wasmSha256: string;
+};
+
+async function verifyAppDocument(
+  response: BrowserResponse | null,
+  build: Build,
+  fromServiceWorker = false
+) {
+  assert(response, 'No application document response');
+  assert.equal(response.status(), 200);
+  assert.match(response.headers()['content-type'] ?? '', /^text\/html\b/i);
+  assert.equal(
+    sha256(await response.body()),
+    build.indexSha256,
+    'Application document differs from its build'
+  );
+  if (fromServiceWorker)
+    assert(response.fromServiceWorker(), 'Offline document bypassed the service worker');
+}
+
+async function verifyArchivedAssetFetches(
+  page: Page,
+  available: boolean,
+  cache: 'default' | 'no-store' = 'no-store',
+  fromServiceWorker = false
+) {
+  const paths = LEGACY_WEBP_DEPLOYMENT.files.map(assetPath);
+  const observations = new Map<string, BrowserRequest>();
+  const origin = new URL(page.url()).origin;
+  const record = (request: BrowserRequest) => {
+    const url = new URL(request.url());
+    if (
+      url.origin === origin &&
+      !url.search &&
+      paths.includes(url.pathname) &&
+      request.resourceType() === 'fetch'
+    )
+      observations.set(url.pathname, request);
+  };
+  page.on('request', record);
+  try {
+    const rows = await page.evaluate(
+      async ({ paths, cache }) =>
+        Promise.all(
+          paths.map(async (path) => {
+            let response: Response;
+            try {
+              response = await fetch(path, { cache, redirect: 'error' });
+            } catch (error) {
+              if (!(error instanceof TypeError)) throw error;
+              return { path, fetchRejected: true as const };
+            }
+            const bytes = await response.arrayBuffer();
+            const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+            return {
+              path,
+              status: response.status,
+              contentType: response.headers.get('content-type') ?? '',
+              cacheControl: response.headers.get('cache-control') ?? '',
+              size: bytes.byteLength,
+              sha256: [...digest].map((value) => value.toString(16).padStart(2, '0')).join(''),
+            };
+          })
+        ),
+      { paths, cache }
+    );
+    return await Promise.all(
+      rows.map(async (row, index) => {
+        const asset = LEGACY_WEBP_DEPLOYMENT.files[index];
+        assert(asset && row.path === assetPath(asset));
+        const request = observations.get(row.path);
+        assert(request, `No browser request observed for ${row.path}`);
+        assert.equal(request.redirectedFrom(), null);
+        const response = await request.response();
+        const serviceWorkerResponse = response?.fromServiceWorker() ?? null;
+        const failure = request.failure()?.errorText ?? null;
+        if (available) {
+          assert('status' in row, `Archived baseline bytes unavailable: ${row.path}`);
+          assert.equal(row.status, 200);
+          assert.equal(response?.status(), row.status);
+          assert.match(
+            row.contentType,
+            asset.path.endsWith('.wasm') ? /^application\/wasm\b/i : /(?:javascript|ecmascript)/i
+          );
+          assert.equal(row.size, asset.size);
+          assert.equal(row.sha256, asset.sha256);
+          if (fromServiceWorker) assert.equal(serviceWorkerResponse, true, row.path);
+        } else if ('status' in row) {
+          assert.equal(row.status, 404, `Retired executable was served: ${row.path}`);
+          assert.equal(response?.status(), row.status);
+          assert(
+            !isExecutableMediaType(row.contentType) && !/\bimmutable\b/i.test(row.cacheControl)
+          );
+          assert.notEqual(row.sha256, asset.sha256);
+        } else {
+          assert.equal(response, null, `Retired executable returned a response: ${row.path}`);
+          assert(failure, `No browser request failure observed for ${row.path}`);
+        }
+        return { ...row, cache, serviceWorkerResponse, failure };
+      })
+    );
+  } finally {
+    page.off('request', record);
+  }
+}
+
+async function stageColdLegacyTab(page: Page, baseUrl: string, priorBuild: Build) {
+  await forceMainSoftwareWebp(page);
+  const traffic = observeSoftwareWebp(page, baseUrl);
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+    await verifyAppDocument(await page.reload(), priorBuild, true);
+    await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    return traffic;
+  } catch (error) {
+    traffic.stop();
+    throw error;
+  }
+}
+
+async function exerciseColdLegacyTab(
+  page: Page,
+  baseUrl: string,
+  fixture: string,
+  currentBuild: Build,
+  currentSoftware: ReturnType<typeof softwareWebpInventory>,
+  priorDocument: number
+) {
+  await page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) throw new Error('Old cold tab registration disappeared');
+    await registration.update();
+  });
+  await page.waitForFunction(
+    () =>
+      navigator.serviceWorker.controller?.state === 'activated' &&
+      navigator.serviceWorker.controller !== globalThis.__wmcUpgradeInitialController,
+    undefined,
+    { timeout: 15_000 }
+  );
+  assert.equal(await page.evaluate(() => performance.timeOrigin), priorDocument);
+  const mainLoaderUrl = new URL(assetPath(LEGACY_WEBP_DEPLOYMENT.files[0]), baseUrl).href;
+  const [failed] = await Promise.all([
+    page.waitForEvent('requestfailed', {
+      predicate: (request) => request.url() === mainLoaderUrl,
+      timeout: 30_000,
+    }),
+    startForcedWebp(page, fixture),
+  ]);
+  const failure = failed.failure()?.errorText;
+  assert(failure, 'Cold legacy conversion did not fail on its archived loader');
+  const error = page.locator('[data-testid="error-display"]');
+  await error.waitFor({ state: 'visible' });
+  assert.equal(await page.evaluate(() => performance.timeOrigin), priorDocument);
+  assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), false);
+  const recovery = page.locator('[data-testid="app-recovery-reload"]');
+  await recovery.waitFor({ state: 'visible', timeout: 15_000 });
+  assert.equal(await recovery.isEnabled(), true);
+  const [response] = await Promise.all([page.waitForNavigation(), recovery.click()]);
+  await verifyAppDocument(response, currentBuild);
+  assert.notEqual(await page.evaluate(() => performance.timeOrigin), priorDocument);
+  await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+  const ownedWebp = await convertAndVerifySoftwareWebp(page, baseUrl, fixture, currentSoftware);
+  assert.deepEqual(await cachedLegacyExecutablePaths(page), []);
+  return {
+    archivedSource: LEGACY_WEBP_DEPLOYMENT.sourceSha,
+    failedLoader: new URL(failed.url()).pathname,
+    failure,
+    reload: 'in-app-recovery-action',
+    ownedWebp,
+  };
+}
+
 async function exerciseBuildUpgrade(
   browser: Browser,
   baseUrl: string,
@@ -152,7 +598,8 @@ async function exerciseBuildUpgrade(
   activeFixture: string,
   setDistribution: StartedServer['setDistribution'],
   priorRelativePath = 'validation/windows/prior-dist',
-  requireChangedWorker = false
+  requireChangedWorker = false,
+  removal?: RemovalVerification
 ) {
   // readBuild checks each emitted file against deployment-state.json, including
   // service-worker.js, before the browser uses either distribution.
@@ -161,7 +608,7 @@ async function exerciseBuildUpgrade(
       readBuild(bundleRoot, relativePath, async (_root, path) => join(bundleRoot, path), {
         requireCompiledSource: relativePath === 'dist' || requireChangedWorker,
         verifyInventory: true,
-        exactInventory: requireChangedWorker,
+        exactInventory: relativePath === 'dist' || requireChangedWorker,
       })
     )
   );
@@ -184,15 +631,78 @@ async function exerciseBuildUpgrade(
     );
     assert(!workerByteIdentical, 'Worker handoff requires distinct emitted worker bytes');
   }
-  const context = await browser.newContext({ locale: 'en-US', acceptDownloads: true });
-  const page = await context.newPage();
+  const currentSoftware =
+    requireChangedWorker && !removal ? null : softwareWebpInventory(currentBuild.state.files);
+  const priorSoftware =
+    currentSoftware?.family === 'owned-vp8' ? softwareWebpInventory(priorBuild.state.files) : null;
+  if (priorSoftware) {
+    const entry = await readFile(join(bundleRoot, priorRelativePath, priorBuild.main.path));
+    assert(
+      entry.includes(priorBuild.state.sourceSha),
+      'Prior encoder build has no compiled source identity'
+    );
+  }
+  if (removal) {
+    assert.equal(priorBuild.state.sourceSha, LEGACY_WEBP_DEPLOYMENT.sourceSha);
+    assert.equal(priorBuild.state.treeSha, LEGACY_WEBP_DEPLOYMENT.treeSha);
+    assert.equal(
+      priorBuild.manifestSha256,
+      LEGACY_WEBP_DEPLOYMENT.manifestSha256,
+      'Archived baseline deployment metadata differs from verified 7d9e0f1b Pages bytes'
+    );
+    assert.equal(
+      priorBuild.state.headersSha256,
+      LEGACY_WEBP_DEPLOYMENT.headersSha256,
+      'Archived baseline _headers differs from verified 7d9e0f1b Pages bytes'
+    );
+    assert.equal(priorBuild.state.files.length, LEGACY_WEBP_DEPLOYMENT.inventoryCount);
+    const archivedFiles = priorBuild.state.files.map(({ path, size, sha256 }) => ({
+      path,
+      size,
+      sha256,
+    }));
+    assert.equal(
+      sha256(JSON.stringify(archivedFiles)),
+      LEGACY_WEBP_DEPLOYMENT.inventorySha256,
+      'Archived baseline inventory differs from verified 7d9e0f1b Pages bytes'
+    );
+    assert.equal(priorSoftware?.family, 'wasm-webp');
+    for (const asset of LEGACY_WEBP_DEPLOYMENT.files)
+      assert.deepEqual(
+        priorBuild.state.files.find(({ path }) => path === asset.path),
+        asset
+      );
+    assert.equal(currentBuild.state.coreSha, removal.coreSha);
+    assert(currentSoftware?.ownedOnly, 'Removal candidate inventory is not owned-only');
+    assert.equal(currentSoftware.asset.sha256, removal.wasmSha256);
+  }
+  if (currentSoftware?.ownedOnly) {
+    for (const { path } of currentBuild.state.files.filter(({ path }) => /\.[cm]?js$/.test(path)))
+      assert(
+        !hasLegacyWebpLoader(await readFile(join(bundleRoot, 'dist', path))),
+        `Current executable retains a legacy WebP loader or its reference: ${path}`
+      );
+  }
   let activePage: Page | undefined;
+  let coldContext: BrowserContext | undefined;
+  let coldPage: Page | undefined;
+  let coldDocument: number | undefined;
+  const exactLegacyLoader = Boolean(removal);
+  const persistent = removal ? await prepareInstalledProfile(browser, bundleRoot) : null;
+  let context: BrowserContext | undefined;
   try {
+    const warm = persistent
+      ? await persistent.launch()
+      : { context: await browser.newContext({ locale: 'en-US', acceptDownloads: true }) };
+    context = warm.context;
+    const page = context.pages()[0] ?? (await context.newPage());
+    if (priorSoftware) await forceMainSoftwareWebp(page);
     await setDistribution(priorRelativePath);
     await page.goto(baseUrl);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
-    await page.reload();
+    const priorNavigation = await page.reload();
+    if (removal) await verifyAppDocument(priorNavigation, priorBuild);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await page.waitForFunction(async () => {
       const names = await caches.keys();
@@ -225,13 +735,66 @@ async function exerciseBuildUpgrade(
       .filter((file) => /^assets\/[^/]+\.js$/.test(file.path))
       .map((file) => file.path.slice('assets/'.length))
       .filter((name) => !nextAssets.has(name));
-    await page.locator('[data-testid="file-input"]').setInputFiles(smallFixture);
-    await page.locator('[data-testid="convert-button"]').click();
-    const proceed = page.locator('[data-testid="modal-confirm-button"]');
-    if (await proceed.isVisible({ timeout: 1500 }).catch(() => false)) await proceed.click();
-    await page
-      .locator('[data-testid="result-section"]')
-      .waitFor({ state: 'visible', timeout: 120_000 });
+    const priorForcedWebp = priorSoftware
+      ? await convertAndVerifySoftwareWebp(
+          page,
+          baseUrl,
+          smallFixture,
+          priorSoftware,
+          false,
+          exactLegacyLoader
+        )
+      : null;
+    const warmedArchivedAssets = removal ? await verifyArchivedAssetFetches(page, true) : null;
+    if (removal) {
+      coldContext = await browser.newContext({ locale: 'en-US', acceptDownloads: true });
+      coldPage = await coldContext.newPage();
+      const tab = coldPage;
+      const traffic = await stageColdLegacyTab(tab, baseUrl, priorBuild);
+      try {
+        const pipeline = emittedAsset(priorBuild, /^assets\/conversion-pipeline[.-][\w-]{8}\.js$/);
+        // A real GIF conversion loads the prior main pipeline without loading WebP.
+        const pipelineResponse = tab.waitForResponse(
+          (response) => new URL(response.url()).pathname === assetPath(pipeline),
+          { timeout: 120_000 }
+        );
+        const [, served] = await Promise.all([
+          (async () => {
+            await tab.locator('[data-testid="option-format-gif"]').click();
+            await tab.locator('[data-testid="file-input"]').setInputFiles(smallFixture);
+            await tab.locator('[data-testid="convert-button"]').click();
+            const confirm = tab.locator('[data-testid="modal-confirm-button"]');
+            if (await confirm.isVisible()) await confirm.click();
+          })(),
+          pipelineResponse,
+        ]);
+        assert.equal(served.status(), 200);
+        assert.equal(sha256(await served.body()), pipeline.sha256);
+        await tab
+          .locator('[data-testid="result-section"]')
+          .waitFor({ state: 'visible', timeout: 120_000 });
+        assert(traffic.requests.every((path) => !isRetiredWebpExecutable(path)));
+        assert.deepEqual(await cachedLegacyExecutablePaths(coldPage), []);
+        coldDocument = await coldPage.evaluate(() => {
+          const controller = navigator.serviceWorker.controller;
+          if (controller?.state !== 'activated')
+            throw new Error('Cold legacy tab has no old controller');
+          globalThis.__wmcUpgradeInitialController = controller;
+          return performance.timeOrigin;
+        });
+      } finally {
+        traffic.stop();
+      }
+    }
+    if (!priorForcedWebp) {
+      await page.locator('[data-testid="file-input"]').setInputFiles(smallFixture);
+      await page.locator('[data-testid="convert-button"]').click();
+      const proceed = page.locator('[data-testid="modal-confirm-button"]');
+      if (await proceed.isVisible({ timeout: 1500 }).catch(() => false)) await proceed.click();
+      await page
+        .locator('[data-testid="result-section"]')
+        .waitFor({ state: 'visible', timeout: 120_000 });
+    }
     const oldDocumentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
     const oldDownloadHref = await page
       .locator('[data-testid="download-result-button"]')
@@ -248,6 +811,18 @@ async function exerciseBuildUpgrade(
     );
     assert(priorResultBytes.length > 100, 'Prior result Blob is unexpectedly small');
     const priorResultSha256 = sha256(priorResultBytes);
+    if (priorForcedWebp) assert.equal(priorResultSha256, priorForcedWebp.outputSha256);
+    const priorLegacyPaths = priorSoftware?.legacyExecutables.map(assetPath) ?? [];
+    const cachedLegacyBeforeUpdate = await cachedLegacyExecutablePaths(page, priorLegacyPaths);
+    const legacyCacheWarmed =
+      priorSoftware?.family === 'wasm-webp' &&
+      (removal
+        ? LEGACY_WEBP_DEPLOYMENT.files.every((asset) =>
+            cachedLegacyBeforeUpdate.includes(assetPath(asset))
+          )
+        : cachedLegacyBeforeUpdate.includes(assetPath(priorSoftware.asset)));
+    if (removal)
+      assert(legacyCacheWarmed, 'The three archived URLs were not warmed in Cache Storage');
     const cachedPaths = await page.evaluate(async () => {
       const paths = [];
       for (const name of (await caches.keys()).filter((value) =>
@@ -289,14 +864,17 @@ async function exerciseBuildUpgrade(
     // result remains available in the first tab. The high-motion fixture is
     // also used by the maintained cancellation acceptance.
     activePage = await context.newPage();
-    await activePage.goto(baseUrl);
+    const activeTraffic = removal ? observeSoftwareWebp(activePage, baseUrl) : null;
+    if (removal) await forceMainSoftwareWebp(activePage);
+    const activeNavigation = await activePage.goto(baseUrl);
+    if (removal) await verifyAppDocument(activeNavigation, priorBuild);
     await activePage.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await activePage.waitForFunction(
       () => navigator.serviceWorker.controller?.state === 'activated'
     );
     await activePage.locator('[data-testid="file-input"]').setInputFiles(activeFixture);
     for (const [group, value] of [
-      ['format', 'gif'],
+      ['format', removal ? 'webp' : 'gif'],
       ['quality', 'high'],
       ['scale', '1'],
       ['smart-frame-skip', 'adaptive'],
@@ -322,6 +900,16 @@ async function exerciseBuildUpgrade(
       undefined,
       { timeout: 180_000 }
     );
+    if (removal && priorSoftware && activeTraffic) {
+      const wasmPath = assetPath(priorSoftware.asset);
+      if (
+        !activeTraffic.responses.some((response) => new URL(response.url()).pathname === wasmPath)
+      )
+        await activePage.waitForResponse(
+          (response) => new URL(response.url()).pathname === wasmPath,
+          { timeout: 120_000 }
+        );
+    }
     const activeProgressAtSwitch = await activePage.evaluate(() =>
       Number(
         document
@@ -472,6 +1060,32 @@ async function exerciseBuildUpgrade(
       false,
       'Active old-build conversion failed after worker update'
     );
+    const activeLegacyWebp =
+      activeTraffic && priorSoftware
+        ? await verifySoftwareWebp(
+            activePage,
+            await readResultDownload(activePage),
+            priorSoftware,
+            activeTraffic,
+            { exactLegacyLoader }
+          )
+        : null;
+    activeTraffic?.stop();
+    const coldLegacyWebp =
+      removal && coldPage && coldDocument !== undefined && currentSoftware
+        ? await exerciseColdLegacyTab(
+            coldPage,
+            baseUrl,
+            smallFixture,
+            currentBuild,
+            currentSoftware,
+            coldDocument
+          )
+        : null;
+    if (coldContext) {
+      await coldContext.close();
+      coldContext = undefined;
+    }
     const retainedDownload = await readResultDownload(page);
     assert.equal(
       sha256(retainedDownload),
@@ -493,6 +1107,9 @@ async function exerciseBuildUpgrade(
       sha256(Buffer.from(cached.bytes)),
       'Cached prior JS changed after upgrade'
     );
+    const retainedLegacyAfterWorkerClaim = removal
+      ? await verifyArchivedAssetFetches(page, true, 'no-store', true)
+      : null;
     await context.setOffline(false);
 
     const missingPath = `/assets/${missingAsset}`;
@@ -621,7 +1238,8 @@ async function exerciseBuildUpgrade(
 
     // The user has downloaded the retained result and explicitly reloads the
     // browser tab. The new document must load the current build and remain usable.
-    await page.reload();
+    const currentNavigation = await page.reload();
+    if (removal) await verifyAppDocument(currentNavigation, currentBuild);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     assert.notEqual(
       await page.evaluate(() => performance.timeOrigin),
@@ -656,6 +1274,78 @@ async function exerciseBuildUpgrade(
       true,
       'Current application did not accept a settings interaction after explicit reload'
     );
+    const currentForcedWebp =
+      currentSoftware?.family === 'owned-vp8'
+        ? await convertAndVerifySoftwareWebp(page, baseUrl, smallFixture, currentSoftware)
+        : null;
+    const cachedLegacyAfterReload = await cachedLegacyExecutablePaths(page, priorLegacyPaths);
+    if (removal) {
+      assert.equal(
+        await activePage.evaluate(() => performance.timeOrigin),
+        activeDocumentTimeOrigin
+      );
+      assert.deepEqual(
+        cachedLegacyAfterReload,
+        LEGACY_WEBP_DEPLOYMENT.files.map(assetPath).sort(),
+        'The three archived executables must remain cached until the last old tab closes'
+      );
+    }
+    // The active old document has completed. Observe retention after its last
+    // client closes without manipulating application caches from the harness.
+    await activePage.close();
+    if (removal)
+      await page.waitForFunction(
+        async (retired) => {
+          for (const name of (await caches.keys()).filter((value) =>
+            value.startsWith('dropconvert-')
+          )) {
+            const requests = await (await caches.open(name)).keys();
+            if (requests.some((request) => retired.includes(new URL(request.url).pathname)))
+              return false;
+          }
+          return true;
+        },
+        priorLegacyPaths,
+        { timeout: 15_000 }
+      );
+    const cachedLegacyWithoutOldTabs = await cachedLegacyExecutablePaths(page, priorLegacyPaths);
+    const retiredAssetsAfterUpgrade = removal
+      ? {
+          normal: await verifyArchivedAssetFetches(page, false, 'default'),
+          bypassHttpCache: await verifyArchivedAssetFetches(page, false, 'no-store'),
+        }
+      : null;
+    if (removal) {
+      for (const asset of LEGACY_WEBP_DEPLOYMENT.files) {
+        const retiredUrl = new URL(assetPath(asset), baseUrl).href;
+        const response: APIResponse = await context.request.get(retiredUrl, {
+          maxRedirects: 0,
+          failOnStatusCode: false,
+          headers: { 'Cache-Control': 'no-cache' },
+        });
+        assert.equal(response.status(), 404, `Origin served retired executable ${asset.path}`);
+        assert(!/\bimmutable\b/i.test(response.headers()['cache-control'] ?? ''));
+        assert.notEqual(sha256(await response.body()), asset.sha256);
+      }
+      assert.deepEqual(await cachedLegacyExecutablePaths(page, priorLegacyPaths), []);
+    }
+    let restart = null;
+    if (persistent) {
+      assert(currentSoftware?.ownedOnly && currentForcedWebp && 'version' in warm);
+      // Close the entire process for the profile that actually upgraded from
+      // the archived build. A fresh candidate profile cannot prove eviction survives restart.
+      await context.close();
+      context = undefined;
+      restart = await verifyInstalledProfileRestart(
+        persistent,
+        warm.version,
+        baseUrl,
+        currentBuild,
+        smallFixture,
+        currentSoftware,
+        currentForcedWebp.outputSha256
+      );
+    }
     return {
       id: 'real-build-upgrade',
       status: 'passed',
@@ -674,6 +1364,37 @@ async function exerciseBuildUpgrade(
       retainedDocument: true,
       priorSourceSha: priorBuild.state.sourceSha,
       currentSourceSha: currentBuild.state.sourceSha,
+      priorManifestSha256: priorBuild.manifestSha256,
+      currentManifestSha256: currentBuild.manifestSha256,
+      priorForcedWebp,
+      currentForcedWebp,
+      ...(removal
+        ? {
+            warmedArchivedAssets,
+            activeLegacyWebp,
+            coldLegacyWebp,
+            retainedLegacyAfterWorkerClaim,
+            retiredAssetsAfterUpgrade,
+            restart,
+          }
+        : {}),
+      cachedLegacyBeforeUpdate,
+      legacyCacheWarmed,
+      cachedLegacyAfterReload,
+      cachedLegacyWithoutOldTabs,
+      ownedOnlyAfterUpgrade: Boolean(
+        currentSoftware?.ownedOnly &&
+        currentForcedWebp &&
+        priorForcedWebp &&
+        legacyCacheWarmed &&
+        cachedLegacyWithoutOldTabs.length === 0 &&
+        (!removal ||
+          (activeLegacyWebp &&
+            coldLegacyWebp &&
+            retainedLegacyAfterWorkerClaim &&
+            retiredAssetsAfterUpgrade &&
+            restart))
+      ),
       priorWorkerSha256: priorBuild.workerSha256,
       currentWorkerSha256: currentBuild.workerSha256,
       workerUpdateOutcome,
@@ -692,9 +1413,109 @@ async function exerciseBuildUpgrade(
       currentAppSettingsInteraction: true,
     };
   } finally {
-    await context.setOffline(false).catch(() => {});
+    try {
+      await coldContext?.close();
+      if (context) {
+        await context.setOffline(false).catch(() => {});
+        await context.close();
+      }
+    } finally {
+      try {
+        await persistent?.dispose();
+      } finally {
+        await setDistribution('dist');
+      }
+    }
+  }
+}
+
+async function installedBrowserVersion(context: BrowserContext, page: Page) {
+  const session = await context.newCDPSession(page);
+  try {
+    const { product, userAgent } = await session.send('Browser.getVersion');
+    return { product, userAgent };
+  } finally {
+    await session.detach();
+  }
+}
+
+async function prepareInstalledProfile(browser: Browser, bundleRoot: string) {
+  assert.equal(
+    browser.browserType().name(),
+    'chromium',
+    'Removal requires the installed Chromium controller'
+  );
+  const detection = await browser.newContext();
+  let expected: Awaited<ReturnType<typeof installedBrowserVersion>>;
+  try {
+    expected = await installedBrowserVersion(detection, await detection.newPage());
+  } finally {
+    await detection.close();
+  }
+  const channel = expected.userAgent.includes('Edg/') ? 'msedge' : 'chrome';
+  assert.match(expected.userAgent, /Chrome\//, 'Unsupported installed Chromium channel');
+  const profilePath = await mkdtemp(join(bundleRoot, '.wmc-owned-removal-'));
+  return {
+    channel,
+    async launch() {
+      const context = await browser.browserType().launchPersistentContext(profilePath, {
+        channel,
+        headless: false,
+        acceptDownloads: true,
+        locale: 'en-US',
+        args: ['--mute-audio'],
+      });
+      try {
+        const page = context.pages()[0] ?? (await context.newPage());
+        const version = await installedBrowserVersion(context, page);
+        assert.deepEqual(version, expected, 'Removal profile changed the installed browser build');
+        return { context, version };
+      } catch (error) {
+        await context.close();
+        throw error;
+      }
+    },
+    async dispose() {
+      await rm(profilePath, { recursive: true, force: true });
+    },
+  };
+}
+
+async function verifyInstalledProfileRestart(
+  persistent: Awaited<ReturnType<typeof prepareInstalledProfile>>,
+  before: Awaited<ReturnType<typeof installedBrowserVersion>>,
+  baseUrl: string,
+  build: Build,
+  fixture: string,
+  software: ReturnType<typeof softwareWebpInventory>,
+  outputSha256: string
+) {
+  const { context, version: after } = await persistent.launch();
+  try {
+    await context.setOffline(true);
+    const page = context.pages()[0] ?? (await context.newPage());
+    await forceMainSoftwareWebp(page);
+    await verifyAppDocument(await page.goto(baseUrl), build, true);
+    await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+    await page.locator('[data-testid="offline-banner"]').waitFor({ state: 'visible' });
+    const cachePaths = await cachedLegacyExecutablePaths(page);
+    assert.deepEqual(cachePaths, [], 'Retired cache entries survived process restart');
+    const retiredRequests = await verifyArchivedAssetFetches(page, false, 'default');
+    const webp = await convertAndVerifySoftwareWebp(page, baseUrl, fixture, software, true);
+    assert.equal(webp.outputSha256, outputSha256, 'Offline restart changed WebP output');
+    assert.deepEqual(await cachedLegacyExecutablePaths(page), []);
+    return {
+      status: 'passed',
+      profile: 'migrated',
+      channel: persistent.channel,
+      before,
+      after,
+      cachePaths,
+      retiredRequests,
+      webp,
+    };
+  } finally {
     await context.close();
-    await setDistribution('dist');
   }
 }
 
@@ -707,7 +1528,8 @@ export async function exerciseOfflineRecovery(
   smallFixture: string,
   activeFixture: string,
   priorRelativePath = 'validation/windows/prior-dist',
-  requireChangedWorker = false
+  requireChangedWorker = false,
+  removal?: RemovalVerification
 ) {
   const upgrade = await exerciseBuildUpgrade(
     browser,
@@ -717,13 +1539,20 @@ export async function exerciseOfflineRecovery(
     activeFixture,
     setDistribution,
     priorRelativePath,
-    requireChangedWorker
+    requireChangedWorker,
+    removal
   );
+  if (removal) assert(upgrade.ownedOnlyAfterUpgrade, 'Removal upgrade evidence is incomplete');
   const context = await browser.newContext({
     locale: 'en-US',
     viewport: { width: 1280, height: 900 },
+    acceptDownloads: true,
   });
   const page = await context.newPage();
+  const build = await readBuild(bundleRoot, 'dist', async (_root, path) => join(bundleRoot, path));
+  const software =
+    requireChangedWorker && !removal ? null : softwareWebpInventory(build.state.files);
+  if (software?.family === 'owned-vp8') await forceMainSoftwareWebp(page);
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   try {
@@ -756,7 +1585,8 @@ export async function exerciseOfflineRecovery(
 
     // Reload under the controller so application assets and the root response
     // reach the real worker before the browser's network is disabled.
-    await page.goto(`${baseUrl}/?offline-acceptance=online`);
+    const onlineResponse = await page.goto(`${baseUrl}/?offline-acceptance=online`);
+    if (removal) await verifyAppDocument(onlineResponse, build, true);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await page.waitForFunction(async () => {
       const names = await caches.keys();
@@ -786,6 +1616,10 @@ export async function exerciseOfflineRecovery(
     const before = await inspect();
     assert.match(before.contentType ?? '', /^text\/html\b/);
     assert.equal(before.status, 200);
+    const onlineWebp =
+      software?.family === 'owned-vp8'
+        ? await convertAndVerifySoftwareWebp(page, baseUrl, smallFixture, software)
+        : null;
 
     const textResponse = await page.goto(`${baseUrl}/robots.txt`);
     assert(textResponse);
@@ -802,6 +1636,7 @@ export async function exerciseOfflineRecovery(
 
     await context.setOffline(true);
     const offlineResponse = await page.goto(`${baseUrl}/?offline-acceptance=recovery`);
+    if (removal) await verifyAppDocument(offlineResponse, build, true);
     assert(offlineResponse);
     assert.equal(offlineResponse.status(), 200);
     assert.equal(offlineResponse.fromServiceWorker(), true);
@@ -811,6 +1646,10 @@ export async function exerciseOfflineRecovery(
     await page.locator('[data-testid="option-format-webp"]').click();
     assert.equal(await page.locator('[data-testid="option-format-webp"] input').isChecked(), true);
     await page.screenshot({ path: join(outputRoot, 'offline-app-recovery.png'), fullPage: true });
+    const offlineWebp =
+      software?.family === 'owned-vp8'
+        ? await convertAndVerifySoftwareWebp(page, baseUrl, smallFixture, software, true)
+        : null;
     await page.evaluate(async (cacheName) => {
       const cache = await caches.open(cacheName);
       await cache.put(
@@ -821,6 +1660,7 @@ export async function exerciseOfflineRecovery(
       );
     }, before.cacheName);
     const staticFallback = await page.reload();
+    if (removal) await verifyAppDocument(staticFallback, build, true);
     assert(staticFallback);
     assert.equal(staticFallback.status(), 200);
     assert.equal(staticFallback.fromServiceWorker(), true);
@@ -838,14 +1678,36 @@ export async function exerciseOfflineRecovery(
       path: join(outputRoot, 'offline-static-recovery.png'),
       fullPage: true,
     });
+    const staticFallbackWebp =
+      software?.family === 'owned-vp8'
+        ? await convertAndVerifySoftwareWebp(page, baseUrl, smallFixture, software, true)
+        : null;
+    if (onlineWebp) {
+      assert.equal(offlineWebp?.outputSha256, onlineWebp.outputSha256);
+      assert.equal(staticFallbackWebp?.outputSha256, onlineWebp.outputSha256);
+    }
+    const currentLegacyCachePaths = await cachedLegacyExecutablePaths(page);
+    if (software?.ownedOnly) assert.deepEqual(currentLegacyCachePaths, []);
     await context.setOffline(false);
     await page.locator('[data-testid="offline-banner"]').waitFor({ state: 'hidden' });
     assert.deepEqual(pageErrors, []);
+    if (removal)
+      assert(
+        software?.ownedOnly && onlineWebp && offlineWebp && staticFallbackWebp,
+        'Owned-only online and offline conversions were not all verified'
+      );
     const digest = (body: string) => createHash('sha256').update(body).digest('hex');
     return {
       id: 'offline-app-recovery',
       status: 'passed',
       upgrade,
+      sourceSha: build.state.sourceSha,
+      manifestSha256: build.manifestSha256,
+      software: software ? { family: software.family, ownedOnly: software.ownedOnly } : null,
+      onlineWebp,
+      offlineWebp,
+      staticFallbackWebp,
+      currentLegacyCachePaths,
       controller: identity.controller,
       cacheName: before.cacheName,
       priorPollutedCacheRemoved: true,
@@ -946,6 +1808,15 @@ function emittedAsset(build: Build, pattern: RegExp) {
   const asset = matches[0];
   assert(asset);
   return asset;
+}
+
+export function selectPipelineDependency(files: readonly InventoryFile[]) {
+  const gifenc = files.filter(({ path }) => /^assets\/gifenc[.-][\w-]{8}\.js$/.test(path));
+  const dependency = gifenc.length
+    ? gifenc
+    : files.filter(({ path }) => /^assets\/owned-demux-index-snapshot[.-][\w-]{8}\.js$/.test(path));
+  assert.equal(dependency.length, 1, 'Build needs one known first-pipeline preload dependency');
+  return { asset: dependency[0]!, firstConversion: gifenc.length > 0 };
 }
 
 function assetPath(asset: Build['main']) {
@@ -1316,9 +2187,7 @@ async function firstPipelineImportFailure(
 ) {
   await started.setDistribution(build.relativePath);
   const pipeline = emittedAsset(build, /^assets\/conversion-pipeline[.-][\w-]{8}\.js$/);
-  // The emitted Vite preload graph requests gifenc alongside the pipeline,
-  // including for WebP. Offline rejection therefore fails this dependency too.
-  const pipelineDependency = emittedAsset(build, /^assets\/gifenc[.-][\w-]{8}\.js$/);
+  const pipelineDependency = selectPipelineDependency(build.state.files);
   const path = assetPath(pipeline);
   const errorChunk = baseline
     ? emittedAsset(build, /^assets\/ErrorDisplay[.-][\w-]{8}\.js$/)
@@ -1377,7 +2246,15 @@ async function firstPipelineImportFailure(
       assert.equal(await option.locator('input').isChecked(), true);
     }
     await assertNeverFetched(page, path);
-    await assertNeverFetched(page, assetPath(pipelineDependency));
+    const dependencyPath = assetPath(pipelineDependency.asset);
+    // Owned demux is shared with media inspection and already requested on
+    // upload. The historical gifenc preload is cold when conversion starts.
+    if (pipelineDependency.firstConversion) await assertNeverFetched(page, dependencyPath);
+    else
+      assert(
+        events.requestedAssets.includes(dependencyPath),
+        'Shared owned demux preload was not observed during media inspection'
+      );
     if (errorChunk) await assertNeverFetched(page, assetPath(errorChunk));
     const timeOrigin = await page.evaluate(() => performance.timeOrigin);
     const beforeOrigin = started.observedAssetRequests.length;
@@ -1420,8 +2297,11 @@ async function firstPipelineImportFailure(
     }
     const errorChunkPath = errorChunk ? assetPath(errorChunk) : null;
     if (baseline) assert(errorChunkPath);
-    const expectedPaths = baseline ? [path, assetPath(pipelineDependency), errorChunkPath] : [path];
-    const expectedRequestedPaths = baseline ? expectedPaths : [path, assetPath(pipelineDependency)];
+    const firstConversionImports = pipelineDependency.firstConversion
+      ? [path, dependencyPath]
+      : [path];
+    const expectedPaths = baseline ? [...firstConversionImports, errorChunkPath] : [path];
+    const expectedRequestedPaths = baseline ? expectedPaths : firstConversionImports;
     const deadline = Date.now() + 15_000;
     while (
       Date.now() < deadline &&
@@ -1508,8 +2388,9 @@ async function firstPipelineImportFailure(
       sourceSha: build.state.sourceSha,
       emittedPipeline: path,
       pipelineSha256: pipeline.sha256,
-      pipelineDependency: assetPath(pipelineDependency),
-      pipelineDependencySha256: pipelineDependency.sha256,
+      pipelineDependency: dependencyPath,
+      pipelineDependencySha256: pipelineDependency.asset.sha256,
+      pipelineDependencyFirstRequestedDuringConversion: pipelineDependency.firstConversion,
       secondaryErrorChunk: errorChunk ? assetPath(errorChunk) : null,
       secondaryErrorChunkSha256: errorChunk?.sha256 ?? null,
       serviceWorkerControlled: controlled,
