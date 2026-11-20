@@ -345,10 +345,10 @@ ranking trial used the existing two-class wire map.
 The single-quantizer q85 rate trial uses that exact source gate and bias.
 It rounds the mean of the original FineSmooth and ChromaticFlat qindices,
 weighted by their source macroblock counts, to the nearest integer. Exact
-half-integer ties round up. The rate ablation advances that mean to the first
-larger index with a distinct, coarser UV DC step, bounded by the coarser
-original class index. This accounts for repeated entries in the VP8 DC table.
-If the bound contains no distinct coarser step, the mean is retained. The
+half-integer ties round up. When adjacent indices within the original class range share the mean’s
+physical UV DC step, the encoder advances to the first distinct coarser step
+within that range. A unique step or a plateau without a coarser step keeps
+the weighted mean. The
 selected base index omits VP8 segmentation. Source IDs and class-specific rate
 weights stay intact.
 Every coded block uses the selected base index with the existing UV deltas,

@@ -228,12 +228,19 @@ impl Config {
         let mean = (weighted + total / 2) / total;
         let uv_dc_step = |qindex: usize| steps(qindex as u8, deltas, Plane::UV).dc;
         let initial = uv_dc_step(mean);
-        // Adjacent qindices can have the same UV DC step. Stay within the
-        // original source quantizer range while testing the next real step.
+        let finest = fine_qindex.min(flat_qindex);
         let coarsest = fine_qindex.max(flat_qindex);
-        let selected = (mean + 1..=coarsest)
-            .find(|&qindex| uv_dc_step(qindex) > initial)
-            .unwrap_or(mean);
+        let shares_step = (mean > finest && uv_dc_step(mean - 1) == initial)
+            || (mean < coarsest && uv_dc_step(mean + 1) == initial);
+        // Keep an unambiguous rounded index. Treat every member of a repeated
+        // DC step alike so selection stays monotonic across the plateau.
+        let selected = if shares_step {
+            (mean + 1..=coarsest)
+                .find(|&qindex| uv_dc_step(qindex) > initial)
+                .unwrap_or(mean)
+        } else {
+            mean
+        };
         Self::nonsegmented(selected)
     }
 
@@ -604,14 +611,14 @@ mod tests {
     }
 
     #[test]
-    fn q85_smooth_pair_takes_the_next_distinct_uv_dc_step_after_the_rounded_mean() {
+    fn q85_smooth_pair_advances_only_a_repeated_uv_dc_step() {
         let deltas = presets::deltas(85);
         for (counts, mean, expected) in [
             ([1, 1, 0, 0], 11, 12),
             ([5, 4, 0, 0], 10, 12),
-            ([3, 1, 0, 0], 8, 9),
-            ([1, 3, 0, 0], 13, 14),
-            ([113, 287, 0, 0], 12, 13),
+            ([3, 1, 0, 0], 8, 8),
+            ([1, 3, 0, 0], 13, 13),
+            ([113, 287, 0, 0], 12, 12),
             ([1, 31, 0, 0], 15, 15),
         ] {
             let original = Config::from_counts(85, counts, counts.iter().sum(), false);
@@ -638,6 +645,21 @@ mod tests {
                 selected.write_id(&mut header, id).unwrap();
             }
             assert_eq!(header.count, 1);
+        }
+    }
+
+    #[test]
+    fn q85_smooth_pair_allocation_is_monotonic_across_the_dc_plateau() {
+        let mut previous = 0;
+        for flat in 1..100 {
+            let counts = [100 - flat, flat, 0, 0];
+            let original = Config::from_counts(85, counts, 100, false);
+            let selected = original.with_q85_smooth_pair_allocation(counts, presets::deltas(85));
+            let mean = (6 * counts[0] + 15 * flat + 50) / 100;
+            let expected = if (10..=11).contains(&mean) { 12 } else { mean };
+            assert_eq!(selected.base_qindex, expected);
+            assert!(selected.base_qindex >= previous);
+            previous = selected.base_qindex;
         }
     }
 
