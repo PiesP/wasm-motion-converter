@@ -55,6 +55,10 @@ impl CurvatureTotals {
             && blocks > 0
     }
 
+    pub(crate) fn luma_mean_at_most_twice_cutoff(self, blocks: usize) -> bool {
+        blocks > 0 && self.sums[0] <= 2 * CURVATURE_CUTOFF * Y_DIFFERENCES_PER_BLOCK * blocks as u64
+    }
+
     pub(crate) fn luma_dominates(self) -> bool {
         let [y, u, v] = self.sums;
         // All planes use the same number of macroblocks. Compare their means

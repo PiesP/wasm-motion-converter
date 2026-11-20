@@ -144,11 +144,11 @@ Y1 AC zero bin for I16. I4 retains its ordinary quantization. If luma
 itself exceeds the cutoff but one chroma plane has higher mean curvature
 than luma and the other stays within the cutoff, the experiment moves
 the q60 UV AC delta halfway toward UV DC and raises q85 UV AC by one.
-These choices require at least one complete visible block. A separate
-q85 experiment refines only Y2 DC on segmented, entirely smooth fields
-that contain FineSmooth and ChromaticRamp classes and have a majority
-of chromatic blocks. Its −2 index adjustment moves the q15 chromatic
-segment one physical Y2 DC step across the q14/q15 plateau.
+These choices require at least one complete visible block. The I16 zero
+bin applies through twice the ordinary luma cutoff. Stronger luma edges
+keep the ordinary Y1 AC rounding. The ordinary q60 luma-dominant profile
+also qualifies full tiles for local UV DC error feedback when both chroma
+means stay within the cutoff.
 
 Eligible mixed low-curvature q60 frames use one wire quantizer when the
 estimated segment ID map exceeds 128 bytes or when both FineSmooth and
@@ -307,7 +307,9 @@ The first q75 feedback experiment isolated the effect of that tile-local
 correction on original-reference PSNR. Under the retained q75 profile, it
 also applies to low-curvature luma-dominant frames with a strict majority
 of ChromaticRamp blocks, no Textured blocks, non-neutral chroma and at least
-one full visible block.
+one full visible block. At q85, the experiment also enables local feedback
+on entirely smooth chromatic-majority fields containing both FineSmooth and
+ChromaticRamp blocks. It keeps the ordinary Y2 and UV quantization factors.
 
 For a frame with varied visible imported luma, U and V both within one unit
 of 128, and visible RGB import error within the existing chroma-loss bound,

@@ -2194,6 +2194,11 @@ fn q85_smooth_pair_luma_bias(
         && segmentation::smooth_pair_only(counts)
 }
 
+fn q85_chromatic_ramp_uv_feedback(quality: u32, counts: [usize; 4]) -> bool {
+    let [fine, flat, ramp, textured] = counts;
+    quality == 85 && textured == 0 && fine > 0 && ramp > 0 && flat + ramp > fine
+}
+
 fn q75_luma_ramp_uv_feedback(
     quality: u32,
     neutral_chroma: bool,
@@ -2447,12 +2452,14 @@ fn encode_observed(
         high_chroma_loss,
     );
     let photo_q60 = ordinary_q60_texture && low_curvature;
+    // Restrict the widened bin to residuals on moderately curved luma.
+    // Above twice the smoothness cutoff, retain small edge coefficients.
     let textured_i16_zero_bin = q60_textured_with_smooth_chroma(
         ordinary_q60_texture,
         curvature,
         count,
         (width as u32, height as u32),
-    );
+    ) && curvature.luma_mean_at_most_twice_cutoff(count);
     let mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
         quality,
         class_counts,
@@ -2476,6 +2483,13 @@ fn encode_observed(
     );
     let uv_dc_feedback = mixed_y1_ac
         || medium_y1_ac
+        || q85_chromatic_ramp_uv_feedback(quality, class_counts)
+        || q60_textured_with_smooth_chroma(
+            ordinary_q60_texture,
+            curvature,
+            count,
+            (width as u32, height as u32),
+        )
         || q75_luma_ramp_uv_feedback(
             quality,
             neutral_chroma,
@@ -2828,12 +2842,6 @@ fn encode_observed(
         curvature,
         high_chroma_loss,
         (width as u32, height as u32),
-    );
-    deltas = crate::presets::q85_chromatic_ramp_y2_dc_deltas(
-        deltas,
-        quality,
-        class_counts,
-        segments.enabled,
     );
     deltas = crate::presets::q85_smooth_textured_deltas(
         deltas,
@@ -5141,7 +5149,9 @@ impl FrameEncoder {
                 self.curvature,
                 self.blocks.len(),
                 (self.request.width, self.request.height),
-            );
+            ) && self
+                .curvature
+                .luma_mean_at_most_twice_cutoff(self.blocks.len());
             self.mixed_y1_ac = crate::presets::mixed_y1_ac_profile(
                 quality,
                 self.class_counts,
@@ -5160,6 +5170,13 @@ impl FrameEncoder {
                 medium_mixed_low_curvature(quality, self.omit_display_refinement, low_curvature);
             self.uv_dc_feedback = self.mixed_y1_ac
                 || self.medium_y1_ac
+                || q85_chromatic_ramp_uv_feedback(quality, self.class_counts)
+                || q60_textured_with_smooth_chroma(
+                    ordinary_q60_texture,
+                    self.curvature,
+                    self.blocks.len(),
+                    (self.request.width, self.request.height),
+                )
                 || q75_luma_ramp_uv_feedback(
                     quality,
                     self.neutral_chroma,
@@ -5226,12 +5243,6 @@ impl FrameEncoder {
                 self.curvature,
                 self.high_chroma_loss,
                 (self.request.width, self.request.height),
-            );
-            self.deltas = crate::presets::q85_chromatic_ramp_y2_dc_deltas(
-                self.deltas,
-                quality,
-                self.class_counts,
-                self.segments.enabled,
             );
             self.deltas = crate::presets::q85_smooth_textured_deltas(
                 self.deltas,
@@ -11098,6 +11109,15 @@ mod tests {
     }
 
     #[test]
+    fn chromatic_ramp_feedback_requires_a_strict_smooth_chromatic_majority_at_q85() {
+        assert!(q85_chromatic_ramp_uv_feedback(85, [1, 0, 2, 0]));
+        for counts in [[2, 0, 2, 0], [1, 2, 0, 0], [0, 2, 1, 0], [1, 2, 1, 1]] {
+            assert!(!q85_chromatic_ramp_uv_feedback(85, counts));
+        }
+        assert!(!q85_chromatic_ramp_uv_feedback(75, [1, 0, 2, 0]));
+    }
+
+    #[test]
     fn q75_luma_ramp_feedback_covers_only_full_tiles_in_luma_dominant_ramps() {
         let luma = segmentation::CurvatureTotals { sums: [448, 0, 0] };
         let chroma = segmentation::CurvatureTotals { sums: [448, 97, 0] };
@@ -11118,6 +11138,42 @@ mod tests {
             assert_eq!(enabled, expected);
             assert_eq!(uv_dc_feedback_for_tile(enabled, 0, 0, 8, 8), expected);
             assert!(!uv_dc_feedback_for_tile(enabled, 0, 0, 8, 7));
+        }
+    }
+
+    #[test]
+    fn ordinary_q60_texture_feedback_preserves_wire_grid_and_sync_resume() {
+        let input = photo_allocation_input();
+        for quality in [60, 75, 85] {
+            let request = Request {
+                quality,
+                ..engine_request(16, 16, 0, &input, 64)
+            };
+            let plan = ResourcePlan::checked(request).unwrap();
+            let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
+            assert!(engine.curvature.only_luma_exceeds_cutoff(1));
+            assert_eq!(engine.uv_dc_feedback, quality == 60);
+            assert_eq!(
+                uv_dc_feedback_for_tile(engine.uv_dc_feedback, 0, 0, 8, 8),
+                quality == 60
+            );
+            assert!(!uv_dc_feedback_for_tile(engine.uv_dc_feedback, 0, 0, 8, 7));
+            if quality == 60 {
+                assert_eq!(engine.segments.base_qindex, 32);
+                assert_eq!(engine.rate_qindex(segmentation::TEXTURED), 32);
+                assert_eq!(
+                    engine.deltas,
+                    Deltas {
+                        uv_dc: -4,
+                        uv_ac: -4,
+                        ..Deltas::default()
+                    }
+                );
+            }
+            assert_eq!(
+                engine.output(),
+                encode_textured(&input, 16, 16, 64, 0, quality).unwrap()
+            );
         }
     }
 
@@ -12638,7 +12694,7 @@ mod tests {
     }
 
     #[test]
-    fn q60_textured_i16_zero_bin_reuses_the_inclusive_plane_cutoff() {
+    fn q60_textured_smooth_chroma_reuses_the_inclusive_plane_cutoff() {
         use segmentation::CurvatureTotals;
 
         for (ordinary, count, sums, visible, expected) in [
@@ -12660,16 +12716,54 @@ mod tests {
     }
 
     #[test]
+    fn luma_zero_bin_upper_bound_is_inclusive() {
+        for (blocks, luma_sum, expected) in [
+            (1, 1792, true),
+            (1, 1793, false),
+            (2, 3584, true),
+            (2, 3585, false),
+            (0, 0, false),
+        ] {
+            let totals = segmentation::CurvatureTotals {
+                sums: [luma_sum, 0, 0],
+            };
+            assert_eq!(totals.luma_mean_at_most_twice_cutoff(blocks), expected);
+        }
+    }
+
+    fn luma_stripes_with_smooth_chroma(contrast: u8) -> Vec<u8> {
+        let mut input = Vec::with_capacity(16 * 16 * 4);
+        for _ in 0..16 {
+            for x in 0..16 {
+                let n = if x % 8 < 4 { 80 } else { 80 + contrast };
+                input.extend_from_slice(&[n + 6, n, n - 3, 255]);
+            }
+        }
+        input
+    }
+
+    #[test]
     fn textured_i16_zero_bin_uses_the_existing_wire_profile_in_both_encoders() {
-        let input = photo_allocation_input();
-        for quality in [60, 75, 85] {
+        for (contrast, quality, enabled) in [
+            (20, 60, true),
+            (36, 60, false),
+            (20, 75, false),
+            (20, 85, false),
+        ] {
+            let input = luma_stripes_with_smooth_chroma(contrast);
             let request = Request {
                 quality,
                 ..engine_request(16, 16, 0, &input, 64)
             };
             let plan = ResourcePlan::checked(request).unwrap();
             let engine = run_engine(FrameEncoder::new(request, input.clone(), plan).unwrap());
-            assert_eq!(engine.textured_i16_zero_bin, quality == 60);
+            assert_eq!(engine.class_counts, [0, 0, 0, 1]);
+            assert!(engine.curvature.only_luma_exceeds_cutoff(1));
+            assert_eq!(
+                engine.curvature.luma_mean_at_most_twice_cutoff(1),
+                contrast == 20
+            );
+            assert_eq!(engine.textured_i16_zero_bin, enabled);
             assert!(!engine.mixed_y1_ac);
             assert!(!engine.omit_display_refinement);
             if quality == 60 {

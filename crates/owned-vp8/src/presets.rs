@@ -163,30 +163,6 @@ pub(crate) fn one_rough_chroma_plane_deltas(
     selected
 }
 
-pub(crate) fn q85_chromatic_ramp_y2_dc_deltas(
-    mut selected: Deltas,
-    quality: u32,
-    counts: [usize; 4],
-    segmented: bool,
-) -> Deltas {
-    use crate::segmentation::{CHROMATIC_FLAT, CHROMATIC_RAMP, FINE_SMOOTH, TEXTURED};
-
-    let fine = counts[FINE_SMOOTH as usize];
-    let ramps = counts[CHROMATIC_RAMP as usize];
-    if quality == 85
-        && segmented
-        && fine > 0
-        && ramps > 0
-        && counts[TEXTURED as usize] == 0
-        && counts[CHROMATIC_FLAT as usize] + ramps > fine
-    {
-        // The q14/q15 DC table plateau requires a delta of -2 to refine
-        // the q15 chromatic segments by one Y2 DC quantization step.
-        selected.y2_dc = selected.y2_dc.min(-2);
-    }
-    selected
-}
-
 pub(crate) fn q85_smooth_textured_deltas(
     mut selected: Deltas,
     quality: u32,
@@ -367,66 +343,6 @@ pub(crate) fn lambda_for_quality(qindex: usize, quality: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn q85_chromatic_ramp_y2_dc_requires_a_segmented_color_majority_without_texture() {
-        let original = deltas(85);
-        let selected = Deltas {
-            y2_dc: -2,
-            ..original
-        };
-        for (quality, counts, segmented, expected) in [
-            (85, [3, 57, 57, 0], true, selected),
-            (85, [3, 0, 4, 0], true, selected),
-            (85, [4, 1, 3, 0], true, original),
-            (85, [95, 20, 2, 0], true, original),
-            (85, [0, 4, 104, 0], true, original),
-            (85, [4, 7, 0, 0], true, original),
-            (85, [3, 57, 57, 1], true, original),
-            (85, [3, 57, 57, 0], false, original),
-            (60, [3, 57, 57, 0], true, original),
-            (75, [3, 57, 57, 0], true, original),
-        ] {
-            assert_eq!(
-                q85_chromatic_ramp_y2_dc_deltas(original, quality, counts, segmented),
-                expected
-            );
-        }
-        let already_finer = Deltas {
-            y2_dc: -3,
-            ..original
-        };
-        assert_eq!(
-            q85_chromatic_ramp_y2_dc_deltas(already_finer, 85, [3, 57, 57, 0], true),
-            already_finer
-        );
-    }
-
-    #[test]
-    fn q85_chromatic_ramp_y2_dc_moves_the_physical_quantizer_one_step_for_color() {
-        use crate::ac_quant::{steps, Plane};
-
-        let original = deltas(85);
-        let refined = q85_chromatic_ramp_y2_dc_deltas(original, 85, [3, 57, 57, 0], true);
-        for (qindex, before, after) in [
-            (smooth_qindex(85) as u8, 20, 16),
-            (chromatic_flat_qindex(85) as u8, 34, 32),
-            (chromatic_ramp_qindex(85) as u8, 34, 32),
-        ] {
-            assert_eq!(steps(qindex, original, Plane::Y2).dc, before);
-            assert_eq!(steps(qindex, refined, Plane::Y2).dc, after);
-            assert_eq!(
-                steps(qindex, original, Plane::Y2).ac,
-                steps(qindex, refined, Plane::Y2).ac
-            );
-            for plane in [Plane::Y1, Plane::UV] {
-                assert_eq!(
-                    steps(qindex, original, plane),
-                    steps(qindex, refined, plane)
-                );
-            }
-        }
-    }
 
     #[test]
     fn mixed_y1_ac_profile_requires_colored_low_curvature_q60_and_multiple_ids() {
