@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "freezeId": "vp8-v14-first-heldout-20261120-01",
+  "status": "EXPOSED_REGRESSION",
+  "originalFrozenManifestSha256": "f4f096225a12d56ebba36b5e1f8676fff508022865049e232f1d38a603bdae59",
+  "firstAttempt": {
+    "status": "REJECTED_HELDOUT",
+    "sourceSha": "2f9ac13b72167e2d5c4d0d7418d7c92dd840edec",
+    "moduleSha256": "14fa1a6cad9531f2b1df86c6d181cf505441064010733189fcfe31f261da193e",
+    "outcomeSha256": "d968d533ee30b18383d598db6d2a4bd74f0830539de2cde321d8a562cd6ecb6f",
+    "resultsSha256": "f90391a6d979802d45d8d1256998779bab730af714dc69d3706e12456359a16c",
+    "passed": 59,
+    "conditions": 60,
+    "failure": { "fixture": "fresh14-large", "quality": 75, "gate": "size" }
+  }
+}
