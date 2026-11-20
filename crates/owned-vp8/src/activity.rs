@@ -258,10 +258,25 @@ impl Activity {
         };
         Some(Allocation {
             config,
-            deltas,
+            deltas: refine_activity_uv_grid(quality, deltas),
             alpha_to_id: map,
         })
     }
+}
+
+fn refine_activity_uv_grid(quality: u32, mut deltas: Deltas) -> Deltas {
+    // Activity drives the luma grid; reserve a finer chroma grid on the
+    // coarser presets with the largest original UV reconstruction steps.
+    // The original UV AC adjustment is in -4..=6, keeping both deltas
+    // representable in the VP8 header's four-bit magnitude plus sign.
+    let reserve = match quality {
+        60 => 10,
+        75 => 6,
+        _ => 0,
+    };
+    deltas.uv_dc -= reserve;
+    deltas.uv_ac -= reserve;
+    deltas
 }
 
 struct Plane<'a> {
@@ -383,6 +398,27 @@ fn cluster(histogram: &[u32; 256]) -> Cluster {
 #[cfg(all(test, feature = "activity-allocation"))]
 mod deferred_tests {
     use super::*;
+
+    #[test]
+    fn activity_chroma_reserve_keeps_the_luma_grid_and_valid_signed_deltas() {
+        for uv_ac in -4..=6 {
+            let native = Deltas {
+                uv_dc: -2,
+                uv_ac,
+                ..Deltas::default()
+            };
+            for (quality, reserve) in [(60, 10), (75, 6), (85, 0)] {
+                let selected = refine_activity_uv_grid(quality, native);
+                assert_eq!(selected.y1_dc, native.y1_dc);
+                assert_eq!(selected.y2_dc, native.y2_dc);
+                assert_eq!(selected.y2_ac, native.y2_ac);
+                assert_eq!(selected.uv_dc, -2 - reserve);
+                assert_eq!(selected.uv_ac, uv_ac - reserve);
+                assert!((-15..=15).contains(&selected.uv_dc));
+                assert!((-15..=15).contains(&selected.uv_ac));
+            }
+        }
+    }
 
     #[test]
     fn deferred_activity_admission_accepts_only_a_certifying_lower_bound() {

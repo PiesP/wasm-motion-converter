@@ -25,10 +25,10 @@
     "crates/owned-vp8/rust-toolchain.toml": "63eade4342cf85d77a436ffb9b086d301d7be4b3a7f5d01940eb2ce4f78a26f0",
     "crates/owned-vp8/LICENSE.libwebp": "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf",
     "crates/owned-vp8/PATENTS.libwebp": "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c",
-    "crates/owned-vp8/README.md": "673c57aeb83f2357a702a8027b7a1bbe554d773300591667edbd67a54bec95f2",
+    "crates/owned-vp8/README.md": "fb62183c43c7c431e3deb55e4ff70ca56c669d3857752c785a034ae1726aa9e8",
     "crates/owned-vp8/src/abi.rs": "79b9c11bba23c0337c6016c4f6c869a28ef6b3d6c990c3c3fbaec2c042ea84f2",
     "crates/owned-vp8/src/ac_quant.rs": "65bae8549550ef096fc8481b2685e17442055af0f1ef24f14756990f06b0ba12",
-    "crates/owned-vp8/src/activity.rs": "233a557d32b07a568c2adcffc50d39fe70735ec59ac2cf69bc3417cad88d67a7",
+    "crates/owned-vp8/src/activity.rs": "c81438049790ba764fc6ff0ca7758d87462363262debdf015c7a22ca4e0775a4",
     "crates/owned-vp8/src/bmode_probs.rs": "abd7bd0e0e6d0e21d4711f4b8d65261357514a536c7f90213571b1725e5e1ef4",
     "crates/owned-vp8/src/coeff_update_probs.rs": "ad7ba79c9921dde735afd234f252db001733fdc804750d9cdb0cc74f3f706e4e",
     "crates/owned-vp8/src/color.rs": "17c982956cb16127b41e94ae52172a99a9039717c52361e1df940e69df6c9d70",
@@ -52,9 +52,9 @@
     "scripts/build/build-gif-scalar-wasm.ts": "1a24a58b72be880aa8b5f151b0acd0258772e8434f33517f614af53aa4a69439"
   },
   "artifact": {
-    "sha256": "7c7890aa50185d9552583466fb54bb29b3095b83cbdd94177c26790f3ea09068",
-    "rawBytes": 299487,
-    "gzipBytes": 103088,
+    "sha256": "8b8da33e9e2298fd265cd25a2b3bcd4f2962cdc63a71e37ab773dff570c10869",
+    "rawBytes": 299582,
+    "gzipBytes": 103156,
     "gzipMethod": "gzip level 9, mtime 0",
     "initialLinearBytes": 1114112,
     "maxLinearBytes": 201326592
