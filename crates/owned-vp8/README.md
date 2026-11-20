@@ -309,7 +309,7 @@ also applies to low-curvature luma-dominant frames with a strict majority
 of ChromaticRamp blocks, no Textured blocks, non-neutral chroma and at least
 one full visible block. At q85, the experiment also enables local feedback
 on entirely smooth chromatic-majority fields containing both FineSmooth and
-ChromaticRamp blocks. It keeps the ordinary Y2 and UV quantization factors.
+ChromaticRamp blocks. It refines the UV DC index by one and keeps the ordinary Y2 and UV AC factors.
 
 For a frame with varied visible imported luma, U and V both within one unit
 of 128, and visible RGB import error within the existing chroma-loss bound,

@@ -2199,6 +2199,13 @@ fn q85_chromatic_ramp_uv_feedback(quality: u32, counts: [usize; 4]) -> bool {
     quality == 85 && textured == 0 && fine > 0 && ramp > 0 && flat + ramp > fine
 }
 
+fn smooth_chromatic_ramp_deltas(mut deltas: Deltas, quality: u32, counts: [usize; 4]) -> Deltas {
+    if q85_chromatic_ramp_uv_feedback(quality, counts) {
+        deltas.uv_dc -= 1;
+    }
+    deltas
+}
+
 fn q75_luma_ramp_uv_feedback(
     quality: u32,
     neutral_chroma: bool,
@@ -2843,6 +2850,7 @@ fn encode_observed(
         high_chroma_loss,
         (width as u32, height as u32),
     );
+    deltas = smooth_chromatic_ramp_deltas(deltas, quality, class_counts);
     deltas = crate::presets::q85_smooth_textured_deltas(
         deltas,
         quality,
@@ -5244,6 +5252,7 @@ impl FrameEncoder {
                 self.high_chroma_loss,
                 (self.request.width, self.request.height),
             );
+            self.deltas = smooth_chromatic_ramp_deltas(self.deltas, quality, self.class_counts);
             self.deltas = crate::presets::q85_smooth_textured_deltas(
                 self.deltas,
                 quality,
@@ -11106,6 +11115,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(engine.output(), sync);
+    }
+
+    #[test]
+    fn high_quality_chromatic_ramp_preserves_both_entry_paths_on_partial_tiles() {
+        let (width, height) = (65, 33);
+        let input = mixed_chroma_input(width, height, |column| usize::from(column == 0));
+        let request = Request {
+            quality: 85,
+            ..engine_request(width, height, 0, &input, width * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let mut engine = FrameEncoder::new(request, input.clone(), plan).unwrap();
+        while engine.stage != Stage::Analyze {
+            assert!(!engine.step().unwrap());
+        }
+        assert_eq!(engine.class_counts, [6, 0, 9, 0]);
+        assert!(engine.segments.enabled && engine.uv_dc_feedback);
+        let baseline = crate::presets::deltas(85);
+        assert_eq!(
+            engine.deltas,
+            Deltas {
+                uv_dc: baseline.uv_dc - 1,
+                ..baseline
+            }
+        );
+        let encoded = run_engine(engine);
+        let sync =
+            encode_textured(&input, request.width, request.height, request.stride, 0, 85).unwrap();
+        assert_eq!(encoded.output(), sync);
     }
 
     #[test]
