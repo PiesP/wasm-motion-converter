@@ -74,7 +74,7 @@ use a frozen install.
 
 ## wasm-webp strict-CSP patch
 
-`wasm-webp@0.1.0.patch` changes the ESM glue used by the application. Its
+`wasm-webp@0.1.0.patch` changes the ESM glue used by the development-only VP8 comparison encoder. Its
 Emscripten bindings otherwise construct JavaScript functions from strings during
 initialization, which the application's CSP rejects. The WebAssembly binary and
 package version are unchanged.
@@ -93,28 +93,20 @@ after the same checks pass.
 `test/unit/config/csp-policy.test.ts` initializes the real WASM module under
 Node's `--disallow-code-generation-from-strings`, round-trips distinct RGB frames,
 and checks repeated use and argument validation. The browser output-contract
-suite forces the WASM fallback under the application's actual CSP and decodes
+suite forces the owned VP8 fallback under the application's actual CSP and decodes
 the resulting animation to verify geometry, color order, and timing. pnpm binds
 the exact patch hash in the lockfile and rejects an unapplied patch.
 
-### Failed initialization
+### Historical initialization behavior
 
-The application retains a rejected WebP initialization for the document lifetime
-and offers an explicit reload under the existing busy-work/result protection.
-The locked Emscripten factory owns per-invocation memory, binding registries and a
-10-second dependency watcher. A rejected streaming fetch rejects `Module.ready`
-without calling `abort` or removing the `wasm-instantiate` dependency; the watcher
-can therefore retain a partially initialized runtime. There is no supported
-partial-runtime disposal API. Reinvoking this factory may succeed but does not
-release that earlier runtime, so clearing only the application Promise is not a
-qualified recovery. No allocation exhaustion is induced to test this boundary.
+The archived 7d9e0f1b application retained a rejected wasm-webp initialization
+for the document lifetime and offered an explicit reload under its busy-work
+and result protections. The pinned Emscripten factory keeps per-invocation
+memory, binding registries and a dependency watcher. A failed streaming fetch
+can reject `Module.ready` while that watcher still retains the partially
+initialized instance. The factory provides no partial-runtime disposal API.
 
-`WasmWebpInitializationError` separates factory failures from import/evaluation
-failures and retains the original cause. Both require explicit reload; a
-browser's failed module graph is not repaired by resetting an application
-Promise. Successful initialization remains shared, frame errors do not reset it,
-and caller cancellation does not dispose it. No conversion or reload is retried
-automatically. The focused built output-contract/Windows scenario injects one
-failed factory fetch, a separate module-evaluation failure, and a cancelled late
-factory failure, then exercises the real reload action and decodes a valid WebP.
-These controlled failures do not establish a reported incident or its frequency.
+The current application loads the owned VP8 module. After an initialization
+failure the user can retry in the same document. Installed-browser validation
+checks failed fetch, invalid module, cancellation, physical settlement and
+recovery. Older wasm-webp observations remain bound to the archived builds.

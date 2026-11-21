@@ -61,6 +61,8 @@ jobs:
         env:
           EXPECTED_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
           VERIFY_CURRENT_MASTER: '1'
+          DEPLOY_REQUIRE_OWNED_VP8_ONLY: '1'
+          DEPLOY_DIST: dist
         run: vp run verify:deploy
 
       - name: Preserve public verification evidence

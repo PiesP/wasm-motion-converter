@@ -74,8 +74,7 @@
   },
   "dependencies": {
     "@piesp/browser-core": "file:packages/core",
-    "solid-js": "1.9.19",
-    "wasm-webp": "^0.1.0"
+    "solid-js": "1.9.19"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
@@ -93,6 +92,7 @@
     "vite": "catalog:",
     "vite-plugin-solid": "2.11.17",
     "vite-plus": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "wasm-webp": "0.1.0"
   }
 }

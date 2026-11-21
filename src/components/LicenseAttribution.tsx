@@ -5,7 +5,11 @@ import { useLocale } from '@hooks/use-locale';
 import type { Component } from 'solid-js';
 
 const LIBRARIES = [
-  { name: 'wasm-webp', url: 'https://github.com/nieyuyao/webp-wasm', license: 'MIT' },
+  {
+    name: 'Owned VP8',
+    url: 'https://github.com/PiesP/wasm-motion-converter/tree/master/crates/owned-vp8',
+    license: 'MIT AND BSD-3-Clause',
+  },
   { name: 'SolidJS', url: 'https://github.com/solidjs/solid', license: 'MIT' },
 ] as const;
 

@@ -1,4 +1,4 @@
-Bundled native and generated runtime notices for wasm-webp@0.1.0
+Native and generated code in the wasm-webp@0.1.0 development comparison package
 
 The npm package metadata points to webp-wasm source commit
 65e1ba32146adc2e14360c557a113c141d8058c9:
