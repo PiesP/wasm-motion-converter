@@ -394,7 +394,8 @@ export function assertWorkerUpdateOutcome(
 type OwnedDownloads = {
   session: CDPSession;
   path: string;
-  pending: Set<string>;
+  tail: Promise<void>;
+  failed: boolean;
   seen: Set<string>;
 };
 
@@ -450,7 +451,26 @@ async function readOwnedDownloadFile(
   throw new Error('Completed browser download file did not appear in the owned directory');
 }
 
+const OWNED_DOWNLOAD_GUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+
+async function ownedDownloadFileSizes(path: string) {
+  const files = (await readdir(path, { withFileTypes: true })).filter((entry) => entry.isFile());
+  const sampled = await Promise.all(
+    files.slice(0, 16).map(async ({ name }) => ({
+      kind: OWNED_DOWNLOAD_GUID.test(name)
+        ? 'guid'
+        : name.endsWith('.crdownload')
+          ? 'partial'
+          : 'other',
+      bytes: (await lstat(join(path, name))).size,
+    }))
+  );
+  return { count: files.length, sampled };
+}
+
 async function readOwnedDownload(page: Page, selector: string, owner: OwnedDownloads) {
+  const started = performance.now();
+  const elapsed = () => Math.round(performance.now() - started);
   const anchor = page.locator(selector);
   const target = await anchor.evaluate((element) => {
     if (!(element instanceof HTMLAnchorElement))
@@ -480,18 +500,61 @@ async function readOwnedDownload(page: Page, selector: string, owner: OwnedDownl
   } finally {
     await pageSession.detach();
   }
-  const { session, path, pending, seen } = owner;
-  const key = JSON.stringify([frameId, target.href]);
-  assert(!pending.has(key) && pending.size < 16, 'Ambiguous native download capture');
-  pending.add(key);
 
+  const { session, path, seen } = owner;
+  const clickObservation = await anchor.evaluateHandle((element, anchorSelector) => {
+    const doc = element.ownerDocument;
+    let click: {
+      trusted: boolean;
+      visibility: DocumentVisibilityState;
+      focused: boolean;
+      href: string;
+    } | null = null;
+    function observe(event: Event) {
+      const clicked = event.target instanceof Element ? event.target.closest('a') : null;
+      if (clicked instanceof HTMLAnchorElement && clicked.matches(anchorSelector) && !click) {
+        click = {
+          trusted: event.isTrusted,
+          visibility: doc.visibilityState,
+          focused: doc.hasFocus(),
+          href: clicked.href,
+        };
+      }
+    }
+    doc.addEventListener('click', observe, true);
+    return { read: () => click, stop: () => doc.removeEventListener('click', observe, true) };
+  }, selector);
+  const readClick = () =>
+    clickObservation.evaluate((observation, href) => {
+      const click = observation.read();
+      if (!click) return null;
+      const { href: observedHref, ...state } = click;
+      return { ...state, hrefMatches: observedHref === href };
+    }, target.href);
+  const timings: {
+    foregroundMs?: number;
+    clickMs?: number;
+    beginMs?: number;
+    completedMs?: number;
+  } = {};
+  const rawBegins: {
+    atMs: number;
+    frameMatches: boolean;
+    hrefMatches: boolean;
+    nameMatches: boolean;
+    afterClickRequest: boolean;
+  }[] = [];
+  let clickRequested = false;
+  let rawBeginOverflow = false;
+  let frameIdMatched = false;
   let resolveDownload!: (value: OwnedDownloadProgress) => void;
   let rejectDownload!: (reason: unknown) => void;
   const result = new Promise<OwnedDownloadProgress>((resolve, reject) => {
     resolveDownload = resolve;
     rejectDownload = reject;
   });
-  const deadline = performance.now() + 30_000;
+  // A page can close while foreground activation is still pending.
+  void result.catch(() => {});
   const timer = new AbortController();
   let guid: string | undefined;
   let completed = false;
@@ -501,22 +564,29 @@ async function readOwnedDownload(page: Page, selector: string, owner: OwnedDownl
     guid: string;
     suggestedFilename: string;
   }) => {
-    if (event.frameId !== frameId || event.url !== target.href) return;
+    const frameMatches = event.frameId === frameId;
+    const hrefMatches = event.url === target.href;
+    const nameMatches = event.suggestedFilename === target.filename;
+    if (rawBegins.length < 8)
+      rawBegins.push({
+        atMs: elapsed(),
+        frameMatches,
+        hrefMatches,
+        nameMatches,
+        afterClickRequest: clickRequested,
+      });
+    else rawBeginOverflow = true;
+    if (!clickRequested || !frameMatches || !hrefMatches) return;
+    frameIdMatched = true;
     try {
       assert(
-        !guid &&
-          /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(event.guid) &&
-          !seen.has(event.guid) &&
-          seen.size < 256,
+        !guid && OWNED_DOWNLOAD_GUID.test(event.guid) && !seen.has(event.guid) && seen.size < 256,
         'Ambiguous or invalid native download GUID'
       );
       guid = event.guid;
       seen.add(guid);
-      assert.equal(
-        event.suggestedFilename,
-        target.filename,
-        'Native download filename differs from the result anchor'
-      );
+      timings.beginMs = elapsed();
+      assert(nameMatches, 'Native download filename differs from the result anchor');
     } catch (error) {
       rejectDownload(error);
     }
@@ -527,6 +597,7 @@ async function readOwnedDownload(page: Page, selector: string, owner: OwnedDownl
       rejectDownload(new Error('Native result download was canceled'));
     if (event.state === 'completed') {
       completed = true;
+      timings.completedMs = elapsed();
       resolveDownload(event);
     }
   };
@@ -536,14 +607,40 @@ async function readOwnedDownload(page: Page, selector: string, owner: OwnedDownl
   session.on('close', onClose);
   page.on('close', onClose);
   try {
+    const activationDeadline = performance.now() + 5_000;
+    const activated = await waitForProcess(
+      page.bringToFront().then(() => true),
+      5_000
+    );
+    assert(activated, 'Could not activate the native download tab');
+    await waitForNativeVisibility(
+      page,
+      'visible',
+      Math.max(1, activationDeadline - performance.now()),
+      true
+    );
+    timings.foregroundMs = elapsed();
+    const deadline = performance.now() + 30_000;
+    clickRequested = true;
+    const click = anchor.click({ timeout: 30_000 }).then(() => {
+      timings.clickMs = elapsed();
+    });
     const [outcome] = await Promise.race([
-      Promise.all([result, anchor.click({ timeout: 30_000 })]),
+      Promise.all([result, click]),
       delay(30_000, undefined, { signal: timer.signal }).then(() => {
         throw new Error(
-          `Native result download did not complete (begin observed: ${Boolean(guid)})`
+          `Native result download did not complete (matching begin: ${frameIdMatched})`
         );
       }),
     ]);
+    const observed = await waitForProcess(readClick(), 1_000);
+    assert(
+      observed?.trusted &&
+        observed.visibility === 'visible' &&
+        observed.focused &&
+        observed.hrefMatches,
+      'Native download did not come from the expected trusted foreground click'
+    );
     const bytes = await readOwnedDownloadFile(path, outcome, deadline);
     console.log('[M5 installed browser download]', {
       frameId,
@@ -551,15 +648,54 @@ async function readOwnedDownload(page: Page, selector: string, owner: OwnedDownl
       filename: target.filename,
       bytes: bytes.length,
       sha256: sha256(bytes),
+      click: observed,
+      timings,
     });
     return bytes;
+  } catch (error) {
+    const diagnostic = <T>(read: Promise<T>) =>
+      waitForProcess(
+        read.catch(() => undefined),
+        1_000
+      );
+    const [click, current, files] = await Promise.all([
+      diagnostic(readClick()),
+      diagnostic(
+        anchor.evaluate(
+          (element, href) => ({
+            visibility: document.visibilityState,
+            focused: document.hasFocus(),
+            hrefMatches: element instanceof HTMLAnchorElement && element.href === href,
+          }),
+          target.href
+        )
+      ),
+      diagnostic(ownedDownloadFileSizes(path)),
+    ]);
+    console.log('[M5 installed browser download failure]', {
+      observedRawBegin: rawBegins.length > 0,
+      rawBegins,
+      rawBeginOverflow,
+      matchingBegin: frameIdMatched,
+      completed,
+      click: click ?? null,
+      current: current ?? null,
+      files: files ?? null,
+      timings,
+      elapsedMs: elapsed(),
+    });
+    throw error;
   } finally {
     timer.abort();
     session.off('Browser.downloadWillBegin', onBegin);
     session.off('Browser.downloadProgress', onProgress);
     session.off('close', onClose);
     page.off('close', onClose);
-    pending.delete(key);
+    const dispose = clickObservation
+      .evaluate((observation) => observation.stop())
+      .finally(() => clickObservation.dispose())
+      .catch(() => {});
+    await waitForProcess(dispose, 1_000);
     if (guid && !completed) {
       await session.send('Browser.cancelDownload', { guid }, { timeout: 2_000 }).catch(() => {
         // The browser can already have canceled it. The owned process still closes on failure.
@@ -570,7 +706,19 @@ async function readOwnedDownload(page: Page, selector: string, owner: OwnedDownl
 
 async function readResultDownload(page: Page, selector = '[data-testid="download-result-button"]') {
   const owned = ownedDownloads.get(page.context());
-  if (owned) return readOwnedDownload(page, selector, owned);
+  if (owned) {
+    const download = owned.tail.then(() => {
+      assert(!owned.failed, 'An earlier owned browser download failed');
+      return readOwnedDownload(page, selector, owned);
+    });
+    owned.tail = download.then(
+      () => undefined,
+      () => {
+        owned.failed = true;
+      }
+    );
+    return download;
+  }
   const [download] = await Promise.all([
     page.waitForEvent('download'),
     page.locator(selector).click(),
@@ -2830,7 +2978,8 @@ async function nativeWindowTarget(page: Page) {
 async function waitForNativeVisibility(
   page: Page,
   expected: DocumentVisibilityState,
-  timeout: number
+  timeout: number,
+  requireFocus = false
 ) {
   const deadline = performance.now() + timeout;
   const stop = new AbortController();
@@ -2838,13 +2987,22 @@ async function waitForNativeVisibility(
     await Promise.race([
       (async () => {
         while (performance.now() < deadline) {
-          if ((await page.evaluate(() => document.visibilityState)) === expected) return;
+          const matched = await page.evaluate(
+            ({ visibility, focus }) =>
+              document.visibilityState === visibility && (!focus || document.hasFocus()),
+            { visibility: expected, focus: requireFocus }
+          );
+          if (matched) return;
           await delay(25, undefined, { signal: stop.signal });
         }
-        throw new Error(`Installed browser did not reach visibility ${expected}`);
+        throw new Error(
+          `Installed browser did not reach visibility ${expected}${requireFocus ? ' and focus' : ''}`
+        );
       })(),
       delay(timeout, undefined, { signal: stop.signal }).then(() => {
-        throw new Error(`Installed browser did not reach visibility ${expected}`);
+        throw new Error(
+          `Installed browser did not reach visibility ${expected}${requireFocus ? ' and focus' : ''}`
+        );
       }),
     ]);
   } finally {
@@ -3047,7 +3205,8 @@ async function prepareInstalledProfile(browser: Browser, bundleRoot: string) {
         ownedDownloads.set(context, {
           session: cdp,
           path: downloadsPath,
-          pending: new Set(),
+          tail: Promise.resolve(),
+          failed: false,
           seen: new Set(),
         });
         observedDownloads = context;
