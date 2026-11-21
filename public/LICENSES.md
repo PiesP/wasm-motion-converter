@@ -526,7 +526,7 @@ Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/
 - **Version:** 0.1.0
 - **License:** MIT AND BSD-3-Clause
 - **Repository:** https://github.com/PiesP/wasm-motion-converter/tree/master/crates/owned-vp8
-- **Purpose:** Conversion-owned Rust VP8 candidate: original MIT code, attributed libwebp transform, color, source-activity, quantization and filter calculations, and RFC 6386 format constants
+- **Purpose:** Conversion-owned Rust VP8 encoder: original MIT code, attributed libwebp transform, color, source-activity, quantization and filter calculations, and RFC 6386 format constants
 
 ### LICENSE
 

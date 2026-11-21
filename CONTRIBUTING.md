@@ -545,13 +545,11 @@ not revise the #427 race finding or the settings writer's separate ownership.
 The existing serialized decoder/config, duration and framerate boundary is
 reused across Worker, main-thread and Worker-unavailable fallback paths.
 
-The proxy's direct `Error` subclasses are narrow native error boundaries:
-`WorkerUnavailableError` alone permits main-thread fallback; timeout, memory,
-pipeline and cancellation failures remain terminal. `OutputLimitError` carries
-the output ceiling category and `WasmWebpInitializationError` retains the
-failed WASM initialization state until an explicit reload. These native error
-types support `instanceof` checks or existing error handling at their direct
-call sites; they do not form a product-internal implementation base class.
+The proxy permits main-thread fallback for `WorkerUnavailableError`. Timeout,
+memory, pipeline and cancellation failures terminate the current job.
+`OutputLimitError` identifies the output ceiling. The owned VP8 host reports
+load and ABI failures with a retry phase that the UI preserves when offering
+another conversion attempt.
 
 Main and Worker conversion-owned memory guards emit `ConversionMemoryLimitError`;
 the Worker entry sends its `OUT_OF_MEMORY` code with the diagnostic text. The UI
