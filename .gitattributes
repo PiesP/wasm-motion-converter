@@ -21,7 +21,8 @@
 
 # The demux oracle records the exact selected patch bytes.
 patches/mediabunny@*.patch text eol=lf
-# Preserve whitespace in the recovered patch's diff context.
+# Preserve exact historical or recovered patch context.
+patches/mediabunny@1.62.1.patch -whitespace
 patches/mediabunny@1.66.2.patch -whitespace
 
 # Source-bound GIF scalar WASM inputs and supplemental notice
@@ -31,6 +32,7 @@ crates/gif-scalar-quantizer/Cargo.lock text eol=lf
 scripts/build/gifenc-pnn-NOTICES.txt text eol=lf
 # Upstream notices are kept byte-for-byte; their hashes are verified separately.
 scripts/build/gifenc-LICENSE.txt text eol=lf -whitespace
+scripts/build/heroicons-*-LICENSE.txt text eol=lf
 public/notices/rust-1.100.0.html text eol=lf -whitespace linguist-vendored
 crates/gif-scalar-quantizer/LICENSE.pnn text eol=lf
 crates/owned-vp8/LICENSE.* text eol=lf

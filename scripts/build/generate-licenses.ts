@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
 //
-// generate-licenses.ts — Collect notices for runtime dependencies and
-// build-generated Vite browser helpers in public/LICENSES.md.
+// Collect notices for shipped code, UI assets and development oracles.
 //
 // Usage: node --experimental-strip-types scripts/build/generate-licenses.ts
 // Called automatically during `vp run build` via the `prebuild` script.
@@ -82,6 +81,7 @@ function inferPurpose(name: string): string {
     mediabunny:
       'Development-only patched metadata and demux differential oracle; no production executable',
     'solid-js': 'UI framework (reactive signals, components)',
+    tailwindcss: 'Theme and Preflight styles in the shipped CSS',
   };
   return purposes[name] || 'Runtime dependency';
 }
@@ -315,7 +315,11 @@ ${wasmIndex}`;
     if (entry.url) md += `- **Repository:** ${entry.url}\n`;
     md += `- **Purpose:** ${entry.purpose}\n\n`;
     if (entry.name === 'mediabunny' || entry.name === 'wasm-webp') {
-      md += `Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/patches/${entry.name}@${entry.version}.patch\n\n`;
+      const patch = `patches/${entry.name}@${entry.version}.patch`;
+      const bytes = readFileSync(join(ROOT, patch));
+      const blob = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+      md += `[Published package](https://registry.npmjs.org/${entry.name}/-/${entry.name}-${entry.version}.tgz) · [Exact patch (Git blob)](https://api.github.com/repos/PiesP/wasm-motion-converter/git/blobs/${blob}). `;
+      md += `To browse the patch as text, open \`${patch}\` at the \`sourceSha\` in this build's [deployment manifest](deployment-state.json).\n\n`;
     }
     if (entry.name === 'gifenc') {
       md +=
@@ -383,7 +387,46 @@ export function generateLicenses(): void {
       existsSync(join(ROOT, 'crates', name)) ||
       existsSync(join(ROOT, artifact))
   );
-  const sections = entries.map((entry) => ({ entry, title: entry.name }));
+  const sections = entries.map((entry) => ({
+    entry,
+    title: entry.name === 'tailwindcss' ? 'Tailwind CSS' : entry.name,
+  }));
+  sections.push(
+    {
+      title: 'Heroicons v1',
+      entry: {
+        name: 'heroicons-v1',
+        version: '1.0.6',
+        license: 'MIT',
+        url: 'https://github.com/tailwindlabs/heroicons/tree/71b15b9e72e0211c5dbb28fb75f280deedaec28d',
+        purpose: 'SVG icon paths embedded in the application UI',
+        notices: [notice('scripts/build/heroicons-v1-LICENSE.txt')],
+      },
+    },
+    {
+      title: 'Heroicons v2',
+      entry: {
+        name: 'heroicons-v2',
+        version: '2.2.0',
+        license: 'MIT',
+        url: 'https://github.com/tailwindlabs/heroicons/tree/0435d4ca364a608cc75e2f8683d374e55abbae26',
+        purpose:
+          'Inline warning icon in the result preview. The same MIT notice also covers the [Tailwind documentation spinner](https://github.com/tailwindlabs/tailwindcss.com/blob/947a944b219519718ceecafec642286148286c22/src/pages/docs/animation.mdx#L122) used by Icon and ProgressBar. [Maintainer statement for documentation examples](https://github.com/tailwindlabs/tailwindcss.com/issues/665#issuecomment-745307599).',
+        notices: [notice('scripts/build/heroicons-v2-LICENSE.txt')],
+      },
+    }
+  );
+  if (
+    dev &&
+    typeof dev === 'object' &&
+    'tailwindcss' in dev &&
+    !entries.some((entry) => entry.name === 'tailwindcss')
+  ) {
+    sections.push({
+      title: 'Tailwind CSS',
+      entry: collectInstalledDependency('tailwindcss', inferPurpose('tailwindcss')),
+    });
+  }
   const gifDependency = entries.find((entry) => entry.name === 'gifenc');
   if (gifDependency) {
     checkGifencSource(gifDependency);

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
+// Download icon: Heroicons v1, Copyright (c) 2020 Refactoring UI Inc. (MIT).
+// Warning icon: Heroicons v2, Copyright (c) Tailwind Labs, Inc. (MIT).
 
 import Panel from '@components/ui/Panel';
 import { useLocale } from '@hooks/use-locale';

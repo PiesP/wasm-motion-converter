@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
+// Dismiss and error icons: Heroicons v1, Copyright (c) 2020 Refactoring UI Inc. (MIT).
 
 import Panel from '@components/ui/Panel';
 import { useLocale } from '@hooks/use-locale';

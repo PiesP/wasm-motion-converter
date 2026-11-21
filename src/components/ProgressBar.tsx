@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
+// Spinner paths: Tailwind CSS documentation example, Copyright (c) Tailwind Labs, Inc. (MIT).
 
 import { useLocale } from '@hooks/use-locale';
 import type { ProgressPhase } from '@t/conversion-types';
