@@ -421,6 +421,10 @@ impl Config {
     }
 
     pub(crate) fn with_uniform_qindex(self, counts: [usize; 4], minimum_qindex: usize) -> Self {
+        Self::nonsegmented(self.weighted_median_qindex(counts).max(minimum_qindex))
+    }
+
+    pub(crate) fn weighted_median_qindex(self, counts: [usize; 4]) -> usize {
         let mut weighted_indices =
             std::array::from_fn::<_, 4, _>(|id| (self.qindex[id], counts[id]));
         weighted_indices.sort_unstable_by_key(|&(qindex, _)| qindex);
@@ -432,7 +436,7 @@ impl Config {
         for (qindex, count) in weighted_indices {
             cumulative += count;
             if cumulative >= midpoint {
-                return Self::nonsegmented(qindex.max(minimum_qindex));
+                return qindex;
             }
         }
         unreachable!("weighted rank must fall within classified macroblocks");

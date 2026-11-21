@@ -2439,9 +2439,16 @@ fn q85_source_grid(
         && fine + flat > ramp + textured
         && segments.map_exceeds_rate_allowance(counts)
     {
-        // The per-block map costs more than the rate allowance. Use the
-        // weighted median and chromatic-ramp floor used by mixed presets.
-        segments.with_uniform_qindex(counts, crate::presets::chromatic_ramp_qindex(quality))
+        let median = segments.weighted_median_qindex(counts);
+        let floor = crate::presets::chromatic_ramp_qindex(quality);
+        // Moving a Textured median up one step can save the map cost.
+        // Preserve the fine grid on smooth-majority fades and the original
+        // per-class allocation when the median already meets the floor.
+        if median == segments.qindex_for(segmentation::TEXTURED) && median + 1 == floor {
+            SegmentConfig::nonsegmented(floor)
+        } else {
+            segments
+        }
     } else {
         segments
     }
@@ -2462,6 +2469,7 @@ fn q60_mixed_rate_grids(
     let [fine, flat, ramp, textured] = class_counts;
     if mixed_y1_ac
         && !segments.enabled
+        && segments.base_qindex == crate::presets::chromatic_ramp_qindex(60)
         && fine > 0
         && flat > 0
         && textured > 0
@@ -2470,8 +2478,8 @@ fn q60_mixed_rate_grids(
         && ramp <= fine + flat + textured
         && !smooth_pair_with_sparse_texture(class_counts)
     {
-        // The collapsed physical grid retains the fine compensation used
-        // before map selection. Relax its UV AC step for mixed edge content.
+        // Only a median clipped to the chromatic floor loses the original
+        // four-index relationship between the luma and chroma grids.
         let mixed_grid_offset = crate::presets::MIXED_Y1_AC_QINDEX_INCREASE as i8;
         deltas.uv_ac = (deltas.uv_ac + mixed_grid_offset).min(15);
     } else if segments.enabled
@@ -12455,15 +12463,16 @@ mod tests {
     fn q60_mixed_rate_grid_preserves_shared_and_protected_profiles() {
         let low = segmentation::CurvatureTotals::default();
         let original = crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true);
-        for (quality, counts, protected, expected) in [
-            (60, [3, 3, 1, 3], false, -11),
-            (75, [3, 3, 1, 3], false, -15),
-            (60, [3, 3, 1, 3], true, -15),
-            (60, [3, 3, 10, 3], false, -15),
-            (60, [64, 64, 0, 1], false, -15),
-            (60, [3, 0, 1, 3], false, -15),
+        for (quality, qindex, counts, protected, expected) in [
+            (60, 32, [3, 3, 1, 3], false, -11),
+            (60, 36, [3, 3, 1, 3], false, -15),
+            (75, 32, [3, 3, 1, 3], false, -15),
+            (60, 32, [3, 3, 1, 3], true, -15),
+            (60, 32, [3, 3, 10, 3], false, -15),
+            (60, 32, [64, 64, 0, 1], false, -15),
+            (60, 32, [3, 0, 1, 3], false, -15),
         ] {
-            let mut segments = SegmentConfig::nonsegmented(32);
+            let mut segments = SegmentConfig::nonsegmented(qindex);
             let mut deltas = original;
             q60_mixed_rate_grids(
                 &mut segments,
@@ -12475,7 +12484,7 @@ mod tests {
                 protected,
             );
             assert!(!segments.enabled);
-            assert_eq!(segments.base_qindex, 32);
+            assert_eq!(segments.base_qindex, qindex);
             assert_eq!(
                 deltas,
                 Deltas {
@@ -12556,16 +12565,18 @@ mod tests {
     #[test]
     fn q85_uniform_grid_requires_an_expensive_smooth_majority_map() {
         for (quality, neutral, counts, collapse) in [
-            (85, false, [512, 384, 0, 128], true),
-            (85, false, [768, 128, 32, 96], true),
-            (85, false, [3, 2, 0, 1], false),
+            (85, false, [400, 374, 50, 200], true),
+            (85, false, [512, 384, 0, 128], false),
+            (85, false, [200, 600, 80, 144], false),
+            (85, false, [768, 128, 32, 96], false),
+            (85, false, [4, 4, 0, 2], false),
             (85, false, [256, 256, 0, 512], false),
             (85, false, [0, 768, 0, 256], false),
             (85, false, [768, 0, 0, 256], false),
             (85, false, [512, 512, 0, 0], false),
-            (85, true, [512, 384, 0, 128], false),
-            (75, false, [512, 384, 0, 128], false),
-            (60, false, [512, 384, 0, 128], false),
+            (85, true, [400, 374, 50, 200], false),
+            (75, false, [400, 374, 50, 200], false),
+            (60, false, [400, 374, 50, 200], false),
         ] {
             let original =
                 SegmentConfig::from_counts(quality, counts, counts.iter().sum(), neutral);

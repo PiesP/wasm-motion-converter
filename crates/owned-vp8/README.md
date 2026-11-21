@@ -170,8 +170,9 @@ visible chroma tiles, each UV mode uses bounded DC error feedback inside the
 refinement or its extra search quota.
 
 For the ordinary requested q60 profile, a collapsed mixed grid with FineSmooth,
-ChromaticFlat and Textured blocks relaxes its UV AC compensation by the existing
-four-index mixed-grid adjustment. The potential shared q60/q75 rate profiles
+ChromaticFlat and Textured blocks relaxes its UV AC compensation by four indices
+when the physical index is clipped to the chromatic-ramp floor. A coarser
+weighted median retains the original compensation. The potential shared q60/q75 rate profiles
 keep their exact quantizers. A separate mixed grid that retains segmentation,
 has a strict majority of Textured blocks, and exceeds the curvature cutoff in
 luma alone increases only the Textured segment index by two. Both adjustments
@@ -256,9 +257,10 @@ attributed to the RFC; no external production Cargo crate is used.
 
 At q85, chromatic frames with both smooth classes, some texture and a
 strict majority of FineSmooth and ChromaticFlat blocks use a uniform grid
-when the original segment map exceeds the existing rate allowance. The
-lower weighted median has the same chromatic-ramp floor as the other mixed
-presets. Activity-selected grids retain their allocation.
+when the original segment map exceeds the existing rate allowance and the
+lower weighted median is the Textured index one step below the chromatic-ramp
+floor. The uniform grid uses that floor. Other medians and activity-selected
+grids retain their per-class allocation.
 
 For q60 and q75, the color-import pass tracks up to eight distinct visible
 RGB colors. A ninth color ends palette collection. In a non-neutral frame
