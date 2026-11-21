@@ -13,7 +13,7 @@ const LIBRARIES = [
   { name: 'SolidJS', url: 'https://github.com/solidjs/solid', license: 'MIT' },
 ] as const;
 
-const LICENSES_URL = '/LICENSES.md';
+const LICENSES_URL = '/notices/';
 const GITHUB_ISSUES_URL = 'https://github.com/PiesP/wasm-motion-converter/issues';
 
 const linkClass =

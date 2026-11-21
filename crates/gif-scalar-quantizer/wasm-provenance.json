@@ -12,11 +12,13 @@
   ],
   "rustflags": "-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd",
   "sourceSha256": {
-    "crates/gif-scalar-quantizer/Cargo.toml": "dc1417eb297a04391c841aec5635a97a074dc74885deb5b94c3b8b521485213f",
+    "crates/gif-scalar-quantizer/Cargo.toml": "2f8917559e7a325da0093861e8217e9e95398c91a305ece74facd6c4eefdce61",
     "crates/gif-scalar-quantizer/Cargo.lock": "c51878d6042db126c8210ce237011bba55b7224d8db874eeab2b588caacafccc",
+    "crates/gif-scalar-quantizer/LICENSE.pnn": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+    "crates/gif-scalar-quantizer/NOTICE.md": "0ad275a4fb52ddc1ee74ed183474fc3384fd2d2c991e60b4175826fd84a78b42",
     "crates/gif-scalar-quantizer/rust-toolchain.toml": "63eade4342cf85d77a436ffb9b086d301d7be4b3a7f5d01940eb2ce4f78a26f0",
-    "crates/gif-scalar-quantizer/src/lib.rs": "443ac78cb9db6f83ca885c06129d3481957d29389991908ee2443c900cc2161c",
-    "scripts/build/build-gif-scalar-wasm.ts": "1a24a58b72be880aa8b5f151b0acd0258772e8434f33517f614af53aa4a69439"
+    "crates/gif-scalar-quantizer/src/lib.rs": "f9d4baa097b1409f595c5e234bd73d64d7dc4e640152e4cc7959a138bd16298b",
+    "scripts/build/build-gif-scalar-wasm.ts": "da6557ed2bc970a06049f93af74899d218114a548cd3e271b8766855364c0121"
   },
   "artifact": {
     "sha256": "a0753c05b7b7163a15b5608fde8189e41466da7fddd9d1eb7250ef0f3dfcf23d",

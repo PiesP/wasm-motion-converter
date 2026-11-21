@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Reference table: Copyright (c) 2010, 2011 Google Inc., RFC 6386 section 20.3. See ../LICENSE.rfc6386.
 // VP8 DC quantizer table from RFC 6386 section 14.1.
 pub const DC_QUANT: [i32; 128] = [
     4, 5, 6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 15, 16, 17, 17, 18, 19, 20, 20, 21, 21, 22, 22, 23,

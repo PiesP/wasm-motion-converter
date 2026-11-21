@@ -30,6 +30,8 @@ const sourcePaths = [
   'scripts/build/build-gif-scalar-wasm.ts',
   'crates/gif-scalar-quantizer/Cargo.toml',
   'crates/gif-scalar-quantizer/Cargo.lock',
+  'crates/gif-scalar-quantizer/LICENSE.pnn',
+  'crates/gif-scalar-quantizer/NOTICE.md',
   'crates/gif-scalar-quantizer/rust-toolchain.toml',
   'crates/gif-scalar-quantizer/src/lib.rs',
   'crates/gif-scalar-quantizer/wasm-provenance.json',

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Reference table: Copyright (c) 2010, 2011 Google Inc., RFC 6386 section 20.18. See ../LICENSE.rfc6386.
 // VP8 coefficient update probabilities from RFC 6386 section 13.4.
 // RFC 6386 is published by the IETF Trust; see README.md for provenance.
 pub const COEFF_UPDATE_PROBS: [u8; 1056] = [

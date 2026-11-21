@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Reference table: Copyright (c) 2010, 2011 Google Inc., RFC 6386 section 20.18. See ../LICENSE.rfc6386.
 // VP8 default coefficient probabilities from RFC 6386 section 13.5.
 pub const DEFAULT_COEFF_PROBS: [u8; 1056] = [
     128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128,

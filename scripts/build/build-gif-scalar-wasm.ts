@@ -30,6 +30,8 @@ const provenance = join(crate, 'wasm-provenance.json');
 const sourcePaths = [
   'crates/gif-scalar-quantizer/Cargo.toml',
   'crates/gif-scalar-quantizer/Cargo.lock',
+  'crates/gif-scalar-quantizer/LICENSE.pnn',
+  'crates/gif-scalar-quantizer/NOTICE.md',
   'crates/gif-scalar-quantizer/rust-toolchain.toml',
   'crates/gif-scalar-quantizer/src/lib.rs',
   'scripts/build/build-gif-scalar-wasm.ts',
@@ -38,7 +40,7 @@ const compiler = '1.100.0';
 const target = 'wasm32-unknown-unknown';
 const cargoArgs = ['build', '--release', '--target', target, '--locked', '--offline'];
 const rustflags = '-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd';
-const crateManifestSha = 'dc1417eb297a04391c841aec5635a97a074dc74885deb5b94c3b8b521485213f';
+const crateManifestSha = '2f8917559e7a325da0093861e8217e9e95398c91a305ece74facd6c4eefdce61';
 const cargoLockSha = 'c51878d6042db126c8210ce237011bba55b7224d8db874eeab2b588caacafccc';
 const pinnedToolchain = `[toolchain]
 channel = "${compiler}"
@@ -175,6 +177,8 @@ export function assertClosedCompilationInputs(
   const expectedCrateEntries = [
     'Cargo.lock',
     'Cargo.toml',
+    'LICENSE.pnn',
+    'NOTICE.md',
     'rust-toolchain.toml',
     'src',
     'wasm-provenance.json',
@@ -296,6 +300,8 @@ export function buildGifScalarWasm(mode: 'verify' | 'check' | 'generate' = 'veri
   if (mode === 'generate') {
     const bytes = compilePinned();
     const manifest = `${JSON.stringify(expectedProvenance(bytes), null, 2)}\n`;
+    const source = readRegularFile(join(crate, 'src/lib.rs'));
+    writeFileSync(join(root, 'public/notices/gif-scalar-source.txt'), source);
     writeFileSync(output, bytes);
     writeFileSync(provenance, manifest);
   } else {

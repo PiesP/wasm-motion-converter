@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// Experimental keyframe-only VP8 writer. Format and coding rules: RFC 6386.
+// Keyframe-only VP8 writer. Format and coding rules: RFC 6386.
 // Complete residual engineering path; product/preset qualification is unfinished.
 
 mod abi;

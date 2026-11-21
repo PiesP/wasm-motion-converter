@@ -51,6 +51,7 @@ function fixture() {
     'scripts/build/verify-service-worker-output.ts',
     'tooling/vite/plugins/emit-service-worker.ts',
     'scripts/build/gifenc-pnn-NOTICES.txt',
+    'scripts/build/gifenc-LICENSE.txt',
     'validation/windows/gif-quantization-owner-video.json',
   ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -75,6 +76,17 @@ function fixture() {
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+
+function copyRustNoticeInputs(root: string, names: string[]): void {
+  for (const file of [
+    'LICENSE',
+    'public/notices/rust-1.100.0.html',
+    ...names.map((name) => `crates/${name}/rust-toolchain.toml`),
+  ]) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    copyFileSync(join(project, file), join(root, file));
+  }
+}
 
 function stub(path: string, contents: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -247,6 +259,7 @@ describe('direct Node script boundaries', () => {
       '{"version":"1.0.0","license":"MIT"}'
     );
     writeFileSync(join(root, 'node_modules/sample/LICENSE'), 'Sample MIT notice\n');
+    copyRustNoticeInputs(root, ['owned-vp8']);
     writeFileSync(join(root, 'LICENSE'), 'Owned MIT notice\n');
     writeFileSync(
       join(root, 'crates/owned-vp8/Cargo.toml'),
@@ -254,6 +267,14 @@ describe('direct Node script boundaries', () => {
     );
     writeFileSync(join(root, 'crates/owned-vp8/LICENSE.libwebp'), 'Pinned libwebp BSD notice\n');
     writeFileSync(join(root, 'crates/owned-vp8/PATENTS.libwebp'), 'Pinned libwebp patent grant\n');
+    writeFileSync(
+      join(root, 'crates/owned-vp8/LICENSE.rfc6386'),
+      'Pinned reference code BSD notice\n'
+    );
+    writeFileSync(
+      join(root, 'crates/owned-vp8/PATENTS.rfc6386'),
+      'Pinned reference patent grant\n'
+    );
 
     const output = join(root, 'public/LICENSES.md');
     const result = run('scripts/build/generate-licenses.ts');
@@ -265,6 +286,9 @@ describe('direct Node script boundaries', () => {
     expect(notices).toContain('Pinned libwebp BSD notice');
     expect(notices).toContain('Pinned libwebp patent grant');
     expect(notices).toContain('RFC 6386');
+    expect(notices).toContain('Pinned reference code BSD notice');
+    expect(notices).toContain('Pinned reference patent grant');
+    expect(notices).toContain('notices/rust-1.100.0.html');
     expect(notices).not.toContain('## wasm-webp');
 
     unlinkSync(join(root, 'crates/owned-vp8/PATENTS.libwebp'));
@@ -272,6 +296,75 @@ describe('direct Node script boundaries', () => {
     expect(missingGrant.status).toBe(1);
     expect(missingGrant.stderr).toContain('PATENTS.libwebp');
     expect(readFileSync(output, 'utf8')).toBe(notices);
+  });
+
+  it('ships the GIF source, toolkit and demux notices independently of npm oracles', () => {
+    const { root, run } = fixture();
+    const gif = 'crates/gif-scalar-quantizer';
+    const distributedSource = join(root, 'public/notices/gif-scalar-source.txt');
+    copyRustNoticeInputs(root, ['gif-scalar-quantizer', 'owned-demux']);
+    for (const file of [
+      `${gif}/Cargo.toml`,
+      `${gif}/LICENSE.pnn`,
+      `${gif}/NOTICE.md`,
+      'public/notices/pnn-upstream-gpl-3.0.txt',
+      'crates/owned-demux/Cargo.toml',
+    ]) {
+      copyFileSync(join(project, file), join(root, file));
+    }
+    mkdirSync(join(root, gif, 'src'));
+    writeFileSync(join(root, gif, 'src/lib.rs'), '// fixture source\n');
+    writeFileSync(distributedSource, '// fixture source\n');
+    mkdirSync(join(root, 'node_modules/sample'), { recursive: true });
+    writeFileSync(
+      join(root, 'package.json'),
+      '{"type":"module","dependencies":{"sample":"1.0.0"}}'
+    );
+    writeFileSync(
+      join(root, 'node_modules/sample/package.json'),
+      '{"version":"1.0.0","license":"MIT"}'
+    );
+    writeFileSync(join(root, 'node_modules/sample/LICENSE'), 'Sample license');
+    const output = join(root, 'public/LICENSES.md');
+    const generate = () => run('scripts/build/generate-licenses.ts');
+    const result = generate();
+    expect(result.status, result.stderr).toBe(0);
+    const text = readFileSync(output, 'utf8');
+    expect(text).toContain('src/services/owned-demux.wasm');
+    expect(text).toContain('src/services/gif-scalar-quantizer.wasm');
+    expect(text).toContain('notices/gif-scalar-source.txt');
+    expect(text).toContain('Mozilla Public License Version 2.0');
+    expect(text).toContain('Copyright (c) 2017 Matt DesLauriers');
+    expect(text).toContain('Kevin Weiner');
+    expect(text).toContain('earlier PNN rights under review');
+    expect(text).not.toContain('Development-only demux oracle');
+
+    writeFileSync(distributedSource, '// stale');
+    expect(generate().stderr).toContain('Published GIF source differs');
+    writeFileSync(distributedSource, '// fixture source\n');
+    const toolchain = join(root, 'crates/owned-demux/rust-toolchain.toml');
+    writeFileSync(toolchain, '[toolchain]\nchannel = "1.101.0"\n');
+    expect(generate().stderr).toContain('Review Rust standard library notices for owned-demux');
+    copyFileSync(join(project, 'crates/owned-demux/rust-toolchain.toml'), toolchain);
+    writeFileSync(join(root, 'public/notices/rust-1.100.0.html'), 'unverified notice');
+    expect(generate().stderr).toContain('Rust standard library notice digest mismatch');
+    expect(readFileSync(output, 'utf8')).toBe(text);
+
+    copyFileSync(
+      join(project, 'public/notices/rust-1.100.0.html'),
+      join(root, 'public/notices/rust-1.100.0.html')
+    );
+    rmSync(join(root, 'crates/owned-demux'), { recursive: true });
+    mkdirSync(join(root, 'src/services'), { recursive: true });
+    writeFileSync(join(root, 'src/services/owned-demux.wasm'), Buffer.from([0, 97, 115, 109]));
+    expect(generate().stderr).toContain('crates/owned-demux/Cargo.toml');
+    unlinkSync(join(root, 'src/services/owned-demux.wasm'));
+    writeFileSync(
+      join(root, 'package.json'),
+      '{"type":"module","dependencies":{"sample":"1.0.0"},"scripts":{"build:demux-wasm":"build"}}'
+    );
+    expect(generate().stderr).toContain('crates/owned-demux/Cargo.toml');
+    expect(readFileSync(output, 'utf8')).toBe(text);
   });
 
   it('retains gifenc MIT text and its source-pinned PNN attribution', () => {
@@ -293,6 +386,8 @@ describe('direct Node script boundaries', () => {
       join(root, 'node_modules/gifenc/LICENSE'),
       'MIT License\nCopyright (c) 2017 Matt DesLauriers\n'
     );
+    const lzwPath = 'node_modules/gifenc/src/lzwEncode.js';
+    copyFileSync(join(project, lzwPath), join(root, lzwPath));
     const sourcePath = join(root, 'node_modules/gifenc/src/pnnquant2.js');
     const source = `// Modified from:
 // https://github.com/mcychan/PnnQuant.js/blob/master/src/pnnquant.js
@@ -322,6 +417,12 @@ export const quantize = () => {};
     expect(readFileSync(output, 'utf8')).toBe(notices);
 
     writeFileSync(sourcePath, source);
+    writeFileSync(join(root, lzwPath), '/* Changed LZW source attribution */');
+    expect(run('scripts/build/generate-licenses.ts').stderr).toContain(
+      'Review gifenc PNN and LZW credits'
+    );
+    expect(readFileSync(output, 'utf8')).toBe(notices);
+    copyFileSync(join(project, lzwPath), join(root, lzwPath));
     writeFileSync(metadataPath, JSON.stringify({ ...metadata, version: '1.0.4' }));
     const changedVersion = run('scripts/build/generate-licenses.ts');
     expect(changedVersion.status).toBe(1);

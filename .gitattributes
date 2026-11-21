@@ -23,6 +23,13 @@
 crates/gif-scalar-quantizer/src/lib.rs text eol=lf
 crates/gif-scalar-quantizer/Cargo.lock text eol=lf
 scripts/build/gifenc-pnn-NOTICES.txt text eol=lf
+# Upstream notices are kept byte-for-byte; their hashes are verified separately.
+scripts/build/gifenc-LICENSE.txt text eol=lf -whitespace
+public/notices/rust-1.100.0.html text eol=lf -whitespace linguist-vendored
+crates/gif-scalar-quantizer/LICENSE.pnn text eol=lf
+crates/owned-vp8/LICENSE.* text eol=lf
+crates/owned-vp8/PATENTS.* text eol=lf
+public/notices/*.txt text eol=lf
 
 # Binary
 *.png binary

@@ -238,7 +238,10 @@ The classifier uses bounded per-tile range scans and the existing four IDs.
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
 sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
 tables are format constants from sections 13.4, 13.5 and 14.1 respectively;
-their Rust files identify those sources separately. RFC 6386 is Copyright (c)
+their values also appear in the reference decoder in sections 20.18 and 20.3.
+The subblock-mode probabilities match section 20.13. The reference code has
+its own [Google BSD notice](LICENSE.rfc6386) and [patent grant](PATENTS.rfc6386)
+in sections 20.26 and 20.27. RFC 6386 is Copyright (c)
 2011 IETF Trust and the identified contributors. These numeric format tables
 are not an imported encoder implementation. Original Rust portions use MIT.
 The [W3C VP8 WebCodecs registration](https://www.w3.org/TR/webcodecs-vp8-codec-registration/)

@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT AND BSD-3-Clause
 // Copyright (c) 2026 PiesP
-// VP8 keyframe subblock mode probabilities, RFC 6386 section 11.5.
+// Google Inc. (2010, 2011), RFC 6386 sections 11.5 and 20.13. See ../LICENSE.rfc6386.
 pub(crate) const BMODE_PROBS: [[[u8; 9]; 10]; 10] = [
     [
         [231, 120, 48, 89, 115, 113, 120, 152, 112],

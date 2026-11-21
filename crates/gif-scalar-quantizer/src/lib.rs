@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// Adapted from gifenc 1.0.3 src/pnnquant2.js (MIT), Copyright (c) 2017
-// Matt DesLauriers; PNN origin Copyright (C) 2004-2019 Mark Tyler and
-// Dmitry Groshev, and Copyright (c) 2018-2021 Miller Cy Chan.
+// MIT contributions include gifenc 1.0.3, Copyright (c) 2017 Matt DesLauriers.
+// Its src/pnnquant2.js adapts PnnQuant.js, Copyright (C) 2004-2019 Mark Tyler
+// and Dmitry Groshev, Copyright (c) 2018-2021 Miller Cy Chan. PnnQuant.js
+// carried MPL-2.0. See ../NOTICE.md for earlier GPL sources and rights review.
 // The image-data encoder is adapted from gifenc 1.0.3 src/lzwEncode.js (MIT),
 // Kevin Weiner, Thibault Imbert, Johan Nordberg and its credited contributors.
 

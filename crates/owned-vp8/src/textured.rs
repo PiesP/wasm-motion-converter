@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT AND BSD-3-Clause
 // Copyright (c) 2026 PiesP
-// Experimental opaque VP8 keyframe path. Coding rules and
-// static format tables are documented in RFC 6386 sections 9, 11, 13 and 14.
+// Opaque VP8 keyframe coding follows RFC 6386. Trellis quantization derives from
+// libwebp (Copyright 2011 Google Inc.). See ../LICENSE.libwebp and ../PATENTS.libwebp.
 
 use super::{BoolWriter, EncodeError, MAX_OUTPUT_BYTES};
 use crate::ac_quant::{self, Deltas, Method4Matrices, Method4Matrix, Plane, Steps};

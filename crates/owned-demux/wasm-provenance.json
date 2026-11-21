@@ -28,7 +28,7 @@
     "crates/owned-demux/src/snapshot.rs": "3f383c0a8a8205f65b4547f261df4157485a9ff3370130d01bde6bb40e321107",
     "crates/owned-demux/src/ts.rs": "8d3b03b7bb59a2efdf47f24da454ccb0a382841a728821293913a2b2bb12aa1c",
     "scripts/build/build-owned-demux-wasm.ts": "b080430496fd2852f5d291642a6f72ebe3e799901086ee3d630e3c04e2ce648e",
-    "scripts/build/build-gif-scalar-wasm.ts": "1a24a58b72be880aa8b5f151b0acd0258772e8434f33517f614af53aa4a69439"
+    "scripts/build/build-gif-scalar-wasm.ts": "da6557ed2bc970a06049f93af74899d218114a548cd3e271b8766855364c0121"
   },
   "artifact": {
     "sha256": "f4132e72e2916bdc1693e436c3f4bd2e47735bcbff989a26c0f09ff42ee71f93",
