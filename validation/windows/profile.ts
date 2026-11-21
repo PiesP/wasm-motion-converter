@@ -856,6 +856,14 @@ async function loadApplication(page: Page, url: string) {
   };
 }
 
+async function waitForMp4SampleBudgetError(page: Page) {
+  const error = page.locator('[data-testid="error-display"]');
+  await error.waitFor({ state: 'visible', timeout: 10_000 });
+  // ABI error 3 is ResourceLimit, which the owned parser returns before expanding stsz.
+  assert.deepEqual(await error.locator('pre').allTextContents(), ['Owned demux parser error 3']);
+  return error;
+}
+
 async function selectFixture(page: Page, filePath: string, inspectAnalysis = false) {
   if (inspectAnalysis) {
     await page.evaluate(() => {
@@ -2828,9 +2836,7 @@ async function exercisePublicTarget(
       mimeType: 'video/mp4',
       buffer: budgetFixture.bytes,
     });
-    const metadataError = page.locator('[data-testid="error-display"]');
-    await metadataError.waitFor({ state: 'visible', timeout: 10_000 });
-    assert((await metadataError.textContent())?.includes('ISOBMFF sample metadata'));
+    await waitForMp4SampleBudgetError(page);
     await page
       .locator(
         '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
@@ -6448,10 +6454,7 @@ export async function run({
       mimeType: 'video/mp4',
       buffer: budgetFixture.bytes,
     });
-    const metadataError = page.locator('[data-testid="error-display"]');
-    await metadataError.waitFor({ state: 'visible', timeout: 10_000 });
-    const errorText = await metadataError.textContent();
-    assert(errorText?.includes('ISOBMFF sample metadata') && errorText.includes('sample count'));
+    const metadataError = await waitForMp4SampleBudgetError(page);
     const selectDifferent = page.locator(
       '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
     );
