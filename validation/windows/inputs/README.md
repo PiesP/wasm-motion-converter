@@ -160,6 +160,26 @@ retirement and verifies its cache, archived URLs and offline owned WebP
 conversion. The additional fresh-context checks cover owned WebP online and
 offline. The original handoff mode retains its earlier scope and reporting.
 
+The predecessor migration receipt tracks the archived app entry and conversion
+Worker separately from the four codec files. It records the old document's
+entry response, drives an old GIF conversion with Worker enabled, and reports
+the exact Worker instance and response only when observed. It records existing
+cache entries before seeding two known caller aliases. During grace the new
+offline tab must reject both caller URLs and their aliases. A retained old
+window may read physically resident canonical caller bytes. An old window
+fetch alone does not establish a Worker request.
+
+The receipt derives the full predecessor-only hashed path set from the two
+verified manifests. It lists paths absent before the update and tracks actual
+cache keys from the app's static and dynamic cache namespaces through the final
+old tab closure, a caller-specific origin challenge and a persistent restart.
+Exact shared assets already resident before closure must survive, and stable
+navigation keys are checked by document hash. For the origin challenge, direct
+requests must receive the exact archived caller bytes at both canonical and
+alias URLs. The controlled client must refuse those same URLs with no origin
+request or cache admission, and direct requests must return 404 again after
+the archive control is turned off.
+
 After the qualified build lands and deploys, run the Pages checks against the
 exact clean build artifact. The final mode checks the physical artifact
 inventory before making public requests. It probes the four archived codec

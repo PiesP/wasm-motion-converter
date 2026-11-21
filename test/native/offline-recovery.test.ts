@@ -10,6 +10,7 @@ import { test } from 'vite-plus/test';
 
 import {
   LEGACY_WEBP_DEPLOYMENT,
+  RETIRED_WEBP_CALLERS,
   RETIRED_WEBP_EXECUTABLES,
   RETIRED_WEBP_SHIM,
 } from '../../scripts/test/retired-webp-assets.ts';
@@ -21,6 +22,7 @@ import {
   selectCachedRetiredExecutableKeys,
   selectGraceWorkerVersion,
   selectPipelineDependency,
+  selectPredecessorAssetSet,
   softwareWebpInventory,
 } from '../../validation/windows/offline-recovery.ts';
 import { startStaticServer } from '../../validation/windows/profile.ts';
@@ -46,6 +48,15 @@ test('retirement origin records real alias targets and projects the original thr
     );
     const started = await startStaticServer(bundle, { recordRetirementOrigin: true });
     try {
+      assert.deepEqual(started.archivedOriginSnapshot(true).requests, []);
+      const callerAlias = '/' + RETIRED_WEBP_CALLERS[0].path + '?known=1';
+      const callerResponse = await fetch(started.url + callerAlias);
+      assert.equal(callerResponse.status, 404);
+      await callerResponse.text();
+      const callers = started.archivedOriginSnapshot('callers');
+      assert.equal(callers.requests.length, 1);
+      assert.equal(callers.requests[0]?.target, callerAlias);
+      assert.equal(callers.requests[0]?.disposition, 'finished');
       assert.deepEqual(started.archivedOriginSnapshot(true).requests, []);
       const expected = [];
       for (const [index, asset] of [RETIRED_WEBP_SHIM, ...LEGACY_WEBP_DEPLOYMENT.files].entries()) {
@@ -82,6 +93,7 @@ test('retirement origin records real alias targets and projects the original thr
         original.requests,
         expected.slice(1).map((row, index) => ({ ...row, sequence: index + 1 }))
       );
+      assert.deepEqual(started.archivedOriginSnapshot('callers'), callers);
     } finally {
       await new Promise<void>((resolve, reject) => {
         started.server.closeIdleConnections();
@@ -91,6 +103,29 @@ test('retirement origin records real alias targets and projects the original thr
   } finally {
     await rm(bundle, { recursive: true, force: true });
   }
+});
+
+test('predecessor inventory distinguishes absent assets, exact shared files and stable paths', () => {
+  const oldCss = { path: 'assets/index.D-kAC8Cr.css', size: 21, sha256: prior };
+  const oldDocument = { path: 'index.html', size: 31, sha256: prior };
+  const priorAssets = [...RETIRED_WEBP_CALLERS, oldCss, oldDocument, demux];
+  const replacement = { path: 'assets/worker-s9R4x7Qm.js', size: 10, sha256: current };
+  assert.deepEqual(selectPredecessorAssetSet(priorAssets, [demux, replacement]), {
+    oldOnly: [...RETIRED_WEBP_CALLERS, oldCss],
+    shared: [demux],
+  });
+  assert.throws(
+    () => selectPredecessorAssetSet(priorAssets, [{ ...demux, sha256: current }]),
+    /Shared hashed path changed digest/
+  );
+  assert.throws(
+    () => selectPredecessorAssetSet([oldCss, oldCss], []),
+    /Duplicate predecessor hashed path/
+  );
+  assert.throws(
+    () => selectPredecessorAssetSet(priorAssets, [demux, demux]),
+    /Duplicate current hashed path/
+  );
 });
 
 test('software WebP inventory distinguishes legacy, retained legacy and owned-only builds', () => {
