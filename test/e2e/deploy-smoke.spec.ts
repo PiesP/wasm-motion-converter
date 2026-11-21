@@ -26,7 +26,7 @@ import {
 
 import {
   isExecutableMediaType,
-  RETIRED_WEBP_EXECUTABLES,
+  RETIRED_WEBP_DELIVERY_FILES,
   RETIRED_REQUEST_MODES,
 } from '../../scripts/test/retired-webp-assets';
 import { hasLegacyWebpInRetiredBuild } from '../../scripts/test/retired-webp-worker';
@@ -323,7 +323,7 @@ test.describe('Deployment: Page Load', () => {
       try {
         for (const mode of RETIRED_REQUEST_MODES) {
           const context = mode === 'ordinary' ? ordinary : request;
-          for (const prior of RETIRED_WEBP_EXECUTABLES) {
+          for (const prior of RETIRED_WEBP_DELIVERY_FILES) {
             const url = new URL(`/${prior.path}`, DEPLOY_URL).href;
             const response = await context.get(url, {
               maxRedirects: 0,

@@ -12,7 +12,7 @@ import {
   LEGACY_WEBP_WASM_ASSET,
   OWNED_VP8_ASSET,
   RETIRED_REQUEST_MODES,
-  RETIRED_WEBP_EXECUTABLES,
+  RETIRED_WEBP_DELIVERY_FILES,
 } from './retired-webp-assets.ts';
 
 const MAX_REPORT_BYTES = 2_000_000;
@@ -299,7 +299,7 @@ function forcedWebpEncoder(
 function retiredWebpUrls(value: unknown, target: URL): unknown {
   const rows = entries(value, 'retired WebP URLs');
   const expectedRows = RETIRED_REQUEST_MODES.flatMap((mode) =>
-    RETIRED_WEBP_EXECUTABLES.map((file) => ({ mode, ...file }))
+    RETIRED_WEBP_DELIVERY_FILES.map((file) => ({ mode, ...file }))
   );
   if (rows.length !== expectedRows.length)
     throw new Error('Incomplete retired WebP URL observations');

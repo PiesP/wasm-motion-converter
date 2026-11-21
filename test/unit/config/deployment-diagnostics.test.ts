@@ -16,7 +16,8 @@ import { preserveDeploymentDiagnostics } from '../../../scripts/test/deployment-
 import {
   isRetiredWebpExecutable,
   RETIRED_REQUEST_MODES,
-  RETIRED_WEBP_EXECUTABLES,
+  RETIRED_WEBP_CALLERS,
+  RETIRED_WEBP_DELIVERY_FILES,
   RETIRED_WEBP_SHIM,
 } from '../../../scripts/test/retired-webp-assets';
 
@@ -61,7 +62,7 @@ const forcedEncoder = {
   },
 };
 const retiredUrls = RETIRED_REQUEST_MODES.flatMap((mode) =>
-  RETIRED_WEBP_EXECUTABLES.map((file) => ({
+  RETIRED_WEBP_DELIVERY_FILES.map((file) => ({
     mode,
     url: new URL(`/${file.path}`, target).href,
     priorSha256: file.sha256,
@@ -230,7 +231,7 @@ afterEach(() => {
 });
 
 describe('deployment diagnostic artifact', () => {
-  it('binds the final software route and all four archived Pages URLs to the validated artifact', () => {
+  it('binds the final software route and the four archived codec URLs and both caller URLs to the validated artifact', () => {
     const { file, output } = fixture(report({ final: true }));
     const path = preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode);
     const artifact = JSON.parse(readFileSync(path, 'utf8'));
@@ -281,6 +282,9 @@ describe('deployment diagnostic artifact', () => {
     [
       retiredUrls.slice(1),
       retiredUrls.filter((row) => row.priorSha256 !== RETIRED_WEBP_SHIM.sha256),
+      ...RETIRED_WEBP_CALLERS.map((caller) =>
+        retiredUrls.filter((row) => row.priorSha256 !== caller.sha256)
+      ),
       [{ ...retiredUrls[0], mode: 'revalidated' }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], status: 302 }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], cacheControl: 'immutable' }, ...retiredUrls.slice(1)],

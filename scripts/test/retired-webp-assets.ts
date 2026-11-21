@@ -36,6 +36,23 @@ export const RETIRED_WEBP_SHIM = {
 
 export const RETIRED_WEBP_EXECUTABLES = [...LEGACY_WEBP_DEPLOYMENT.files, RETIRED_WEBP_SHIM];
 
+// The archived entry and conversion Worker dynamically import the two legacy
+// loaders. They are separate from the codec files warmed in old-tab tests.
+export const RETIRED_WEBP_CALLERS = [
+  {
+    path: 'assets/index.D1rWSzxT.js',
+    size: 211705,
+    sha256: 'a1d79b4adb32cc3e317ee508abe2c4a23154a4e999a24e18b5562bf43c92bd82',
+  },
+  {
+    path: 'assets/worker-BG8LzI1q.js',
+    size: 112807,
+    sha256: '18477517e1755f75dfc8f6216c846e4731f96620faf4265a509a2c3535c54113',
+  },
+] as const;
+
+export const RETIRED_WEBP_DELIVERY_FILES = [...RETIRED_WEBP_EXECUTABLES, ...RETIRED_WEBP_CALLERS];
+
 export const RETIRED_REQUEST_MODES = ['ordinary', 'revalidated'] as const;
 
 const LEGACY_WEBP_EXECUTABLE = /(?:^|\/)(?:webp-wasm|wasm-webp)(?:[.-][\w-]+)*\.(?:wasm|[cm]?js)$/i;

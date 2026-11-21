@@ -162,9 +162,10 @@ offline. The original handoff mode retains its earlier scope and reporting.
 
 After the qualified build lands and deploys, run the Pages checks against the
 exact clean build artifact. The final mode checks the physical artifact
-inventory before making public requests. It probes the four archived
-executable URLs, including the 112-byte Vite shim, from a new ordinary request
-context before a separate revalidation pass. It binds the observed forced
+inventory before making public requests. It probes the four archived codec
+files, including the 112-byte Vite shim, and the archived app entry and
+conversion Worker that import the old loaders. It requests all six from a new
+ordinary request context before a separate revalidation pass. It binds the observed forced
 software encoder and the actual browser navigation and encoder-response CSP
 rules to the served artifact. The final command requires exact manifest bytes
 before and after the browser run and takes no automatic Playwright retries.
