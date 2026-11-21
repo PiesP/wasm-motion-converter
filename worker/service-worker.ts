@@ -184,6 +184,18 @@ async function isArchivedDocument(response: Response) {
 }
 
 async function currentShell() {
+  await serialized(async () => {
+    try {
+      // Look in the named cache without creating it on a fresh offline start.
+      const former = await caches.match(NAVIGATION_CACHE_KEY, { cacheName: DYNAMIC_CACHE });
+      if (!former || isAppDocumentResponse(former)) return;
+      const cache = await caches.open(DYNAMIC_CACHE);
+      const cached = await cache.match(NAVIGATION_CACHE_KEY);
+      if (cached && !isAppDocumentResponse(cached)) await cache.delete(NAVIGATION_CACHE_KEY);
+    } catch {
+      // Recover from the verified static shell even if the old dynamic key cannot be removed.
+    }
+  });
   try {
     const cache = await caches.open(STATIC_CACHE);
     const cached = await cache.match(NAVIGATION_CACHE_KEY);

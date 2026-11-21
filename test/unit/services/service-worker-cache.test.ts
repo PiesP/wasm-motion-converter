@@ -36,6 +36,7 @@ afterAll(() => {
 });
 
 const origin = 'https://drop.test';
+const dynamicCacheName = 'dropconvert-dynamic-v20261008-documents';
 const assetUrl = (name: string, extension = 'js') =>
   `${origin}/assets/${name}.abcdefgh.${extension}`;
 
@@ -150,7 +151,7 @@ function loadServiceWorker(existingStores?: CacheStores): {
   dispatchMessage: (client: ClientLike, claimedGeneration?: string) => Promise<void>;
   addClient: (id: string, type?: ClientLike['type'], url?: string) => ClientLike;
   removeClient: (id: string) => void;
-  failDelete: (url: string) => void;
+  failDelete: (url: string, throws?: boolean) => void;
   delayRead: (url: string) => { started: Promise<void>; resume: () => void };
   dispatchInstall: () => Promise<void>;
   dispatchActivate: () => Promise<void>;
@@ -165,7 +166,6 @@ function loadServiceWorker(existingStores?: CacheStores): {
   setStorageFailure: (failure: boolean) => void;
 } {
   const staticCacheName = 'dropconvert-static-v20261008-documents';
-  const dynamicCacheName = 'dropconvert-dynamic-v20261008-documents';
   const listeners = new Map<string, (event: ServiceWorkerEventLike) => void>();
   const cacheStores = existingStores ?? new Map<string, Map<string, unknown>>();
   const staticCacheEntries = cacheStores.get(staticCacheName) ?? new Map<string, unknown>();
@@ -179,7 +179,7 @@ function loadServiceWorker(existingStores?: CacheStores): {
   let networkResponse: unknown;
   let networkFailure: unknown;
   let storageFailure = false;
-  let rejectedDelete: string | undefined;
+  let rejectedDelete: { url: string; throws: boolean } | undefined;
   let delayedRead: { url: string; started: () => void; done: Promise<void> } | undefined;
   let writes = 0;
   let enumerations = 0;
@@ -222,9 +222,12 @@ function loadServiceWorker(existingStores?: CacheStores): {
           entries.set(toCacheKey(key), response);
         }
       }),
-      delete: vi.fn((key: string | { url: string }) =>
-        Promise.resolve(toCacheKey(key) !== rejectedDelete && entries.delete(toCacheKey(key)))
-      ),
+      delete: vi.fn(async (key: string | { url: string }) => {
+        const url = toCacheKey(key);
+        if (url !== rejectedDelete?.url) return entries.delete(url);
+        if (rejectedDelete.throws) throw new Error('Cache deletion failed');
+        return false;
+      }),
       match: vi.fn(async (key: string | { url: string }) => {
         const url = toCacheKey(key);
         if (url === delayedRead?.url) {
@@ -308,8 +311,8 @@ function loadServiceWorker(existingStores?: CacheStores): {
     removeClient: (id) => {
       clients.delete(id);
     },
-    failDelete: (url) => {
-      rejectedDelete = url;
+    failDelete: (url, throws = false) => {
+      rejectedDelete = { url, throws };
     },
     delayRead: (url) => {
       const started = Promise.withResolvers<void>();
@@ -380,6 +383,7 @@ describe('service worker dynamic cache boundaries', () => {
 
   it('commits only the exact emitted shell and serves it offline, including eager assets', async () => {
     const worker = loadServiceWorker();
+    worker.cacheStores.delete(dynamicCacheName);
     await worker.dispatchInstall();
     expect(worker.staticCacheEntries.has(`${origin}/`)).toBe(false);
     await worker.dispatchActivate();
@@ -401,6 +405,7 @@ describe('service worker dynamic cache boundaries', () => {
       )
     ).resolves.toBeDefined();
     expect(eager.some((url) => /worker|wasm|conversion-pipeline/.test(url))).toBe(false);
+    expect(worker.cacheStores.has(dynamicCacheName)).toBe(false);
   });
 
   it('rejects a staged mismatching document without replacing the previous offline document', async () => {
@@ -465,6 +470,45 @@ describe('service worker dynamic cache boundaries', () => {
     expect(worker.cacheEntries.has(`${origin}/`)).toBe(false);
     expect(worker.staticCacheEntries.get(`${origin}/`)).toBe(shell);
   });
+
+  it.each([
+    [
+      'evicts the poisoned dynamic root',
+      new Response('poison', { headers: { 'content-type': 'text/plain' } }),
+      false,
+      false,
+    ],
+    [
+      'tolerates a failed deletion',
+      new Response('poison', { headers: { 'content-type': 'text/plain' } }),
+      true,
+      true,
+    ],
+    [
+      'keeps an admissible predecessor document',
+      documentResponse('predecessor shell'),
+      false,
+      true,
+    ],
+  ] as const)(
+    'serves the verified static shell and %s',
+    async (_case, dynamic, fail, keepsDynamic) => {
+      const worker = loadServiceWorker();
+      await worker.dispatchInstall();
+      await worker.dispatchActivate();
+      const key = `${origin}/`;
+      const shell = worker.staticCacheEntries.get(key);
+      expect(shell).toBeDefined();
+      worker.cacheEntries.set(key, dynamic);
+      if (fail) worker.failDelete(key, true);
+      worker.setNetworkFailure(new Error('offline'));
+
+      await expect(worker.dispatchFetch(`${origin}/?offline`, 'document')).resolves.toBe(shell);
+      expect(worker.cacheStores.get(dynamicCacheName)?.get(key)).toBe(
+        keepsDynamic ? dynamic : undefined
+      );
+    }
+  );
 
   it('fails offline when neither recovery entry is valid', async () => {
     const worker = loadServiceWorker();
