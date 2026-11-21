@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
@@ -2663,12 +2663,33 @@ async function waitForNativeVisibility(
   }
 }
 
-async function installedExecutable(browser: Browser) {
+async function installedExecutable(browser: Browser, expectedPid?: number) {
   const session = await browser.newBrowserCDPSession();
   try {
-    const { arguments: argv } = await session.send('Browser.getBrowserCommandLine');
-    assert(argv[0] && isAbsolute(argv[0]), 'Installed browser has no complete executable path');
-    return realpath(argv[0]);
+    const { processInfo } = await session.send('SystemInfo.getProcessInfo');
+    const matches = processInfo.filter(({ type }) => type === 'browser');
+    assert.equal(
+      matches.length,
+      1,
+      'Expected one browser process on the attached browser endpoint'
+    );
+    const pid = matches[0]!.id;
+    assert(Number.isSafeInteger(pid) && pid > 0, 'Invalid browser process identity');
+    if (expectedPid !== undefined) assert.equal(pid, expectedPid, 'Unexpected owned browser PID');
+    const root = process.env.SystemRoot;
+    assert(root && isAbsolute(root), 'Missing Windows system root');
+    const shell = join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const query = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::Write((Get-Process -Id ${pid} -ErrorAction Stop).Path)`;
+    const path = await new Promise<string>((resolve, reject) => {
+      execFile(
+        shell,
+        ['-NoProfile', '-NonInteractive', '-Command', query],
+        { encoding: 'utf8', timeout: 15_000, maxBuffer: 32_768, windowsHide: true },
+        (error, stdout) => (error ? reject(error) : resolve(stdout))
+      );
+    });
+    assert(isAbsolute(path), 'The running installed browser has no absolute executable path');
+    return await realpath(path);
   } finally {
     await session.detach();
   }
@@ -2823,7 +2844,8 @@ async function prepareInstalledProfile(browser: Browser, bundleRoot: string) {
         });
         const [context] = connected.contexts();
         assert(context && connected.contexts().length === 1, 'Expected the owned default profile');
-        assert.equal(await installedExecutable(connected), executable);
+        assert(child.pid, 'Owned browser PID is unavailable');
+        assert.equal(await installedExecutable(connected, child.pid), executable);
         const cdp = await connected.newBrowserCDPSession();
         try {
           // Restore real downloads to the owned directory without restoring focus emulation.
