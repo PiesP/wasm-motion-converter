@@ -2410,6 +2410,32 @@ fn rate_profile_filter(filter: FilterConfig, requested: u32, effective: u32) -> 
     }
 }
 
+fn q85_luma_edge_grid(
+    segments: SegmentConfig,
+    quality: u32,
+    counts: [usize; 4],
+    neutral_chroma: bool,
+    curvature: segmentation::CurvatureTotals,
+) -> SegmentConfig {
+    let [fine, flat, ramp, textured] = counts;
+    if quality == 85
+        && !neutral_chroma
+        && !segments.enabled
+        && fine == 0
+        && flat == 0
+        && ramp == 0
+        && curvature.only_luma_exceeds_cutoff(textured)
+    {
+        // Only the all-Textured profile has complete curvature here. With
+        // smooth chroma and no activity grid, a slightly wider residual
+        // grid avoids spending the fine q85 steps on luma-driven edges.
+        // The ordinary q85 Textured grid supplies the physical base index.
+        SegmentConfig::nonsegmented(segments.base_qindex + 1)
+    } else {
+        segments
+    }
+}
+
 fn q85_smooth_pair_luma_bias(
     quality: u32,
     neutral_chroma: bool,
@@ -3226,6 +3252,7 @@ fn encode_observed(
         segments = config;
         deltas = allocation_deltas;
     } else {
+        segments = q85_luma_edge_grid(segments, quality, class_counts, neutral_chroma, curvature);
         small_palette.allocate_texture(
             &mut segments,
             requested_quality,
@@ -6027,6 +6054,13 @@ impl FrameEncoder {
 
     fn prepare_analysis(&mut self) -> Result<(), Status> {
         if !self.activity.selected() {
+            self.segments = q85_luma_edge_grid(
+                self.segments,
+                self.effective_quality,
+                self.class_counts,
+                self.neutral_chroma,
+                self.curvature,
+            );
             self.small_palette.allocate_texture(
                 &mut self.segments,
                 self.request.quality,
@@ -12350,6 +12384,30 @@ mod tests {
     }
 
     #[test]
+    fn q85_luma_edge_grid_requires_complete_luma_only_curvature() {
+        let baseline = SegmentConfig::nonsegmented(14);
+        let all_textured = [0, 0, 0, 2];
+        let mixed = [1, 0, 0, 1];
+        for (quality, counts, neutral, sums, expected) in [
+            (85, all_textured, false, [1793, 384, 384], 15),
+            (85, all_textured, false, [1792, 384, 384], 14),
+            (85, all_textured, false, [1793, 385, 384], 14),
+            (85, all_textured, false, [1793, 384, 385], 14),
+            (85, all_textured, true, [1793, 384, 384], 14),
+            (85, mixed, false, [1793, 384, 384], 14),
+            (75, all_textured, false, [1793, 384, 384], 14),
+        ] {
+            let curvature = segmentation::CurvatureTotals {
+                sums,
+                ..Default::default()
+            };
+            let selected = q85_luma_edge_grid(baseline, quality, counts, neutral, curvature);
+            assert!(!selected.enabled);
+            assert_eq!(selected.qindex_for(segmentation::TEXTURED), expected);
+        }
+    }
+
+    #[test]
     fn ordinary_q60_texture_feedback_preserves_wire_grid_and_sync_resume() {
         let input = photo_allocation_input();
         for quality in [60, 75, 85] {
@@ -14268,7 +14326,7 @@ mod tests {
             ),
             (low_curvature_photo_input(), 60, 28, (-15, -7), true, None),
             (photo_allocation_input(), 75, 26, (-11, -7), false, None),
-            (photo_allocation_input(), 85, 14, (-4, -4), false, None),
+            (photo_allocation_input(), 85, 15, (-4, -4), false, None),
         ] {
             let request = Request {
                 quality,

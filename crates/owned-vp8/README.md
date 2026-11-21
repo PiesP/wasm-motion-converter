@@ -138,6 +138,11 @@ smaller of the frame base and the medium texture index (28), preserving an
 already coarser high-import choice. The q85 classifier collects these sums
 only until it encounters a source class other than Textured.
 
+At q85, an ordinary nonsegmented frame uses the adjacent quantizer index
+15 when every block is Textured, chroma is non-neutral, and only the luma
+curvature exceeds its cutoff. Both encoder entry points use the existing
+complete curvature totals and the selected frame keeps its preset deltas.
+
 For ordinary all-Textured q60 with high luma curvature and both chroma
 means at most 2, the current residual experiment also uses the existing
 Y1 AC zero bin for I16. I4 retains its ordinary quantization. If luma
