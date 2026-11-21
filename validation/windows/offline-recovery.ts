@@ -3,10 +3,13 @@
 
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
-import { join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import type {
   APIResponse,
@@ -1517,11 +1520,13 @@ async function exerciseBuildUpgrade(
   const exactLegacyLoader = Boolean(removal);
   const persistent = removal ? await prepareInstalledProfile(browser, bundleRoot) : null;
   let context: BrowserContext | undefined;
+  let closeOwnedBrowser: (() => Promise<void>) | undefined;
   try {
     const warm = persistent
       ? await persistent.launch()
       : { context: await browser.newContext({ locale: 'en-US', acceptDownloads: true }) };
     context = warm.context;
+    if ('close' in warm) closeOwnedBrowser = warm.close;
     const page = context.pages()[0] ?? (await context.newPage());
     if (priorSoftware) await forceMainSoftwareWebp(page);
     if (removal) await observeCurrentClientRetirement(page, currentBuild.state.sourceSha);
@@ -2203,7 +2208,20 @@ async function exerciseBuildUpgrade(
     if (removal) page.on('framenavigated', recordRetirementNavigation);
     let beforeOldCloseEvents: RetirementEvent[] = [];
     if (removal) {
+      const visibleTarget = await nativeWindowTarget(page);
+      const oldTarget = await nativeWindowTarget(activePage);
+      assert.equal(
+        visibleTarget.windowId,
+        oldTarget.windowId,
+        'Retained tabs are in different windows'
+      );
+      assert.notEqual(
+        visibleTarget.targetId,
+        oldTarget.targetId,
+        'Retained tabs share a target ID'
+      );
       await page.bringToFront();
+      await waitForNativeVisibility(page, 'visible', 30_000);
       await page.waitForFunction(
         () =>
           globalThis.__wmcRetirementEvents.some(
@@ -2212,9 +2230,25 @@ async function exerciseBuildUpgrade(
         undefined,
         { timeout: 15_000 }
       );
+      const switchDeadline = performance.now() + 30_000;
       await activePage.bringToFront();
-      await page.waitForFunction(() => document.visibilityState === 'hidden');
+      await waitForNativeVisibility(
+        page,
+        'hidden',
+        Math.max(1, switchDeadline - performance.now())
+      );
+      await waitForNativeVisibility(
+        activePage,
+        'visible',
+        Math.max(1, switchDeadline - performance.now())
+      );
       beforeOldCloseEvents = await page.evaluate(() => globalThis.__wmcRetirementEvents.slice());
+      console.log('[M5 installed browser focus]', {
+        current: visibleTarget,
+        old: oldTarget,
+        currentVisibility: 'hidden',
+        oldVisibility: 'visible',
+      });
       assert(
         !beforeOldCloseEvents.some(({ kind, value }) => kind === 'worker' && value === 'retired')
       );
@@ -2239,9 +2273,7 @@ async function exerciseBuildUpgrade(
       const closedAt = Date.now();
       const remaining = () => Math.max(1, 15_000 - (Date.now() - closedAt));
       await page.bringToFront();
-      await page.waitForFunction(() => document.visibilityState === 'visible', undefined, {
-        timeout: remaining(),
-      });
+      await waitForNativeVisibility(page, 'visible', remaining());
       await page.waitForFunction(
         (offset) => {
           const events = globalThis.__wmcRetirementEvents.slice(offset);
@@ -2428,11 +2460,14 @@ async function exerciseBuildUpgrade(
     let restart = null;
     let predecessorRestart = null;
     if (persistent) {
-      assert(currentSoftware?.ownedOnly && currentForcedWebp && 'version' in warm);
+      assert(
+        currentSoftware?.ownedOnly && currentForcedWebp && 'version' in warm && closeOwnedBrowser
+      );
       assert(predecessorAssets && predecessorBeforeClose);
       // Close the entire process for the profile that actually upgraded from
       // the archived build. A fresh candidate profile cannot prove eviction survives restart.
-      await context.close();
+      await closeOwnedBrowser();
+      closeOwnedBrowser = undefined;
       context = undefined;
       const { predecessor, ...legacyRestart } = await verifyInstalledProfileRestart(
         persistent,
@@ -2565,7 +2600,8 @@ async function exerciseBuildUpgrade(
       await coldContext?.close();
       if (context) {
         await context.setOffline(false).catch(() => {});
-        await context.close();
+        if (closeOwnedBrowser) await closeOwnedBrowser();
+        else await context.close();
       }
     } finally {
       try {
@@ -2587,12 +2623,142 @@ async function installedBrowserVersion(context: BrowserContext, page: Page) {
   }
 }
 
-async function prepareInstalledProfile(browser: Browser, bundleRoot: string) {
-  assert.equal(
-    browser.browserType().name(),
-    'chromium',
-    'Removal requires the installed Chromium controller'
+async function nativeWindowTarget(page: Page) {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { targetInfo } = await session.send('Target.getTargetInfo');
+    const { windowId, bounds } = await session.send('Browser.getWindowForTarget', {
+      targetId: targetInfo.targetId,
+    });
+    assert.equal(targetInfo.type, 'page');
+    assert.notEqual(bounds.windowState, 'minimized', 'Installed browser window is minimized');
+    return { targetId: targetInfo.targetId, windowId };
+  } finally {
+    await session.detach();
+  }
+}
+
+async function waitForNativeVisibility(
+  page: Page,
+  expected: DocumentVisibilityState,
+  timeout: number
+) {
+  const deadline = performance.now() + timeout;
+  const stop = new AbortController();
+  try {
+    await Promise.race([
+      (async () => {
+        while (performance.now() < deadline) {
+          if ((await page.evaluate(() => document.visibilityState)) === expected) return;
+          await delay(25, undefined, { signal: stop.signal });
+        }
+        throw new Error(`Installed browser did not reach visibility ${expected}`);
+      })(),
+      delay(timeout, undefined, { signal: stop.signal }).then(() => {
+        throw new Error(`Installed browser did not reach visibility ${expected}`);
+      }),
+    ]);
+  } finally {
+    stop.abort();
+  }
+}
+
+async function installedExecutable(browser: Browser) {
+  const session = await browser.newBrowserCDPSession();
+  try {
+    const { arguments: argv } = await session.send('Browser.getBrowserCommandLine');
+    assert(argv[0] && isAbsolute(argv[0]), 'Installed browser has no complete executable path');
+    return realpath(argv[0]);
+  } finally {
+    await session.detach();
+  }
+}
+
+function exitOf(child: ChildProcess) {
+  return new Promise<{ error?: Error; code?: number | null }>((complete) => {
+    child.once('error', (error) => complete({ error }));
+    child.once('exit', (code) => complete({ code }));
+  });
+}
+
+async function waitForProcess<T>(exit: Promise<T>, timeout: number): Promise<T | undefined> {
+  const stop = new AbortController();
+  try {
+    return await Promise.race([exit, delay(timeout, undefined, { signal: stop.signal })]);
+  } finally {
+    stop.abort();
+  }
+}
+
+async function stopOwnedBrowser(
+  child: ChildProcess,
+  exit: ReturnType<typeof exitOf>,
+  browser: Browser | undefined
+) {
+  if (browser?.isConnected()) {
+    // Closing an attached Playwright browser only disconnects its transport.
+    const close = (async () => {
+      const session = await browser.newBrowserCDPSession();
+      await session.send('Browser.close');
+    })().catch(() => {});
+    await waitForProcess(Promise.race([close.then(() => true), exit]), 5_000);
+    const ended = await waitForProcess(exit, 5_000);
+    if (ended) {
+      if (ended.error) throw ended.error;
+      assert.equal(ended.code, 0, 'Owned installed browser did not close normally');
+      return;
+    }
+  } else {
+    const ended = await waitForProcess(exit, 250);
+    if (ended) {
+      if (browser) throw new Error('Owned installed browser disconnected before normal close');
+      return;
+    }
+  }
+
+  const root = process.env.SystemRoot;
+  assert(root && isAbsolute(root) && child.pid, 'Cannot terminate the owned browser process');
+  const killer = spawn(
+    join(root, 'System32', 'taskkill.exe'),
+    ['/PID', String(child.pid), '/T', '/F'],
+    { windowsHide: true, stdio: 'ignore', shell: false }
   );
+  const killed = await waitForProcess(exitOf(killer), 5_000);
+  if (!killed) killer.kill();
+  assert(await waitForProcess(exit, 5_000), 'Owned installed browser did not exit');
+  throw new Error('Owned installed browser required forced process cleanup');
+}
+
+async function ownedDevToolsEndpoint(profilePath: string, exit: ReturnType<typeof exitOf>) {
+  const deadline = performance.now() + 15_000;
+  while (performance.now() < deadline) {
+    const ended = await waitForProcess(exit, 25);
+    if (ended) throw ended.error ?? new Error(`Owned installed browser exited (${ended.code})`);
+    const text = await readFile(join(profilePath, 'DevToolsActivePort'), 'utf8').catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return '';
+      }
+    );
+    const [port, endpoint] = text.trim().split(/\r?\n/);
+    if (
+      port &&
+      /^\d{1,5}$/.test(port) &&
+      Number(port) > 0 &&
+      Number(port) <= 65_535 &&
+      endpoint &&
+      /^\/devtools\/browser\/[0-9a-f-]{36}$/.test(endpoint)
+    ) {
+      return `ws://127.0.0.1:${port}${endpoint}`;
+    }
+  }
+  throw new Error('Owned installed browser did not publish its loopback DevTools endpoint');
+}
+
+async function prepareInstalledProfile(browser: Browser, bundleRoot: string) {
+  assert.equal(process.platform, 'win32', 'Removal requires the installed Windows browser');
+  assert.equal(browser.browserType().name(), 'chromium', 'Removal requires installed Chromium');
+  const executable = await installedExecutable(browser);
   const detection = await browser.newContext();
   let expected: Awaited<ReturnType<typeof installedBrowserVersion>>;
   try {
@@ -2602,28 +2768,91 @@ async function prepareInstalledProfile(browser: Browser, bundleRoot: string) {
   }
   const channel = expected.userAgent.includes('Edg/') ? 'msedge' : 'chrome';
   assert.match(expected.userAgent, /Chrome\//, 'Unsupported installed Chromium channel');
+  assert.equal(basename(executable).toLowerCase(), `${channel}.exe`);
   const profilePath = await mkdtemp(join(bundleRoot, '.wmc-owned-removal-'));
+  let active: (() => Promise<void>) | undefined;
   return {
     channel,
     async launch() {
-      const context = await browser.browserType().launchPersistentContext(profilePath, {
-        channel,
-        headless: false,
-        acceptDownloads: true,
-        locale: 'en-US',
-        args: ['--mute-audio'],
-      });
+      assert(!active, 'The previous owned installed browser has not closed');
+      const downloadsPath = await mkdtemp(join(profilePath, 'downloads-'));
+      const userData = join(profilePath, 'persistent');
+      await mkdir(userData, { recursive: true });
+      await rm(join(userData, 'DevToolsActivePort'), { force: true });
+      const child = spawn(
+        executable,
+        [
+          `--user-data-dir=${userData}`,
+          '--remote-debugging-address=127.0.0.1',
+          '--remote-debugging-port=0',
+          '--enable-automation',
+          '--disable-background-networking',
+          '--disable-component-update',
+          '--disable-sync',
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--mute-audio',
+          '--lang=en-US',
+          'about:blank',
+        ],
+        { stdio: 'ignore', shell: false }
+      );
+      const exit = exitOf(child);
+      let connected: Browser | undefined;
+      const close = async () => {
+        try {
+          await stopOwnedBrowser(child, exit, connected);
+        } finally {
+          if (child.exitCode !== null || child.signalCode !== null || !child.pid) {
+            active = undefined;
+            if (connected?.isConnected()) {
+              const detached = connected.close().then(() => true);
+              assert(await waitForProcess(detached, 5_000), 'Owned CDP connection did not detach');
+            }
+          }
+        }
+      };
+      active = close;
       try {
+        const endpoint = await ownedDevToolsEndpoint(userData, exit);
+        connected = await browser.browserType().connectOverCDP(endpoint, {
+          noDefaults: true,
+          isLocal: true,
+          artifactsDir: downloadsPath,
+          timeout: 15_000,
+        });
+        const [context] = connected.contexts();
+        assert(context && connected.contexts().length === 1, 'Expected the owned default profile');
+        assert.equal(await installedExecutable(connected), executable);
+        const cdp = await connected.newBrowserCDPSession();
+        try {
+          // Restore real downloads to the owned directory without restoring focus emulation.
+          await cdp.send('Browser.setDownloadBehavior', {
+            behavior: 'allowAndName',
+            downloadPath: downloadsPath,
+            eventsEnabled: true,
+          });
+        } finally {
+          await cdp.detach();
+        }
         const page = context.pages()[0] ?? (await context.newPage());
         const version = await installedBrowserVersion(context, page);
         assert.deepEqual(version, expected, 'Removal profile changed the installed browser build');
-        return { context, version };
+        return { context, version, close };
       } catch (error) {
-        await context.close();
+        try {
+          await close();
+        } catch (cleanup) {
+          throw new AggregateError(
+            [error, cleanup],
+            'Owned installed browser launch/cleanup failed'
+          );
+        }
         throw error;
       }
     },
     async dispose() {
+      await active?.();
       await rm(profilePath, { recursive: true, force: true });
     },
   };
@@ -2641,7 +2870,7 @@ async function verifyInstalledProfileRestart(
   predecessorBeforeClose: PredecessorCacheSnapshot,
   priorIndexSha256: string
 ) {
-  const { context, version: after } = await persistent.launch();
+  const { context, version: after, close } = await persistent.launch();
   try {
     await context.setOffline(true);
     const page = context.pages()[0] ?? (await context.newPage());
@@ -2707,7 +2936,7 @@ async function verifyInstalledProfileRestart(
       predecessor: { callerRequests, settled },
     };
   } finally {
-    await context.close();
+    await close();
   }
 }
 
