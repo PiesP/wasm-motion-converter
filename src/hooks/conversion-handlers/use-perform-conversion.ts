@@ -22,7 +22,6 @@ import {
   OWNED_VP8_FAILURE_CODES,
   type OwnedVp8FailureKind,
 } from '@services/owned-vp8-errors';
-import { findWasmWebpInitializationError } from '@services/wasm-webp-singleton';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
 import {
@@ -38,7 +37,6 @@ import {
   setTotalFrames,
   setVideoMetadata,
   setVideoPreviewUrl,
-  setWebpReloadRequired,
   transitionToState,
   videoMetadata,
   videoPreviewUrl,
@@ -552,26 +550,22 @@ async function handleConversionError(
   }
 
   const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
-  const initializationError = findWasmWebpInitializationError(error);
-
   const knownFailure = findKnownConversionFailure(error);
-  if (!initializationError && knownFailure === undefined && isCancellationError(error)) {
+  if (knownFailure === undefined && isCancellationError(error)) {
     // The intent's finally owns the terminal transition after teardown settles.
     runtime.stopMemoryMonitoring();
     return;
   }
 
   const context = classifyConversionError(
-    initializationError?.message ?? errorMessage_,
+    errorMessage_,
     videoMetadata(),
     settings,
     t,
     knownFailure?.code
   );
   context.originalError = errorMessage_;
-  if (initializationError) {
-    setWebpReloadRequired(true);
-  } else if (knownFailure?.retryPhase) {
+  if (knownFailure?.retryPhase) {
     context.recovery = 'retry';
     context.phase = knownFailure.retryPhase;
     delete context.suggestion;

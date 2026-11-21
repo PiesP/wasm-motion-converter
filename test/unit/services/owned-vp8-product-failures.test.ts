@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   encode: vi.fn(),
   retire: vi.fn(),
-  legacy: vi.fn(),
   targetReleased: false,
 }));
 
@@ -23,7 +22,6 @@ vi.mock('@services/owned-vp8-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@services/owned-vp8-core')>()),
   createOwnedVp8Encoder: mocks.create,
 }));
-vi.mock('@services/wasm-webp-singleton', () => ({ encodeRGBReuse: mocks.legacy }));
 vi.mock('@services/decoder-service', () => ({
   decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
     const target = await options.frameMemoryBudget.acquireTarget();
@@ -56,7 +54,6 @@ beforeEach(() => {
   mocks.create.mockReset().mockResolvedValue({ encode: mocks.encode, retire: mocks.retire });
   mocks.encode.mockReset();
   mocks.retire.mockReset();
-  mocks.legacy.mockReset();
   mocks.targetReleased = false;
 });
 
@@ -86,12 +83,11 @@ describe('owned VP8 product failures', () => {
       });
       expect(mocks.targetReleased).toBe(true);
       expect(mocks.retire).toHaveBeenCalledOnce();
-      expect(mocks.legacy).not.toHaveBeenCalled();
     }
   );
 
   it.each([OwnedVp8TrapError, OwnedVp8CancelledError])(
-    'propagates %s after retiring without a legacy retry',
+    'propagates %s after retiring without an automatic retry',
     async (ErrorType) => {
       mocks.encode.mockRejectedValue(new ErrorType('fault'));
       await expect(encodeWebpOwned(demux, options)).rejects.toBeInstanceOf(ErrorType);
@@ -99,7 +95,6 @@ describe('owned VP8 product failures', () => {
       expect(mocks.encode).toHaveBeenCalledTimes(1);
       expect(mocks.retire).toHaveBeenCalledTimes(1);
       expect(mocks.targetReleased).toBe(true);
-      expect(mocks.legacy).not.toHaveBeenCalled();
       const removeGuard = globalBufferPool.installGrowthGuard(() => undefined);
       removeGuard();
     }

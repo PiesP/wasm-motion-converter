@@ -18,7 +18,6 @@ const mocks = vi.hoisted(() => ({
   setCurrentFrame: vi.fn(),
   setErrorMessage: vi.fn(),
   setErrorContext: vi.fn(),
-  setWebpReloadRequired: vi.fn(),
   setOutputFrames: vi.fn(),
   setTotalFrames: vi.fn(),
   setAppState: vi.fn((state: 'idle' | 'cancelling' | 'error') => {
@@ -62,7 +61,6 @@ vi.mock('@stores/conversion-store', () => ({
   setConversionStatusMessage: mocks.setConversionStatusMessage,
   setCurrentFrame: mocks.setCurrentFrame,
   setErrorContext: mocks.setErrorContext,
-  setWebpReloadRequired: mocks.setWebpReloadRequired,
   setErrorMessage: mocks.setErrorMessage,
   setInputFile: mocks.setInputFile,
   setOutputFrames: mocks.setOutputFrames,
@@ -143,7 +141,6 @@ beforeEach(() => {
   mocks.setCurrentFrame.mockReset();
   mocks.setErrorMessage.mockClear();
   mocks.setErrorContext.mockClear();
-  mocks.setWebpReloadRequired.mockClear();
   mocks.setOutputFrames.mockReset();
   mocks.setTotalFrames.mockReset();
   mocks.setAppState.mockClear();
@@ -743,35 +740,16 @@ describe('localized conversion progress status', () => {
   });
 });
 
-it('offers terminal recovery for initialization wrapped by frame processing, even with AbortError cause', async () => {
-  const { WasmWebpInitializationError } = await import('@services/wasm-webp-singleton');
-  const original = new DOMException('bounded failed factory fetch', 'AbortError');
-  const initialization = new WasmWebpInitializationError('factory', original);
-  const processing = new Error(`Frame processing failed: ${initialization.message}`, {
-    cause: initialization,
-  });
-  mocks.settings = { ...mocks.settings, format: 'webp' };
-  mocks.validateVideoDuration.mockResolvedValue({ duration: 1000, warnings: [] });
-  mocks.runConversionPipeline.mockRejectedValueOnce(processing);
-  await handleConvert(
-    createRuntime(),
-    ((key: string) => key) as Parameters<typeof handleConvert>[1]
-  );
-  expect(mocks.setWebpReloadRequired).toHaveBeenCalledWith(true);
-  expect(mocks.setErrorContext).toHaveBeenCalledWith(
-    expect.objectContaining({
-      phase: 'wasm_webp_initialization',
-      originalError: processing.message,
-    })
-  );
-  expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
-  expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
-    expect.objectContaining({ outputBlob: expect.any(Blob) }),
-  ]);
-});
-
 it.each([
   [new OwnedVp8LoadError('Owned VP8 WASM request failed (HTTP 503)'), 'owned_vp8_initialization'],
+  [
+    new Error('Frame processing failed: owned WASM request interrupted', {
+      cause: new OwnedVp8LoadError('Owned VP8 WASM load failed', {
+        cause: new DOMException('Failed load request', 'AbortError'),
+      }),
+    }),
+    'owned_vp8_initialization',
+  ],
   [
     new OwnedVp8InitializationAbiError('Owned VP8 WASM header is invalid'),
     'owned_vp8_initialization',
@@ -800,7 +778,6 @@ it.each([
       recovery: 'retry',
     })
   );
-  expect(mocks.setWebpReloadRequired).not.toHaveBeenCalled();
   expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
 
   // The real conversion-store transition sets this before a click can reach Retry.
@@ -813,7 +790,6 @@ it.each([
   expect(mocks.setConversionResults).toHaveBeenCalledWith([
     expect.objectContaining({ outputBlob: expect.any(Blob) }),
   ]);
-  expect(mocks.setWebpReloadRequired).not.toHaveBeenCalled();
   expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
 });
 
@@ -835,7 +811,6 @@ it.each([
   expect(mocks.setErrorContext).not.toHaveBeenCalledWith(
     expect.objectContaining({ recovery: 'retry' })
   );
-  expect(mocks.setWebpReloadRequired).not.toHaveBeenCalled();
 });
 
 it.each([
