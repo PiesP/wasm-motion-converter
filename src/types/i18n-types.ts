@@ -85,7 +85,6 @@ export interface TranslationKeys {
   'app.error.details': string;
   'app.error.retry': string;
   'app.error.reload': string;
-  'error.webpInitialization': string;
   'update.available': string;
   'update.clearResults': string;
   'update.unavailable': string;

@@ -264,20 +264,6 @@ export function classifyConversionError(
     phase: 'unknown' as string,
   };
 
-  // Initialization is a document-lifetime failure, even when its original
-  // cause mentions abort, memory, or a network timeout.
-  if (errorMessage.startsWith('WebP initialization failed (')) {
-    return {
-      ...baseContext,
-      type: 'general',
-      code: 'ENCODER_ERROR',
-      phase: 'wasm_webp_initialization',
-      suggestion: t
-        ? t('error.webpInitialization')
-        : 'The WebP encoder could not start. Reload the page before trying WebP again.',
-    };
-  }
-
   // A known producer code survives harmless diagnostic wording changes.
   // Keep the more specific existing rule when its code agrees with the producer.
   const matchingRule = ERROR_RULES.find(
