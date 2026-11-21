@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { extractVideoMetadata } from '@services/video-metadata';
 import { MP4_MAX_LOGICAL_SAMPLES, MP4_METADATA_BUDGET_BYTES } from '@utils/constants';
 import {
+  BufferSource,
   BufferTarget,
   EncodedPacket,
   EncodedPacketSink,
@@ -28,21 +29,25 @@ type Table = {
 };
 type Track = {
   id: number;
-  info: { type: string; codec?: string; numberOfChannels?: number };
+  info: { type: string; codec?: string; numberOfChannels?: number; sampleRate?: number };
+  timescale: number;
   sampleTableByteOffset: number;
   sampleTable: Table | null;
   fragmentLookupTable: unknown[];
   fragmentPositionCache: unknown[];
 };
 type Slice = { filePos: number };
+type Fragment = { trackData: Map<number, { samples: unknown[] }> };
 type Parser = {
   moovSlice: Slice;
+  reader: unknown;
   tracks: Track[];
   idToTrack: Map<number, Track>;
   getSampleTableForTrack(track: Track): Table;
+  readFragment(offset: number): Promise<Fragment | null>;
   traverseBox(slice: Slice): boolean;
-  currentFragment: { trackData: Map<number, { samples: unknown[] }> } | null;
-  lastReadFragment: { trackData: Map<number, { samples: unknown[] }> } | null;
+  currentFragment: Fragment | null;
+  lastReadFragment: { moofOffset: number; promise: Promise<Fragment | null> } | null;
 };
 
 // Import the installed patched parser, rather than copying its expansion loops.
@@ -51,8 +56,9 @@ const modules = new URL('../modules/src/', pathToFileURL(require.resolve('mediab
 const { IsobmffDemuxer } = (await import(`${modules.href}isobmff/isobmff-demuxer.js`)) as {
   IsobmffDemuxer: new (input: Input) => Parser;
 };
-const { FileSlice } = (await import(`${modules.href}reader.js`)) as {
+const { FileSlice, Reader } = (await import(`${modules.href}reader.js`)) as {
   FileSlice: { tempFromBytes(bytes: Uint8Array): Slice };
+  Reader: new (source: BufferSource) => unknown;
 };
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -94,6 +100,7 @@ function track(id = 1): Track {
   return {
     id,
     info: { type: 'video' },
+    timescale: 30,
     sampleTableByteOffset: 0,
     sampleTable: null,
     fragmentLookupTable: [],
@@ -321,7 +328,8 @@ describe('installed MP4 sample metadata allocation policy', () => {
     const probe = parser(1024, MP4_MAX_LOGICAL_SAMPLES);
     try {
       const target = track();
-      target.info = { type: 'audio', codec: 'pcm-s16', numberOfChannels: 2 };
+      target.info = { type: 'audio', codec: 'pcm-s16', numberOfChannels: 2, sampleRate: 48_000 };
+      target.timescale = 48_000;
       const table = readTable(
         probe.parser,
         target,
@@ -371,19 +379,22 @@ describe('installed MP4 sample metadata allocation policy', () => {
     }
   });
 
-  it('shares fragment work across tracks and unique offsets without charging rereads twice', () => {
+  it('shares fragment reads at the same offset and bounds cumulative work across offsets', async () => {
+    const bytes = fragment(1, 6);
     const probe = parser(4096);
     const target = track(1);
     probe.parser.tracks.push(target);
     probe.parser.idToTrack.set(target.id, target);
+    probe.parser.reader = new Reader(new BufferSource(concat(bytes, bytes)));
+    probe.parser.moovSlice = FileSlice.tempFromBytes(box('stbl'));
     try {
-      const bytes = fragment(1, 6);
-      expect(probe.parser.traverseBox(FileSlice.tempFromBytes(bytes))).toBe(true);
-      expect(probe.parser.lastReadFragment?.trackData.get(1)?.samples).toHaveLength(6);
-      expect(probe.parser.traverseBox(FileSlice.tempFromBytes(bytes))).toBe(true);
-      const next = FileSlice.tempFromBytes(concat(box('free', new Uint8Array()), bytes));
-      next.filePos = 8;
-      expect(() => probe.parser.traverseBox(next)).toThrow('cumulative fragment work');
+      const first = probe.parser.readFragment(0);
+      expect(probe.parser.readFragment(0)).toBe(first);
+      expect((await first)?.trackData.get(1)?.samples).toHaveLength(6);
+      expect(probe.parser.readFragment(0)).toBe(first);
+      await expect(probe.parser.readFragment(bytes.length)).rejects.toThrow(
+        'cumulative fragment work'
+      );
     } finally {
       probe.input.dispose();
     }

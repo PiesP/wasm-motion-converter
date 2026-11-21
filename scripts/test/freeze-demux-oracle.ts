@@ -5,8 +5,9 @@
 import { execFileSync } from 'node:child_process';
 /** Freeze local, development-oracle traces without retaining compressed payloads. */
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { findPackageJSON } from 'node:module';
+import { basename, dirname, resolve } from 'node:path';
 
 import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from 'mediabunny';
 
@@ -17,9 +18,110 @@ import {
   MP4_METADATA_BUDGET_BYTES,
 } from '../../src/utils/constants.ts';
 
+const root = resolve(import.meta.dirname, '../..');
+const packageName = 'mediabunny';
+
 function digest(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
+
+// Select an indentation-scoped block in the canonical pnpm-generated lock.
+function lockSection(lines: string[], header: string): string[] {
+  const start = lines.indexOf(header);
+  if (start === -1) return [];
+  const childIndent = ' '.repeat(header.length - header.trimStart().length + 1);
+  const end = lines.findIndex(
+    (line, index) => index > start && line !== '' && !line.startsWith(childIndent)
+  );
+  return lines.slice(start + 1, end === -1 ? undefined : end);
+}
+
+function verifyOracleInstallation() {
+  const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  const packageFile = findPackageJSON(import.meta.resolve(packageName));
+  if (
+    !packageFile ||
+    realpathSync(packageFile) !==
+      realpathSync(resolve(root, 'node_modules', packageName, 'package.json'))
+  ) {
+    throw new Error('Could not resolve MediaBunny from the local installation');
+  }
+  const installed = JSON.parse(readFileSync(packageFile, 'utf8')) as {
+    name?: string;
+    version?: string;
+  };
+  const { version } = installed;
+  if (
+    installed.name !== packageName ||
+    !version ||
+    manifest.devDependencies?.[packageName] !== version ||
+    manifest.dependencies?.[packageName] !== undefined
+  ) {
+    throw new Error('Installed MediaBunny does not match the exact development dependency');
+  }
+
+  const selector = `${packageName}@${version}`;
+  const configArgs = ['config', 'get', 'patchedDependencies', '--json'];
+  const config = JSON.parse(
+    process.platform === 'win32'
+      ? execFileSync('cmd.exe', ['/d', '/c', 'pnpm config get patchedDependencies --json'], {
+          cwd: root,
+          encoding: 'utf8',
+        })
+      : execFileSync('pnpm', configArgs, { cwd: root, encoding: 'utf8' })
+  ) as Record<string, string> | null;
+  const patchPath = config?.[selector];
+  if (!patchPath) throw new Error(`No configured patch for ${selector}`);
+  const patch = readFileSync(resolve(root, patchPath));
+  const patchSha256 = digest(patch);
+
+  const lockfile = readFileSync(resolve(root, 'pnpm-lock.yaml'));
+  // pnpm may put its own package-manager lock in a separate first document.
+  const lock =
+    lockfile.toString('utf8').replaceAll('\r\n', '\n').split(/^---$/m).at(-1)?.trim() ?? '';
+  const lockLines = lock.split('\n');
+  const rootImporter = lockSection(lockSection(lockLines, 'importers:'), '  .:');
+  const lockedDevelopment = lockSection(rootImporter, '    devDependencies:');
+  const lockedDependency = lockSection(lockedDevelopment, `      ${packageName}:`);
+  const expectedDependency = [
+    `        specifier: ${version}`,
+    `        version: ${version}(patch_hash=${patchSha256})`,
+  ].join('\n');
+  if (
+    !lockSection(lockLines, 'patchedDependencies:').includes(`  ${selector}: ${patchSha256}`) ||
+    lockedDependency.join('\n').trimEnd() !== expectedDependency
+  ) {
+    throw new Error(`pnpm lockfile does not select the configured patch for ${selector}`);
+  }
+  const modules = JSON.parse(readFileSync(resolve(root, 'node_modules/.modules.yaml'), 'utf8')) as {
+    virtualStoreDir: string;
+  };
+  const installedLock = readFileSync(
+    resolve(root, 'node_modules', modules.virtualStoreDir, 'lock.yaml'),
+    'utf8'
+  );
+  if (installedLock.replaceAll('\r\n', '\n').trim() !== lock) {
+    throw new Error('Installed pnpm lock does not match pnpm-lock.yaml. Run a frozen install.');
+  }
+
+  const packageDir = dirname(packageFile);
+  // In a linked worktree Git would otherwise scope patch paths to node_modules.
+  try {
+    execFileSync('git', ['apply', '--reverse', '--check', '-'], {
+      cwd: packageDir,
+      env: { ...process.env, GIT_CEILING_DIRECTORIES: dirname(packageDir) },
+      input: patch,
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+  } catch (cause) {
+    throw new Error(`Installed MediaBunny files do not match the patch for ${selector}`, { cause });
+  }
+  return { package: packageName, version, patchSha256, lockSha256: digest(lockfile) };
+}
+
 function description(
   value: ArrayBufferLike | ArrayBufferView<ArrayBufferLike> | undefined
 ): string | null {
@@ -142,6 +244,7 @@ export async function freezeOracle(path: string): Promise<unknown> {
 if (import.meta.main) {
   const [output, ...paths] = process.argv.slice(2);
   if (!output || !paths.length) throw new Error('Usage: freeze-demux-oracle.ts OUTPUT INPUT...');
+  const oracle = verifyOracleInstallation();
   const fixtures = [];
   for (const path of paths) {
     try {
@@ -150,14 +253,13 @@ if (import.meta.main) {
       fixtures.push({ id: basename(path), status: 'oracle-rejected', error: String(error) });
     }
   }
-  const patch = readFileSync('patches/mediabunny@1.65.2.patch');
   writeFileSync(
     output,
     JSON.stringify(
       {
         schema: 1,
-        source: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
-        oracle: { package: 'mediabunny', version: '1.65.2', patchSha256: digest(patch) },
+        source: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+        oracle,
         node: process.version,
         tools: {
           ffmpeg: execFileSync('ffmpeg', ['-version'], { encoding: 'utf8' }).split('\n')[0],
