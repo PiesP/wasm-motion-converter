@@ -358,7 +358,7 @@ async function persistReplacement(state: ReplacementState) {
   ).put(RETIREMENT_KEY, new Response(JSON.stringify(state)));
 }
 
-async function startReplacement(former: Response | undefined, old: RetirementState | undefined) {
+async function startReplacement(former: Response | undefined) {
   if (
     !replacementOnly.size ||
     (await caches.match(RETIREMENT_KEY, { cacheName: REPLACEMENT_CACHE }))
@@ -369,9 +369,9 @@ async function startReplacement(former: Response | undefined, old: RetirementSta
   if (former && (await isReplacementDocument(former))) {
     // The browser has switched already-controlled clients to this worker at
     // activation. Take the snapshot before claim() adds uncontrolled clients.
-    const windows = await controlledAppWindows();
-    const priorClients = new Set(old?.phase === 'grace' && old.overlap ? old.old : []);
-    candidates = windows.filter((window) => !priorClients.has(window.id)).map(({ id }) => id);
+    // The earlier retirement census can contain hidden 02f windows which have
+    // yet to send their source cue. Record candidates independently of it.
+    candidates = (await controlledAppWindows()).map(({ id }) => id);
   }
   await persistReplacement({
     candidates: clientIds(candidates) ? candidates : [],
@@ -381,10 +381,28 @@ async function startReplacement(former: Response | undefined, old: RetirementSta
 
 async function reconcileReplacement(client?: Client, generation?: string) {
   if (!replacementOnly.size) return undefined;
-  const state = await readReplacement();
-  // A controllerchange message can arrive before activate has recorded its census.
-  // Until that record exists, deny unconfirmed reads and leave resident bytes in place.
-  if (!state) return undefined;
+  let state = await readReplacement();
+  if (!state) {
+    // A current page can recover a lost record after activation. The shell
+    // pin prevents an early controllerchange cue from closing the pending census.
+    if (
+      !client ||
+      generation !== __APP_SOURCE_SHA__ ||
+      workerScope.registration.active?.state !== 'activated'
+    ) {
+      return undefined;
+    }
+    const shell = await caches.match(NAVIGATION_CACHE_KEY, { cacheName: STATIC_CACHE });
+    if (
+      !shell ||
+      !(await isCurrentDocument(shell)) ||
+      !(await controlledAppWindows()).some(({ id }) => id === client.id)
+    ) {
+      return undefined;
+    }
+    state = { candidates: [], confirmed: [] };
+    await persistReplacement(state);
+  }
   if (state.candidates.length) {
     const live = new Set((await controlledAppWindows()).map(({ id }) => id));
     const candidates = state.candidates.filter(
@@ -403,7 +421,7 @@ async function reconcileReplacement(client?: Client, generation?: string) {
     if (candidates.length) return { candidates, confirmed };
   }
   await sweepReplacement();
-  return undefined;
+  return { candidates: [], confirmed: [] };
 }
 
 async function replacementRequester(event: FetchEvent, state: ReplacementState) {
@@ -741,7 +759,7 @@ workerScope.addEventListener('activate', (event) => {
       const previous = await cache.match(NAVIGATION_CACHE_KEY).catch(() => undefined);
       const existing = await readState();
       try {
-        await startReplacement(previous, existing);
+        await startReplacement(previous);
       } catch {
         // Shell activation can proceed when previous-generation metadata is unavailable.
       }
@@ -788,7 +806,9 @@ workerScope.addEventListener('message', (event) => {
     serialized(async () => {
       const client = await workerScope.clients.get(source.id);
       if (!client || !isAppWindow(client)) return;
-      await reconcileReplacement(client, generation).catch(() => {});
+      const replacementState = await reconcileReplacement(client, generation).catch(
+        () => undefined
+      );
       const isCurrent = generation === __APP_SOURCE_SHA__;
       let phase: 'grace' | 'retired-pending-sweep' | 'retired' = 'retired-pending-sweep';
       try {
@@ -804,33 +824,33 @@ workerScope.addEventListener('message', (event) => {
               await persist({ phase: 'closed', old: [], current: [], overlap: false });
               phase = (await sweep()) ? 'retired' : 'retired-pending-sweep';
             }
-            if (isCurrent)
-              client.postMessage({
-                type: 'dropconvert:retirement-state',
-                generation: __APP_SOURCE_SHA__,
-                phase,
-              });
-            return;
-          }
-          const current = [...new Set([...state.current, client.id])].filter((id) => live.has(id));
-          const old = state.old.filter((id) => live.has(id) && !current.includes(id));
-          if ([...live].some((id) => !current.includes(id))) {
-            await persist({ phase: 'grace', old, current, overlap: state.overlap });
-            phase = 'grace';
           } else {
-            await persist({ phase: 'closed', old: [], current: [], overlap: false });
-            phase = (await sweep()) ? 'retired' : 'retired-pending-sweep';
+            const current = [...new Set([...state.current, client.id])].filter((id) =>
+              live.has(id)
+            );
+            const old = state.old.filter((id) => live.has(id) && !current.includes(id));
+            if ([...live].some((id) => !current.includes(id))) {
+              await persist({ phase: 'grace', old, current, overlap: state.overlap });
+              phase = 'grace';
+            } else {
+              await persist({ phase: 'closed', old: [], current: [], overlap: false });
+              phase = (await sweep()) ? 'retired' : 'retired-pending-sweep';
+            }
           }
         }
       } catch {
         // A failed census, transition or physical sweep is retried by a real page cue.
       }
-      if (isCurrent)
+      if (isCurrent) {
+        if (phase === 'retired' && replacementOnly.size && !replacementState) {
+          phase = 'retired-pending-sweep';
+        }
         client.postMessage({
           type: 'dropconvert:retirement-state',
           generation: __APP_SOURCE_SHA__,
           phase,
         });
+      }
     })
   );
 });
