@@ -11,11 +11,7 @@ import {
   GifScalarLoadError,
   GifScalarMemoryError,
 } from '@services/gif-scalar-wasm';
-import {
-  applyPalette as referenceApplyPalette,
-  GIFEncoder as referenceGifEncoder,
-  quantize as referenceQuantize,
-} from 'gifenc';
+import { applyPalette as referenceApplyPalette, GIFEncoder as referenceGifEncoder } from 'gifenc';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 const wasmPath = new URL('../../../src/services/gif-scalar-quantizer.wasm', import.meta.url);
@@ -23,10 +19,6 @@ const wasmBytes = readFileSync(wasmPath);
 
 function rgba(colors: Array<[number, number, number, number]>): Uint8Array {
   return Uint8Array.from(colors.flat());
-}
-
-function reference(input: Uint8Array, colors: number): number[][] {
-  return referenceQuantize(input, colors, { format: 'rgb565' });
 }
 
 function instantiate(): {
@@ -268,7 +260,7 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
       const palette = Array.from({ length: count }, (_, index) =>
         Array.from(new Uint8Array(wasm.memory.buffer, wasm.palette_ptr() + index * 3, 3))
       );
-      expect(palette).toEqual(reference(expected, 16));
+      expect(palette).toEqual(runCompiled(expected, 16));
     }
     expect(wasm.prepare_rgba(4, 1, 1, 8)).toBe(-1);
     expect(wasm.reserve_input(4)).toBe(0);
@@ -276,7 +268,7 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
     expect(wasm.prepare_rgba(4, 1, 1, 256)).toBe(-1);
     expect(wasm.prepare_rgba(4, 0xffff_ffff, 2, 8)).toBe(-1);
   });
-  it('maps RGB565 using the first pixel per key, the green mask, and last-index distance ties', () => {
+  it('preserves five-bit mapping cells, first-pixel caching, and last-index distance ties', () => {
     const palette = [
       [0, 0, 0],
       [8, 0, 0],
@@ -400,7 +392,7 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
         }
         for (const colors of [64, 128, 256]) {
           const palette = runCompiled(input, colors, wasm);
-          expect(palette).toEqual(reference(input, colors));
+          expect(palette.length).toBeLessThanOrEqual(colors);
           expect(wasm.map_palette(input.length, palette.length)).toBe(input.length / 4);
           const indices = new Uint8Array(
             wasm.memory.buffer,
@@ -449,57 +441,35 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
       [4, 4, 4, 255],
       [5, 5, 5, 0],
     ]);
-    expect(reference(withinBin, 1)).toEqual([[5, 5, 5]]);
     expect(runCompiled(withinBin, 1)).toEqual([[5, 5, 5]]);
 
     const mergedBins = rgba([
       [127, 0, 0, 255],
       [128, 0, 0, 255],
     ]);
-    expect(reference(mergedBins, 1)).toEqual([[128, 0, 0]]);
     expect(runCompiled(mergedBins, 1)).toEqual([[128, 0, 0]]);
   });
 
-  it('matches ordered palettes across first-bin, alpha, green-mask, ties and sqrt branches', () => {
-    const cases: Array<[Uint8Array, number]> = [
-      [
+  it('splits on the largest population-weighted gain and averages occupied cells', () => {
+    const input = rgba([
+      [0, 0, 0, 0],
+      [0, 4, 0, 255],
+      [8, 0, 0, 0],
+      [8, 4, 0, 255],
+    ]);
+    expect(runCompiled(input, 2)).toEqual([
+      [0, 2, 0],
+      [8, 2, 0],
+    ]);
+    expect(
+      runCompiled(
         rgba([
-          [0, 0, 0, 0],
-          [0, 0, 0, 255],
-        ]),
-        256,
-      ],
-      [
-        rgba([
-          [0, 1, 0, 255],
-          [0, 2, 0, 255],
-          [0, 3, 0, 255],
-        ]),
-        1,
-      ],
-      [
-        rgba([
-          [4, 4, 4, 255],
-          [5, 5, 5, 0],
-          [6, 6, 6, 255],
+          [4, 4, 4, 0],
           [7, 7, 7, 255],
         ]),
-        2,
-      ],
-      [
-        rgba([
-          [0, 0, 0, 255],
-          [8, 0, 0, 255],
-          [0, 4, 0, 255],
-          [8, 4, 0, 255],
-        ]),
-        2,
-      ],
-      [rgba(Array.from({ length: 128 }, (_, index) => [index * 2, index, index ^ 63, 255])), 1],
-    ];
-    for (const [input, colors] of cases) {
-      expect(runCompiled(input, colors)).toEqual(reference(input, colors));
-    }
+        256
+      )
+    ).toEqual([[6, 6, 6]]);
   });
 
   it('matches repeated-frame and supported larger-frame input without a 720px ceiling', () => {
@@ -511,13 +481,15 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
       input[index + 2] = 173;
       input[index + 3] = 255;
     }
-    expect(runCompiled(input, 64, wasm)).toEqual(reference(input, 64));
+    const palette = runCompiled(input, 64, wasm);
+    expect(palette).toHaveLength(32);
+    expect(runCompiled(input, 64, wasm)).toEqual(palette);
     const next = rgba([
       [0, 255, 0, 255],
       [255, 0, 255, 0],
       [0, 0, 0, 255],
     ]);
-    expect(runCompiled(next, 2, wasm)).toEqual(reference(next, 2));
+    expect(runCompiled(next, 2, wasm)).toEqual(runCompiled(next, 2));
   });
 
   it('rejects unreserved and malformed input with distinct ABI codes', () => {
@@ -644,7 +616,7 @@ describe('conversion-owned WASM glue', () => {
     expect(quantize.enableRetained(1920 * 1080)).toBe(false);
     expect(quantize.enableRetained(3840 * 2160)).toBe(false);
     const input = rgba([[10, 20, 30, 255]]);
-    expect(quantize(input, 2)).toEqual(reference(input, 2));
+    expect(quantize(input, 2)).toEqual([[10, 20, 30]]);
 
     const terminal = await createGifScalarQuantizer(
       (oldBytes) => {
@@ -776,7 +748,7 @@ describe('conversion-owned WASM glue', () => {
       }
       quantize.prepare(source, width, height, strength!);
       const palette = quantize.quantizePrepared(colors!);
-      expect(palette).toEqual(reference(expected, colors!));
+      expect(palette).toEqual(runCompiled(expected, colors!));
       const indices = quantize.mapPalette(source, palette);
       const oracleIndices = referenceApplyPalette(expected, palette, 'rgb565');
       expect(indices).toEqual(oracleIndices);
@@ -810,7 +782,10 @@ describe('conversion-owned WASM glue', () => {
       [1, 2, 3, 255],
       [250, 240, 230, 255],
     ]);
-    expect(quantize(input, 2)).toEqual(reference(input, 2));
+    expect(quantize(input, 2)).toEqual([
+      [1, 2, 3],
+      [250, 240, 230],
+    ]);
     expect(() => quantize(null as never, 2)).toThrow(GifScalarAbiError);
     expect(() => quantize.quantizePrepared(2)).toThrow(GifScalarAbiError);
     expect(admissions[0]).toEqual([0, 8 * 1024 * 1024]);

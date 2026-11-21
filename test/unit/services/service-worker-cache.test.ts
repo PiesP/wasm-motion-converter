@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { webcrypto } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,12 +11,21 @@ import { build } from 'vite';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import { verifyServiceWorkerOutput } from '../../../scripts/build/verify-service-worker-output';
+import { replacedApp } from '../../../tooling/vite/plugins/emit-service-worker';
 
 let emittedWorker: string;
 let workerBuildRoot: string;
 const generation = 'a'.repeat(40);
 const oldCaller = 'https://drop.test/assets/index.D1rWSzxT.js';
 const archivedWorker = 'https://drop.test/assets/worker-BG8LzI1q.js';
+const replacedGifPath = '/assets/gif-scalar-quantizer-C4eFz0Ox.wasm';
+const replacedPipelinePath = '/assets/conversion-pipeline.D3cmESmf.js';
+const replacedPipeline = 'export const valid = true;';
+const replacedWorkerPath = '/assets/worker-B5-WTQ3J.js';
+const replacedDocument = '<!doctype html><title>Prior GIF deployment fixture</title>';
+const replacedGif = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+const fixtureDigest = (bytes: string | Uint8Array) =>
+  createHash('sha256').update(bytes).digest('hex');
 
 beforeAll(async () => {
   workerBuildRoot = mkdtempSync(join(tmpdir(), 'wmc-service-worker-'));
@@ -37,6 +46,8 @@ afterAll(() => {
 
 const origin = 'https://drop.test';
 const dynamicCacheName = 'dropconvert-dynamic-v20261008-documents';
+const replacementCacheName = 'dropconvert-replace-02f1cc21';
+const retirementKey = origin + '/.dropconvert-retirement';
 const assetUrl = (name: string, extension = 'js') =>
   `${origin}/assets/${name}.abcdefgh.${extension}`;
 
@@ -137,6 +148,7 @@ interface ClientLike {
   id: string;
   type: 'window' | 'worker';
   url: string;
+  controlled: boolean;
   postMessage: (data: unknown) => void;
 }
 
@@ -144,12 +156,20 @@ type ServiceWorkerEventLike = FetchEventLike | WaitUntilEventLike;
 
 type CacheStores = Map<string, Map<string, unknown>>;
 
-function loadServiceWorker(existingStores?: CacheStores): {
+function loadServiceWorker(
+  existingStores?: CacheStores,
+  replacementFixture = false
+): {
   cacheEntries: Map<string, unknown>;
   staticCacheEntries: Map<string, unknown>;
   dispatchFetch: (url: string, destination?: string, clientId?: string) => Promise<unknown>;
   dispatchMessage: (client: ClientLike, claimedGeneration?: string) => Promise<void>;
-  addClient: (id: string, type?: ClientLike['type'], url?: string) => ClientLike;
+  addClient: (
+    id: string,
+    type?: ClientLike['type'],
+    url?: string,
+    controlled?: boolean
+  ) => ClientLike;
   removeClient: (id: string) => void;
   failDelete: (url: string, throws?: boolean) => void;
   delayRead: (url: string) => { started: Promise<void>; resume: () => void };
@@ -164,6 +184,7 @@ function loadServiceWorker(existingStores?: CacheStores): {
   setNetworkFailure: (error: unknown) => void;
   setNetworkResponse: (response?: unknown) => void;
   setStorageFailure: (failure: boolean) => void;
+  setReplacementWriteFailure: (failure: boolean) => void;
 } {
   const staticCacheName = 'dropconvert-static-v20261008-documents';
   const listeners = new Map<string, (event: ServiceWorkerEventLike) => void>();
@@ -179,6 +200,8 @@ function loadServiceWorker(existingStores?: CacheStores): {
   let networkResponse: unknown;
   let networkFailure: unknown;
   let storageFailure = false;
+  let replacementWriteFailure = false;
+  const registration = { active: { state: existingStores ? 'activated' : 'activating' } };
   let rejectedDelete: { url: string; throws: boolean } | undefined;
   let delayedRead: { url: string; started: () => void; done: Promise<void> } | undefined;
   let writes = 0;
@@ -186,11 +209,17 @@ function loadServiceWorker(existingStores?: CacheStores): {
   let syncWaitCount = 0;
   const messages: unknown[] = [];
   const clients = new Map<string, ClientLike>();
-  const addClient = (id: string, type: ClientLike['type'] = 'window', url = `${origin}/`) => {
+  const addClient = (
+    id: string,
+    type: ClientLike['type'] = 'window',
+    url = `${origin}/`,
+    controlled = true
+  ) => {
     const client = {
       id,
       type,
       url,
+      controlled,
       postMessage: (data: unknown) => {
         messages.push(data);
       },
@@ -246,6 +275,9 @@ function loadServiceWorker(existingStores?: CacheStores): {
         return Promise.resolve([...entries.keys()].map((url) => ({ url })));
       }),
       put: vi.fn((key: string, response: unknown) => {
+        if (cacheName === replacementCacheName && replacementWriteFailure) {
+          return Promise.reject(new Error('replacement metadata write unavailable'));
+        }
         writes += 1;
         entries.set(toCacheKey(key), response);
         return Promise.resolve();
@@ -260,7 +292,9 @@ function loadServiceWorker(existingStores?: CacheStores): {
       for (const cacheName of cacheNames) {
         const entries = cacheStores.get(cacheName);
         const response = entries?.get(cacheKey);
-        if (response !== undefined) return Promise.resolve(response);
+        if (response !== undefined) {
+          return Promise.resolve(response instanceof Response ? response.clone() : response);
+        }
       }
       return Promise.resolve(undefined);
     }),
@@ -277,15 +311,44 @@ function loadServiceWorker(existingStores?: CacheStores): {
       listeners.set(type, listener);
     },
     clients: {
-      claim: vi.fn(),
+      claim: vi.fn(() => {
+        for (const client of clients.values()) client.controlled = true;
+      }),
       get: vi.fn(async (id: string) => clients.get(id)),
-      matchAll: vi.fn(async () => [...clients.values()].filter(({ type }) => type === 'window')),
+      matchAll: vi.fn(async (options: { type: string; includeUncontrolled?: boolean }) =>
+        [...clients.values()].filter(
+          (client) =>
+            client.type === options.type && (client.controlled || options.includeUncontrolled)
+        )
+      ),
     },
     location: { origin: 'https://drop.test' },
+    registration,
     skipWaiting: vi.fn(),
   };
 
-  runInNewContext(`'use strict';\n${emittedWorker}`, {
+  const output = replacementFixture
+    ? emittedWorker.replace(/^const __DROP_CONVERT_SHELL__=(.+);$/m, (_line, json: string) => {
+        const manifest = JSON.parse(json);
+        manifest.replacement.document = {
+          size: Buffer.byteLength(replacedDocument),
+          sha256: fixtureDigest(replacedDocument),
+        };
+        for (const [expected, body] of [
+          [replacedGifPath, replacedGif],
+          [replacedPipelinePath, replacedPipeline],
+        ] as const) {
+          const pin = manifest.replacement.only.find(
+            ({ path }: { path: string }) => path === expected
+          );
+          if (!pin) throw new Error('Fixture asset must be absent from production bundle');
+          pin.size = Buffer.byteLength(body);
+          pin.sha256 = fixtureDigest(body);
+        }
+        return `const __DROP_CONVERT_SHELL__=${JSON.stringify(manifest)};`;
+      })
+    : emittedWorker;
+  runInNewContext(`'use strict';\n${output}`, {
     Promise,
     Headers,
     Response,
@@ -364,6 +427,7 @@ function loadServiceWorker(existingStores?: CacheStores): {
       const waits: Promise<unknown>[] = [];
       listeners.get('activate')?.({ waitUntil: (promise) => waits.push(promise) });
       await Promise.all(waits);
+      registration.active.state = 'activated';
     },
     setNetworkFailure: (error) => {
       networkFailure = error;
@@ -374,6 +438,9 @@ function loadServiceWorker(existingStores?: CacheStores): {
     },
     setStorageFailure: (failure) => {
       storageFailure = failure;
+    },
+    setReplacementWriteFailure: (failure) => {
+      replacementWriteFailure = failure;
     },
   };
 }
@@ -623,6 +690,370 @@ describe('service worker dynamic cache boundaries', () => {
       'error'
     );
     expect(restarted.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('isolates replacement grace from the closed VP8 retirement and pins cached predecessor bytes', async () => {
+    const worker = loadServiceWorker(undefined, true);
+    const url = origin + replacedGifPath;
+    const prior = assetResponse(url, { body: replacedGif });
+    worker.staticCacheEntries.set(`${origin}/`, documentResponse(replacedDocument));
+    worker.cacheEntries.set(url, prior);
+    worker.cacheEntries.set(oldCaller, assetResponse(oldCaller));
+    worker.cacheStores.set(
+      'dropconvert-retire-7d9e0f1b',
+      new Map([
+        [
+          origin + '/.dropconvert-retirement',
+          new Response('{"phase":"closed","old":[],"current":[]}'),
+        ],
+      ])
+    );
+    const firstOld = worker.addClient('test-client');
+    const secondOld = worker.addClient('second-old');
+    const newPageBeforeActivation = worker.addClient('new-before-activation');
+    const claimed = worker.addClient('initially-uncontrolled', 'window', `${origin}/`, false);
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+    expect(worker.cacheEntries.get(url)).toBe(prior);
+    expect(worker.cacheEntries.has(oldCaller)).toBe(false);
+    const networkCount = worker.fetchMock.mock.calls.length;
+    const denied = async (id: string, asset = url) => {
+      expect(((await worker.dispatchFetch(asset, '', id)) as Response).type).toBe('error');
+    };
+    await denied(firstOld.id);
+    await worker.dispatchMessage(firstOld, replacedApp.source);
+    await worker.dispatchMessage(secondOld, replacedApp.source);
+    await worker.dispatchMessage(claimed, replacedApp.source);
+    await worker.dispatchMessage(newPageBeforeActivation);
+    const newClient = worker.addClient('new-after-activation');
+    await worker.dispatchMessage(newClient, replacedApp.source);
+    for (const id of [newClient.id, claimed.id, newPageBeforeActivation.id, '']) await denied(id);
+
+    await expect(worker.dispatchFetch(url, '', firstOld.id)).resolves.toBe(prior);
+    await expect(worker.dispatchFetch(url, '', secondOld.id)).resolves.toBe(prior);
+    const dedicated = worker.addClient('old-worker', 'worker', origin + replacedWorkerPath);
+    const otherWorker = worker.addClient('different-worker', 'worker', archivedWorker);
+    const uncontrolledWorker = worker.addClient(
+      'outside-worker',
+      'worker',
+      origin + replacedWorkerPath,
+      false
+    );
+    await expect(worker.dispatchFetch(url, '', dedicated.id)).resolves.toBe(prior);
+    await denied(otherWorker.id);
+    await denied(uncontrolledWorker.id);
+    await denied(firstOld.id, origin + '/assets/conversion-pipeline.D3cmESmf.js');
+    worker.cacheEntries.set(
+      url,
+      assetResponse(url, { body: new Uint8Array([0, 97, 115, 109, 1, 0, 0, 1]) })
+    );
+    await denied(firstOld.id);
+    worker.cacheEntries.set(url, prior);
+    expect(worker.fetchMock).toHaveBeenCalledTimes(networkCount);
+
+    const shared = origin + '/assets/preload-helper.7y9sWmk5.js';
+    worker.cacheEntries.set(shared, assetResponse(shared));
+    for (let entry = worker.cacheEntries.size; entry < 64; entry++) {
+      const ordinary = assetUrl(`existing-${entry}`);
+      worker.cacheEntries.set(ordinary, assetResponse(ordinary));
+    }
+    await worker.dispatchFetch(assetUrl('incoming'), '', newClient.id);
+    expect(worker.cacheEntries.size).toBe(64);
+    expect(worker.cacheEntries.get(url)).toBe(prior);
+    expect(worker.cacheEntries.has(shared)).toBe(true);
+
+    const restarted = loadServiceWorker(worker.cacheStores, true);
+    restarted.addClient(secondOld.id);
+    restarted.removeClient(firstOld.id);
+    await expect(restarted.dispatchFetch(url, '', secondOld.id)).resolves.toBe(prior);
+    restarted.removeClient(secondOld.id);
+    restarted.addClient(newClient.id);
+    restarted.failDelete(url);
+    await restarted.dispatchMessage(newClient);
+    expect(restarted.cacheEntries.has(url)).toBe(true);
+    expect(((await restarted.dispatchFetch(url, '', newClient.id)) as Response).type).toBe('error');
+    const retry = loadServiceWorker(worker.cacheStores, true);
+    await retry.dispatchMessage(retry.addClient(newClient.id));
+    expect(retry.cacheEntries.has(url)).toBe(false);
+    expect(retry.cacheEntries.has(shared)).toBe(true);
+    expect(restarted.fetchMock).not.toHaveBeenCalled();
+    expect(retry.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves warmed assets when controllerchange reaches the worker before activation', async () => {
+    const worker = loadServiceWorker(undefined, true);
+    const overlap = origin + replacedGifPath;
+    const onlyReplacement = origin + '/assets/conversion-pipeline.D3cmESmf.js';
+    const prior = assetResponse(overlap, { body: replacedGif });
+    const pipeline = assetResponse(onlyReplacement);
+    worker.staticCacheEntries.set(`${origin}/`, documentResponse(replacedDocument));
+    worker.cacheEntries.set(overlap, prior);
+    worker.cacheEntries.set(onlyReplacement, pipeline);
+    worker.cacheStores.set(
+      'dropconvert-retire-7d9e0f1b',
+      new Map([
+        [
+          origin + '/.dropconvert-retirement',
+          new Response('{"phase":"closed","old":[],"current":[]}'),
+        ],
+      ])
+    );
+    const tab = worker.addClient('test-client');
+    await worker.dispatchInstall();
+
+    const earlyNetwork = worker.fetchMock.mock.calls.length;
+    await worker.dispatchMessage(tab, replacedApp.source);
+    const earlyCurrent = worker.addClient(
+      'incoming-before-activate',
+      'window',
+      `${origin}/`,
+      false
+    );
+    await worker.dispatchMessage(earlyCurrent);
+    expect(worker.messages.at(-1)).toMatchObject({ phase: 'retired-pending-sweep' });
+    expect(((await worker.dispatchFetch(overlap, '', tab.id)) as Response).type).toBe('error');
+    expect(worker.cacheEntries.get(overlap)).toBe(prior);
+    expect(worker.cacheEntries.get(onlyReplacement)).toBe(pipeline);
+    expect(worker.fetchMock).toHaveBeenCalledTimes(earlyNetwork);
+
+    await worker.dispatchActivate();
+    await worker.dispatchMessage(tab, replacedApp.source);
+    await expect(worker.dispatchFetch(overlap, '', tab.id)).resolves.toBe(prior);
+  });
+
+  it.each(['02f first', '7d first', '02f skipped'] as const)(
+    'retains identically pinned shared assets until both predecessor cohorts release them (%s)',
+    async (order) => {
+      const worker = loadServiceWorker(undefined, true);
+      const overlap = origin + replacedGifPath;
+      const onlyReplacement = origin + '/assets/conversion-pipeline.D3cmESmf.js';
+      const shared = assetResponse(overlap, { body: replacedGif });
+      worker.staticCacheEntries.set(
+        `${origin}/`,
+        documentResponse(order === '02f skipped' ? 'different immediate shell' : replacedDocument)
+      );
+      worker.cacheEntries.set(overlap, shared);
+      worker.cacheEntries.set(onlyReplacement, assetResponse(onlyReplacement));
+      worker.cacheEntries.set(oldCaller, assetResponse(oldCaller));
+      const legacy = worker.addClient('legacy');
+      const replacement = worker.addClient('test-client');
+      const uncontrolled = worker.addClient('uncontrolled', 'window', `${origin}/`, false);
+      worker.cacheStores.set(
+        'dropconvert-retire-7d9e0f1b',
+        new Map([
+          [
+            origin + '/.dropconvert-retirement',
+            new Response(
+              JSON.stringify({ phase: 'grace', old: [legacy.id], current: [replacement.id] })
+            ),
+          ],
+        ])
+      );
+      await worker.dispatchInstall();
+      await worker.dispatchActivate();
+
+      const legacyWorker = worker.addClient('legacy-worker', 'worker', archivedWorker);
+      const incoming = worker.addClient('incoming');
+      const networkBefore = worker.fetchMock.mock.calls.length;
+      const denied = async (id: string, url = overlap) => {
+        expect(((await worker.dispatchFetch(url, '', id)) as Response).type).toBe('error');
+      };
+      await denied(replacement.id);
+      await denied(incoming.id);
+      await denied(uncontrolled.id);
+      await worker.dispatchMessage(replacement, replacedApp.source);
+      await expect(worker.dispatchFetch(overlap, '', legacy.id)).resolves.toBe(shared);
+      await expect(worker.dispatchFetch(overlap, '', legacyWorker.id)).resolves.toBe(shared);
+      await denied(legacy.id, onlyReplacement);
+      worker.cacheEntries.set(
+        overlap,
+        assetResponse(overlap, { body: new Uint8Array([0, 97, 115, 109, 1, 0, 0, 1]) })
+      );
+      await denied(legacy.id);
+      await denied(legacyWorker.id);
+      worker.cacheEntries.set(overlap, shared);
+      worker.removeClient(uncontrolled.id);
+      if (order === '02f skipped') {
+        await denied(replacement.id);
+        expect(worker.cacheEntries.has(onlyReplacement)).toBe(false);
+        worker.removeClient(replacement.id);
+      } else {
+        await expect(worker.dispatchFetch(overlap, '', replacement.id)).resolves.toBe(shared);
+        if (order === '7d first') {
+          worker.removeClient(legacy.id);
+          await worker.dispatchMessage(incoming);
+          expect(worker.cacheEntries.has(oldCaller)).toBe(false);
+          await expect(worker.dispatchFetch(overlap, '', replacement.id)).resolves.toBe(shared);
+          await denied(legacyWorker.id);
+        }
+        worker.removeClient(replacement.id);
+        await worker.dispatchMessage(incoming);
+        if (order === '7d first') expect(worker.cacheEntries.has(onlyReplacement)).toBe(false);
+      }
+      if (order !== '7d first') {
+        await expect(worker.dispatchFetch(overlap, '', legacy.id)).resolves.toBe(shared);
+        worker.removeClient(legacy.id);
+        await worker.dispatchMessage(incoming);
+      }
+      expect(worker.cacheEntries.has(overlap)).toBe(false);
+      expect(worker.cacheEntries.has(onlyReplacement)).toBe(false);
+      expect(worker.cacheEntries.has(oldCaller)).toBe(false);
+      await denied(incoming.id);
+      expect(worker.fetchMock).toHaveBeenCalledTimes(networkBefore);
+    }
+  );
+
+  it('accepts a late 02f cue from a hidden window recorded in the earlier census', async () => {
+    const worker = loadServiceWorker(undefined, true);
+    const pipeline = origin + replacedPipelinePath;
+    const overlap = origin + replacedGifPath;
+    const priorPipeline = assetResponse(pipeline, { body: replacedPipeline });
+    const priorGif = assetResponse(overlap, { body: replacedGif });
+    const archived = assetResponse(oldCaller);
+    worker.staticCacheEntries.set(`${origin}/`, documentResponse(replacedDocument));
+    worker.cacheEntries.set(pipeline, priorPipeline);
+    worker.cacheEntries.set(overlap, priorGif);
+    worker.cacheEntries.set(oldCaller, archived);
+    const hidden = worker.addClient('hidden-02f');
+    const legacy = worker.addClient('7d');
+    worker.cacheStores.set(
+      'dropconvert-retire-7d9e0f1b',
+      new Map([
+        [
+          retirementKey,
+          new Response(
+            JSON.stringify({
+              phase: 'grace',
+              old: [hidden.id, legacy.id],
+              current: [],
+            })
+          ),
+        ],
+      ])
+    );
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+
+    expect(((await worker.dispatchFetch(pipeline, 'script', hidden.id)) as Response).type).toBe(
+      'error'
+    );
+    await worker.dispatchMessage(hidden, replacedApp.source);
+    await expect(worker.dispatchFetch(pipeline, 'script', hidden.id)).resolves.toBe(priorPipeline);
+    expect(((await worker.dispatchFetch(oldCaller, 'script', hidden.id)) as Response).type).toBe(
+      'error'
+    );
+    await expect(worker.dispatchFetch(overlap, '', legacy.id)).resolves.toBe(priorGif);
+    await expect(worker.dispatchFetch(oldCaller, 'script', legacy.id)).resolves.toBe(archived);
+    expect(((await worker.dispatchFetch(pipeline, 'script', legacy.id)) as Response).type).toBe(
+      'error'
+    );
+  });
+
+  it('retries a failed activation write from a current-page cue and closes grace', async () => {
+    const worker = loadServiceWorker(undefined, true);
+    const url = origin + replacedGifPath;
+    worker.staticCacheEntries.set(`${origin}/`, documentResponse(replacedDocument));
+    worker.cacheEntries.set(url, assetResponse(url, { body: replacedGif }));
+    worker.cacheStores.set(
+      'dropconvert-retire-7d9e0f1b',
+      new Map([[retirementKey, new Response('{"phase":"closed","old":[],"current":[]}')]])
+    );
+    const old = worker.addClient('test-client');
+    worker.setReplacementWriteFailure(true);
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+
+    const current = worker.addClient('current');
+    await worker.dispatchMessage(old, replacedApp.source);
+    expect(((await worker.dispatchFetch(url, '', old.id)) as Response).type).toBe('error');
+    await worker.dispatchMessage(current);
+    expect(worker.cacheEntries.has(url)).toBe(true);
+    expect(worker.messages.at(-1)).toMatchObject({ phase: 'retired-pending-sweep' });
+
+    worker.setReplacementWriteFailure(false);
+    await worker.dispatchMessage(current);
+    expect(worker.cacheEntries.has(url)).toBe(false);
+    expect(worker.messages.at(-1)).toMatchObject({ phase: 'retired' });
+    const status = worker.cacheStores.get(replacementCacheName)?.get(retirementKey) as Response;
+    expect(await status.clone().json()).toEqual({ candidates: [], confirmed: [] });
+    await worker.dispatchMessage(old, replacedApp.source);
+    expect(((await worker.dispatchFetch(url, '', old.id)) as Response).type).toBe('error');
+  });
+
+  it.each(['missing', 'corrupt'])(
+    'recovers a %s replacement record after restart while keeping authorized 7d overlap',
+    async (record) => {
+      const former = loadServiceWorker(undefined, true);
+      const overlap = origin + replacedGifPath;
+      const pipeline = origin + replacedPipelinePath;
+      former.staticCacheEntries.set(`${origin}/`, documentResponse(replacedDocument));
+      const priorGif = assetResponse(overlap, { body: replacedGif });
+      former.cacheEntries.set(overlap, priorGif);
+      former.cacheEntries.set(pipeline, assetResponse(pipeline, { body: replacedPipeline }));
+      former.cacheStores.set(
+        'dropconvert-retire-7d9e0f1b',
+        new Map([[retirementKey, new Response('{"phase":"grace","old":["7d"],"current":[]}')]])
+      );
+      former.addClient('7d');
+      await former.dispatchInstall();
+      await former.dispatchActivate();
+
+      const metadata = former.cacheStores.get(replacementCacheName)!;
+      if (record === 'missing') metadata.delete(retirementKey);
+      else metadata.set(retirementKey, new Response('corrupt'));
+      const worker = loadServiceWorker(former.cacheStores, true);
+      const legacy = worker.addClient('7d');
+      const old = worker.addClient('test-client');
+      const current = worker.addClient('current');
+      await worker.dispatchMessage(old, replacedApp.source);
+      expect(((await worker.dispatchFetch(pipeline, 'script', old.id)) as Response).type).toBe(
+        'error'
+      );
+      await worker.dispatchMessage(current);
+      expect(worker.cacheEntries.has(pipeline)).toBe(false);
+      await expect(worker.dispatchFetch(overlap, '', legacy.id)).resolves.toBe(priorGif);
+      worker.removeClient(legacy.id);
+      await worker.dispatchMessage(current);
+      expect(worker.cacheEntries.has(overlap)).toBe(false);
+      expect(worker.fetchMock).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not grant overlapping bytes to a legacy cohort bootstrapped without its prior shell', async () => {
+    const worker = loadServiceWorker(undefined, true);
+    const url = origin + replacedGifPath;
+    const prior = assetResponse(url, { body: replacedGif });
+    worker.staticCacheEntries.set(`${origin}/`, documentResponse(replacedDocument));
+    worker.cacheEntries.set(url, prior);
+    const probationary = worker.addClient('test-client');
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+    expect(((await worker.dispatchFetch(url, '', probationary.id)) as Response).type).toBe('error');
+    await worker.dispatchMessage(probationary, replacedApp.source);
+    await expect(worker.dispatchFetch(url, '', probationary.id)).resolves.toBe(prior);
+  });
+
+  it('closes replacement grace when the immediately previous shell was skipped', async () => {
+    const worker = loadServiceWorker(undefined, true);
+    const url = origin + replacedGifPath;
+    worker.staticCacheEntries.set(
+      `${origin}/`,
+      documentResponse('<!doctype html><title>different</title>')
+    );
+    worker.cacheEntries.set(url, assetResponse(url, { body: replacedGif }));
+    const client = worker.addClient('test-client');
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+    await worker.dispatchMessage(client, replacedApp.source);
+    const networkCount = worker.fetchMock.mock.calls.length;
+    expect(((await worker.dispatchFetch(url, '', client.id)) as Response).type).toBe('error');
+    expect(worker.cacheEntries.has(url)).toBe(false);
+    expect(worker.fetchMock).toHaveBeenCalledTimes(networkCount);
+    worker.setNetworkResponse(documentResponse(replacedDocument));
+    const result = await worker.dispatchFetch(`${origin}/`, 'document');
+    expect(result).toMatchObject({
+      body: readFileSync(join(workerBuildRoot, 'index.html'), 'utf8'),
+    });
   });
 
   it('settles an admitted compatibility read before the subsequent retirement sweep', async () => {

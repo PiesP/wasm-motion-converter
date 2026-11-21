@@ -1,4 +1,22 @@
-# Owned VP8 v2 candidate implementation
+# Owned VP8 software encoder
+
+The main application and conversion Worker load this Rust/WASM encoder when
+WebP conversion needs the software fallback. The browser still decodes the
+input video, and validated native Canvas encoding remains available. The
+[TypeScript host](../../src/services/owned-vp8-core.ts) owns each encoder
+instance, memory admission, cancellation and output release. The Rust core
+encodes VP8 frames through the resumable ABI2 interface. The WebP muxer
+assembles those frames into the animation. `wasm-webp` is a development oracle.
+
+[PR #513](https://github.com/PiesP/wasm-motion-converter/pull/513) introduced
+this runtime route on `master`. [Issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
+holds the qualification and delivery record. See [ABI2 and resources](#abi2-and-resources)
+for the host contract and [Engineering checks](#engineering-checks) to reproduce
+the checked-in artifact.
+
+## Candidate history
+
+The results below belong to the source revisions and workloads of each experiment.
 
 The [combined M2 and strict compiler candidate](../../docs/experiments/501-owned-vp8-combined-m2-simd-candidate.md)
 combines the qualified exposed Y1 source with exact paired chroma sampling and
@@ -15,12 +33,9 @@ Separate component timing ratios must not be multiplied. Browser capability,
 product performance, physical resource peaks, and delivery remain unqualified.
 Changes to this README require a provenance refresh before prebuilt verification.
 
-Execution and acceptance are governed by [issue #501](https://github.com/PiesP/wasm-motion-converter/issues/501)
-and the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
-The candidate main and conversion Worker software routes import this crate's
-WASM artifact. Master delivery and `wasm-webp` removal remain gated by product
-qualification. The historical DC-only result and receipts remain in
-`497-owned-vp8-result.md`.
+The experiments followed the [prospective contract](../../docs/experiments/501-owned-vp8-v2-contract.md).
+The [earlier DC-only result](../../docs/experiments/497-owned-vp8-result.md)
+records its own qualification outcome.
 
 The residual path now codes all sixteen coefficients using B_PRED/B_DC prediction,
 plus a separately exercised I16/DC and Y2/WHT path. The candidate encoder
@@ -238,7 +253,10 @@ The classifier uses bounded per-tile range scans and the existing four IDs.
 The bitstream and coefficient update probabilities follow [RFC 6386](https://www.rfc-editor.org/rfc/rfc6386.html),
 sections 7, 9 and 11. The coefficient-update, default-coefficient and DC-quantizer
 tables are format constants from sections 13.4, 13.5 and 14.1 respectively;
-their Rust files identify those sources separately. RFC 6386 is Copyright (c)
+their values also appear in the reference decoder in sections 20.18 and 20.3.
+The subblock-mode probabilities match section 20.13. The reference code has
+its own [Google BSD notice](LICENSE.rfc6386) and [patent grant](PATENTS.rfc6386)
+in sections 20.26 and 20.27. RFC 6386 is Copyright (c)
 2011 IETF Trust and the identified contributors. These numeric format tables
 are not an imported encoder implementation. Original Rust portions use MIT.
 The [W3C VP8 WebCodecs registration](https://www.w3.org/TR/webcodecs-vp8-codec-registration/)
@@ -589,7 +607,7 @@ cargo build --locked --offline --release --features activity-allocation --target
 ```
 
 From the repository root, use the project-selected Node to generate or verify
-the bounded candidate artifact and its source provenance:
+the shipped artifact and its source provenance:
 
 ```sh
 vp exec node --experimental-strip-types scripts/build/build-owned-vp8-wasm.ts --generate
@@ -601,10 +619,9 @@ The provenance manifest includes this README and license files as well as Rust
 sources. Regenerate it after changing any listed input, then run `--check`; an
 unchanged WASM digest alone does not validate stale provenance.
 
-The artifact is `owned-vp8.wasm` in this crate, imported by the candidate main
-and conversion Worker software routes. Master delivery remains gated by product
-qualification. Its memory declaration has an exact 192-MiB maximum; raw
-Cargo development output without that declaration does not qualify delivery.
+The checked-in artifact is `owned-vp8.wasm` in this crate. Its memory
+declaration has an exact 192-MiB maximum. The build script verifies the
+declaration when it checks the module.
 
 Ignored tests explicitly require FFmpeg's native `vp8` and separate `libvpx`
 decoders. They compare every visible YUV byte against encoder reconstruction

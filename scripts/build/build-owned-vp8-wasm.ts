@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-/** Rebuild the candidate product-owned VP8 ABI2 module from a closed source set. */
+/** Rebuild the shipped VP8 software encoder from a closed source set. */
 import { deepStrictEqual } from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -106,13 +106,18 @@ function sourcePaths(): string[] {
   )
     throw new Error('Owned VP8 Cargo inputs or zero-dependency lock changed');
   assertPinnedToolchain(read(join(crate, 'rust-toolchain.toml')).toString());
+  const documentation = [
+    'LICENSE.libwebp',
+    'PATENTS.libwebp',
+    'LICENSE.rfc6386',
+    'PATENTS.rfc6386',
+    'README.md',
+  ];
   const allowed = new Set([
     '.gitignore',
     'Cargo.toml',
     'Cargo.lock',
-    'LICENSE.libwebp',
-    'PATENTS.libwebp',
-    'README.md',
+    ...documentation,
     'rust-toolchain.toml',
     'src',
     'target',
@@ -122,7 +127,7 @@ function sourcePaths(): string[] {
   for (const entry of readdirSync(crate))
     if (!allowed.has(entry) || lstatSync(join(crate, entry)).isSymbolicLink())
       throw new Error(`Unexpected owned VP8 crate input: ${entry}`);
-  for (const name of ['LICENSE.libwebp', 'PATENTS.libwebp', 'README.md'])
+  for (const name of documentation)
     if (read(join(crate, name)).length > 64 * 1024)
       throw new Error(`Owned VP8 provenance input exceeds its limit: ${name}`);
   const sources = readdirSync(join(crate, 'src')).sort();
@@ -143,9 +148,7 @@ function sourcePaths(): string[] {
     'crates/owned-vp8/Cargo.toml',
     'crates/owned-vp8/Cargo.lock',
     'crates/owned-vp8/rust-toolchain.toml',
-    'crates/owned-vp8/LICENSE.libwebp',
-    'crates/owned-vp8/PATENTS.libwebp',
-    'crates/owned-vp8/README.md',
+    ...documentation.map((name) => `crates/owned-vp8/${name}`),
     ...sources.map((name) => `crates/owned-vp8/src/${name}`),
     'scripts/build/build-owned-vp8-wasm.ts',
     'scripts/build/build-gif-scalar-wasm.ts',
@@ -259,7 +262,7 @@ export function inspectOwnedVp8Wasm(bytes: Buffer): object {
 function expected(bytes: Buffer): object {
   return {
     schemaVersion: 1,
-    role: 'candidate product-owned VP8 ABI2 module; imported by candidate routes, not yet qualified for master delivery',
+    role: 'VP8 ABI2 software fallback for the application and conversion Worker',
     compiler,
     compilerCommit,
     target,

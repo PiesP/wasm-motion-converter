@@ -1,7 +1,7 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT AND BSD-3-Clause
 // Copyright (c) 2026 PiesP
 // RFC 6386 section 14.1 AC lookup values, checked against the reference
-// decoder's dequant_data.h in RFC 6386 attachment 20.3.
+// decoder's dequant_data.h, RFC 6386 section 20.3. See ../LICENSE.rfc6386.
 // The method-4 quantizer parameters derive from libwebp commit
 // 6c484cbf92e81a5673b24485ac02d211f69be5b7 (Copyright 2011 Google Inc.),
 // src/enc/quant_enc.c, src/enc/vp8i_enc.h and src/dsp/enc.c.

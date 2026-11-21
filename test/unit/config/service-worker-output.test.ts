@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 import { verifyServiceWorkerOutput } from '../../../scripts/build/verify-service-worker-output';
+import { replacedApp } from '../../../tooling/vite/plugins/emit-service-worker';
 
 const roots: string[] = [];
 
@@ -30,6 +31,13 @@ function fixture() {
     document: pin('/index.html', document),
     eager: [pin('/assets/app.abcdefgh.js', app)],
     predecessorOnly: ['/assets/old.abcdefgh.js'],
+    replacement: {
+      source: replacedApp.source,
+      document: replacedApp.document,
+      workers: replacedApp.workers,
+      only: replacedApp.assets,
+      shared: [],
+    },
   };
   writeFileSync(join(dist, 'index.html'), document);
   writeFileSync(join(dist, 'assets/app.abcdefgh.js'), app);
@@ -61,6 +69,26 @@ describe('emitted service worker output', () => {
     writeFileSync(join(dist, 'assets/app.abcdefgh.js'), 'replaced eager bytes');
     expect(() => verifyServiceWorkerOutput(root, dist)).toThrow(
       'Incorrect service worker shell bytes'
+    );
+  });
+
+  it('rejects omitted replacement pins and retired files that remain in the output', () => {
+    const { root, dist, output } = fixture();
+    const retired = replacedApp.assets[0]!;
+    writeFileSync(
+      join(dist, 'service-worker.js'),
+      output.replace(
+        JSON.stringify(replacedApp.assets),
+        JSON.stringify(replacedApp.assets.slice(1))
+      )
+    );
+    expect(() => verifyServiceWorkerOutput(root, dist)).toThrow(
+      'Invalid replacement-only asset inventory'
+    );
+    writeFileSync(join(dist, 'service-worker.js'), output);
+    writeFileSync(join(dist, retired.path.slice(1)), 'archived app bytes');
+    expect(() => verifyServiceWorkerOutput(root, dist)).toThrow(
+      'Invalid replacement-only asset inventory'
     );
   });
 

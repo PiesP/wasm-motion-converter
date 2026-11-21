@@ -4,7 +4,7 @@ import { join, posix } from 'node:path';
 
 import { parse } from '@babel/parser';
 
-import { shellEntries } from '../../tooling/vite/plugins/emit-service-worker.ts';
+import { replacedApp, shellEntries } from '../../tooling/vite/plugins/emit-service-worker.ts';
 
 const workerMarker = /^\/\* dropconvert-worker-source-sha256:([a-f0-9]{64}) \*\/\n/;
 
@@ -55,7 +55,18 @@ interface Pin {
 
 function verifyShell(
   dist: string,
-  manifest: { document: Pin; eager: Pin[]; predecessorOnly: string[] }
+  manifest: {
+    document: Pin;
+    eager: Pin[];
+    predecessorOnly: string[];
+    replacement: {
+      source: string;
+      document: Omit<Pin, 'path'>;
+      workers: string[];
+      only: Pin[];
+      shared: Pin[];
+    };
+  }
 ) {
   const document = readPinned(manifest.document, join(dist, 'index.html'));
   if (manifest.document.path !== '/index.html') throw new Error('[postbuild] Invalid shell path');
@@ -98,6 +109,25 @@ function verifyShell(
       throw new Error(`[postbuild] Invalid predecessor-only asset ${path}`);
     }
   }
+  const transition = manifest.replacement;
+  if (
+    !transition ||
+    transition.source !== replacedApp.source ||
+    transition.document?.sha256 !== replacedApp.document.sha256 ||
+    transition.document.size !== replacedApp.document.size ||
+    JSON.stringify(transition.workers) !== JSON.stringify(replacedApp.workers)
+  ) {
+    throw new Error('[postbuild] Invalid replacement generation');
+  }
+  const removed = replacedApp.assets.filter(({ path }) => !existsSync(join(dist, path.slice(1))));
+  const shared = replacedApp.assets.filter((asset) => !removed.includes(asset));
+  if (JSON.stringify(transition.only) !== JSON.stringify(removed)) {
+    throw new Error('[postbuild] Invalid replacement-only asset inventory');
+  }
+  if (JSON.stringify(transition.shared) !== JSON.stringify(shared)) {
+    throw new Error('[postbuild] Invalid shared replacement asset inventory');
+  }
+  for (const pin of shared) readPinned(pin, join(dist, pin.path.slice(1)));
 }
 
 function readPinned(pin: Pin, path: string): Buffer {

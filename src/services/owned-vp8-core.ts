@@ -308,6 +308,7 @@ function classifyFailure(error: unknown): Error {
 
 export class OwnedVp8Encoder {
   private api: Vp8Exports | undefined;
+  private responseView: DataView | undefined;
   private readonly generation: number;
   private frame = 0;
   private busy = false;
@@ -337,7 +338,7 @@ export class OwnedVp8Encoder {
     return this.api;
   }
 
-  private view(pointer: number, length: number): Uint8Array {
+  private checkedBuffer(pointer: number, length: number): ArrayBuffer {
     const buffer = this.currentApi().memory.buffer;
     if (
       !Number.isSafeInteger(pointer) ||
@@ -347,18 +348,28 @@ export class OwnedVp8Encoder {
       pointer + length > buffer.byteLength
     )
       throw new OwnedVp8AbiError('Owned VP8 ABI extent is invalid');
-    return new Uint8Array(buffer, pointer, length);
+    return buffer;
+  }
+
+  private view(pointer: number, length: number): Uint8Array {
+    return new Uint8Array(this.checkedBuffer(pointer, length), pointer, length);
   }
 
   private record(status: number, checkTicket: boolean): ResponseRecord {
     const api = this.currentApi();
-    const view = this.view(api.vp8_v2_response_ptr(), RESPONSE_BYTES);
-    const words = new DataView(view.buffer, view.byteOffset, view.byteLength);
-    const word = (index: number): number => words.getUint32(index * 4, true);
+    const pointer = api.vp8_v2_response_ptr();
+    const buffer = this.checkedBuffer(pointer, RESPONSE_BYTES);
+    // The response can move within memory, and memory growth can replace the buffer.
+    if (this.responseView?.buffer !== buffer) this.responseView = new DataView(buffer);
+    const words = this.responseView;
+    const word = (index: number): number => words.getUint32(pointer + index * 4, true);
     if (
       word(0) !== ABI_VERSION ||
       word(1) !== status ||
-      [20, 21, 22, 23].some((index) => word(index) !== 0)
+      word(20) !== 0 ||
+      word(21) !== 0 ||
+      word(22) !== 0 ||
+      word(23) !== 0
     )
       throw new OwnedVp8AbiError('Owned VP8 ABI response is inconsistent');
     const record: ResponseRecord = {
@@ -388,8 +399,9 @@ export class OwnedVp8Encoder {
 
   private status(status: number, allowed: readonly number[], checkTicket = true): ResponseRecord {
     // A rejected plan has not committed its requested generation/frame yet.
-    const record = this.record(status, checkTicket && allowed.includes(status));
-    if (allowed.includes(status)) return record;
+    const accepted = allowed.includes(status);
+    const record = this.record(status, checkTicket && accepted);
+    if (accepted) return record;
     switch (status) {
       case 1:
         throw new OwnedVp8InvalidInputError('Owned VP8 rejected the input');
@@ -495,6 +507,7 @@ export class OwnedVp8Encoder {
     } catch {
       // A trapped instance is already retired from use.
     } finally {
+      this.responseView = undefined;
       this.api = undefined;
       this.retired = true;
       this.accountingReleased = true;
@@ -558,8 +571,12 @@ export class OwnedVp8Encoder {
         frozen.retainedOutputBytes,
       ];
       values.forEach((value, index) => fixedWord(value, `request word ${index}`));
-      const request = this.view(api.vp8_v2_request_ptr(), REQUEST_BYTES);
-      const words = new DataView(request.buffer, request.byteOffset, request.byteLength);
+      const requestPointer = api.vp8_v2_request_ptr();
+      const words = new DataView(
+        this.checkedBuffer(requestPointer, REQUEST_BYTES),
+        requestPointer,
+        REQUEST_BYTES
+      );
       values.forEach((value, index) => words.setUint32(index * 4, value, true));
       let admission = this.admit(this.status(api.vp8_v2_plan(), [0], true));
       if (admission !== undefined) await admission;

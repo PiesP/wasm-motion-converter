@@ -17,6 +17,7 @@ function fakeCompactWasm(
     onWork?: () => void;
     onQueryWork?: () => void;
     queryWorkSteps?: number;
+    packet?: (index: number) => { offset: number; key: boolean; pts: bigint };
   } = {}
 ): {
   module: WebAssembly.Module;
@@ -32,12 +33,13 @@ function fakeCompactWasm(
     return pointer;
   };
   const writePacket = (index: number): number => {
+    const packet = options.packet?.(index);
     event(256, 5);
-    view.setBigUint64(264, BigInt(index === PACKET_COUNT - 1 ? 0 : 5), true);
+    view.setBigUint64(264, BigInt(packet?.offset ?? (index === PACKET_COUNT - 1 ? 0 : 5)), true);
     view.setUint32(272, 5, true);
-    view.setUint32(276, 1, true);
+    view.setUint32(276, Number(packet?.key ?? true), true);
     view.setBigInt64(280, BigInt(index === PACKET_COUNT - 1 ? 9 : 8), true);
-    view.setBigInt64(288, BigInt(index === PACKET_COUNT - 1 ? 9 : 8), true);
+    view.setBigInt64(288, packet?.pts ?? BigInt(index === PACKET_COUNT - 1 ? 9 : 8), true);
     view.setBigUint64(296, 1n, true);
     view.setBigUint64(304, 0n, true);
     return 256;
@@ -157,6 +159,50 @@ describe('ABI4 compact demux host', () => {
       await session.analyze();
       expect(calls.packet).toBe(2);
       expect(session.seekWorkspaceBytes).toBe(24);
+    } finally {
+      session.release();
+    }
+  });
+
+  it('verifies expanded key hints in signed presentation order and breaks ties by packet index', async () => {
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    const pts = [-max, max - 1n, max - 1n, max, 0n];
+    const { module } = fakeCompactWasm({
+      mode: 0,
+      count: pts.length,
+      packet: (index) => ({
+        offset: index === 3 ? 0 : 5,
+        key: index !== 4,
+        pts: pts[index]!,
+      }),
+    });
+    const session = new OwnedDemuxSession(source.buffer, module);
+    try {
+      await session.analyze();
+      expect(session.seekWorkspaceBytes).toBe(4 * 12);
+      await expect(session.findVerifiedKey(Number(max))).resolves.toBe(2);
+      await expect(session.findVerifiedKey(0)).resolves.toBe(0);
+      pts[4] = max + 1n;
+      await expect(session.findVerifiedKey(0)).rejects.toThrow('timestamp out of range');
+    } finally {
+      session.release();
+    }
+  });
+
+  it('rejects additional seek candidates beyond the validated workspace', async () => {
+    let key = false;
+    const { module } = fakeCompactWasm({
+      mode: 0,
+      count: 2,
+      packet: () => ({ offset: 5, key, pts: 0n }),
+    });
+    const session = new OwnedDemuxSession(source.buffer, module);
+    try {
+      await session.analyze();
+      expect(session.seekWorkspaceBytes).toBe(0);
+      await expect(session.findVerifiedKey(0)).resolves.toBeNull();
+      key = true;
+      await expect(session.findVerifiedKey(0)).rejects.toThrow('seek key count exceeded');
     } finally {
       session.release();
     }
