@@ -163,7 +163,7 @@ peak. A selected input retains at most8MiB of logical index, no codec instance.
 Each job uses an independent checked snapshot copy where prospective admission
 allows it; otherwise it evicts the cache before copying and parses once.
 
-Patched MediaBunny1.65.2 remains a development-only metadata/demux oracle in
+Patched MediaBunny 1.66.2 remains a development-only metadata/demux oracle in
 `test/helpers/mediabunny-oracle.ts`; its patch and notices remain intentional.
 Historical scalar/timing/presentation/fragment accounting units in that patch
 (16/96/128/304 policy bytes) describe oracle JavaScript objects, not the owned

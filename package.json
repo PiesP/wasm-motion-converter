@@ -86,7 +86,7 @@
     "@vitest/browser-playwright": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "gifenc": "1.0.3",
-    "mediabunny": "1.65.2",
+    "mediabunny": "1.66.2",
     "playwright": "1.65.1",
     "tailwindcss": "4.3.5",
     "vite": "catalog:",

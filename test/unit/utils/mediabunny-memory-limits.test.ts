@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { ENCODED_PACKET_BUDGET_BYTES, MEDIA_BUNNY_BUFFER_BUDGET_BYTES } from '@utils/constants';
-import { ALL_FORMATS, BufferSource, Input, InputFormat, Source } from 'mediabunny';
+import {
+  ALL_FORMATS,
+  BufferSource,
+  EncodedPacketSink,
+  Input,
+  InputFormat,
+  Source,
+} from 'mediabunny';
 import { describe, expect, it } from 'vite-plus/test';
 
 import { createMediaBunnyInput } from '../../helpers/mediabunny-oracle';
@@ -55,7 +66,7 @@ class ProbeFormat extends InputFormat {
     return false;
   }
 
-  async _canReadInput(input: Input): Promise<boolean> {
+  async _getMatchPosition(input: Input): Promise<number | null> {
     const reader = (
       input as unknown as {
         _reader: {
@@ -69,7 +80,7 @@ class ProbeFormat extends InputFormat {
     } else {
       await reader.requestSlice(0, this.readLength);
     }
-    return true;
+    return 0;
   }
 
   _createDemuxer() {
@@ -187,6 +198,49 @@ function makeEmptyFlacPictureBlock(isLast = false): Uint8Array {
 }
 
 describe('MediaBunny input memory limits', () => {
+  it('bounds incremental MPEG-TS packet buffers and accepts the same owned stream with room', async () => {
+    const encoded = readFileSync(resolve('test/fixtures/owned-demux/avc.ts.base64'), 'utf8');
+    const bytes = Buffer.from(encoded, 'base64');
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+      'c2fe6f5de906439f82016527fae307927fd79c97e0ebbf97cce42ac1a8064802'
+    );
+
+    for (const [limit, expectedPackets] of [
+      [512, null],
+      [65_536, 12],
+    ] as const) {
+      const input = new Input({
+        formats: ALL_FORMATS,
+        source: new BufferSource(bytes),
+      });
+      setInputMemoryLimits(input, limit);
+      (input as Input & { _maxContiguousReadBytes: number })._maxContiguousReadBytes = 65_536;
+
+      try {
+        const readPackets = async () => {
+          const track = await input.getPrimaryVideoTrack();
+          expect(track).not.toBeNull();
+          const sink = new EncodedPacketSink(track!);
+          let count = 0;
+          for await (const packet of sink.packets()) {
+            expect(packet.byteLength).toBeGreaterThan(0);
+            count++;
+          }
+          return count;
+        };
+        if (expectedPackets === null) {
+          await expect(readPackets()).rejects.toThrow(
+            'MPEG-TS packet buffers exceed the configured memory limit.'
+          );
+        } else {
+          await expect(readPackets()).resolves.toBe(expectedPackets);
+        }
+      } finally {
+        input.dispose();
+      }
+    }
+  });
+
   it('applies the WMC buffer, encoded-packet, and buffered-packet limits to every input', () => {
     const input = createMediaBunnyInput(new ArrayBuffer(0));
     const bounded = input as Input & {

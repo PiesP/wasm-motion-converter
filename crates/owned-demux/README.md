@@ -25,7 +25,7 @@ a comparison failure. Minimal CI and a local toolchain with `rust-src` must
 reproduce the same artifact; changing checkout location alone is not sufficient
 to exercise this distinction.
 
-The pinned patched MediaBunny1.65.2 implementation is a development oracle.
+The pinned patched MediaBunny 1.66.2 implementation is a development oracle.
 Frozen synthetic inputs and normalized configurations/packet/seek traces are in
 `test/fixtures/owned-demux`; the capture script also independently decodes them
 with FFmpeg/FFprobe. Its source identity and patch attribution remain separate

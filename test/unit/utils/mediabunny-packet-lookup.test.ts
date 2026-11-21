@@ -146,3 +146,69 @@ it('rejects a cached WebM cluster again after its summary reservation fails', as
     input.dispose();
   }
 });
+
+// MediaBunny 1.66.2 rounds Matroska DefaultDuration to the container tick grid.
+// Keep the 1.65.2 trace immutable for the owned demux contract and check only
+// this observed comparator difference against the same independent fixtures.
+const roundedDefaultDurationPackets: Record<string, number[]> = {
+  'vp8.webm': [1, 3, 5, 7, 9, 11],
+  'vp9.webm': [1, 3, 5, 7, 9, 11],
+  'av1.webm': [11],
+  'avc.mkv': [11],
+  'hevc.mkv': [8],
+  'vp9-10bit.webm': [11],
+  'vp9-fullrange.webm': [11],
+};
+
+for (const [id, roundedIndices] of Object.entries(roundedDefaultDurationPackets)) {
+  it(`keeps the 1.66.2 Matroska comparator delta limited to rounded durations: ${id}`, async () => {
+    const frozen = JSON.parse(
+      readFileSync(resolve('test/fixtures/owned-demux/oracle.json'), 'utf8')
+    ) as {
+      fixtures: Array<{
+        id: string;
+        packets: Array<{
+          timestampUs: number;
+          durationUs: number;
+          type: string;
+          size: number;
+          sha256: string;
+        }>;
+      }>;
+    };
+    const previous = frozen.fixtures.find((fixture) => fixture.id === id);
+    expect(previous).toBeDefined();
+    const bytes = Buffer.from(
+      readFileSync(resolve('test/fixtures/owned-demux', id + '.base64'), 'utf8'),
+      'base64'
+    );
+    const input = createMediaBunnyInput(Uint8Array.from(bytes).buffer);
+    try {
+      const track = await input.getPrimaryVideoTrack();
+      expect(track).not.toBeNull();
+      const sink = new EncodedPacketSink(track!);
+      let index = 0;
+      for await (const packet of sink.packets()) {
+        const expected = previous!.packets[index];
+        expect(expected).toBeDefined();
+        expect({
+          timestampUs: packet.microsecondTimestamp,
+          durationUs: packet.microsecondDuration,
+          type: packet.type,
+          size: packet.byteLength,
+          sha256: createHash('sha256').update(packet.data).digest('hex'),
+        }).toEqual({
+          timestampUs: expected!.timestampUs,
+          durationUs: roundedIndices.includes(index) ? 167_000 : expected!.durationUs,
+          type: expected!.type,
+          size: expected!.size,
+          sha256: expected!.sha256,
+        });
+        index++;
+      }
+      expect(index).toBe(previous!.packets.length);
+    } finally {
+      input.dispose();
+    }
+  });
+}

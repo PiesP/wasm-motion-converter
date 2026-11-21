@@ -581,12 +581,12 @@ The TypeScript GIF writer adapts the container and output buffer from gifenc 1.0
 
 ## Development-only demux oracle (MediaBunny)
 
-- **Version:** 1.65.2
+- **Version:** 1.66.2
 - **License:** MPL-2.0
 - **Repository:** https://github.com/Vanilagy/mediabunny
 - **Purpose:** Development-only patched metadata and demux differential oracle; no production executable
 
-Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/patches/mediabunny@1.65.2.patch
+Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/patches/mediabunny@1.66.2.patch
 
 ### LICENSE
 

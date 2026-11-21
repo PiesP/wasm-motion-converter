@@ -19,6 +19,11 @@
 *.html text eol=lf
 *.md text eol=lf
 
+# The demux oracle records the exact selected patch bytes.
+patches/mediabunny@*.patch text eol=lf
+# Preserve whitespace in the recovered patch's diff context.
+patches/mediabunny@1.66.2.patch -whitespace
+
 # Source-bound GIF scalar WASM inputs and supplemental notice
 /LICENSE text eol=lf
 crates/gif-scalar-quantizer/src/*.rs text eol=lf

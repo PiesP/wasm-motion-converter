@@ -2,10 +2,10 @@
 
 ## MediaBunny memory limits
 
-`mediabunny@1.65.2.patch` applies to the exact published 1.65.2 package. The
-development-only oracle sets finite limits in `test/helpers/mediabunny-oracle.ts`;
-the patch enforces them in the oracle's imported ESM modules and mirrors the
-changes in the shipped TypeScript source. Production metadata and demux use the
+`mediabunny@1.66.2.patch` applies to the exact published 1.66.2 package. The
+development-only oracle sets finite limits in `test/helpers/mediabunny-oracle.ts`.
+The patch enforces them in the oracle's imported ESM modules and includes
+changes for the shipped TypeScript source. Production metadata and demux use the
 owned Rust/WASM core; MediaBunny and this patch remain development references.
 The patch bounds contiguous reads, encoded packets, retained parser
 buffers, nested HLS inputs, and packet-sink prefetch. MP4 parsing also enforces
@@ -24,15 +24,17 @@ test sets its 256-byte Reader limit before format detection and checks reads at
 and beyond that boundary; changing the Input field afterward would not update
 the Reader.
 
-The 1.65.2 port preserves upstream iterative fragment/cluster lookup and skips
+The 1.66.2 port preserves upstream iterative fragment/cluster lookup and skips
 position-cache entries without a key frame during key-packet searches. It also
-retains the 1.63.0 reference-PES header fix. That upstream fix does not bound MPEG-TS
-section, PES, or reordered packet buffers, so the local first-section reread and
-byte budgets remain. The local MP4 sample and metadata budgets, both encryption
-auxiliary-info reservations, Matroska descriptive skip and final packet/side-data
-check, nested HLS budgets, and finite-budget packet-sink on-demand mode also
-remain. The port mirrors these limits in the imported ESM modules and shipped
-TypeScript and matching declarations. MP4 fragment-position cache entries retain
+retains the 1.63.0 reference-PES header fix. The 1.66.2 MPEG-TS reader consumes
+PES payloads incrementally from transport packets, so the old full first-section
+reread is obsolete. Its scratch growth, copied packets, and reordered packet
+buffers remain subject to the local byte budgets. The local MP4 sample and
+metadata budgets, both encryption auxiliary-info reservations, Matroska
+descriptive skip and final packet/side-data check, nested HLS budgets, and
+finite-budget packet-sink on-demand mode also remain in the imported ESM
+modules. The patch includes TypeScript source and declarations. MP4
+fragment-position cache entries retain
 their 96-byte metadata reservation. Matroska cluster-position cache entries and
 cluster summaries now share a finite lookup-cache allowance based on the input's
 buffered-packet budget; conservative estimates reserve 96 bytes per position,
@@ -47,20 +49,38 @@ policy and the dependency's unchanged default metadata behavior.
 lookup in cue-less WebM clusters and no-index MP4 fragments, plus a finite
 Matroska lookup-cache rejection.
 
-The port was checked against the published [1.65.2 npm tarball](https://registry.npmjs.org/mediabunny/-/mediabunny-1.65.2.tgz)
-(`sha512-goZpibvo/5hkc/56WVNm93Ini+o7K4y8aXA20c/BN1B+m3L5aHQa8MTvO+S1APg/YI8kMILtrX6QCqUtxLW7bA==`,
-SHA-256 `93bceb27fd807e06e8b6a0e9e02350bf69e1d70da12d685dd0b133b54c3b1ff6`),
-the [1.65.0...1.65.2 source delta](https://github.com/Vanilagy/mediabunny/compare/v1.65.0...v1.65.2),
-and [1.65.2 release notes](https://github.com/Vanilagy/mediabunny/releases/tag/v1.65.2).
+The port was checked against the published [1.66.2 npm tarball](https://registry.npmjs.org/mediabunny/-/mediabunny-1.66.2.tgz)
+(`sha512-NTzRrBhAyRVi8qpJ9AH6XPyxiDVkfugxYY+gu3Z5zi+Nw2R/7nTAnXJEt2Ucy8wTIve1/UYGnCFf50x2LpvMDQ==`,
+SHA-256 `0a1a1011496a7527175bb7ada56ecc4371244f6a00f082d77fd3e668230eb01e`),
+the [1.65.2...1.66.2 source delta](https://github.com/Vanilagy/mediabunny/compare/v1.65.2...v1.66.2),
+and [1.66.2 release notes](https://github.com/Vanilagy/mediabunny/releases/tag/v1.66.2).
 The 1.65.1 retention decision in issue #453 remains historical evidence for
-that version; the later key-packet lookup changes reach WMC's nonzero-trim path.
+that version. Later key-packet lookup changes apply to the comparator's seek
+results.
 The 1.63.0 reference-PES change is upstream; the local limits above are still
 required. The two MP4 auxiliary-info call sites retain their reservation
-callback, the Matroska final packet check follows codec-delay handling,
-and the MPEG-TS first-section reread follows the moved packet lookup method.
-The 1.65.2 MP4 output-flag change is outside WMC's demux-only MediaBunny use.
-The AES stream error close can affect encrypted HLS input, but does not change
-WMC's locally imposed nested-reader and packet budgets.
+callback, and the Matroska final packet check follows codec-delay handling.
+The 1.66.2 asynchronous MP4 fragment reader reserves its summary and position
+cache before insertion and releases its transient budget on both success and
+failure. The patched TypeScript source includes a second accounting reset after
+auxiliary-data handling. The comparator executes the ESM files, where the reset
+runs after synchronous fragment parsing. Rebuilding from the patched TypeScript
+source and encrypted-fragment parity are outside this comparison.
+
+The historical `test/fixtures/owned-demux/oracle.json` records the
+1.65.2 comparator and the digest of `mediabunny@1.65.2.patch`.
+The 1.66.2 comparison of the same 41 inputs found 17 packet durations rounded
+from 166666 to 167000 microseconds in seven Matroska/WebM fixtures. Their
+average packet rates and bitrates reflect the new final packet end times.
+The `hevc-hvc1.mp4` decoder configuration now uses the container's `hvc1`
+prefix for its codec string. Packet timestamps, types, sizes, data hashes,
+verified-key seeks, and same-tool FFmpeg decoded-frame hashes matched.
+
+For a new capture, run `scripts/test/freeze-demux-oracle.ts` with Git, FFmpeg,
+and the repository's frozen pnpm installation. It checks the imported version,
+selected patch bytes, and installed lock before reading inputs. New captures
+record the lockfile SHA-256 alongside the version and patch SHA-256. To
+reproduce a historical capture, use its recorded source revision and tools.
 
 For a later MediaBunny update, review the complete published package delta and
 port the patch to its runtime modules, source, and declarations. Update the exact
