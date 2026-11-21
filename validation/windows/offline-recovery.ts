@@ -1494,11 +1494,13 @@ async function exerciseBuildUpgrade(
     const page = context.pages()[0] ?? (await context.newPage());
     if (priorSoftware) await forceMainSoftwareWebp(page);
     if (removal) await observeCurrentClientRetirement(page, currentBuild.state.sourceSha);
-    const earlyCallerTraffic = removal ? observeArchivedCallerResponses(context, baseUrl) : null;
     await setDistribution(priorRelativePath);
     await page.goto(baseUrl);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+    // Capture the controlled predecessor document's requests in this navigation.
+    // Chromium discards an earlier document's response bodies when it unloads.
+    const earlyCallerTraffic = removal ? observeArchivedCallerResponses(context, baseUrl) : null;
     const priorNavigation = await page.reload();
     if (removal) await verifyAppDocument(priorNavigation, priorBuild);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
