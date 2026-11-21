@@ -511,6 +511,99 @@ The sections below identify the shipped code and the separate development oracle
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+## Heroicons v1
+
+- **Version:** 1.0.6
+- **License:** MIT
+- **Repository:** https://github.com/tailwindlabs/heroicons/tree/71b15b9e72e0211c5dbb28fb75f280deedaec28d
+- **Purpose:** SVG icon paths embedded in the application UI
+
+### scripts/build/heroicons-v1-LICENSE.txt
+
+    MIT License
+
+    Copyright (c) 2020 Refactoring UI Inc.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+## Heroicons v2
+
+- **Version:** 2.2.0
+- **License:** MIT
+- **Repository:** https://github.com/tailwindlabs/heroicons/tree/0435d4ca364a608cc75e2f8683d374e55abbae26
+- **Purpose:** Inline warning icon in the result preview. The same MIT notice also covers the [Tailwind documentation spinner](https://github.com/tailwindlabs/tailwindcss.com/blob/947a944b219519718ceecafec642286148286c22/src/pages/docs/animation.mdx#L122) used by Icon and ProgressBar. [Maintainer statement for documentation examples](https://github.com/tailwindlabs/tailwindcss.com/issues/665#issuecomment-745307599).
+
+### scripts/build/heroicons-v2-LICENSE.txt
+
+    MIT License
+
+    Copyright (c) Tailwind Labs, Inc.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+## Tailwind CSS
+
+- **Version:** 4.3.5
+- **License:** MIT
+- **Repository:** https://github.com/tailwindlabs/tailwindcss
+- **Purpose:** Theme and Preflight styles in the shipped CSS
+
+### LICENSE
+
+    MIT License
+
+    Copyright (c) Tailwind Labs, Inc.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
 ## Owned GIF source attribution (gifenc)
 
 - **Version:** 1.0.3
@@ -586,7 +679,7 @@ The TypeScript GIF writer adapts the container and output buffer from gifenc 1.0
 - **Repository:** https://github.com/Vanilagy/mediabunny
 - **Purpose:** Development-only patched metadata and demux differential oracle; no production executable
 
-Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/patches/mediabunny@1.66.2.patch
+[Published package](https://registry.npmjs.org/mediabunny/-/mediabunny-1.66.2.tgz) · [Exact patch (Git blob)](https://api.github.com/repos/PiesP/wasm-motion-converter/git/blobs/754820ffabff42d24015095281fdc9e82fc8b629). To browse the patch as text, open `patches/mediabunny@1.66.2.patch` at the `sourceSha` in this build's [deployment manifest](deployment-state.json).
 
 ### LICENSE
 
@@ -1099,7 +1192,7 @@ Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/
 - **Repository:** https://github.com/nieyuyao/webp-wasm
 - **Purpose:** Pinned development-only VP8 comparison encoder
 
-Local modifications: https://github.com/PiesP/wasm-motion-converter/blob/master/patches/wasm-webp@0.1.0.patch
+[Published package](https://registry.npmjs.org/wasm-webp/-/wasm-webp-0.1.0.tgz) · [Exact patch (Git blob)](https://api.github.com/repos/PiesP/wasm-motion-converter/git/blobs/16fe71037285bb0cff877540e3472dee202cd554). To browse the patch as text, open `patches/wasm-webp@0.1.0.patch` at the `sourceSha` in this build's [deployment manifest](deployment-state.json).
 
 ### LICENSE
 

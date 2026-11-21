@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
+// Warning icon: Heroicons v1, Copyright (c) 2020 Refactoring UI Inc. (MIT).
 
 import { useLocale } from '@hooks/use-locale';
 import { assessEnvironmentCapabilities } from '@utils/environment-capabilities';

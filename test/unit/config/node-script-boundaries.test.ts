@@ -51,6 +51,8 @@ function fixture() {
     'scripts/build/deployment-state.ts',
     'scripts/build/verify-service-worker-output.ts',
     'tooling/vite/plugins/emit-service-worker.ts',
+    'scripts/build/heroicons-v1-LICENSE.txt',
+    'scripts/build/heroicons-v2-LICENSE.txt',
     'scripts/build/gifenc-pnn-NOTICES.txt',
     'scripts/build/gifenc-LICENSE.txt',
     'scripts/build/build-gif-scalar-wasm.ts',
@@ -437,6 +439,29 @@ export const quantize = () => {};
     expect(readFileSync(output, 'utf8')).toBe(notices);
   });
 
+  it('keeps the v0.2.4 MediaBunny patch and links its original Git blob from generated notices', () => {
+    const { root, run } = fixture();
+    const pkg = 'node_modules/mediabunny';
+    const patch = 'patches/mediabunny@1.62.1.patch';
+    mkdirSync(join(root, pkg), { recursive: true });
+    mkdirSync(join(root, 'public'));
+    mkdirSync(join(root, 'patches'));
+    copyFileSync(join(project, patch), join(root, patch));
+    writeFileSync(
+      join(root, 'package.json'),
+      '{"type":"module","dependencies":{"mediabunny":"1.62.1"}}'
+    );
+    writeFileSync(join(root, pkg, 'package.json'), '{"version":"1.62.1","license":"MPL-2.0"}');
+    writeFileSync(join(root, pkg, 'LICENSE'), 'Fixture license text');
+    const result = run('scripts/build/generate-licenses.ts');
+    expect(result.status, result.stderr).toBe(0);
+    const notices = readFileSync(join(root, 'public/LICENSES.md'), 'utf8');
+    expect(notices).toContain('https://registry.npmjs.org/mediabunny/-/mediabunny-1.62.1.tgz');
+    expect(notices).toContain(patch);
+    // This is the Git blob delivered from the v0.2.4 source commit, 6de815e3.
+    expect(notices).toContain('/git/blobs/697740a86c92752f768ed982ceeb3095b74d22ee');
+  });
+
   it('includes the installed Vite helper owner notice when Vite is declared', () => {
     const { root, run } = fixture();
     mkdirSync(join(root, 'node_modules/sample'), { recursive: true });
@@ -592,6 +617,12 @@ export const quantize = () => {};
     mkdirSync(join(root, 'dist/assets'), { recursive: true });
     mkdirSync(join(root, 'public'));
     mkdirSync(join(root, 'worker'));
+    const tailwindLicense = 'node_modules/tailwindcss/LICENSE';
+    mkdirSync(dirname(join(root, tailwindLicense)), { recursive: true });
+    copyFileSync(join(project, tailwindLicense), join(root, tailwindLicense));
+    const noticesPath = join(root, 'dist/LICENSES.md');
+    const notices = readFileSync(join(project, 'public/LICENSES.md'), 'utf8');
+    writeFileSync(noticesPath, notices);
     const workerSource = 'self.addEventListener("fetch", () => {});\n';
     writeFileSync(join(root, 'worker/service-worker.ts'), workerSource);
     const workerHash = createHash('sha256').update(workerSource).digest('hex');
@@ -647,6 +678,20 @@ export const quantize = () => {};
     );
     expect(existsSync(join(root, 'dist/assets/b.wasm'))).toBe(false);
     expect(existsSync(join(root, 'dist/test-video-sample.mp4'))).toBe(false);
+    for (const heading of ['Tailwind CSS', 'Heroicons v1', 'Heroicons v2']) {
+      // Leave the component and its license label in the delivered file but remove its terms.
+      const incomplete = notices
+        .split(/^## /m)
+        .map((section) =>
+          section.startsWith(`${heading}\n`) ? `${heading}\n\nMIT License\n\n` : section
+        )
+        .join('## ');
+      writeFileSync(noticesPath, incomplete);
+      const missing = run('scripts/build/postbuild.ts');
+      expect(missing.status).not.toBe(0);
+      expect(missing.stderr).toContain(`missing the full ${heading} notice`);
+    }
+    writeFileSync(noticesPath, notices);
     writeFileSync(
       join(root, 'dist/index.html'),
       '<script src="https://static.cloudflareinsights.com/beacon.min.js"></script>'

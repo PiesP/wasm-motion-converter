@@ -1,5 +1,25 @@
 # Maintained dependency patches
 
+## MediaBunny source for earlier releases
+
+The v0.2.4 and v0.2.5 browser builds shipped patched MediaBunny under MPL-2.0.
+Each published package includes its TypeScript source and license. The linked
+patch supplies the project changes for that release.
+
+| Application release | Original MediaBunny package | Project modifications at release | Distributed notices |
+| --- | --- | --- | --- |
+| v0.2.4 | [1.62.1 package](https://registry.npmjs.org/mediabunny/-/mediabunny-1.62.1.tgz) | [1.62.1 patch](https://raw.githubusercontent.com/PiesP/wasm-motion-converter/6de815e39678a07acf596824006fa5f41ed6329e/patches/mediabunny@1.62.1.patch) | [v0.2.4 notices](https://github.com/PiesP/wasm-motion-converter/blob/6de815e39678a07acf596824006fa5f41ed6329e/public/LICENSES.md) |
+| v0.2.5 | [1.65.2 package](https://registry.npmjs.org/mediabunny/-/mediabunny-1.65.2.tgz) | [1.65.2 patch](https://raw.githubusercontent.com/PiesP/wasm-motion-converter/90b5e592755d5885b5ad67da19175f4fc017a10f/patches/mediabunny@1.65.2.patch) | [v0.2.5 notices](https://github.com/PiesP/wasm-motion-converter/blob/90b5e592755d5885b5ad67da19175f4fc017a10f/public/LICENSES.md) |
+
+The v0.2.4 notices link to `patches/mediabunny@1.62.1.patch` on `master`.
+The file at that location preserves the original release bytes. The [v0.2.4
+lockfile](https://github.com/PiesP/wasm-motion-converter/blob/6de815e39678a07acf596824006fa5f41ed6329e/pnpm-lock.yaml#L186)
+records patch SHA-256 `aaf7804347af70680e2e7ae3cdecd87ae79df5c776fe7cdc0e01dd68b77ad638`.
+To assemble the v0.2.4 source, extract the 1.62.1 package and run
+`git apply /path/to/mediabunny@1.62.1.patch` inside its `package/` directory.
+For v0.2.5, the [release checkout](https://github.com/PiesP/wasm-motion-converter/tree/90b5e592755d5885b5ad67da19175f4fc017a10f)
+selects the 1.65.2 patch through its frozen pnpm installation.
+
 ## MediaBunny memory limits
 
 `mediabunny@1.66.2.patch` applies to the exact published 1.66.2 package. The

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025-2026 PiesP
+// Outline icon paths: Heroicons v1, Copyright (c) 2020 Refactoring UI Inc. (MIT).
+// Spinner path: Tailwind CSS documentation example, Copyright (c) Tailwind Labs, Inc. (MIT).
 
 import { useLocale } from '@hooks/use-locale';
 import { DESIGN_ICON_CONTRACT } from '@piesp/browser-core/design';
