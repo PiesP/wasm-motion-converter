@@ -30,6 +30,7 @@ import type {
   Request as PlaywrightRequest,
 } from '@playwright/test';
 
+import { pagesFileUrl } from '../../scripts/test/pages-file-url.ts';
 import {
   RETIRED_WEBP_CALLERS,
   RETIRED_WEBP_EXECUTABLES,
@@ -2722,11 +2723,12 @@ async function exercisePublicTarget(
       );
       assert(Number.isSafeInteger(file.size) && file.size >= 0);
       assert(/^[a-f0-9]{64}$/.test(file.sha256));
-      const path =
-        file.path === 'index.html' ? '/' : file.path === '404.html' ? '/404' : `/${file.path}`;
-      const response: APIResponse = await context.request.get(new URL(path, target.url).href, {
-        maxRedirects: 0,
-      });
+      const response: APIResponse = await context.request.get(
+        pagesFileUrl(target.url, file.path).href,
+        {
+          maxRedirects: 0,
+        }
+      );
       assert.equal(response.status(), 200, `Public asset ${file.path} did not return 200`);
       const bytes = await response.body();
       assert.equal(bytes.byteLength, file.size, `Public asset size differs: ${file.path}`);
@@ -2735,7 +2737,7 @@ async function exercisePublicTarget(
     }
     const representative = metadata.files.find((file) => file.path.endsWith('.js'));
     assert(representative, 'Public metadata contains no JavaScript asset');
-    const representativeUrl = new URL(`/${representative.path}`, target.url).href;
+    const representativeUrl = pagesFileUrl(target.url, representative.path).href;
     const initialAsset = await context.request.get(representativeUrl);
     assert.equal(initialAsset.status(), 200);
     assert.match(initialAsset.headers()['cache-control'] ?? '', /\bimmutable\b/i);

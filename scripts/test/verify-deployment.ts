@@ -16,6 +16,7 @@ import { join, resolve } from 'node:path';
 import type { DeploymentState } from '../build/deployment-state.ts';
 import { runChild } from '../check/run-child.ts';
 import { preserveDeploymentDiagnostics } from './deployment-diagnostics.ts';
+import { pagesFileUrl } from './pages-file-url.ts';
 import { runPlaywright } from './run-playwright.ts';
 
 const sha = /^[a-f0-9]{40}$/;
@@ -162,10 +163,7 @@ export async function verifyDeploymentBytes(
     throw new Error('Deployment inventory differs from build artifact');
   const files = [];
   for (const file of expected.files) {
-    // Pages serves top-level HTML documents at canonical extensionless URLs.
-    const path =
-      file.path === 'index.html' ? '/' : file.path === '404.html' ? '/404' : `/${file.path}`;
-    const url = new URL(path, target);
+    const url = pagesFileUrl(target, file.path);
     const response = await fetcher(url, { redirect: 'error', signal: AbortSignal.timeout(20_000) });
     if (response.status !== 200) throw new Error(`${file.path} returned ${response.status}`);
     const body = await bytes(response, MAX_ASSET_BYTES);
