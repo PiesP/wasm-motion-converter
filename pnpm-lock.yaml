@@ -212,6 +212,9 @@ importers:
       '@axe-core/playwright':
         specifier: ^4.14.0
         version: 4.14.0(playwright-core@1.65.1)
+      '@babel/parser':
+        specifier: 7.29.14
+        version: 7.29.14
       '@playwright/test':
         specifier: ^1.65.1
         version: 1.65.1

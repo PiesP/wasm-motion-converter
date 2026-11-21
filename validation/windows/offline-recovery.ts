@@ -27,6 +27,10 @@ import {
   RETIRED_WEBP_EXECUTABLES,
   RETIRED_WEBP_SHIM,
 } from '../../scripts/test/retired-webp-assets.ts';
+import {
+  hasLegacyWebpInRetiredBuild,
+  hasLegacyWebpLoader,
+} from '../../scripts/test/retired-webp-worker.ts';
 import { measureColdTransfer, readBuild } from './app-update.ts';
 import { instrumentOwnedInstance, parseAnimatedWebp } from './helpers/owned-vp8-product.ts';
 
@@ -154,9 +158,6 @@ function sha256(bytes: Buffer | string) {
 
 type InventoryFile = Build['state']['files'][number];
 const STALE_ALIAS_QUERY = '?offline-acceptance=retired-alias';
-const LEGACY_WEBP_MODULE_REFERENCE =
-  /(?:\.\/|\bassets\/)(?:webp-wasm|wasm-webp)[-.][\w-]+\.(?:wasm|[cm]?js)\b/i;
-
 export function softwareWebpInventory(files: readonly InventoryFile[]) {
   const owned = files.filter(({ path }) => OWNED_VP8_ASSET.test(path));
   const legacyWasm = files.filter(({ path }) => LEGACY_WEBP_WASM_ASSET.test(path));
@@ -183,16 +184,7 @@ export function softwareWebpInventory(files: readonly InventoryFile[]) {
   };
 }
 
-export function hasLegacyWebpLoader(bytes: Uint8Array): boolean {
-  const js = Buffer.from(bytes).toString('utf8');
-  // Frozen legacy builds expose all three Emscripten symbols even after minification.
-  return (
-    LEGACY_WEBP_MODULE_REFERENCE.test(js) ||
-    ['emscripten_resize_heap', 'wasmMemory', '__wasm_call_ctors'].every((marker) =>
-      js.includes(marker)
-    )
-  );
-}
+export { hasLegacyWebpLoader } from '../../scripts/test/retired-webp-worker.ts';
 
 export async function forceMainSoftwareWebp(page: Page) {
   await page.addInitScript(() => {
@@ -1209,11 +1201,13 @@ async function exerciseBuildUpgrade(
     assert.equal(currentSoftware.asset.sha256, removal.wasmSha256);
   }
   if (currentSoftware?.ownedOnly) {
-    for (const { path } of currentBuild.state.files.filter(({ path }) => /\.[cm]?js$/.test(path)))
+    for (const { path } of currentBuild.state.files.filter(({ path }) => /\.[cm]?js$/.test(path))) {
+      const bytes = await readFile(join(bundleRoot, 'dist', path));
       assert(
-        !hasLegacyWebpLoader(await readFile(join(bundleRoot, 'dist', path))),
+        !(removal ? hasLegacyWebpInRetiredBuild(path, bytes) : hasLegacyWebpLoader(bytes)),
         `Current executable retains a legacy WebP loader or its reference: ${path}`
       );
+    }
   }
   let activePage: Page | undefined;
   let coldContext: BrowserContext | undefined;

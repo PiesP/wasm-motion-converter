@@ -29,10 +29,10 @@ import {
   RETIRED_WEBP_EXECUTABLES,
   RETIRED_REQUEST_MODES,
 } from '../../scripts/test/retired-webp-assets';
+import { hasLegacyWebpInRetiredBuild } from '../../scripts/test/retired-webp-worker';
 import { parseDeploymentState } from '../../scripts/test/verify-deployment';
 import {
   forceMainSoftwareWebp,
-  hasLegacyWebpLoader,
   observeSoftwareWebp,
   softwareWebpInventory,
   verifySoftwareWebp,
@@ -379,7 +379,7 @@ test.describe('Deployment: Page Load', () => {
           bytes
         );
         expect(
-          hasLegacyWebpLoader(bytes),
+          hasLegacyWebpInRetiredBuild(path, bytes),
           `Legacy WebP loader in deployed executable ${path}`
         ).toBe(false);
       }

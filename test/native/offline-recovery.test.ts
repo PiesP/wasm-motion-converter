@@ -10,8 +10,10 @@ import { test } from 'vite-plus/test';
 
 import {
   LEGACY_WEBP_DEPLOYMENT,
+  RETIRED_WEBP_EXECUTABLES,
   RETIRED_WEBP_SHIM,
 } from '../../scripts/test/retired-webp-assets.ts';
+import { hasLegacyWebpInRetiredBuild } from '../../scripts/test/retired-webp-worker.ts';
 import {
   assertRemovalUpgradeEvidence,
   assertWorkerUpdateOutcome,
@@ -219,6 +221,48 @@ test('legacy runtime audit distinguishes module references and compiled loader m
     hasLegacyWebpLoader(Buffer.from('MIT; https://github.com/nieyuyao/webp-wasm')),
     false
   );
+});
+
+test('only the exact emitted root may carry four inert archived executable identities', () => {
+  const rows = RETIRED_WEBP_EXECUTABLES.map(
+    ({ path, size, sha256 }) => `[\`/${path}\`,${size},\`${sha256}\`]`
+  );
+  const table = `[${rows.join(',')}]`;
+  const projection = 'return row&&{size:row[1],sha256:row[2]}';
+  const metadata = `var lookup=(()=>{let assets=${table};return pathname=>{
+    let row=assets.find(([path])=>path===pathname);${projection}
+  }})();`;
+  const consumers = `function verify(url,length){return lookup(url.pathname)?.size===length}`;
+  const candidates = {
+    'loader reference after metadata': `${metadata}fetch('/${RETIRED_WEBP_SHIM.path}');${consumers}`,
+    'direct path extraction': metadata.replace(projection, 'return fetch(row[0])') + consumers,
+    'descriptor escapes lookup': metadata.replace(projection, 'return row') + consumers,
+    'table escapes lookup': metadata.replace(projection, 'return assets') + consumers,
+    'import with a computed specifier': `${metadata}${consumers}import(String.fromCharCode(47));`,
+    'fifth row': metadata.replace(table, `[${rows.join(',')},${rows[0]}]`) + consumers,
+    'changed QName': metadata.replace('wasm-webp.Wg4Zhl1L.js', 'wasm-webp.Wg4Zhl1X.js') + consumers,
+    'changed projection': metadata.replace('size:row[1]', 'size:row[0]') + consumers,
+    'changed comparator':
+      metadata.replace('path===pathname', 'path.startsWith(pathname)') + consumers,
+    'changed hash': metadata.replace(RETIRED_WEBP_SHIM.sha256, 'a'.repeat(64)) + consumers,
+    'escaped literal': metadata.replace('wasm-webp', '\\x77asm-webp') + consumers,
+    'comment in tuple': metadata.replace(',51996,', ',/* retained */ 51996,') + consumers,
+    'unscoped table': `var assets=${table};${consumers}`,
+    'malformed JavaScript': metadata + 'function broken(',
+    'oversized worker': metadata + consumers + ' '.repeat(64 * 1024),
+  };
+  const valid = Buffer.from(metadata + consumers);
+  assert.equal(hasLegacyWebpLoader(valid), true);
+  assert.equal(hasLegacyWebpInRetiredBuild('service-worker.js', valid), false);
+  for (const path of ['assets/service-worker.js', './service-worker.js', '/service-worker.js'])
+    assert.equal(hasLegacyWebpInRetiredBuild(path, valid), true, path);
+  for (const [reason, source] of Object.entries(candidates))
+    assert.equal(
+      hasLegacyWebpInRetiredBuild('service-worker.js', Buffer.from(source)),
+      true,
+      reason
+    );
+  assert.equal(hasLegacyWebpInRetiredBuild('assets/app.js', Buffer.from('fetch("owned")')), false);
 });
 
 test('first-pipeline expectations preserve historical GIF preload and verify the owned demux family', () => {

@@ -79,6 +79,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
+    "@babel/parser": "7.29.14",
     "@playwright/test": "^1.65.1",
     "@tailwindcss/vite": "4.3.5",
     "@types/dom-webcodecs": "^0.1.19",
