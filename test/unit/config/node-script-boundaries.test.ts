@@ -49,12 +49,19 @@ function fixture() {
     'scripts/release/published-asset.ts',
     'scripts/build/deployment-state.ts',
     'scripts/build/verify-service-worker-output.ts',
+    'tooling/vite/plugins/emit-service-worker.ts',
     'scripts/build/gifenc-pnn-NOTICES.txt',
     'validation/windows/gif-quantization-owner-video.json',
   ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     copyFileSync(join(project, path), join(root, path));
   }
+  mkdirSync(join(root, 'node_modules/@babel'), { recursive: true });
+  symlinkSync(
+    join(project, 'node_modules/@babel/parser'),
+    join(root, 'node_modules/@babel/parser'),
+    'dir'
+  );
   writeFileSync(join(root, 'package.json'), '{"type":"module","version":"0.2.2"}\n');
   const run = (entry: string, environment: NodeJS.ProcessEnv = process.env) =>
     spawnSync(process.execPath, ['--experimental-strip-types', join(root, entry)], {
@@ -480,18 +487,29 @@ export const quantize = () => {};
     const workerSource = 'self.addEventListener("fetch", () => {});\n';
     writeFileSync(join(root, 'worker/service-worker.ts'), workerSource);
     const workerHash = createHash('sha256').update(workerSource).digest('hex');
+    const html = '<script type="module" src="/assets/app.js"></script>';
+    const app = 'import("./lazy-codec.js")';
+    const pin = (path: string, source: string) => ({
+      path,
+      size: Buffer.byteLength(source),
+      sha256: createHash('sha256').update(source).digest('hex'),
+    });
+    const shell = {
+      document: pin('/index.html', html),
+      eager: [pin('/assets/app.js', app)],
+      predecessorOnly: [],
+      predecessorShared: [],
+    };
     writeFileSync(
       join(root, 'dist/service-worker.js'),
-      `/* dropconvert-worker-source-sha256:${workerHash} */\nself.addEventListener("fetch",()=>{});`
+      `/* dropconvert-worker-source-sha256:${workerHash} */\nconst __DROP_CONVERT_SHELL__=${JSON.stringify(shell)};\n${workerSource}`
     );
     writeFileSync(join(root, 'public/_headers'), '/*\n  X-Content-Type-Options: nosniff\n');
-    writeFileSync(
-      join(root, 'dist/index.html'),
-      '<script type="module" src="/assets/app.js"></script>'
-    );
+    writeFileSync(join(root, 'dist/index.html'), html);
     writeFileSync(join(root, 'dist/assets/a.wasm'), 'same');
     writeFileSync(join(root, 'dist/assets/b.wasm'), 'same');
-    writeFileSync(join(root, 'dist/assets/app.js'), 'fetch("/assets/b.wasm")');
+    writeFileSync(join(root, 'dist/assets/app.js'), app);
+    writeFileSync(join(root, 'dist/assets/lazy-codec.js'), 'fetch("/assets/b.wasm")');
     writeFileSync(join(root, 'dist/test-video-sample.mp4'), 'omit');
     const privateBytes = Buffer.from('synthetic-private-owner-input');
     declareSyntheticOwnerInput(root, privateBytes);
@@ -508,7 +526,10 @@ export const quantize = () => {};
     expect(existsSync(join(root, 'dist/nested/arbitrary-name.bin'))).toBe(false);
     expect(readFileSync(join(root, 'dist/nested/safe-same-size.bin'))).toEqual(safeBytes);
     expect(readFileSync(join(root, 'public/preserved-original.mp4'))).toEqual(privateBytes);
-    expect(readFileSync(join(root, 'dist/assets/app.js'), 'utf8')).toContain('/assets/a.wasm');
+    expect(readFileSync(join(root, 'dist/assets/app.js'), 'utf8')).toBe(app);
+    expect(readFileSync(join(root, 'dist/assets/lazy-codec.js'), 'utf8')).toContain(
+      '/assets/a.wasm'
+    );
     expect(existsSync(join(root, 'dist/assets/b.wasm'))).toBe(false);
     expect(existsSync(join(root, 'dist/test-video-sample.mp4'))).toBe(false);
     writeFileSync(
