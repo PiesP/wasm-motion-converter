@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
+
+import { parse } from '@babel/parser';
+
+import { shellEntries } from '../../tooling/vite/plugins/emit-service-worker.ts';
 
 const workerMarker = /^\/\* dropconvert-worker-source-sha256:([a-f0-9]{64}) \*\/\n/;
 
@@ -37,5 +41,72 @@ export function verifyServiceWorkerOutput(root: string, dist: string): string {
   if (marker !== sourceHash) {
     throw new Error('[postbuild] Service worker output does not match the current source');
   }
+  const match = /^const __DROP_CONVERT_SHELL__=(.+);$/m.exec(bytes.toString('utf8'));
+  if (!match) throw new Error('[postbuild] Missing service worker shell manifest');
+  verifyShell(dist, JSON.parse(match[1]!));
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+interface Pin {
+  path: string;
+  size: number;
+  sha256: string;
+}
+
+function verifyShell(
+  dist: string,
+  manifest: { document: Pin; eager: Pin[]; predecessorOnly: string[] }
+) {
+  const document = readPinned(manifest.document, join(dist, 'index.html'));
+  if (manifest.document.path !== '/index.html') throw new Error('[postbuild] Invalid shell path');
+  const assets = new Map<string, Buffer>();
+  for (const pin of manifest.eager) {
+    if (!/^\/assets\/[\w.-]+\.(?:js|css)$/.test(pin.path) || assets.has(pin.path.slice(1))) {
+      throw new Error('[postbuild] Invalid eager shell asset path');
+    }
+    assets.set(pin.path.slice(1), readPinned(pin, join(dist, pin.path.slice(1))));
+  }
+  const seen = new Set<string>();
+  const pending = shellEntries(document.toString('utf8'));
+  while (pending.length) {
+    const path = pending.pop()!;
+    if (seen.has(path)) continue;
+    const file = assets.get(path);
+    if (!file) throw new Error(`[postbuild] Unexpected unpinned shell dependency ${path}`);
+    seen.add(path);
+    if (!path.endsWith('.js')) continue;
+    for (const node of parse(file.toString('utf8'), { sourceType: 'module' }).program.body) {
+      if (
+        (node.type === 'ImportDeclaration' ||
+          node.type === 'ExportNamedDeclaration' ||
+          node.type === 'ExportAllDeclaration') &&
+        node.source
+      ) {
+        if (!node.source.value.startsWith('.')) {
+          throw new Error(`[postbuild] Non-local static shell dependency ${node.source.value}`);
+        }
+        pending.push(posix.join(posix.dirname(path), node.source.value));
+      }
+    }
+  }
+  if (seen.size !== assets.size) throw new Error('[postbuild] Unexpected eager shell asset');
+  for (const path of manifest.predecessorOnly) {
+    if (
+      !/^\/assets\/[\w.-]+\.(?:js|css|wasm)$/.test(path) ||
+      existsSync(join(dist, path.slice(1)))
+    ) {
+      throw new Error(`[postbuild] Invalid predecessor-only asset ${path}`);
+    }
+  }
+}
+
+function readPinned(pin: Pin, path: string): Buffer {
+  const contents = readFileSync(path);
+  if (
+    contents.length !== pin.size ||
+    createHash('sha256').update(contents).digest('hex') !== pin.sha256
+  ) {
+    throw new Error(`[postbuild] Incorrect service worker shell bytes for ${pin.path}`);
+  }
+  return contents;
 }

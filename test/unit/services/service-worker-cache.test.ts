@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { webcrypto } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -13,12 +14,16 @@ import { verifyServiceWorkerOutput } from '../../../scripts/build/verify-service
 
 let emittedWorker: string;
 let workerBuildRoot: string;
+const generation = 'a'.repeat(40);
+const oldCaller = 'https://drop.test/assets/index.D1rWSzxT.js';
+const archivedWorker = 'https://drop.test/assets/worker-BG8LzI1q.js';
 
 beforeAll(async () => {
   workerBuildRoot = mkdtempSync(join(tmpdir(), 'wmc-service-worker-'));
   await build({
     configFile: resolve('vite.config.ts'),
     publicDir: false,
+    define: { __APP_SOURCE_SHA__: JSON.stringify(generation) },
     build: { outDir: workerBuildRoot },
     logLevel: 'error',
   });
@@ -86,8 +91,15 @@ function assetResponse(
   return response;
 }
 
+function defaultAssetResponse(url: string) {
+  const path = new URL(url).pathname;
+  const emitted = join(workerBuildRoot, path);
+  if (existsSync(emitted)) return assetResponse(url, { body: readFileSync(emitted) });
+  return assetResponse(url);
+}
+
 function documentResponse(
-  body = 'app',
+  body = readFileSync(join(workerBuildRoot, 'index.html'), 'utf8'),
   overrides: { url?: string; status?: number; type?: string; contentType?: string | null } = {}
 ) {
   const response = {
@@ -101,7 +113,10 @@ function documentResponse(
         ? {}
         : { 'content-type': overrides.contentType ?? 'text/html; charset=utf-8' }
     ),
-    clone: () => response,
+    clone: () => ({
+      ...response,
+      body: new Response(body).body,
+    }),
   };
   return response;
 }
@@ -117,12 +132,26 @@ interface WaitUntilEventLike {
   waitUntil: (work: Promise<unknown>) => void;
 }
 
+interface ClientLike {
+  id: string;
+  type: 'window' | 'worker';
+  url: string;
+  postMessage: (data: unknown) => void;
+}
+
 type ServiceWorkerEventLike = FetchEventLike | WaitUntilEventLike;
 
-function loadServiceWorker(): {
+type CacheStores = Map<string, Map<string, unknown>>;
+
+function loadServiceWorker(existingStores?: CacheStores): {
   cacheEntries: Map<string, unknown>;
   staticCacheEntries: Map<string, unknown>;
-  dispatchFetch: (url: string, destination?: string) => Promise<unknown>;
+  dispatchFetch: (url: string, destination?: string, clientId?: string) => Promise<unknown>;
+  dispatchMessage: (client: ClientLike, claimedGeneration?: string) => Promise<void>;
+  addClient: (id: string, type?: ClientLike['type'], url?: string) => ClientLike;
+  removeClient: (id: string) => void;
+  failDelete: (url: string) => void;
+  delayRead: (url: string) => { started: Promise<void>; resume: () => void };
   dispatchInstall: () => Promise<void>;
   dispatchActivate: () => Promise<void>;
   cacheStores: Map<string, Map<string, unknown>>;
@@ -138,9 +167,9 @@ function loadServiceWorker(): {
   const staticCacheName = 'dropconvert-static-v20261008-documents';
   const dynamicCacheName = 'dropconvert-dynamic-v20261008-documents';
   const listeners = new Map<string, (event: ServiceWorkerEventLike) => void>();
-  const cacheStores = new Map<string, Map<string, unknown>>();
-  const staticCacheEntries = new Map<string, unknown>();
-  const cacheEntries = new Map<string, unknown>();
+  const cacheStores = existingStores ?? new Map<string, Map<string, unknown>>();
+  const staticCacheEntries = cacheStores.get(staticCacheName) ?? new Map<string, unknown>();
+  const cacheEntries = cacheStores.get(dynamicCacheName) ?? new Map<string, unknown>();
   cacheStores.set(staticCacheName, staticCacheEntries);
   cacheStores.set(dynamicCacheName, cacheEntries);
 
@@ -150,10 +179,26 @@ function loadServiceWorker(): {
   let networkResponse: unknown;
   let networkFailure: unknown;
   let storageFailure = false;
+  let rejectedDelete: string | undefined;
+  let delayedRead: { url: string; started: () => void; done: Promise<void> } | undefined;
   let writes = 0;
   let enumerations = 0;
   let syncWaitCount = 0;
   const messages: unknown[] = [];
+  const clients = new Map<string, ClientLike>();
+  const addClient = (id: string, type: ClientLike['type'] = 'window', url = `${origin}/`) => {
+    const client = {
+      id,
+      type,
+      url,
+      postMessage: (data: unknown) => {
+        messages.push(data);
+      },
+    };
+    clients.set(id, client);
+    return client;
+  };
+  addClient('test-client');
   const fetchMock = vi.fn((request: string | { url: string }) =>
     networkFailure === undefined
       ? Promise.resolve(
@@ -161,7 +206,7 @@ function loadServiceWorker(): {
             (new URL(typeof request === 'string' ? request : request.url).pathname.startsWith(
               '/assets/'
             )
-              ? assetResponse(typeof request === 'string' ? request : request.url)
+              ? defaultAssetResponse(typeof request === 'string' ? request : request.url)
               : defaultResponse)
         )
       : Promise.reject(networkFailure)
@@ -177,11 +222,25 @@ function loadServiceWorker(): {
           entries.set(toCacheKey(key), response);
         }
       }),
-      delete: vi.fn((key: string) => Promise.resolve(entries.delete(toCacheKey(key)))),
-      match: vi.fn((key: string) => Promise.resolve(entries.get(toCacheKey(key)))),
+      delete: vi.fn((key: string | { url: string }) =>
+        Promise.resolve(toCacheKey(key) !== rejectedDelete && entries.delete(toCacheKey(key)))
+      ),
+      match: vi.fn(async (key: string | { url: string }) => {
+        const url = toCacheKey(key);
+        if (url === delayedRead?.url) {
+          const delay = delayedRead;
+          delayedRead = undefined;
+          delay.started();
+          await delay.done;
+        }
+        const response = entries.get(url);
+        return url.endsWith('/.dropconvert-retirement') && response instanceof Response
+          ? response.clone()
+          : response;
+      }),
       keys: vi.fn(() => {
         enumerations += 1;
-        return Promise.resolve([...entries.keys()]);
+        return Promise.resolve([...entries.keys()].map((url) => ({ url })));
       }),
       put: vi.fn((key: string, response: unknown) => {
         writes += 1;
@@ -216,7 +275,8 @@ function loadServiceWorker(): {
     },
     clients: {
       claim: vi.fn(),
-      get: vi.fn(async () => ({ postMessage: (message: unknown) => messages.push(message) })),
+      get: vi.fn(async (id: string) => clients.get(id)),
+      matchAll: vi.fn(async () => [...clients.values()].filter(({ type }) => type === 'window')),
     },
     location: { origin: 'https://drop.test' },
     skipWaiting: vi.fn(),
@@ -230,6 +290,7 @@ function loadServiceWorker(): {
     Uint8Array,
     URL,
     caches,
+    crypto: webcrypto,
     fetch: fetchMock,
     self,
   });
@@ -243,7 +304,32 @@ function loadServiceWorker(): {
     cacheEnumerations: () => enumerations,
     messages,
     syncWaits: () => syncWaitCount,
-    dispatchFetch: async (url: string, destination = '') => {
+    addClient,
+    removeClient: (id) => {
+      clients.delete(id);
+    },
+    failDelete: (url) => {
+      rejectedDelete = url;
+    },
+    delayRead: (url) => {
+      const started = Promise.withResolvers<void>();
+      const done = Promise.withResolvers<void>();
+      delayedRead = { url, started: started.resolve, done: done.promise };
+      return { started: started.promise, resume: done.resolve };
+    },
+    dispatchMessage: async (source, claimedGeneration = generation) => {
+      const waits: Promise<unknown>[] = [];
+      listeners.get('message')?.({
+        ...{
+          isTrusted: true,
+          source,
+          data: { type: 'dropconvert:retirement-check', generation: claimedGeneration },
+        },
+        waitUntil: (work) => waits.push(work),
+      });
+      await Promise.all(waits);
+    },
+    dispatchFetch: async (url: string, destination = '', clientId = 'test-client') => {
       const waits: Promise<unknown>[] = [];
       let responsePromise: Promise<unknown> | undefined;
       listeners.get('fetch')?.({
@@ -253,7 +339,7 @@ function loadServiceWorker(): {
           mode: destination === 'document' ? 'navigate' : 'cors',
           url,
         },
-        clientId: 'test-client',
+        clientId,
         respondWith: (promise) => {
           responsePromise = promise;
         },
@@ -292,45 +378,51 @@ function loadServiceWorker(): {
 describe('service worker dynamic cache boundaries', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('stores supported application document queries under one canonical key', async () => {
+  it('commits only the exact emitted shell and serves it offline, including eager assets', async () => {
     const worker = loadServiceWorker();
-
-    await worker.dispatchFetch('https://drop.test/?nonce=one', 'document');
-    await worker.dispatchFetch('https://drop.test/?nonce=two', 'document');
-
-    expect([...worker.cacheEntries.keys()]).toEqual(['https://drop.test/']);
+    await worker.dispatchInstall();
+    expect(worker.staticCacheEntries.has(`${origin}/`)).toBe(false);
+    await worker.dispatchActivate();
+    const shell = worker.staticCacheEntries.get(`${origin}/`);
+    const update = documentResponse('future app');
+    worker.setNetworkResponse(update);
+    await expect(worker.dispatchFetch(`${origin}/?new`, 'document')).resolves.toBe(update);
+    expect(worker.cacheEntries.has(`${origin}/`)).toBe(false);
+    worker.setNetworkFailure(new Error('offline'));
+    await expect(worker.dispatchFetch(`${origin}/?offline`, 'document')).resolves.toBe(shell);
+    const eager = [...worker.staticCacheEntries.keys()].filter((url) =>
+      new URL(url).pathname.startsWith('/assets/')
+    );
+    expect(eager).toHaveLength(3);
+    await expect(
+      worker.dispatchFetch(
+        eager.find((url) => url.endsWith('.js'))!,
+        'script'
+      )
+    ).resolves.toBeDefined();
+    expect(eager.some((url) => /worker|wasm|conversion-pipeline/.test(url))).toBe(false);
   });
 
-  it('prefers the latest dynamic document over the static precache offline', async () => {
+  it('rejects a staged mismatching document without replacing the previous offline document', async () => {
     const worker = loadServiceWorker();
-    const versionA = documentResponse('A');
-    const versionB = documentResponse('B');
-
-    worker.setNetworkResponse(versionA);
-    await worker.dispatchInstall();
-    expect(worker.staticCacheEntries.get('https://drop.test/')).toBe(versionA);
-
-    worker.setNetworkResponse(versionB);
-    await worker.dispatchFetch('https://drop.test/?version=B', 'document');
-    expect(worker.cacheEntries.get('https://drop.test/')).toBe(versionB);
-
-    worker.setNetworkFailure(new Error('offline'));
-    await expect(worker.dispatchFetch('https://drop.test/?version=B', 'document')).resolves.toBe(
-      versionB
-    );
+    const previous = documentResponse('old');
+    worker.staticCacheEntries.set(`${origin}/`, previous);
+    worker.setNetworkResponse(documentResponse('outside this build'));
+    await expect(worker.dispatchInstall()).rejects.toThrow('Unverified application');
+    expect(worker.staticCacheEntries.get(`${origin}/`)).toBe(previous);
   });
 
   it.each(['/robots.txt', '/sitemap.xml', '/manifest.json', '/error.html', '/other'])(
     'does not replace the recovery document with %s',
     async (path) => {
       const worker = loadServiceWorker();
-      const app = documentResponse();
-      worker.setNetworkResponse(app);
-      await worker.dispatchFetch(`${origin}/`, 'document');
+      await worker.dispatchInstall();
+      await worker.dispatchActivate();
+      const app = worker.staticCacheEntries.get(`${origin}/`);
       const resource = documentResponse('resource', { url: `${origin}${path}` });
       worker.setNetworkResponse(resource);
       await expect(worker.dispatchFetch(`${origin}${path}`, 'document')).resolves.toBe(resource);
-      expect(worker.cacheEntries.get(`${origin}/`)).toBe(app);
+      expect(worker.staticCacheEntries.get(`${origin}/`)).toBe(app);
       worker.setNetworkFailure(new Error('offline'));
       await expect(worker.dispatchFetch(`${origin}/?offline`, 'document')).resolves.toBe(app);
       await expect(worker.dispatchFetch(`${origin}${path}?uncached`, 'document')).rejects.toThrow(
@@ -354,37 +446,24 @@ describe('service worker dynamic cache boundaries', () => {
     { url: '' },
   ])('returns but does not admit an invalid root response %j', async (overrides) => {
     const worker = loadServiceWorker();
-    const app = documentResponse();
-    worker.setNetworkResponse(app);
-    await worker.dispatchFetch(`${origin}/`, 'document');
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
     const invalid = documentResponse('invalid', overrides);
     worker.setNetworkResponse(invalid);
     await expect(worker.dispatchFetch(`${origin}/?changed`, 'document')).resolves.toBe(invalid);
-    expect(worker.cacheEntries.get(`${origin}/`)).toBe(app);
-  });
-
-  it('accepts a redirect within the supported document set', async () => {
-    const worker = loadServiceWorker();
-    const app = documentResponse('redirected app', { url: `${origin}/index.html?new` });
-    worker.setNetworkResponse(app);
-    await worker.dispatchFetch(`${origin}/?redirect`, 'document');
-    expect(worker.cacheEntries.get(`${origin}/`)).toBe(app);
-    await worker.dispatchFetch(`${origin}/index.html?new`, 'document');
-    expect(worker.cacheEntries.size).toBe(1);
-  });
-
-  it('rejects a polluted dynamic entry and uses the valid static document', async () => {
-    const worker = loadServiceWorker();
-    const app = documentResponse('static app');
-    worker.setNetworkResponse(app);
-    await worker.dispatchInstall();
-    worker.cacheEntries.set(
-      `${origin}/`,
-      documentResponse('robots', { url: `${origin}/robots.txt`, contentType: 'text/plain' })
-    );
-    worker.setNetworkFailure(new Error('offline'));
-    await expect(worker.dispatchFetch(`${origin}/`, 'document')).resolves.toBe(app);
     expect(worker.cacheEntries.has(`${origin}/`)).toBe(false);
+  });
+
+  it('passes an online document redirect through without replacing the verified shell', async () => {
+    const worker = loadServiceWorker();
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+    const shell = worker.staticCacheEntries.get(`${origin}/`);
+    const redirected = documentResponse('redirected app', { url: `${origin}/index.html?new` });
+    worker.setNetworkResponse(redirected);
+    await expect(worker.dispatchFetch(`${origin}/?redirect`, 'document')).resolves.toBe(redirected);
+    expect(worker.cacheEntries.has(`${origin}/`)).toBe(false);
+    expect(worker.staticCacheEntries.get(`${origin}/`)).toBe(shell);
   });
 
   it('fails offline when neither recovery entry is valid', async () => {
@@ -399,8 +478,6 @@ describe('service worker dynamic cache boundaries', () => {
     );
     worker.setNetworkFailure(new Error('offline'));
     await expect(worker.dispatchFetch(`${origin}/`, 'document')).rejects.toThrow('offline');
-    expect(worker.cacheEntries.size).toBe(0);
-    expect(worker.staticCacheEntries.size).toBe(0);
   });
 
   it('retains the current cache through activation and removes only stale app-owned caches', async () => {
@@ -440,23 +517,112 @@ describe('service worker dynamic cache boundaries', () => {
     );
   });
 
-  it('keeps the latest navigation document while evicting runtime assets', async () => {
+  it('protects resident predecessor aliases under dynamic cache pressure until retirement', async () => {
     const worker = loadServiceWorker();
-    const versionA = documentResponse('A');
-    const versionB = documentResponse('B');
-
-    worker.setNetworkResponse(versionA);
     await worker.dispatchInstall();
-    worker.setNetworkResponse(versionB);
-    await worker.dispatchFetch('https://drop.test/?version=B', 'document');
-    worker.setNetworkResponse();
-
-    for (let index = 0; index < 64; index += 1) {
+    await worker.dispatchActivate();
+    const oldAlias = `${oldCaller}?frozen`;
+    worker.cacheEntries.set(oldAlias, assetResponse(oldCaller));
+    for (let index = 0; index < 68; index++) {
       await worker.dispatchFetch(assetUrl(String(index)));
     }
+    expect(worker.cacheEntries.size).toBe(64);
+    expect(worker.cacheEntries.has(oldAlias)).toBe(true);
+    expect(worker.staticCacheEntries.has(`${origin}/`)).toBe(true);
+  });
 
-    expect(worker.cacheEntries.size).toBe(65);
-    expect(worker.cacheEntries.get('https://drop.test/')).toBe(versionB);
+  it('limits warm callers and closes admission across worker reinitialization', async () => {
+    const worker = loadServiceWorker();
+    const before = assetResponse(oldCaller);
+    worker.cacheEntries.set(oldCaller, before);
+    worker.staticCacheEntries.set(`${oldCaller}?preserve`, before);
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+    const current = worker.addClient('current');
+    const oldDedicated = worker.addClient('old-worker', 'worker', archivedWorker);
+    const otherWorker = worker.addClient(
+      'unresolved-worker',
+      'worker',
+      `${origin}/assets/webp-wasm-BqUWQtOZ.js`
+    );
+    const networkCount = worker.fetchMock.mock.calls.length;
+    await expect(worker.dispatchFetch(oldCaller, 'script')).resolves.toBe(before);
+    await expect(worker.dispatchFetch(oldCaller, 'script', oldDedicated.id)).resolves.toBe(before);
+    expect(
+      ((await worker.dispatchFetch(oldCaller, 'script', otherWorker.id)) as Response).type
+    ).toBe('error');
+    expect(((await worker.dispatchFetch(oldCaller, 'script', '')) as Response).type).toBe('error');
+    expect(((await worker.dispatchFetch(oldCaller, 'script', current.id)) as Response).type).toBe(
+      'error'
+    );
+    await worker.dispatchMessage(current, 'b'.repeat(40));
+    expect(worker.messages.some((message) => (message as { phase?: string }).phase)).toBe(false);
+    await worker.dispatchMessage(current);
+    expect(worker.messages.at(-1)).toMatchObject({ phase: 'grace', generation });
+    worker.removeClient('test-client');
+    worker.failDelete(oldCaller);
+    await worker.dispatchMessage(current);
+    expect(worker.messages.at(-1)).toMatchObject({ phase: 'retired-pending-sweep', generation });
+    expect(worker.cacheEntries.has(oldCaller)).toBe(true);
+    expect(
+      ((await worker.dispatchFetch(`${oldCaller}?after`, 'script', current.id)) as Response).type
+    ).toBe('error');
+    expect(worker.fetchMock.mock.calls).toHaveLength(networkCount);
+
+    const restarted = loadServiceWorker(worker.cacheStores);
+    restarted.removeClient('test-client');
+    await restarted.dispatchMessage(restarted.addClient(current.id));
+    expect(restarted.messages.at(-1)).toMatchObject({ phase: 'retired', generation });
+    expect(restarted.cacheEntries.has(oldCaller)).toBe(false);
+    expect(restarted.staticCacheEntries.has(`${oldCaller}?preserve`)).toBe(false);
+    expect(((await restarted.dispatchFetch(oldCaller, 'style', current.id)) as Response).type).toBe(
+      'error'
+    );
+    expect(restarted.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('settles an admitted compatibility read before the subsequent retirement sweep', async () => {
+    const worker = loadServiceWorker();
+    const body = assetResponse(oldCaller);
+    worker.cacheEntries.set(oldCaller, body);
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+    const current = worker.addClient('current');
+    const delay = worker.delayRead(oldCaller);
+    const compatibility = worker.dispatchFetch(oldCaller);
+    await delay.started;
+    worker.removeClient('test-client');
+    const retirement = worker.dispatchMessage(current);
+    expect(worker.cacheEntries.has(oldCaller)).toBe(true);
+    expect(worker.messages).toEqual([]);
+    delay.resume();
+    await expect(compatibility).resolves.toBe(body);
+    await retirement;
+    expect(worker.messages.at(-1)).toMatchObject({ phase: 'retired', generation });
+    expect(worker.cacheEntries.has(oldCaller)).toBe(false);
+  });
+
+  it('rejects an invalid exact legacy body and older aliases without network/cache admission', async () => {
+    const worker = loadServiceWorker();
+    await worker.dispatchInstall();
+    await worker.dispatchActivate();
+    const legacy = `${origin}/assets/webp-wasm-DhoM6Y9t.wasm`;
+    worker.cacheEntries.set(legacy, assetResponse(legacy));
+    const network = worker.fetchMock.mock.calls.length;
+    const writes = worker.cacheWrites();
+    expect(await worker.dispatchFetch(legacy)).toHaveProperty('type', 'error');
+    expect(
+      await worker.dispatchFetch(`${origin}/assets/%77ebp-wasm-DhoM6Y9t.wasm?alias`)
+    ).toHaveProperty('type', 'error');
+    expect(
+      await worker.dispatchFetch(`${origin}/assets/webp-wasm-abcdefgh.wasm?older`)
+    ).toHaveProperty('type', 'error');
+    expect(worker.fetchMock.mock.calls).toHaveLength(network);
+    expect(worker.cacheWrites()).toBe(writes);
+    const current = worker.addClient('current');
+    worker.removeClient('test-client');
+    await worker.dispatchMessage(current);
+    expect(worker.cacheEntries.has(legacy)).toBe(false);
   });
 
   it('removes query strings from same-origin static asset cache keys', async () => {
@@ -504,7 +670,7 @@ describe('service worker dynamic cache boundaries', () => {
   it.each([
     ['worker-CbXtAM7H.js', 'worker'],
     ['index.B3dFgWpN.css', 'style'],
-    ['webp-wasm-Dt0iE3Ie.wasm', ''],
+    ['owned-vp8-Dt0iE3Ie.wasm', ''],
   ])('admits emitted fingerprinted asset %s', async (name, destination) => {
     const worker = loadServiceWorker();
     const url = `${origin}/assets/${name}`;

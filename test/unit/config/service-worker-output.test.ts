@@ -19,7 +19,24 @@ function fixture() {
   const source = 'self.addEventListener("fetch", () => {});\n';
   writeFileSync(join(root, 'worker/service-worker.ts'), source);
   const sourceHash = createHash('sha256').update(source).digest('hex');
-  const output = `/* dropconvert-worker-source-sha256:${sourceHash} */\nself.addEventListener("fetch",()=>{});`;
+  const document = '<script type="module" src="/assets/app.abcdefgh.js"></script>';
+  const app = 'export default "present";';
+  const pin = (path: string, content: string) => ({
+    path,
+    size: Buffer.byteLength(content),
+    sha256: createHash('sha256').update(content).digest('hex'),
+  });
+  const manifest = {
+    document: pin('/index.html', document),
+    eager: [pin('/assets/app.abcdefgh.js', app)],
+    predecessorOnly: ['/assets/old.abcdefgh.js'],
+  };
+  writeFileSync(join(dist, 'index.html'), document);
+  writeFileSync(join(dist, 'assets/app.abcdefgh.js'), app);
+  const output =
+    `/* dropconvert-worker-source-sha256:${sourceHash} */\n` +
+    `const __DROP_CONVERT_SHELL__=${JSON.stringify(manifest)};\n` +
+    'self.addEventListener("fetch",()=>{});';
   writeFileSync(join(dist, 'service-worker.js'), output);
   return { root, dist, output };
 }
@@ -33,6 +50,17 @@ describe('emitted service worker output', () => {
     const { root, dist, output } = fixture();
     expect(verifyServiceWorkerOutput(root, dist)).toBe(
       createHash('sha256').update(output).digest('hex')
+    );
+  });
+
+  it('rejects changed eager bytes and a physically present retired caller', () => {
+    const { root, dist } = fixture();
+    writeFileSync(join(dist, 'assets/old.abcdefgh.js'), 'retired caller');
+    expect(() => verifyServiceWorkerOutput(root, dist)).toThrow('Invalid predecessor-only asset');
+    rmSync(join(dist, 'assets/old.abcdefgh.js'));
+    writeFileSync(join(dist, 'assets/app.abcdefgh.js'), 'replaced eager bytes');
+    expect(() => verifyServiceWorkerOutput(root, dist)).toThrow(
+      'Incorrect service worker shell bytes'
     );
   });
 
