@@ -28,7 +28,12 @@ const ARCHIVED_DOCUMENT = {
 };
 type BodyPin = { size: number; sha256: string };
 type AssetPin = BodyPin & { path: string };
-type RetirementState = { phase: 'grace' | 'closed'; old: string[]; current: string[] };
+type RetirementState = {
+  phase: 'grace' | 'closed';
+  old: string[];
+  current: string[];
+  overlap: boolean;
+};
 type ReplacementState = { candidates: string[]; confirmed: string[] };
 declare const __APP_SOURCE_SHA__: string | null;
 declare const __DROP_CONVERT_SHELL__: {
@@ -138,6 +143,10 @@ async function windows() {
   return (await workerScope.clients.matchAll({ includeUncontrolled: true, type: 'window' })).filter(
     (client) => client.url === '' || client.url === 'about:blank' || isAppWindow(client)
   );
+}
+
+async function controlledAppWindows() {
+  return (await workerScope.clients.matchAll({ type: 'window' })).filter(isAppWindow);
 }
 
 function archivedPath(url: URL): string {
@@ -268,9 +277,16 @@ async function readState(): Promise<RetirementState | undefined> {
     if (
       (state.phase === 'grace' || state.phase === 'closed') &&
       clientIds(state.old) &&
-      clientIds(state.current)
+      clientIds(state.current) &&
+      (state.overlap === undefined || typeof state.overlap === 'boolean')
     ) {
-      return { phase: state.phase, old: state.old, current: state.current };
+      // Existing records predate the replacement and already own VP8 grace.
+      return {
+        phase: state.phase,
+        old: state.old,
+        current: state.current,
+        overlap: state.overlap ?? true,
+      };
     }
   } catch {
     // Unavailable or invalid metadata cannot admit archived assets.
@@ -286,11 +302,21 @@ async function persist(state: RetirementState) {
   await cache.put(RETIREMENT_KEY, new Response(JSON.stringify(state)));
 }
 
-async function oldRequester(event: FetchEvent, state: RetirementState) {
-  if (!event.clientId || state.current.includes(event.clientId)) return false;
+async function oldRequester(event: FetchEvent, state: RetirementState, overlappingAsset: boolean) {
+  if (
+    !event.clientId ||
+    state.current.includes(event.clientId) ||
+    (overlappingAsset && (!state.overlap || event.request.mode === 'navigate'))
+  )
+    return false;
   const client = await workerScope.clients.get(event.clientId);
   if (!client) return false;
-  if (state.old.includes(client.id) && isAppWindow(client)) return true;
+  if (state.old.includes(client.id) && isAppWindow(client)) {
+    if (!overlappingAsset) return true;
+    return (await workerScope.clients.matchAll({ type: 'window' })).some(
+      ({ id }) => id === client.id
+    );
+  }
   const url = new URL(client.url);
   if (
     client.type !== 'worker' ||
@@ -299,7 +325,17 @@ async function oldRequester(event: FetchEvent, state: RetirementState) {
   ) {
     return false;
   }
-  return (await windows()).some((window) => state.old.includes(window.id) && isAppWindow(window));
+  if (!overlappingAsset) {
+    return (await windows()).some((window) => state.old.includes(window.id) && isAppWindow(window));
+  }
+  const [controlledWorkers, controlledWindows] = await Promise.all([
+    workerScope.clients.matchAll({ type: 'worker' }),
+    controlledAppWindows(),
+  ]);
+  return (
+    controlledWorkers.some(({ id }) => id === client.id) &&
+    controlledWindows.some((window) => state.old.includes(window.id))
+  );
 }
 
 async function readReplacement(): Promise<ReplacementState | undefined> {
@@ -322,7 +358,7 @@ async function persistReplacement(state: ReplacementState) {
   ).put(RETIREMENT_KEY, new Response(JSON.stringify(state)));
 }
 
-async function startReplacement(former: Response | undefined) {
+async function startReplacement(former: Response | undefined, old: RetirementState | undefined) {
   if (
     !replacementOnly.size ||
     (await caches.match(RETIREMENT_KEY, { cacheName: REPLACEMENT_CACHE }))
@@ -333,8 +369,9 @@ async function startReplacement(former: Response | undefined) {
   if (former && (await isReplacementDocument(former))) {
     // The browser has switched already-controlled clients to this worker at
     // activation. Take the snapshot before claim() adds uncontrolled clients.
-    const windows = await workerScope.clients.matchAll({ type: 'window' });
-    candidates = windows.filter(isAppWindow).map(({ id }) => id);
+    const windows = await controlledAppWindows();
+    const priorClients = new Set(old?.phase === 'grace' && old.overlap ? old.old : []);
+    candidates = windows.filter((window) => !priorClients.has(window.id)).map(({ id }) => id);
   }
   await persistReplacement({
     candidates: clientIds(candidates) ? candidates : [],
@@ -345,12 +382,11 @@ async function startReplacement(former: Response | undefined) {
 async function reconcileReplacement(client?: Client, generation?: string) {
   if (!replacementOnly.size) return undefined;
   const state = await readReplacement();
-  if (state?.candidates.length) {
-    const live = new Set(
-      (await workerScope.clients.matchAll({ type: 'window' }))
-        .filter(isAppWindow)
-        .map(({ id }) => id)
-    );
+  // A controllerchange message can arrive before activate has recorded its census.
+  // Until that record exists, deny unconfirmed reads and leave resident bytes in place.
+  if (!state) return undefined;
+  if (state.candidates.length) {
+    const live = new Set((await controlledAppWindows()).map(({ id }) => id));
     const candidates = state.candidates.filter(
       (id) => live.has(id) && !(id === client?.id && generation === __APP_SOURCE_SHA__)
     );
@@ -408,23 +444,19 @@ async function predecessorResponse(event: FetchEvent, url: URL, path: string) {
     const kind = assetKind(canonical);
     if (kind) {
       const replaced = replacementOnly.get(path);
-      if (replaced) {
-        const state = await reconcileReplacement();
-        if (state && (await replacementRequester(event, state))) {
-          const cached = await cachedPredecessor(canonical.href, kind, replaced);
-          if (cached) return cached;
-        }
-      } else {
-        const state = await readState();
-        const pin = lookupRetired(path);
-        if (
-          state?.phase === 'grace' &&
+      const replacementState = replaced
+        ? await reconcileReplacement().catch(() => undefined)
+        : undefined;
+      const oldState = isPredecessorAsset(path) ? await readState() : undefined;
+      const pin = replaced ?? lookupRetired(path);
+      if (
+        (replacementState && (await replacementRequester(event, replacementState))) ||
+        (oldState?.phase === 'grace' &&
           (pin || !isRetiredCodec(path)) &&
-          (await oldRequester(event, state))
-        ) {
-          const cached = await cachedPredecessor(canonical.href, kind, pin);
-          if (cached) return cached;
-        }
+          (await oldRequester(event, oldState, !!replaced)))
+      ) {
+        const cached = await cachedPredecessor(canonical.href, kind, pin);
+        if (cached) return cached;
       }
     }
   } catch {
@@ -436,6 +468,11 @@ async function predecessorResponse(event: FetchEvent, url: URL, path: string) {
 
 async function sweepReplacement() {
   if (replacementSwept) return;
+  const old = await readState();
+  const keepOverlap =
+    old?.phase === 'grace' &&
+    old.overlap &&
+    (await controlledAppWindows()).some((window) => old.old.includes(window.id));
   for (const name of (await caches.keys()).filter(isAppCache)) {
     const cache = await caches.open(name);
     for (const key of await cache.keys()) {
@@ -443,9 +480,10 @@ async function sweepReplacement() {
       if (url.origin !== workerScope.location.origin) continue;
       const response =
         name === DYNAMIC_CACHE && isAppDocumentUrl(url) ? await cache.match(key) : undefined;
+      const path = archivedPath(url);
+      const removeAsset = replacementOnly.has(path) && !(keepOverlap && predecessorPaths.has(path));
       if (
-        (replacementOnly.has(archivedPath(url)) ||
-          (response && (await isReplacementDocument(response)))) &&
+        (removeAsset || (response && (await isReplacementDocument(response)))) &&
         !(await cache.delete(key)) &&
         (await cache.match(key))
       ) {
@@ -453,26 +491,34 @@ async function sweepReplacement() {
       }
     }
   }
-  replacementSwept = true;
+  replacementSwept = !keepOverlap;
+}
+
+async function replacementMayNeedAssets() {
+  if (!replacementOnly.size) return false;
+  const state = await readReplacement();
+  return !state || state.candidates.length > 0;
 }
 
 async function sweep() {
+  const keepOverlap = await replacementMayNeedAssets();
   for (const name of (await caches.keys()).filter(isAppCache)) {
     const cache = await caches.open(name);
     for (const key of await cache.keys()) {
-      if (await retiredCacheEntry(cache, key)) await cache.delete(key);
+      if (await retiredCacheEntry(cache, key, keepOverlap)) await cache.delete(key);
     }
     for (const key of await cache.keys()) {
-      if (await retiredCacheEntry(cache, key)) return false;
+      if (await retiredCacheEntry(cache, key, keepOverlap)) return false;
     }
   }
   return true;
 }
 
-async function retiredCacheEntry(cache: Cache, key: Request) {
+async function retiredCacheEntry(cache: Cache, key: Request, keepOverlap: boolean) {
   const url = new URL(key.url);
   if (url.origin !== workerScope.location.origin) return false;
-  if (isPredecessorAsset(archivedPath(url))) return true;
+  const path = archivedPath(url);
+  if (isPredecessorAsset(path)) return !(keepOverlap && replacementOnly.has(path));
   if (!isAppDocumentUrl(url)) return false;
   const response = await cache.match(key);
   return !!response && (await isArchivedDocument(response));
@@ -497,7 +543,7 @@ async function putInCache(key: string, response: Response) {
       if (trim) {
         const state = await readState();
         const keepOld = !state || state.phase === 'grace';
-        const keepReplacement = !!(await readReplacement())?.candidates.length;
+        const keepReplacement = await replacementMayNeedAssets();
         const eligible = keys.filter((entry) => {
           const url = new URL(entry.url);
           const path = archivedPath(url);
@@ -692,19 +738,21 @@ workerScope.addEventListener('activate', (event) => {
       const shell = await cache.match(STAGED_DOCUMENT);
       if (!shell || !(await isCurrentDocument(shell)))
         throw new Error('Missing verified app shell');
+      const previous = await cache.match(NAVIGATION_CACHE_KEY).catch(() => undefined);
+      const existing = await readState();
       try {
-        await startReplacement(await cache.match(NAVIGATION_CACHE_KEY));
+        await startReplacement(previous, existing);
       } catch {
         // Shell activation can proceed when previous-generation metadata is unavailable.
       }
       await cache.put(NAVIGATION_CACHE_KEY, shell);
       await cache.delete(STAGED_DOCUMENT);
 
-      const existing = await readState();
       if (!existing && !(await hasState())) {
-        const clients = await windows();
+        const overlap = !!previous && (await isArchivedDocument(previous));
+        const clients = overlap ? await controlledAppWindows() : await windows();
         if (clients.length <= MAX_CLIENTS) {
-          await persist({ phase: 'grace', old: clients.map(({ id }) => id), current: [] });
+          await persist({ phase: 'grace', old: clients.map(({ id }) => id), current: [], overlap });
         }
       }
       const names = await caches.keys();
@@ -741,7 +789,7 @@ workerScope.addEventListener('message', (event) => {
       const client = await workerScope.clients.get(source.id);
       if (!client || !isAppWindow(client)) return;
       await reconcileReplacement(client, generation).catch(() => {});
-      if (generation !== __APP_SOURCE_SHA__) return;
+      const isCurrent = generation === __APP_SOURCE_SHA__;
       let phase: 'grace' | 'retired-pending-sweep' | 'retired' = 'retired-pending-sweep';
       try {
         const state = await readState();
@@ -753,34 +801,36 @@ workerScope.addEventListener('message', (event) => {
           if (!state) {
             // Recovery from a missing or corrupt record can only close, never reopen grace.
             if (live.size === 1) {
-              await persist({ phase: 'closed', old: [], current: [] });
+              await persist({ phase: 'closed', old: [], current: [], overlap: false });
               phase = (await sweep()) ? 'retired' : 'retired-pending-sweep';
             }
-            client.postMessage({
-              type: 'dropconvert:retirement-state',
-              generation: __APP_SOURCE_SHA__,
-              phase,
-            });
+            if (isCurrent)
+              client.postMessage({
+                type: 'dropconvert:retirement-state',
+                generation: __APP_SOURCE_SHA__,
+                phase,
+              });
             return;
           }
           const current = [...new Set([...state.current, client.id])].filter((id) => live.has(id));
           const old = state.old.filter((id) => live.has(id) && !current.includes(id));
           if ([...live].some((id) => !current.includes(id))) {
-            await persist({ phase: 'grace', old, current });
+            await persist({ phase: 'grace', old, current, overlap: state.overlap });
             phase = 'grace';
           } else {
-            await persist({ phase: 'closed', old: [], current: [] });
+            await persist({ phase: 'closed', old: [], current: [], overlap: false });
             phase = (await sweep()) ? 'retired' : 'retired-pending-sweep';
           }
         }
       } catch {
         // A failed census, transition or physical sweep is retried by a real page cue.
       }
-      client.postMessage({
-        type: 'dropconvert:retirement-state',
-        generation: __APP_SOURCE_SHA__,
-        phase,
-      });
+      if (isCurrent)
+        client.postMessage({
+          type: 'dropconvert:retirement-state',
+          generation: __APP_SOURCE_SHA__,
+          phase,
+        });
     })
   );
 });

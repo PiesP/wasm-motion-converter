@@ -182,7 +182,7 @@ export function emitServiceWorkerPlugin(): Plugin {
             throw new Error(`Unexpected application shell asset: ${path}`);
           }
         }
-        const replacedPaths = new Set(replacedApp.assets.map(({ path }) => path));
+        const replacedPins = new Map(replacedApp.assets.map((asset) => [asset.path, asset.sha256]));
         const replacementOnly = replacedApp.assets.filter((asset) => {
           if (!bundle[asset.path.slice(1)]) return true;
           const current = pin(asset.path.slice(1));
@@ -195,7 +195,10 @@ export function emitServiceWorkerPlugin(): Plugin {
         const predecessorShared: string[] = [];
         const predecessorOnly = Object.entries(predecessorAssets)
           .filter(([path, sha256]) => {
-            if (replacedPaths.has(`/${path}`)) return false;
+            const replacementSha = replacedPins.get(`/${path}`);
+            if (replacementSha && replacementSha !== sha256) {
+              throw new Error(`Predecessor generations disagree on immutable asset ${path}`);
+            }
             if (!bundle[path]) return true;
             if (pin(path).sha256 !== sha256) {
               throw new Error(`Immutable predecessor asset changed bytes at ${path}`);

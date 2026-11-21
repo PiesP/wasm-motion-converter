@@ -598,7 +598,9 @@ generation's dedicated worker entries can use cached assets that match the
 signed deployment's size and SHA-256. Fresh navigations use the current asset
 graph. A cache miss or a skipped predecessor uses the recovery path above.
 The worker sweeps replaced assets after it observes the last candidate window
-close or change generations. Current assets shared across the two builds stay
+close or change generations. If both predecessor generations used a removed
+asset, the exact cached bytes remain eligible while either generation still has
+a live owner. Current assets shared across the builds stay
 eligible for the ordinary cache policy.
 
 The recovery actions above require the application shell to have loaded. An
