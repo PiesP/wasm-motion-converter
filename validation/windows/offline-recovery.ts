@@ -651,49 +651,79 @@ async function verifyAppDocument(
     assert(response.fromServiceWorker(), 'Offline document bypassed the service worker');
 }
 
-function observeArchivedCallerResponses(context: BrowserContext, baseUrl: string) {
+async function archivedCallerResponse(
+  response: BrowserResponse,
+  expected: ArchivedAsset,
+  allowUnavailableBody: boolean
+) {
+  const request = response.request();
+  const metadata = {
+    path: assetPath(expected),
+    requestUrl: request.url(),
+    method: request.method(),
+    resourceType: request.resourceType(),
+    fromServiceWorker: response.fromServiceWorker(),
+    serviceWorkerInitiated: Boolean(request.serviceWorker()),
+    status: response.status(),
+  };
+  assert.equal(metadata.status, 200);
+  assert(isExecutableMediaType(response.headers()['content-type'] ?? ''));
+  let bytes: Buffer;
+  try {
+    bytes = await response.body();
+  } catch (error) {
+    if (
+      !allowUnavailableBody ||
+      !(error instanceof Error) ||
+      !/Response body is unavailable|No resource with given identifier found/.test(error.message)
+    )
+      throw error;
+    return { kind: 'unavailable' as const, row: { ...metadata, reason: error.message } };
+  }
+  const digest = sha256(bytes);
+  assert.equal(bytes.length, expected.size);
+  assert.equal(digest, expected.sha256);
+  return { kind: 'verified' as const, row: { ...metadata, size: bytes.length, sha256: digest } };
+}
+
+function observeArchivedCallerResponses(
+  context: BrowserContext,
+  baseUrl: string,
+  allowUnavailableBody = false
+) {
   const origin = new URL(baseUrl).origin;
-  const responses: BrowserResponse[] = [];
+  type Capture = Awaited<ReturnType<typeof archivedCallerResponse>>;
+  const responses: Promise<Capture | { kind: 'failed'; error: unknown }>[] = [];
   let overflow = false;
   const record = (response: BrowserResponse) => {
     const url = new URL(response.url());
-    if (
-      url.origin === origin &&
-      RETIRED_WEBP_CALLERS.some((asset) => assetPath(asset) === url.pathname)
-    ) {
-      if (responses.length < 32) responses.push(response);
-      else overflow = true;
+    if (url.origin !== origin) return;
+    const expected = RETIRED_WEBP_CALLERS.find((asset) => assetPath(asset) === url.pathname);
+    if (!expected) return;
+    if (responses.length >= 32) {
+      overflow = true;
+      return;
     }
+    // A short-lived Worker may terminate before the conversion result appears.
+    responses.push(
+      archivedCallerResponse(response, expected, allowUnavailableBody).catch((error: unknown) => ({
+        kind: 'failed' as const,
+        error,
+      }))
+    );
   };
   context.on('response', record);
   return {
     async read() {
       assert(!overflow, 'Archived caller response observation overflowed');
-      return Promise.all(
-        responses.map(async (response) => {
-          const request = response.request();
-          const path = new URL(response.url()).pathname;
-          const expected = RETIRED_WEBP_CALLERS.find((asset) => assetPath(asset) === path);
-          assert(expected);
-          assert.equal(response.status(), 200);
-          assert(isExecutableMediaType(response.headers()['content-type'] ?? ''));
-          const bytes = await response.body();
-          const digest = sha256(bytes);
-          assert.equal(bytes.length, expected.size);
-          assert.equal(digest, expected.sha256);
-          return {
-            path,
-            requestUrl: request.url(),
-            method: request.method(),
-            resourceType: request.resourceType(),
-            fromServiceWorker: response.fromServiceWorker(),
-            serviceWorkerInitiated: Boolean(request.serviceWorker()),
-            status: response.status(),
-            size: bytes.length,
-            sha256: digest,
-          };
-        })
-      );
+      const verified = [];
+      const unavailable = [];
+      for (const result of await Promise.all(responses)) {
+        if (result.kind === 'failed') throw result.error;
+        if (result.kind === 'verified') verified.push(result.row);
+        else unavailable.push(result.row);
+      }
+      return { verified, unavailable };
     },
     stop() {
       context.off('response', record);
@@ -708,7 +738,7 @@ async function verifyArchivedWorkerCaller(
   fixture: string
 ) {
   const tab = await context.newPage();
-  const traffic = observeArchivedCallerResponses(context, baseUrl);
+  const traffic = observeArchivedCallerResponses(context, baseUrl, true);
   const workerUrls = new Set<string>();
   const workerPath = assetPath(RETIRED_WEBP_CALLERS[1]);
   tab.on('worker', (worker) => workerUrls.add(worker.url()));
@@ -725,7 +755,7 @@ async function verifyArchivedWorkerCaller(
       .locator('[data-testid="result-section"]')
       .waitFor({ state: 'visible', timeout: 120_000 });
     const expected = new URL(workerPath, baseUrl).href;
-    const responses = await traffic.read();
+    const { verified: responses, unavailable } = await traffic.read();
     const observedExactWorker = workerUrls.has(expected);
     return {
       route: 'old application GIF conversion',
@@ -736,6 +766,7 @@ async function verifyArchivedWorkerCaller(
           ? 'observed'
           : 'unverified',
       responses,
+      unavailableResponseBodies: unavailable,
     };
   } finally {
     traffic.stop();
@@ -1504,7 +1535,9 @@ async function exerciseBuildUpgrade(
     const priorNavigation = await page.reload();
     if (removal) await verifyAppDocument(priorNavigation, priorBuild);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
-    const archivedEntryResponses = earlyCallerTraffic ? await earlyCallerTraffic.read() : null;
+    const archivedEntryResponses = earlyCallerTraffic
+      ? (await earlyCallerTraffic.read()).verified
+      : null;
     earlyCallerTraffic?.stop();
     if (archivedEntryResponses)
       assert(
