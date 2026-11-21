@@ -27,10 +27,7 @@ import {
   RETIRED_WEBP_EXECUTABLES,
   RETIRED_WEBP_SHIM,
 } from '../../scripts/test/retired-webp-assets.ts';
-import {
-  hasLegacyWebpInRetiredBuild,
-  hasLegacyWebpLoader,
-} from '../../scripts/test/retired-webp-worker.ts';
+import { hasLegacyWebpInRetiredBuild } from '../../scripts/test/retired-webp-worker.ts';
 import { measureColdTransfer, readBuild } from './app-update.ts';
 import { instrumentOwnedInstance, parseAnimatedWebp } from './helpers/owned-vp8-product.ts';
 
@@ -1204,7 +1201,7 @@ async function exerciseBuildUpgrade(
     for (const { path } of currentBuild.state.files.filter(({ path }) => /\.[cm]?js$/.test(path))) {
       const bytes = await readFile(join(bundleRoot, 'dist', path));
       assert(
-        !(removal ? hasLegacyWebpInRetiredBuild(path, bytes) : hasLegacyWebpLoader(bytes)),
+        !hasLegacyWebpInRetiredBuild(path, bytes, { requireRetirementMetadata: Boolean(removal) }),
         `Current executable retains a legacy WebP loader or its reference: ${path}`
       );
     }

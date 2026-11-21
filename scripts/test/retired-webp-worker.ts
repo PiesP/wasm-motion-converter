@@ -3,7 +3,7 @@
 
 import { Buffer } from 'node:buffer';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { parse } from '@babel/parser';
@@ -12,6 +12,11 @@ import { RETIRED_WEBP_EXECUTABLES, RETIRED_WEBP_SHIM } from './retired-webp-asse
 
 const LEGACY_MODULE_REFERENCE =
   /(?:\.\/|\bassets\/)(?:webp-wasm|wasm-webp)[-.][\w-]+\.(?:wasm|[cm]?js)\b/i;
+const LEGACY_SHIM_REFERENCE = new RegExp(
+  '(?:^|[/\\s"\'`])' +
+    basename(RETIRED_WEBP_SHIM.path).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+    '(?=$|[?#\\s"\'`),;\\]}])'
+);
 const LEGACY_MARKERS = ['emscripten_resize_heap', 'wasmMemory', '__wasm_call_ctors'];
 const MAX_WORKER_BYTES = 64 * 1024;
 const EXECUTION_NAMES = new Set([
@@ -34,7 +39,7 @@ const EXECUTION_NODES = new Set([
 function hasLegacyReference(source: string) {
   return (
     LEGACY_MODULE_REFERENCE.test(source) ||
-    source.includes(RETIRED_WEBP_SHIM.path) ||
+    LEGACY_SHIM_REFERENCE.test(source) ||
     LEGACY_MARKERS.every((marker) => source.includes(marker))
   );
 }
@@ -135,8 +140,8 @@ function loadParser(): typeof parse {
     if (!(error instanceof Error && 'code' in error && error.code === 'MODULE_NOT_FOUND'))
       throw error;
   }
-  // The full Windows payload contains regular files only. Named scenarios
-  // omit these files and do not request the strict retirement scan.
+  // Full Windows payloads copy regular files only. Named scenarios return
+  // before the application upgrade scan and omit the parser package.
   const entry = fileURLToPath(
     new URL(
       `../../node_modules/.pnpm/@babel+parser@${PARSER_VERSION}/node_modules/@babel/parser/lib/index.js`,
@@ -148,8 +153,13 @@ function loadParser(): typeof parse {
   return bundled;
 }
 
-export function hasLegacyWebpInRetiredBuild(path: string, bytes: Uint8Array): boolean {
+export function hasLegacyWebpInRetiredBuild(
+  path: string,
+  bytes: Uint8Array,
+  { requireRetirementMetadata = true }: { requireRetirementMetadata?: boolean } = {}
+): boolean {
   if (path !== 'service-worker.js') return hasLegacyWebpLoader(bytes);
+  if (!requireRetirementMetadata && !hasLegacyWebpLoader(bytes)) return false;
   if (bytes.byteLength > MAX_WORKER_BYTES) return true;
   const source = new TextDecoder('utf-8', { fatal: true });
   const parseWorker = loadParser();
@@ -203,7 +213,8 @@ function containsArchivedIdentity(source: string) {
   const lower = source.toLowerCase();
   return RETIRED_WEBP_EXECUTABLES.some(
     ({ path, sha256 }) =>
-      lower.includes(path.slice(path.lastIndexOf('/') + 1).toLowerCase()) || lower.includes(sha256)
+      lower.includes(sha256) ||
+      (path !== RETIRED_WEBP_SHIM.path && lower.includes(basename(path).toLowerCase()))
   );
 }
 

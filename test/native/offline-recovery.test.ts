@@ -223,6 +223,25 @@ test('legacy runtime audit distinguishes module references and compiled loader m
   );
 });
 
+test('legacy scanner recognizes the exact Vite shim in emitted sibling and root references', () => {
+  const name = RETIRED_WEBP_SHIM.path.slice('assets/'.length);
+  for (const source of [
+    `import{n as e}from\`./${name}\`;`,
+    `load('./${name}?retired=1#alias')`,
+    `new URL('/${RETIRED_WEBP_SHIM.path}#release',import.meta.url)`,
+    `new URL('${name}',import.meta.url)`,
+  ])
+    assert.equal(hasLegacyWebpLoader(Buffer.from(source)), true, source);
+  for (const source of [
+    'import{n as e}from`./__vite-browser-external.leW0L_I9.js`;',
+    `load('./prefix-${name}')`,
+    `load('./${name}.map')`,
+    `load('./${name}on')`,
+    `load('./${name}/nested')`,
+  ])
+    assert.equal(hasLegacyWebpLoader(Buffer.from(source)), false, source);
+});
+
 test('only the exact emitted root may carry four inert archived executable identities', () => {
   const rows = RETIRED_WEBP_EXECUTABLES.map(
     ({ path, size, sha256 }) => `[\`/${path}\`,${size},\`${sha256}\`]`
@@ -252,16 +271,25 @@ test('only the exact emitted root may carry four inert archived executable ident
     'oversized worker': metadata + consumers + ' '.repeat(64 * 1024),
   };
   const valid = Buffer.from(metadata + consumers);
+  const ordinary = { requireRetirementMetadata: false };
+  const older = Buffer.from('self.addEventListener("fetch", () => {});');
   assert.equal(hasLegacyWebpLoader(valid), true);
   assert.equal(hasLegacyWebpInRetiredBuild('service-worker.js', valid), false);
-  for (const path of ['assets/service-worker.js', './service-worker.js', '/service-worker.js'])
+  assert.equal(hasLegacyWebpInRetiredBuild('service-worker.js', valid, ordinary), false);
+  assert.equal(hasLegacyWebpInRetiredBuild('service-worker.js', older, ordinary), false);
+  assert.equal(hasLegacyWebpInRetiredBuild('service-worker.js', older), true);
+  for (const path of ['assets/service-worker.js', './service-worker.js', '/service-worker.js']) {
     assert.equal(hasLegacyWebpInRetiredBuild(path, valid), true, path);
+    assert.equal(hasLegacyWebpInRetiredBuild(path, valid, ordinary), true, path);
+  }
   for (const [reason, source] of Object.entries(candidates))
     assert.equal(
       hasLegacyWebpInRetiredBuild('service-worker.js', Buffer.from(source)),
       true,
       reason
     );
+  const modified = Buffer.from(candidates['direct path extraction']);
+  assert.equal(hasLegacyWebpInRetiredBuild('service-worker.js', modified, ordinary), true);
   assert.equal(hasLegacyWebpInRetiredBuild('assets/app.js', Buffer.from('fetch("owned")')), false);
 });
 
