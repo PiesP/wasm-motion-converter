@@ -6,7 +6,16 @@ import { Buffer } from 'node:buffer';
 import { execFile, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { basename, isAbsolute, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -15,6 +24,7 @@ import type {
   APIResponse,
   Browser,
   BrowserContext,
+  CDPSession,
   Page,
   Request as BrowserRequest,
   Response as BrowserResponse,
@@ -381,7 +391,186 @@ export function assertWorkerUpdateOutcome(
   return expectedChange ? 'changed-worker-claimed' : 'byte-identical-kept-controller';
 }
 
+type OwnedDownloads = {
+  session: CDPSession;
+  path: string;
+  pending: Set<string>;
+  seen: Set<string>;
+};
+
+const ownedDownloads = new WeakMap<BrowserContext, OwnedDownloads>();
+type OwnedDownloadProgress = {
+  guid: string;
+  totalBytes: number;
+  receivedBytes: number;
+  state: 'inProgress' | 'completed' | 'canceled';
+  filePath?: string;
+};
+
+async function readOwnedDownloadFile(
+  path: string,
+  result: OwnedDownloadProgress,
+  deadline: number
+): Promise<Buffer> {
+  const filename = join(path, result.guid);
+  while (performance.now() < deadline) {
+    const info = await lstat(filename).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (!info) {
+      await delay(25);
+      continue;
+    }
+    assert(info.isFile() && info.nlink === 1, 'Completed browser download is not a regular file');
+    const canonical = await realpath(filename);
+    assert.equal(
+      canonical,
+      join(await realpath(path), result.guid),
+      'Download escaped its owned directory'
+    );
+    if (result.filePath !== undefined) {
+      assert.equal(
+        await realpath(result.filePath),
+        canonical,
+        'Browser returned a different download file'
+      );
+    }
+    assert(Number.isSafeInteger(result.receivedBytes) && result.receivedBytes > 0);
+    assert(result.totalBytes <= 0 || result.totalBytes === result.receivedBytes);
+    assert.equal(
+      info.size,
+      result.receivedBytes,
+      'Completed download extent differs from browser progress'
+    );
+    const bytes = await readFile(canonical);
+    assert.equal(bytes.length, info.size, 'Downloaded file changed while reading it');
+    return bytes;
+  }
+  throw new Error('Completed browser download file did not appear in the owned directory');
+}
+
+async function readOwnedDownload(page: Page, selector: string, owner: OwnedDownloads) {
+  const anchor = page.locator(selector);
+  const target = await anchor.evaluate((element) => {
+    if (!(element instanceof HTMLAnchorElement))
+      throw new Error('Result download is not an anchor');
+    return { href: element.href, filename: element.download };
+  });
+  assert(
+    target.href.startsWith('blob:') && new URL(target.href).origin === new URL(page.url()).origin,
+    'Expected the result anchor to point at a same-origin Blob'
+  );
+  assert(
+    target.filename && basename(target.filename) === target.filename,
+    'Missing result filename'
+  );
+  const pageSession = await page.context().newCDPSession(page);
+  let frameId: string;
+  try {
+    const { frameTree } = await pageSession.send('Page.getFrameTree');
+    const frame = frameTree.frame;
+    frameId = frame.id;
+    assert(frameId, 'Download has no attached main frame');
+    assert.equal(
+      frame.url + (frame.urlFragment ?? ''),
+      page.url(),
+      'Download frame does not match the app'
+    );
+  } finally {
+    await pageSession.detach();
+  }
+  const { session, path, pending, seen } = owner;
+  const key = JSON.stringify([frameId, target.href]);
+  assert(!pending.has(key) && pending.size < 16, 'Ambiguous native download capture');
+  pending.add(key);
+
+  let resolveDownload!: (value: OwnedDownloadProgress) => void;
+  let rejectDownload!: (reason: unknown) => void;
+  const result = new Promise<OwnedDownloadProgress>((resolve, reject) => {
+    resolveDownload = resolve;
+    rejectDownload = reject;
+  });
+  const deadline = performance.now() + 30_000;
+  const timer = new AbortController();
+  let guid: string | undefined;
+  let completed = false;
+  const onBegin = (event: {
+    frameId: string;
+    url: string;
+    guid: string;
+    suggestedFilename: string;
+  }) => {
+    if (event.frameId !== frameId || event.url !== target.href) return;
+    try {
+      assert(
+        !guid &&
+          /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(event.guid) &&
+          !seen.has(event.guid) &&
+          seen.size < 256,
+        'Ambiguous or invalid native download GUID'
+      );
+      guid = event.guid;
+      seen.add(guid);
+      assert.equal(
+        event.suggestedFilename,
+        target.filename,
+        'Native download filename differs from the result anchor'
+      );
+    } catch (error) {
+      rejectDownload(error);
+    }
+  };
+  const onProgress = (event: OwnedDownloadProgress) => {
+    if (event.guid !== guid) return;
+    if (event.state === 'canceled')
+      rejectDownload(new Error('Native result download was canceled'));
+    if (event.state === 'completed') {
+      completed = true;
+      resolveDownload(event);
+    }
+  };
+  const onClose = () => rejectDownload(new Error('Native download observation closed'));
+  session.on('Browser.downloadWillBegin', onBegin);
+  session.on('Browser.downloadProgress', onProgress);
+  session.on('close', onClose);
+  page.on('close', onClose);
+  try {
+    const [outcome] = await Promise.race([
+      Promise.all([result, anchor.click({ timeout: 30_000 })]),
+      delay(30_000, undefined, { signal: timer.signal }).then(() => {
+        throw new Error(
+          `Native result download did not complete (begin observed: ${Boolean(guid)})`
+        );
+      }),
+    ]);
+    const bytes = await readOwnedDownloadFile(path, outcome, deadline);
+    console.log('[M5 installed browser download]', {
+      frameId,
+      guid: outcome.guid,
+      filename: target.filename,
+      bytes: bytes.length,
+      sha256: sha256(bytes),
+    });
+    return bytes;
+  } finally {
+    timer.abort();
+    session.off('Browser.downloadWillBegin', onBegin);
+    session.off('Browser.downloadProgress', onProgress);
+    session.off('close', onClose);
+    page.off('close', onClose);
+    pending.delete(key);
+    if (guid && !completed) {
+      await session.send('Browser.cancelDownload', { guid }, { timeout: 2_000 }).catch(() => {
+        // The browser can already have canceled it. The owned process still closes on failure.
+      });
+    }
+  }
+}
+
 async function readResultDownload(page: Page, selector = '[data-testid="download-result-button"]') {
+  const owned = ownedDownloads.get(page.context());
+  if (owned) return readOwnedDownload(page, selector, owned);
   const [download] = await Promise.all([
     page.waitForEvent('download'),
     page.locator(selector).click(),
@@ -2820,7 +3009,9 @@ async function prepareInstalledProfile(browser: Browser, bundleRoot: string) {
       );
       const exit = exitOf(child);
       let connected: Browser | undefined;
+      let observedDownloads: BrowserContext | undefined;
       const close = async () => {
+        if (observedDownloads) ownedDownloads.delete(observedDownloads);
         try {
           await stopOwnedBrowser(child, exit, connected);
         } finally {
@@ -2847,16 +3038,19 @@ async function prepareInstalledProfile(browser: Browser, bundleRoot: string) {
         assert(child.pid, 'Owned browser PID is unavailable');
         assert.equal(await installedExecutable(connected, child.pid), executable);
         const cdp = await connected.newBrowserCDPSession();
-        try {
-          // Restore real downloads to the owned directory without restoring focus emulation.
-          await cdp.send('Browser.setDownloadBehavior', {
-            behavior: 'allowAndName',
-            downloadPath: downloadsPath,
-            eventsEnabled: true,
-          });
-        } finally {
-          await cdp.detach();
-        }
+        // Keep the event-enabled session for the lifetime of this owned process.
+        await cdp.send('Browser.setDownloadBehavior', {
+          behavior: 'allowAndName',
+          downloadPath: downloadsPath,
+          eventsEnabled: true,
+        });
+        ownedDownloads.set(context, {
+          session: cdp,
+          path: downloadsPath,
+          pending: new Set(),
+          seen: new Set(),
+        });
+        observedDownloads = context;
         const page = context.pages()[0] ?? (await context.newPage());
         const version = await installedBrowserVersion(context, page);
         assert.deepEqual(version, expected, 'Removal profile changed the installed browser build');
