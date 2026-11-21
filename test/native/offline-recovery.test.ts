@@ -13,6 +13,7 @@ import {
   RETIRED_WEBP_SHIM,
 } from '../../scripts/test/retired-webp-assets.ts';
 import {
+  assertRemovalUpgradeEvidence,
   assertWorkerUpdateOutcome,
   hasLegacyWebpLoader,
   selectCachedRetiredExecutableKeys,
@@ -164,6 +165,40 @@ test('grace worker selection binds an activated running registration to both ret
     selectGraceWorkerVersion([candidate], '15', scriptURL, [targets[0] ?? '', targets[0] ?? '']),
     undefined
   );
+});
+
+test('exclusive removal requires witnessed grace restart and all other upgrade evidence', () => {
+  assert.throws(
+    () => assertRemovalUpgradeEvidence(true, { ownedOnlyAfterUpgrade: true }),
+    /restart evidence is missing/
+  );
+  assert.throws(
+    () =>
+      assertRemovalUpgradeEvidence(true, {
+        ownedOnlyAfterUpgrade: true,
+        graceWorkerRestart: {
+          status: 'unverified',
+          reason: 'ServiceWorker.stopWorker unavailable',
+        },
+      }),
+    /restart unverified \(ServiceWorker\.stopWorker unavailable\)/
+  );
+  const passed = { status: 'passed' } as const;
+  assert.throws(
+    () =>
+      assertRemovalUpgradeEvidence(true, {
+        ownedOnlyAfterUpgrade: false,
+        graceWorkerRestart: passed,
+      }),
+    /upgrade evidence is incomplete/
+  );
+  assert.doesNotThrow(() =>
+    assertRemovalUpgradeEvidence(true, {
+      ownedOnlyAfterUpgrade: true,
+      graceWorkerRestart: passed,
+    })
+  );
+  assert.doesNotThrow(() => assertRemovalUpgradeEvidence(false, { ownedOnlyAfterUpgrade: false }));
 });
 
 test('legacy runtime audit distinguishes module references and compiled loader markers from attribution', () => {

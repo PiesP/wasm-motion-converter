@@ -761,11 +761,8 @@ async function retirementClientIdentity(page: Page) {
   }));
 }
 
-async function verifyFreshOfflineDuringGrace(
-  context: BrowserContext,
-  baseUrl: string,
-  build: Build
-) {
+async function verifyFreshOfflineDuringGrace(retainedTab: Page, baseUrl: string, build: Build) {
+  const context = retainedTab.context();
   const fresh = await context.newPage();
   const traffic = observeSoftwareWebp(fresh, baseUrl);
   let workersStarted = 0;
@@ -779,7 +776,11 @@ async function verifyFreshOfflineDuringGrace(
     assert.deepEqual(traffic.requests, [], 'Fresh offline shell eagerly requested codec assets');
     assert.deepEqual(traffic.foreignRequests, [], 'Fresh offline shell requested a foreign codec');
     assert.equal(workersStarted, 0, 'Fresh offline shell eagerly started a conversion worker');
-    const denied = await verifyArchivedAssetFetches(
+    const [canonical, retainedOldCanonical] = await Promise.all([
+      verifyArchivedAssetFetches(fresh, false, 'default', false, RETIRED_WEBP_EXECUTABLES),
+      verifyArchivedAssetFetches(retainedTab, true, 'no-store', true),
+    ]);
+    const aliases = await verifyArchivedAssetFetches(
       fresh,
       false,
       'no-store',
@@ -795,7 +796,8 @@ async function verifyFreshOfflineDuringGrace(
       fromServiceWorker: true,
       eagerCodecRequests: 0,
       eagerConversionWorkers: workersStarted,
-      denied,
+      denied: { canonical, aliases },
+      retainedOldCanonical,
       retainedPaths,
     };
   } finally {
@@ -1597,7 +1599,7 @@ async function exerciseBuildUpgrade(
       'Service worker upgrade reloaded an actively converting old tab'
     );
     const freshOfflineDuringGrace = removal
-      ? await verifyFreshOfflineDuringGrace(context, baseUrl, currentBuild)
+      ? await verifyFreshOfflineDuringGrace(page, baseUrl, currentBuild)
       : null;
     if (removal) {
       assert.equal(await page.evaluate(() => performance.timeOrigin), oldDocumentTimeOrigin);
@@ -2145,6 +2147,7 @@ async function exerciseBuildUpgrade(
             retainedLegacyAfterWorkerClaim &&
             retainedLegacyAliasesAfterWorkerClaim &&
             freshOfflineDuringGrace &&
+            graceWorkerRestart?.status === 'passed' &&
             seededArchiveKeys &&
             currentClientWake &&
             archivedOriginDenial &&
@@ -2292,6 +2295,21 @@ async function verifyInstalledProfileRestart(
   }
 }
 
+export function assertRemovalUpgradeEvidence(
+  removal: boolean,
+  upgrade: {
+    ownedOnlyAfterUpgrade: boolean;
+    graceWorkerRestart?: { status: 'passed' } | { status: 'unverified'; reason: string } | null;
+  }
+) {
+  if (!removal) return;
+  const restart = upgrade.graceWorkerRestart;
+  if (restart?.status === 'unverified')
+    assert.fail(`Removal grace worker restart unverified (${restart.reason})`);
+  assert.equal(restart?.status, 'passed', 'Removal grace worker restart evidence is missing');
+  assert(upgrade.ownedOnlyAfterUpgrade, 'Removal upgrade evidence is incomplete');
+}
+
 export async function exerciseOfflineRecovery(
   browser: Browser,
   baseUrl: string,
@@ -2317,7 +2335,7 @@ export async function exerciseOfflineRecovery(
     removal,
     archivedOrigin
   );
-  if (removal) assert(upgrade.ownedOnlyAfterUpgrade, 'Removal upgrade evidence is incomplete');
+  assertRemovalUpgradeEvidence(Boolean(removal), upgrade);
   const context = await browser.newContext({
     locale: 'en-US',
     viewport: { width: 1280, height: 900 },

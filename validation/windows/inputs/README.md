@@ -127,7 +127,11 @@ legacy loader failure and explicit in-app reload, and the three existing
 warm-cache positive checks on the exact 7d9e0f1b bytes. The archived 112-byte
 Vite shim has a separate initial cache observation. A new offline tab opens
 the current application during grace while both old documents remain open.
-The current tab must deny the archived URLs during grace.
+The current tab denies canonical and query-alias requests for all four archived
+executables. In that same offline window, the old tab retrieves the three
+warmed canonical assets through the updated worker and verifies their exact
+bytes. The controlled origin checks below exercise online requests after
+retirement.
 
 After the final old tab closes, the current application returns to the
 foreground in the same document with its existing result. A passive observer
@@ -146,8 +150,10 @@ During grace, a Chromium DevTools session stops the one activated service
 worker version controlling both retained old documents. A normal offline
 request from an old tab wakes that same version. The receipt binds the
 registered scope, version, stopped and running observations, both live
-document identities and result hashes, and retained cache keys. A browser
-without this DevTools capability reports the grace restart as unverified.
+document identities and result hashes, and retained cache keys. If the
+installed browser lacks this DevTools capability, the exclusive removal run
+fails with the grace restart marked unverified in its diagnostic. The original
+handoff mode does not require this proof.
 
 The separate browser-process restart uses the same persisted profile after
 retirement and verifies its cache, archived URLs and offline owned WebP
