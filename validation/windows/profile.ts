@@ -30,6 +30,10 @@ import type {
   Request as PlaywrightRequest,
 } from '@playwright/test';
 
+import {
+  RETIRED_WEBP_EXECUTABLES,
+  RETIRED_WEBP_SHIM,
+} from '../../scripts/test/retired-webp-assets.ts';
 import { exerciseAnalysisRecovery, exerciseWorkerRecovery } from './analysis-worker-recovery.ts';
 import { readBuild, runAppUpdate } from './app-update.ts';
 import {
@@ -71,7 +75,13 @@ import {
   NARROW_OUTPUT_SCENARIO,
 } from './narrow-output.ts';
 import { exerciseNativeTooltipZoom, exerciseNativeUi } from './native-ui.ts';
-import { exerciseOfflineRecovery, runRecoveryBuilds } from './offline-recovery.ts';
+import {
+  exerciseOfflineRecovery,
+  type RemovalVerification,
+  type RetirementOriginRequest,
+  type RetirementOriginSnapshot,
+  runRecoveryBuilds,
+} from './offline-recovery.ts';
 import type { OutputContractCase } from './output-contract.ts';
 import { compareAnimatedOutputExact, verifyAnimatedOutput } from './output-contract.ts';
 import {
@@ -536,8 +546,10 @@ export async function startStaticServer(
   {
     gzipAssets = false,
     metadataHandler = null,
+    recordRetirementOrigin = false,
   }: {
     gzipAssets?: boolean;
+    recordRetirementOrigin?: boolean;
     metadataHandler?:
       | ((
           request: import('node:http').IncomingMessage,
@@ -547,6 +559,7 @@ export async function startStaticServer(
   } = {}
 ) {
   let distRoot: string | undefined;
+  let distribution = 'dist';
   let headerRules: HeaderRule[] | undefined;
   let assetFailure: AssetFailure | null = null;
   const assetFailureRequests: { path: string; mode: AssetFailure['mode'] }[] = [];
@@ -555,6 +568,47 @@ export async function startStaticServer(
   const observedWasmAssetRequests: string[] = [];
   let observedWasmAssetOverflow = false;
   const missingAssetResponses: { path: string; status: number }[] = [];
+  let archivedOrigin = new Map<string, Buffer>();
+  const archivePaths = new Set<string>(RETIRED_WEBP_EXECUTABLES.map(({ path }) => '/' + path));
+  const archivedOriginRequests: RetirementOriginRequest[] = [];
+  let archivedOriginOverflow = false;
+  function archivedOriginSnapshot(includeShim: boolean): RetirementOriginSnapshot {
+    const requests = archivedOriginRequests
+      .filter((row) => includeShim || row.path !== '/' + RETIRED_WEBP_SHIM.path)
+      .map((row, index) => ({ ...row, sequence: index + 1 }));
+    return {
+      distribution,
+      overflow: archivedOriginOverflow,
+      paths: requests.map((row) => row.path),
+      requests,
+    };
+  }
+  async function setArchivedOrigin(
+    archive: string | null,
+    assets: ReadonlyArray<{ path: string; size: number; sha256: string }>
+  ) {
+    if (archive === null) {
+      assert.equal(assets.length, 0);
+      archivedOrigin.clear();
+      return;
+    }
+    assert.deepEqual(assets, RETIRED_WEBP_EXECUTABLES);
+    const root = await realpath(join(bundleRoot, archive));
+    assert(isWithin(bundleRoot, root), 'Archived positive control escapes the fixture bundle');
+    const entries = await Promise.all(
+      assets.map(async (asset) => {
+        const path = '/' + asset.path;
+        const file = await resolveStaticFile(root, path);
+        assert.equal((await stat(file)).size, asset.size);
+        const bytes = await readFile(file);
+        assert.equal(bytes.length, asset.size);
+        assert.equal(sha256(bytes), asset.sha256);
+        return [path, bytes] as const;
+      })
+    );
+    assert(recordRetirementOrigin, 'Archived response controls require the removal-only recorder');
+    archivedOrigin = new Map(entries);
+  }
   function setAssetFailure(failure: AssetFailure | null) {
     assert(
       failure === null ||
@@ -576,6 +630,7 @@ export async function startStaticServer(
     parseCatchAllHeaders(headersText);
     const nextHeaders = parseHeaderRules(headersText);
     distRoot = nextRoot;
+    distribution = relativePath;
     headerRules = nextHeaders;
   }
   await setDistribution('dist');
@@ -599,7 +654,38 @@ export async function startStaticServer(
         await metadataHandler(request, response);
         return;
       }
-      const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+      const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1');
+      const { pathname } = requestUrl;
+      if (recordRetirementOrigin) {
+        const path = '/' + decodeURIComponent(pathname).split('/').filter(Boolean).join('/');
+        if (archivePaths.has(path)) {
+          if (archivedOriginRequests.length >= 128) archivedOriginOverflow = true;
+          else {
+            const row: RetirementOriginRequest = {
+              sequence: archivedOriginRequests.length + 1,
+              path,
+              target: (request.url ?? '/').slice(0, 512),
+              method: request.method,
+              distribution,
+              requestCacheControl: String(request.headers['cache-control'] ?? '').slice(0, 256),
+              disposition: 'pending',
+              status: null,
+              contentType: null,
+              cacheControl: null,
+            };
+            archivedOriginRequests.push(row);
+            response.once('finish', () => {
+              row.disposition = 'finished';
+              row.status = response.statusCode;
+              row.contentType = String(response.getHeader('content-type') ?? '');
+              row.cacheControl = String(response.getHeader('cache-control') ?? '');
+            });
+            response.once('close', () => {
+              if (row.disposition === 'pending') row.disposition = 'closed';
+            });
+          }
+        }
+      }
       if (/^\/assets\/[\w.-]+\.js$/.test(pathname)) {
         if (observedAssetRequests.length < 512) observedAssetRequests.push(pathname);
         else observedAssetOverflow = true;
@@ -607,6 +693,20 @@ export async function startStaticServer(
       if (/^\/assets\/[\w.-]+\.wasm$/.test(pathname)) {
         if (observedWasmAssetRequests.length < 512) observedWasmAssetRequests.push(pathname);
         else observedWasmAssetOverflow = true;
+      }
+      const archivedBytes = archivedOrigin.get(pathname);
+      if (archivedBytes) {
+        for (const [name, value] of matchedHeaders(headerRules ?? [], pathname))
+          response.setHeader(name, value);
+        response.setHeader(
+          'Content-Type',
+          MIME_TYPES.get(extname(pathname)) ?? 'application/octet-stream'
+        );
+        response.setHeader('Content-Length', archivedBytes.length);
+        response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        response.writeHead(200);
+        response.end(request.method === 'HEAD' ? undefined : archivedBytes);
+        return;
       }
       if (assetFailure && pathname === assetFailure.path) {
         if (assetFailureRequests.length < 128)
@@ -663,10 +763,9 @@ export async function startStaticServer(
         missingAssetResponses.push({ path: pathname, status: statusCode });
       for (const [name, value] of matchedHeaders(headerRules ?? [], '/', true))
         response.setHeader(name, value);
-      response.writeHead(statusCode, {
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Cache-Control': 'no-cache',
-      });
+      response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      response.setHeader('Cache-Control', 'no-cache');
+      response.writeHead(statusCode);
       response.end(statusCode === 404 ? 'Not found' : 'Request rejected');
     }
   });
@@ -686,6 +785,8 @@ export async function startStaticServer(
     setDistribution,
     setAssetFailure,
     assetFailureRequests,
+    setArchivedOrigin,
+    archivedOriginSnapshot,
     observedAssetRequests,
     get observedAssetOverflow() {
       return observedAssetOverflow;
@@ -3794,6 +3895,24 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
+  const handoffSelector = 'service-worker-handoff.json';
+  const inputs = 'validation/windows/inputs';
+  const handoffConfigPath = `${inputs}/${handoffSelector}`;
+  let handoffConfig: unknown;
+  try {
+    if ((await stat(resolve(bundleRoot, handoffConfigPath))).isFile()) {
+      const configPath = await validateBundleFile(bundleRoot, handoffConfigPath);
+      handoffConfig = JSON.parse(await readFile(configPath, 'utf8'));
+    }
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
+  if (isRecord(handoffConfig) && handoffConfig.mode === 'm5-legacy-removal') {
+    const competingSelectors = (await readdir(resolve(bundleRoot, inputs))).filter(
+      (name) => name.endsWith('.json') && name !== handoffSelector
+    );
+    assert.deepEqual(competingSelectors, [], 'Owned-only removal requires an exclusive selector');
+  }
   const pixelScenario = 'owned-vp8-product-v8-low-inputs';
   const pixelSelector = resolve(
     bundleRoot,
@@ -5988,17 +6107,13 @@ export async function run({
       );
     }
   }
-  const handoffConfigPath = 'validation/windows/inputs/service-worker-handoff.json';
-  let handoffPresent = false;
-  try {
-    handoffPresent = (await stat(resolve(bundleRoot, handoffConfigPath))).isFile();
-  } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
-  }
-  if (handoffPresent) {
-    const configPath = await validateBundleFile(bundleRoot, handoffConfigPath);
-    const config: unknown = JSON.parse(await readFile(configPath, 'utf8'));
+  if (handoffConfig !== undefined) {
+    const config = handoffConfig;
     assert(isRecord(config), 'Invalid service-worker handoff selector');
+    const finalRemoval = config.mode === 'm5-legacy-removal';
+    assert(
+      config.schemaVersion === 1 && (finalRemoval || config.mode === 'service-worker-handoff')
+    );
     assert.deepEqual(
       Object.keys(config).sort(),
       [
@@ -6008,9 +6123,9 @@ export async function run({
         'baselineTreeSha',
         'candidateSourceSha',
         'candidateTreeSha',
+        ...(finalRemoval ? ['candidateCoreSha', 'candidateWasmSha256'] : []),
       ].sort()
     );
-    assert(config.schemaVersion === 1 && config.mode === 'service-worker-handoff');
     for (const key of [
       'baselineSourceSha',
       'baselineTreeSha',
@@ -6019,11 +6134,28 @@ export async function run({
     ]) {
       assert(typeof config[key] === 'string' && /^[a-f0-9]{40}$/.test(config[key]));
     }
+    let removal: RemovalVerification | undefined;
+    if (finalRemoval) {
+      const { candidateCoreSha, candidateWasmSha256 } = config;
+      assert(typeof candidateCoreSha === 'string' && /^[a-f0-9]{40}$/.test(candidateCoreSha));
+      assert(typeof candidateWasmSha256 === 'string' && /^[a-f0-9]{64}$/.test(candidateWasmSha256));
+      const bundle: unknown = JSON.parse(await readFile(join(bundleRoot, 'bundle.json'), 'utf8'));
+      assert(isRecord(bundle));
+      assert.equal(
+        bundle.mode,
+        'desktop',
+        'Owned-only removal needs the installed desktop controller'
+      );
+      removal = {
+        coreSha: candidateCoreSha,
+        wasmSha256: candidateWasmSha256,
+      };
+    }
     const baselinePath = 'validation/windows/inputs/service-worker-baseline';
     const outputRoot = resolve(output);
     await mkdir(outputRoot, { recursive: true });
     const diagnostics: Record<string, unknown> = {
-      id: 'service-worker-handoff',
+      id: config.mode,
       status: 'running',
       browserVersion: browser.version(),
       nodeVersion: process.version,
@@ -6069,7 +6201,7 @@ export async function run({
         inventorySha256: candidate.manifestSha256,
         workerSha256: candidate.workerSha256,
       };
-      started = await startStaticServer(bundleRoot);
+      started = await startStaticServer(bundleRoot, { recordRetirementOrigin: finalRemoval });
       const probeContext = await browser.newContext({ serviceWorkers: 'block' });
       try {
         for (const [distribution, expected] of [
@@ -6097,7 +6229,9 @@ export async function run({
         smallFixture,
         activeFixture,
         baselinePath,
-        true
+        true,
+        removal,
+        started
       );
       diagnostics.check = check;
       diagnostics.status = 'passed';
@@ -6107,6 +6241,8 @@ export async function run({
       diagnostics.error = String(error)
         .replaceAll(bundleRoot, '<bundle>')
         .replaceAll(outputRoot, '<evidence>');
+      if (finalRemoval && started)
+        diagnostics.retirementOriginFailure = started.archivedOriginSnapshot(true);
       throw error;
     } finally {
       if (started) await closeServer(started.server);

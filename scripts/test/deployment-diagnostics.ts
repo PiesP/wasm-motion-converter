@@ -4,9 +4,22 @@ import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from 'node:fs
 import { join } from 'node:path';
 
 import type { DeploymentState } from '../build/deployment-state.ts';
+import {
+  isExecutableMediaType,
+  isRetiredWebpExecutable,
+  isUnexpectedWasm,
+  LEGACY_WEBP_DEPLOYMENT,
+  LEGACY_WEBP_WASM_ASSET,
+  OWNED_VP8_ASSET,
+  RETIRED_REQUEST_MODES,
+  RETIRED_WEBP_EXECUTABLES,
+} from './retired-webp-assets.ts';
 
 const MAX_REPORT_BYTES = 2_000_000;
 const MAX_DIAGNOSTIC_BYTES = 128_000;
+const HISTORICAL_WEBP_TITLE = 'WebP conversion uses real WASM fallback and downloads valid bytes';
+const FORCED_WEBP_TITLE =
+  'Forced WebP downloads a decodable animation from the inventoried software encoder';
 const PRODUCERS = [
   {
     file: 'e2e/deploy-smoke.spec.ts',
@@ -26,7 +39,7 @@ const PRODUCERS = [
   },
   {
     file: 'e2e/deploy-smoke.spec.ts',
-    title: 'WebP conversion uses real WASM fallback and downloads valid bytes',
+    title: FORCED_WEBP_TITLE,
     name: 'first-webp-traffic',
   },
 ] as const;
@@ -213,24 +226,130 @@ function firstConversionObservation(
   };
 }
 
+type DiagnosticMode = {
+  requireOwnedVp8Only?: boolean;
+  expectedManifestSha256?: string;
+};
+const HEX_SHA256 = /^[a-f0-9]{64}$/;
+
+function forcedWebpEncoder(
+  value: unknown,
+  expected: DeploymentState,
+  traffic: unknown,
+  mode: DiagnosticMode
+): unknown {
+  const observation = record(value, 'forced WebP encoder');
+  const software = record(observation.software, 'software encoder');
+  const module = record(software.asset, 'software module inventory');
+  const abi = record(software.abi, 'software ABI');
+  const requested = entries(software.requested, 'software requests');
+  const retired = entries(observation.legacyExecutables, 'legacy executables');
+  const unexpected = entries(observation.unexpectedWasm, 'unexpected WASM');
+  const owned = software.family === 'owned-vp8';
+  const expectedAsset = expected.files.find(({ path }) => path === module.path);
+  const legacy = expected.files.filter(({ path, sha256 }) => isRetiredWebpExecutable(path, sha256));
+  const expectedUnexpected = expected.files.filter(({ path }) => isUnexpectedWasm(path));
+  const expectedOwnedOnly = owned && legacy.length === 0 && expectedUnexpected.length === 0;
+  if (
+    observation.sourceSha !== expected.sourceSha ||
+    observation.treeSha !== expected.treeSha ||
+    observation.coreSha !== expected.coreSha ||
+    typeof observation.manifestSha256 !== 'string' ||
+    !HEX_SHA256.test(observation.manifestSha256) ||
+    (mode.expectedManifestSha256 !== undefined &&
+      observation.manifestSha256 !== mode.expectedManifestSha256) ||
+    (!owned && software.family !== 'wasm-webp') ||
+    !expectedAsset ||
+    module.sha256 !== expectedAsset.sha256 ||
+    module.size !== expectedAsset.size ||
+    !(owned ? OWNED_VP8_ASSET : LEGACY_WEBP_WASM_ASSET).test(expectedAsset.path) ||
+    JSON.stringify(retired) !== JSON.stringify(legacy) ||
+    JSON.stringify(unexpected) !== JSON.stringify(expectedUnexpected) ||
+    observation.ownedOnlyInventory !== expectedOwnedOnly ||
+    (mode.requireOwnedVp8Only === true && !expectedOwnedOnly) ||
+    requested.length === 0 ||
+    requested.length > 256 ||
+    new Set(requested).size !== requested.length ||
+    !requested.includes(`/${expectedAsset.path}`) ||
+    requested.some(
+      (path) =>
+        typeof path !== 'string' ||
+        !expected.files.some((row) => `/${row.path}` === path) ||
+        (owned && isRetiredWebpExecutable(path))
+    ) ||
+    typeof abi.successfulBeginCalls !== 'number' ||
+    !Number.isSafeInteger(abi.successfulBeginCalls) ||
+    typeof abi.stepCalls !== 'number' ||
+    !Number.isSafeInteger(abi.stepCalls) ||
+    (owned
+      ? abi.successfulBeginCalls <= 0 || abi.stepCalls < abi.successfulBeginCalls
+      : abi.successfulBeginCalls !== 0 || abi.stepCalls !== 0) ||
+    software.fromServiceWorker !== false ||
+    typeof software.decodedFrames !== 'number' ||
+    !Number.isSafeInteger(software.decodedFrames) ||
+    software.decodedFrames <= 1 ||
+    software.outputBytes !== record(traffic, 'software traffic').outputBytes ||
+    typeof software.outputSha256 !== 'string' ||
+    !HEX_SHA256.test(software.outputSha256)
+  )
+    throw new Error('Invalid or unbound forced WebP encoder observation');
+  return value;
+}
+
+function retiredWebpUrls(value: unknown, target: URL): unknown {
+  const rows = entries(value, 'retired WebP URLs');
+  const expectedRows = RETIRED_REQUEST_MODES.flatMap((mode) =>
+    RETIRED_WEBP_EXECUTABLES.map((file) => ({ mode, ...file }))
+  );
+  if (rows.length !== expectedRows.length)
+    throw new Error('Incomplete retired WebP URL observations');
+  for (const [index, row] of rows.entries()) {
+    const evidence = record(row, 'retired URL');
+    const expected = expectedRows[index];
+    if (!expected) throw new Error('Unknown retired WebP URL');
+    if (
+      evidence.mode !== expected.mode ||
+      evidence.url !== new URL(`/${expected.path}`, target).href ||
+      evidence.priorSha256 !== expected.sha256 ||
+      evidence.status !== 404 ||
+      typeof evidence.cacheControl !== 'string' ||
+      /\bimmutable\b/i.test(evidence.cacheControl) ||
+      typeof evidence.contentType !== 'string' ||
+      isExecutableMediaType(evidence.contentType) ||
+      typeof evidence.responseSha256 !== 'string' ||
+      !HEX_SHA256.test(evidence.responseSha256) ||
+      evidence.responseSha256 === expected.sha256
+    )
+      throw new Error('Invalid retired WebP URL observation');
+  }
+  return value;
+}
+
 /** Extract only bounded public observations; the caller owns Playwright's exit status. */
 export function preserveDeploymentDiagnostics(
   reportFile: string,
   expected: DeploymentState,
   target: URL,
   playwrightExitCode: number,
-  outputDirectory = 'test-results'
+  outputDirectory = 'test-results',
+  mode: DiagnosticMode = {}
 ): string {
   const report = record(JSON.parse(readBoundedReport(reportFile)), 'report');
   const specs = observedTests(report);
   const runId = randomUUID();
   const diagnostics = PRODUCERS.map((producer) => {
     const matches = specs.filter(
-      (spec) => spec.file === producer.file && spec.title === producer.title
+      (spec) =>
+        spec.file === producer.file &&
+        (spec.title === producer.title ||
+          (!mode.requireOwnedVp8Only &&
+            producer.name === 'first-webp-traffic' &&
+            spec.title === HISTORICAL_WEBP_TITLE))
     );
     if (matches.length !== 1)
       throw new Error(`Deployment diagnostic test absent or duplicated: ${producer.title}`);
-    const tests = entries(matches[0]?.tests, 'tests');
+    const matched = matches[0]!;
+    const tests = entries(matched.tests, 'tests');
     if (tests.length !== 1)
       throw new Error(`Deployment diagnostic project count differs: ${producer.title}`);
     const test = record(tests[0], 'test');
@@ -244,15 +363,26 @@ export function preserveDeploymentDiagnostics(
         typeof result.status !== 'string'
       )
         throw new Error('Invalid deployment test result');
-      const attempt: { retry: number; status: string; observation?: unknown } = {
+      const attempt: {
+        retry: number;
+        status: string;
+        observation?: unknown;
+        forcedEncoder?: unknown;
+        retiredUrls?: unknown;
+      } = {
         retry: result.retry,
         status: result.status,
       };
       if (result.status === 'passed') {
         attempt.observation = diagnosticBody(result, producer.name);
-        if (producer.name === 'conditional-header-observations')
+        if (producer.name === 'conditional-header-observations') {
           validateConditional(attempt.observation, expected, target);
-        else if (producer.name === 'js-transfer-timing')
+          if (mode.requireOwnedVp8Only)
+            attempt.retiredUrls = retiredWebpUrls(
+              diagnosticBody(result, 'retired-webp-urls'),
+              target
+            );
+        } else if (producer.name === 'js-transfer-timing')
           validateTiming(attempt.observation, target);
         else
           attempt.observation = firstConversionObservation(
@@ -260,6 +390,13 @@ export function preserveDeploymentDiagnostics(
             expected,
             target,
             producer.name
+          );
+        if (matched.title === FORCED_WEBP_TITLE)
+          attempt.forcedEncoder = forcedWebpEncoder(
+            diagnosticBody(result, 'forced-webp-encoder'),
+            expected,
+            attempt.observation,
+            mode
           );
       }
       return attempt;
@@ -271,7 +408,7 @@ export function preserveDeploymentDiagnostics(
       throw new Error(`Deployment diagnostic test did not pass: ${producer.title}`);
     return {
       file: producer.file,
-      title: producer.title,
+      title: matched.title,
       project: test.projectName,
       outcome: test.status,
       attachment: producer.name,
@@ -279,6 +416,18 @@ export function preserveDeploymentDiagnostics(
     };
   });
   const stats = record(report.stats, 'stats');
+  if (
+    playwrightExitCode === 0 &&
+    mode.requireOwnedVp8Only &&
+    (stats.skipped !== 0 ||
+      stats.unexpected !== 0 ||
+      stats.flaky !== 0 ||
+      diagnostics.some(
+        ({ outcome, attempts }) =>
+          outcome !== 'expected' || attempts.length !== 1 || attempts[0]?.retry !== 0
+      ))
+  )
+    throw new Error('Owned-only deployment diagnostics require a complete, single-attempt pass');
   const targetHash = createHash('sha256').update(target.href).digest('hex').slice(0, 12);
   const filename = `deployment-diagnostics-${expected.sourceSha.slice(0, 12)}-${targetHash}-${runId}.json`;
   mkdirSync(outputDirectory, { recursive: true });
@@ -298,6 +447,14 @@ export function preserveDeploymentDiagnostics(
         target: target.href,
         browser: 'chromium',
         startedAt: stats.startTime,
+        ...(mode.requireOwnedVp8Only
+          ? {
+              mode: 'owned-vp8-only',
+              manifestSha256: mode.expectedManifestSha256,
+              archivedSourceSha: LEGACY_WEBP_DEPLOYMENT.sourceSha,
+              archivedTreeSha: LEGACY_WEBP_DEPLOYMENT.treeSha,
+            }
+          : {}),
         playwrightExitCode,
         counts: {
           expected: stats.expected,

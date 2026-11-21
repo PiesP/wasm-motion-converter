@@ -90,12 +90,84 @@ Place a complete clean baseline distribution at the ignored
 {"schemaVersion":1,"mode":"service-worker-handoff","baselineSourceSha":"<40-hex-SHA>","baselineTreeSha":"<40-hex-tree>","candidateSourceSha":"<40-hex-SHA>","candidateTreeSha":"<40-hex-tree>"}
 ```
 
-This selector takes priority over other validation modes. The runner verifies
-both complete inventories and distinct worker bytes, observes the new worker
+Select only this mode for the run. The runner verifies both complete
+inventories and distinct worker bytes, observes the new worker
 claiming retained tabs, checks preserved cached assets and unavailable resources,
 then exercises explicit reload and offline document recovery. It writes
 `service-worker-handoff.json` to the external evidence directory. Remove the
 selector after the focused run.
+
+### Owned VP8 final removal verification
+
+Use the same selector path with mode `m5-legacy-removal` and keep the complete
+archived 7d9e0f1b Pages distribution as the baseline. All 29 inventoried
+files and the exact manifest are pinned to the previously verified served
+bytes. The archived generated `_headers` is pinned to the matching CI artifact.
+The candidate is the
+bundled static production `dist/`. Supply its exact source, tree, core, and
+owned VP8 WASM SHA-256. This mode requires the installed desktop Chromium
+controller. Stage only this selector in the full bundle because the focused
+scenario packager generates a selector with a different schema.
+
+```json
+{
+  "schemaVersion": 1,
+  "mode": "m5-legacy-removal",
+  "baselineSourceSha": "7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3",
+  "baselineTreeSha": "0018da499f5e6217d19b13c834c0dbb54c3a49c8",
+  "candidateSourceSha": "<40-hex-SHA>",
+  "candidateTreeSha": "<40-hex-tree>",
+  "candidateCoreSha": "<40-hex-SHA>",
+  "candidateWasmSha256": "<64-hex-WASM-digest>"
+}
+```
+
+The receipt requires an active old-tab legacy WebP conversion, an actual cold
+legacy loader failure and explicit in-app reload, and the three existing
+warm-cache positive checks on the exact 7d9e0f1b bytes. The archived 112-byte
+Vite shim has a separate initial cache observation. A new offline tab opens
+the current application during grace while both old documents remain open.
+The current tab must deny the archived URLs during grace.
+
+After the final old tab closes, the current application returns to the
+foreground in the same document with its existing result. A passive observer
+records the controlling worker's grace and retirement acknowledgements. The
+test checks physical eviction of all four archived executables, including the
+query keys seeded during the old build. On the private loopback, the original
+three canonical direct requests still establish 404 positive controls for the
+origin recorder. A separate control serves the four exact archived responses
+to direct requests with query aliases. The current controlled page then
+requests those resources through normal and HTTP-cache-bypassing fetches.
+The receipt preserves the raw origin recorder before and after each step,
+verifies that the page sends no request to origin or adds a physical cache
+key, and confirms that the normal origin returns direct 404s again.
+
+During grace, a Chromium DevTools session stops the one activated service
+worker version controlling both retained old documents. A normal offline
+request from an old tab wakes that same version. The receipt binds the
+registered scope, version, stopped and running observations, both live
+document identities and result hashes, and retained cache keys. A browser
+without this DevTools capability reports the grace restart as unverified.
+
+The separate browser-process restart uses the same persisted profile after
+retirement and verifies its cache, archived URLs and offline owned WebP
+conversion. The additional fresh-context checks cover owned WebP online and
+offline. The original handoff mode retains its earlier scope and reporting.
+
+After the qualified build lands and deploys, run the Pages checks against the
+exact clean build artifact. The final mode checks the physical artifact
+inventory before making public requests. It probes the four archived
+executable URLs, including the 112-byte Vite shim, from a new ordinary request
+context before a separate revalidation pass. It binds the observed forced
+software encoder and the actual browser navigation and encoder-response CSP
+rules to the served artifact. The final command requires exact manifest bytes
+before and after the browser run and takes no automatic Playwright retries.
+
+```sh
+DEPLOY_REQUIRE_OWNED_VP8_ONLY=1 VERIFY_CURRENT_MASTER=1 \
+  EXPECTED_SOURCE_SHA=MERGED_SOURCE_SHA DEPLOY_DIST=EXACT_CI_DIST_DIRECTORY \
+  DEPLOY_URL=https://wasm-motion-converter.pages.dev/ vp run verify:deploy
+```
 
 ## Application update
 
