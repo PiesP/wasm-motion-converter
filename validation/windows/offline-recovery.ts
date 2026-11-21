@@ -3356,6 +3356,13 @@ export async function exerciseOfflineRecovery(
     archivedOrigin
   );
   assertRemovalUpgradeEvidence(Boolean(removal), upgrade);
+  if (removal) {
+    await writeFile(
+      join(outputRoot, 'completed-service-worker-upgrade.json'),
+      JSON.stringify(upgrade),
+      { flag: 'wx' }
+    );
+  }
   const context = await browser.newContext({
     locale: 'en-US',
     viewport: { width: 1280, height: 900 },
@@ -3401,34 +3408,42 @@ export async function exerciseOfflineRecovery(
     const onlineResponse = await page.goto(`${baseUrl}/?offline-acceptance=online`);
     if (removal) await verifyAppDocument(onlineResponse, build, true);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
-    await page.waitForFunction(async () => {
-      const names = await caches.keys();
-      const name = names.find((value) => value.startsWith('dropconvert-dynamic-'));
-      if (!name) return false;
-      const cache = await caches.open(name);
-      return (
-        Boolean(await cache.match('/')) &&
-        (await cache.keys()).some((request) => new URL(request.url).pathname.endsWith('.js'))
-      );
-    });
     const inspect = () =>
-      page.evaluate(async () => {
-        const names = await caches.keys();
-        const cacheName = names.find((name) => name.startsWith('dropconvert-dynamic-'));
-        if (!cacheName) throw new Error('Dynamic recovery cache is missing');
-        const response = await (await caches.open(cacheName)).match('/');
-        if (!response) throw new Error('Recovery cache has no root response');
+      page.evaluate(async (entryPath) => {
+        const names = (await caches.keys()).filter((name) =>
+          name.startsWith('dropconvert-static-')
+        );
+        if (names.length !== 1) throw new Error('Expected the installed static shell cache');
+        const cacheName = names[0]!;
+        const cache = await caches.open(cacheName);
+        const response = await cache.match('/');
+        const entry = await cache.match(entryPath);
+        if (!response || !entry)
+          throw new Error('Installed shell lacks its document or eager entry');
+        const bytes = await entry.arrayBuffer();
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
         return {
           cacheName,
           url: response.url,
           status: response.status,
           contentType: response.headers.get('content-type'),
           body: await response.text(),
+          entryBytes: bytes.byteLength,
+          entrySha256: Array.from(new Uint8Array(digest), (byte) =>
+            byte.toString(16).padStart(2, '0')
+          ).join(''),
         };
-      });
+      }, `/${build.main.path}`);
     const before = await inspect();
     assert.match(before.contentType ?? '', /^text\/html\b/);
     assert.equal(before.status, 200);
+    assert.equal(sha256(Buffer.from(before.body)), build.indexSha256);
+    assert.equal(before.entryBytes, build.main.size);
+    assert.equal(before.entrySha256, build.main.sha256);
+    const dynamicCacheName = before.cacheName.replace(
+      'dropconvert-static-',
+      'dropconvert-dynamic-'
+    );
     const onlineWebp =
       software?.family === 'owned-vp8'
         ? await convertAndVerifySoftwareWebp(page, baseUrl, smallFixture, software)
@@ -3471,7 +3486,10 @@ export async function exerciseOfflineRecovery(
           headers: { 'content-type': 'text/plain' },
         })
       );
-    }, before.cacheName);
+      const seeded = await cache.match('/');
+      if ((await seeded?.text()) !== 'current polluted recovery document')
+        throw new Error('Could not seed the dynamic recovery pollution control');
+    }, dynamicCacheName);
     const staticFallback = await page.reload();
     if (removal) await verifyAppDocument(staticFallback, build, true);
     assert(staticFallback);
@@ -3482,7 +3500,7 @@ export async function exerciseOfflineRecovery(
     assert.equal(
       await page.evaluate(
         async (cacheName) => Boolean(await (await caches.open(cacheName)).match('/')),
-        before.cacheName
+        dynamicCacheName
       ),
       false,
       'Current polluted dynamic entry was retained'
