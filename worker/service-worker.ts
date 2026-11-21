@@ -19,6 +19,7 @@ const STAGED_DOCUMENT = new URL(
 ).href;
 const RETIREMENT_CACHE = 'dropconvert-retire-7d9e0f1b';
 const RETIREMENT_KEY = new URL('/.dropconvert-retirement', workerScope.location.origin).href;
+const REPLACEMENT_CACHE = 'dropconvert-replace-02f1cc21';
 const MAX_CLIENTS = 128;
 const ARCHIVED_WORKER = '/assets/worker-BG8LzI1q.js';
 const ARCHIVED_DOCUMENT = {
@@ -28,17 +29,28 @@ const ARCHIVED_DOCUMENT = {
 type BodyPin = { size: number; sha256: string };
 type AssetPin = BodyPin & { path: string };
 type RetirementState = { phase: 'grace' | 'closed'; old: string[]; current: string[] };
+type ReplacementState = { candidates: string[]; confirmed: string[] };
 declare const __APP_SOURCE_SHA__: string | null;
 declare const __DROP_CONVERT_SHELL__: {
   document: AssetPin;
   eager: AssetPin[];
   predecessorOnly: string[];
   predecessorShared: string[];
+  replacement: {
+    source: string;
+    document: BodyPin;
+    workers: string[];
+    only: AssetPin[];
+    shared: AssetPin[];
+  };
 };
 const shellManifest = __DROP_CONVERT_SHELL__;
 const eagerPaths = new Set(shellManifest.eager.map(({ path }) => path));
 const predecessorPaths = new Set(shellManifest.predecessorOnly);
 const sharedPaths = new Set(shellManifest.predecessorShared);
+const replacement = shellManifest.replacement;
+const replacementOnly = new Map(replacement.only.map((pin) => [pin.path, pin]));
+const replacementShared = new Set(replacement.shared.map(({ path }) => path));
 const lookupRetired = (() => {
   const rows = [
     [
@@ -68,6 +80,7 @@ const lookupRetired = (() => {
   };
 })();
 let pendingWork: Promise<void> = Promise.resolve();
+let replacementSwept = false;
 
 const ASSET_ADMISSION_VERSION = 'body-checked-v1';
 const ASSET_ADMISSION_HEADER = 'x-dropconvert-asset-admission';
@@ -118,7 +131,7 @@ function isAppCache(name: string) {
 }
 
 function isAppWindow(client: Client) {
-  return client.type === 'window' && isAppDocumentUrl(new URL(client.url));
+  return client.type === 'window' && !!client.url && isAppDocumentUrl(new URL(client.url));
 }
 
 async function windows() {
@@ -179,6 +192,10 @@ async function isCurrentDocument(response: Response) {
   return isAppDocumentResponse(response) && (await bodyMatches(response, shellManifest.document));
 }
 
+async function isReplacementDocument(response: Response) {
+  return isAppDocumentResponse(response) && (await bodyMatches(response, replacement.document));
+}
+
 async function isArchivedDocument(response: Response) {
   return isAppDocumentResponse(response) && (await bodyMatches(response, ARCHIVED_DOCUMENT));
 }
@@ -235,19 +252,23 @@ async function hasState() {
   return !!(await (await caches.open(RETIREMENT_CACHE)).match(RETIREMENT_KEY));
 }
 
+function clientIds(list: unknown): list is string[] {
+  return (
+    Array.isArray(list) &&
+    list.length <= MAX_CLIENTS &&
+    list.every((id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 128)
+  );
+}
+
 async function readState(): Promise<RetirementState | undefined> {
   try {
     const response = await (await caches.open(RETIREMENT_CACHE)).match(RETIREMENT_KEY);
     if (!response) return undefined;
     const state: Partial<RetirementState> = await response.json();
-    const ids = (list: unknown): list is string[] =>
-      Array.isArray(list) &&
-      list.length <= MAX_CLIENTS &&
-      list.every((id: unknown) => typeof id === 'string' && id.length > 0 && id.length <= 128);
     if (
       (state.phase === 'grace' || state.phase === 'closed') &&
-      ids(state.old) &&
-      ids(state.current)
+      clientIds(state.old) &&
+      clientIds(state.current)
     ) {
       return { phase: state.phase, old: state.old, current: state.current };
     }
@@ -281,29 +302,128 @@ async function oldRequester(event: FetchEvent, state: RetirementState) {
   return (await windows()).some((window) => state.old.includes(window.id) && isAppWindow(window));
 }
 
+async function readReplacement(): Promise<ReplacementState | undefined> {
+  try {
+    const response = await caches.match(RETIREMENT_KEY, { cacheName: REPLACEMENT_CACHE });
+    if (!response) return undefined;
+    const state: Partial<ReplacementState> = await response.json();
+    if (clientIds(state.candidates) && clientIds(state.confirmed)) {
+      return { candidates: state.candidates, confirmed: state.confirmed };
+    }
+  } catch {
+    // A lost or corrupt record cannot admit old bytes.
+  }
+  return undefined;
+}
+
+async function persistReplacement(state: ReplacementState) {
+  await (
+    await caches.open(REPLACEMENT_CACHE)
+  ).put(RETIREMENT_KEY, new Response(JSON.stringify(state)));
+}
+
+async function startReplacement(former: Response | undefined) {
+  if (
+    !replacementOnly.size ||
+    (await caches.match(RETIREMENT_KEY, { cacheName: REPLACEMENT_CACHE }))
+  )
+    return;
+
+  let candidates: string[] = [];
+  if (former && (await isReplacementDocument(former))) {
+    // The browser has switched already-controlled clients to this worker at
+    // activation. Take the snapshot before claim() adds uncontrolled clients.
+    const windows = await workerScope.clients.matchAll({ type: 'window' });
+    candidates = windows.filter(isAppWindow).map(({ id }) => id);
+  }
+  await persistReplacement({
+    candidates: clientIds(candidates) ? candidates : [],
+    confirmed: [],
+  });
+}
+
+async function reconcileReplacement(client?: Client, generation?: string) {
+  if (!replacementOnly.size) return undefined;
+  const state = await readReplacement();
+  if (state?.candidates.length) {
+    const live = new Set(
+      (await workerScope.clients.matchAll({ type: 'window' }))
+        .filter(isAppWindow)
+        .map(({ id }) => id)
+    );
+    const candidates = state.candidates.filter(
+      (id) => live.has(id) && !(id === client?.id && generation === __APP_SOURCE_SHA__)
+    );
+    const confirmed = state.confirmed.filter((id) => candidates.includes(id));
+    if (client && generation === replacement.source && candidates.includes(client.id)) {
+      if (!confirmed.includes(client.id)) confirmed.push(client.id);
+    }
+    if (
+      candidates.length !== state.candidates.length ||
+      confirmed.length !== state.confirmed.length
+    ) {
+      await persistReplacement({ candidates, confirmed });
+    }
+    if (candidates.length) return { candidates, confirmed };
+  }
+  await sweepReplacement();
+  return undefined;
+}
+
+async function replacementRequester(event: FetchEvent, state: ReplacementState) {
+  if (!event.clientId || event.request.mode === 'navigate') return false;
+  const client = await workerScope.clients.get(event.clientId);
+  if (!client) return false;
+  if (isAppWindow(client)) return state.confirmed.includes(client.id);
+  if (client.type !== 'worker' || !state.confirmed.length) return false;
+  const url = new URL(client.url);
+  // The exact worker entry is itself cache-only and gated for window clients.
+  // An already running old worker can also finish while its old tab stays live.
+  const dedicated = await workerScope.clients.matchAll({ type: 'worker' });
+  return (
+    url.origin === workerScope.location.origin &&
+    replacement.workers.includes(url.pathname) &&
+    replacementOnly.has(url.pathname) &&
+    dedicated.some(({ id }) => id === client.id)
+  );
+}
+
+async function cachedPredecessor(key: string, kind: AssetKind, pin?: BodyPin) {
+  for (const cacheName of [DYNAMIC_CACHE, STATIC_CACHE]) {
+    const response = await (await caches.open(cacheName)).match(key);
+    if (
+      response &&
+      (assetHeadersValid(response, key, kind, true) || (await validAsset(response, key, kind))) &&
+      (!pin || (await bodyMatches(response, pin)))
+    ) {
+      return response;
+    }
+  }
+  return undefined;
+}
+
 async function predecessorResponse(event: FetchEvent, url: URL, path: string) {
   try {
-    const state = await readState();
     const canonical = new URL(path, workerScope.location.origin);
     const kind = assetKind(canonical);
-    const pin = lookupRetired(path);
-    if (
-      state?.phase === 'grace' &&
-      kind &&
-      (pin || !isRetiredCodec(path)) &&
-      (await oldRequester(event, state))
-    ) {
-      const key = canonical.href;
-      for (const name of [DYNAMIC_CACHE, STATIC_CACHE]) {
-        const cache = await caches.open(name);
-        const response = await cache.match(key);
+    if (kind) {
+      const replaced = replacementOnly.get(path);
+      if (replaced) {
+        const state = await reconcileReplacement();
+        if (state && (await replacementRequester(event, state))) {
+          const cached = await cachedPredecessor(canonical.href, kind, replaced);
+          if (cached) return cached;
+        }
+      } else {
+        const state = await readState();
+        const pin = lookupRetired(path);
         if (
-          response &&
-          (assetHeadersValid(response, key, kind, true) ||
-            (await validAsset(response, key, kind))) &&
-          (!pin || (await bodyMatches(response, pin)))
+          state?.phase === 'grace' &&
+          (pin || !isRetiredCodec(path)) &&
+          (await oldRequester(event, state))
         ) {
-          return response;
+          const cached = await cachedPredecessor(canonical.href, kind, pin);
+          if (cached) return cached;
         }
       }
     }
@@ -312,6 +432,28 @@ async function predecessorResponse(event: FetchEvent, url: URL, path: string) {
   }
   await notifyAssetUnavailable(event, url, 404, 'invalid-response');
   return Response.error();
+}
+
+async function sweepReplacement() {
+  if (replacementSwept) return;
+  for (const name of (await caches.keys()).filter(isAppCache)) {
+    const cache = await caches.open(name);
+    for (const key of await cache.keys()) {
+      const url = new URL(key.url);
+      if (url.origin !== workerScope.location.origin) continue;
+      const response =
+        name === DYNAMIC_CACHE && isAppDocumentUrl(url) ? await cache.match(key) : undefined;
+      if (
+        (replacementOnly.has(archivedPath(url)) ||
+          (response && (await isReplacementDocument(response)))) &&
+        !(await cache.delete(key)) &&
+        (await cache.match(key))
+      ) {
+        throw new Error('Could not delete replaced app bytes');
+      }
+    }
+  }
+  replacementSwept = true;
 }
 
 async function sweep() {
@@ -355,9 +497,15 @@ async function putInCache(key: string, response: Response) {
       if (trim) {
         const state = await readState();
         const keepOld = !state || state.phase === 'grace';
+        const keepReplacement = !!(await readReplacement())?.candidates.length;
         const eligible = keys.filter((entry) => {
           const url = new URL(entry.url);
-          return entry.url !== key && !(keepOld && isProtectedPredecessor(url));
+          const path = archivedPath(url);
+          return (
+            entry.url !== key &&
+            !(keepOld && isProtectedPredecessor(url)) &&
+            !(keepReplacement && (replacementOnly.has(path) || replacementShared.has(path)))
+          );
         });
         if (eligible.length < trim) return;
         for (const entry of eligible.slice(0, trim)) {
@@ -544,6 +692,11 @@ workerScope.addEventListener('activate', (event) => {
       const shell = await cache.match(STAGED_DOCUMENT);
       if (!shell || !(await isCurrentDocument(shell)))
         throw new Error('Missing verified app shell');
+      try {
+        await startReplacement(await cache.match(NAVIGATION_CACHE_KEY));
+      } catch {
+        // Shell activation can proceed when previous-generation metadata is unavailable.
+      }
       await cache.put(NAVIGATION_CACHE_KEY, shell);
       await cache.delete(STAGED_DOCUMENT);
 
@@ -560,6 +713,7 @@ workerScope.addEventListener('activate', (event) => {
       }
       await workerScope.clients.claim();
       if (existing?.phase === 'closed') await sweep();
+      await reconcileReplacement().catch(() => {});
     })
   );
 });
@@ -575,16 +729,19 @@ workerScope.addEventListener('message', (event) => {
     !('type' in data) ||
     data.type !== 'dropconvert:retirement-check' ||
     !('generation' in data) ||
-    data.generation !== __APP_SOURCE_SHA__ ||
+    (data.generation !== __APP_SOURCE_SHA__ && data.generation !== replacement.source) ||
     !source ||
     !('id' in source)
   ) {
     return;
   }
+  const generation = data.generation;
   event.waitUntil(
     serialized(async () => {
       const client = await workerScope.clients.get(source.id);
       if (!client || !isAppWindow(client)) return;
+      await reconcileReplacement(client, generation).catch(() => {});
+      if (generation !== __APP_SOURCE_SHA__) return;
       let phase: 'grace' | 'retired-pending-sweep' | 'retired' = 'retired-pending-sweep';
       try {
         const state = await readState();
@@ -634,7 +791,7 @@ workerScope.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   if (url.origin === workerScope.location.origin) {
     const path = archivedPath(url);
-    if (isPredecessorAsset(path)) {
+    if (isPredecessorAsset(path) || replacementOnly.has(path)) {
       const work = serialized(() => predecessorResponse(event, url, path));
       event.respondWith(work);
       event.waitUntil(work.catch(() => {}));
@@ -667,11 +824,19 @@ workerScope.addEventListener('fetch', (event) => {
     request.mode === 'navigate' && request.destination === 'document' && isAppDocumentUrl(url)
       ? NAVIGATION_CACHE_KEY
       : null;
+  if (documentCacheKey && !replacementSwept && replacementOnly.size) {
+    event.waitUntil(serialized(() => reconcileReplacement()).catch(() => {}));
+  }
   const work = documentCacheKey
     ? fetch(request)
         .then(async (response) => {
           if (!isAppDocumentResponse(response)) return response;
-          if (await isArchivedDocument(response)) return (await currentShell()) ?? Response.error();
+          if (
+            (await isArchivedDocument(response)) ||
+            (replacementOnly.size && (await isReplacementDocument(response)))
+          ) {
+            return (await currentShell()) ?? Response.error();
+          }
           return response;
         })
         .catch(async (error) => {

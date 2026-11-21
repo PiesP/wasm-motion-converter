@@ -11,6 +11,7 @@ import {
   existsSync,
   fstatSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -27,18 +28,24 @@ const root = resolve(import.meta.dirname, '../..');
 const crate = join(root, 'crates/gif-scalar-quantizer');
 const output = join(root, 'src/services/gif-scalar-quantizer.wasm');
 const provenance = join(crate, 'wasm-provenance.json');
+const rustSources = ['lib.rs', 'lzw.rs', 'mapper.rs', 'palette.rs'] as const;
 const sourcePaths = [
+  'LICENSE',
+  'scripts/build/gifenc-LICENSE.txt',
+  'scripts/build/gifenc-pnn-NOTICES.txt',
   'crates/gif-scalar-quantizer/Cargo.toml',
   'crates/gif-scalar-quantizer/Cargo.lock',
+  'crates/gif-scalar-quantizer/LICENSE.pnn',
+  'crates/gif-scalar-quantizer/NOTICE.md',
   'crates/gif-scalar-quantizer/rust-toolchain.toml',
-  'crates/gif-scalar-quantizer/src/lib.rs',
+  ...rustSources.map((name) => `crates/gif-scalar-quantizer/src/${name}`),
   'scripts/build/build-gif-scalar-wasm.ts',
 ] as const;
 const compiler = '1.100.0';
 const target = 'wasm32-unknown-unknown';
 const cargoArgs = ['build', '--release', '--target', target, '--locked', '--offline'];
 const rustflags = '-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd';
-const crateManifestSha = 'dc1417eb297a04391c841aec5635a97a074dc74885deb5b94c3b8b521485213f';
+const crateManifestSha = '2f8917559e7a325da0093861e8217e9e95398c91a305ece74facd6c4eefdce61';
 const cargoLockSha = 'c51878d6042db126c8210ce237011bba55b7224d8db874eeab2b588caacafccc';
 const pinnedToolchain = `[toolchain]
 channel = "${compiler}"
@@ -167,14 +174,22 @@ export function assertClosedCompilationInputs(
   const crateRoot = join(checkoutRoot, 'crates/gif-scalar-quantizer');
   if (
     !lstatSync(join(crateRoot, 'src')).isDirectory() ||
-    !lstatSync(join(crateRoot, 'src/lib.rs')).isFile() ||
-    readdirSync(join(crateRoot, 'src')).sort().join('\n') !== 'lib.rs'
+    rustSources.some((name) => !lstatSync(join(crateRoot, 'src', name)).isFile()) ||
+    readdirSync(join(crateRoot, 'src')).sort().join('\n') !== rustSources.join('\n')
   ) {
     throw new Error('GIF scalar WASM has unexpected Rust source inputs');
+  }
+  for (const name of rustSources) {
+    const source = readRegularFile(join(crateRoot, 'src', name)).toString('utf8');
+    if (/\binclude(?:_str|_bytes)?!\s*\(/.test(source) || /#\s*\[\s*path\s*=/.test(source)) {
+      throw new Error('GIF scalar WASM has an unrecorded source reference');
+    }
   }
   const expectedCrateEntries = [
     'Cargo.lock',
     'Cargo.toml',
+    'LICENSE.pnn',
+    'NOTICE.md',
     'rust-toolchain.toml',
     'src',
     'wasm-provenance.json',
@@ -228,6 +243,22 @@ export function pinnedCargoEnvironment(
   };
 }
 
+// Preserve each UTF-8 file and its relative path so recipients can restore the build tree.
+export function matchingGifSource(projectRoot: string, wasmDigest: string): string {
+  const files = sourcePaths.map((path) => {
+    const bytes = readRegularFile(join(projectRoot, path));
+    const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+    return { path, sha256: sha256(bytes), text };
+  });
+  return (
+    JSON.stringify(
+      { schemaVersion: 1, wasmSha256: wasmDigest, compiler, target, cargoArgs, rustflags, files },
+      null,
+      2
+    ) + '\n'
+  );
+}
+
 function expectedProvenance(bytes: Buffer): object {
   assertClosedCompilationInputs(root);
   const toolchain = readRegularFile(join(crate, 'rust-toolchain.toml')).toString('utf8');
@@ -241,6 +272,7 @@ function expectedProvenance(bytes: Buffer): object {
     sourceSha256: Object.fromEntries(
       sourcePaths.map((path) => [path, sha256(readRegularFile(join(root, path)))])
     ),
+    matchingSourceSha256: sha256(Buffer.from(matchingGifSource(root, sha256(bytes)))),
     artifact: inspectWasm(bytes),
   };
 }
@@ -255,6 +287,12 @@ function verifyVendored(): Buffer {
   } catch {
     throw new Error('GIF scalar WASM source, binary, or provenance mismatch');
   }
+  if (
+    readRegularFile(join(root, 'public/notices/gif-source.json')).toString('utf8') !==
+    matchingGifSource(root, sha256(bytes))
+  ) {
+    throw new Error('Published GIF source differs from its matching build inputs');
+  }
   return bytes;
 }
 
@@ -266,20 +304,32 @@ function compilePinned(): Buffer {
   let completed = false;
   try {
     const env = pinnedCargoEnvironment(temporary);
+    // Compile only the crate files a recipient can restore from the source bundle.
+    const buildCrate = join(temporary, 'crate');
+    mkdirSync(join(buildCrate, 'src'), { recursive: true });
+    for (const path of sourcePaths) {
+      const prefix = 'crates/gif-scalar-quantizer/';
+      if (path.startsWith(prefix)) {
+        writeFileSync(
+          join(buildCrate, path.slice(prefix.length)),
+          readRegularFile(join(root, path))
+        );
+      }
+    }
     const rustc = execFileSync('rustc', ['--version'], {
-      cwd: crate,
+      cwd: buildCrate,
       env,
       encoding: 'utf8',
     }).trim();
     const cargo = execFileSync('cargo', ['--version'], {
-      cwd: crate,
+      cwd: buildCrate,
       env,
       encoding: 'utf8',
     }).trim();
     if (!rustc.startsWith(`rustc ${compiler} `) || !cargo.startsWith(`cargo ${compiler} `)) {
       throw new Error(`GIF scalar WASM compiler mismatch: ${rustc}; ${cargo}`);
     }
-    execFileSync('cargo', cargoArgs, { cwd: crate, env, stdio: 'inherit' });
+    execFileSync('cargo', cargoArgs, { cwd: buildCrate, env, stdio: 'inherit' });
     const bytes = readRegularFile(
       join(env.CARGO_TARGET_DIR, target, 'release/gif_scalar_quantizer.wasm')
     );
@@ -296,6 +346,10 @@ export function buildGifScalarWasm(mode: 'verify' | 'check' | 'generate' = 'veri
   if (mode === 'generate') {
     const bytes = compilePinned();
     const manifest = `${JSON.stringify(expectedProvenance(bytes), null, 2)}\n`;
+    writeFileSync(
+      join(root, 'public/notices/gif-source.json'),
+      matchingGifSource(root, sha256(bytes))
+    );
     writeFileSync(output, bytes);
     writeFileSync(provenance, manifest);
   } else {

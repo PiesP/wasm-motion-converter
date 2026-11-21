@@ -1,0 +1,51 @@
+{
+  "presets": ["low", "medium", "high"],
+  "quality": {
+    "ui": {
+      "maxWorstFrameRmse": [8, 8, 8], "maxAnimationRmseDelta": 0.8, "maxWorstFrameRmseDelta": 1.4,
+      "maxFlickerRmse": 4, "maxFlickerRmseDelta": 1.3, "maxAccentRmse": [10, 10, 10], "maxAccentRmseDelta": 2.5,
+      "maxSizeGrowthRatio": 0.08, "sizeGrowthFloorBytes": 64
+    },
+    "motion": {
+      "maxWorstFrameRmse": [12, 9, 7], "maxAnimationRmseDelta": 1.2, "maxWorstFrameRmseDelta": 2.0,
+      "maxFlickerRmse": 5, "maxFlickerRmseDelta": 1.8, "maxAccentRmse": null, "maxAccentRmseDelta": null,
+      "maxSizeGrowthRatio": 0.15, "sizeGrowthFloorBytes": 128
+    },
+    "gradient": {
+      "maxWorstFrameRmse": [16, 12, 9], "maxAnimationRmseDelta": 1.2, "maxWorstFrameRmseDelta": 2.0,
+      "maxFlickerRmse": 9, "maxFlickerRmseDelta": 2.0, "maxAccentRmse": null, "maxAccentRmseDelta": null,
+      "maxSizeGrowthRatio": 0.12, "sizeGrowthFloorBytes": 128
+    },
+    "duplicates": {
+      "maxWorstFrameRmse": [1, 4, 5], "maxAnimationRmseDelta": 1, "maxWorstFrameRmseDelta": 1.5,
+      "maxFlickerRmse": 4, "maxFlickerRmseDelta": 2, "maxAccentRmse": null, "maxAccentRmseDelta": null,
+      "maxSizeGrowthRatio": 0.12, "sizeGrowthFloorBytes": 64
+    },
+    "collision": {
+      "maxWorstFrameRmse": [4, 7, 8], "maxAnimationRmseDelta": 0.6, "maxWorstFrameRmseDelta": 1.0,
+      "maxFlickerRmse": 5, "maxFlickerRmseDelta": 1.5, "maxAccentRmse": [6, 9, 10], "maxAccentRmseDelta": 2,
+      "maxSizeGrowthRatio": 0.12, "sizeGrowthFloorBytes": 128
+    },
+    "hold": {
+      "maxWorstFrameRmse": [0, 4, 5], "maxAnimationRmseDelta": 1, "maxWorstFrameRmseDelta": 1.4,
+      "maxFlickerRmse": 0, "maxFlickerRmseDelta": 0, "maxAccentRmse": null, "maxAccentRmseDelta": null,
+      "maxSizeGrowthRatio": 0, "sizeGrowthFloorBytes": 24
+    }
+  },
+  "timing": {
+    "trialsPerVariant": 5, "limitMedianIncreaseRatio": 0.05, "limitMedianIncreaseFloorMs": 20, "maxStopToIdleMs": 500,
+    "conditions": ["firstFromFreshDocument", "sameDocumentWarm"],
+    "productScopes": ["worker", "mainThreadFallback"],
+    "productOrder": [
+      ["baseline", "variance", "median"], ["variance", "median", "baseline"], ["median", "baseline", "variance"],
+      ["baseline", "median", "variance"], ["variance", "baseline", "median"]
+    ]
+  },
+  "resource": {
+    "moduleRaw": 131072, "moduleGzip": 49152,
+    "initialLinear": 8388608, "primarySteadyLinear": 12582912, "primaryGrowthOverlapLinear": 25165824,
+    "primaryDimensions": [720,720], "additionalFrameDimensions": [[1920,1080], [3840,2160]],
+    "conversionAggregateBytes": 536870912, "outputPeakBytes": 268435456,
+    "maxDecodedFramePixels": 10066329
+  }
+}

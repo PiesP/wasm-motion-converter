@@ -590,6 +590,17 @@ it does not guarantee that an old tab can load an asset it has never used.
 | Offline cache hit, miss or eviction | A valid hit can work. A miss remains unavailable; neither the worker nor a longer HTTP cache lifetime can reconstruct missing bytes. Fully offline conversion is not guaranteed. |
 | Expiry, emergency withdrawal or authorized rollback | An absent asset path must remain a genuine, non-immutable 404 at the origin, without substituting current code under an old URL. Withdrawal and rollback need separate review and do not promise to restore old assets. |
 
+The GIF replacement uses a separate transition from the VP8 retirement.
+When the service worker activates over the verified 02f1cc21 shell, it records
+the app windows already controlled at activation. An old window confirms its
+source over the existing retirement message. Those windows and the retired
+generation's dedicated worker entries can use cached assets that match the
+signed deployment's size and SHA-256. Fresh navigations use the current asset
+graph. A cache miss or a skipped predecessor uses the recovery path above.
+The worker sweeps replaced assets after it observes the last candidate window
+close or change generations. Current assets shared across the two builds stay
+eligible for the ordinary cache policy.
+
 The recovery actions above require the application shell to have loaded. An
 entry or static-module failure before it initializes remains outside that
 boundary. For a recoverable failure, download any retained result, explicitly

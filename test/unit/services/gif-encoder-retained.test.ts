@@ -301,6 +301,19 @@ describe('real retained GIF service route', () => {
       height: 1,
       frames: [frame(0, 4_010_000, alternating([red, blue]))],
       delays: [200, 199, 2],
+      localTables: [false, false, false],
+    },
+    {
+      name: 'viewer-safe delay split with a later local palette',
+      quality: 'low' as const,
+      width: 2,
+      height: 1,
+      frames: [
+        frame(0, 100_000, alternating([red, blue])),
+        frame(100_000, 4_110_000, alternating([green, blue])),
+      ],
+      delays: [10, 200, 199, 2],
+      localTables: [false, true, true, true],
     },
   ];
 

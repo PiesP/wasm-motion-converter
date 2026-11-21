@@ -12,15 +12,24 @@
   ],
   "rustflags": "-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd",
   "sourceSha256": {
-    "crates/gif-scalar-quantizer/Cargo.toml": "dc1417eb297a04391c841aec5635a97a074dc74885deb5b94c3b8b521485213f",
+    "LICENSE": "d4e05c4836d683da7ebd7fc4bf542d811f3896b3244d6a01ca10de1c207567b7",
+    "scripts/build/gifenc-LICENSE.txt": "47bc590c39d8ccccfc544875a9faebf44bafa828ef20315b396b5d0629f0cfd6",
+    "scripts/build/gifenc-pnn-NOTICES.txt": "86d8c6f2ec8f5141a20cc8a1adeee1f4f8ba6f4189847e43236f75d434a7d1bd",
+    "crates/gif-scalar-quantizer/Cargo.toml": "2f8917559e7a325da0093861e8217e9e95398c91a305ece74facd6c4eefdce61",
     "crates/gif-scalar-quantizer/Cargo.lock": "c51878d6042db126c8210ce237011bba55b7224d8db874eeab2b588caacafccc",
+    "crates/gif-scalar-quantizer/LICENSE.pnn": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
+    "crates/gif-scalar-quantizer/NOTICE.md": "bed2957c4a6ca7d3d9f969fc634cbaf40423b4082ff3a60b18213ce961caf10e",
     "crates/gif-scalar-quantizer/rust-toolchain.toml": "63eade4342cf85d77a436ffb9b086d301d7be4b3a7f5d01940eb2ce4f78a26f0",
-    "crates/gif-scalar-quantizer/src/lib.rs": "443ac78cb9db6f83ca885c06129d3481957d29389991908ee2443c900cc2161c",
-    "scripts/build/build-gif-scalar-wasm.ts": "1a24a58b72be880aa8b5f151b0acd0258772e8434f33517f614af53aa4a69439"
+    "crates/gif-scalar-quantizer/src/lib.rs": "8b4b5586731f80619d88a2d3d29925c5cc496a7deeb5d4abffd34c3a2b15e88d",
+    "crates/gif-scalar-quantizer/src/lzw.rs": "a9bd4dded51bc2526c2f56d128846e23a101180eaeeff794f5fa7524cf776fd8",
+    "crates/gif-scalar-quantizer/src/mapper.rs": "bca069c1f74b344993fd6a5e188774d4c3b44d4993b42242f1978f57f5876e66",
+    "crates/gif-scalar-quantizer/src/palette.rs": "bf627fa4e456acbda175074bcd5d8482447990269376251fdbb34323f2a81109",
+    "scripts/build/build-gif-scalar-wasm.ts": "bd3275dc3ada13f26af1f89d2c1a7c64c03a0a6a1786c95b6d524a93b0768a08"
   },
+  "matchingSourceSha256": "aa642edad2ab77337527dd907132857ed0b0108ba983c39ad7fdb1f925e4dee8",
   "artifact": {
-    "sha256": "a0753c05b7b7163a15b5608fde8189e41466da7fddd9d1eb7250ef0f3dfcf23d",
-    "rawBytes": 27338,
-    "gzipBytes": 11384
+    "sha256": "60907b1489b708638c5a3e684a891ca379cbfa80f6b178e30dc5e4c50fa55dfc",
+    "rawBytes": 28753,
+    "gzipBytes": 12357
   }
 }

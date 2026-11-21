@@ -440,7 +440,9 @@ describe('owned VP8 conversion-owned host adapter', () => {
 
   it.each([
     ['valid', 0, 0x90, true],
+    ['relocated response and replaced buffer', 0, 0x90, true],
     ['bad release response', 0, 0x90, true],
+    ['bad release extent', 0, 0x90, true],
     ['unsupported version', 0, 0x92, false],
     ['scaled width', 7, 0x40, false],
     ['scaled height', 9, 0x80, false],
@@ -452,7 +454,8 @@ describe('owned VP8 conversion-owned host adapter', () => {
     'admits output before the next step and checks its header (%s)',
     async (scenario, offset, byte, valid) => {
       const memory = new WebAssembly.Memory({ initial: 1, maximum: 3_072 });
-      const response = new DataView(memory.buffer, 128, 96);
+      let responsePointer = 128;
+      let response = new DataView(memory.buffer, responsePointer, 96);
       const raw = new Uint8Array(memory.buffer, 2048, 100);
       raw.set([0x90, 0x02, 0, 0x9d, 0x01, 0x2a, 1, 0, 1, 0]);
       raw[offset] = byte;
@@ -485,7 +488,13 @@ describe('owned VP8 conversion-owned host adapter', () => {
       );
       const step = vi
         .fn()
-        .mockImplementationOnce(() => publish(10, 4, 4 * 65_536, 100))
+        .mockImplementationOnce(() => {
+          if (scenario === 'relocated response and replaced buffer') {
+            memory.grow(0);
+            response = new DataView(memory.buffer, responsePointer, 96);
+          }
+          return publish(10, 4, 4 * 65_536, 100);
+        })
         .mockImplementationOnce(() => {
           expect(ledger.reserve).toHaveBeenLastCalledWith(4 * 65_536, 100);
           return publish(11, 5, 4 * 65_536, 100);
@@ -494,9 +503,15 @@ describe('owned VP8 conversion-owned host adapter', () => {
         memory,
         vp8_v2_abi_version: () => 2,
         vp8_v2_request_ptr: () => 64,
-        vp8_v2_response_ptr: () => 128,
+        vp8_v2_response_ptr: () => responsePointer,
         vp8_v2_plan: () => publish(0, 1, 2 * 65_536),
-        vp8_v2_reserve_step: () => publish(0, 3, 2 * 65_536),
+        vp8_v2_reserve_step: () => {
+          if (scenario === 'relocated response and replaced buffer') {
+            responsePointer = 256;
+            response = new DataView(memory.buffer, responsePointer, 96);
+          }
+          return publish(0, 3, 2 * 65_536);
+        },
         vp8_v2_begin: () => publish(10, 4, 2 * 65_536),
         vp8_v2_step: step,
         vp8_v2_abort: () => publish(9, 0, 0),
@@ -504,6 +519,7 @@ describe('owned VP8 conversion-owned host adapter', () => {
         vp8_v2_release_output: vi.fn(() => {
           const status = publish(0, 0, 0);
           if (scenario === 'bad release response') put(0, 3);
+          if (scenario === 'bad release extent') responsePointer = memory.buffer.byteLength - 95;
           return status;
         }),
         vp8_v2_retire: () => 0,
@@ -520,7 +536,7 @@ describe('owned VP8 conversion-owned host adapter', () => {
       await vi.waitFor(() => expect(ledger.reserve).toHaveBeenLastCalledWith(4 * 65_536, 100));
       expect(step).toHaveBeenCalledTimes(1);
       completeReservation();
-      if (scenario === 'bad release response') {
+      if (scenario === 'bad release response' || scenario === 'bad release extent') {
         await expect(task).rejects.toBeInstanceOf(core.OwnedVp8AbiError);
         expect(consume).toHaveBeenCalledOnce();
       } else if (valid) {

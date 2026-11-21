@@ -269,9 +269,15 @@ export function createStreamingWebpEncoder(
           }
           const outstanding = outstandingTasks.get(id);
           if (!outstanding || firstEncodeError) return result;
-          const resultBytes =
-            retainedResultBytes(result.bitstream) +
-            (result.iccProfile ? retainedResultBytes(result.iccProfile) : 0);
+          const { bitstream, iccProfile } = result;
+          let resultBytes = retainedResultBytes(bitstream);
+          // A transferred Canvas container can back both views while they wait for the muxer.
+          if (
+            iccProfile &&
+            (!(bitstream.buffer instanceof ArrayBuffer) || iccProfile.buffer !== bitstream.buffer)
+          ) {
+            resultBytes += retainedResultBytes(iccProfile);
+          }
           if (!outstanding.reservation.reserveResultBytes(resultBytes)) {
             throw new Error('WebP frame memory limit exceeded by encoded results');
           }

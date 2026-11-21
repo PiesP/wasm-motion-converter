@@ -18,7 +18,7 @@ import { getErrorMessage } from '@piesp/browser-core/error';
 import { isRecord } from '@piesp/browser-core/util';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 
-import { extractCanvasWebp } from './webp-bitstream';
+import { takeCanvasWebpForTransfer } from './webp-bitstream';
 
 // ─── Worker Entry Point ────────────────────────────────────────────
 
@@ -126,15 +126,11 @@ async function handleEncode(
     throw new Error(`convertToBlob returned ${blob ? 'empty' : 'null'} for frame`);
   }
 
-  // Read blob as ArrayBuffer, convert to Uint8Array
-  const arrayBuffer = await blob.arrayBuffer();
-  const webpBuffer = new Uint8Array(arrayBuffer);
-
   // Always use full VP8 bitstream extraction. convertToBlob may produce VP8X
   // (extended) format for any frame, not just the first. The former fast-path
   // assumption (simple VP8 at offset 20) produced garbage bitstreams for VP8X
   // frames, resulting in broken animated WebP output.
-  const { bitstream, iccProfile } = extractCanvasWebp(webpBuffer);
+  const { bitstream, iccProfile } = takeCanvasWebpForTransfer(await blob.arrayBuffer());
 
   return { id, bitstream, iccProfile };
 }
@@ -158,13 +154,7 @@ self.onmessage = async (event: MessageEvent) => {
 
   try {
     const result = await handleEncode(request);
-    // Transfer the VP8 payload and any ICC profile.
-    self.postMessage(
-      result,
-      result.iccProfile
-        ? [result.bitstream.buffer, result.iccProfile.buffer]
-        : [result.bitstream.buffer]
-    );
+    self.postMessage(result, [result.bitstream.buffer]);
   } catch (err) {
     const message = getErrorMessage(err);
     self.postMessage({ id: request.id, error: message });

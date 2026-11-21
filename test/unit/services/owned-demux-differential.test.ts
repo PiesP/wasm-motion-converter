@@ -86,6 +86,8 @@ describe('actual compiled owned demux versus pinned patched development oracle',
         expect(Number(track.durationTicks) / track.timescale).toBe(fixture.duration);
         expect(track.rotation).toBe(fixture.rotation);
         expect(track.packetCount).toBe(fixture.packets.length);
+        const seekBytes = fixture.packets.filter((packet) => packet.type === 'key').length * 12;
+        expect(session.seekWorkspaceBytes).toBe(seekBytes);
         expect(await computeOwnedPacketStats(session, track)).toEqual({
           averagePacketRate: fixture.stats.averagePacketRate,
           averageBitrate: fixture.stats.averageBitrate,
@@ -115,6 +117,7 @@ describe('actual compiled owned demux versus pinned patched development oracle',
             fixture.duration
           );
           expect(importedTrack.packetCount).toBe(track.packetCount);
+          expect(reused.seekWorkspaceBytes).toBe(seekBytes);
           expect(reused.transferStats.rangeReads).toBe(0);
           const importedCapacity = reused.transferStats.wasmCapacityBytes;
           for (let index = 0; index < importedTrack.packetCount; index++) {

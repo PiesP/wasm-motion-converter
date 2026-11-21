@@ -28,10 +28,19 @@ import {
 const sourceRoot = resolve(import.meta.dirname, '../../..');
 const sourcePaths = [
   'scripts/build/build-gif-scalar-wasm.ts',
+  'scripts/build/gifenc-LICENSE.txt',
+  'scripts/build/gifenc-pnn-NOTICES.txt',
+  'LICENSE',
+  'public/notices/gif-source.json',
   'crates/gif-scalar-quantizer/Cargo.toml',
   'crates/gif-scalar-quantizer/Cargo.lock',
+  'crates/gif-scalar-quantizer/LICENSE.pnn',
+  'crates/gif-scalar-quantizer/NOTICE.md',
   'crates/gif-scalar-quantizer/rust-toolchain.toml',
   'crates/gif-scalar-quantizer/src/lib.rs',
+  'crates/gif-scalar-quantizer/src/lzw.rs',
+  'crates/gif-scalar-quantizer/src/mapper.rs',
+  'crates/gif-scalar-quantizer/src/palette.rs',
   'crates/gif-scalar-quantizer/wasm-provenance.json',
   'src/services/gif-scalar-quantizer.wasm',
 ];
@@ -118,6 +127,14 @@ describe('GIF WASM source bootstrap', () => {
       expect(() => assertClosedCompilationInputs(root)).toThrow();
       expect(verify(root)).not.toBe(0);
     }
+    const sourceFixture = fixture();
+    appendFileSync(
+      join(sourceFixture, 'crates/gif-scalar-quantizer/src/palette.rs'),
+      '\nconst AUXILIARY: &[u8] = include_bytes!("../palette-data.bin");\n'
+    );
+    expect(() => assertClosedCompilationInputs(sourceFixture)).toThrow(
+      'unrecorded source reference'
+    );
     const root = fixture();
     appendFileSync(join(root, 'crates/gif-scalar-quantizer/Cargo.toml'), '\n[dependencies]\n');
     expect(() => assertClosedCompilationInputs(root)).toThrow('unexpected Cargo inputs');
@@ -202,6 +219,10 @@ describe('GIF WASM source bootstrap', () => {
   it('rejects source, binary, and provenance tampering before a consuming build', () => {
     for (const path of [
       'crates/gif-scalar-quantizer/src/lib.rs',
+      'crates/gif-scalar-quantizer/src/lzw.rs',
+      'crates/gif-scalar-quantizer/src/mapper.rs',
+      'crates/gif-scalar-quantizer/src/palette.rs',
+      'public/notices/gif-source.json',
       'src/services/gif-scalar-quantizer.wasm',
     ]) {
       const root = fixture();

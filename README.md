@@ -55,4 +55,7 @@ are in the [testing guide](./test/README.md).
 
 ## License
 
-MIT. See [LICENSE](./LICENSE) and [third-party licenses](./public/LICENSES.md).
+Project contributions use the [MIT license](./LICENSE). The distributed
+WASM modules include material with additional terms. See the
+[license and source notices](./public/LICENSES.md) and the
+[GIF quantizer provenance review](https://github.com/PiesP/wasm-motion-converter/issues/532).

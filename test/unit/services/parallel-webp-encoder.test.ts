@@ -177,18 +177,31 @@ describe('createStreamingWebpEncoder tail timing', () => {
 
     for (let index = 1; index < 4; index++) {
       const backing = new Uint8Array(1024);
-      mocks.pending.get(index)?.resolve({ id: index, bitstream: backing.subarray(0, 8) });
+      const profileBacking = index === 3 ? new Uint8Array(64) : backing;
+      mocks.pending.get(index)?.resolve({
+        id: index,
+        bitstream: backing.subarray(0, 8),
+        iccProfile: profileBacking.subarray(16, 19),
+      });
     }
-    await vi.waitFor(() => expect(budget.usage.resultBytes).toBe(3 * 1024));
+    await vi.waitFor(() => expect(budget.usage.resultBytes).toBe(3 * 1024 + 64));
     expect(fifthAccepted).toBe(false);
     expect(mocks.tasks.size).toBe(4);
 
-    mocks.pending.get(0)?.resolve({ id: 0, bitstream: new Uint8Array(8) });
+    mocks.pending.get(0)?.resolve({
+      id: 0,
+      bitstream: new Uint8Array(8),
+      iccProfile: new Uint8Array(3),
+    });
     await fifthSubmission;
     expect(mocks.tasks.size).toBe(5);
     expect(budget.usage.resultBytes).toBe(0);
 
-    mocks.pending.get(4)?.resolve({ id: 4, bitstream: new Uint8Array(8) });
+    mocks.pending.get(4)?.resolve({
+      id: 4,
+      bitstream: new Uint8Array(8),
+      iccProfile: new Uint8Array(3),
+    });
     await expect(encoder.finish()).resolves.toBeInstanceOf(Uint8Array);
     encoder.dispose();
     budget.dispose();

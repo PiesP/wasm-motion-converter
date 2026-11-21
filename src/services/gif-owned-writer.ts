@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// GIF block layout adapted from gifenc 1.0.3 (MIT), Matt DesLauriers.
+// GIF block layout and buffer growth adapted from gifenc 1.0.3 (MIT), Matt DesLauriers.
 
 import { OutputLimitError } from './output-limits';
 

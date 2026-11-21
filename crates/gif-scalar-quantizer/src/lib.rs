@@ -1,60 +1,26 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// Adapted from gifenc 1.0.3 src/pnnquant2.js (MIT), Copyright (c) 2017
-// Matt DesLauriers; PNN origin Copyright (C) 2004-2019 Mark Tyler and
-// Dmitry Groshev, and Copyright (c) 2018-2021 Miller Cy Chan.
-// The image-data encoder is adapted from gifenc 1.0.3 src/lzwEncode.js (MIT),
-// Kevin Weiner, Thibault Imbert, Johan Nordberg and its credited contributors.
 
 use core::arch::wasm32::memory_size;
 use core::cell::UnsafeCell;
 use core::ptr::addr_of;
 
-const BIN_COUNT: usize = 65_536;
-const DELETED: u32 = (BIN_COUNT - 1) as u32;
+mod lzw;
+mod mapper;
+mod palette;
+
+use lzw::{encode_lzw, LzwError, LzwScratch};
+
+use mapper::{map_in_place, MapperScratch};
+use palette::{build_palette, PaletteMethod, PaletteScratch};
+
 const PAGE_BYTES: usize = 65_536;
-const LZW_HASH_SIZE: usize = 5003;
-const LZW_MAX_CODE: u32 = 4096;
 const MAX_RETAINED_GENERATION: u32 = (i32::MAX as u32) >> 2;
 const BAYER_8X8: [i16; 64] = [
     0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60,
     28, 52, 20, 62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15,
     47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21,
 ];
-
-// The field order keeps each bin at 64 bytes. All arithmetic stays f64 and in
-// the same expression order as the locked gifenc RGB565 path.
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct Bin {
-    rc: f64,
-    gc: f64,
-    bc: f64,
-    cnt: f64,
-    err: f64,
-    nn: u32,
-    fw: u32,
-    bk: u32,
-    tm: u32,
-    mtm: u32,
-    _padding: u32,
-}
-
-impl Bin {
-    const EMPTY: Self = Self {
-        rc: 0.0,
-        gc: 0.0,
-        bc: 0.0,
-        cnt: 0.0,
-        err: 0.0,
-        nn: 0,
-        fw: 0,
-        bk: 0,
-        tm: 0,
-        mtm: 0,
-        _padding: 0,
-    };
-}
 
 #[derive(Clone, Copy)]
 struct RetainedSlot {
@@ -89,9 +55,9 @@ impl RetainedResult {
 }
 
 struct State {
-    bins: [Bin; BIN_COUNT],
-    order: [u32; BIN_COUNT],
-    heap: [u32; BIN_COUNT + 1],
+    scratch: PaletteScratch,
+    mapper: MapperScratch,
+    lzw: LzwScratch,
     palette: [u8; 256 * 3],
     reserved_input_len: u32,
     input_was_mapped: bool,
@@ -113,9 +79,9 @@ struct ConversionState(UnsafeCell<State>);
 unsafe impl Sync for ConversionState {}
 
 static STATE: ConversionState = ConversionState(UnsafeCell::new(State {
-    bins: [Bin::EMPTY; BIN_COUNT],
-    order: [0; BIN_COUNT],
-    heap: [0; BIN_COUNT + 1],
+    scratch: PaletteScratch::EMPTY,
+    mapper: MapperScratch::EMPTY,
+    lzw: LzwScratch::EMPTY,
     palette: [0; 256 * 3],
     reserved_input_len: 0,
     input_was_mapped: false,
@@ -321,68 +287,6 @@ pub extern "C" fn prepare_rgba(input_len: u32, width: u32, height: u32, strength
     0
 }
 
-#[inline]
-fn sqr(value: f64) -> f64 {
-    value * value
-}
-
-#[inline]
-fn at(state: &State, index: usize) -> &Bin {
-    &state.bins[state.order[index] as usize]
-}
-
-#[inline]
-fn at_mut(state: &mut State, index: usize) -> &mut Bin {
-    &mut state.bins[state.order[index] as usize]
-}
-
-fn find_nearest(state: &mut State, index: usize) {
-    let first = *at(state, index);
-    let n1 = first.cnt;
-    let wr = first.rc;
-    let wg = first.gc;
-    let wb = first.bc;
-    let mut next = first.fw as usize;
-    let mut nearest = 0;
-    let mut err = 1e100;
-    while next != 0 {
-        let bin = *at(state, next);
-        let n2 = bin.cnt;
-        let nerr2 = (n1 * n2) / (n1 + n2);
-        if nerr2 < err {
-            let mut nerr = 0.0;
-            nerr += nerr2 * sqr(bin.rc - wr);
-            if nerr < err {
-                nerr += nerr2 * sqr(bin.gc - wg);
-                if nerr < err {
-                    nerr += nerr2 * sqr(bin.bc - wb);
-                    if nerr < err {
-                        err = nerr;
-                        nearest = next as u32;
-                    }
-                }
-            }
-        }
-        next = bin.fw as usize;
-    }
-    let first = at_mut(state, index);
-    first.err = err;
-    first.nn = nearest;
-}
-
-#[inline]
-fn rounded_channel(value: f64) -> u8 {
-    // Histogram means and merged channels are finite and nonnegative. Compare
-    // the fractional part directly so adding 0.5 cannot round a near-half up.
-    let base = value.floor();
-    let rounded = if value - base >= 0.5 {
-        base + 1.0
-    } else {
-        base
-    };
-    rounded.clamp(0.0, 255.0) as u8
-}
-
 #[no_mangle]
 pub extern "C" fn quantize(input_len: u32, colors: u32) -> i32 {
     if input_len == 0 || (input_len & 3) != 0 || !(1..=256).contains(&colors) {
@@ -401,148 +305,14 @@ pub extern "C" fn quantize(input_len: u32, colors: u32) -> i32 {
     // The caller owns this disjoint region from __heap_base through end.
     let rgba =
         unsafe { core::slice::from_raw_parts(input_start() as *const u8, input_len as usize) };
-    state.bins.fill(Bin::EMPTY);
-    for pixel in rgba.chunks_exact(4) {
-        let r = pixel[0] as usize;
-        let g = pixel[1] as usize;
-        let b = pixel[2] as usize;
-        let key = ((r << 8) & 0xf800) | ((g << 2) & 0x03e0) | (b >> 3);
-        let bin = &mut state.bins[key];
-        bin.rc += r as f64;
-        bin.gc += g as f64;
-        bin.bc += b as f64;
-        bin.cnt += 1.0;
-    }
-
-    let mut maxbins = 0;
-    for key in 0..BIN_COUNT {
-        let bin = &mut state.bins[key];
-        if bin.cnt != 0.0 {
-            let d = 1.0 / bin.cnt;
-            bin.rc *= d;
-            bin.gc *= d;
-            bin.bc *= d;
-            state.order[maxbins] = key as u32;
-            maxbins += 1;
-        }
-    }
-    if maxbins == 0 {
-        return -3;
-    }
-    let use_sqrt = sqr(colors as f64) / (maxbins as f64) >= 0.022;
-    for index in 0..maxbins - 1 {
-        at_mut(state, index).fw = (index + 1) as u32;
-        at_mut(state, index + 1).bk = index as u32;
-        if use_sqrt {
-            let count = at(state, index).cnt;
-            at_mut(state, index).cnt = count.sqrt();
-        }
-    }
-    if use_sqrt {
-        let count = at(state, maxbins - 1).cnt;
-        at_mut(state, maxbins - 1).cnt = count.sqrt();
-    }
-
-    state.heap[0] = 0;
-    for index in 0..maxbins {
-        find_nearest(state, index);
-        let err = at(state, index).err;
-        state.heap[0] += 1;
-        let mut slot = state.heap[0] as usize;
-        while slot > 1 {
-            let parent = slot >> 1;
-            let h = state.heap[parent] as usize;
-            if at(state, h).err <= err {
-                break;
-            }
-            state.heap[slot] = h as u32;
-            slot = parent;
-        }
-        state.heap[slot] = index as u32;
-    }
-
-    let extbins = maxbins.saturating_sub(colors as usize);
-    let mut merged = 0;
-    while merged < extbins {
-        let mut b1;
-        let tb;
-        loop {
-            b1 = state.heap[1] as usize;
-            let current = *at(state, b1);
-            if current.tm >= current.mtm && at(state, current.nn as usize).mtm <= current.tm {
-                tb = b1;
-                break;
-            }
-            if current.mtm == DELETED {
-                b1 = state.heap[state.heap[0] as usize] as usize;
-                state.heap[1] = b1 as u32;
-                state.heap[0] -= 1;
-            } else {
-                find_nearest(state, b1);
-                at_mut(state, b1).tm = merged as u32;
-            }
-            let err = at(state, b1).err;
-            let mut slot = 1;
-            loop {
-                let mut child = slot + slot;
-                if child > state.heap[0] as usize {
-                    break;
-                }
-                if child < state.heap[0] as usize
-                    && at(state, state.heap[child] as usize).err
-                        > at(state, state.heap[child + 1] as usize).err
-                {
-                    child += 1;
-                }
-                let h = state.heap[child] as usize;
-                if err <= at(state, h).err {
-                    break;
-                }
-                state.heap[slot] = h as u32;
-                slot = child;
-            }
-            state.heap[slot] = b1 as u32;
-        }
-        let current = *at(state, tb);
-        let nb_index = current.nn as usize;
-        let neighbor = *at(state, nb_index);
-        let n1 = current.cnt;
-        let n2 = neighbor.cnt;
-        let d = 1.0 / (n1 + n2);
-        let bin = at_mut(state, tb);
-        bin.rc = d * (n1 * bin.rc + n2 * neighbor.rc);
-        bin.gc = d * (n1 * bin.gc + n2 * neighbor.gc);
-        bin.bc = d * (n1 * bin.bc + n2 * neighbor.bc);
-        bin.cnt += neighbor.cnt;
-        merged += 1;
-        bin.mtm = merged as u32;
-        at_mut(state, neighbor.bk as usize).fw = neighbor.fw;
-        at_mut(state, neighbor.fw as usize).bk = neighbor.bk;
-        at_mut(state, nb_index).mtm = DELETED;
-    }
-
-    let mut palette_len = 0;
-    let mut index = 0;
-    loop {
-        let bin = *at(state, index);
-        let color = [
-            rounded_channel(bin.rc),
-            rounded_channel(bin.gc),
-            rounded_channel(bin.bc),
-        ];
-        let exists = state.palette[..palette_len * 3]
-            .chunks_exact(3)
-            .any(|prior| prior == color);
-        if !exists {
-            state.palette[palette_len * 3..palette_len * 3 + 3].copy_from_slice(&color);
-            palette_len += 1;
-        }
-        index = bin.fw as usize;
-        if index == 0 {
-            break;
-        }
-    }
-    palette_len as i32
+    build_palette(
+        rgba,
+        colors as usize,
+        &mut state.palette,
+        &mut state.scratch,
+        PaletteMethod::Variance,
+    )
+    .map_or(-1, |count| count as i32)
 }
 
 #[inline]
@@ -555,8 +325,8 @@ pub extern "C" fn indices_ptr() -> u32 {
     indexed_start() as u32
 }
 
-// The cache is deliberately keyed by the original first pixel in each RGB565
-// bucket, not by a synthetic bucket center. A new frame clears every entry.
+// The fixed-palette ABI caches the first pixel in each five-bit R/G/B cell.
+// Preserve its green mask and last-index tie rule on both mapping paths.
 #[no_mangle]
 pub extern "C" fn map_palette(input_len: u32, colors: u32) -> i32 {
     if input_len == 0 || (input_len & 3) != 0 || !(1..=256).contains(&colors) {
@@ -566,7 +336,6 @@ pub extern "C" fn map_palette(input_len: u32, colors: u32) -> i32 {
     if state.reserved_input_len != input_len || state.input_was_mapped {
         return -1;
     }
-    let count = (input_len / 4) as usize;
     let start = indexed_start();
     let Some(end) = input_start().checked_add(input_len as usize) else {
         return -1;
@@ -578,49 +347,16 @@ pub extern "C" fn map_palette(input_len: u32, colors: u32) -> i32 {
         return -2;
     }
 
-    // The output reuses the start of the RGBA region. For pixel i, the four
-    // input bytes at 4*i..4*i+4 are read before byte i is overwritten; all
-    // later pixels are untouched. Raw accesses avoid overlapping Rust slices.
-    // State is disjoint from __heap_base and no quantizer borrow survives ABI.
-    state.order.fill(u32::MAX);
-    for pixel in 0..count {
-        let offset = pixel * 4;
-        let r = unsafe { *((start + offset) as *const u8) } as i32;
-        let g = unsafe { *((start + offset + 1) as *const u8) } as i32;
-        let b = unsafe { *((start + offset + 2) as *const u8) } as i32;
-        let key = (((r << 8) & 0xf800) | ((g << 2) & 0x03e0) | (b >> 3)) as usize;
-        let cached = state.order[key];
-        if cached != u32::MAX {
-            unsafe { *((start + pixel) as *mut u8) = cached as u8 };
-            continue;
-        }
-        let mut best = 0;
-        let mut minimum = i32::MAX;
-        for candidate in 0..colors as usize {
-            let offset = candidate * 3;
-            let dr = state.palette[offset] as i32 - r;
-            let mut distance = dr * dr;
-            if distance > minimum {
-                continue;
-            }
-            let dg = state.palette[offset + 1] as i32 - g;
-            distance += dg * dg;
-            if distance > minimum {
-                continue;
-            }
-            let db = state.palette[offset + 2] as i32 - b;
-            distance += db * db;
-            if distance > minimum {
-                continue;
-            }
-            // gifenc's internal RGB mapper accepts equality, so the last
-            // palette entry at an equal distance wins.
-            minimum = distance;
-            best = candidate;
-        }
-        state.order[key] = best as u32;
-        unsafe { *((start + pixel) as *mut u8) = best as u8 };
-    }
+    // reserve_input validated the caller-owned arena. Its unique mutable view is
+    // disjoint from the palette and static mapper scratch and ends inside this call.
+    let rgba = unsafe { core::slice::from_raw_parts_mut(start as *mut u8, input_len as usize) };
+    let Some(count) = map_in_place(
+        rgba,
+        &state.palette[..colors as usize * 3],
+        &mut state.mapper,
+    ) else {
+        return -1;
+    };
     state.input_was_mapped = true;
     count as i32
 }
@@ -873,86 +609,6 @@ pub extern "C" fn lzw_output_ptr() -> u32 {
         .unwrap_or(0)
 }
 
-struct ImageDataWriter<'a> {
-    bytes: &'a mut [u8],
-    written: usize,
-    packet: [u8; 254],
-    packet_len: usize,
-    accumulator: u32,
-    bits: u32,
-    code_bits: u32,
-    max_code: u32,
-    clear_pending: bool,
-    initial_bits: u32,
-    free_entry: u32,
-}
-
-impl ImageDataWriter<'_> {
-    fn byte(&mut self, byte: u8) -> Result<(), ()> {
-        let Some(slot) = self.bytes.get_mut(self.written) else {
-            return Err(());
-        };
-        *slot = byte;
-        self.written += 1;
-        Ok(())
-    }
-
-    fn packet_byte(&mut self, byte: u8) -> Result<(), ()> {
-        self.packet[self.packet_len] = byte;
-        self.packet_len += 1;
-        if self.packet_len == 254 {
-            self.flush_packet()?;
-        }
-        Ok(())
-    }
-
-    fn flush_packet(&mut self) -> Result<(), ()> {
-        if self.packet_len != 0 {
-            self.byte(self.packet_len as u8)?;
-            let end = self.written.checked_add(self.packet_len).ok_or(())?;
-            let target = self.bytes.get_mut(self.written..end).ok_or(())?;
-            target.copy_from_slice(&self.packet[..self.packet_len]);
-            self.written = end;
-            self.packet_len = 0;
-        }
-        Ok(())
-    }
-
-    fn code(&mut self, code: u32, end_code: u32) -> Result<(), ()> {
-        self.accumulator &= (1 << self.bits) - 1;
-        self.accumulator |= code << self.bits;
-        self.bits += self.code_bits;
-        while self.bits >= 8 {
-            self.packet_byte(self.accumulator as u8)?;
-            self.accumulator >>= 8;
-            self.bits -= 8;
-        }
-        if self.free_entry > self.max_code || self.clear_pending {
-            if self.clear_pending {
-                self.code_bits = self.initial_bits;
-                self.max_code = (1 << self.code_bits) - 1;
-                self.clear_pending = false;
-            } else {
-                self.code_bits += 1;
-                self.max_code = if self.code_bits == 12 {
-                    LZW_MAX_CODE
-                } else {
-                    (1 << self.code_bits) - 1
-                };
-            }
-        }
-        if code == end_code {
-            while self.bits > 0 {
-                self.packet_byte(self.accumulator as u8)?;
-                self.accumulator >>= 8;
-                self.bits = self.bits.saturating_sub(8);
-            }
-            self.flush_packet()?;
-        }
-        Ok(())
-    }
-}
-
 #[no_mangle]
 pub extern "C" fn lzw_encode(pixel_count: u32, depth: u32, output_capacity: u32) -> i32 {
     let state = unsafe { &*STATE.0.get() };
@@ -1005,91 +661,14 @@ fn lzw_encode_from(index_start: usize, pixel_count: u32, depth: u32, output_capa
         return -2;
     }
     // No reference to these disjoint ABI ranges escapes this synchronous call.
-    // The static hash/code arrays are reused only after quantize/map_palette.
     let indices =
         unsafe { core::slice::from_raw_parts(index_start as *const u8, pixel_count as usize) };
-    if indices.iter().any(|&index| index as u32 >= (1 << depth)) {
-        return -1;
-    }
     let output = unsafe {
         core::slice::from_raw_parts_mut(output_start as *mut u8, output_capacity as usize)
     };
-    state.order[..LZW_HASH_SIZE].fill(u32::MAX);
-    state.heap[..LZW_HASH_SIZE].fill(0);
-    let initial_bits = depth + 1;
-    let clear_code = 1 << depth;
-    let end_code = clear_code + 1;
-    let mut writer = ImageDataWriter {
-        bytes: output,
-        written: 0,
-        packet: [0; 254],
-        packet_len: 0,
-        accumulator: 0,
-        bits: 0,
-        code_bits: initial_bits,
-        max_code: (1 << initial_bits) - 1,
-        clear_pending: false,
-        initial_bits,
-        free_entry: clear_code + 2,
-    };
-    if writer.byte(depth as u8).is_err() || writer.code(clear_code, end_code).is_err() {
-        return -2;
+    match encode_lzw(indices, depth as u8, output, &mut state.lzw) {
+        Ok(length) => length as i32,
+        Err(LzwError::InvalidDepth | LzwError::InvalidIndex) => -1,
+        Err(LzwError::OutputTooSmall) => -2,
     }
-    let mut entry = indices[0] as u32;
-    let mut hash_shift = 0;
-    let mut hash_size = LZW_HASH_SIZE;
-    while hash_size < 65_536 {
-        hash_shift += 1;
-        hash_size *= 2;
-    }
-    hash_shift = 8 - hash_shift;
-    for &character in &indices[1..] {
-        let character = character as u32;
-        let key = (character << 12) + entry;
-        let mut slot = ((character << hash_shift) ^ entry) as usize;
-        if state.order[slot] == key {
-            entry = state.heap[slot];
-            continue;
-        }
-        let displacement = if slot == 0 { 1 } else { LZW_HASH_SIZE - slot };
-        let mut found = false;
-        while state.order[slot] != u32::MAX {
-            slot = if slot < displacement {
-                slot + LZW_HASH_SIZE - displacement
-            } else {
-                slot - displacement
-            };
-            if state.order[slot] == key {
-                entry = state.heap[slot];
-                found = true;
-                break;
-            }
-        }
-        if found {
-            continue;
-        }
-        if writer.code(entry, end_code).is_err() {
-            return -2;
-        }
-        entry = character;
-        if writer.free_entry < LZW_MAX_CODE {
-            state.heap[slot] = writer.free_entry;
-            writer.free_entry += 1;
-            state.order[slot] = key;
-        } else {
-            state.order[..LZW_HASH_SIZE].fill(u32::MAX);
-            writer.free_entry = clear_code + 2;
-            writer.clear_pending = true;
-            if writer.code(clear_code, end_code).is_err() {
-                return -2;
-            }
-        }
-    }
-    if writer.code(entry, end_code).is_err()
-        || writer.code(end_code, end_code).is_err()
-        || writer.byte(0).is_err()
-    {
-        return -2;
-    }
-    writer.written as i32
 }

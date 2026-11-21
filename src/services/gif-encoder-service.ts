@@ -369,6 +369,7 @@ export async function encodeGif(
     }
     // This is a representable source interval, established before comparing
     // indexed colors. Duplicate/palette optimization must preserve its timing.
+    const establishesGlobalPalette = outputFrames === 0;
     let useGlobalPalette = retained
       ? retainedGlobalLength !== 0 && quantizePalette.remapRetainedGlobal(lastIndexedData as number)
       : globalPalette !== null &&
@@ -380,10 +381,9 @@ export async function encodeGif(
       if (remainingCs - chunkCs === 1) chunkCs--;
       writeIndexedFrame(lastIndexedData, chunkCs * 10, lastPalette, useGlobalPalette);
       outputTotalDelay += chunkCs;
-      // The first emitted frame established the global palette. Its own
-      // continuation can omit a redundant local table.
-      if (retained ? retainedGlobalLength !== 0 : globalPalette === lastPalette)
-        useGlobalPalette = true;
+      // Only the first source image establishes the global table. A later
+      // image that failed remapping needs its local table on every record.
+      if (establishesGlobalPalette) useGlobalPalette = true;
       remainingCs -= chunkCs;
       if (remainingCs > 0) splitFrames++;
       if ((splitFrames & 63) === 0 && remainingCs > 0) await yieldToMain();

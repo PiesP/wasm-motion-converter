@@ -23,6 +23,7 @@ const MAX_WASM_CAPACITY_BYTES = 64 * 1024 * 1024;
 const MAX_INDEX_BYTES = 32 * 1024 * 1024;
 const MAX_TRACK_PACKETS = 100_000_000;
 const EVENT_BYTES = 64;
+const SEEK_KEY_BYTES = Uint32Array.BYTES_PER_ELEMENT + Float64Array.BYTES_PER_ELEMENT;
 const MAX_STEPS = 2_000_000;
 let nextSessionId = 1;
 
@@ -340,9 +341,7 @@ export class OwnedDemuxSession {
   get seekWorkspaceBytes(): number {
     if (!this.active || !this.ready || !this.indexInfo)
       throw new Error('Owned demux index unavailable');
-    return this.indexInfo.mode === 'compact'
-      ? this.indexInfo.seekWorkspaceBytes
-      : this.indexInfo.packetCount * 12;
+    return this.indexInfo.seekWorkspaceBytes;
   }
 
   get transferStats(): OwnedDemuxTransferStats {
@@ -459,8 +458,7 @@ export class OwnedDemuxSession {
           await nextTask();
         } else if (status === 3) {
           let track = this.readTrackRecord();
-          const info = this.readIndexInfo(track.packetCount);
-          await this.validateExpandedIndex(info, signal);
+          const info = await this.validateIndex(this.readIndexInfo(track.packetCount), signal);
           // The VP9 prefix probe can need presentation order from compact CTTS.
           this.indexInfo = info;
           if (track.codec === 'VP90') {
@@ -600,14 +598,14 @@ export class OwnedDemuxSession {
       const info = this.readIndexInfo(track.packetCount);
       if (info.mode !== 'expanded')
         throw new Error('Owned demux compact snapshot import unsupported');
-      await this.validateExpandedIndex(info, signal);
+      const validated = await this.validateIndex(info, signal);
       signal?.throwIfAborted();
       if (!this.active) throw new Error('Owned demux session released');
       if (info.reconstructs && !this.wasm.demux_prepare_packets(this.maxPacketBytes))
         throw new Error('Owned demux snapshot packet workspace admission failed');
       this.preparedWasmCapacityBytes = this.wasm.memory.buffer.byteLength;
       track.maxPacketBytes = this.maxPacketBytes;
-      this.indexInfo = info;
+      this.indexInfo = validated;
       this.ready = true;
       this.analyzedTrack = track;
       return track;
@@ -654,9 +652,10 @@ export class OwnedDemuxSession {
     };
   }
 
-  private async validateExpandedIndex(info: IndexInfo, signal?: AbortSignal): Promise<void> {
+  private async validateIndex(info: IndexInfo, signal?: AbortSignal): Promise<IndexInfo> {
     this.maxPacketBytes = info.maxPacketBytes;
-    if (info.mode === 'compact') return;
+    if (info.mode === 'compact') return info;
+    let keyCount = 0;
     let observedMax = 0;
     let observedReconstruction = false;
     for (let index = 0; index < info.packetCount; index++) {
@@ -666,11 +665,13 @@ export class OwnedDemuxSession {
         await nextTask();
       }
       const packet = this.readPacketRecord(index);
+      if (packet.key) keyCount++;
       observedMax = Math.max(observedMax, packet.byteLength);
       observedReconstruction ||= packet.sourceEnd !== null;
     }
     if (observedMax !== info.maxPacketBytes || observedReconstruction !== info.reconstructs)
       throw new Error('Owned demux index ABI summary mismatch');
+    return { ...info, seekWorkspaceBytes: keyCount * SEEK_KEY_BYTES };
   }
 
   private readTrackRecord(): OwnedDemuxTrack {
@@ -1077,20 +1078,20 @@ export class OwnedDemuxSession {
       const target = Math.abs(scaled / rounded - 1) < 10 * Number.EPSILON ? rounded : scaled;
       if (this.indexInfo?.mode === 'compact')
         return await this.findCompactVerifiedKey(track, BigInt(Math.floor(target)), signal);
-      const safeTick = BigInt(Number.MAX_SAFE_INTEGER);
-      // The two typed arrays use at most 12 bytes per admitted indexed packet.
-      // Heap insertion and removal are logarithmic; no whole-index sort occurs.
-      const indices = new Uint32Array(track.packetCount);
-      const points = new BigInt64Array(track.packetCount);
+      // The descriptor scan counted every key hint, including unverified ones.
+      const keyCapacity = this.seekWorkspaceBytes / SEEK_KEY_BYTES;
+      const indices = new Uint32Array(keyCapacity);
+      const presentationTicks = new Float64Array(keyCapacity);
       let count = 0;
       const higher = (a: number, b: number): boolean =>
-        points[a]! > points[b]! || (points[a] === points[b] && indices[a]! > indices[b]!);
+        presentationTicks[a]! > presentationTicks[b]! ||
+        (presentationTicks[a] === presentationTicks[b] && indices[a]! > indices[b]!);
       const swap = (a: number, b: number): void => {
-        const point = points[a]!,
+        const ticks = presentationTicks[a]!,
           index = indices[a]!;
-        points[a] = points[b]!;
+        presentationTicks[a] = presentationTicks[b]!;
         indices[a] = indices[b]!;
-        points[b] = point;
+        presentationTicks[b] = ticks;
         indices[b] = index;
       };
       for (let index = 0; index < track.packetCount; index++) {
@@ -1100,27 +1101,38 @@ export class OwnedDemuxSession {
           await nextTask();
         }
         const packet = this.packet(index);
-        if (packet.ptsTicks < -safeTick || packet.ptsTicks > safeTick)
+        const ticks = Number(packet.ptsTicks);
+        if (!Number.isSafeInteger(ticks))
           throw new Error('Owned demux seek timestamp out of range');
-        if (!packet.key || Number(packet.ptsTicks) > target) continue;
+        if (!packet.key || ticks > target) continue;
+        if (count >= keyCapacity) throw new Error('Owned demux seek key count exceeded');
         let at = count++;
-        points[at] = packet.ptsTicks;
-        indices[at] = index;
+        // We scan in ascending index order, so this candidate wins equal-PTS ties.
         while (at > 0) {
           const parent = (at - 1) >> 1;
-          if (!higher(at, parent)) break;
-          swap(at, parent);
+          if (ticks < presentationTicks[parent]!) break;
+          presentationTicks[at] = presentationTicks[parent]!;
+          indices[at] = indices[parent]!;
           at = parent;
         }
+        presentationTicks[at] = ticks;
+        indices[at] = index;
       }
       while (count > 0) {
         signal?.throwIfAborted();
         if (!this.active) throw new Error('Owned demux session released');
         const index = indices[0]!;
+        const packet = this.packet(index);
+        const payload = new Uint8Array(await this.readPacketInternal(packet, signal, true));
+        if (await verifyOwnedVideoKey(track.codec, track.description, payload, signal)) {
+          signal?.throwIfAborted();
+          if (!this.active) throw new Error('Owned demux session released');
+          return index;
+        }
         count--;
         if (count > 0) {
           indices[0] = indices[count]!;
-          points[0] = points[count]!;
+          presentationTicks[0] = presentationTicks[count]!;
           let at = 0;
           for (;;) {
             const left = at * 2 + 1,
@@ -1131,13 +1143,6 @@ export class OwnedDemuxSession {
             swap(child, at);
             at = child;
           }
-        }
-        const packet = this.packet(index);
-        const payload = new Uint8Array(await this.readPacketInternal(packet, signal, true));
-        if (await verifyOwnedVideoKey(track.codec, track.description, payload, signal)) {
-          signal?.throwIfAborted();
-          if (!this.active) throw new Error('Owned demux session released');
-          return index;
         }
         await nextTask();
       }
