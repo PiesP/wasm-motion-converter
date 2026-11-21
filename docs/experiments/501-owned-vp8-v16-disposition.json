@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "status": "EXPOSED_REGRESSION",
+  "cohort": "corrected-v16",
+  "freezeId": "vp8-v16-first-heldout-20261120-01",
+  "originalFrozenManifestSha256": "a3760f36a26c821677becdddb87732f04a77327dfe445072ddc046e4d101a2be",
+  "originalOutcomeSha256": "6530f659d1dd556740a59440f142e78e68cbd6a34bf2c900a2d7a2d596565b9c",
+  "originalResultsSha256": "4197d21ce33b0a7d6ef6deccd3ef797e3331b5915891b21f36300fadbb5d6499",
+  "originalIdentitiesSha256": "eb42666be5b6daad3668dccf27b0562bdc81cddd0f0156679d3b7058534e4d7a",
+  "originalPassCount": 55,
+  "originalConditionCount": 60,
+  "failedRows": [
+    {
+      "fixture": "fresh16-near-neutral",
+      "quality": 60,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh16-near-neutral",
+      "quality": 75,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh16-dark",
+      "quality": 60,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh16-dark",
+      "quality": 75,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    },
+    {
+      "fixture": "fresh16-dark",
+      "quality": 85,
+      "gates": {
+        "psnr": true,
+        "ssim": true,
+        "size": false
+      }
+    }
+  ]
+}

@@ -35,8 +35,9 @@ export default defineConfig(({ command }) => {
           command: ['vp run fmt', 'vp run lint', 'vp run test:ci', 'vp run check:i18n'],
           cache: false,
         },
-        'build:ci': {
+        'build:ci:native': {
           command: [
+            'vp run check:owned-vp8-inputs',
             'vp run build:owned-wasm',
             'node --experimental-strip-types scripts/build/generate-licenses.ts',
             'vp build',

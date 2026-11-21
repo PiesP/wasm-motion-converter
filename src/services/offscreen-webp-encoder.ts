@@ -67,7 +67,7 @@ export async function encodeWebpOffscreen(
   if (!isOffscreenCanvasAvailable()) {
     throw new Error(
       'OffscreenCanvas is not available in this context. ' +
-        'Use the wasm-webp encoder instead, or run in a browser environment.'
+        'Use the software encoder instead, or run in a browser environment.'
     );
   }
 

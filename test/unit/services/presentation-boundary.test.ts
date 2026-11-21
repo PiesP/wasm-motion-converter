@@ -16,18 +16,23 @@ import { type BaseEncoderOptions, resolveCadencePolicy } from '@services/encoder
 import { encodeGif } from '@services/gif-encoder-service';
 import { encodeWebpOffscreen } from '@services/offscreen-webp-encoder';
 import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
-import { encodeWebp } from '@services/webp-encoder-service';
+import { encodeWebpOwned } from '@services/webp-encoder-service';
 import type { EncodeTask, WebpWorkerPool } from '@services/worker-pool';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
-const wasmUrl = new URL('../../../src/services/gif-scalar-quantizer.wasm', import.meta.url);
-const wasmBytes = readFileSync(wasmUrl);
+const modules = new Map(
+  [
+    new URL('../../../src/services/gif-scalar-quantizer.wasm', import.meta.url),
+    new URL('../../../crates/owned-vp8/owned-vp8.wasm', import.meta.url),
+  ].map((url) => [url.href, readFileSync(url)])
+);
 
 beforeEach(() => {
-  vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
-    expect(input).toBe(wasmUrl.href);
-    return new Response(wasmBytes, {
+  vi.stubGlobal('fetch', async (input: string | URL) => {
+    const bytes = modules.get(String(input));
+    if (!bytes) throw new Error(`Unexpected WASM request: ${input}`);
+    return new Response(bytes, {
       status: 200,
       headers: { 'content-type': 'application/wasm' },
     });
@@ -51,14 +56,6 @@ function simpleWebp(color: number): Uint8Array<ArrayBuffer> {
   result.set(frame, 20);
   return result;
 }
-
-// The native codec is the platform boundary. Decoder selection, pixel copy,
-// gifenc, encoder skipping and container serialization remain production code.
-vi.mock('@services/wasm-webp-singleton', () => ({
-  encodeRGBReuse: async (rgb: Uint8Array) => {
-    return simpleWebp(rgb[0]!);
-  },
-}));
 
 interface SourceFrame {
   timestamp: number;
@@ -253,7 +250,8 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
           selectedFrames = counts.selectedFrames ?? -1;
         },
       };
-      const bytes = format === 'gif' ? await encodeGif(demux, opts) : await encodeWebp(demux, opts);
+      const bytes =
+        format === 'gif' ? await encodeGif(demux, opts) : await encodeWebpOwned(demux, opts);
       expect(format === 'gif' ? gifHolds(bytes) : webpHolds(bytes)).toEqual([1000, 1000, 1000]);
       expect(selectedFrames).toBe(3);
     }
@@ -489,7 +487,7 @@ describe('source presentation boundaries (issues #285 and #287)', () => {
             };
             let bytes: Uint8Array;
             if (format === 'gif') bytes = await encodeGif(demux, opts);
-            else if (format === 'webp') bytes = await encodeWebp(demux, opts);
+            else if (format === 'webp') bytes = await encodeWebpOwned(demux, opts);
             else if (format === 'webp-canvas') {
               vi.stubGlobal(
                 'ImageData',

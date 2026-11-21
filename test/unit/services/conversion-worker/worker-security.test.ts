@@ -109,7 +109,76 @@ describe('conversion worker message security', () => {
     );
   });
 
-  it.each(['memory', 'parse'] as const)(
+  it.each([
+    ['OwnedVp8LoadError', 'load', 'ENCODER_ERROR'],
+    ['OwnedVp8AbiError', 'abi', 'ENCODER_ERROR'],
+    ['OwnedVp8InitializationAbiError', 'abi-initialization', 'ENCODER_ERROR'],
+    ['OwnedVp8TrapError', 'trap', 'ENCODER_ERROR'],
+    ['OwnedVp8InvalidInputError', 'invalid-input', 'ENCODER_ERROR'],
+    ['OwnedVp8UnsupportedLayoutError', 'unsupported-layout', 'ENCODER_ERROR'],
+    ['OwnedVp8UnsupportedPixelsError', 'unsupported-pixels', 'ENCODER_ERROR'],
+    ['OwnedVp8OutputLimitError', 'output-limit', 'OUT_OF_MEMORY'],
+    ['OwnedVp8PartitionLimitError', 'partition-limit', 'ENCODER_ERROR'],
+    ['OwnedVp8MemoryAdmissionError', 'resource', 'OUT_OF_MEMORY'],
+    ['OwnedVp8BusyError', 'busy', 'ENCODER_ERROR'],
+    ['OwnedVp8CancelledError', undefined, 'CANCELLED'],
+  ] as const)(
+    'preserves wrapped %s across the real Worker handler',
+    async (className, kind, code) => {
+      const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+      vi.stubGlobal('self', workerScope);
+      const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+      const vp8Core = await import('@services/owned-vp8-core');
+      const message = 'Frame processing failed: Opaque timeout abort marker';
+      vi.mocked(runWorkerPipeline).mockImplementationOnce(
+        async (_input, _options, _respond, _requestId, signal) => {
+          expect(signal?.aborted).toBe(false);
+          const transportCause =
+            kind === 'load'
+              ? new DOMException('Response body interrupted', 'AbortError')
+              : undefined;
+          throw new Error(message, {
+            cause: new vp8Core[className]('Opaque timeout abort marker', { cause: transportCause }),
+          });
+        }
+      );
+      await import('@services/conversion-worker/worker');
+      workerScope.postMessage.mockClear();
+
+      await workerScope.onmessage?.({
+        source: null,
+        data: {
+          type: 'start',
+          requestId: 'typed-vp8',
+          inputBlob: new Blob(['video']),
+          config: { codec: 'vp09', codedHeight: 16, codedWidth: 16 },
+          options: {
+            format: 'webp',
+            fps: 30,
+            maxFrames: 1,
+            maxOutputBytes: 1024,
+            quality: 'medium',
+            scale: 1,
+            trimEnd: 0,
+            trimStart: 0,
+          },
+        },
+      } as unknown as MessageEvent);
+
+      expect(workerScope.postMessage).toHaveBeenCalledExactlyOnceWith(
+        {
+          type: 'error',
+          requestId: 'typed-vp8',
+          message,
+          code,
+          ...(kind ? { ownedVp8FailureKind: kind } : {}),
+        },
+        []
+      );
+    }
+  );
+
+  it.each(['memory', 'parse', 'vp8-trap', 'vp8-load'] as const)(
     'gives an active cancellation priority over a %s failure',
     async (failure) => {
       const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
@@ -118,6 +187,15 @@ describe('conversion worker message security', () => {
       const { OwnedDemuxParseError } = await import('@services/owned-demux-core');
       const { ConversionMemoryLimitError: CurrentMemoryLimitError } =
         await import('@services/conversion-memory-limit-error');
+      const { OwnedVp8LoadError, OwnedVp8TrapError } = await import('@services/owned-vp8-errors');
+      const failures = {
+        memory: new CurrentMemoryLimitError('Budget exhausted'),
+        parse: new OwnedDemuxParseError('Malformed media'),
+        'vp8-trap': new OwnedVp8TrapError('Owned VP8 trapped'),
+        'vp8-load': new OwnedVp8LoadError('Owned VP8 response stream failed', {
+          cause: new DOMException('Response body interrupted', 'AbortError'),
+        }),
+      };
       let rejectPipeline!: (error: Error) => void;
       vi.mocked(runWorkerPipeline).mockImplementationOnce(
         () =>
@@ -151,11 +229,7 @@ describe('conversion worker message security', () => {
         source: null,
         data: { type: 'abort', requestId: 'cancel-first' },
       } as unknown as MessageEvent);
-      rejectPipeline(
-        failure === 'memory'
-          ? new CurrentMemoryLimitError('Budget exhausted')
-          : new OwnedDemuxParseError('Malformed media')
-      );
+      rejectPipeline(failures[failure]);
       await start;
 
       expect(workerScope.postMessage).toHaveBeenCalledWith(
@@ -170,12 +244,15 @@ describe('conversion worker message security', () => {
     }
   );
 
-  it('gives an actual TimeoutError name its terminal category without a demux kind', async () => {
+  it('gives an actual TimeoutError name its terminal category without a codec failure kind', async () => {
     const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
     vi.stubGlobal('self', workerScope);
     const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+    const { OwnedVp8LoadError } = await import('@services/owned-vp8-errors');
     vi.mocked(runWorkerPipeline).mockRejectedValueOnce(
-      new DOMException('Deadline expired', 'TimeoutError')
+      Object.assign(new DOMException('Deadline expired', 'TimeoutError'), {
+        cause: new OwnedVp8LoadError('Late VP8 load failure'),
+      })
     );
     await import('@services/conversion-worker/worker');
     workerScope.postMessage.mockClear();
@@ -354,29 +431,30 @@ describe('conversion worker message security', () => {
     expect(workerScope.postMessage).not.toHaveBeenCalled();
   });
 
-  it('forwards Blob input and cancels its exact conversion request', async () => {
-    const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
-    vi.stubGlobal('self', workerScope);
-    const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
-    let rejectPipeline!: (error: Error) => void;
-    vi.mocked(runWorkerPipeline).mockImplementationOnce(
-      () =>
-        new Promise((_resolve, reject) => {
-          rejectPipeline = reject;
-        })
-    );
-    await import('@services/conversion-worker/worker');
-    workerScope.postMessage.mockClear();
-    const input = new Blob(['video']);
-    const start = workerScope.onmessage?.({
-      source: null,
-      data: {
+  it.each(['fulfills', 'rejects'] as const)(
+    'keeps the cancelled request exclusive until the pipeline %s, then accepts a new request',
+    async (settlement) => {
+      const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
+      vi.stubGlobal('self', workerScope);
+      const { runWorkerPipeline } = await import('@services/conversion-worker/pipeline-worker');
+      const pending = Promise.withResolvers<Awaited<ReturnType<typeof runWorkerPipeline>>>();
+      const outputBuffer = new ArrayBuffer(10);
+      const pipeline = vi.mocked(runWorkerPipeline);
+      pipeline
+        .mockReset()
+        .mockReturnValueOnce(pending.promise)
+        .mockResolvedValueOnce({ outputBuffer });
+      await import('@services/conversion-worker/worker');
+      workerScope.postMessage.mockClear();
+
+      const input = new Blob(['video']);
+      const request = {
         type: 'start',
         requestId: 'blob-request',
         inputBlob: input,
         config: { codec: 'vp09', codedHeight: 16, codedWidth: 16 },
         options: {
-          format: 'gif',
+          format: 'webp',
           fps: 30,
           maxFrames: 1,
           maxOutputBytes: 1024,
@@ -385,26 +463,66 @@ describe('conversion worker message security', () => {
           trimEnd: 0,
           trimStart: 0,
         },
-      },
-    } as unknown as MessageEvent);
+      };
+      const send = (data: unknown) => workerScope.onmessage!(new MessageEvent('message', { data }));
+      const start = send(request);
 
-    const invocation = vi.mocked(runWorkerPipeline).mock.calls.at(-1)!;
-    expect(invocation[0]).toBe(input);
-    expect(invocation[4]?.aborted).toBe(false);
-    await workerScope.onmessage?.({
-      source: null,
-      data: { type: 'abort', requestId: 'blob-request' },
-    } as unknown as MessageEvent);
-    expect(invocation[4]?.aborted).toBe(true);
-    rejectPipeline(new DOMException('Cancelled', 'AbortError'));
-    await start;
-    expect(workerScope.postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'error',
-        requestId: 'blob-request',
-        code: 'CANCELLED',
-      }),
-      []
-    );
-  });
+      const invocation = pipeline.mock.calls[0]!;
+      expect(invocation[0]).toBe(input);
+      await send(request);
+      await send({ type: 'start', requestId: request.requestId }); // Malformed duplicate.
+      await send({ type: 'abort', requestId: 'unrelated' });
+      expect(invocation[4]?.aborted).toBe(false);
+      expect(workerScope.postMessage).not.toHaveBeenCalled();
+      expect(pipeline).toHaveBeenCalledTimes(1);
+
+      await send({ type: 'abort', requestId: request.requestId });
+      expect(invocation[4]?.aborted).toBe(true);
+      invocation[2]({
+        type: 'log',
+        requestId: request.requestId,
+        level: 'info',
+        category: 'general',
+        message: 'Late pipeline callback',
+      });
+      await send({ ...request, requestId: 'overlap' });
+      await send(request);
+      expect(pipeline).toHaveBeenCalledTimes(1);
+      expect(workerScope.postMessage.mock.calls).toEqual([
+        [
+          {
+            type: 'error',
+            requestId: 'overlap',
+            message: 'Conversion worker is busy',
+            code: 'BUSY',
+          },
+        ],
+      ]);
+
+      if (settlement === 'fulfills') {
+        pending.resolve({ outputBuffer: new ArrayBuffer(1) });
+      } else {
+        pending.reject(new Error('Late pipeline failure'));
+      }
+      await start;
+      expect(workerScope.postMessage).toHaveBeenCalledTimes(2);
+      expect(workerScope.postMessage).toHaveBeenLastCalledWith(
+        {
+          type: 'error',
+          requestId: request.requestId,
+          message: expect.any(String),
+          code: 'CANCELLED',
+        },
+        []
+      );
+
+      await send({ ...request, requestId: 'recovery' });
+      expect(pipeline).toHaveBeenCalledTimes(2);
+      expect(workerScope.postMessage).toHaveBeenCalledTimes(3);
+      expect(workerScope.postMessage).toHaveBeenLastCalledWith(
+        { type: 'complete', requestId: 'recovery', outputBuffer, durationMs: expect.any(Number) },
+        [outputBuffer]
+      );
+    }
+  );
 });

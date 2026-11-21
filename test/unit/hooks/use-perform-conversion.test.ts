@@ -18,7 +18,6 @@ const mocks = vi.hoisted(() => ({
   setCurrentFrame: vi.fn(),
   setErrorMessage: vi.fn(),
   setErrorContext: vi.fn(),
-  setWebpReloadRequired: vi.fn(),
   setOutputFrames: vi.fn(),
   setTotalFrames: vi.fn(),
   setAppState: vi.fn((state: 'idle' | 'cancelling' | 'error') => {
@@ -62,7 +61,6 @@ vi.mock('@stores/conversion-store', () => ({
   setConversionStatusMessage: mocks.setConversionStatusMessage,
   setCurrentFrame: mocks.setCurrentFrame,
   setErrorContext: mocks.setErrorContext,
-  setWebpReloadRequired: mocks.setWebpReloadRequired,
   setErrorMessage: mocks.setErrorMessage,
   setInputFile: mocks.setInputFile,
   setOutputFrames: mocks.setOutputFrames,
@@ -103,6 +101,14 @@ import {
   WorkerPipelineError,
   WorkerTimeoutError,
 } from '@services/conversion-worker/main-thread-proxy';
+import {
+  OwnedVp8AbiError,
+  OwnedVp8InitializationAbiError,
+  OwnedVp8InvalidInputError,
+  OwnedVp8LoadError,
+  OwnedVp8MemoryAdmissionError,
+  OwnedVp8TrapError,
+} from '@services/owned-vp8-errors';
 
 const { handleCancelConversion, handleConvert, handleDismissError, handleRetry } = conversionModule;
 
@@ -135,7 +141,6 @@ beforeEach(() => {
   mocks.setCurrentFrame.mockReset();
   mocks.setErrorMessage.mockClear();
   mocks.setErrorContext.mockClear();
-  mocks.setWebpReloadRequired.mockClear();
   mocks.setOutputFrames.mockReset();
   mocks.setTotalFrames.mockReset();
   mocks.setAppState.mockClear();
@@ -296,6 +301,35 @@ describe('handleConvert conversion ownership', () => {
       }
     }
   );
+
+  it('keeps the Stop outcome when an owned VP8 load later rejects', async () => {
+    mocks.settings = { ...mocks.settings, format: 'webp' };
+    mocks.validateVideoDuration.mockResolvedValue({ duration: 1_000, warnings: [] });
+    let rejectPipeline: ((error: Error) => void) | undefined;
+    mocks.runConversionPipeline.mockReturnValueOnce(
+      new Promise<ArrayBuffer>((_resolve, reject) => {
+        rejectPipeline = reject;
+      })
+    );
+    const runtime = createRuntime();
+
+    const conversion = handleConvert(runtime, localizedProgressT);
+    await vi.waitFor(() => expect(mocks.runConversionPipeline).toHaveBeenCalledOnce());
+    mocks.setErrorContext.mockClear();
+    handleCancelConversion(runtime);
+    expect(mocks.appState).toBe('cancelling');
+
+    rejectPipeline?.(
+      new OwnedVp8LoadError('Owned VP8 response stream failed', {
+        cause: new DOMException('Response body interrupted', 'AbortError'),
+      })
+    );
+    await conversion;
+
+    expect(mocks.appState).toBe('idle');
+    expect(mocks.setErrorContext).not.toHaveBeenCalled();
+    expect(mocks.transitionToState).not.toHaveBeenCalledWith('error');
+  });
 
   it('restores idle after a cancelled direct retry physically settles', async () => {
     mocks.appState = 'error';
@@ -706,31 +740,77 @@ describe('localized conversion progress status', () => {
   });
 });
 
-it('offers terminal recovery for initialization wrapped by frame processing, even with AbortError cause', async () => {
-  const { WasmWebpInitializationError } = await import('@services/wasm-webp-singleton');
-  const original = new DOMException('bounded failed factory fetch', 'AbortError');
-  const initialization = new WasmWebpInitializationError('factory', original);
-  const processing = new Error(`Frame processing failed: ${initialization.message}`, {
-    cause: initialization,
-  });
+it.each([
+  [new OwnedVp8LoadError('Owned VP8 WASM request failed (HTTP 503)'), 'owned_vp8_initialization'],
+  [
+    new Error('Frame processing failed: owned WASM request interrupted', {
+      cause: new OwnedVp8LoadError('Owned VP8 WASM load failed', {
+        cause: new DOMException('Failed load request', 'AbortError'),
+      }),
+    }),
+    'owned_vp8_initialization',
+  ],
+  [
+    new OwnedVp8InitializationAbiError('Owned VP8 WASM header is invalid'),
+    'owned_vp8_initialization',
+  ],
+  [new OwnedVp8TrapError('Owned VP8 WASM trapped'), 'owned_vp8_runtime'],
+  [
+    new WorkerPipelineError('ENCODER_ERROR', 'Owned VP8 WASM trapped', undefined, 'trap'),
+    'owned_vp8_runtime',
+  ],
+] as const)('offers an explicit new conversion for recoverable %s', async (reason, phase) => {
   mocks.settings = { ...mocks.settings, format: 'webp' };
   mocks.validateVideoDuration.mockResolvedValue({ duration: 1000, warnings: [] });
-  mocks.runConversionPipeline.mockRejectedValueOnce(processing);
-  await handleConvert(
-    createRuntime(),
-    ((key: string) => key) as Parameters<typeof handleConvert>[1]
-  );
-  expect(mocks.setWebpReloadRequired).toHaveBeenCalledWith(true);
+  mocks.runConversionPipeline.mockRejectedValueOnce(reason);
+  const runtime = createRuntime();
+
+  await handleConvert(runtime, localizedProgressT);
+
+  expect(mocks.runConversionPipeline).toHaveBeenCalledOnce();
+  expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
   expect(mocks.setErrorContext).toHaveBeenCalledWith(
     expect.objectContaining({
-      phase: 'wasm_webp_initialization',
-      originalError: processing.message,
+      code: 'ENCODER_ERROR',
+      type: 'format',
+      phase,
+      originalError: reason.message,
+      recovery: 'retry',
     })
   );
-  expect(mocks.transitionToState).toHaveBeenLastCalledWith('error');
-  expect(mocks.setConversionResults).not.toHaveBeenCalledWith([
+  expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+
+  // The real conversion-store transition sets this before a click can reach Retry.
+  mocks.appState = 'error';
+  handleRetry(runtime, localizedProgressT);
+
+  await vi.waitFor(() => expect(mocks.transitionToState).toHaveBeenLastCalledWith('done'));
+  expect(mocks.runConversionPipeline).toHaveBeenCalledTimes(2);
+  expect(mocks.validateVideoDuration).toHaveBeenCalledOnce();
+  expect(mocks.setConversionResults).toHaveBeenCalledWith([
     expect.objectContaining({ outputBlob: expect.any(Blob) }),
   ]);
+  expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
+});
+
+it.each([
+  new OwnedVp8AbiError('Owned VP8 raw keyframe header or geometry is invalid'),
+  new OwnedVp8InvalidInputError('Owned VP8 rejected the input'),
+  new Error('The native WebP encoding failed'),
+])('keeps %s on the ordinary format failure path', async (reason) => {
+  mocks.settings = { ...mocks.settings, format: 'webp' };
+  mocks.validateVideoDuration.mockResolvedValue({ duration: 1000, warnings: [] });
+  mocks.runConversionPipeline.mockRejectedValueOnce(reason);
+
+  await handleConvert(createRuntime(), localizedProgressT);
+
+  expect(mocks.runConversionPipeline).toHaveBeenCalledOnce();
+  expect(mocks.setErrorContext).toHaveBeenCalledWith(
+    expect.objectContaining({ type: 'format', code: 'ENCODER_ERROR' })
+  );
+  expect(mocks.setErrorContext).not.toHaveBeenCalledWith(
+    expect.objectContaining({ recovery: 'retry' })
+  );
 });
 
 it.each([
@@ -741,6 +821,23 @@ it.each([
     'OUT_OF_MEMORY',
     'memory',
   ],
+  [
+    'webp',
+    new Error('Frame processing failed: Opaque timeout', {
+      cause: new OwnedVp8TrapError('Opaque timeout'),
+    }),
+    'ENCODER_ERROR',
+    'format',
+  ],
+  [
+    'webp',
+    new OwnedVp8LoadError('Owned VP8 response stream failed', {
+      cause: new DOMException('Response body interrupted', 'AbortError'),
+    }),
+    'ENCODER_ERROR',
+    'format',
+  ],
+  ['webp', new OwnedVp8MemoryAdmissionError('Diagnostic changed'), 'OUT_OF_MEMORY', 'memory'],
   ['gif', new WorkerTimeoutError(1000), 'TIMEOUT', 'timeout'],
   [
     'gif',

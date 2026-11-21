@@ -3,7 +3,7 @@
 
 import Panel from '@components/ui/Panel';
 import { useLocale } from '@hooks/use-locale';
-import type { ConversionErrorType } from '@t/conversion-types';
+import type { ConversionErrorType, ErrorContext } from '@t/conversion-types';
 import type { TranslationKey } from '@t/i18n-types';
 import type { Component } from 'solid-js';
 import { createMemo, onMount, Show, splitProps } from 'solid-js';
@@ -19,7 +19,7 @@ interface ErrorDisplayProps {
   suggestion?: string | undefined;
   errorType?: ConversionErrorType | undefined;
   canRetry?: boolean | undefined;
-  reloadRequired?: boolean;
+  recovery?: ErrorContext['recovery'];
   onRetry: () => void;
   onSelectNewFile: () => void;
   onDismiss?: (() => void) | undefined;
@@ -32,7 +32,7 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     'suggestion',
     'errorType',
     'canRetry',
-    'reloadRequired',
+    'recovery',
     'onRetry',
     'onSelectNewFile',
     'onDismiss',
@@ -45,12 +45,15 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     });
   });
 
+  const retryConversion = () => local.recovery === 'retry';
   const canRetry = createMemo(
-    () => local.canRetry !== false && local.errorType !== 'format' && local.errorType !== 'codec'
+    () =>
+      local.canRetry !== false &&
+      (retryConversion() || (local.errorType !== 'format' && local.errorType !== 'codec'))
   );
 
   const userFriendlyMessage = createMemo((): string => {
-    if (!local.errorType || local.errorType === 'general') {
+    if (retryConversion() || !local.errorType || local.errorType === 'general') {
       return t('error.unknown');
     }
 
@@ -58,10 +61,12 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
     return t(key);
   });
 
-  const errorIcon = createMemo(() => ERROR_ICONS[local.errorType ?? 'general'] ?? '');
+  const errorIcon = createMemo(() =>
+    retryConversion() ? '' : (ERROR_ICONS[local.errorType ?? 'general'] ?? '')
+  );
 
   const rawErrorMessage = createMemo(() => {
-    if (!local.errorType || local.errorType === 'general') {
+    if (retryConversion() || !local.errorType || local.errorType === 'general') {
       return local.message;
     }
     return null;
@@ -143,45 +148,43 @@ const ErrorDisplay: Component<ErrorDisplayProps> = (props) => {
               <strong class="text-text-primary">{t('error.suggestion')}</strong> {local.suggestion}
             </div>
           </Show>
-          <Show when={!local.reloadRequired}>
-            <div class="mt-4 flex gap-3">
-              <Show
-                when={canRetry()}
-                fallback={
-                  <button
-                    ref={primaryActionRef}
-                    type="button"
-                    data-testid="error-select-different-fallback-button"
-                    class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
-                    onClick={handleSelectNewFile}
-                    aria-label={t('error.selectDifferent')}
-                  >
-                    {t('error.selectDifferentFallback')}
-                  </button>
-                }
-              >
+          <div class="mt-4 flex gap-3">
+            <Show
+              when={canRetry()}
+              fallback={
                 <button
                   ref={primaryActionRef}
                   type="button"
-                  data-testid="error-retry-button"
+                  data-testid="error-select-different-fallback-button"
                   class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
-                  onClick={handleRetry}
-                  aria-label={t('error.retry')}
-                >
-                  {t('error.retry')}
-                </button>
-                <button
-                  type="button"
-                  data-testid="error-select-different-button"
-                  class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-text-secondary bg-white/[0.02] border-border-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
                   onClick={handleSelectNewFile}
                   aria-label={t('error.selectDifferent')}
                 >
-                  {t('error.selectDifferent')}
+                  {t('error.selectDifferentFallback')}
                 </button>
-              </Show>
-            </div>
-          </Show>
+              }
+            >
+              <button
+                ref={primaryActionRef}
+                type="button"
+                data-testid="error-retry-button"
+                class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-text-primary bg-white/[0.02] border-border-standard hover:bg-bg-elevated/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
+                onClick={handleRetry}
+                aria-label={t('error.retry')}
+              >
+                {t('error.retry')}
+              </button>
+              <button
+                type="button"
+                data-testid="error-select-different-button"
+                class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-text-secondary bg-white/[0.02] border-border-standard focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-focus cursor-pointer"
+                onClick={handleSelectNewFile}
+                aria-label={t('error.selectDifferent')}
+              >
+                {t('error.selectDifferent')}
+              </button>
+            </Show>
+          </div>
         </div>
       </div>
     </Panel>

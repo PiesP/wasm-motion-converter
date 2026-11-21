@@ -30,7 +30,7 @@ const hasSchedulerPostTask =
  * await scheduleTask(() => decodeFrames(...), { priority: 'user-blocking' });
  *
  * // user-visible: tasks visible to user but not blocking (encode)
- * await scheduleTask(() => encodeWebp(...), { priority: 'user-visible' });
+ * await scheduleTask(() => encodeWebpOwned(...), { priority: 'user-visible' });
  *
  * // background: non-time-critical tasks (analytics, logging)
  * scheduleTask(() => logger.performance('done', report), { priority: 'background' });
@@ -75,14 +75,13 @@ export function focusElementUnlessUserIsEditing(selector: string): void {
   });
 }
 
-/** Focus the current error's enabled action on the next microtask, then fall back to reload. */
+/** Focus the current error's enabled action on the next microtask. */
 export function focusPrimaryErrorAction(): void {
   queueMicrotask(() => {
     // Query separately: a selector list follows DOM order, not action priority.
     for (const selector of [
       '[data-testid="error-retry-button"]:enabled',
       '[data-testid="error-select-different-fallback-button"]:enabled',
-      '[data-testid="app-recovery-reload"]:enabled',
     ]) {
       const action = document.querySelector<HTMLButtonElement>(selector);
       if (action) {

@@ -155,8 +155,6 @@ export function postbuild(
   const excluded = excludeDeclaredPrivateInput(root, dist, removePrivateCopy);
   console.log(`[postbuild] Excluded ${excluded} declared private input copies from dist`);
   const indexPath = resolve(dist, 'index.html');
-  const workerHash = verifyServiceWorkerOutput(root, dist);
-  console.log(`[postbuild] Verified emitted service-worker.js ${workerHash}`);
 
   const html = readFileSync(indexPath, 'utf-8');
   // Application initialization stays in bundled external modules.
@@ -208,6 +206,9 @@ export function postbuild(
   }
 
   console.log(`[postbuild] Removed ${deduplicatedBytes} duplicate WASM bytes`);
+
+  const workerHash = verifyServiceWorkerOutput(root, dist);
+  console.log(`[postbuild] Verified emitted service-worker.js ${workerHash}`);
 
   for (const chunkName of readdirSync(assetsDir).filter((entry) => entry.endsWith('.js'))) {
     const chunk = readFileSync(resolve(assetsDir, chunkName), 'utf8');

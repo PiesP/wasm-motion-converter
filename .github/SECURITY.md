@@ -20,9 +20,9 @@ coordinate disclosure after a fix is available.
 
 - Conversion runs locally in the browser; user media is not uploaded for
   server-side processing.
-- WebCodecs handles decoding. Owned demux/GIF Rust/WASM, wasm-webp and UI runtime
-  code are bundled at build time instead of loaded from a runtime CDN. MediaBunny
-  and gifenc remain development-only differential oracles, not production fallbacks.
+- WebCodecs handles decoding. The build bundles the owned demux, GIF and VP8 Rust/WASM
+  modules with the UI. MediaBunny, gifenc and the patched wasm-webp encoder
+  are development-only differential oracles.
 - Owned Rust sources and JavaScript/WASM memory boundaries need focused review,
   including bounded parser/index state, palette/LZW slots and generation leases;
   see the threat model for build verification and scanner coverage limits.

@@ -396,6 +396,149 @@ mod tests {
     use super::*;
 
     #[test]
+    fn smooth_pair_q75_keeps_abi_request_and_leases_with_exact_q60_work() {
+        let (width, height) = (32, 16);
+        let stride = width * 4;
+        let mut outputs = Vec::new();
+        for quality in [60, 75] {
+            let mut state = State::new();
+            state.request = [
+                2,
+                width,
+                height,
+                stride,
+                0,
+                quality,
+                stride * height,
+                4096,
+                41,
+                1,
+                stride * height,
+                0,
+            ];
+            assert_eq!(state.plan(), Ok(0));
+            reserve(&mut state);
+            for row in state.input.chunks_exact_mut(stride as usize) {
+                for (x, rgba) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                    let step = u8::from(x >= 24);
+                    rgba.copy_from_slice(&[96 + step, 96 + step, 101 + step, 255]);
+                }
+            }
+            assert_eq!(state.begin(41, 1), Ok(WORKING));
+            let mut steps = 0;
+            loop {
+                steps += 1;
+                assert!(
+                    steps < 4096,
+                    "smooth pair must finish within its small fixture bound"
+                );
+                let status = state.step(41, 1).unwrap();
+                if status == OUTPUT_READY {
+                    break;
+                }
+                assert_eq!(status, WORKING);
+                assert!(state.job.as_ref().unwrap().output().is_empty());
+            }
+            assert_eq!(state.phase, Phase::OutputLease);
+            assert_eq!(state.frozen_request.unwrap().quality, quality);
+            let bytes = state.job.as_ref().unwrap().output();
+            let plan = state.plan.unwrap();
+            assert_eq!(plan.frame_bytes as usize, bytes.len());
+            outputs.push((bytes.to_vec(), steps, plan.linear_capacity_bytes));
+            assert_eq!(state.release_output(41, 1), Ok(0));
+            assert_eq!(state.phase, Phase::Idle);
+        }
+        assert_eq!(outputs[0], outputs[1]);
+    }
+
+    #[test]
+    fn stale_ticket_and_abort_at_refinement_count_replay_and_release_recover() {
+        let (width, height) = (33usize, 33usize);
+        let input: Vec<u8> = (0..height)
+            .flat_map(|y| {
+                (0..width).flat_map(move |x| {
+                    let gray = 48 + (x * 9 + y * 13 + (x * y % 7) * 3) % 160;
+                    [
+                        (gray + (x * 5 + y * 3) % 17) as u8,
+                        gray as u8,
+                        (gray - (x * 3 + y * 7) % 13) as u8,
+                        255,
+                    ]
+                })
+            })
+            .collect();
+        let joint_input: Vec<u8> = (0..5)
+            .flat_map(|x| {
+                let rgb = if (3 * x) % 4 == 0 {
+                    [244, 29, 171]
+                } else if (2 * x) & 1 != 0 {
+                    [35, 227, 91]
+                } else {
+                    [89, 61, 239]
+                };
+                [rgb[0], rgb[1], rgb[2], 255]
+            })
+            .collect();
+        for target in [
+            36, 37, 38, 39, 40, 27, 29, 28, 35, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+        ] {
+            let mut reached = false;
+            let joint = (37..=40).contains(&target) || (45..=48).contains(&target);
+            let (case_width, case_height, case_input, qualities): (usize, usize, &[u8], &[u32]) =
+                if joint {
+                    (5, 1, &joint_input, &[85])
+                } else {
+                    (width, height, &input, &[60, 75, 85])
+                };
+            for &quality in qualities {
+                let mut state = State::new();
+                state.request = [
+                    2,
+                    case_width as u32,
+                    case_height as u32,
+                    (case_width * 4) as u32,
+                    0,
+                    quality,
+                    case_input.len() as u32,
+                    1_048_576,
+                    41,
+                    1,
+                    case_input.len() as u32,
+                    0,
+                ];
+                assert_eq!(state.plan(), Ok(0));
+                reserve(&mut state);
+                state.input.copy_from_slice(case_input);
+                assert_eq!(state.begin(41, 1), Ok(WORKING));
+                for _ in 0..4096 {
+                    if state.job.as_ref().unwrap().stage() == target {
+                        reached = true;
+                        assert_eq!(state.step(41, 2), Err(Status::StaleTicket));
+                        assert_eq!(state.job.as_ref().unwrap().stage(), target);
+                        assert!(state.job.as_ref().unwrap().output().is_empty());
+                        assert_eq!(state.abort(41, 1), Ok(Status::Cancelled as u32));
+                        assert_eq!(state.phase, Phase::Idle);
+                        assert!(state.job.is_none());
+                        state.request = [2, 16, 16, 64, 0, 75, 1024, 1_048_576, 41, 2, 1024, 0];
+                        assert_eq!(state.plan(), Ok(0));
+                        ready(&mut state);
+                        assert_eq!(state.phase, Phase::OutputLease);
+                        assert_eq!(state.release_output(41, 2), Ok(0));
+                        break;
+                    }
+                    if state.step(41, 1).unwrap() == OUTPUT_READY {
+                        break;
+                    }
+                }
+                if reached {
+                    break;
+                }
+            }
+            assert!(reached, "stage={target}");
+        }
+    }
+
+    #[test]
     fn capacity_conversion_never_turns_4gib_into_an_unchecked_zero() {
         assert_eq!(capacity_word(18), 18 * 65_536);
         assert_eq!(capacity_word(3072), 192 * 1024 * 1024);

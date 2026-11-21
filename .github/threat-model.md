@@ -4,10 +4,10 @@
 
 dropconvert is a static, client-side Vite and SolidJS application. It accepts one
 local video `File`, parses it with owned demux Rust/WASM, decodes with WebCodecs,
-and encodes GIF or animated WebP with owned GIF Rust/WASM, Canvas, WebCodecs,
-or bundled wasm-webp. Patched MediaBunny and gifenc are development-only oracles. Conversion must remain
-local: there is no backend, account,
-application session, upload API, or runtime CDN dependency.
+and encodes GIF with owned GIF Rust/WASM or animated WebP with Canvas or owned
+VP8 Rust/WASM. Patched wasm-webp and MediaBunny, and gifenc, are
+development-only comparison packages. Conversion must remain local: there is no backend,
+account, application session, upload API, or runtime CDN dependency.
 
 Protect these assets:
 
@@ -25,9 +25,9 @@ Protect these assets:
 - Data crossing Worker boundaries is untrusted at runtime despite TypeScript
   types. Request and response discriminants, numeric fields, buffers,
   transferables, cancellation, and lifecycle state require validation.
-- Browser APIs, codec implementations, Canvas, WebCodecs, WebAssembly and
-  wasm-webp cross from JavaScript into native or third-party code.
-- Owned GIF and demux modules cross JavaScript/WASM boundaries. Their loaders
+- Canvas, WebCodecs and WebAssembly cross from JavaScript into browser-native
+  code.
+- Owned GIF, demux and VP8 modules cross JavaScript/WASM boundaries. Their loaders
   and Rust entrypoints must keep offsets, lengths, palette order, index records,
   source ranges and allocations bounded. Refresh views after growth; protect
   borrowed output, asynchronous source reads and generation-checked leases.

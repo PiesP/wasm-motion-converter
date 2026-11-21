@@ -36,7 +36,7 @@ const demuxResult = {
   totalFrames: 30,
 };
 vi.mock('@services/gif-encoder-service', () => ({ encodeGif: mocks.encodeGif }));
-vi.mock('@services/webp-encoder-service', () => ({ encodeWebp: mocks.encodeWebp }));
+vi.mock('@services/webp-encoder-service', () => ({ encodeWebpOwned: mocks.encodeWebp }));
 vi.mock('@services/offscreen-webp-encoder', () => ({
   encodeWebpOffscreen: mocks.encodeWebpOffscreen,
 }));
@@ -48,6 +48,7 @@ vi.mock('@services/worker-pool', () => ({
 
 import { runConversionPipeline } from '@services/conversion-pipeline';
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
+import { getOwnedVp8ModuleBytes, ownedVp8ModuleState } from '@services/owned-vp8-module-state';
 
 const baseRequest: ConversionRequest = {
   inputBuffer: new ArrayBuffer(8),
@@ -97,6 +98,49 @@ afterEach(() => {
 });
 
 describe('main conversion pipeline encoder options', () => {
+  it('waits abortably before demux and drops cached VP8 source on Canvas selection', async () => {
+    const loader = Promise.withResolvers<void>();
+    ownedVp8ModuleState.loaderIdle = loader.promise;
+    ownedVp8ModuleState.loadBytes = 740_651;
+    const request = { ...baseRequest, format: 'webp' as const };
+    const controller = new AbortController();
+    try {
+      stubCanvasWebpSupport();
+      vi.stubGlobal('Worker', undefined);
+      const stopped = runConversionPipeline(request, vi.fn(), controller.signal);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(mocks.demuxVideo).not.toHaveBeenCalled();
+      controller.abort();
+      await expect(stopped).rejects.toMatchObject({ name: 'OwnedVp8CancelledError' });
+
+      const next = runConversionPipeline(request, vi.fn());
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(mocks.demuxVideo).not.toHaveBeenCalled();
+      mocks.encodeWebpOffscreen.mockImplementationOnce(async () => {
+        expect(getOwnedVp8ModuleBytes()).toBe(0);
+        return new Uint8Array([1, 2, 3]);
+      });
+      const binary = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]);
+      ownedVp8ModuleState.cache = {
+        module: new WebAssembly.Module(binary),
+        initialPages: 0,
+        sourceBytes: binary.byteLength,
+      };
+      ownedVp8ModuleState.loadBytes = 0;
+      ownedVp8ModuleState.loaderIdle = undefined;
+      loader.resolve();
+      await next;
+      expect(mocks.demuxVideo).toHaveBeenCalledOnce();
+      expect(mocks.encodeWebpOffscreen).toHaveBeenCalledOnce();
+      expect(mocks.encodeWebp).not.toHaveBeenCalled();
+    } finally {
+      ownedVp8ModuleState.cache = undefined;
+      ownedVp8ModuleState.loadBytes = 0;
+      ownedVp8ModuleState.loaderIdle = undefined;
+      loader.resolve();
+    }
+  });
+
   it('passes the request-owned metadata to demux and permits programmatic omission', async () => {
     const preComputedMetadata = {
       config: { codec: 'vp09.00.10.08', codedWidth: 16, codedHeight: 16 },
@@ -111,7 +155,7 @@ describe('main conversion pipeline encoder options', () => {
     expect(mocks.demuxVideo.mock.calls[1]?.[1]).toBeUndefined();
   });
 
-  it.each(['gif', 'webp-wasm', 'webp-canvas'] as const)(
+  it.each(['gif', 'webp-owned-vp8', 'webp-canvas'] as const)(
     'forwards independent normal, pressure, and explicit-gap policies to %s',
     async (route) => {
       if (route === 'webp-canvas') {
@@ -184,13 +228,13 @@ describe('main conversion pipeline encoder options', () => {
     }
   });
 
-  it.each(['gif-main', 'webp-serial-canvas', 'webp-wasm'] as const)(
+  it.each(['gif-main', 'webp-serial-canvas', 'webp-owned-vp8'] as const)(
     'reports finite decode rates and exact terminal counters on %s',
     async (route) => {
       if (route === 'webp-serial-canvas') {
         stubCanvasWebpSupport();
         vi.stubGlobal('Worker', undefined);
-      } else if (route === 'webp-wasm') {
+      } else if (route === 'webp-owned-vp8') {
         vi.stubGlobal('OffscreenCanvas', undefined);
         vi.stubGlobal('Worker', undefined);
       }

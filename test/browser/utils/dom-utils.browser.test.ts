@@ -71,20 +71,20 @@ describe('dom utilities', () => {
     expect(document.activeElement).toBe(currentAction);
   });
 
-  it('skips an error action disabled by its fieldset and uses an available reload', async () => {
+  it('skips an error action disabled by its fieldset and focuses the available file action', async () => {
     const fieldset = document.createElement('fieldset');
     fieldset.disabled = true;
     const retry = document.createElement('button');
     retry.dataset.testid = 'error-retry-button';
     fieldset.append(retry);
-    const reload = document.createElement('button');
-    reload.dataset.testid = 'app-recovery-reload';
-    document.body.append(fieldset, reload);
+    const select = document.createElement('button');
+    select.dataset.testid = 'error-select-different-fallback-button';
+    document.body.append(fieldset, select);
 
     focusPrimaryErrorAction();
     await Promise.resolve();
 
-    expect(document.activeElement).toBe(reload);
+    expect(document.activeElement).toBe(select);
     expect(fieldset.disabled).toBe(true);
   });
 
@@ -92,14 +92,16 @@ describe('dom utilities', () => {
     'preserves focus when the only action becomes %s before the microtask',
     async (state) => {
       const previousAction = document.createElement('button');
+      const retry = document.createElement('button');
+      retry.dataset.testid = 'error-retry-button';
       const reload = document.createElement('button');
       reload.dataset.testid = 'app-recovery-reload';
-      document.body.append(previousAction, reload);
+      document.body.append(previousAction, retry, reload);
       previousAction.focus();
 
       focusPrimaryErrorAction();
-      if (state === 'disabled') reload.disabled = true;
-      else reload.remove();
+      if (state === 'disabled') retry.disabled = true;
+      else retry.remove();
       await Promise.resolve();
 
       expect(document.activeElement).toBe(previousAction);
@@ -134,14 +136,4 @@ describe('dom utilities', () => {
 
     expect(focusResult).toHaveBeenCalled();
   });
-});
-
-it('focuses explicit reload when terminal initialization has no retry action', async () => {
-  const button = document.createElement('button');
-  button.dataset.testid = 'app-recovery-reload';
-  document.body.append(button);
-  focusPrimaryErrorAction();
-  await Promise.resolve();
-  expect(document.activeElement).toBe(button);
-  button.remove();
 });

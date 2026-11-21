@@ -26,8 +26,10 @@
  * 9. eval `__TEST_HELPERS__.resetApp()` — clean up, repeat
  */
 
+import { schedulerPostTask } from '@piesp/browser-core/util';
 import { getLastConversionProfileReport } from '@services/conversion-profile-store';
 import type { ConversionProfileReport } from '@services/conversion-profiler';
+import type { OwnedVp8Stats } from '@services/owned-vp8-core';
 import { confirmDialog } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -160,6 +162,40 @@ export interface TestHelpers {
    * Available in dev mode only.
    */
   getConversionProfile(): ConversionProfileReport | null;
+
+  /** Compiled owned VP8 kernel checks that do not require VideoDecoder or the UI pipeline. */
+  encodeOwnedVp8Fixture(request: OwnedVp8FixtureRequest): Promise<OwnedVp8FixtureResult>;
+  cancelOwnedVp8AfterStep(request: OwnedVp8FixtureRequest): Promise<OwnedVp8CancellationResult>;
+}
+
+export interface OwnedVp8FixtureRequest {
+  width: number;
+  height: number;
+  quality: 60 | 75 | 85;
+  seed: number;
+  repeats?: number;
+}
+
+export interface OwnedVp8FixtureResult {
+  rawFrames: number[][];
+  stats: OwnedVp8Stats[];
+  releases: number;
+}
+
+export interface OwnedVp8CancellationResult {
+  moduleSha256: string;
+  abiVersion: number;
+  realSteps: number;
+  observedAnalysisSteps: number;
+  cancellationStage: number;
+  analyzedMacroblocks: number;
+  totalMacroblocks: number;
+  hostTaskRan: boolean;
+  cancellationTaskKind: 'scheduler-user-blocking' | 'timer-fallback';
+  taskObservedActive: boolean;
+  outputPublished: boolean;
+  errorName: string;
+  releases: number;
 }
 
 // ─── Helper implementations ─────────────────────────────────────────────────
@@ -353,6 +389,269 @@ const getResultValidation = (): {
   };
 };
 
+function ownedVp8Pixels(
+  request: OwnedVp8FixtureRequest,
+  maxWidth = 64,
+  maxHeight = 64
+): Uint8Array {
+  const { width, height, seed } = request;
+  if (
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > maxWidth ||
+    height > maxHeight ||
+    !Number.isInteger(seed) ||
+    seed < 0 ||
+    seed > 255
+  ) {
+    throw new Error('Invalid owned VP8 test fixture');
+  }
+  const pixels = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const at = (y * width + x) * 4;
+      pixels[at] = (x * 31 + y * 17 + seed) & 255;
+      pixels[at + 1] = (x * 7 + y * 43 + seed * 3) & 255;
+      pixels[at + 2] = (x * 53 + y * 11 + seed * 5) & 255;
+      pixels[at + 3] = 255;
+    }
+  }
+  return pixels;
+}
+
+function ownedVp8Accounting(): {
+  accounting: {
+    assertModuleLoad(bytes: number): void;
+    reserve(linearCapacityBytes: number, hostOutputCopyBytes: number): void;
+    observe(actualCapacityBytes: number): void;
+    release(): void;
+  };
+  releases(): number;
+} {
+  let releaseCount = 0;
+  return {
+    accounting: {
+      assertModuleLoad: () => undefined,
+      reserve: () => undefined,
+      observe: () => undefined,
+      release: () => {
+        releaseCount++;
+      },
+    },
+    releases: () => releaseCount,
+  };
+}
+
+function ownedVp8Settings(request: OwnedVp8FixtureRequest, sourceBytes: number) {
+  return {
+    width: request.width,
+    height: request.height,
+    stride: request.width * 4,
+    layout: 0,
+    quality: request.quality,
+    outputLimit: 96 * 1024 * 1024,
+    externalLiveBytes: sourceBytes,
+    retainedOutputBytes: 0,
+  };
+}
+
+const encodeOwnedVp8Fixture = async (
+  request: OwnedVp8FixtureRequest
+): Promise<OwnedVp8FixtureResult> => {
+  const pixels = ownedVp8Pixels(request);
+  const repeats = request.repeats ?? 1;
+  if (!Number.isInteger(repeats) || repeats < 1 || repeats > 2)
+    throw new Error('Invalid owned VP8 test repeat count');
+  const { createOwnedVp8Encoder } = await import('@services/owned-vp8-core');
+  const ledger = ownedVp8Accounting();
+  const encoder = await createOwnedVp8Encoder({ accounting: ledger.accounting });
+  const rawFrames: number[][] = [];
+  const stats: OwnedVp8Stats[] = [];
+  try {
+    for (let i = 0; i < repeats; i++) {
+      stats.push(
+        await encoder.encode(pixels, ownedVp8Settings(request, pixels.byteLength), (raw) => {
+          // Copy while the SDK still owns the output lease.
+          rawFrames.push(Array.from(raw));
+        })
+      );
+    }
+  } finally {
+    encoder.retire();
+  }
+  return { rawFrames, stats, releases: ledger.releases() };
+};
+
+const cancelOwnedVp8AfterStep = async (
+  request: OwnedVp8FixtureRequest
+): Promise<OwnedVp8CancellationResult> => {
+  const pixels = ownedVp8Pixels(request, 512, 384);
+  const sdk = await import('@services/owned-vp8-core');
+  const assetUrl = new URL('../crates/owned-vp8/owned-vp8.wasm', import.meta.url);
+  // This functional probe compiles fresh code; require an entity response for
+  // network MIME/hash evidence rather than a conditional-cache metadata event.
+  const response = await fetch(assetUrl, {
+    redirect: 'error',
+    credentials: 'same-origin',
+    cache: 'no-store',
+  });
+  if (
+    !response.ok ||
+    response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/wasm'
+  )
+    throw new Error('Owned VP8 test module response is invalid');
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const moduleSha256 = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
+  const module = await WebAssembly.compile(bytes as BufferSource);
+  if (WebAssembly.Module.imports(module).length !== 0)
+    throw new Error('Owned VP8 test module unexpectedly imports a runtime');
+  const instance = new WebAssembly.Instance(module, {});
+  const api = instance.exports as unknown as {
+    memory: WebAssembly.Memory;
+    vp8_v2_abi_version(): number;
+    vp8_v2_response_ptr(): number;
+    vp8_v2_step(generation: number, frame: number): number;
+  };
+  const abiVersion = api.vp8_v2_abi_version();
+  const controller = new AbortController();
+  let realSteps = 0;
+  let observedAnalysisSteps = 0;
+  let cancellationStage = -1;
+  let analyzedMacroblocks = 0;
+  let totalMacroblocks = 0;
+  let hostTaskRan = false;
+  let taskObservedActive = false;
+  let outputPublished = false;
+  let encodingActive = false;
+  const taskController = new AbortController();
+  const cancellationTaskKind =
+    typeof globalThis.scheduler !== 'undefined' &&
+    typeof globalThis.scheduler.postTask === 'function'
+      ? 'scheduler-user-blocking'
+      : 'timer-fallback';
+  let cancelTask: Promise<void> | undefined;
+  let cancelTaskError: unknown;
+  const readResponse = (generation: number, frame: number) => {
+    const buffer = api.memory.buffer;
+    const pointer = api.vp8_v2_response_ptr();
+    if (!Number.isSafeInteger(pointer) || pointer <= 0 || pointer + 96 > buffer.byteLength)
+      throw new Error('Owned VP8 test response lies outside linear memory');
+    const words = new DataView(buffer, pointer, 96);
+    const word = (index: number): number => words.getUint32(index * 4, true);
+    const stage = word(12);
+    const done = word(13);
+    const total = word(14);
+    if (
+      word(0) !== 2 ||
+      ![10, 11].includes(word(1)) ||
+      word(2) > 6 ||
+      word(3) !== generation ||
+      word(4) !== frame ||
+      word(9) !== buffer.byteLength ||
+      // Initialize, Color, Classify and optional SourceActivity can precede Analyze.
+      ![0, 1, 18, 62, 2].includes(stage) ||
+      total === 0 ||
+      done > total ||
+      ([18, 62, 2].includes(stage) && total !== word(17)) ||
+      [20, 21, 22, 23].some((index) => word(index) !== 0)
+    )
+      throw new Error('Owned VP8 test response is inconsistent');
+    return { stage, done, total };
+  };
+  // WASM export properties are immutable; copy values before wrapping one real call.
+  const wrappedExports = {
+    ...instance.exports,
+    vp8_v2_step(generation: number, frame: number): number {
+      const before = cancelTask === undefined ? readResponse(generation, frame) : undefined;
+      const status = api.vp8_v2_step(generation, frame);
+      realSteps++;
+      if (before?.stage === 2 && cancelTask === undefined) {
+        const after = readResponse(generation, frame);
+        if (status !== 10 || after.stage !== 2 || after.done !== before.done + 1)
+          throw new Error('Owned VP8 Analyze step did not complete one macroblock');
+        observedAnalysisSteps++;
+        cancellationStage = before.stage;
+        analyzedMacroblocks = after.done;
+        totalMacroblocks = after.total;
+        cancelTask = schedulerPostTask(
+          () => {
+            hostTaskRan = true;
+            taskObservedActive = encodingActive;
+            controller.abort('host task after a compiled VP8 Analyze step');
+          },
+          { priority: 'user-blocking', signal: taskController.signal }
+        ).catch((error: unknown) => {
+          if (!taskController.signal.aborted) cancelTaskError = error;
+        });
+      }
+      return status;
+    },
+  };
+  const wrappedInstance = new Proxy(instance, {
+    get(target, property, receiver) {
+      return property === 'exports' ? wrappedExports : Reflect.get(target, property, receiver);
+    },
+  });
+  const ledger = ownedVp8Accounting();
+  const initialCapacity = api.memory.buffer.byteLength;
+  ledger.accounting.reserve(initialCapacity, 0);
+  const encoder = new sdk.OwnedVp8Encoder(
+    wrappedInstance,
+    { signal: controller.signal, accounting: ledger.accounting },
+    initialCapacity
+  );
+  let errorName = '';
+  encodingActive = true;
+  try {
+    await encoder.encode(pixels, ownedVp8Settings(request, pixels.byteLength), () => {
+      outputPublished = true;
+    });
+  } catch (error) {
+    if (!(error instanceof sdk.OwnedVp8CancelledError)) throw error;
+    errorName = error.name;
+  } finally {
+    encodingActive = false;
+    taskController.abort();
+    await cancelTask;
+    encoder.retire();
+  }
+  if (
+    realSteps < 1 ||
+    observedAnalysisSteps < 1 ||
+    cancellationStage !== 2 ||
+    analyzedMacroblocks < 1 ||
+    analyzedMacroblocks > totalMacroblocks ||
+    !hostTaskRan ||
+    !taskObservedActive ||
+    outputPublished ||
+    !errorName ||
+    cancelTaskError !== undefined
+  )
+    throw new Error(
+      `Owned VP8 host-task cancellation did not interrupt active compiled work: ${JSON.stringify({ realSteps, observedAnalysisSteps, cancellationStage, analyzedMacroblocks, totalMacroblocks, cancellationTaskKind, hostTaskRan, taskObservedActive, outputPublished, errorName, cancelTaskError: String(cancelTaskError) })}`
+    );
+  return {
+    moduleSha256,
+    abiVersion,
+    realSteps,
+    observedAnalysisSteps,
+    cancellationStage,
+    analyzedMacroblocks,
+    totalMacroblocks,
+    hostTaskRan,
+    cancellationTaskKind,
+    taskObservedActive,
+    outputPublished,
+    errorName,
+    releases: ledger.releases(),
+  };
+};
+
 // ─── Create and attach ──────────────────────────────────────────────────────
 
 const testHelpers: TestHelpers = {
@@ -385,6 +684,8 @@ const testHelpers: TestHelpers = {
   autoConfirm,
   // Profiler
   getConversionProfile: getLastConversionProfileReport,
+  encodeOwnedVp8Fixture,
+  cancelOwnedVp8AfterStep,
 };
 
 export function attachTestHelpers(): void {

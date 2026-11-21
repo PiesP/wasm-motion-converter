@@ -3,17 +3,75 @@
 
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { execFile, spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import type { Server } from 'node:http';
-import { join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
-import type { Browser, Page } from '@playwright/test';
+import type {
+  APIResponse,
+  Browser,
+  BrowserContext,
+  CDPSession,
+  Page,
+  Request as BrowserRequest,
+  Response as BrowserResponse,
+} from '@playwright/test';
 
+import {
+  isExecutableMediaType,
+  isRetiredWebpExecutable,
+  isUnexpectedWasm,
+  LEGACY_WEBP_DEPLOYMENT,
+  LEGACY_WEBP_WASM_ASSET,
+  OWNED_VP8_ASSET,
+  RETIRED_WEBP_CALLERS,
+  RETIRED_WEBP_DELIVERY_FILES,
+  RETIRED_WEBP_EXECUTABLES,
+  RETIRED_WEBP_SHIM,
+} from '../../scripts/test/retired-webp-assets.ts';
+import { hasLegacyWebpInRetiredBuild } from '../../scripts/test/retired-webp-worker.ts';
 import { measureColdTransfer, readBuild } from './app-update.ts';
+import { instrumentOwnedInstance, parseAnimatedWebp } from './helpers/owned-vp8-product.ts';
 
 type Build = Awaited<ReturnType<typeof readBuild>>;
 type AssetFailure = { path: string; mode: '404' | 'wrong-mime' | 'network' };
+type ArchivedAsset = { path: string; size: number; sha256: string };
+export type RetirementOriginRequest = {
+  sequence: number;
+  path: string;
+  target: string;
+  method: string;
+  distribution: string;
+  requestCacheControl: string;
+  disposition: 'pending' | 'finished' | 'closed';
+  status: number | null;
+  contentType: string | null;
+  cacheControl: string | null;
+};
+export type RetirementOriginSnapshot = {
+  distribution: string;
+  paths: string[];
+  overflow: boolean;
+  requests: RetirementOriginRequest[];
+};
+export type RetirementOriginScope = boolean | 'callers';
+type ArchivedOriginControl = {
+  setArchivedOrigin: (archive: string | null, assets: readonly ArchivedAsset[]) => Promise<void>;
+  archivedOriginSnapshot: (scope: RetirementOriginScope) => RetirementOriginSnapshot;
+};
 type StartedServer = {
   server: Server;
   url: string;
@@ -49,6 +107,7 @@ type PageEvents = {
   overflow: boolean;
 };
 type WorkerAssetMessage = { path: string; status: number; reason: string };
+type RetirementEvent = { kind: 'visibility' | 'worker'; value: string; atMs: number };
 type ActiveConversionObservation = {
   timeOrigin: number;
   progress: number;
@@ -90,6 +149,9 @@ declare global {
   var __wmcUpgradeControllerObservation: ActiveConversionObservation | null;
   var __wmcObserveActiveConversion: () => ActiveConversionObservation;
   var __wmcUpgradeAssetMessages: WorkerAssetMessage[];
+  var __wmcRetirementEvents: RetirementEvent[];
+  var __wmcGraceRestartController: ServiceWorker | null;
+  var __wmcGraceRestartControllerChanges: number;
   var __wmcRecoveryWorkerMessages: WorkerAssetMessage[];
   var __wmcLogExportInteraction: LogExportInteraction;
   var __wmcRestoreNumberFormat: () => void;
@@ -105,6 +167,203 @@ declare global {
 
 function sha256(bytes: Buffer | string) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+type InventoryFile = Build['state']['files'][number];
+const STALE_ALIAS_QUERY = '?offline-acceptance=retired-alias';
+export function softwareWebpInventory(files: readonly InventoryFile[]) {
+  const owned = files.filter(({ path }) => OWNED_VP8_ASSET.test(path));
+  const legacyWasm = files.filter(({ path }) => LEGACY_WEBP_WASM_ASSET.test(path));
+  assert(owned.length <= 1 && legacyWasm.length <= 1, 'Ambiguous software WebP WASM inventory');
+  const asset = owned[0] ?? legacyWasm[0];
+  assert(asset, 'No inventoried software WebP encoder WASM');
+  assert.equal(
+    files.filter(({ sha256 }) => sha256 === asset.sha256).length,
+    1,
+    'Software WebP module bytes appear more than once in the executable inventory'
+  );
+  const legacyExecutables = files.filter(({ path, sha256 }) =>
+    isRetiredWebpExecutable(path, sha256)
+  );
+  const unexpectedWasm = files.filter(({ path }) => isUnexpectedWasm(path));
+  const family = owned.length ? 'owned-vp8' : 'wasm-webp';
+  return {
+    family,
+    asset,
+    wasmPaths: files.filter(({ path }) => path.endsWith('.wasm')).map(({ path }) => `/${path}`),
+    legacyExecutables,
+    unexpectedWasm,
+    ownedOnly: family === 'owned-vp8' && !legacyExecutables.length && !unexpectedWasm.length,
+  };
+}
+
+export { hasLegacyWebpLoader } from '../../scripts/test/retired-webp-worker.ts';
+
+export async function forceMainSoftwareWebp(page: Page) {
+  await page.addInitScript(() => {
+    if (typeof OffscreenCanvas !== 'undefined')
+      Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
+        configurable: true,
+        value: undefined,
+      });
+    Object.defineProperty(globalThis, 'Worker', { configurable: true, value: undefined });
+  });
+  await page.addInitScript(instrumentOwnedInstance);
+}
+
+export function observeSoftwareWebp(page: Page, origin: string) {
+  const requests: string[] = [];
+  const foreignRequests: string[] = [];
+  const responses: BrowserResponse[] = [];
+  const observeRequest = (request: BrowserRequest) => {
+    const url = new URL(request.url());
+    if (!url.pathname.endsWith('.wasm') && !isRetiredWebpExecutable(url.pathname)) return;
+    if (url.origin === origin) requests.push(url.pathname);
+    else foreignRequests.push(url.href);
+  };
+  const observeResponse = (response: BrowserResponse) => {
+    const url = new URL(response.url());
+    if (
+      url.origin === origin &&
+      (url.pathname.endsWith('.wasm') || isRetiredWebpExecutable(url.pathname))
+    ) {
+      responses.push(response);
+    }
+  };
+  page.on('request', observeRequest);
+  page.on('response', observeResponse);
+  return {
+    requests,
+    foreignRequests,
+    responses,
+    stop() {
+      page.off('request', observeRequest);
+      page.off('response', observeResponse);
+    },
+  };
+}
+
+export async function verifySoftwareWebp(
+  page: Page,
+  bytes: Buffer,
+  inventory: ReturnType<typeof softwareWebpInventory>,
+  traffic: ReturnType<typeof observeSoftwareWebp>,
+  { offline = false, exactLegacyLoader = false } = {}
+) {
+  const { asset, family } = inventory;
+  const path = `/${asset.path}`;
+  assert.deepEqual(
+    traffic.foreignRequests,
+    [],
+    'Forced conversion requested a foreign encoder asset'
+  );
+  assert(
+    traffic.requests.every(
+      (request) => !request.endsWith('.wasm') || inventory.wasmPaths.includes(request)
+    ),
+    'Forced conversion requested WASM absent from the verified inventory'
+  );
+  assert(traffic.requests.includes(path), `${family} was not requested by the forced conversion`);
+  const responses = traffic.responses.filter((entry) => new URL(entry.url()).pathname === path);
+  assert(responses.length > 0, `Forced conversion got no response for ${path}`);
+  for (const response of responses) {
+    assert.equal(response.status(), 200);
+    assert.equal(response.request().redirectedFrom(), null);
+    assert.match(response.headers()['content-type'] ?? '', /^application\/wasm(?:\s*;|$)/i);
+    const wasm = await response.body();
+    assert.equal(wasm.subarray(0, 8).toString('hex'), '0061736d01000000');
+    assert.equal(wasm.length, asset.size, 'Requested encoder WASM size differs from inventory');
+    assert.equal(
+      sha256(wasm),
+      asset.sha256,
+      'Requested encoder WASM digest differs from inventory'
+    );
+    if (offline)
+      assert(response.fromServiceWorker(), 'Offline encoder WASM bypassed the service worker');
+  }
+  const legacyLoader = exactLegacyLoader ? await verifyLegacyLoader(traffic) : undefined;
+  const abi = await page.evaluate(() => {
+    const probe = Reflect.get(globalThis, '__wmcVp8AbiProbe');
+    if (!probe) throw new Error('The main-document ABI observer did not run');
+    const { successfulBeginCalls, stepCalls } = probe;
+    return { successfulBeginCalls, stepCalls } as {
+      successfulBeginCalls: number;
+      stepCalls: number;
+    };
+  });
+  if (family === 'owned-vp8') {
+    assert(
+      abi.successfulBeginCalls > 0 && abi.stepCalls > 0,
+      'Owned VP8 did not execute begin/step'
+    );
+    assert(
+      traffic.requests.every((request) => !isRetiredWebpExecutable(request)),
+      'Owned conversion requested a legacy WebP executable'
+    );
+  } else {
+    assert.equal(abi.successfulBeginCalls, 0);
+    assert.equal(abi.stepCalls, 0);
+  }
+  const parsed = parseAnimatedWebp(bytes);
+  assert(parsed.frames.length > 1, 'Forced software output is not a multi-frame animation');
+  const decoded = await page.evaluate(
+    async ({ data, frameCount }) => {
+      const decoder = new ImageDecoder({
+        data: new Uint8Array(data),
+        type: 'image/webp',
+        preferAnimation: true,
+      });
+      try {
+        await decoder.tracks.ready;
+        if (decoder.tracks.selectedTrack?.frameCount !== frameCount)
+          throw new Error('Decoder did not expose every parsed frame');
+        for (let frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+          const { complete, image } = await decoder.decode({
+            frameIndex,
+            completeFramesOnly: true,
+          });
+          image.close();
+          if (!complete) throw new Error(`Software WebP frame ${frameIndex} was incomplete`);
+        }
+        return frameCount;
+      } finally {
+        decoder.close();
+      }
+    },
+    { data: [...bytes], frameCount: parsed.frames.length }
+  );
+  return {
+    family,
+    asset,
+    abi,
+    requested: [...new Set(traffic.requests)],
+    fromServiceWorker: responses.every((response) => response.fromServiceWorker()),
+    ...(legacyLoader ? { legacyLoader } : {}),
+    decodedFrames: decoded,
+    outputBytes: bytes.length,
+    outputSha256: sha256(bytes),
+  };
+}
+
+async function verifyLegacyLoader(traffic: ReturnType<typeof observeSoftwareWebp>) {
+  const asset = LEGACY_WEBP_DEPLOYMENT.files[0];
+  const path = `/${asset.path}`;
+  const responses = traffic.responses.filter(
+    (response) => new URL(response.url()).pathname === path
+  );
+  assert(
+    responses.length > 0 && traffic.requests.includes(path),
+    'No archived main WebP loader response'
+  );
+  for (const response of responses) {
+    assert.equal(response.status(), 200);
+    assert.equal(response.request().redirectedFrom(), null);
+    assert.match(response.headers()['content-type'] ?? '', /(?:javascript|ecmascript)/i);
+    const bytes = await response.body();
+    assert.equal(bytes.length, asset.size);
+    assert.equal(sha256(bytes), asset.sha256, 'Archived main WebP loader bytes changed');
+  }
+  return asset;
 }
 
 export function assertWorkerUpdateOutcome(
@@ -132,7 +391,334 @@ export function assertWorkerUpdateOutcome(
   return expectedChange ? 'changed-worker-claimed' : 'byte-identical-kept-controller';
 }
 
+type OwnedDownloads = {
+  session: CDPSession;
+  path: string;
+  tail: Promise<void>;
+  failed: boolean;
+  seen: Set<string>;
+};
+
+const ownedDownloads = new WeakMap<BrowserContext, OwnedDownloads>();
+type OwnedDownloadProgress = {
+  guid: string;
+  totalBytes: number;
+  receivedBytes: number;
+  state: 'inProgress' | 'completed' | 'canceled';
+  filePath?: string;
+};
+
+async function readOwnedDownloadFile(
+  path: string,
+  result: OwnedDownloadProgress,
+  deadline: number
+): Promise<Buffer> {
+  const filename = join(path, result.guid);
+  while (performance.now() < deadline) {
+    const info = await lstat(filename).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (!info) {
+      await delay(25);
+      continue;
+    }
+    assert(info.isFile() && info.nlink === 1, 'Completed browser download is not a regular file');
+    const canonical = await realpath(filename);
+    assert.equal(
+      canonical,
+      join(await realpath(path), result.guid),
+      'Download escaped its owned directory'
+    );
+    if (result.filePath !== undefined) {
+      assert.equal(
+        await realpath(result.filePath),
+        canonical,
+        'Browser returned a different download file'
+      );
+    }
+    assert(Number.isSafeInteger(result.receivedBytes) && result.receivedBytes > 0);
+    assert(result.totalBytes <= 0 || result.totalBytes === result.receivedBytes);
+    assert.equal(
+      info.size,
+      result.receivedBytes,
+      'Completed download extent differs from browser progress'
+    );
+    const bytes = await readFile(canonical);
+    assert.equal(bytes.length, info.size, 'Downloaded file changed while reading it');
+    return bytes;
+  }
+  throw new Error('Completed browser download file did not appear in the owned directory');
+}
+
+const OWNED_DOWNLOAD_GUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+
+async function ownedDownloadFileSizes(path: string) {
+  const files = (await readdir(path, { withFileTypes: true })).filter((entry) => entry.isFile());
+  const sampled = await Promise.all(
+    files.slice(0, 16).map(async ({ name }) => ({
+      kind: OWNED_DOWNLOAD_GUID.test(name)
+        ? 'guid'
+        : name.endsWith('.crdownload')
+          ? 'partial'
+          : 'other',
+      bytes: (await lstat(join(path, name))).size,
+    }))
+  );
+  return { count: files.length, sampled };
+}
+
+async function readOwnedDownload(page: Page, selector: string, owner: OwnedDownloads) {
+  const started = performance.now();
+  const elapsed = () => Math.round(performance.now() - started);
+  const anchor = page.locator(selector);
+  const target = await anchor.evaluate((element) => {
+    if (!(element instanceof HTMLAnchorElement))
+      throw new Error('Result download is not an anchor');
+    return { href: element.href, filename: element.download };
+  });
+  assert(
+    target.href.startsWith('blob:') && new URL(target.href).origin === new URL(page.url()).origin,
+    'Expected the result anchor to point at a same-origin Blob'
+  );
+  assert(
+    target.filename && basename(target.filename) === target.filename,
+    'Missing result filename'
+  );
+  const pageSession = await page.context().newCDPSession(page);
+  let frameId: string;
+  try {
+    const { frameTree } = await pageSession.send('Page.getFrameTree');
+    const frame = frameTree.frame;
+    frameId = frame.id;
+    assert(frameId, 'Download has no attached main frame');
+    assert.equal(
+      frame.url + (frame.urlFragment ?? ''),
+      page.url(),
+      'Download frame does not match the app'
+    );
+  } finally {
+    await pageSession.detach();
+  }
+
+  const { session, path, seen } = owner;
+  const clickObservation = await anchor.evaluateHandle((element, anchorSelector) => {
+    const doc = element.ownerDocument;
+    let click: {
+      trusted: boolean;
+      visibility: DocumentVisibilityState;
+      focused: boolean;
+      href: string;
+    } | null = null;
+    function observe(event: Event) {
+      const clicked = event.target instanceof Element ? event.target.closest('a') : null;
+      if (clicked instanceof HTMLAnchorElement && clicked.matches(anchorSelector) && !click) {
+        click = {
+          trusted: event.isTrusted,
+          visibility: doc.visibilityState,
+          focused: doc.hasFocus(),
+          href: clicked.href,
+        };
+      }
+    }
+    doc.addEventListener('click', observe, true);
+    return { read: () => click, stop: () => doc.removeEventListener('click', observe, true) };
+  }, selector);
+  const readClick = () =>
+    clickObservation.evaluate((observation, href) => {
+      const click = observation.read();
+      if (!click) return null;
+      const { href: observedHref, ...state } = click;
+      return { ...state, hrefMatches: observedHref === href };
+    }, target.href);
+  const timings: {
+    foregroundMs?: number;
+    clickMs?: number;
+    beginMs?: number;
+    completedMs?: number;
+  } = {};
+  const rawBegins: {
+    atMs: number;
+    frameMatches: boolean;
+    hrefMatches: boolean;
+    nameMatches: boolean;
+    afterClickRequest: boolean;
+  }[] = [];
+  let clickRequested = false;
+  let rawBeginOverflow = false;
+  let frameIdMatched = false;
+  let resolveDownload!: (value: OwnedDownloadProgress) => void;
+  let rejectDownload!: (reason: unknown) => void;
+  const result = new Promise<OwnedDownloadProgress>((resolve, reject) => {
+    resolveDownload = resolve;
+    rejectDownload = reject;
+  });
+  // A page can close while foreground activation is still pending.
+  void result.catch(() => {});
+  const timer = new AbortController();
+  let guid: string | undefined;
+  let completed = false;
+  const onBegin = (event: {
+    frameId: string;
+    url: string;
+    guid: string;
+    suggestedFilename: string;
+  }) => {
+    const frameMatches = event.frameId === frameId;
+    const hrefMatches = event.url === target.href;
+    const nameMatches = event.suggestedFilename === target.filename;
+    if (rawBegins.length < 8)
+      rawBegins.push({
+        atMs: elapsed(),
+        frameMatches,
+        hrefMatches,
+        nameMatches,
+        afterClickRequest: clickRequested,
+      });
+    else rawBeginOverflow = true;
+    if (!clickRequested || !frameMatches || !hrefMatches) return;
+    frameIdMatched = true;
+    try {
+      assert(
+        !guid && OWNED_DOWNLOAD_GUID.test(event.guid) && !seen.has(event.guid) && seen.size < 256,
+        'Ambiguous or invalid native download GUID'
+      );
+      guid = event.guid;
+      seen.add(guid);
+      timings.beginMs = elapsed();
+      assert(nameMatches, 'Native download filename differs from the result anchor');
+    } catch (error) {
+      rejectDownload(error);
+    }
+  };
+  const onProgress = (event: OwnedDownloadProgress) => {
+    if (event.guid !== guid) return;
+    if (event.state === 'canceled')
+      rejectDownload(new Error('Native result download was canceled'));
+    if (event.state === 'completed') {
+      completed = true;
+      timings.completedMs = elapsed();
+      resolveDownload(event);
+    }
+  };
+  const onClose = () => rejectDownload(new Error('Native download observation closed'));
+  session.on('Browser.downloadWillBegin', onBegin);
+  session.on('Browser.downloadProgress', onProgress);
+  session.on('close', onClose);
+  page.on('close', onClose);
+  try {
+    const activationDeadline = performance.now() + 5_000;
+    const activated = await waitForProcess(
+      page.bringToFront().then(() => true),
+      5_000
+    );
+    assert(activated, 'Could not activate the native download tab');
+    await waitForNativeVisibility(
+      page,
+      'visible',
+      Math.max(1, activationDeadline - performance.now()),
+      true
+    );
+    timings.foregroundMs = elapsed();
+    const deadline = performance.now() + 30_000;
+    clickRequested = true;
+    const click = anchor.click({ timeout: 30_000 }).then(() => {
+      timings.clickMs = elapsed();
+    });
+    const [outcome] = await Promise.race([
+      Promise.all([result, click]),
+      delay(30_000, undefined, { signal: timer.signal }).then(() => {
+        throw new Error(
+          `Native result download did not complete (matching begin: ${frameIdMatched})`
+        );
+      }),
+    ]);
+    const observed = await waitForProcess(readClick(), 1_000);
+    assert(
+      observed?.trusted &&
+        observed.visibility === 'visible' &&
+        observed.focused &&
+        observed.hrefMatches,
+      'Native download did not come from the expected trusted foreground click'
+    );
+    const bytes = await readOwnedDownloadFile(path, outcome, deadline);
+    console.log('[M5 installed browser download]', {
+      frameId,
+      guid: outcome.guid,
+      filename: target.filename,
+      bytes: bytes.length,
+      sha256: sha256(bytes),
+      click: observed,
+      timings,
+    });
+    return bytes;
+  } catch (error) {
+    const diagnostic = <T>(read: Promise<T>) =>
+      waitForProcess(
+        read.catch(() => undefined),
+        1_000
+      );
+    const [click, current, files] = await Promise.all([
+      diagnostic(readClick()),
+      diagnostic(
+        anchor.evaluate(
+          (element, href) => ({
+            visibility: document.visibilityState,
+            focused: document.hasFocus(),
+            hrefMatches: element instanceof HTMLAnchorElement && element.href === href,
+          }),
+          target.href
+        )
+      ),
+      diagnostic(ownedDownloadFileSizes(path)),
+    ]);
+    console.log('[M5 installed browser download failure]', {
+      observedRawBegin: rawBegins.length > 0,
+      rawBegins,
+      rawBeginOverflow,
+      matchingBegin: frameIdMatched,
+      completed,
+      click: click ?? null,
+      current: current ?? null,
+      files: files ?? null,
+      timings,
+      elapsedMs: elapsed(),
+    });
+    throw error;
+  } finally {
+    timer.abort();
+    session.off('Browser.downloadWillBegin', onBegin);
+    session.off('Browser.downloadProgress', onProgress);
+    session.off('close', onClose);
+    page.off('close', onClose);
+    const dispose = clickObservation
+      .evaluate((observation) => observation.stop())
+      .finally(() => clickObservation.dispose())
+      .catch(() => {});
+    await waitForProcess(dispose, 1_000);
+    if (guid && !completed) {
+      await session.send('Browser.cancelDownload', { guid }, { timeout: 2_000 }).catch(() => {
+        // The browser can already have canceled it. The owned process still closes on failure.
+      });
+    }
+  }
+}
+
 async function readResultDownload(page: Page, selector = '[data-testid="download-result-button"]') {
+  const owned = ownedDownloads.get(page.context());
+  if (owned) {
+    const download = owned.tail.then(() => {
+      assert(!owned.failed, 'An earlier owned browser download failed');
+      return readOwnedDownload(page, selector, owned);
+    });
+    owned.tail = download.then(
+      () => undefined,
+      () => {
+        owned.failed = true;
+      }
+    );
+    return download;
+  }
   const [download] = await Promise.all([
     page.waitForEvent('download'),
     page.locator(selector).click(),
@@ -144,6 +730,1018 @@ async function readResultDownload(page: Page, selector = '[data-testid="download
   return Buffer.concat(chunks);
 }
 
+async function startForcedWebp(page: Page, fixture: string) {
+  await page.locator('[data-testid="option-format-webp"]').click();
+  await page.locator('[data-testid="file-input"]').setInputFiles(fixture);
+  await page.locator('[data-testid="convert-button"]').click();
+  const proceed = page.locator('[data-testid="modal-confirm-button"]');
+  if (await proceed.isVisible()) await proceed.click();
+}
+
+async function convertAndVerifySoftwareWebp(
+  page: Page,
+  origin: string,
+  fixture: string,
+  inventory: ReturnType<typeof softwareWebpInventory>,
+  offline = false,
+  exactLegacyLoader = false
+) {
+  const traffic = observeSoftwareWebp(page, origin);
+  try {
+    await startForcedWebp(page, fixture);
+    await page
+      .locator('[data-testid="result-section"]')
+      .waitFor({ state: 'visible', timeout: 120_000 });
+    return await verifySoftwareWebp(page, await readResultDownload(page), inventory, traffic, {
+      offline,
+      exactLegacyLoader,
+    });
+  } finally {
+    traffic.stop();
+  }
+}
+
+export function selectCachedRetiredExecutableKeys(
+  entries: { cache: string; request: string }[],
+  knownPaths: string[] = []
+) {
+  return entries
+    .filter(({ cache }) => cache.startsWith('dropconvert-'))
+    .map(({ cache, request }) => {
+      const url = new URL(request);
+      return { cache, path: url.pathname, search: url.search };
+    })
+    .filter(({ path }) => isRetiredWebpExecutable(path) || knownPaths.includes(path))
+    .sort(
+      (a, b) =>
+        a.cache.localeCompare(b.cache) ||
+        a.path.localeCompare(b.path) ||
+        a.search.localeCompare(b.search)
+    );
+}
+
+async function cachedLegacyExecutableKeys(page: Page, knownPaths: string[] = []) {
+  const paths = await page.evaluate(async () => {
+    const entries = [];
+    for (const name of await caches.keys()) {
+      if (!name.startsWith('dropconvert-')) continue;
+      for (const request of await (await caches.open(name)).keys())
+        entries.push({ cache: name, request: request.url });
+    }
+    return entries;
+  });
+  return selectCachedRetiredExecutableKeys(paths, knownPaths);
+}
+
+async function cachedLegacyExecutablePaths(page: Page, knownPaths: string[] = []) {
+  return [
+    ...new Set((await cachedLegacyExecutableKeys(page, knownPaths)).map(({ path }) => path)),
+  ].sort();
+}
+
+export function selectPredecessorAssetSet(
+  prior: readonly ArchivedAsset[],
+  current: readonly ArchivedAsset[]
+) {
+  const hashedPath = /^assets\/[^/]+[.-][\w-]{8}\.(?:js|css|wasm)$/;
+  const currentHashed = current.filter(({ path }) => hashedPath.test(path));
+  const newAssets = new Map(currentHashed.map((asset) => [asset.path, asset]));
+  const oldOnly: ArchivedAsset[] = [];
+  const shared: ArchivedAsset[] = [];
+  const seen = new Set<string>();
+  assert.equal(newAssets.size, currentHashed.length, 'Duplicate current hashed path');
+  for (const asset of prior.filter(({ path }) => hashedPath.test(path))) {
+    assert(!seen.has(asset.path), `Duplicate predecessor hashed path: ${asset.path}`);
+    seen.add(asset.path);
+    const next = newAssets.get(asset.path);
+    if (!next) oldOnly.push(asset);
+    else {
+      assert.equal(next.sha256, asset.sha256, `Shared hashed path changed digest: ${asset.path}`);
+      assert.equal(next.size, asset.size, `Shared hashed path changed extent: ${asset.path}`);
+      shared.push(asset);
+    }
+  }
+  return { oldOnly, shared };
+}
+
+type PredecessorAssets = ReturnType<typeof selectPredecessorAssetSet>;
+
+async function snapshotPredecessorCaches(page: Page, assets: PredecessorAssets) {
+  return page.evaluate(async ({ oldOnly, shared }) => {
+    const oldPaths = new Set(oldOnly.map((asset) => '/' + asset.path));
+    const sharedPaths = new Map(shared.map((asset) => ['/' + asset.path, asset]));
+    const oldKeys = [];
+    const sharedKeys = [];
+    const navigation = [];
+    const cacheNames = (await caches.keys())
+      .filter((name) => /^dropconvert-(?:static|dynamic)-/.test(name))
+      .sort();
+    for (const name of cacheNames) {
+      const cache = await caches.open(name);
+      for (const request of await cache.keys()) {
+        const url = new URL(request.url);
+        if (url.origin !== location.origin) continue;
+        const { pathname: path, search } = url;
+        const key = { cache: name, path, search };
+        const expected = sharedPaths.get(path);
+        const isNavigation = path === '/' || path === '/index.html';
+        if (oldPaths.has(path)) oldKeys.push(key);
+        else if (expected || isNavigation) {
+          const response = await cache.match(request);
+          if (!response?.ok) continue;
+          const bytes = await response.arrayBuffer();
+          const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+          const sha256 = [...digest].map((value) => value.toString(16).padStart(2, '0')).join('');
+          const row = { ...key, size: bytes.byteLength, sha256 };
+          if (isNavigation) navigation.push(row);
+          else if (expected && row.sha256 === expected.sha256 && row.size === expected.size)
+            sharedKeys.push(row);
+        }
+      }
+    }
+    return { cacheNames, oldKeys, sharedKeys, navigation };
+  }, assets);
+}
+
+type PredecessorCacheSnapshot = Awaited<ReturnType<typeof snapshotPredecessorCaches>>;
+
+function assertPredecessorCacheSettlement(
+  settled: PredecessorCacheSnapshot,
+  beforeClose: PredecessorCacheSnapshot,
+  priorIndexSha256: string,
+  currentIndexSha256: string
+) {
+  assert.deepEqual(settled.oldKeys, [], 'An archived-only key survived retirement');
+  assert(
+    beforeClose.sharedKeys.length > 0,
+    'No actual shared asset was available as a preservation control'
+  );
+  for (const key of beforeClose.sharedKeys)
+    assert(
+      settled.sharedKeys.some(
+        (row) =>
+          row.cache === key.cache &&
+          row.path === key.path &&
+          row.search === key.search &&
+          row.size === key.size &&
+          row.sha256 === key.sha256
+      ),
+      `A shared cache key changed or disappeared: ${key.cache} ${key.path}${key.search}`
+    );
+  assert(
+    !settled.navigation.some(({ sha256 }) => sha256 === priorIndexSha256),
+    'A stable URL still holds the archived document'
+  );
+  assert(
+    settled.navigation.some(({ sha256 }) => sha256 === currentIndexSha256),
+    'No exact current offline shell survived'
+  );
+}
+
+async function observeCurrentClientRetirement(page: Page, sourceSha: string) {
+  await page.addInitScript((generation) => {
+    globalThis.__wmcRetirementEvents = [];
+    const record = (kind: RetirementEvent['kind'], value: string) => {
+      if (globalThis.__wmcRetirementEvents.length < 128)
+        globalThis.__wmcRetirementEvents.push({ kind, value, atMs: performance.now() });
+    };
+    document.addEventListener('visibilitychange', (event) => {
+      if (event.isTrusted) record('visibility', document.visibilityState);
+    });
+    navigator.serviceWorker?.addEventListener('message', (event) => {
+      if (!event.isTrusted || event.source !== navigator.serviceWorker.controller) return;
+      const data = event.data;
+      if (
+        data?.type === 'dropconvert:retirement-state' &&
+        data.generation === generation &&
+        (data.phase === 'grace' ||
+          data.phase === 'retired-pending-sweep' ||
+          data.phase === 'retired')
+      )
+        record('worker', data.phase);
+    });
+  }, sourceSha);
+}
+
+async function seedArchivedCacheAliases(
+  page: Page,
+  bundleRoot: string,
+  archive: string,
+  assets: readonly ArchivedAsset[] = RETIRED_WEBP_EXECUTABLES
+) {
+  // Add known physical query keys to the old profile before changing origin.
+  // Retain the real requests and canonical entries warmed by both old tabs.
+  const entries = await Promise.all(
+    assets.map(async (asset) => {
+      const bytes = await readFile(join(bundleRoot, archive, asset.path));
+      assert.equal(bytes.length, asset.size);
+      assert.equal(sha256(bytes), asset.sha256);
+      return {
+        url: assetPath(asset) + STALE_ALIAS_QUERY,
+        contentType: asset.path.endsWith('.wasm') ? 'application/wasm' : 'text/javascript',
+        bytes: bytes.toString('base64'),
+      };
+    })
+  );
+  await page.evaluate(async (assets) => {
+    const [cacheName, ...other] = (await caches.keys()).filter((name) =>
+      name.startsWith('dropconvert-dynamic-')
+    );
+    if (!cacheName || other.length) throw new Error('Expected the one warmed old dynamic cache');
+    const cache = await caches.open(cacheName);
+    await Promise.all(
+      assets.map(({ url, contentType, bytes }) =>
+        cache.put(
+          url,
+          new Response(
+            Uint8Array.from(atob(bytes), (value) => value.charCodeAt(0)),
+            { headers: { 'Content-Type': contentType } }
+          )
+        )
+      )
+    );
+  }, entries);
+  const paths = assets.map(assetPath);
+  const keys = (await cachedLegacyExecutableKeys(page, paths)).filter(
+    ({ path, search }) => paths.includes(path) && search === STALE_ALIAS_QUERY
+  );
+  assert.deepEqual(keys.map(({ path }) => path).sort(), paths.sort());
+  return keys;
+}
+
+export type RemovalVerification = {
+  coreSha: string;
+  wasmSha256: string;
+};
+
+async function verifyAppDocument(
+  response: BrowserResponse | null,
+  build: Build,
+  fromServiceWorker = false
+) {
+  assert(response, 'No application document response');
+  assert.equal(response.status(), 200);
+  assert.match(response.headers()['content-type'] ?? '', /^text\/html\b/i);
+  assert.equal(
+    sha256(await response.body()),
+    build.indexSha256,
+    'Application document differs from its build'
+  );
+  if (fromServiceWorker)
+    assert(response.fromServiceWorker(), 'Offline document bypassed the service worker');
+}
+
+async function archivedCallerResponse(
+  response: BrowserResponse,
+  expected: ArchivedAsset,
+  allowUnavailableBody: boolean
+) {
+  const request = response.request();
+  const metadata = {
+    path: assetPath(expected),
+    requestUrl: request.url(),
+    method: request.method(),
+    resourceType: request.resourceType(),
+    fromServiceWorker: response.fromServiceWorker(),
+    serviceWorkerInitiated: Boolean(request.serviceWorker()),
+    status: response.status(),
+  };
+  assert.equal(metadata.status, 200);
+  assert(isExecutableMediaType(response.headers()['content-type'] ?? ''));
+  let bytes: Buffer;
+  try {
+    bytes = await response.body();
+  } catch (error) {
+    if (
+      !allowUnavailableBody ||
+      !(error instanceof Error) ||
+      !/Response body is unavailable|No resource with given identifier found/.test(error.message)
+    )
+      throw error;
+    return { kind: 'unavailable' as const, row: { ...metadata, reason: error.message } };
+  }
+  const digest = sha256(bytes);
+  assert.equal(bytes.length, expected.size);
+  assert.equal(digest, expected.sha256);
+  return { kind: 'verified' as const, row: { ...metadata, size: bytes.length, sha256: digest } };
+}
+
+function observeArchivedCallerResponses(
+  context: BrowserContext,
+  baseUrl: string,
+  allowUnavailableBody = false
+) {
+  const origin = new URL(baseUrl).origin;
+  type Capture = Awaited<ReturnType<typeof archivedCallerResponse>>;
+  const responses: Promise<Capture | { kind: 'failed'; error: unknown }>[] = [];
+  let overflow = false;
+  const record = (response: BrowserResponse) => {
+    const url = new URL(response.url());
+    if (url.origin !== origin) return;
+    const expected = RETIRED_WEBP_CALLERS.find((asset) => assetPath(asset) === url.pathname);
+    if (!expected) return;
+    if (responses.length >= 32) {
+      overflow = true;
+      return;
+    }
+    // A short-lived Worker may terminate before the conversion result appears.
+    responses.push(
+      archivedCallerResponse(response, expected, allowUnavailableBody).catch((error: unknown) => ({
+        kind: 'failed' as const,
+        error,
+      }))
+    );
+  };
+  context.on('response', record);
+  return {
+    async read() {
+      assert(!overflow, 'Archived caller response observation overflowed');
+      const verified = [];
+      const unavailable = [];
+      for (const result of await Promise.all(responses)) {
+        if (result.kind === 'failed') throw result.error;
+        if (result.kind === 'verified') verified.push(result.row);
+        else unavailable.push(result.row);
+      }
+      return { verified, unavailable };
+    },
+    stop() {
+      context.off('response', record);
+    },
+  };
+}
+
+async function verifyArchivedWorkerCaller(
+  context: BrowserContext,
+  baseUrl: string,
+  build: Build,
+  fixture: string
+) {
+  const tab = await context.newPage();
+  const traffic = observeArchivedCallerResponses(context, baseUrl, true);
+  const workerUrls = new Set<string>();
+  const workerPath = assetPath(RETIRED_WEBP_CALLERS[1]);
+  tab.on('worker', (worker) => workerUrls.add(worker.url()));
+  try {
+    await verifyAppDocument(await tab.goto(baseUrl), build);
+    await tab.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    await tab.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+    await tab.locator('[data-testid="option-format-gif"]').click();
+    await tab.locator('[data-testid="file-input"]').setInputFiles(fixture);
+    await tab.locator('[data-testid="convert-button"]').click();
+    const confirm = tab.locator('[data-testid="modal-confirm-button"]');
+    if (await confirm.isVisible()) await confirm.click();
+    await tab
+      .locator('[data-testid="result-section"]')
+      .waitFor({ state: 'visible', timeout: 120_000 });
+    const expected = new URL(workerPath, baseUrl).href;
+    const { verified: responses, unavailable } = await traffic.read();
+    const observedExactWorker = workerUrls.has(expected);
+    return {
+      route: 'old application GIF conversion',
+      workerUrls: [...workerUrls],
+      observedExactWorker,
+      byteEvidence:
+        observedExactWorker && responses.some(({ requestUrl }) => requestUrl === expected)
+          ? 'observed'
+          : 'unverified',
+      responses,
+      unavailableResponseBodies: unavailable,
+    };
+  } finally {
+    traffic.stop();
+    await tab.close();
+  }
+}
+
+async function verifyArchivedAssetFetches(
+  page: Page,
+  available: boolean,
+  cache: 'default' | 'no-store' = 'no-store',
+  fromServiceWorker = false,
+  assets: readonly ArchivedAsset[] = LEGACY_WEBP_DEPLOYMENT.files,
+  search = ''
+) {
+  const paths = assets.map((asset) => assetPath(asset) + search);
+  const observations = new Map<string, BrowserRequest>();
+  const origin = new URL(page.url()).origin;
+  const record = (request: BrowserRequest) => {
+    const url = new URL(request.url());
+    if (
+      url.origin === origin &&
+      paths.includes(url.pathname + url.search) &&
+      request.resourceType() === 'fetch'
+    )
+      observations.set(url.pathname + url.search, request);
+  };
+  page.on('request', record);
+  try {
+    const rows = await page.evaluate(
+      async ({ paths, cache }) =>
+        Promise.all(
+          paths.map(async (path) => {
+            let response: Response;
+            try {
+              response = await fetch(path, { cache, redirect: 'error' });
+            } catch (error) {
+              if (!(error instanceof TypeError)) throw error;
+              return { path, fetchRejected: true as const };
+            }
+            const bytes = await response.arrayBuffer();
+            const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+            return {
+              path,
+              status: response.status,
+              contentType: response.headers.get('content-type') ?? '',
+              cacheControl: response.headers.get('cache-control') ?? '',
+              size: bytes.byteLength,
+              sha256: [...digest].map((value) => value.toString(16).padStart(2, '0')).join(''),
+            };
+          })
+        ),
+      { paths, cache }
+    );
+    return await Promise.all(
+      rows.map(async (row, index) => {
+        const asset = assets[index];
+        assert(asset && row.path === assetPath(asset) + search);
+        const request = observations.get(row.path);
+        assert(request, `No browser request observed for ${row.path}`);
+        assert.equal(request.redirectedFrom(), null);
+        const response = await request.response();
+        const serviceWorkerResponse = response?.fromServiceWorker() ?? null;
+        const failure = request.failure()?.errorText ?? null;
+        if (available) {
+          assert('status' in row, `Archived baseline bytes unavailable: ${row.path}`);
+          assert.equal(row.status, 200);
+          assert.equal(response?.status(), row.status);
+          assert.match(
+            row.contentType,
+            asset.path.endsWith('.wasm') ? /^application\/wasm\b/i : /(?:javascript|ecmascript)/i
+          );
+          assert.equal(row.size, asset.size);
+          assert.equal(row.sha256, asset.sha256);
+          if (fromServiceWorker) assert.equal(serviceWorkerResponse, true, row.path);
+        } else if ('status' in row) {
+          assert.equal(row.status, 404, `Retired executable was served: ${row.path}`);
+          assert.equal(response?.status(), row.status);
+          assert(
+            !isExecutableMediaType(row.contentType) && !/\bimmutable\b/i.test(row.cacheControl)
+          );
+          assert.notEqual(row.sha256, asset.sha256);
+        } else {
+          assert.equal(response, null, `Retired executable returned a response: ${row.path}`);
+          assert(failure, `No browser request failure observed for ${row.path}`);
+        }
+        return {
+          ...row,
+          path: assetPath(asset),
+          requestUrl: request.url(),
+          method: request.method(),
+          resourceType: request.resourceType(),
+          requestCacheControl: (await request.allHeaders())['cache-control'] ?? null,
+          cache,
+          serviceWorkerResponse,
+          failure,
+        };
+      })
+    );
+  } finally {
+    page.off('request', record);
+  }
+}
+
+function requireQuietOrigin(before: RetirementOriginSnapshot, after: RetirementOriginSnapshot) {
+  assert(!before.overflow && !after.overflow, 'Archived origin recorder overflowed');
+  assert(
+    before.requests.every((row) => row.disposition !== 'pending'),
+    'Prior origin requests are unsettled'
+  );
+  assert.deepEqual(after, before, 'Controlled retired requests reached the private origin');
+}
+
+async function retiredBrowserOriginWindow(
+  page: Page,
+  origin: ArchivedOriginControl,
+  scope: RetirementOriginScope,
+  cache: 'default' | 'no-store',
+  search = ''
+) {
+  const assets =
+    scope === 'callers'
+      ? RETIRED_WEBP_CALLERS
+      : scope
+        ? RETIRED_WEBP_EXECUTABLES
+        : LEGACY_WEBP_DEPLOYMENT.files;
+  const before = origin.archivedOriginSnapshot(scope);
+  const rows = await verifyArchivedAssetFetches(page, false, cache, false, assets, search);
+  const after = origin.archivedOriginSnapshot(scope);
+  requireQuietOrigin(before, after);
+  return { before, after, rows };
+}
+
+async function readDirectArchivedOrigin(
+  page: Page,
+  baseUrl: string,
+  origin: ArchivedOriginControl,
+  assets: readonly ArchivedAsset[],
+  available: boolean,
+  scope: RetirementOriginScope,
+  search = available ? STALE_ALIAS_QUERY : ''
+) {
+  const before = origin.archivedOriginSnapshot(scope);
+  const rows = [];
+  for (const asset of assets) {
+    const path = assetPath(asset);
+    const requestUrl = new URL(path + search, baseUrl).href;
+    const response: APIResponse = await page.context().request.get(requestUrl, {
+      maxRedirects: 0,
+      failOnStatusCode: false,
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    const bytes = await response.body();
+    const { 'content-type': contentType = '', 'cache-control': cacheControl = '' } =
+      response.headers();
+    const status = response.status();
+    const digest = sha256(bytes);
+    if (available) {
+      assert.equal(status, 200);
+      assert(isExecutableMediaType(contentType));
+      assert.match(cacheControl, /\bimmutable\b/i);
+      assert.equal(bytes.length, asset.size);
+      assert.equal(digest, asset.sha256);
+    } else {
+      assert.equal(status, 404, `Origin served retired executable ${asset.path}`);
+      assert(!isExecutableMediaType(contentType) && !/\bimmutable\b/i.test(cacheControl));
+      assert.notEqual(digest, asset.sha256);
+    }
+    rows.push({
+      path,
+      requestUrl,
+      method: 'GET',
+      requestCacheControl: 'no-cache',
+      status,
+      contentType,
+      cacheControl,
+      sha256: digest,
+    });
+  }
+  const after = origin.archivedOriginSnapshot(scope);
+  assert(!before.overflow && !after.overflow, 'Direct origin recorder overflowed');
+  assert.deepEqual(after.requests.slice(0, before.requests.length), before.requests);
+  const recorded = after.requests.slice(before.requests.length);
+  assert.equal(recorded.length, rows.length, 'Missing or extra independent origin requests');
+  for (const [index, row] of rows.entries()) {
+    const record = recorded[index];
+    assert(record && record.disposition === 'finished', 'Direct origin request did not settle');
+    assert.equal(record.path, row.path);
+    assert.equal(record.target, row.path + search);
+    assert.equal(record.distribution, 'dist');
+    for (const key of [
+      'method',
+      'requestCacheControl',
+      'status',
+      'contentType',
+      'cacheControl',
+    ] as const)
+      assert.equal(record[key], row[key], `Direct origin ${key} differs from client request`);
+  }
+  return { before, after, rows };
+}
+
+async function verifyCallerReadmissionDenied(
+  page: Page,
+  baseUrl: string,
+  archivedOrigin: ArchivedOriginControl,
+  archive: string
+) {
+  const before = await retirementClientIdentity(page);
+  const readDirect = (available: boolean, search: string) =>
+    readDirectArchivedOrigin(
+      page,
+      baseUrl,
+      archivedOrigin,
+      RETIRED_WEBP_CALLERS,
+      available,
+      'callers',
+      search
+    );
+  await archivedOrigin.setArchivedOrigin(archive, RETIRED_WEBP_CALLERS);
+  let direct;
+  let denied;
+  try {
+    direct = {
+      canonical: await readDirect(true, ''),
+      aliases: await readDirect(true, STALE_ALIAS_QUERY),
+    };
+    denied = {
+      canonical: await retiredBrowserOriginWindow(page, archivedOrigin, 'callers', 'default'),
+      aliases: await retiredBrowserOriginWindow(
+        page,
+        archivedOrigin,
+        'callers',
+        'no-store',
+        STALE_ALIAS_QUERY
+      ),
+    };
+    requireQuietOrigin(direct.aliases.after, denied.aliases.after);
+  } finally {
+    await archivedOrigin.setArchivedOrigin(null, []);
+  }
+  const candidate = {
+    canonical: await readDirect(false, ''),
+    aliases: await readDirect(false, STALE_ALIAS_QUERY),
+  };
+  assert.deepEqual(candidate.canonical.before, denied.aliases.after);
+  assert.deepEqual(await retirementClientIdentity(page), before);
+  return { client: before, direct, denied, candidate };
+}
+
+async function retirementClientIdentity(page: Page) {
+  return page.evaluate(() => ({
+    documentUrl: location.href,
+    timeOrigin: performance.timeOrigin,
+    workerUrl: navigator.serviceWorker.controller?.scriptURL ?? null,
+    workerState: navigator.serviceWorker.controller?.state ?? null,
+  }));
+}
+
+async function verifyFreshOfflineDuringGrace(retainedTab: Page, baseUrl: string, build: Build) {
+  const context = retainedTab.context();
+  const fresh = await context.newPage();
+  const traffic = observeSoftwareWebp(fresh, baseUrl);
+  let workersStarted = 0;
+  fresh.on('worker', () => workersStarted++);
+  try {
+    await context.setOffline(true);
+    await verifyAppDocument(await fresh.goto(baseUrl), build, true);
+    await fresh.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+    await fresh.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    await fresh.locator('[data-testid="offline-banner"]').waitFor({ state: 'visible' });
+    assert.deepEqual(traffic.requests, [], 'Fresh offline shell eagerly requested codec assets');
+    assert.deepEqual(traffic.foreignRequests, [], 'Fresh offline shell requested a foreign codec');
+    assert.equal(workersStarted, 0, 'Fresh offline shell eagerly started a conversion worker');
+    const [canonical, retainedOldCanonical] = await Promise.all([
+      verifyArchivedAssetFetches(fresh, false, 'default', false, RETIRED_WEBP_EXECUTABLES),
+      verifyArchivedAssetFetches(retainedTab, true, 'no-store', true),
+    ]);
+    const aliases = await verifyArchivedAssetFetches(
+      fresh,
+      false,
+      'no-store',
+      false,
+      RETIRED_WEBP_EXECUTABLES,
+      STALE_ALIAS_QUERY
+    );
+    const retainedPaths = await cachedLegacyExecutablePaths(fresh);
+    assert(LEGACY_WEBP_DEPLOYMENT.files.every((asset) => retainedPaths.includes(assetPath(asset))));
+    const callerKeys = (
+      await cachedLegacyExecutableKeys(retainedTab, RETIRED_WEBP_CALLERS.map(assetPath))
+    ).filter(({ cache, search }) => /^dropconvert-(?:static|dynamic)-/.test(cache) && !search);
+    const residentCallers = RETIRED_WEBP_CALLERS.filter((asset) =>
+      callerKeys.some(({ path }) => path === assetPath(asset))
+    );
+    const [callerCanonical, oldWindowCacheReads] = await Promise.all([
+      verifyArchivedAssetFetches(fresh, false, 'default', false, RETIRED_WEBP_CALLERS),
+      verifyArchivedAssetFetches(retainedTab, true, 'no-store', true, residentCallers),
+    ]);
+    const callerAliases = await verifyArchivedAssetFetches(
+      fresh,
+      false,
+      'no-store',
+      false,
+      RETIRED_WEBP_CALLERS,
+      STALE_ALIAS_QUERY
+    );
+    return {
+      codec: {
+        sourceSha: build.state.sourceSha,
+        sha256: build.indexSha256,
+        fromServiceWorker: true,
+        eagerCodecRequests: 0,
+        eagerConversionWorkers: workersStarted,
+        denied: { canonical, aliases },
+        retainedOldCanonical,
+        retainedPaths,
+      },
+      callers: {
+        denied: { canonical: callerCanonical, aliases: callerAliases },
+        oldWindowCacheReads,
+      },
+    };
+  } finally {
+    traffic.stop();
+    try {
+      await fresh.close();
+    } finally {
+      await context.setOffline(false);
+    }
+  }
+}
+
+type GraceWorkerVersion = {
+  versionId: string;
+  registrationId: string;
+  scriptURL: string;
+  status: string;
+  runningStatus: string;
+  controlledClients?: string[];
+  targetId?: string;
+};
+
+export function selectGraceWorkerVersion(
+  versions: Iterable<GraceWorkerVersion>,
+  registrationId: string,
+  scriptURL: string,
+  targets: readonly string[]
+) {
+  const matches = [...versions].filter(
+    (version) =>
+      version.status === 'activated' &&
+      version.runningStatus === 'running' &&
+      version.registrationId === registrationId &&
+      version.scriptURL === scriptURL &&
+      targets.length === 2 &&
+      new Set(targets).size === 2 &&
+      targets.every((id) => version.controlledClients?.includes(id))
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+async function waitForGraceObservation<T>(read: () => T | undefined, detail: string) {
+  const deadline = performance.now() + 15_000;
+  do {
+    const found = read();
+    if (found !== undefined) return found;
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  } while (performance.now() < deadline);
+  throw new Error(detail);
+}
+
+function unsupportedServiceWorkerProtocol(error: unknown) {
+  return (
+    error instanceof Error &&
+    /(?:wasn't found|Method not found|unknown command)/i.test(error.message)
+  );
+}
+
+async function verifyGraceWorkerRestart(page: Page, activePage: Page, workerSha256: string) {
+  const tabs = [page, activePage];
+  const scope = new URL('/', page.url()).href;
+  const scriptURL = new URL('service-worker.js', scope).href;
+  const before = await Promise.all(
+    tabs.map(async (tab) => {
+      const document = await tab.evaluate(async () => {
+        const controller = navigator.serviceWorker.controller;
+        const registration = await navigator.serviceWorker.getRegistration();
+        if (
+          !controller ||
+          controller.state !== 'activated' ||
+          registration?.active !== controller ||
+          registration.installing ||
+          registration.waiting
+        )
+          throw new Error(
+            'Grace restart requires the one activated registration on both retained tabs'
+          );
+        globalThis.__wmcGraceRestartController = controller;
+        globalThis.__wmcGraceRestartControllerChanges = 0;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          globalThis.__wmcGraceRestartControllerChanges++;
+        });
+        return {
+          timeOrigin: performance.timeOrigin,
+          scope: registration.scope,
+          scriptURL: controller.scriptURL,
+        };
+      });
+      assert.equal(document.scope, scope);
+      assert.equal(document.scriptURL, scriptURL);
+      return { ...document, resultSha256: sha256(await readResultDownload(tab)) };
+    })
+  );
+  const retainedBefore = await cachedLegacyExecutableKeys(page);
+  const clientSessions: Awaited<ReturnType<BrowserContext['newCDPSession']>>[] = [];
+  let disableServiceWorker: (() => Promise<unknown>) | undefined;
+  try {
+    try {
+      for (const tab of tabs) clientSessions.push(await tab.context().newCDPSession(tab));
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !/CDP session is only available in Chromium/i.test(error.message)
+      )
+        throw error;
+      return {
+        status: 'unverified',
+        reason: 'The installed browser has no page CDP session',
+      } as const;
+    }
+    const [session] = clientSessions;
+    assert(session);
+    const targets = await Promise.all(
+      clientSessions.map(
+        async (client) => (await client.send('Target.getTargetInfo')).targetInfo.targetId
+      )
+    );
+    const registrations = new Map<string, string>();
+    const versions = new Map<string, GraceWorkerVersion>();
+    const lifecycle: { version: GraceWorkerVersion; atMs: number }[] = [];
+    session.on('ServiceWorker.workerRegistrationUpdated', ({ registrations: updates }) => {
+      for (const item of updates) {
+        registrations.delete(item.registrationId);
+        if (!item.isDeleted) registrations.set(item.registrationId, item.scopeURL);
+      }
+    });
+    session.on('ServiceWorker.workerVersionUpdated', ({ versions: updates }) => {
+      for (const version of updates) {
+        if (version.scriptURL !== scriptURL) continue;
+        versions.set(version.versionId, version);
+        if (lifecycle.length < 128) lifecycle.push({ version, atMs: performance.now() });
+      }
+    });
+    try {
+      await session.send('ServiceWorker.enable');
+    } catch (error) {
+      if (!unsupportedServiceWorkerProtocol(error)) throw error;
+      return {
+        status: 'unverified',
+        reason: 'ServiceWorker.enable unavailable in installed Chromium',
+      } as const;
+    }
+    disableServiceWorker = () => session.send('ServiceWorker.disable');
+    const worker = await waitForGraceObservation(() => {
+      const ids = [...registrations].filter(([, candidateScope]) => candidateScope === scope);
+      if (ids.length !== 1) return undefined;
+      return selectGraceWorkerVersion(versions.values(), ids[0]?.[0] ?? '', scriptURL, targets);
+    }, 'Could not observe an activated running worker controlling both retained documents');
+    const commandStart = lifecycle.length;
+    try {
+      await session.send('ServiceWorker.stopWorker', { versionId: worker.versionId });
+    } catch (error) {
+      if (!unsupportedServiceWorkerProtocol(error)) throw error;
+      return {
+        status: 'unverified',
+        reason: 'ServiceWorker.stopWorker unavailable in installed Chromium',
+      } as const;
+    }
+    const sameVersion = (version: GraceWorkerVersion) =>
+      version.versionId === worker.versionId &&
+      version.registrationId === worker.registrationId &&
+      version.scriptURL === scriptURL &&
+      version.status === 'activated';
+    const stopped = await waitForGraceObservation(
+      () =>
+        lifecycle
+          .slice(commandStart)
+          .find(({ version }) => sameVersion(version) && version.runningStatus === 'stopped'),
+      'Scoped stop did not produce a stopped event for the live activated worker'
+    );
+    assert.equal(
+      versions.get(worker.versionId)?.runningStatus,
+      'stopped',
+      'Worker woke before the ordinary fetch'
+    );
+    const wakeStart = lifecycle.length;
+    const archived = await verifyArchivedAssetFetches(page, true, 'no-store', true);
+    const restarted = await waitForGraceObservation(
+      () =>
+        lifecycle
+          .slice(wakeStart)
+          .find(
+            ({ version }) =>
+              sameVersion(version) &&
+              version.runningStatus === 'running' &&
+              targets.every((id) => version.controlledClients?.includes(id))
+          ),
+      'Ordinary offline fetch did not wake the same worker controlling the two retained tabs'
+    );
+    assert.deepEqual(
+      [...registrations].filter(([, candidateScope]) => candidateScope === scope),
+      [[worker.registrationId, scope]],
+      'Scoped stop changed the registration'
+    );
+    const after = await Promise.all(
+      tabs.map(async (tab) => {
+        const document = await tab.evaluate(() => {
+          const controller = navigator.serviceWorker.controller;
+          return {
+            timeOrigin: performance.timeOrigin,
+            sameController: controller === globalThis.__wmcGraceRestartController,
+            controllerChanges: globalThis.__wmcGraceRestartControllerChanges,
+            scriptURL: controller?.scriptURL,
+          };
+        });
+        return { ...document, resultSha256: sha256(await readResultDownload(tab)) };
+      })
+    );
+    for (const [index, document] of after.entries()) {
+      assert.equal(document.timeOrigin, before[index]?.timeOrigin);
+      assert.equal(document.resultSha256, before[index]?.resultSha256);
+      assert.equal(document.scriptURL, scriptURL);
+      assert(document.sameController);
+      assert.equal(document.controllerChanges, 0);
+    }
+    const retainedAfter = await cachedLegacyExecutableKeys(page);
+    assert.deepEqual(
+      retainedAfter,
+      retainedBefore,
+      'Grace restart rewrote physically retained asset keys'
+    );
+    return {
+      status: 'passed',
+      workerSha256,
+      scope,
+      registrationId: worker.registrationId,
+      versionId: worker.versionId,
+      scriptURL,
+      targets,
+      stopped,
+      restarted,
+      runningBeforeStop: worker,
+      wake: 'ordinary retained-document offline fetch',
+      archived,
+      before,
+      after,
+      retainedAfter,
+    } as const;
+  } finally {
+    try {
+      await disableServiceWorker?.();
+    } finally {
+      await Promise.all(clientSessions.map((client) => client.detach()));
+    }
+  }
+}
+
+async function stageColdLegacyTab(page: Page, baseUrl: string, priorBuild: Build) {
+  await forceMainSoftwareWebp(page);
+  const traffic = observeSoftwareWebp(page, baseUrl);
+  try {
+    await page.goto(baseUrl);
+    await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+    await verifyAppDocument(await page.reload(), priorBuild, true);
+    await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    return traffic;
+  } catch (error) {
+    traffic.stop();
+    throw error;
+  }
+}
+
+async function exerciseColdLegacyTab(
+  page: Page,
+  baseUrl: string,
+  fixture: string,
+  currentBuild: Build,
+  currentSoftware: ReturnType<typeof softwareWebpInventory>,
+  priorDocument: number
+) {
+  await page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) throw new Error('Old cold tab registration disappeared');
+    await registration.update();
+  });
+  await page.waitForFunction(
+    () =>
+      navigator.serviceWorker.controller?.state === 'activated' &&
+      navigator.serviceWorker.controller !== globalThis.__wmcUpgradeInitialController,
+    undefined,
+    { timeout: 15_000 }
+  );
+  assert.equal(await page.evaluate(() => performance.timeOrigin), priorDocument);
+  const mainLoaderUrl = new URL(assetPath(LEGACY_WEBP_DEPLOYMENT.files[0]), baseUrl).href;
+  const [failed] = await Promise.all([
+    page.waitForEvent('requestfailed', {
+      predicate: (request) => request.url() === mainLoaderUrl,
+      timeout: 30_000,
+    }),
+    startForcedWebp(page, fixture),
+  ]);
+  const failure = failed.failure()?.errorText;
+  assert(failure, 'Cold legacy conversion did not fail on its archived loader');
+  const error = page.locator('[data-testid="error-display"]');
+  await error.waitFor({ state: 'visible' });
+  assert.equal(await page.evaluate(() => performance.timeOrigin), priorDocument);
+  assert.equal(await page.locator('[data-testid="result-section"]').isVisible(), false);
+  const recovery = page.locator('[data-testid="app-recovery-reload"]');
+  await recovery.waitFor({ state: 'visible', timeout: 15_000 });
+  assert.equal(await recovery.isEnabled(), true);
+  const [response] = await Promise.all([page.waitForNavigation(), recovery.click()]);
+  await verifyAppDocument(response, currentBuild);
+  assert.notEqual(await page.evaluate(() => performance.timeOrigin), priorDocument);
+  await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+  const ownedWebp = await convertAndVerifySoftwareWebp(page, baseUrl, fixture, currentSoftware);
+  assert.deepEqual(await cachedLegacyExecutablePaths(page), []);
+  return {
+    archivedSource: LEGACY_WEBP_DEPLOYMENT.sourceSha,
+    failedLoader: new URL(failed.url()).pathname,
+    failure,
+    reload: 'in-app-recovery-action',
+    ownedWebp,
+  };
+}
+
 async function exerciseBuildUpgrade(
   browser: Browser,
   baseUrl: string,
@@ -152,7 +1750,9 @@ async function exerciseBuildUpgrade(
   activeFixture: string,
   setDistribution: StartedServer['setDistribution'],
   priorRelativePath = 'validation/windows/prior-dist',
-  requireChangedWorker = false
+  requireChangedWorker = false,
+  removal?: RemovalVerification,
+  archivedOrigin?: ArchivedOriginControl
 ) {
   // readBuild checks each emitted file against deployment-state.json, including
   // service-worker.js, before the browser uses either distribution.
@@ -161,7 +1761,7 @@ async function exerciseBuildUpgrade(
       readBuild(bundleRoot, relativePath, async (_root, path) => join(bundleRoot, path), {
         requireCompiledSource: relativePath === 'dist' || requireChangedWorker,
         verifyInventory: true,
-        exactInventory: requireChangedWorker,
+        exactInventory: relativePath === 'dist' || requireChangedWorker,
       })
     )
   );
@@ -184,16 +1784,111 @@ async function exerciseBuildUpgrade(
     );
     assert(!workerByteIdentical, 'Worker handoff requires distinct emitted worker bytes');
   }
-  const context = await browser.newContext({ locale: 'en-US', acceptDownloads: true });
-  const page = await context.newPage();
+  const currentSoftware =
+    requireChangedWorker && !removal ? null : softwareWebpInventory(currentBuild.state.files);
+  const priorSoftware =
+    currentSoftware?.family === 'owned-vp8' ? softwareWebpInventory(priorBuild.state.files) : null;
+  const predecessorAssets = removal
+    ? selectPredecessorAssetSet(priorBuild.state.files, currentBuild.state.files)
+    : null;
+  if (priorSoftware) {
+    const entry = await readFile(join(bundleRoot, priorRelativePath, priorBuild.main.path));
+    assert(
+      entry.includes(priorBuild.state.sourceSha),
+      'Prior encoder build has no compiled source identity'
+    );
+  }
+  if (removal) {
+    assert.equal(priorBuild.state.sourceSha, LEGACY_WEBP_DEPLOYMENT.sourceSha);
+    assert.equal(priorBuild.state.treeSha, LEGACY_WEBP_DEPLOYMENT.treeSha);
+    assert.equal(
+      priorBuild.manifestSha256,
+      LEGACY_WEBP_DEPLOYMENT.manifestSha256,
+      'Archived baseline deployment metadata differs from verified 7d9e0f1b Pages bytes'
+    );
+    assert.equal(
+      priorBuild.state.headersSha256,
+      LEGACY_WEBP_DEPLOYMENT.headersSha256,
+      'Archived baseline _headers differs from verified 7d9e0f1b Pages bytes'
+    );
+    assert.equal(priorBuild.state.files.length, LEGACY_WEBP_DEPLOYMENT.inventoryCount);
+    const archivedFiles = priorBuild.state.files.map(({ path, size, sha256 }) => ({
+      path,
+      size,
+      sha256,
+    }));
+    assert.equal(
+      sha256(JSON.stringify(archivedFiles)),
+      LEGACY_WEBP_DEPLOYMENT.inventorySha256,
+      'Archived baseline inventory differs from verified 7d9e0f1b Pages bytes'
+    );
+    assert.equal(priorSoftware?.family, 'wasm-webp');
+    assert(archivedOrigin, 'The private archived-origin control is required');
+    assert.equal(priorBuild.main.path, RETIRED_WEBP_CALLERS[0].path);
+    for (const asset of RETIRED_WEBP_DELIVERY_FILES) {
+      assert.deepEqual(
+        priorBuild.state.files.find(({ path }) => path === asset.path),
+        asset
+      );
+      assert(
+        !currentBuild.state.files.some(
+          ({ path, sha256 }) => path === asset.path || sha256 === asset.sha256
+        ),
+        'Current executable inventory contains the archived path or exact payload'
+      );
+    }
+    assert.equal(currentBuild.state.coreSha, removal.coreSha);
+    assert(currentSoftware?.ownedOnly, 'Removal candidate inventory is not owned-only');
+    assert.equal(currentSoftware.asset.sha256, removal.wasmSha256);
+  }
+  if (currentSoftware?.ownedOnly) {
+    for (const { path } of currentBuild.state.files.filter(({ path }) => /\.[cm]?js$/.test(path))) {
+      const bytes = await readFile(join(bundleRoot, 'dist', path));
+      assert(
+        !hasLegacyWebpInRetiredBuild(path, bytes, { requireRetirementMetadata: Boolean(removal) }),
+        `Current executable retains a legacy WebP loader or its reference: ${path}`
+      );
+    }
+  }
   let activePage: Page | undefined;
+  let coldContext: BrowserContext | undefined;
+  let coldPage: Page | undefined;
+  let coldDocument: number | undefined;
+  const exactLegacyLoader = Boolean(removal);
+  const persistent = removal ? await prepareInstalledProfile(browser, bundleRoot) : null;
+  let context: BrowserContext | undefined;
+  let closeOwnedBrowser: (() => Promise<void>) | undefined;
   try {
+    const warm = persistent
+      ? await persistent.launch()
+      : { context: await browser.newContext({ locale: 'en-US', acceptDownloads: true }) };
+    context = warm.context;
+    if ('close' in warm) closeOwnedBrowser = warm.close;
+    const page = context.pages()[0] ?? (await context.newPage());
+    if (priorSoftware) await forceMainSoftwareWebp(page);
+    if (removal) await observeCurrentClientRetirement(page, currentBuild.state.sourceSha);
     await setDistribution(priorRelativePath);
     await page.goto(baseUrl);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
-    await page.reload();
+    // Capture the controlled predecessor document's requests in this navigation.
+    // Chromium discards an earlier document's response bodies when it unloads.
+    const earlyCallerTraffic = removal ? observeArchivedCallerResponses(context, baseUrl) : null;
+    const priorNavigation = await page.reload();
+    if (removal) await verifyAppDocument(priorNavigation, priorBuild);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    const archivedEntryResponses = earlyCallerTraffic
+      ? (await earlyCallerTraffic.read()).verified
+      : null;
+    earlyCallerTraffic?.stop();
+    if (archivedEntryResponses)
+      assert(
+        archivedEntryResponses.some(
+          ({ path, serviceWorkerInitiated }) =>
+            path === assetPath(RETIRED_WEBP_CALLERS[0]) && !serviceWorkerInitiated
+        ),
+        'No actual archived document entry response'
+      );
     await page.waitForFunction(async () => {
       const names = await caches.keys();
       for (const name of names.filter((value) => value.startsWith('dropconvert-dynamic-'))) {
@@ -225,13 +1920,66 @@ async function exerciseBuildUpgrade(
       .filter((file) => /^assets\/[^/]+\.js$/.test(file.path))
       .map((file) => file.path.slice('assets/'.length))
       .filter((name) => !nextAssets.has(name));
-    await page.locator('[data-testid="file-input"]').setInputFiles(smallFixture);
-    await page.locator('[data-testid="convert-button"]').click();
-    const proceed = page.locator('[data-testid="modal-confirm-button"]');
-    if (await proceed.isVisible({ timeout: 1500 }).catch(() => false)) await proceed.click();
-    await page
-      .locator('[data-testid="result-section"]')
-      .waitFor({ state: 'visible', timeout: 120_000 });
+    const priorForcedWebp = priorSoftware
+      ? await convertAndVerifySoftwareWebp(
+          page,
+          baseUrl,
+          smallFixture,
+          priorSoftware,
+          false,
+          exactLegacyLoader
+        )
+      : null;
+    const warmedArchivedAssets = removal ? await verifyArchivedAssetFetches(page, true) : null;
+    if (removal) {
+      coldContext = await browser.newContext({ locale: 'en-US', acceptDownloads: true });
+      coldPage = await coldContext.newPage();
+      const tab = coldPage;
+      const traffic = await stageColdLegacyTab(tab, baseUrl, priorBuild);
+      try {
+        const pipeline = emittedAsset(priorBuild, /^assets\/conversion-pipeline[.-][\w-]{8}\.js$/);
+        // A real GIF conversion loads the prior main pipeline without loading WebP.
+        const pipelineResponse = tab.waitForResponse(
+          (response) => new URL(response.url()).pathname === assetPath(pipeline),
+          { timeout: 120_000 }
+        );
+        const [, served] = await Promise.all([
+          (async () => {
+            await tab.locator('[data-testid="option-format-gif"]').click();
+            await tab.locator('[data-testid="file-input"]').setInputFiles(smallFixture);
+            await tab.locator('[data-testid="convert-button"]').click();
+            const confirm = tab.locator('[data-testid="modal-confirm-button"]');
+            if (await confirm.isVisible()) await confirm.click();
+          })(),
+          pipelineResponse,
+        ]);
+        assert.equal(served.status(), 200);
+        assert.equal(sha256(await served.body()), pipeline.sha256);
+        await tab
+          .locator('[data-testid="result-section"]')
+          .waitFor({ state: 'visible', timeout: 120_000 });
+        assert(traffic.requests.every((path) => !isRetiredWebpExecutable(path)));
+        assert.deepEqual(await cachedLegacyExecutablePaths(coldPage), []);
+        coldDocument = await coldPage.evaluate(() => {
+          const controller = navigator.serviceWorker.controller;
+          if (controller?.state !== 'activated')
+            throw new Error('Cold legacy tab has no old controller');
+          globalThis.__wmcUpgradeInitialController = controller;
+          return performance.timeOrigin;
+        });
+      } finally {
+        traffic.stop();
+      }
+    }
+    if (!priorForcedWebp) {
+      await page.locator('[data-testid="file-input"]').setInputFiles(smallFixture);
+      await page.locator('[data-testid="convert-button"]').click();
+      const proceed = page.locator('[data-testid="modal-confirm-button"]');
+      if (await proceed.isVisible({ timeout: 1500 }).catch(() => false)) await proceed.click();
+      await page
+        .locator('[data-testid="result-section"]')
+        .waitFor({ state: 'visible', timeout: 120_000 });
+    }
     const oldDocumentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
     const oldDownloadHref = await page
       .locator('[data-testid="download-result-button"]')
@@ -248,6 +1996,45 @@ async function exerciseBuildUpgrade(
     );
     assert(priorResultBytes.length > 100, 'Prior result Blob is unexpectedly small');
     const priorResultSha256 = sha256(priorResultBytes);
+    if (priorForcedWebp) assert.equal(priorResultSha256, priorForcedWebp.outputSha256);
+    const priorLegacyPaths = priorSoftware?.legacyExecutables.map(assetPath) ?? [];
+    const cachedLegacyBeforeUpdate = await cachedLegacyExecutablePaths(page, priorLegacyPaths);
+    const legacyCacheWarmed =
+      priorSoftware?.family === 'wasm-webp' &&
+      (removal
+        ? LEGACY_WEBP_DEPLOYMENT.files.every((asset) =>
+            cachedLegacyBeforeUpdate.includes(assetPath(asset))
+          )
+        : cachedLegacyBeforeUpdate.includes(assetPath(priorSoftware.asset)));
+    if (removal)
+      assert(legacyCacheWarmed, 'The three archived URLs were not warmed in Cache Storage');
+    const warmedShim = removal
+      ? await verifyArchivedAssetFetches(page, true, 'no-store', true, [RETIRED_WEBP_SHIM])
+      : null;
+    if (removal)
+      await page.waitForFunction(
+        async (path) => {
+          for (const name of await caches.keys()) {
+            if (!name.startsWith('dropconvert-')) continue;
+            if (await (await caches.open(name)).match(path)) return true;
+          }
+          return false;
+        },
+        assetPath(RETIRED_WEBP_SHIM),
+        { timeout: 15_000 }
+      );
+    const seededArchiveKeys = removal
+      ? await seedArchivedCacheAliases(page, bundleRoot, priorRelativePath)
+      : null;
+    const archivedWorkerRequests = removal
+      ? await verifyArchivedWorkerCaller(context, baseUrl, priorBuild, smallFixture)
+      : null;
+    const predecessorBeforeUpdate = predecessorAssets
+      ? await snapshotPredecessorCaches(page, predecessorAssets)
+      : null;
+    const seededCallerAliases = removal
+      ? await seedArchivedCacheAliases(page, bundleRoot, priorRelativePath, RETIRED_WEBP_CALLERS)
+      : null;
     const cachedPaths = await page.evaluate(async () => {
       const paths = [];
       for (const name of (await caches.keys()).filter((value) =>
@@ -289,14 +2076,17 @@ async function exerciseBuildUpgrade(
     // result remains available in the first tab. The high-motion fixture is
     // also used by the maintained cancellation acceptance.
     activePage = await context.newPage();
-    await activePage.goto(baseUrl);
+    const activeTraffic = removal ? observeSoftwareWebp(activePage, baseUrl) : null;
+    if (removal) await forceMainSoftwareWebp(activePage);
+    const activeNavigation = await activePage.goto(baseUrl);
+    if (removal) await verifyAppDocument(activeNavigation, priorBuild);
     await activePage.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     await activePage.waitForFunction(
       () => navigator.serviceWorker.controller?.state === 'activated'
     );
     await activePage.locator('[data-testid="file-input"]').setInputFiles(activeFixture);
     for (const [group, value] of [
-      ['format', 'gif'],
+      ['format', removal ? 'webp' : 'gif'],
       ['quality', 'high'],
       ['scale', '1'],
       ['smart-frame-skip', 'adaptive'],
@@ -322,6 +2112,16 @@ async function exerciseBuildUpgrade(
       undefined,
       { timeout: 180_000 }
     );
+    if (removal && priorSoftware && activeTraffic) {
+      const wasmPath = assetPath(priorSoftware.asset);
+      if (
+        !activeTraffic.responses.some((response) => new URL(response.url()).pathname === wasmPath)
+      )
+        await activePage.waitForResponse(
+          (response) => new URL(response.url()).pathname === wasmPath,
+          { timeout: 120_000 }
+        );
+    }
     const activeProgressAtSwitch = await activePage.evaluate(() =>
       Number(
         document
@@ -459,6 +2259,17 @@ async function exerciseBuildUpgrade(
       activeDocumentTimeOrigin,
       'Service worker upgrade reloaded an actively converting old tab'
     );
+    const freshGrace = removal
+      ? await verifyFreshOfflineDuringGrace(page, baseUrl, currentBuild)
+      : null;
+    const freshOfflineDuringGrace = freshGrace?.codec ?? null;
+    if (removal) {
+      assert.equal(await page.evaluate(() => performance.timeOrigin), oldDocumentTimeOrigin);
+      assert.equal(
+        await activePage.evaluate(() => performance.timeOrigin),
+        activeDocumentTimeOrigin
+      );
+    }
     await activePage
       .locator('[data-testid="result-section"]')
       .waitFor({ state: 'visible', timeout: 180_000 });
@@ -472,6 +2283,32 @@ async function exerciseBuildUpgrade(
       false,
       'Active old-build conversion failed after worker update'
     );
+    const activeLegacyWebp =
+      activeTraffic && priorSoftware
+        ? await verifySoftwareWebp(
+            activePage,
+            await readResultDownload(activePage),
+            priorSoftware,
+            activeTraffic,
+            { exactLegacyLoader }
+          )
+        : null;
+    activeTraffic?.stop();
+    const coldLegacyWebp =
+      removal && coldPage && coldDocument !== undefined && currentSoftware
+        ? await exerciseColdLegacyTab(
+            coldPage,
+            baseUrl,
+            smallFixture,
+            currentBuild,
+            currentSoftware,
+            coldDocument
+          )
+        : null;
+    if (coldContext) {
+      await coldContext.close();
+      coldContext = undefined;
+    }
     const retainedDownload = await readResultDownload(page);
     assert.equal(
       sha256(retainedDownload),
@@ -493,6 +2330,22 @@ async function exerciseBuildUpgrade(
       sha256(Buffer.from(cached.bytes)),
       'Cached prior JS changed after upgrade'
     );
+    const retainedLegacyAfterWorkerClaim = removal
+      ? await verifyArchivedAssetFetches(page, true, 'no-store', true)
+      : null;
+    const retainedLegacyAliasesAfterWorkerClaim = removal
+      ? await verifyArchivedAssetFetches(
+          page,
+          true,
+          'no-store',
+          true,
+          LEGACY_WEBP_DEPLOYMENT.files,
+          STALE_ALIAS_QUERY
+        )
+      : null;
+    const graceWorkerRestart = removal
+      ? await verifyGraceWorkerRestart(page, activePage, currentBuild.workerSha256)
+      : null;
     await context.setOffline(false);
 
     const missingPath = `/assets/${missingAsset}`;
@@ -509,8 +2362,8 @@ async function exerciseBuildUpgrade(
       !/\bimmutable\b/i.test(missingAtOrigin.headers()['cache-control'] ?? ''),
       'Uncached control received immutable caching at the origin'
     );
-    // This listener belongs only to the acceptance harness. The old app cannot
-    // display a notice introduced by the new bundle while its document stays open.
+    // This listener records the updated worker's message in the exact old document.
+    // The separately retained cold scenario verifies the archived in-app reload action.
     await page.evaluate(() => {
       globalThis.__wmcUpgradeAssetMessages = [];
       navigator.serviceWorker.addEventListener('message', (event) => {
@@ -621,7 +2474,8 @@ async function exerciseBuildUpgrade(
 
     // The user has downloaded the retained result and explicitly reloads the
     // browser tab. The new document must load the current build and remain usable.
-    await page.reload();
+    const currentNavigation = await page.reload();
+    if (removal) await verifyAppDocument(currentNavigation, currentBuild);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
     assert.notEqual(
       await page.evaluate(() => performance.timeOrigin),
@@ -656,6 +2510,336 @@ async function exerciseBuildUpgrade(
       true,
       'Current application did not accept a settings interaction after explicit reload'
     );
+    const currentForcedWebp =
+      currentSoftware?.family === 'owned-vp8'
+        ? await convertAndVerifySoftwareWebp(page, baseUrl, smallFixture, currentSoftware)
+        : null;
+    const cachedRetiredKeysAfterReload = await cachedLegacyExecutableKeys(page, priorLegacyPaths);
+    const cachedLegacyAfterReload = removal
+      ? LEGACY_WEBP_DEPLOYMENT.files
+          .map(assetPath)
+          .filter((path) =>
+            cachedRetiredKeysAfterReload.some((key) => key.path === path && !key.search)
+          )
+          .sort()
+      : [...new Set(cachedRetiredKeysAfterReload.map(({ path }) => path))].sort();
+    if (removal) {
+      assert.equal(
+        await activePage.evaluate(() => performance.timeOrigin),
+        activeDocumentTimeOrigin
+      );
+      assert(
+        LEGACY_WEBP_DEPLOYMENT.files.every((asset) =>
+          cachedLegacyAfterReload.includes(assetPath(asset))
+        ),
+        'The three archived executables must remain cached until the last old tab closes'
+      );
+    }
+    // Keep the last old tab visible until closure, then foreground the existing
+    // current app. The harness observes cache state without triggering a request.
+    const currentDocumentTimeOrigin = await page.evaluate(() => performance.timeOrigin);
+    let retirementNavigations = 0;
+    const recordRetirementNavigation = (frame: ReturnType<Page['mainFrame']>) => {
+      if (frame === page.mainFrame()) retirementNavigations++;
+    };
+    if (removal) page.on('framenavigated', recordRetirementNavigation);
+    let beforeOldCloseEvents: RetirementEvent[] = [];
+    if (removal) {
+      const visibleTarget = await nativeWindowTarget(page);
+      const oldTarget = await nativeWindowTarget(activePage);
+      assert.equal(
+        visibleTarget.windowId,
+        oldTarget.windowId,
+        'Retained tabs are in different windows'
+      );
+      assert.notEqual(
+        visibleTarget.targetId,
+        oldTarget.targetId,
+        'Retained tabs share a target ID'
+      );
+      await page.bringToFront();
+      await waitForNativeVisibility(page, 'visible', 30_000);
+      await page.waitForFunction(
+        () =>
+          globalThis.__wmcRetirementEvents.some(
+            ({ kind, value }) => kind === 'worker' && value === 'grace'
+          ),
+        undefined,
+        { timeout: 15_000 }
+      );
+      const switchDeadline = performance.now() + 30_000;
+      await activePage.bringToFront();
+      await waitForNativeVisibility(
+        page,
+        'hidden',
+        Math.max(1, switchDeadline - performance.now())
+      );
+      await waitForNativeVisibility(
+        activePage,
+        'visible',
+        Math.max(1, switchDeadline - performance.now())
+      );
+      beforeOldCloseEvents = await page.evaluate(() => globalThis.__wmcRetirementEvents.slice());
+      console.log('[M5 installed browser focus]', {
+        current: visibleTarget,
+        old: oldTarget,
+        currentVisibility: 'hidden',
+        oldVisibility: 'visible',
+      });
+      assert(
+        !beforeOldCloseEvents.some(({ kind, value }) => kind === 'worker' && value === 'retired')
+      );
+    }
+    const clientBeforeClose = removal ? await retirementClientIdentity(page) : null;
+    const originBeforeClose = archivedOrigin?.archivedOriginSnapshot(false);
+    const predecessorBeforeClose = predecessorAssets
+      ? await snapshotPredecessorCaches(page, predecessorAssets)
+      : null;
+    if (predecessorBeforeClose && seededCallerAliases) {
+      for (const key of seededCallerAliases)
+        assert(
+          predecessorBeforeClose.oldKeys.some(
+            (row) => row.cache === key.cache && row.path === key.path && row.search === key.search
+          ),
+          `Caller alias disappeared before the last old tab closed: ${key.path}${key.search}`
+        );
+    }
+    await activePage.close();
+    let currentClientWake = null;
+    if (removal) {
+      const closedAt = Date.now();
+      const remaining = () => Math.max(1, 15_000 - (Date.now() - closedAt));
+      await page.bringToFront();
+      await waitForNativeVisibility(page, 'visible', remaining());
+      await page.waitForFunction(
+        (offset) => {
+          const events = globalThis.__wmcRetirementEvents.slice(offset);
+          const wake = events.findIndex(
+            ({ kind, value }) => kind === 'visibility' && value === 'visible'
+          );
+          return (
+            wake >= 0 &&
+            events
+              .slice(wake + 1)
+              .some(({ kind, value }) => kind === 'worker' && value === 'retired')
+          );
+        },
+        beforeOldCloseEvents.length,
+        { timeout: remaining() }
+      );
+      await page.waitForFunction(
+        async (retired) => {
+          for (const name of (await caches.keys()).filter((value) =>
+            value.startsWith('dropconvert-')
+          )) {
+            const requests = await (await caches.open(name)).keys();
+            if (requests.some((request) => retired.includes(new URL(request.url).pathname)))
+              return false;
+          }
+          return true;
+        },
+        RETIRED_WEBP_EXECUTABLES.map(assetPath),
+        { timeout: remaining() }
+      );
+      const retirementObservedAfterMs = Date.now() - closedAt;
+      assert(
+        retirementObservedAfterMs <= 15_000,
+        'Retirement exceeded its 15-second foreground bound'
+      );
+      assert.equal(await page.evaluate(() => performance.timeOrigin), currentDocumentTimeOrigin);
+      page.off('framenavigated', recordRetirementNavigation);
+      assert.equal(retirementNavigations, 0, 'Current app navigated during retirement');
+      assert.equal(sha256(await readResultDownload(page)), currentForcedWebp?.outputSha256);
+      currentClientWake = {
+        visibility: 'visible',
+        sameDocument: true,
+        retainedOwnedResult: true,
+        beforeOldCloseEvents,
+        afterOldCloseEvents: await page.evaluate(
+          (offset) => globalThis.__wmcRetirementEvents.slice(offset),
+          beforeOldCloseEvents.length
+        ),
+        retirementObservedAfterMs,
+      };
+    }
+    const cachedLegacyWithoutOldTabs = await cachedLegacyExecutablePaths(page, priorLegacyPaths);
+    const predecessorAfterClose = predecessorAssets
+      ? await snapshotPredecessorCaches(page, predecessorAssets)
+      : null;
+    if (predecessorAfterClose && predecessorBeforeClose)
+      assertPredecessorCacheSettlement(
+        predecessorAfterClose,
+        predecessorBeforeClose,
+        priorBuild.indexSha256,
+        currentBuild.indexSha256
+      );
+    let retiredAssetsAfterUpgrade = null;
+    let retirementOrigin = null;
+    let archivedOriginDenial = null;
+    let predecessorReadmission = null;
+    if (removal) {
+      assert(archivedOrigin && clientBeforeClose && originBeforeClose);
+      const clientAfter = await retirementClientIdentity(page);
+      assert.equal(clientAfter.workerState, 'activated');
+      assert.deepEqual(clientAfter, clientBeforeClose);
+      const normal = await retiredBrowserOriginWindow(page, archivedOrigin, false, 'default');
+      const bypass = await retiredBrowserOriginWindow(page, archivedOrigin, false, 'no-store');
+      const query = await retiredBrowserOriginWindow(
+        page,
+        archivedOrigin,
+        false,
+        'no-store',
+        STALE_ALIAS_QUERY
+      );
+      requireQuietOrigin(originBeforeClose, query.after);
+      retiredAssetsAfterUpgrade = {
+        normal: normal.rows,
+        bypassHttpCache: bypass.rows,
+        queryAlias: query.rows,
+      };
+      const directOrigin = await readDirectArchivedOrigin(
+        page,
+        baseUrl,
+        archivedOrigin,
+        LEGACY_WEBP_DEPLOYMENT.files,
+        false,
+        false
+      );
+      assert.deepEqual(directOrigin.before, query.after);
+      const { rows: _normal, ...normalWindow } = normal;
+      const { rows: _bypass, ...bypassWindow } = bypass;
+      const { rows: _query, ...queryWindow } = query;
+      retirementOrigin = {
+        schemaVersion: 1,
+        origin: new URL(baseUrl).origin,
+        retiredPaths: LEGACY_WEBP_DEPLOYMENT.files.map(assetPath),
+        candidate: {
+          sourceSha: currentBuild.state.sourceSha,
+          manifestSha256: currentBuild.manifestSha256,
+          workerSha256: currentBuild.workerSha256,
+        },
+        controlled: {
+          clientBeforeClose,
+          clientAfter,
+          beforeLastOldTabClose: originBeforeClose,
+          afterControlled: query.after,
+          normal: normalWindow,
+          bypassHttpCache: bypassWindow,
+          queryAlias: queryWindow,
+        },
+        directOrigin,
+      };
+      let direct;
+      let denied;
+      await archivedOrigin.setArchivedOrigin(priorRelativePath, RETIRED_WEBP_EXECUTABLES);
+      try {
+        direct = await readDirectArchivedOrigin(
+          page,
+          baseUrl,
+          archivedOrigin,
+          RETIRED_WEBP_EXECUTABLES,
+          true,
+          true
+        );
+        denied = {
+          normal: await retiredBrowserOriginWindow(
+            page,
+            archivedOrigin,
+            true,
+            'default',
+            STALE_ALIAS_QUERY
+          ),
+          noStore: await retiredBrowserOriginWindow(page, archivedOrigin, true, 'no-store'),
+        };
+        requireQuietOrigin(direct.after, denied.noStore.after);
+      } finally {
+        await archivedOrigin.setArchivedOrigin(null, []);
+      }
+      const afterResetDirect404 = await readDirectArchivedOrigin(
+        page,
+        baseUrl,
+        archivedOrigin,
+        RETIRED_WEBP_EXECUTABLES,
+        false,
+        true
+      );
+      assert.deepEqual(afterResetDirect404.before, denied.noStore.after);
+      const physicalKeys = await cachedLegacyExecutableKeys(page, priorLegacyPaths);
+      assert.deepEqual(physicalKeys, [], 'A retired canonical or query key was readmitted');
+      assert.deepEqual(await retirementClientIdentity(page), clientBeforeClose);
+      archivedOriginDenial = {
+        schemaVersion: 1,
+        origin: new URL(baseUrl).origin,
+        retiredPaths: RETIRED_WEBP_EXECUTABLES.map(assetPath),
+        client: clientBeforeClose,
+        direct,
+        denied,
+        afterResetDirect404,
+        controlledRequestsReachedOrigin: 0,
+        physicalKeys,
+      };
+      assert(predecessorAssets && predecessorBeforeClose);
+      const callerChallenge = await verifyCallerReadmissionDenied(
+        page,
+        baseUrl,
+        archivedOrigin,
+        priorRelativePath
+      );
+      const afterChallenge = await snapshotPredecessorCaches(page, predecessorAssets);
+      assertPredecessorCacheSettlement(
+        afterChallenge,
+        predecessorBeforeClose,
+        priorBuild.indexSha256,
+        currentBuild.indexSha256
+      );
+      predecessorReadmission = { ...callerChallenge, afterChallenge };
+    }
+    let restart = null;
+    let predecessorRestart = null;
+    if (persistent) {
+      assert(
+        currentSoftware?.ownedOnly && currentForcedWebp && 'version' in warm && closeOwnedBrowser
+      );
+      assert(predecessorAssets && predecessorBeforeClose);
+      // Close the entire process for the profile that actually upgraded from
+      // the archived build. A fresh candidate profile cannot prove eviction survives restart.
+      await closeOwnedBrowser();
+      closeOwnedBrowser = undefined;
+      context = undefined;
+      const { predecessor, ...legacyRestart } = await verifyInstalledProfileRestart(
+        persistent,
+        warm.version,
+        baseUrl,
+        currentBuild,
+        smallFixture,
+        currentSoftware,
+        currentForcedWebp.outputSha256,
+        predecessorAssets,
+        predecessorBeforeClose,
+        priorBuild.indexSha256
+      );
+      restart = legacyRestart;
+      predecessorRestart = predecessor;
+    }
+    const predecessorMigration =
+      predecessorAssets && predecessorBeforeUpdate
+        ? {
+            schemaVersion: 1,
+            inventory: predecessorAssets,
+            archivedEntryResponses,
+            archivedWorkerRequests,
+            absentBeforeUpdate: predecessorAssets.oldOnly
+              .map(assetPath)
+              .filter((path) => !predecessorBeforeUpdate.oldKeys.some((row) => row.path === path)),
+            beforeUpdate: predecessorBeforeUpdate,
+            seededCallerAliases,
+            grace: freshGrace?.callers,
+            beforeLastClose: predecessorBeforeClose,
+            afterLastClose: predecessorAfterClose,
+            readmission: predecessorReadmission,
+            restart: predecessorRestart,
+          }
+        : null;
     return {
       id: 'real-build-upgrade',
       status: 'passed',
@@ -674,6 +2858,63 @@ async function exerciseBuildUpgrade(
       retainedDocument: true,
       priorSourceSha: priorBuild.state.sourceSha,
       currentSourceSha: currentBuild.state.sourceSha,
+      priorManifestSha256: priorBuild.manifestSha256,
+      currentManifestSha256: currentBuild.manifestSha256,
+      priorForcedWebp,
+      currentForcedWebp,
+      ...(removal
+        ? {
+            warmedArchivedAssets,
+            warmedShim,
+            activeLegacyWebp,
+            coldLegacyWebp,
+            retainedLegacyAfterWorkerClaim,
+            retainedLegacyAliasesAfterWorkerClaim,
+            freshOfflineDuringGrace,
+            graceWorkerRestart,
+            offlineDuringGrace: freshOfflineDuringGrace && {
+              sourceSha: freshOfflineDuringGrace.sourceSha,
+              sha256: freshOfflineDuringGrace.sha256,
+            },
+            seededArchiveKeys,
+            cachedRetiredKeysAfterReload,
+            retirementNavigations,
+            currentClientWake,
+            archivedOriginDenial,
+            retirementOrigin,
+            retiredAssetsAfterUpgrade,
+            restart,
+            predecessorMigration,
+          }
+        : {}),
+      cachedLegacyBeforeUpdate,
+      legacyCacheWarmed,
+      cachedLegacyAfterReload,
+      cachedLegacyWithoutOldTabs,
+      ownedOnlyAfterUpgrade: Boolean(
+        currentSoftware?.ownedOnly &&
+        currentForcedWebp &&
+        priorForcedWebp &&
+        legacyCacheWarmed &&
+        cachedLegacyWithoutOldTabs.length === 0 &&
+        (!removal ||
+          (activeLegacyWebp &&
+            coldLegacyWebp &&
+            warmedShim &&
+            retainedLegacyAfterWorkerClaim &&
+            retainedLegacyAliasesAfterWorkerClaim &&
+            freshOfflineDuringGrace &&
+            graceWorkerRestart?.status === 'passed' &&
+            seededArchiveKeys &&
+            currentClientWake &&
+            archivedOriginDenial &&
+            retirementOrigin &&
+            retiredAssetsAfterUpgrade &&
+            predecessorMigration &&
+            predecessorReadmission &&
+            predecessorRestart &&
+            restart))
+      ),
       priorWorkerSha256: priorBuild.workerSha256,
       currentWorkerSha256: currentBuild.workerSha256,
       workerUpdateOutcome,
@@ -692,10 +2933,401 @@ async function exerciseBuildUpgrade(
       currentAppSettingsInteraction: true,
     };
   } finally {
-    await context.setOffline(false).catch(() => {});
-    await context.close();
-    await setDistribution('dist');
+    try {
+      await coldContext?.close();
+      if (context) {
+        await context.setOffline(false).catch(() => {});
+        if (closeOwnedBrowser) await closeOwnedBrowser();
+        else await context.close();
+      }
+    } finally {
+      try {
+        await persistent?.dispose();
+      } finally {
+        await setDistribution('dist');
+      }
+    }
   }
+}
+
+async function installedBrowserVersion(context: BrowserContext, page: Page) {
+  const session = await context.newCDPSession(page);
+  try {
+    const { product, userAgent } = await session.send('Browser.getVersion');
+    return { product, userAgent };
+  } finally {
+    await session.detach();
+  }
+}
+
+async function nativeWindowTarget(page: Page) {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { targetInfo } = await session.send('Target.getTargetInfo');
+    const { windowId, bounds } = await session.send('Browser.getWindowForTarget', {
+      targetId: targetInfo.targetId,
+    });
+    assert.equal(targetInfo.type, 'page');
+    assert.notEqual(bounds.windowState, 'minimized', 'Installed browser window is minimized');
+    return { targetId: targetInfo.targetId, windowId };
+  } finally {
+    await session.detach();
+  }
+}
+
+async function waitForNativeVisibility(
+  page: Page,
+  expected: DocumentVisibilityState,
+  timeout: number,
+  requireFocus = false
+) {
+  const deadline = performance.now() + timeout;
+  const stop = new AbortController();
+  try {
+    await Promise.race([
+      (async () => {
+        while (performance.now() < deadline) {
+          const matched = await page.evaluate(
+            ({ visibility, focus }) =>
+              document.visibilityState === visibility && (!focus || document.hasFocus()),
+            { visibility: expected, focus: requireFocus }
+          );
+          if (matched) return;
+          await delay(25, undefined, { signal: stop.signal });
+        }
+        throw new Error(
+          `Installed browser did not reach visibility ${expected}${requireFocus ? ' and focus' : ''}`
+        );
+      })(),
+      delay(timeout, undefined, { signal: stop.signal }).then(() => {
+        throw new Error(
+          `Installed browser did not reach visibility ${expected}${requireFocus ? ' and focus' : ''}`
+        );
+      }),
+    ]);
+  } finally {
+    stop.abort();
+  }
+}
+
+async function installedExecutable(browser: Browser, expectedPid?: number) {
+  const session = await browser.newBrowserCDPSession();
+  try {
+    const { processInfo } = await session.send('SystemInfo.getProcessInfo');
+    const matches = processInfo.filter(({ type }) => type === 'browser');
+    assert.equal(
+      matches.length,
+      1,
+      'Expected one browser process on the attached browser endpoint'
+    );
+    const pid = matches[0]!.id;
+    assert(Number.isSafeInteger(pid) && pid > 0, 'Invalid browser process identity');
+    if (expectedPid !== undefined) assert.equal(pid, expectedPid, 'Unexpected owned browser PID');
+    const root = process.env.SystemRoot;
+    assert(root && isAbsolute(root), 'Missing Windows system root');
+    const shell = join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    const query = `$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::Write((Get-Process -Id ${pid} -ErrorAction Stop).Path)`;
+    const path = await new Promise<string>((resolve, reject) => {
+      execFile(
+        shell,
+        ['-NoProfile', '-NonInteractive', '-Command', query],
+        { encoding: 'utf8', timeout: 15_000, maxBuffer: 32_768, windowsHide: true },
+        (error, stdout) => (error ? reject(error) : resolve(stdout))
+      );
+    });
+    assert(isAbsolute(path), 'The running installed browser has no absolute executable path');
+    return await realpath(path);
+  } finally {
+    await session.detach();
+  }
+}
+
+function exitOf(child: ChildProcess) {
+  return new Promise<{ error?: Error; code?: number | null }>((complete) => {
+    child.once('error', (error) => complete({ error }));
+    child.once('exit', (code) => complete({ code }));
+  });
+}
+
+async function waitForProcess<T>(exit: Promise<T>, timeout: number): Promise<T | undefined> {
+  const stop = new AbortController();
+  try {
+    return await Promise.race([exit, delay(timeout, undefined, { signal: stop.signal })]);
+  } finally {
+    stop.abort();
+  }
+}
+
+async function stopOwnedBrowser(
+  child: ChildProcess,
+  exit: ReturnType<typeof exitOf>,
+  browser: Browser | undefined
+) {
+  if (browser?.isConnected()) {
+    // Closing an attached Playwright browser only disconnects its transport.
+    const close = (async () => {
+      const session = await browser.newBrowserCDPSession();
+      await session.send('Browser.close');
+    })().catch(() => {});
+    await waitForProcess(Promise.race([close.then(() => true), exit]), 5_000);
+    const ended = await waitForProcess(exit, 5_000);
+    if (ended) {
+      if (ended.error) throw ended.error;
+      assert.equal(ended.code, 0, 'Owned installed browser did not close normally');
+      return;
+    }
+  } else {
+    const ended = await waitForProcess(exit, 250);
+    if (ended) {
+      if (browser) throw new Error('Owned installed browser disconnected before normal close');
+      return;
+    }
+  }
+
+  const root = process.env.SystemRoot;
+  assert(root && isAbsolute(root) && child.pid, 'Cannot terminate the owned browser process');
+  const killer = spawn(
+    join(root, 'System32', 'taskkill.exe'),
+    ['/PID', String(child.pid), '/T', '/F'],
+    { windowsHide: true, stdio: 'ignore', shell: false }
+  );
+  const killed = await waitForProcess(exitOf(killer), 5_000);
+  if (!killed) killer.kill();
+  assert(await waitForProcess(exit, 5_000), 'Owned installed browser did not exit');
+  throw new Error('Owned installed browser required forced process cleanup');
+}
+
+async function ownedDevToolsEndpoint(profilePath: string, exit: ReturnType<typeof exitOf>) {
+  const deadline = performance.now() + 15_000;
+  while (performance.now() < deadline) {
+    const ended = await waitForProcess(exit, 25);
+    if (ended) throw ended.error ?? new Error(`Owned installed browser exited (${ended.code})`);
+    const text = await readFile(join(profilePath, 'DevToolsActivePort'), 'utf8').catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'ENOENT') throw error;
+        return '';
+      }
+    );
+    const [port, endpoint] = text.trim().split(/\r?\n/);
+    if (
+      port &&
+      /^\d{1,5}$/.test(port) &&
+      Number(port) > 0 &&
+      Number(port) <= 65_535 &&
+      endpoint &&
+      /^\/devtools\/browser\/[0-9a-f-]{36}$/.test(endpoint)
+    ) {
+      return `ws://127.0.0.1:${port}${endpoint}`;
+    }
+  }
+  throw new Error('Owned installed browser did not publish its loopback DevTools endpoint');
+}
+
+async function prepareInstalledProfile(browser: Browser, bundleRoot: string) {
+  assert.equal(process.platform, 'win32', 'Removal requires the installed Windows browser');
+  assert.equal(browser.browserType().name(), 'chromium', 'Removal requires installed Chromium');
+  const executable = await installedExecutable(browser);
+  const detection = await browser.newContext();
+  let expected: Awaited<ReturnType<typeof installedBrowserVersion>>;
+  try {
+    expected = await installedBrowserVersion(detection, await detection.newPage());
+  } finally {
+    await detection.close();
+  }
+  const channel = expected.userAgent.includes('Edg/') ? 'msedge' : 'chrome';
+  assert.match(expected.userAgent, /Chrome\//, 'Unsupported installed Chromium channel');
+  assert.equal(basename(executable).toLowerCase(), `${channel}.exe`);
+  const profilePath = await mkdtemp(join(bundleRoot, '.wmc-owned-removal-'));
+  let active: (() => Promise<void>) | undefined;
+  return {
+    channel,
+    async launch() {
+      assert(!active, 'The previous owned installed browser has not closed');
+      const downloadsPath = await mkdtemp(join(profilePath, 'downloads-'));
+      const userData = join(profilePath, 'persistent');
+      await mkdir(userData, { recursive: true });
+      await rm(join(userData, 'DevToolsActivePort'), { force: true });
+      const child = spawn(
+        executable,
+        [
+          `--user-data-dir=${userData}`,
+          '--remote-debugging-address=127.0.0.1',
+          '--remote-debugging-port=0',
+          '--enable-automation',
+          '--disable-background-networking',
+          '--disable-component-update',
+          '--disable-sync',
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--mute-audio',
+          '--lang=en-US',
+          'about:blank',
+        ],
+        { stdio: 'ignore', shell: false }
+      );
+      const exit = exitOf(child);
+      let connected: Browser | undefined;
+      let observedDownloads: BrowserContext | undefined;
+      const close = async () => {
+        if (observedDownloads) ownedDownloads.delete(observedDownloads);
+        try {
+          await stopOwnedBrowser(child, exit, connected);
+        } finally {
+          if (child.exitCode !== null || child.signalCode !== null || !child.pid) {
+            active = undefined;
+            if (connected?.isConnected()) {
+              const detached = connected.close().then(() => true);
+              assert(await waitForProcess(detached, 5_000), 'Owned CDP connection did not detach');
+            }
+          }
+        }
+      };
+      active = close;
+      try {
+        const endpoint = await ownedDevToolsEndpoint(userData, exit);
+        connected = await browser.browserType().connectOverCDP(endpoint, {
+          noDefaults: true,
+          isLocal: true,
+          artifactsDir: downloadsPath,
+          timeout: 15_000,
+        });
+        const [context] = connected.contexts();
+        assert(context && connected.contexts().length === 1, 'Expected the owned default profile');
+        assert(child.pid, 'Owned browser PID is unavailable');
+        assert.equal(await installedExecutable(connected, child.pid), executable);
+        const cdp = await connected.newBrowserCDPSession();
+        // Keep the event-enabled session for the lifetime of this owned process.
+        await cdp.send('Browser.setDownloadBehavior', {
+          behavior: 'allowAndName',
+          downloadPath: downloadsPath,
+          eventsEnabled: true,
+        });
+        ownedDownloads.set(context, {
+          session: cdp,
+          path: downloadsPath,
+          tail: Promise.resolve(),
+          failed: false,
+          seen: new Set(),
+        });
+        observedDownloads = context;
+        const page = context.pages()[0] ?? (await context.newPage());
+        const version = await installedBrowserVersion(context, page);
+        assert.deepEqual(version, expected, 'Removal profile changed the installed browser build');
+        return { context, version, close };
+      } catch (error) {
+        try {
+          await close();
+        } catch (cleanup) {
+          throw new AggregateError(
+            [error, cleanup],
+            'Owned installed browser launch/cleanup failed'
+          );
+        }
+        throw error;
+      }
+    },
+    async dispose() {
+      await active?.();
+      await rm(profilePath, { recursive: true, force: true });
+    },
+  };
+}
+
+async function verifyInstalledProfileRestart(
+  persistent: Awaited<ReturnType<typeof prepareInstalledProfile>>,
+  before: Awaited<ReturnType<typeof installedBrowserVersion>>,
+  baseUrl: string,
+  build: Build,
+  fixture: string,
+  software: ReturnType<typeof softwareWebpInventory>,
+  outputSha256: string,
+  predecessorAssets: PredecessorAssets,
+  predecessorBeforeClose: PredecessorCacheSnapshot,
+  priorIndexSha256: string
+) {
+  const { context, version: after, close } = await persistent.launch();
+  try {
+    await context.setOffline(true);
+    const page = context.pages()[0] ?? (await context.newPage());
+    await forceMainSoftwareWebp(page);
+    await verifyAppDocument(await page.goto(baseUrl), build, true);
+    await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+    await page.locator('[data-testid="offline-banner"]').waitFor({ state: 'visible' });
+    const cachePaths = await cachedLegacyExecutablePaths(page);
+    assert.deepEqual(cachePaths, [], 'Retired cache entries survived process restart');
+    const retiredRequests = {
+      canonical: await verifyArchivedAssetFetches(
+        page,
+        false,
+        'default',
+        false,
+        RETIRED_WEBP_EXECUTABLES
+      ),
+      aliases: await verifyArchivedAssetFetches(
+        page,
+        false,
+        'default',
+        false,
+        RETIRED_WEBP_EXECUTABLES,
+        STALE_ALIAS_QUERY
+      ),
+    };
+    const webp = await convertAndVerifySoftwareWebp(page, baseUrl, fixture, software, true);
+    assert.equal(webp.outputSha256, outputSha256, 'Offline restart changed WebP output');
+    assert.deepEqual(await cachedLegacyExecutablePaths(page), []);
+    const callerRequests = {
+      canonical: await verifyArchivedAssetFetches(
+        page,
+        false,
+        'default',
+        false,
+        RETIRED_WEBP_CALLERS
+      ),
+      aliases: await verifyArchivedAssetFetches(
+        page,
+        false,
+        'no-store',
+        false,
+        RETIRED_WEBP_CALLERS,
+        STALE_ALIAS_QUERY
+      ),
+    };
+    const settled = await snapshotPredecessorCaches(page, predecessorAssets);
+    assertPredecessorCacheSettlement(
+      settled,
+      predecessorBeforeClose,
+      priorIndexSha256,
+      build.indexSha256
+    );
+    return {
+      status: 'passed',
+      profile: 'migrated',
+      channel: persistent.channel,
+      before,
+      after,
+      cachePaths,
+      retiredRequests,
+      webp,
+      predecessor: { callerRequests, settled },
+    };
+  } finally {
+    await close();
+  }
+}
+
+export function assertRemovalUpgradeEvidence(
+  removal: boolean,
+  upgrade: {
+    ownedOnlyAfterUpgrade: boolean;
+    graceWorkerRestart?: { status: 'passed' } | { status: 'unverified'; reason: string } | null;
+  }
+) {
+  if (!removal) return;
+  const restart = upgrade.graceWorkerRestart;
+  if (restart?.status === 'unverified')
+    assert.fail(`Removal grace worker restart unverified (${restart.reason})`);
+  assert.equal(restart?.status, 'passed', 'Removal grace worker restart evidence is missing');
+  assert(upgrade.ownedOnlyAfterUpgrade, 'Removal upgrade evidence is incomplete');
 }
 
 export async function exerciseOfflineRecovery(
@@ -707,7 +3339,9 @@ export async function exerciseOfflineRecovery(
   smallFixture: string,
   activeFixture: string,
   priorRelativePath = 'validation/windows/prior-dist',
-  requireChangedWorker = false
+  requireChangedWorker = false,
+  removal?: RemovalVerification,
+  archivedOrigin?: ArchivedOriginControl
 ) {
   const upgrade = await exerciseBuildUpgrade(
     browser,
@@ -717,13 +3351,28 @@ export async function exerciseOfflineRecovery(
     activeFixture,
     setDistribution,
     priorRelativePath,
-    requireChangedWorker
+    requireChangedWorker,
+    removal,
+    archivedOrigin
   );
+  assertRemovalUpgradeEvidence(Boolean(removal), upgrade);
+  if (removal) {
+    await writeFile(
+      join(outputRoot, 'completed-service-worker-upgrade.json'),
+      JSON.stringify(upgrade),
+      { flag: 'wx' }
+    );
+  }
   const context = await browser.newContext({
     locale: 'en-US',
     viewport: { width: 1280, height: 900 },
+    acceptDownloads: true,
   });
   const page = await context.newPage();
+  const build = await readBuild(bundleRoot, 'dist', async (_root, path) => join(bundleRoot, path));
+  const software =
+    requireChangedWorker && !removal ? null : softwareWebpInventory(build.state.files);
+  if (software?.family === 'owned-vp8') await forceMainSoftwareWebp(page);
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   try {
@@ -756,36 +3405,49 @@ export async function exerciseOfflineRecovery(
 
     // Reload under the controller so application assets and the root response
     // reach the real worker before the browser's network is disabled.
-    await page.goto(`${baseUrl}/?offline-acceptance=online`);
+    const onlineResponse = await page.goto(`${baseUrl}/?offline-acceptance=online`);
+    if (removal) await verifyAppDocument(onlineResponse, build, true);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
-    await page.waitForFunction(async () => {
-      const names = await caches.keys();
-      const name = names.find((value) => value.startsWith('dropconvert-dynamic-'));
-      if (!name) return false;
-      const cache = await caches.open(name);
-      return (
-        Boolean(await cache.match('/')) &&
-        (await cache.keys()).some((request) => new URL(request.url).pathname.endsWith('.js'))
-      );
-    });
     const inspect = () =>
-      page.evaluate(async () => {
-        const names = await caches.keys();
-        const cacheName = names.find((name) => name.startsWith('dropconvert-dynamic-'));
-        if (!cacheName) throw new Error('Dynamic recovery cache is missing');
-        const response = await (await caches.open(cacheName)).match('/');
-        if (!response) throw new Error('Recovery cache has no root response');
+      page.evaluate(async (entryPath) => {
+        const names = (await caches.keys()).filter((name) =>
+          name.startsWith('dropconvert-static-')
+        );
+        if (names.length !== 1) throw new Error('Expected the installed static shell cache');
+        const cacheName = names[0]!;
+        const cache = await caches.open(cacheName);
+        const response = await cache.match('/');
+        const entry = await cache.match(entryPath);
+        if (!response || !entry)
+          throw new Error('Installed shell lacks its document or eager entry');
+        const bytes = await entry.arrayBuffer();
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
         return {
           cacheName,
           url: response.url,
           status: response.status,
           contentType: response.headers.get('content-type'),
           body: await response.text(),
+          entryBytes: bytes.byteLength,
+          entrySha256: Array.from(new Uint8Array(digest), (byte) =>
+            byte.toString(16).padStart(2, '0')
+          ).join(''),
         };
-      });
+      }, `/${build.main.path}`);
     const before = await inspect();
     assert.match(before.contentType ?? '', /^text\/html\b/);
     assert.equal(before.status, 200);
+    assert.equal(sha256(Buffer.from(before.body)), build.indexSha256);
+    assert.equal(before.entryBytes, build.main.size);
+    assert.equal(before.entrySha256, build.main.sha256);
+    const dynamicCacheName = before.cacheName.replace(
+      'dropconvert-static-',
+      'dropconvert-dynamic-'
+    );
+    const onlineWebp =
+      software?.family === 'owned-vp8'
+        ? await convertAndVerifySoftwareWebp(page, baseUrl, smallFixture, software)
+        : null;
 
     const textResponse = await page.goto(`${baseUrl}/robots.txt`);
     assert(textResponse);
@@ -802,6 +3464,7 @@ export async function exerciseOfflineRecovery(
 
     await context.setOffline(true);
     const offlineResponse = await page.goto(`${baseUrl}/?offline-acceptance=recovery`);
+    if (removal) await verifyAppDocument(offlineResponse, build, true);
     assert(offlineResponse);
     assert.equal(offlineResponse.status(), 200);
     assert.equal(offlineResponse.fromServiceWorker(), true);
@@ -811,6 +3474,10 @@ export async function exerciseOfflineRecovery(
     await page.locator('[data-testid="option-format-webp"]').click();
     assert.equal(await page.locator('[data-testid="option-format-webp"] input').isChecked(), true);
     await page.screenshot({ path: join(outputRoot, 'offline-app-recovery.png'), fullPage: true });
+    const offlineWebp =
+      software?.family === 'owned-vp8'
+        ? await convertAndVerifySoftwareWebp(page, baseUrl, smallFixture, software, true)
+        : null;
     await page.evaluate(async (cacheName) => {
       const cache = await caches.open(cacheName);
       await cache.put(
@@ -819,8 +3486,12 @@ export async function exerciseOfflineRecovery(
           headers: { 'content-type': 'text/plain' },
         })
       );
-    }, before.cacheName);
+      const seeded = await cache.match('/');
+      if ((await seeded?.text()) !== 'current polluted recovery document')
+        throw new Error('Could not seed the dynamic recovery pollution control');
+    }, dynamicCacheName);
     const staticFallback = await page.reload();
+    if (removal) await verifyAppDocument(staticFallback, build, true);
     assert(staticFallback);
     assert.equal(staticFallback.status(), 200);
     assert.equal(staticFallback.fromServiceWorker(), true);
@@ -829,7 +3500,7 @@ export async function exerciseOfflineRecovery(
     assert.equal(
       await page.evaluate(
         async (cacheName) => Boolean(await (await caches.open(cacheName)).match('/')),
-        before.cacheName
+        dynamicCacheName
       ),
       false,
       'Current polluted dynamic entry was retained'
@@ -838,14 +3509,36 @@ export async function exerciseOfflineRecovery(
       path: join(outputRoot, 'offline-static-recovery.png'),
       fullPage: true,
     });
+    const staticFallbackWebp =
+      software?.family === 'owned-vp8'
+        ? await convertAndVerifySoftwareWebp(page, baseUrl, smallFixture, software, true)
+        : null;
+    if (onlineWebp) {
+      assert.equal(offlineWebp?.outputSha256, onlineWebp.outputSha256);
+      assert.equal(staticFallbackWebp?.outputSha256, onlineWebp.outputSha256);
+    }
+    const currentLegacyCachePaths = await cachedLegacyExecutablePaths(page);
+    if (software?.ownedOnly) assert.deepEqual(currentLegacyCachePaths, []);
     await context.setOffline(false);
     await page.locator('[data-testid="offline-banner"]').waitFor({ state: 'hidden' });
     assert.deepEqual(pageErrors, []);
+    if (removal)
+      assert(
+        software?.ownedOnly && onlineWebp && offlineWebp && staticFallbackWebp,
+        'Owned-only online and offline conversions were not all verified'
+      );
     const digest = (body: string) => createHash('sha256').update(body).digest('hex');
     return {
       id: 'offline-app-recovery',
       status: 'passed',
       upgrade,
+      sourceSha: build.state.sourceSha,
+      manifestSha256: build.manifestSha256,
+      software: software ? { family: software.family, ownedOnly: software.ownedOnly } : null,
+      onlineWebp,
+      offlineWebp,
+      staticFallbackWebp,
+      currentLegacyCachePaths,
       controller: identity.controller,
       cacheName: before.cacheName,
       priorPollutedCacheRemoved: true,
@@ -946,6 +3639,15 @@ function emittedAsset(build: Build, pattern: RegExp) {
   const asset = matches[0];
   assert(asset);
   return asset;
+}
+
+export function selectPipelineDependency(files: readonly InventoryFile[]) {
+  const gifenc = files.filter(({ path }) => /^assets\/gifenc[.-][\w-]{8}\.js$/.test(path));
+  const dependency = gifenc.length
+    ? gifenc
+    : files.filter(({ path }) => /^assets\/owned-demux-index-snapshot[.-][\w-]{8}\.js$/.test(path));
+  assert.equal(dependency.length, 1, 'Build needs one known first-pipeline preload dependency');
+  return { asset: dependency[0]!, firstConversion: gifenc.length > 0 };
 }
 
 function assetPath(asset: Build['main']) {
@@ -1316,9 +4018,7 @@ async function firstPipelineImportFailure(
 ) {
   await started.setDistribution(build.relativePath);
   const pipeline = emittedAsset(build, /^assets\/conversion-pipeline[.-][\w-]{8}\.js$/);
-  // The emitted Vite preload graph requests gifenc alongside the pipeline,
-  // including for WebP. Offline rejection therefore fails this dependency too.
-  const pipelineDependency = emittedAsset(build, /^assets\/gifenc[.-][\w-]{8}\.js$/);
+  const pipelineDependency = selectPipelineDependency(build.state.files);
   const path = assetPath(pipeline);
   const errorChunk = baseline
     ? emittedAsset(build, /^assets\/ErrorDisplay[.-][\w-]{8}\.js$/)
@@ -1377,7 +4077,15 @@ async function firstPipelineImportFailure(
       assert.equal(await option.locator('input').isChecked(), true);
     }
     await assertNeverFetched(page, path);
-    await assertNeverFetched(page, assetPath(pipelineDependency));
+    const dependencyPath = assetPath(pipelineDependency.asset);
+    // Owned demux is shared with media inspection and already requested on
+    // upload. The historical gifenc preload is cold when conversion starts.
+    if (pipelineDependency.firstConversion) await assertNeverFetched(page, dependencyPath);
+    else
+      assert(
+        events.requestedAssets.includes(dependencyPath),
+        'Shared owned demux preload was not observed during media inspection'
+      );
     if (errorChunk) await assertNeverFetched(page, assetPath(errorChunk));
     const timeOrigin = await page.evaluate(() => performance.timeOrigin);
     const beforeOrigin = started.observedAssetRequests.length;
@@ -1420,8 +4128,11 @@ async function firstPipelineImportFailure(
     }
     const errorChunkPath = errorChunk ? assetPath(errorChunk) : null;
     if (baseline) assert(errorChunkPath);
-    const expectedPaths = baseline ? [path, assetPath(pipelineDependency), errorChunkPath] : [path];
-    const expectedRequestedPaths = baseline ? expectedPaths : [path, assetPath(pipelineDependency)];
+    const firstConversionImports = pipelineDependency.firstConversion
+      ? [path, dependencyPath]
+      : [path];
+    const expectedPaths = baseline ? [...firstConversionImports, errorChunkPath] : [path];
+    const expectedRequestedPaths = baseline ? expectedPaths : firstConversionImports;
     const deadline = Date.now() + 15_000;
     while (
       Date.now() < deadline &&
@@ -1508,8 +4219,9 @@ async function firstPipelineImportFailure(
       sourceSha: build.state.sourceSha,
       emittedPipeline: path,
       pipelineSha256: pipeline.sha256,
-      pipelineDependency: assetPath(pipelineDependency),
-      pipelineDependencySha256: pipelineDependency.sha256,
+      pipelineDependency: dependencyPath,
+      pipelineDependencySha256: pipelineDependency.asset.sha256,
+      pipelineDependencyFirstRequestedDuringConversion: pipelineDependency.firstConversion,
       secondaryErrorChunk: errorChunk ? assetPath(errorChunk) : null,
       secondaryErrorChunkSha256: errorChunk?.sha256 ?? null,
       serviceWorkerControlled: controlled,

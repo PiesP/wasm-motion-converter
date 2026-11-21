@@ -10,6 +10,8 @@ import {
   copyFrameToPixels,
   resolveVideoDimensions,
 } from '@services/frame-utils';
+import { OwnedVp8MemoryAdmissionError } from '@services/owned-vp8-core';
+import { OwnedVp8MemoryAdmissionError as LeafAdmissionError } from '@services/owned-vp8-memory-admission-error';
 import { MAX_FRAME_PIXEL_COUNT } from '@utils/constants';
 import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
@@ -263,6 +265,48 @@ describe('clearCanvasCache', () => {
     clearCanvasCache();
 
     expect(canvases).toEqual([{ width: 0, height: 0 }]);
+  });
+
+  it('does not retry a Canvas copy after a pooled RGB admission failure', async () => {
+    expect(OwnedVp8MemoryAdmissionError).toBe(LeafAdmissionError);
+    globalBufferPool.clear();
+    const closeBitmap = vi.fn();
+    const context = {
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(2 * 2 * 4) })),
+    };
+    vi.stubGlobal(
+      'OffscreenCanvas',
+      class {
+        getContext(): typeof context {
+          return context;
+        }
+      }
+    );
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => ({ close: closeBitmap }))
+    );
+    const memoryError = new OwnedVp8MemoryAdmissionError('pooled RGB ceiling');
+    const removeGuard = globalBufferPool.installGrowthGuard(() => {
+      throw memoryError;
+    });
+    const frame = {
+      codedWidth: 4,
+      codedHeight: 4,
+      displayWidth: 4,
+      displayHeight: 4,
+    } as VideoFrame;
+    try {
+      await expect(copyFrameToPixels(frame, 2, 2, { copyPath: null }, 'rgb')).rejects.toBe(
+        memoryError
+      );
+      expect(closeBitmap).toHaveBeenCalledOnce();
+      expect(context.drawImage).toHaveBeenCalledOnce();
+    } finally {
+      removeGuard();
+    }
   });
 });
 

@@ -10,12 +10,33 @@
 // Environment variables:
 //   DEPLOY_URL — the deployed URL to test (default: https://wasm-motion-converter.pages.dev)
 
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 
-import { type APIResponse, expect, type Page, type Response, test } from '@playwright/test';
+import {
+  type APIResponse,
+  expect,
+  type Page,
+  request as playwrightRequest,
+  type Response,
+  test,
+} from '@playwright/test';
 
+import {
+  isExecutableMediaType,
+  RETIRED_WEBP_DELIVERY_FILES,
+  RETIRED_REQUEST_MODES,
+} from '../../scripts/test/retired-webp-assets';
+import { hasLegacyWebpInRetiredBuild } from '../../scripts/test/retired-webp-worker';
+import { parseDeploymentState } from '../../scripts/test/verify-deployment';
+import {
+  forceMainSoftwareWebp,
+  observeSoftwareWebp,
+  softwareWebpInventory,
+  verifySoftwareWebp,
+} from '../../validation/windows/offline-recovery';
 import { conditionalEtagObservation } from './lib/conditional-etag';
 import { assertExecutableBody, assertExecutableResponse } from './lib/deployment-responses';
 import { firstConversionTraffic } from './lib/first-conversion-traffic';
@@ -28,6 +49,7 @@ const IMMUTABLE = 'public, max-age=31536000, immutable';
 const SHA = /^[a-f0-9]{40}$/;
 const DIGEST = /^[a-f0-9]{64}$/;
 const FINGERPRINTED_ASSET = /^assets\/[\w.-]+[.-][\w-]{8}\.(js|css|wasm)$/;
+const REQUIRE_OWNED_ONLY = process.env.DEPLOY_REQUIRE_OWNED_VP8_ONLY === '1';
 
 test.use({ serviceWorkers: 'block' });
 test.beforeEach(async ({ page }) => {
@@ -123,26 +145,68 @@ function downloadLink(page: Page) {
   return page.getByRole('link', { name: /^Download (?:GIF|WEBP) file —/ });
 }
 
-function expectSingleHeader(response: APIResponse, name: string, value: string): void {
-  const values = response
-    .headersArray()
+function expectHeader(
+  url: string,
+  headers: readonly { name: string; value: string }[],
+  name: string,
+  value: string
+): void {
+  const values = headers
     .filter((header) => header.name.toLowerCase() === name)
     .map((header) => header.value);
-  expect(values, `${response.url()} ${name} values`).toEqual([value]);
+  expect(values, `${url} ${name} values`).toEqual([value]);
 }
 
-function expectSecurityHeaders(response: APIResponse, csp: string): void {
-  expectSingleHeader(response, 'content-security-policy', csp);
-  expectSingleHeader(response, 'cross-origin-opener-policy', 'same-origin');
-  expectSingleHeader(response, 'cross-origin-embedder-policy', 'require-corp');
-  expectSingleHeader(response, 'x-content-type-options', 'nosniff');
+function expectSingleHeader(response: APIResponse, name: string, value: string): void {
+  expectHeader(response.url(), response.headersArray(), name, value);
 }
 
-async function expectedCsp(): Promise<string> {
-  const headers = await readFile(resolve(process.cwd(), 'public/_headers'), 'utf8');
-  const policy = /^ {2}Content-Security-Policy: (.+)$/m.exec(headers)?.[1];
+async function expectSecurityHeaders(response: APIResponse | Response, csp: string): Promise<void> {
+  const headers = await response.headersArray();
+  const url = response.url();
+  expectHeader(url, headers, 'content-security-policy', csp);
+  expectHeader(url, headers, 'cross-origin-opener-policy', 'same-origin');
+  expectHeader(url, headers, 'cross-origin-embedder-policy', 'require-corp');
+  expectHeader(url, headers, 'x-content-type-options', 'nosniff');
+}
+
+async function expectedCsp(headersSha256: string): Promise<string> {
+  const path = REQUIRE_OWNED_ONLY
+    ? resolve(process.env.DEPLOY_DIST || 'dist', '_headers')
+    : resolve('public/_headers');
+  const headers = await readFile(path);
+  if (REQUIRE_OWNED_ONLY)
+    expect(createHash('sha256').update(headers).digest('hex'), 'Frozen CSP rules').toBe(
+      headersSha256
+    );
+  const policy = /^ {2}Content-Security-Policy: (.+)$/m.exec(headers.toString('utf8'))?.[1];
   expect(policy, 'Source _headers must define a CSP').toBeTruthy();
   return policy!;
+}
+
+async function readVerifiedDeployment(response: APIResponse) {
+  expect(response.status()).toBe(200);
+  expect(response.headers()['content-type']).toMatch(/^application\/json(?:\s*;|$)/i);
+  const bytes = await response.body();
+  expect(bytes.byteLength).toBeLessThanOrEqual(128_000);
+  const deployed = parseDeploymentState(JSON.parse(bytes.toString('utf8')));
+  const expectedSource = process.env.EXPECTED_SOURCE_SHA;
+  if (expectedSource || REQUIRE_OWNED_ONLY) {
+    const dist = process.env.DEPLOY_DIST || 'dist';
+    const expectedBytes = await readFile(resolve(dist, 'deployment-state.json'));
+    const expected = parseDeploymentState(JSON.parse(expectedBytes.toString('utf8')));
+    if (REQUIRE_OWNED_ONLY) {
+      expect(expectedSource, 'Final smoke requires an explicit source SHA').toMatch(SHA);
+      expect(process.env.DEPLOY_DIST, 'Final smoke requires a local build artifact').toBeTruthy();
+      expect(
+        bytes.equals(expectedBytes),
+        'Served deployment metadata differs from the artifact'
+      ).toBe(true);
+    }
+    if (expectedSource) expect(expected.sourceSha).toBe(expectedSource);
+    expect(deployed).toEqual(expected);
+  }
+  return { deployed, manifestSha256: createHash('sha256').update(bytes).digest('hex') };
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +281,6 @@ test.describe('Deployment: Page Load', () => {
   test('Pages serves one security and cache policy per document, metadata, and fingerprinted asset', async ({
     request,
   }, testInfo) => {
-    const csp = await expectedCsp();
     const metadataUrl = new URL('/deployment-state.json', DEPLOY_URL).href;
     const metadataResponse = await request.get(metadataUrl, {
       maxRedirects: 0,
@@ -225,9 +288,10 @@ test.describe('Deployment: Page Load', () => {
     });
     expect(metadataResponse.status()).toBe(200);
     expect(metadataResponse.headers()['content-type']).toMatch(/^application\/json(?:\s*;|$)/i);
-    expectSecurityHeaders(metadataResponse, csp);
+    const { deployed: metadata } = await readVerifiedDeployment(metadataResponse);
+    const csp = await expectedCsp(metadata.headersSha256);
+    await expectSecurityHeaders(metadataResponse, csp);
     expectSingleHeader(metadataResponse, 'cache-control', REVALIDATION);
-    const metadata: unknown = await metadataResponse.json();
     expect(metadata).toEqual(
       expect.objectContaining({
         schemaVersion: 1,
@@ -253,6 +317,73 @@ test.describe('Deployment: Page Load', () => {
       expect(Number.isSafeInteger(file.size) && file.size > 0, file.path).toBe(true);
     }
     const assetFiles = files.filter((file) => FINGERPRINTED_ASSET.test(file.path));
+    if (REQUIRE_OWNED_ONLY) {
+      const retiredUrls = [];
+      const ordinary = await playwrightRequest.newContext();
+      try {
+        for (const mode of RETIRED_REQUEST_MODES) {
+          const context = mode === 'ordinary' ? ordinary : request;
+          for (const prior of RETIRED_WEBP_DELIVERY_FILES) {
+            const url = new URL(`/${prior.path}`, DEPLOY_URL).href;
+            const response = await context.get(url, {
+              maxRedirects: 0,
+              failOnStatusCode: false,
+              ...(mode === 'revalidated'
+                ? { headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } }
+                : {}),
+            });
+            const cacheControl = response.headers()['cache-control'] ?? '';
+            const contentType = response.headers()['content-type'] ?? '';
+            const bytes = await response.body();
+            const responseSha256 = createHash('sha256').update(bytes).digest('hex');
+            const label = `${mode} ${prior.path}`;
+            expect(response.status(), label).toBe(404);
+            expect(cacheControl, label).not.toMatch(/\bimmutable\b/i);
+            expect(isExecutableMediaType(contentType), label).toBe(false);
+            expect(responseSha256, label).not.toBe(prior.sha256);
+            expect(bytes.subarray(0, 4).toString('hex'), label).not.toBe('0061736d');
+            retiredUrls.push({
+              mode,
+              url,
+              priorSha256: prior.sha256,
+              responseSha256,
+              status: response.status(),
+              cacheControl,
+              contentType,
+            });
+          }
+        }
+      } finally {
+        await ordinary.dispose();
+      }
+      await testInfo.attach('retired-webp-urls', {
+        body: JSON.stringify(retiredUrls),
+        contentType: 'application/json',
+      });
+      const inventory = softwareWebpInventory(files);
+      expect(inventory.ownedOnly, JSON.stringify(inventory)).toBe(true);
+      for (const file of files.filter(({ path }) => /\.[cm]?js$/.test(path))) {
+        const { path } = file;
+        const response = await request.get(new URL(`/${path}`, DEPLOY_URL).href, {
+          maxRedirects: 0,
+        });
+        const bytes = await response.body();
+        expect(bytes.byteLength, `${path} served size`).toBe(file.size);
+        expect(createHash('sha256').update(bytes).digest('hex'), `${path} served SHA-256`).toBe(
+          file.sha256
+        );
+        assertExecutableBody(
+          'js',
+          response.status(),
+          response.headers()['content-type'] ?? null,
+          bytes
+        );
+        expect(
+          hasLegacyWebpInRetiredBuild(path, bytes),
+          `Legacy WebP loader in deployed executable ${path}`
+        ).toBe(false);
+      }
+    }
     expect(assetFiles.length).toBeGreaterThan(0);
     expect(new Set(assetFiles.map((file) => file.path)).size).toBe(assetFiles.length);
     const kinds = new Set(assetFiles.map((file) => file.path.split('.').at(-1)));
@@ -271,7 +402,7 @@ test.describe('Deployment: Page Load', () => {
       expect(response.headers()['content-type'], path).toMatch(
         path === '/' ? /^text\/html(?:\s*;|$)/i : /^(?:text|application)\/javascript(?:\s*;|$)/i
       );
-      expectSecurityHeaders(response, csp);
+      await expectSecurityHeaders(response, csp);
       expectSingleHeader(response, 'cache-control', REVALIDATION);
     }
 
@@ -281,13 +412,17 @@ test.describe('Deployment: Page Load', () => {
       const response = await request.get(url, { maxRedirects: 0, failOnStatusCode: false });
       const kind = file.path.endsWith('.wasm') ? 'wasm' : file.path.endsWith('.css') ? 'css' : 'js';
       const body = await response.body();
+      expect(body.byteLength, `${file.path} served size`).toBe(file.size);
+      expect(createHash('sha256').update(body).digest('hex'), `${file.path} served SHA-256`).toBe(
+        file.sha256
+      );
       assertExecutableBody(
         kind,
         response.status(),
         response.headers()['content-type'] ?? null,
         body
       );
-      expectSecurityHeaders(response, csp);
+      await expectSecurityHeaders(response, csp);
       expectSingleHeader(response, 'cache-control', IMMUTABLE);
       const etag = response.headers().etag;
       if (!etag) throw new Error(`${file.path} has no ETag`);
@@ -308,7 +443,7 @@ test.describe('Deployment: Page Load', () => {
         process.env.PLAYWRIGHT_TEST_PROFILE === 'deploy'
       );
       expect(await revalidated.body(), `${file.path} conditional body`).toHaveLength(0);
-      expectSecurityHeaders(revalidated, csp);
+      await expectSecurityHeaders(revalidated, csp);
       expectSingleHeader(revalidated, 'cache-control', IMMUTABLE);
       const unmatched = await request.get(url, {
         headers: { 'If-None-Match': '"wmc-unmatched-validator"' },
@@ -318,7 +453,7 @@ test.describe('Deployment: Page Load', () => {
       expect(unmatched.status(), `${file.path} unmatched conditional status`).toBe(200);
       expect(await unmatched.body(), `${file.path} unmatched conditional bytes`).toEqual(body);
       expect(unmatched.headers().etag, `${file.path} unmatched conditional ETag`).toBe(etag);
-      expectSecurityHeaders(unmatched, csp);
+      await expectSecurityHeaders(unmatched, csp);
       expectSingleHeader(unmatched, 'cache-control', IMMUTABLE);
       conditionalObservations.push({
         path: file.path,
@@ -480,32 +615,39 @@ test.describe('Deployment: Visual — Progress UI', () => {
     });
   });
 
-  test('WebP conversion uses real WASM fallback and downloads valid bytes', async ({
+  test('Forced WebP downloads a decodable animation from the inventoried software encoder', async ({
     page,
+    request,
   }, testInfo) => {
+    const metadata = await request.get(new URL('/deployment-state.json', DEPLOY_URL).href, {
+      maxRedirects: 0,
+    });
+    const { deployed, manifestSha256 } = await readVerifiedDeployment(metadata);
+    const inventory = softwareWebpInventory(deployed.files);
+    if (REQUIRE_OWNED_ONLY) expect(inventory.ownedOnly, JSON.stringify(inventory)).toBe(true);
+    const csp = REQUIRE_OWNED_ONLY ? await expectedCsp(deployed.headersSha256) : null;
     const runtimeFailures = await collectRuntimeFailures(page);
-    await page.addInitScript(() => {
-      Object.defineProperty(OffscreenCanvas.prototype, 'convertToBlob', {
-        configurable: true,
-        value: undefined,
-      });
-      Object.defineProperty(globalThis, 'Worker', {
-        configurable: true,
-        value: class UnavailableWorker {
-          constructor() {
-            throw new DOMException('Force WASM fallback', 'NotSupportedError');
-          }
-        },
-      });
-    });
-    const wasmResponses: Response[] = [];
-    page.on('response', (response) => {
-      if (new URL(response.url()).pathname.endsWith('.wasm')) wasmResponses.push(response);
-    });
+    await forceMainSoftwareWebp(page);
     const traffic = firstConversionTraffic(page, 'forced-webp-wasm');
-    await page.goto(DEPLOY_URL);
+    const softwareTraffic = observeSoftwareWebp(page, new URL(DEPLOY_URL).origin);
+    const documentResponse = await page.goto(DEPLOY_URL);
     await page.waitForLoadState('networkidle');
     await traffic.markInitial();
+    if (csp) {
+      const index = deployed.files.find(({ path }) => path === 'index.html');
+      if (!index || !documentResponse) throw new Error('No inventoried startup document');
+      expect(documentResponse.status()).toBe(200);
+      expect(documentResponse.fromServiceWorker()).toBe(false);
+      expect(documentResponse.request().redirectedFrom()).toBeNull();
+      await expectSecurityHeaders(documentResponse, csp);
+      expect(await page.evaluate(() => globalThis.crossOriginIsolated)).toBe(true);
+      expect(
+        createHash('sha256')
+          .update(await documentResponse.body())
+          .digest('hex')
+      ).toBe(index.sha256);
+      expect(softwareTraffic.requests).not.toContain(`/${inventory.asset.path}`);
+    }
     await uploadTestVideo(page);
     await page
       .getByRole('radiogroup', { name: 'Output Format' })
@@ -513,19 +655,41 @@ test.describe('Deployment: Visual — Progress UI', () => {
       .check();
     await startConversion(page);
     await expect(resultSection(page)).toBeVisible({ timeout: 120_000 });
-    expect(wasmResponses.length, 'WebP fallback loaded no WASM response').toBeGreaterThan(0);
-    for (const response of wasmResponses) {
-      await assertExecutableResponse(response, 'wasm', new URL(DEPLOY_URL).origin);
-      const bytes = await response.body();
-      await page.evaluate(async (value) => WebAssembly.compile(new Uint8Array(value)), [...bytes]);
-    }
     const [download] = await Promise.all([
       page.waitForEvent('download'),
       downloadLink(page).click(),
     ]);
     const bytes = await readFile(await download.path());
-    expect(bytes.subarray(0, 4).toString('ascii')).toBe('RIFF');
-    expect(bytes.subarray(8, 12).toString('ascii')).toBe('WEBP');
+    const software = await verifySoftwareWebp(page, bytes, inventory, softwareTraffic);
+    if (csp) {
+      for (const response of softwareTraffic.responses.filter(
+        (entry) => new URL(entry.url()).pathname === `/${inventory.asset.path}`
+      )) {
+        await expectSecurityHeaders(response, csp);
+      }
+    }
+    softwareTraffic.stop();
+    const after = await request.get(new URL('/deployment-state.json', DEPLOY_URL).href, {
+      maxRedirects: 0,
+    });
+    expect((await readVerifiedDeployment(after)).manifestSha256).toBe(manifestSha256);
+    await testInfo.attach('forced-webp-encoder', {
+      body: JSON.stringify(
+        {
+          sourceSha: deployed.sourceSha,
+          treeSha: deployed.treeSha,
+          coreSha: deployed.coreSha,
+          manifestSha256,
+          ownedOnlyInventory: inventory.ownedOnly,
+          legacyExecutables: inventory.legacyExecutables,
+          unexpectedWasm: inventory.unexpectedWasm,
+          software,
+        },
+        null,
+        2
+      ),
+      contentType: 'application/json',
+    });
     await testInfo.attach('first-webp-traffic', {
       body: JSON.stringify(await traffic.observation(bytes.length)),
       contentType: 'application/json',

@@ -1,5 +1,36 @@
 # Application update acceptance inputs
 
+## Owned VP8 large admitted source
+
+Use `{"scenario":"owned-vp8-product-large-admitted"}` in the ignored
+`validation/windows/inputs/owned-vp8-product-large-admitted.json` after preserving
+other focused selectors. Stage the exact source-bound prior distribution at
+`validation/windows/prior-dist/`; the profile prepares the generated source before
+`build:ci` and requires `validation/windows/owned-vp8-large-admitted.json` plus
+`dist-validation/owned-vp8-large-admitted.webm` in the bundle. Its source is
+4032×2457 VP9, two red/blue frames with 500ms holds, frozen at 7,762 bytes and
+SHA-256 `d3aae8949721b4f278e0c12f5abe3b4b98edbfd37d2f7143e7d1e7fbf35abe10`.
+The selector is local input, not a repository asset.
+
+This prospective large-input check is separate from the unchanged 4096×2457
+near-cap case, whose installed Edge decoded frame was 4160×2457 coded and
+4096×2457 displayed. The product's existing decoder guard checks **both**
+actual dimensions against 10,066,329 pixels. Rust's VP8 macroblock padding is
+an independent encoder allocation for the visible RGB input; it does not predict
+the decoder's coded dimensions. Do not assume the observed coded padding for the
+new source or other decoders. The profile records actual decoded metadata on
+both prior and candidate attempts and requires admitted dimensions on every
+successful new-source output. The pinned prior must use its shipped legacy
+wasm-webp bytes, and the candidate must use owned VP8. Candidate saved output,
+owned begin/step/retire,
+WebP structure, visible geometry and red/blue holds remain required. Run the
+source-bound `scripts/test/owned-vp8-animations.ts` verifier on a completed
+profile to check full-scene pixels, infinite loop, ICC and independent native
+VP8/libvpx decode. The verifier reports each saved output's original requirement
+status; inspecting a saved output from a failed row does not turn that row into
+a passing functional requirement. No conversion timing or quality improvement
+follows from a functional pass.
+
 ## Output finalization comparison
 
 The original motion workload uses a task-owned, ignored 12-second 1280×720 input:
@@ -59,12 +90,111 @@ Place a complete clean baseline distribution at the ignored
 {"schemaVersion":1,"mode":"service-worker-handoff","baselineSourceSha":"<40-hex-SHA>","baselineTreeSha":"<40-hex-tree>","candidateSourceSha":"<40-hex-SHA>","candidateTreeSha":"<40-hex-tree>"}
 ```
 
-This selector takes priority over other validation modes. The runner verifies
-both complete inventories and distinct worker bytes, observes the new worker
+Select only this mode for the run. The runner verifies both complete
+inventories and distinct worker bytes, observes the new worker
 claiming retained tabs, checks preserved cached assets and unavailable resources,
 then exercises explicit reload and offline document recovery. It writes
 `service-worker-handoff.json` to the external evidence directory. Remove the
 selector after the focused run.
+
+### Owned VP8 final removal verification
+
+Use the same selector path with mode `m5-legacy-removal` and keep the complete
+archived 7d9e0f1b Pages distribution as the baseline. All 29 inventoried
+files and the exact manifest are pinned to the previously verified served
+bytes. The archived generated `_headers` is pinned to the matching CI artifact.
+The candidate is the
+bundled static production `dist/`. Supply its exact source, tree, core, and
+owned VP8 WASM SHA-256. This mode requires the installed desktop Chromium
+controller. Stage only this selector in the full bundle because the focused
+scenario packager generates a selector with a different schema.
+
+```json
+{
+  "schemaVersion": 1,
+  "mode": "m5-legacy-removal",
+  "baselineSourceSha": "7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3",
+  "baselineTreeSha": "0018da499f5e6217d19b13c834c0dbb54c3a49c8",
+  "candidateSourceSha": "<40-hex-SHA>",
+  "candidateTreeSha": "<40-hex-tree>",
+  "candidateCoreSha": "<40-hex-SHA>",
+  "candidateWasmSha256": "<64-hex-WASM-digest>"
+}
+```
+
+The receipt requires an active old-tab legacy WebP conversion, an actual cold
+legacy loader failure and explicit in-app reload, and the three existing
+warm-cache positive checks on the exact 7d9e0f1b bytes. The archived 112-byte
+Vite shim has a separate initial cache observation. A new offline tab opens
+the current application during grace while both old documents remain open.
+The current tab denies canonical and query-alias requests for all four archived
+executables. In that same offline window, the old tab retrieves the three
+warmed canonical assets through the updated worker and verifies their exact
+bytes. The controlled origin checks below exercise online requests after
+retirement.
+
+After the final old tab closes, the current application returns to the
+foreground in the same document with its existing result. A passive observer
+records the controlling worker's grace and retirement acknowledgements. The
+test checks physical eviction of all four archived executables, including the
+query keys seeded during the old build. On the private loopback, the original
+three canonical direct requests still establish 404 positive controls for the
+origin recorder. A separate control serves the four exact archived responses
+to direct requests with query aliases. The current controlled page then
+requests those resources through normal and HTTP-cache-bypassing fetches.
+The receipt preserves the raw origin recorder before and after each step,
+verifies that the page sends no request to origin or adds a physical cache
+key, and confirms that the normal origin returns direct 404s again.
+
+During grace, a Chromium DevTools session stops the one activated service
+worker version controlling both retained old documents. A normal offline
+request from an old tab wakes that same version. The receipt binds the
+registered scope, version, stopped and running observations, both live
+document identities and result hashes, and retained cache keys. If the
+installed browser lacks this DevTools capability, the exclusive removal run
+fails with the grace restart marked unverified in its diagnostic. The original
+handoff mode does not require this proof.
+
+The separate browser-process restart uses the same persisted profile after
+retirement and verifies its cache, archived URLs and offline owned WebP
+conversion. The additional fresh-context checks cover owned WebP online and
+offline. The original handoff mode retains its earlier scope and reporting.
+
+The predecessor migration receipt tracks the archived app entry and conversion
+Worker separately from the four codec files. It records the old document's
+entry response, drives an old GIF conversion with Worker enabled, and reports
+the exact Worker instance and response only when observed. It records existing
+cache entries before seeding two known caller aliases. During grace the new
+offline tab must reject both caller URLs and their aliases. A retained old
+window may read physically resident canonical caller bytes. An old window
+fetch alone does not establish a Worker request.
+
+The receipt derives the full predecessor-only hashed path set from the two
+verified manifests. It lists paths absent before the update and tracks actual
+cache keys from the app's static and dynamic cache namespaces through the final
+old tab closure, a caller-specific origin challenge and a persistent restart.
+Exact shared assets already resident before closure must survive, and stable
+navigation keys are checked by document hash. For the origin challenge, direct
+requests must receive the exact archived caller bytes at both canonical and
+alias URLs. The controlled client must refuse those same URLs with no origin
+request or cache admission, and direct requests must return 404 again after
+the archive control is turned off.
+
+After the qualified build lands and deploys, run the Pages checks against the
+exact clean build artifact. The final mode checks the physical artifact
+inventory before making public requests. It probes the four archived codec
+files, including the 112-byte Vite shim, and the archived app entry and
+conversion Worker that import the old loaders. It requests all six from a new
+ordinary request context before a separate revalidation pass. It binds the observed forced
+software encoder and the actual browser navigation and encoder-response CSP
+rules to the served artifact. The final command requires exact manifest bytes
+before and after the browser run and takes no automatic Playwright retries.
+
+```sh
+DEPLOY_REQUIRE_OWNED_VP8_ONLY=1 VERIFY_CURRENT_MASTER=1 \
+  EXPECTED_SOURCE_SHA=MERGED_SOURCE_SHA DEPLOY_DIST=EXACT_CI_DIST_DIRECTORY \
+  DEPLOY_URL=https://wasm-motion-converter.pages.dev/ vp run verify:deploy
+```
 
 ## Application update
 
@@ -141,12 +271,14 @@ campaign receipt. Do not commit generated distributions or the selector file.
 
 ## WebP initialization recovery
 
-For the focused built-app failure/reload/output scenario, create ignored
+For the built-app initialization recovery scenario, create ignored
 `webp-initialization.json` containing `{"scenario":"webp-initialization"}`.
-This selector runs before the older migration/recovery selectors. It injects
-one failed WASM fetch and a separate dependency-module evaluation failure,
-verifies the locked factory's retained dependency watcher, tests cancelled late
-work, uses the real protected Reload page action and decodes the recovered WebP.
+This selector runs before the older migration/recovery selectors. It exercises
+an HTTP failure, an invalid owned VP8 module and cancellation of a pending
+module request. After a load error, Retry starts a new module request in the
+same document. After cancellation, the scenario checks for a stale result or
+error before starting a new conversion. It downloads and decodes each recovered
+WebP.
 Run with installed Edge through the existing artifact profile. Remove only this
 selector after collection. This is controlled fixture evidence, not a production
 incident or a broad codec/browser campaign.

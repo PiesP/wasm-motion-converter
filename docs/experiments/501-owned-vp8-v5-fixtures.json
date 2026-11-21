@@ -1,0 +1,382 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v5",
+  "purpose": "Prospective source-only fresh held-out inputs after corrected-v4 44/45 rejection; all earlier cohorts remain exposed regression evidence",
+  "tuningBasis": "No new tuning entries; the existing 15 tuning fixtures stay exposed controls",
+  "rejectedCandidate": "9071b71842e2dcd83163d047e49329aafe336aea",
+  "rejectedWasmSha256": "a53d77301d020c892b08048a02293515daa56e30a023fcd68fa4c228da5868c0",
+  "previousOutcome": {
+    "jointPasses": 44,
+    "conditions": 45,
+    "failed": [
+      {
+        "fixture": "fresh4-tiny",
+        "quality": 60,
+        "gate": "ssim",
+        "baseline": 0.55991,
+        "candidate": 0.525307,
+        "minimum": 0.54991
+      }
+    ]
+  },
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "bounds": {
+    "maxWidth": 16383,
+    "maxHeight": 16383,
+    "maxPixels": 10066329,
+    "photoBytes": 3284011,
+    "videoBytes": 3145371
+  },
+  "sources": {
+    "photo": {
+      "name": "Street in downtown Toronto.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Street_in_downtown_Toronto.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Street_in_downtown_Toronto.jpg&oldid=1086201642",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/b/bf/Street_in_downtown_Toronto.jpg",
+      "license": "CC0-1.0",
+      "author": "Jason Zhang",
+      "originalWidth": 2816,
+      "originalHeight": 2112,
+      "bytes": 3284011,
+      "sha1": "07484e9a34e51af66e32c9e6bf064993f04bb688",
+      "sha256": "dbfcbea6e39f69c359ab4de504f20b81802eac8e6eef44e9d4147ba155d0c6fa"
+    },
+    "photoRegions": {
+      "primary": {
+        "x": 0,
+        "y": 0,
+        "width": 1408,
+        "height": 1056
+      },
+      "detail": {
+        "x": 1760,
+        "y": 1260,
+        "width": 704,
+        "height": 528
+      }
+    },
+    "video": {
+      "name": "V8.webm",
+      "page": "https://commons.wikimedia.org/wiki/File:V8.webm",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/a/a7/V8.webm",
+      "license": "CC0-1.0",
+      "author": "BMKME",
+      "sha256": "c6a21a3a7619ca7fbcbc1b4d012d7098d18f599f0200f735d31cae15a4772dd1",
+      "bytes": 3145371
+    }
+  },
+  "priorManifestSha256": {
+    "initialV1": "75646176a29a6cc6506b07d5ad955401571573df1cd7f2c217f9b7565b7f5918",
+    "correctedV2": "015b9a64af8cdc648f7ac976c14e64ae355a239f343115d21f2269c381afeb81",
+    "correctedV3": "072947742fe4fce1aaf77702f8cfee3d2c7410a79d5715155f047913f00c2d2a",
+    "correctedV4": "13c723fe5e5839fc3cc48a06056ada04cce0127b2b04931163a25f9619fd23b7"
+  },
+  "generator": "scripts/test/owned-vp8-v5-fixtures.ts; source-only generation, no codec outputs",
+  "generatorSha256": "80439385265334842a772e4b2560f5243fe8f7118ec05d83fe85c60b78a550a3",
+  "externalDecode": {
+    "ffmpeg": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "command": "ffmpeg -v error -noautorotate -i SOURCE -vf FILTER -frames:v 1 -f rawvideo -pix_fmt rgba pipe:1",
+    "photoFilter": "crop=1408:1056:0:0,scale=533:399:flags=bicubic",
+    "photoDetailFilter": "crop=704:528:1760:1260,scale=317:237:flags=bicubic",
+    "videoFilter": "select=eq(n\\,FRAME),scale=520:292:flags=bicubic"
+  },
+  "fixtures": [
+    {
+      "id": "fresh5-gray",
+      "split": "held-out",
+      "class": "grayscale",
+      "width": 503,
+      "height": 313,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2012,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "c13b83caf2a368babe83df5895454f77825d710a9b3edce5c3eb72881708c714"
+    },
+    {
+      "id": "fresh5-gradient",
+      "split": "held-out",
+      "class": "gradient",
+      "width": 397,
+      "height": 283,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1588,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "566cf44d6906e3764cece0d749e8c773855cb78ec543f1ad3ddd797b424e7ff2"
+    },
+    {
+      "id": "fresh5-chroma-edge",
+      "split": "held-out",
+      "class": "chroma",
+      "width": 367,
+      "height": 257,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1468,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "8f25b5ea3ba54ac678bfe74d4fda6e49e4b5f5c496f0e5e1a055efde8d8ff7f6"
+    },
+    {
+      "id": "fresh5-text",
+      "split": "held-out",
+      "class": "text",
+      "width": 419,
+      "height": 301,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1676,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "3e7412b72b5d3718238b52384011424edc7b2aa6d7a936fbfb2485f8d2876c24"
+    },
+    {
+      "id": "fresh5-noise",
+      "split": "held-out",
+      "class": "noise",
+      "width": 311,
+      "height": 199,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1244,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "78f52a8ff4a78ec4ae606cc1b2898582ceceaa1438016c2e9c45ce57d1241dcb"
+    },
+    {
+      "id": "fresh5-tiny-2x7",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 2,
+      "height": 7,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 8,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "2a9771a84a218d369c25038983459d0a13de96c0d8c2121bfb5f615eeb53ff4d"
+    },
+    {
+      "id": "fresh5-tiny-5x3",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 5,
+      "height": 3,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 20,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "12e0939774d4643b06882259224b93ab53a5b4c184052212937e32b4110cc874"
+    },
+    {
+      "id": "fresh5-tiny-7x2",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 7,
+      "height": 2,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 28,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "873504dcf158c363aee57287f1dabe5eebc4d2ccec0e262d4fd3e7a5f532df11"
+    },
+    {
+      "id": "fresh5-one-column",
+      "split": "held-out",
+      "class": "odd",
+      "width": 1,
+      "height": 319,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "fe7e834d147bc496e84dd500309d0730046fecf4a37eedb4ebc26c37f0a27df2"
+    },
+    {
+      "id": "fresh5-one-row",
+      "split": "held-out",
+      "class": "odd",
+      "width": 331,
+      "height": 1,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1324,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "b314aa6a0f8645682ed22182df47503c7938ae18ad22970acea1ce0675497a97"
+    },
+    {
+      "id": "fresh5-large-admitted",
+      "split": "held-out",
+      "class": "large",
+      "width": 4000,
+      "height": 2516,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 16000,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "62449b938e462289a6aff0cb9927e522f72b8ec693fedc4ac70bbb97b082d775"
+    },
+    {
+      "id": "fresh5-bgra",
+      "split": "held-out",
+      "class": "layout",
+      "width": 277,
+      "height": 161,
+      "layout": "BGRA",
+      "source": "generated",
+      "stride": 1108,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "233d99d9e577270e27746e85d78a5f6b22577b483c82dff192d8c8dad8844240"
+    },
+    {
+      "id": "fresh5-rgbx",
+      "split": "held-out",
+      "class": "layout",
+      "width": 277,
+      "height": 161,
+      "layout": "RGBX",
+      "source": "generated",
+      "stride": 1108,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "7dbb16bde6e59b10b6a18774b20cd7922d6367254b1a9759215b3a66844c5c16"
+    },
+    {
+      "id": "fresh5-photo",
+      "split": "held-out",
+      "class": "photograph",
+      "width": 533,
+      "height": 399,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 2132,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "c761aef1d33c14191d51180f41b97efcde6b4f3051f2fb71ece57f1f24bd90b3"
+    },
+    {
+      "id": "fresh5-photo-detail",
+      "split": "held-out",
+      "class": "photograph-detail",
+      "width": 317,
+      "height": 237,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1268,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ec1a39042235a857ba9c724662de3453cef1156b8d45dbfe230228048f16a38c"
+    },
+    {
+      "id": "fresh5-video-24",
+      "split": "held-out",
+      "class": "video",
+      "width": 520,
+      "height": 292,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 24,
+      "stride": 2080,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "971acf8ec3872bdfcb6e9964315b9807f8d81bde09191f6d8153f263639b2573"
+    },
+    {
+      "id": "fresh5-video-137",
+      "split": "held-out",
+      "class": "video",
+      "width": 520,
+      "height": 292,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 137,
+      "stride": 2080,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "a6b0d42ae41b624758e56fa4c34ed4e624b14c565ad6bdd09d54fae9407f0461"
+    },
+    {
+      "id": "fresh5-duplicate-hold",
+      "split": "held-out",
+      "class": "duplicate-hold",
+      "width": 520,
+      "height": 292,
+      "layout": "RGBA",
+      "source": "video",
+      "frame": 24,
+      "repeatOf": "fresh5-video-24",
+      "stride": 2080,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "971acf8ec3872bdfcb6e9964315b9807f8d81bde09191f6d8153f263639b2573"
+    }
+  ]
+}

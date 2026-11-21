@@ -5,6 +5,7 @@
 
 import type { ConversionProfileReport } from '@services/conversion-profiler';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
+import type { OwnedVp8FailureKind } from '@services/owned-vp8-errors';
 import type {
   ConversionFormat,
   ConversionQuality,
@@ -88,6 +89,8 @@ export type WorkerResponse =
       code: string;
       /** Checked diagnostic for a typed owned-demux failure across the Worker boundary. */
       demuxFailureKind?: OwnedDemuxFailureKind;
+      /** Checked diagnostic for a typed owned VP8 failure. */
+      ownedVp8FailureKind?: OwnedVp8FailureKind;
     }
   | {
       type: 'log';

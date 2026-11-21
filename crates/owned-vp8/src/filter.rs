@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
-// Test-side VP8 keyframe reconstruction filter. The arithmetic follows RFC 6386
+// VP8 keyframe reconstruction filter. The arithmetic follows RFC 6386
 // section 15 and was checked against libwebp decoder DSP C at commit
 // 6c484cbf92e81a5673b24485ac02d211f69be5b7 (BSD-3-Clause, COPYING).
 // Apply only after *all* macroblocks are reconstructed: intra prediction must
-// read unfiltered neighbors. This module is excluded from production builds.
+// read unfiltered neighbors. Production uses a separate filtered work copy.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct FilterParams {
@@ -140,6 +140,48 @@ fn filter_segment(
         data[q + step] = clip_pixel(q1 - a2);
         data[q + 2 * step] = clip_pixel(q2 - a3);
     }
+}
+
+// Level 15 is the first normal keyframe filter to allow a one-unit
+// difference beside the boundary before taking the high-variance path.
+pub(super) const WEAK_EDGE_LEVEL: u8 = 15;
+
+pub(super) fn weak_edge_gain(
+    reference: &[u8],
+    reconstructed: &[u8],
+    q: usize,
+    step: usize,
+    incumbent: u8,
+    macroblock_edge: bool,
+) -> i32 {
+    let first = q - 4 * step;
+    let samples = std::array::from_fn(|i| reconstructed[first + i * step]);
+    let taps = if macroblock_edge {
+        Taps::Macroblock
+    } else {
+        Taps::Inner
+    };
+    let error = |level| {
+        let mut output: [u8; 8] = samples;
+        let (interior, limit, hev) = thresholds(level, 0);
+        filter_segment(
+            &mut output,
+            4,
+            1,
+            limit + 4 * i32::from(macroblock_edge),
+            interior,
+            hev,
+            taps,
+        );
+        output[1..7]
+            .iter()
+            .enumerate()
+            .map(|(i, pixel)| {
+                (i32::from(*pixel) - i32::from(reference[first + (i + 1) * step])).pow(2)
+            })
+            .sum::<i32>()
+    };
+    error(incumbent) - error(WEAK_EDGE_LEVEL)
 }
 
 #[expect(
@@ -391,6 +433,7 @@ pub(super) fn filter_macroblock(
 
 /// Run only after the full unfiltered frame and every macroblock's metadata
 /// have been frozen. The caller supplies row-major per-MB segment parameters.
+#[cfg(test)]
 pub(super) fn filter_frame(
     planes: &mut Planes<'_>,
     mb_width: usize,
@@ -412,6 +455,16 @@ pub(super) fn filter_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn weak_edge_gain_distinguishes_reconstruction_seams_from_source_edges() {
+        let reconstructed = [100, 100, 99, 100, 105, 105, 105, 105];
+        let weak_filtered = [100, 100, 100, 102, 103, 104, 105, 105];
+        let unchanged = [110; 8];
+        assert!(weak_edge_gain(&weak_filtered, &reconstructed, 4, 1, 6, false) > 0);
+        assert!(weak_edge_gain(&reconstructed, &reconstructed, 4, 1, 6, false) < 0);
+        assert_eq!(weak_edge_gain(&unchanged, &unchanged, 4, 1, 6, true), 0);
+    }
 
     // Frozen from libwebp decoder DSP C (commit 6c484cbf92e81a5673b24485ac02d211f69be5b7).
     // Reproduction source, exact input/output, source hashes and license are in

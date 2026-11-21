@@ -48,7 +48,6 @@ function mountAlerts(protection: 'idle' | 'busy' | 'results') {
         <AppUpdateNotice
           busy={protection === 'busy'}
           hasResults={protection === 'results'}
-          webpReloadRequired={error()?.phase === 'wasm_webp_initialization'}
           onClearResults={() => {}}
           t={(key) => key}
         />
@@ -66,7 +65,7 @@ function mountAlerts(protection: 'idle' | 'busy' | 'results') {
     container
   );
 
-  function showError(type: ConversionErrorType, terminal = false) {
+  function showError(type: ConversionErrorType, retryOwnedInitialization = false) {
     // Match handlers that flush batched error UI before scheduling focus.
     batch(() => {
       setError({
@@ -74,7 +73,9 @@ function mountAlerts(protection: 'idle' | 'busy' | 'results') {
         code: 'UNKNOWN',
         originalError: 'conversion failed',
         timestamp: 0,
-        ...(terminal ? { phase: 'wasm_webp_initialization' } : {}),
+        ...(retryOwnedInitialization
+          ? { phase: 'owned_vp8_initialization', recovery: 'retry' as const }
+          : {}),
       });
       setErrorVisible(true);
     });
@@ -89,7 +90,7 @@ function mountAlerts(protection: 'idle' | 'busy' | 'results') {
     return reload;
   }
 
-  return { container, previousAction, showError, reloadButton, reloadActivated };
+  return { container, showError, reloadButton, reloadActivated };
 }
 
 describe.each(['idle', 'busy', 'results'] as const)(
@@ -119,21 +120,18 @@ describe.each(['idle', 'busy', 'results'] as const)(
       }
     );
 
-    it('uses terminal initialization reload only when it is available', async () => {
-      const { container, previousAction, showError, reloadButton, reloadActivated } =
-        mountAlerts(protection);
-      showError('general', true);
-      const reload = reloadButton();
+    it('focuses same-document Retry for owned initialization without showing a reload notice', async () => {
+      const { container, showError } = mountAlerts(protection);
+      showError('format', true);
       await Promise.resolve();
 
-      expect(container.querySelector('[data-testid="error-retry-button"]')).toBeNull();
+      const retry = container.querySelector('[data-testid="error-retry-button"]');
+      expect(retry).not.toBeNull();
+      expect(document.activeElement).toBe(retry);
       expect(
-        container.querySelector('[data-testid="error-select-different-fallback-button"]')
-      ).toBeNull();
-      expect(container.querySelector('[data-testid="error-select-different-button"]')).toBeNull();
-      expect(reload.disabled).toBe(protection !== 'idle');
-      expect(document.activeElement).toBe(protection === 'idle' ? reload : previousAction);
-      expect(reloadActivated).not.toHaveBeenCalled();
+        container.querySelector('[data-testid="error-select-different-button"]')
+      ).not.toBeNull();
+      expect(container.querySelector('[data-testid="app-recovery-reload"]')).toBeNull();
     });
   }
 );

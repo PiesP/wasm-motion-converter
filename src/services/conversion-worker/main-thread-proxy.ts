@@ -12,7 +12,7 @@
  * - Clones Blob handles for lazy reads or transfers owned ArrayBuffers
  * - Throttled progress callbacks to the main thread
  * - Main-thread fallback only when Worker construction or bootstrap is unavailable
- * - AbortController propagation to the worker
+ * - Aborting the request terminates its dedicated Worker
  * - Timeout protection: terminates worker and rejects if conversion hangs
  */
 
@@ -25,6 +25,8 @@ import {
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { copyOwnedInputIndex } from '@services/owned-input-index-cache';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
+import type { OwnedVp8FailureKind } from '@services/owned-vp8-errors';
+import { discardOwnedVp8Module, waitForOwnedVp8Load } from '@services/owned-vp8-module-state';
 import type { ConversionProgress, ProgressCallback } from '@t/conversion-types';
 import { WORKER_MAX_MEMORY_MB, WORKER_PIPELINE_TIMEOUT_MS } from '@utils/constants';
 import { logger } from '@utils/logger';
@@ -54,7 +56,8 @@ export class WorkerMemoryLimitError extends Error {
   readonly code = 'OUT_OF_MEMORY' as const;
   constructor(
     message: string,
-    readonly demuxFailureKind?: 'resource'
+    readonly demuxFailureKind?: 'resource',
+    readonly ownedVp8FailureKind?: 'resource' | 'output-limit'
   ) {
     super(`Worker ran out of memory: ${message}`);
     this.name = 'WorkerMemoryLimitError';
@@ -74,7 +77,8 @@ export class WorkerPipelineError extends Error {
   constructor(
     readonly code: string,
     message: string,
-    readonly demuxFailureKind?: OwnedDemuxFailureKind
+    readonly demuxFailureKind?: OwnedDemuxFailureKind,
+    readonly ownedVp8FailureKind?: OwnedVp8FailureKind
   ) {
     super(`Worker error: ${message}`);
     this.name = 'WorkerPipelineError';
@@ -109,11 +113,17 @@ export async function runPipelineViaWorker(
     throw new DOMException('Cancelled', 'AbortError');
   }
 
+  // A dedicated Worker cannot reuse the main realm's compiled module. Wait
+  // for the previous loader and give up the cached source before dispatch.
+  const previousLoad = waitForOwnedVp8Load(signal);
+  if (previousLoad) await previousLoad;
+  signal?.throwIfAborted();
+  discardOwnedVp8Module();
+
   return new Promise<ArrayBuffer>((resolve, reject) => {
     const requestId = crypto.randomUUID();
 
-    // Create the worker. Construction failures are capability/bootstrap
-    // failures and are the only class eligible for main-thread fallback.
+    // Classify synchronous Worker construction failures as unavailability.
     let worker: Worker;
     try {
       worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' });
@@ -180,11 +190,8 @@ export async function runPipelineViaWorker(
       );
     };
 
-    // Set up abort signal forwarding.
-    // The listener is registered BEFORE checking signal.aborted to eliminate
-    // the timing window where the signal becomes aborted between the check
-    // and listener registration (the handler would never fire, causing a
-    // permanent hang).
+    // Abort terminates this request's dedicated Worker. Register the listener
+    // before checking for a signal that has already been aborted.
     let settled = false;
     const onAbort = () => {
       if (settled || timedOut) return;
@@ -271,15 +278,24 @@ export async function runPipelineViaWorker(
           if (response.code === 'CANCELLED') {
             reject(new DOMException('Cancelled', 'AbortError'));
           } else if (response.code === 'OUT_OF_MEMORY') {
+            const { ownedVp8FailureKind } = response;
             reject(
               new WorkerMemoryLimitError(
                 response.message,
-                response.demuxFailureKind === 'resource' ? 'resource' : undefined
+                response.demuxFailureKind === 'resource' ? 'resource' : undefined,
+                ownedVp8FailureKind === 'resource' || ownedVp8FailureKind === 'output-limit'
+                  ? ownedVp8FailureKind
+                  : undefined
               )
             );
           } else {
             reject(
-              new WorkerPipelineError(response.code, response.message, response.demuxFailureKind)
+              new WorkerPipelineError(
+                response.code,
+                response.message,
+                response.demuxFailureKind,
+                response.ownedVp8FailureKind
+              )
             );
           }
           break;
@@ -362,8 +378,9 @@ export async function runPipelineViaWorker(
  * Use this as a drop-in replacement for runConversionPipeline when you want
  * to offload the conversion to a Web Worker.
  *
- * Falls back to the main-thread pipeline if Worker creation fails
- * (e.g., CSP violations, file:// protocol).
+ * Falls back to the main-thread pipeline after a construction failure,
+ * an error before the ready message, or failure to send the start message.
+ * Fallback requires an attached input buffer or the original Blob.
  */
 export async function runPipelineWithFallback(
   input: ArrayBuffer | Blob,

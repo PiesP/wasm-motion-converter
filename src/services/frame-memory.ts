@@ -75,11 +75,13 @@ export interface WebpFrameMemoryBudgetOptions {
   targetHeight: number;
   workerCount: number;
   sourceHeadroomFrames?: number;
+  /** Serial software VP8 retains one decoder canvas and one RGB target task. */
+  serialSoftware?: boolean;
 }
 
 export interface WebpWorkerBudgetOptions extends Omit<
   WebpFrameMemoryBudgetOptions,
-  'sourceHeadroomFrames' | 'workerCount'
+  'serialSoftware' | 'sourceHeadroomFrames' | 'workerCount'
 > {
   requestedWorkers: number;
   analysisBytes?: number;
@@ -152,6 +154,7 @@ export class WebpFrameMemoryBudget {
   private targetGateError: Error | null = null;
   private useSourceHeadroom: boolean;
   private decoderFlushActive = false;
+  private beforeReservation: ((nextUsage: FrameMemoryUsage) => void) | null = null;
 
   constructor(options: WebpFrameMemoryBudgetOptions) {
     const requestedWorkers = Math.max(1, Math.floor(options.workerCount));
@@ -159,7 +162,7 @@ export class WebpFrameMemoryBudget {
     this.targetTaskBytes = estimateFrameTaskBytes(
       options.targetWidth,
       options.targetHeight,
-      'rgba'
+      options.serialSoftware ? 'rgb' : 'rgba'
     );
     const sourceFrameBytes = estimateRuntimeDecodedSourceFrameBytes(
       options.codedWidth,
@@ -176,7 +179,7 @@ export class WebpFrameMemoryBudget {
 
     // Every pool Worker may retain its lazily initialized Canvas while idle.
     // The decoder-side scaling/fallback Canvas remains alive for the conversion.
-    const persistentCanvasBytes = canvasBytes * (requestedWorkers + 1);
+    const persistentCanvasBytes = canvasBytes * (options.serialSoftware ? 1 : requestedWorkers + 1);
     const canvasReservation = this.reserveImmediate('canvas', persistentCanvasBytes);
     if (!canvasReservation) {
       throw new Error('WebP frame memory limit exceeded by persistent canvases');
@@ -193,9 +196,11 @@ export class WebpFrameMemoryBudget {
           this.targetTaskBytes
       )
     );
-    // One worker can encode while the decoder prepares its next frame, provided
-    // both tasks fit alongside the same conservative source headroom.
-    this.maxOutstandingTasks = Math.max(1, Math.min(requestedWorkers * 2, headroomTaskCapacity));
+    // Native Workers may keep two target tasks in flight when source headroom
+    // permits it. The conversion-owned software path keeps one target lease.
+    this.maxOutstandingTasks = options.serialSoftware
+      ? 1
+      : Math.max(1, Math.min(requestedWorkers * 2, headroomTaskCapacity));
     this.useSourceHeadroom = this.maxOutstandingTasks >= 2;
     this.allowsTargetLookahead = this.maxOutstandingTasks >= 2;
   }
@@ -208,6 +213,15 @@ export class WebpFrameMemoryBudget {
       sourceBytes: this.sourceBytes,
       targetBytes: this.targetBytes,
       totalBytes: this.currentBytes,
+    };
+  }
+
+  /** Optional conversion-wide admission before any new owned frame bytes. */
+  installAdmissionGuard(guard: (nextUsage: FrameMemoryUsage) => void): () => void {
+    if (this.beforeReservation) throw new Error('Frame memory admission guard already installed');
+    this.beforeReservation = guard;
+    return () => {
+      if (this.beforeReservation === guard) this.beforeReservation = null;
     };
   }
 
@@ -310,6 +324,11 @@ export class WebpFrameMemoryBudget {
     assertReservationBytes(bytes);
     if (!this.reservations.has(reservation)) return false;
     if (this.currentBytes + bytes > FRAME_PIPELINE_MEMORY_BUDGET_BYTES) return false;
+    this.beforeReservation?.({
+      ...this.usage,
+      resultBytes: this.resultBytes + bytes,
+      totalBytes: this.currentBytes + bytes,
+    });
     this.resultBytes += bytes;
     return true;
   }
@@ -360,6 +379,17 @@ export class WebpFrameMemoryBudget {
   private reserveImmediate(kind: ReservationKind, bytes: number): FrameMemoryReservation | null {
     assertReservationBytes(bytes);
     if (this.currentBytes + bytes > FRAME_PIPELINE_MEMORY_BUDGET_BYTES) return null;
+    if (this.beforeReservation) {
+      const usage = this.usage;
+      this.beforeReservation({
+        ...usage,
+        analysisBytes: usage.analysisBytes + (kind === 'analysis' ? bytes : 0),
+        canvasBytes: usage.canvasBytes + (kind === 'canvas' ? bytes : 0),
+        sourceBytes: usage.sourceBytes + (kind === 'source' ? bytes : 0),
+        targetBytes: usage.targetBytes + (kind === 'target' ? bytes : 0),
+        totalBytes: usage.totalBytes + bytes,
+      });
+    }
     const reservation = new FrameMemoryReservation(this, kind, bytes);
     this.reservations.add(reservation);
     if (kind === 'analysis') this.analysisBytes += bytes;
@@ -374,7 +404,13 @@ export class WebpFrameMemoryBudget {
 
   private drainTargetWaiters(): void {
     while (this.targetWaiters.length > 0 && !this.targetGateError) {
-      const reservation = this.tryReserveTarget();
+      let reservation: FrameMemoryReservation | null;
+      try {
+        reservation = this.tryReserveTarget();
+      } catch (error) {
+        this.closeTargetGate(error);
+        return;
+      }
       if (!reservation) return;
       this.targetWaiters.shift()?.resolve(reservation);
     }

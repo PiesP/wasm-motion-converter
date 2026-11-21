@@ -115,6 +115,7 @@ describe('demuxVideo owned packet route', () => {
   it('keeps the source ArrayBuffer and yields decode-order packets lazily', async () => {
     const source = request();
     const result = await demuxVideo(source, metadata);
+    expect(result.inputBufferBytes).toBe(source.inputBuffer?.byteLength);
     expect(result.encodedChunkBudgetBytes).toBe(ENCODED_CHUNK_BUDGET_BYTES);
     expect(result.totalFrames).toBe(12);
     expect(mocks.readPacket).not.toHaveBeenCalled();

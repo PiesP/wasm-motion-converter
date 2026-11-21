@@ -1,0 +1,407 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v15",
+  "status": "FROZEN_UNEXECUTED",
+  "freezeId": "vp8-v15-first-heldout-20261120-01",
+  "attemptBudget": 1,
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "generatorSha256": "716daee783be85d940e048e30630822c2fcb639281431b73c90a1785ee769253",
+  "ffmpegVersion": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "sourceSelectionSha256": "b774c622e185f9d3dab1007f6782de431ecf356afa8fb4758ab5ed3aa132c5af",
+  "sourceMetadataSha256": "fff1f152ec9d433167973f989f6a297964bcbf4c65d131ecb6e87b58a5e85f4e",
+  "sources": {
+    "photo": {
+      "page": "https://commons.wikimedia.org/wiki/File:Rotterdam_aerial_photograph.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Rotterdam_aerial_photograph.jpg&oldid=1226096299",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/7/7c/Rotterdam_aerial_photograph.jpg",
+      "author": "acediscovery",
+      "license": "CC-BY-4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+      "width": 1581,
+      "height": 1383,
+      "bytes": 2326693,
+      "sha256": "c2811ae01650ba6b942e647cd84e1b5ae0403d84862ea3d457c2b794bb83e994"
+    },
+    "video": {
+      "page": "https://commons.wikimedia.org/wiki/File:River_Bank-Closeup.webm",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:River_Bank-Closeup.webm&oldid=1204104561",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/7/7a/River_Bank-Closeup.webm",
+      "author": "Chazzie1769",
+      "license": "CC0-1.0",
+      "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 23973140,
+      "sha256": "8e54de109cd68404f3cceab59a2cdd842d7916f53a164641dced6aee12ed2381",
+      "streamIndex": 0,
+      "timeBase": "1/1000"
+    }
+  },
+  "priorV13": {
+    "path": "docs/experiments/501-owned-vp8-v13-fixtures.json",
+    "sha256": "eedc528acbeaf09faf94330ef4f2501d2209ad628fa92c8fd0b6e6e8ed49df3d"
+  },
+  "priorV14": {
+    "path": "docs/experiments/501-owned-vp8-v14-fixtures.json",
+    "sha256": "f4f096225a12d56ebba36b5e1f8676fff508022865049e232f1d38a603bdae59"
+  },
+  "fixtures": [
+    {
+      "id": "fresh15-neutral",
+      "split": "held-out",
+      "class": "neutral",
+      "width": 541,
+      "height": 359,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2164,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ed96f4f6adb75d793dc47aaad97f2cd2bc2108ab1e127f96bbf8d613f17e9b3b"
+    },
+    {
+      "id": "fresh15-near-neutral",
+      "split": "held-out",
+      "class": "near-neutral",
+      "width": 439,
+      "height": 273,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1756,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "921fd14b79968eee7e7e8420780153c35bafc644b9246a393318bc8385301c83"
+    },
+    {
+      "id": "fresh15-glyph",
+      "split": "held-out",
+      "class": "glyph-edge",
+      "width": 467,
+      "height": 309,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1868,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "c2a68b788ee6c198f64a524899ff05c2a96404719bae1723cae8aeb5e1f7b18e"
+    },
+    {
+      "id": "fresh15-diagonal",
+      "split": "held-out",
+      "class": "diagonal-chroma",
+      "width": 433,
+      "height": 283,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1732,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "ac4a0858a60f7d1c182bed8974e31dabaf0da589da5af09c691419c5bab77f3e"
+    },
+    {
+      "id": "fresh15-dark",
+      "split": "held-out",
+      "class": "dark-gradient",
+      "width": 379,
+      "height": 257,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1516,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "2b5778386c529f2d79da370a8272b164e6f1d4149ad8494e895d6cf3e08823df"
+    },
+    {
+      "id": "fresh15-saturated",
+      "split": "held-out",
+      "class": "saturated-boundary",
+      "width": 403,
+      "height": 269,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1612,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d446541e4a72a7b5c89bc34402867fd79a6beb2cd79118054af75e4be0884ae4"
+    },
+    {
+      "id": "fresh15-noise",
+      "split": "held-out",
+      "class": "deterministic-noise",
+      "width": 331,
+      "height": 241,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1324,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "20f7ec714a0e9a3ab2538d77f5ec6fb1ec3042401838fbe89f29624639abd712"
+    },
+    {
+      "id": "fresh15-curvature",
+      "split": "held-out",
+      "class": "mixed-curvature",
+      "width": 449,
+      "height": 293,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1796,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "31e8fb55d165c1cebaa8d5942dd9a6d5068181baf3aef91dcd04fa4e26b66c53"
+    },
+    {
+      "id": "fresh15-tiny",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 1,
+      "height": 17,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "68f305c408df261a2e5c432663383bea7935e9a61894f8dacb5d4fea2e9b9ab6"
+    },
+    {
+      "id": "fresh15-odd",
+      "split": "held-out",
+      "class": "odd",
+      "width": 7,
+      "height": 11,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 28,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d589f2363e877e2523748f1e67220e9cca90596c3050f042354fd6f8ef17ad9f"
+    },
+    {
+      "id": "fresh15-wide",
+      "split": "held-out",
+      "class": "wide-shallow",
+      "width": 2063,
+      "height": 27,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 8252,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "8445784a6a397411db55c25412028049769d3c175220a1777688b883d59634da"
+    },
+    {
+      "id": "fresh15-large",
+      "split": "held-out",
+      "class": "large-admitted",
+      "width": 3391,
+      "height": 1961,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 13564,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "77eae2d33e689986d85f0568b49602453b3a1cd1fc2c297dac2dc224980ac1e2"
+    },
+    {
+      "id": "fresh15-photo-nw",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 443,
+      "height": 373,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        64,
+        72,
+        660,
+        560
+      ],
+      "stride": 1772,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "afd1b91f8f13b91d071ccf3d7b477aaa71181f2e793a5e36b0d320b640e353e3"
+    },
+    {
+      "id": "fresh15-photo-ne",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 421,
+      "height": 359,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        849,
+        72,
+        660,
+        560
+      ],
+      "stride": 1684,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "100d54985341254a9a1a73b1b21968153235931f6e8fba0a37ebc03f1dc098d6"
+    },
+    {
+      "id": "fresh15-photo-sw",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 457,
+      "height": 389,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        64,
+        728,
+        660,
+        560
+      ],
+      "stride": 1828,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "2379925c2a02d55bdf2848266a6f007ac270a30aa6cd05b71a5e1be72f040924"
+    },
+    {
+      "id": "fresh15-photo-se",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 433,
+      "height": 367,
+      "layout": "RGBA",
+      "source": "photo",
+      "region": [
+        849,
+        728,
+        660,
+        560
+      ],
+      "stride": 1732,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "9f282a53d5aab28a75d44a53b12984b9ae0e4aa0a545c877b7a9a64af7b49a31"
+    },
+    {
+      "id": "fresh15-video-1s",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 541,
+      "height": 305,
+      "layout": "RGBA",
+      "source": "video",
+      "seconds": 1,
+      "pts": 1001,
+      "stride": 2164,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "39e39f2b7a743b4aaa7bd19b1528e4a05e0396bc2d6459f5b16a71b435cc7ab1"
+    },
+    {
+      "id": "fresh15-video-4s",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 509,
+      "height": 287,
+      "layout": "RGBA",
+      "source": "video",
+      "seconds": 4,
+      "pts": 4004,
+      "stride": 2036,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "0906b93f1cd8058a451940eaab9e757e956f211c2ae153365224a422814f09ec"
+    },
+    {
+      "id": "fresh15-video-6s",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 527,
+      "height": 297,
+      "layout": "RGBA",
+      "source": "video",
+      "seconds": 6,
+      "pts": 6006,
+      "stride": 2108,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "d732b01081d1deed106e193a22965b649f782a2173374a7f1563dda64d5de480"
+    },
+    {
+      "id": "fresh15-video-8s",
+      "split": "held-out",
+      "class": "video-packet-pts",
+      "width": 563,
+      "height": 317,
+      "layout": "RGBA",
+      "source": "video",
+      "seconds": 8,
+      "pts": 8008,
+      "stride": 2252,
+      "qualities": [
+        60,
+        75,
+        85
+      ],
+      "sha256": "9808f68a17e4b5a0efcbdfa2fc4e2c9d47f510166259c81bd14b0f22844894f2"
+    }
+  ]
+}

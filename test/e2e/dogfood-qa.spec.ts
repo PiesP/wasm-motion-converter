@@ -372,7 +372,11 @@ test.describe('Footer & Links', () => {
 
     const footer = page.getByRole('contentinfo');
     await expect(footer).toHaveCount(1);
-    await expect(footer).toContainText('wasm-webp');
+    await expect(footer.getByRole('link', { name: /owned vp8/i })).toHaveAttribute(
+      'href',
+      'https://github.com/PiesP/wasm-motion-converter/tree/master/crates/owned-vp8'
+    );
+    await expect(footer).not.toContainText('wasm-webp');
     await expect(footer).not.toContainText('mediabunny');
   });
 

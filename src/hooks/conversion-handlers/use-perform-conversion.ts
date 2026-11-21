@@ -17,7 +17,11 @@ import type {
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
-import { findWasmWebpInitializationError } from '@services/wasm-webp-singleton';
+import {
+  ownedVp8FailureKind,
+  OWNED_VP8_FAILURE_CODES,
+  type OwnedVp8FailureKind,
+} from '@services/owned-vp8-errors';
 import { showConfirmation } from '@stores/confirmation-store';
 import { conversionSettings } from '@stores/conversion-settings-store';
 import {
@@ -33,7 +37,6 @@ import {
   setTotalFrames,
   setVideoMetadata,
   setVideoPreviewUrl,
-  setWebpReloadRequired,
   transitionToState,
   videoMetadata,
   videoPreviewUrl,
@@ -74,7 +77,22 @@ import { handleFileSelected } from './use-handle-file-selected';
 const focusDownloadButton = (): void =>
   focusElementUnlessUserIsEditing('[data-testid="download-result-button"]');
 
-function knownConversionErrorCode(error: unknown): ErrorCode | undefined {
+interface KnownConversionFailure {
+  code: ErrorCode;
+  retryPhase?: 'owned_vp8_initialization' | 'owned_vp8_runtime';
+}
+
+function knownConversionFailure(
+  code: ErrorCode,
+  ownedVp8Kind?: OwnedVp8FailureKind
+): KnownConversionFailure {
+  if (ownedVp8Kind === 'load' || ownedVp8Kind === 'abi-initialization')
+    return { code, retryPhase: 'owned_vp8_initialization' };
+  if (ownedVp8Kind === 'trap') return { code, retryPhase: 'owned_vp8_runtime' };
+  return { code };
+}
+
+function findKnownConversionFailure(error: unknown): KnownConversionFailure | undefined {
   const seen = new Set<Error>();
   let current = error;
   for (let depth = 0; depth < 16 && current instanceof Error && !seen.has(current); depth++) {
@@ -84,11 +102,15 @@ function knownConversionErrorCode(error: unknown): ErrorCode | undefined {
       current instanceof WorkerMemoryLimitError ||
       current instanceof WorkerTimeoutError
     ) {
-      return current.code;
+      return { code: current.code };
     }
     if (current instanceof WorkerPipelineError && isKnownConversionErrorCode(current.code)) {
-      return current.code;
+      return knownConversionFailure(current.code, current.ownedVp8FailureKind);
     }
+    const vp8Failure = ownedVp8FailureKind(current);
+    if (vp8Failure === 'cancelled') return { code: 'CANCELLED' };
+    if (vp8Failure !== undefined)
+      return knownConversionFailure(OWNED_VP8_FAILURE_CODES[vp8Failure], vp8Failure);
     current = current.cause;
   }
   return undefined;
@@ -119,8 +141,7 @@ export async function handleConvert(
     return;
   }
 
-  // Guard against double-click: abort any in-flight conversion and prevent
-  // a second pipeline from starting while the first is still running.
+  // Ignore repeated Convert clicks while the active pipeline is running.
   if (appState() === 'converting') {
     logger.warn('conversion', 'Convert called while already converting — skipping');
     return;
@@ -190,7 +211,7 @@ export async function handleConvert(
                     videoMetadata(),
                     settings,
                     t,
-                    knownConversionErrorCode(error)
+                    findKnownConversionFailure(error)?.code
                   );
                   setErrorMessage(context.originalError);
                   setErrorContext(context);
@@ -404,9 +425,8 @@ async function executePipeline(
     throw new Error('Unable to extract VideoDecoderConfig — cannot run conversion pipeline');
   }
 
-  // WebP: skip Worker pipeline — wasm-webp hangs in Worker context (WASM preload
-  // from main document is not accessible to Workers). Main-thread OffscreenCanvas
-  // path is faster and more reliable.
+  // WebP uses the main conversion pipeline, which selects internal Canvas
+  // Workers or conversion-owned VP8 software with one decoder/resource ledger.
   const isWebP = serializedOptions.format === 'webp';
   if (isWebP) {
     const { runConversionPipeline } = await import('@services/conversion-pipeline');
@@ -530,23 +550,26 @@ async function handleConversionError(
   }
 
   const errorMessage_ = getErrorMessage(error) || t('error.conversionFailed');
-  const initializationError = findWasmWebpInitializationError(error);
-
-  if (!initializationError && isCancellationError(error)) {
+  const knownFailure = findKnownConversionFailure(error);
+  if (knownFailure === undefined && isCancellationError(error)) {
     // The intent's finally owns the terminal transition after teardown settles.
     runtime.stopMemoryMonitoring();
     return;
   }
 
   const context = classifyConversionError(
-    initializationError?.message ?? errorMessage_,
+    errorMessage_,
     videoMetadata(),
     settings,
     t,
-    knownConversionErrorCode(error)
+    knownFailure?.code
   );
   context.originalError = errorMessage_;
-  if (initializationError) setWebpReloadRequired(true);
+  if (knownFailure?.retryPhase) {
+    context.recovery = 'retry';
+    context.phase = knownFailure.retryPhase;
+    delete context.suggestion;
+  }
 
   logger.error('conversion', 'Conversion failed', {
     error: errorMessage_,

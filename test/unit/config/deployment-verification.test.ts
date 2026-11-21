@@ -1,7 +1,7 @@
 // GitHub Actions expressions are literal workflow assertions.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -89,6 +89,23 @@ describe('source-bound public verification', () => {
     await expect(verifyDeploymentBytes(target, state, fetcher)).rejects.toThrow('sourceSha');
   });
 
+  it('requires the original metadata bytes in the final mode', async () => {
+    const original = `${JSON.stringify(state, null, 2)}\n`;
+    const expectedManifestSha256 = createHash('sha256').update(original).digest('hex');
+    let metadata = original;
+    const fetcher: typeof fetch = async (input) =>
+      new URL(String(input)).pathname === '/deployment-state.json'
+        ? new Response(metadata, { headers: { 'content-type': 'application/json' } })
+        : new Response(body);
+    await expect(
+      verifyDeploymentBytes(target, state, fetcher, expectedManifestSha256)
+    ).resolves.toMatchObject({ manifestSha256: expectedManifestSha256 });
+    metadata = JSON.stringify(state);
+    await expect(
+      verifyDeploymentBytes(target, state, fetcher, expectedManifestSha256)
+    ).rejects.toThrow('metadata bytes differ');
+  });
+
   it('restricts targets to the owned Pages surface and maintained loopback serving', () => {
     expect(deploymentUrl('https://1234abcd.wasm-motion-converter.pages.dev/').protocol).toBe(
       'https:'
@@ -143,6 +160,50 @@ describe('source-bound public verification', () => {
       '404.html returned 308'
     );
   });
+
+  it.each([
+    '_worker.js',
+    '_routes.json',
+    '_redirects',
+    'assets/post-stamp.js',
+    'assets/post-stamp.wasm',
+    'index.html',
+  ])(
+    'rejects local final artifact contamination at %s before contacting the origin',
+    async (path) => {
+      const directory = mkdtempSync(join(tmpdir(), 'wmc-owned-dist-'));
+      const fetcher = vi.spyOn(globalThis, 'fetch');
+      try {
+        const headers = '/\n  X-Content-Type-Options: nosniff\n';
+        const manifest = {
+          ...state,
+          headersSha256: createHash('sha256').update(headers).digest('hex'),
+        };
+        writeFileSync(join(directory, '_headers'), headers);
+        writeFileSync(join(directory, 'deployment-state.json'), JSON.stringify(manifest));
+        writeFileSync(join(directory, 'index.html'), body);
+        mkdirSync(join(directory, 'assets'));
+        writeFileSync(
+          join(directory, path),
+          path === 'index.html' ? 'x'.repeat(body.length) : 'extra'
+        );
+        vi.stubEnv('DEPLOY_DIST', directory);
+        vi.stubEnv('DEPLOY_URL', 'http://127.0.0.1:4123/');
+        vi.stubEnv('DEPLOY_REQUIRE_OWNED_VP8_ONLY', '1');
+        vi.stubEnv('EXPECTED_SOURCE_SHA', state.sourceSha);
+        await expect(verifyPublication()).rejects.toThrow(
+          path === 'index.html'
+            ? 'Local deployment artifact bytes differ: index.html'
+            : `Unaccounted deployment artifact file: ${path}`
+        );
+        expect(fetcher).not.toHaveBeenCalled();
+      } finally {
+        fetcher.mockRestore();
+        vi.unstubAllEnvs();
+        rmSync(directory, { recursive: true });
+      }
+    }
+  );
 
   it('fails a superseded source before any public acceptance work', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'wmc-superseded-'));

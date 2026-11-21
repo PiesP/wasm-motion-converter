@@ -12,6 +12,7 @@ const IS_DEPLOY_PROFILE = TEST_PROFILE === 'deploy';
 const IS_CI_PROFILE = TEST_PROFILE === 'ci';
 const IS_RESOURCE_PROFILE = TEST_PROFILE === 'resource';
 const BROWSER_CAPABILITY_TEST = 'e2e/browser-capability.spec.ts';
+const OWNED_VP8_ENGINE_TEST = 'e2e/owned-vp8-engine.spec.ts';
 // Fresh CI checkouts intentionally exclude the large, local-only codec matrix.
 // The smoke fixture is generated deterministically before this profile runs.
 const CI_TEST_MATCH = [
@@ -23,6 +24,7 @@ const CI_TEST_MATCH = [
   'e2e/output-contract.spec.ts',
   'e2e/adaptive-resource-safety.spec.ts',
   BROWSER_CAPABILITY_TEST,
+  OWNED_VP8_ENGINE_TEST,
 ];
 const LOCAL_TEST_IGNORE = [
   'e2e/fixtures/**',
@@ -55,12 +57,12 @@ const chromiumProject = {
 const capabilitySmokeProjects = [
   {
     name: 'firefox',
-    testMatch: BROWSER_CAPABILITY_TEST,
+    testMatch: [BROWSER_CAPABILITY_TEST, OWNED_VP8_ENGINE_TEST],
     use: { ...devices['Desktop Firefox'] },
   },
   {
     name: 'webkit',
-    testMatch: BROWSER_CAPABILITY_TEST,
+    testMatch: [BROWSER_CAPABILITY_TEST, OWNED_VP8_ENGINE_TEST],
     use: { ...devices['Desktop Safari'] },
   },
 ];

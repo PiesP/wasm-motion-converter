@@ -3,20 +3,32 @@
 
 import { readFileSync } from 'node:fs';
 
+import { globalBufferPool } from '@services/buffer-pool';
+import type { DecodeOptions } from '@services/decoder-service';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
 vi.mock('@services/decoder-service', () => ({
-  decodeFrames: vi.fn().mockImplementation(async (_demux, options) => {
-    const first =
-      options.pixelFormat === 'rgba'
-        ? new Uint8Array([0x20, 0x40, 0x60, 0xff])
-        : new Uint8Array([0x20, 0x40, 0x60]);
-    const second =
-      options.pixelFormat === 'rgba'
-        ? new Uint8Array([0x30, 0x50, 0x70, 0xff])
-        : new Uint8Array([0x30, 0x50, 0x70]);
-    await options.onFrameAvailable(first, 100, 0, undefined, { startUs: 0, endUs: 100000 });
-    await options.onFrameAvailable(second, 40, 1, undefined, { startUs: 100000, endUs: 140000 });
+  decodeFrames: vi.fn().mockImplementation(async (_demux, options: DecodeOptions) => {
+    for (const [index, startUs, endUs, color] of [
+      [0, 0, 100_000, [0x20, 0x40, 0x60]],
+      [1, 100_000, 140_000, [0x30, 0x50, 0x70]],
+    ] as const) {
+      const budget = options.frameMemoryBudget;
+      const target = await budget?.acquireTarget();
+      const handoff = target && budget?.createHandoff(target);
+      const pixels = globalBufferPool.acquire(options.pixelFormat === 'rgba' ? 4 : 3);
+      pixels.set(color);
+      if (options.pixelFormat === 'rgba') pixels[3] = 0xff;
+      try {
+        await options.onFrameAvailable(pixels, (endUs - startUs) / 1000, index, handoff, {
+          startUs,
+          endUs,
+        });
+      } finally {
+        if (target && !handoff?.isTaken) target.release();
+      }
+      if (target) expect(target.isReleased).toBe(true);
+    }
     return {
       outputTotalMs: 0,
       skippedByDecimation: 0,
@@ -39,35 +51,31 @@ vi.mock('@services/dynamic-decimation-controller', () => ({
   }),
 }));
 
-vi.mock('@services/wasm-webp-singleton', () => ({
-  encodeRGBReuse: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
-}));
-
-vi.mock('@services/streaming-webp-encoder', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@services/streaming-webp-encoder')>();
-  return {
-    ...actual,
-    extractVP8Bitstream: () => new Uint8Array([0x10, 0, 0, 0x9d, 1, 0x2a, 1, 0, 1, 0]),
-  };
-});
-
 import { encodeGif } from '@services/gif-encoder-service';
-import { encodeWebp } from '@services/webp-encoder-service';
+import { encodeWebpOwned } from '@services/webp-encoder-service';
 
-const wasmUrl = new URL('../../../src/services/gif-scalar-quantizer.wasm', import.meta.url);
-const wasmBytes = readFileSync(wasmUrl);
+const modules = new Map(
+  [
+    new URL('../../../src/services/gif-scalar-quantizer.wasm', import.meta.url),
+    new URL('../../../crates/owned-vp8/owned-vp8.wasm', import.meta.url),
+  ].map((url) => [url.href, readFileSync(url)])
+);
 
 beforeEach(() => {
-  vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
-    expect(input).toBe(wasmUrl.href);
-    return new Response(wasmBytes, {
+  vi.stubGlobal('fetch', async (input: string | URL) => {
+    const bytes = modules.get(String(input));
+    if (!bytes) throw new Error(`Unexpected WASM request: ${input}`);
+    return new Response(bytes, {
       status: 200,
       headers: { 'content-type': 'application/wasm' },
     });
   });
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  globalBufferPool.clear();
+});
 
 const demux = {
   chunks: [],
@@ -89,17 +97,13 @@ function readGifDurationMs(output: Uint8Array): number {
 }
 
 function readWebpDurationMs(output: Uint8Array): number {
+  const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
   let totalMilliseconds = 0;
-  for (let offset = 0; offset + 24 <= output.length; offset++) {
-    if (
-      output[offset] === 0x41 &&
-      output[offset + 1] === 0x4e &&
-      output[offset + 2] === 0x4d &&
-      output[offset + 3] === 0x46
-    ) {
-      totalMilliseconds +=
-        output[offset + 20]! | (output[offset + 21]! << 8) | (output[offset + 22]! << 16);
-    }
+  for (let offset = 12; offset < output.length;) {
+    const size = view.getUint32(offset + 4, true);
+    if (view.getUint32(offset) === 0x414e4d46)
+      totalMilliseconds += view.getUint32(offset + 20, true) & 0x00ff_ffff;
+    offset += 8 + size + (size & 1);
   }
   return totalMilliseconds;
 }
@@ -119,7 +123,7 @@ describe('encoder final playback duration', () => {
   it('preserves decoder and dynamic-decimation tails in the WebP container', async () => {
     const onProgress = vi.fn();
     const onEncodingComplete = vi.fn();
-    const output = await encodeWebp(
+    const output = await encodeWebpOwned(
       demux,
       {
         height: 1,

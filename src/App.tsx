@@ -33,7 +33,6 @@ import {
   environmentSupported,
   errorContext,
   errorMessage,
-  webpReloadRequired,
   inputFile,
   outputFrames,
   setConversionResults,
@@ -348,7 +347,6 @@ const App: Component = () => {
       >
         <AppUpdateNotice
           busy={isBusy()}
-          webpReloadRequired={webpReloadRequired()}
           hasResults={conversionResults().length > 0}
           onClearResults={clearResultsForReload}
           t={t}

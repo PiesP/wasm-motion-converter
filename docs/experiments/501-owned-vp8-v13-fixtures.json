@@ -1,0 +1,383 @@
+{
+  "schemaVersion": 1,
+  "cohort": "corrected-v13",
+  "status": "EXPOSED_REGRESSION",
+  "freezeId": "vp8-v13-first-heldout-20261116-01",
+  "attemptBudget": 1,
+  "generatorSha256": "7207b4b112f7fba5b07c51899459bdd4628d64c0e497c25eddf3006cbd9c5141",
+  "ffmpegVersion": "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "purpose": "Prospective source-only 20-input/60-condition fixed-pixel cohort; V1-V12 are exposed regression evidence",
+  "thresholds": {
+    "psnrBaselineDeltaDb": -1,
+    "ssimBaselineDelta": -0.01,
+    "sizeRatio": 1.25,
+    "sizeAdditiveBytes": 128
+  },
+  "pixelConvention": "RGBA packed stride=width*4, opaque alpha",
+  "sources": {
+    "photoA": {
+      "page": "https://commons.wikimedia.org/wiki/File:House_-_Christchurch,_NZ_-_DSC02742.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:House_-_Christchurch,_NZ_-_DSC02742.jpg&oldid=1054031738",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/d/d6/House_-_Christchurch%2C_NZ_-_DSC02742.jpg",
+      "license": "CC0-1.0",
+      "author": "Daderot",
+      "width": 5472,
+      "height": 3648,
+      "bytes": 4680181,
+      "sha256": "ba6210e1280a49a334d64b0355f1cb49672283663a20c7632b046b27ae6e8826"
+    },
+    "photoB": {
+      "page": "https://commons.wikimedia.org/wiki/File:Green_leaf_for_texture_2.jpg",
+      "revision": "https://commons.wikimedia.org/w/index.php?title=File:Green_leaf_for_texture_2.jpg&oldid=1168030608",
+      "download": "https://upload.wikimedia.org/wikipedia/commons/e/e9/Green_leaf_for_texture_2.jpg",
+      "license": "CC0-1.0",
+      "author": "Kurt Kaiser",
+      "width": 4608,
+      "height": 3456,
+      "bytes": 5253846,
+      "sha256": "0f0f972d62682dee854612d7b22c8a993fb476a44f2c64f5e6a821227e85d2e5"
+    }
+  },
+  "priorManifests": {
+    "initialV1": {
+      "path": "docs/experiments/501-owned-vp8-v2-fixtures.json",
+      "sha256": "75646176a29a6cc6506b07d5ad955401571573df1cd7f2c217f9b7565b7f5918"
+    },
+    "correctedV2": {
+      "path": "docs/experiments/501-owned-vp8-v2-correction-fixtures.json",
+      "sha256": "015b9a64af8cdc648f7ac976c14e64ae355a239f343115d21f2269c381afeb81"
+    },
+    "correctedV3": {
+      "path": "docs/experiments/501-owned-vp8-v3-fixtures.json",
+      "sha256": "072947742fe4fce1aaf77702f8cfee3d2c7410a79d5715155f047913f00c2d2a"
+    },
+    "correctedV4": {
+      "path": "docs/experiments/501-owned-vp8-v4-fixtures.json",
+      "sha256": "13c723fe5e5839fc3cc48a06056ada04cce0127b2b04931163a25f9619fd23b7"
+    },
+    "correctedV5": {
+      "path": "docs/experiments/501-owned-vp8-v5-fixtures.json",
+      "sha256": "c8929d67d57c6df20e2c152c85ac4178b9b4a4c9c7184892b62df130de8faf83"
+    },
+    "correctedV6": {
+      "path": "docs/experiments/501-owned-vp8-v6-fixtures.json",
+      "sha256": "7451495d9c36648193d6864d2e68318262989a32c5cb3e621acd9232dc7e9c2b"
+    },
+    "correctedV7": {
+      "path": "docs/experiments/501-owned-vp8-v7-fixtures.json",
+      "sha256": "0fe8e83f194f25c2ba1f6d9e68486c46a4567d631f7db3aee4e5681bd02fa6bb"
+    },
+    "correctedV8": {
+      "path": "validation/windows/inputs/owned-vp8-prior-manifests/501-owned-vp8-v8-fixtures.json",
+      "sha256": "d4b17b2990ce5fbb96dfa75c3377c8b6fb20336e91e202a5440f5e5d2da24e19"
+    },
+    "correctedV9": {
+      "path": "validation/windows/inputs/owned-vp8-prior-manifests/501-owned-vp8-v9-fixtures.json",
+      "sha256": "8eeae4aeb52b433ff2936ee7973d31795b6d39edc5f734e0a33de84ebf176c54"
+    },
+    "correctedV10": {
+      "path": "validation/windows/inputs/owned-vp8-prior-manifests/501-owned-vp8-v10-fixtures.json",
+      "sha256": "741d4674a4ef687be0e57ea02e8d0470bdbd7f21a74b16c17b25e66f9bc8db40"
+    },
+    "correctedV11": {
+      "path": "validation/windows/inputs/owned-vp8-prior-manifests/501-owned-vp8-v11-fixtures.json",
+      "sha256": "976a1365e7eeb13759df8f00d8b9ff296875c531ad10c707d445a25ac5c298a0"
+    },
+    "correctedV12": {
+      "path": "validation/windows/inputs/owned-vp8-prior-manifests/501-owned-vp8-v12-fixtures.json",
+      "sha256": "56ce94096af1c1d4424e55854b933f5c82ebc14e06bf8360b6cd9470f1a91d95"
+    }
+  },
+  "fixtures": [
+    {
+      "id": "fresh13-neutral",
+      "split": "held-out",
+      "class": "neutral",
+      "width": 521,
+      "height": 317,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 2084,
+      "qualities": [60, 75, 85],
+      "sha256": "fcc314e99f21f1cabcdbc381382989ef2e9f89dcdb3efeff942958518357b89b"
+    },
+    {
+      "id": "fresh13-near-neutral",
+      "split": "held-out",
+      "class": "near-neutral",
+      "width": 409,
+      "height": 277,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1636,
+      "qualities": [60, 75, 85],
+      "sha256": "a1b7963270652a751ab81112a107516ab5fc7ac70d35331eda7b66a0a1ab7cf2"
+    },
+    {
+      "id": "fresh13-glyph",
+      "split": "held-out",
+      "class": "glyph-edge",
+      "width": 443,
+      "height": 311,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1772,
+      "qualities": [60, 75, 85],
+      "sha256": "eb80ccd68f17ea62cd2afd468544266431c87924f9470cddc904a6573d2ca5bf"
+    },
+    {
+      "id": "fresh13-diagonal",
+      "split": "held-out",
+      "class": "diagonal-chroma",
+      "width": 379,
+      "height": 269,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1516,
+      "qualities": [60, 75, 85],
+      "sha256": "ff1ed9bc965433c7c7eae327a3a577e0c2bb6c551f26a8dff10694b8f09c3dd1"
+    },
+    {
+      "id": "fresh13-dark",
+      "split": "held-out",
+      "class": "dark-gradient",
+      "width": 393,
+      "height": 241,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1572,
+      "qualities": [60, 75, 85],
+      "sha256": "0f34d773692cf8cef7e508accd9dac3e763b767a01677945e19cafc3b8fc3a4c"
+    },
+    {
+      "id": "fresh13-saturated",
+      "split": "held-out",
+      "class": "saturated-boundary",
+      "width": 367,
+      "height": 257,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1468,
+      "qualities": [60, 75, 85],
+      "sha256": "2965bd5d8986d7a3b6f932cc15604be98ecf428c9f6e43697486df0f5f9d5da9"
+    },
+    {
+      "id": "fresh13-noise",
+      "split": "held-out",
+      "class": "deterministic-noise",
+      "width": 313,
+      "height": 223,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1252,
+      "qualities": [60, 75, 85],
+      "sha256": "fa6ac00985a9bb496ce0e4d1f6fd35a8772243d1c3c28f76b8722e50c6a8c466"
+    },
+    {
+      "id": "fresh13-curvature",
+      "split": "held-out",
+      "class": "mixed-curvature",
+      "width": 419,
+      "height": 283,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1676,
+      "qualities": [60, 75, 85],
+      "sha256": "e38c5e056301876570c6bac8cdd4da912e7cdcabdbb97146edceab3c1cd5139c"
+    },
+    {
+      "id": "fresh13-tiny",
+      "split": "held-out",
+      "class": "tiny",
+      "width": 1,
+      "height": 11,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 4,
+      "qualities": [60, 75, 85],
+      "sha256": "532d00469bdc6516eb6c39cca3a37ed001f1385f749e419668574b96bb730d13"
+    },
+    {
+      "id": "fresh13-odd",
+      "split": "held-out",
+      "class": "odd",
+      "width": 3,
+      "height": 7,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 12,
+      "qualities": [60, 75, 85],
+      "sha256": "1359ae80fa094f18dc6b0a43843784f96068b8d5a8845d11e921db296610c9ca"
+    },
+    {
+      "id": "fresh13-wide2049",
+      "split": "held-out",
+      "class": "wide-shallow",
+      "width": 2049,
+      "height": 17,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 8196,
+      "qualities": [60, 75, 85],
+      "sha256": "2f57b6c4d0e3a92fb01c06c186e9fdc4600f51d43293ecd03f23f9092161415e"
+    },
+    {
+      "id": "fresh13-muted",
+      "split": "held-out",
+      "class": "muted-texture",
+      "width": 307,
+      "height": 211,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1228,
+      "qualities": [60, 75, 85],
+      "sha256": "9acad1760599dbb777718f803734e99d95b8e100c5305681fd90068d2fbcbe87"
+    },
+    {
+      "id": "fresh13-checker",
+      "split": "held-out",
+      "class": "checker-edge",
+      "width": 343,
+      "height": 233,
+      "layout": "RGBA",
+      "source": "generated",
+      "stride": 1372,
+      "qualities": [60, 75, 85],
+      "sha256": "f0925299fff4215301b4fee8fb9adde25eaf28f2c4c7aff32cf14ede980a34b0"
+    },
+    {
+      "id": "fresh13-photoA-1",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 401,
+      "height": 271,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1604,
+      "qualities": [60, 75, 85],
+      "sha256": "844c71a33d93068470565449d1bf333fd7462a16af99286f876b05f9fe1c5440",
+      "photo": "photoA",
+      "region": {
+        "x": 110,
+        "y": 1282,
+        "width": 1604,
+        "height": 1084
+      }
+    },
+    {
+      "id": "fresh13-photoB-1",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 401,
+      "height": 271,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1604,
+      "qualities": [60, 75, 85],
+      "sha256": "cb0201bc8710a94e2ce4e4cb09e41c4b2c695f8bca90484c4d3ded4dad08b149",
+      "photo": "photoB",
+      "region": {
+        "x": 166,
+        "y": 1321,
+        "width": 1203,
+        "height": 813
+      }
+    },
+    {
+      "id": "fresh13-photoA-2",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 337,
+      "height": 247,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1348,
+      "qualities": [60, 75, 85],
+      "sha256": "9f8cb6cf231b80a749881f84dd1d4bee57236da8d77be7ef6492c8c011d8808e",
+      "photo": "photoA",
+      "region": {
+        "x": 1893,
+        "y": 1206,
+        "width": 1685,
+        "height": 1235
+      }
+    },
+    {
+      "id": "fresh13-photoB-2",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 337,
+      "height": 247,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1348,
+      "qualities": [60, 75, 85],
+      "sha256": "e2765c19326c45c09e8733975a2e54e15692d48ba89fb524ccba63a69a63f080",
+      "photo": "photoB",
+      "region": {
+        "x": 1630,
+        "y": 1234,
+        "width": 1348,
+        "height": 988
+      }
+    },
+    {
+      "id": "fresh13-photoA-3",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 289,
+      "height": 193,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1156,
+      "qualities": [60, 75, 85],
+      "sha256": "3d282ca5f2160cfada44b3a4bf9bcea24e75d3479b58fc60a4d1766300d885f0",
+      "photo": "photoA",
+      "region": {
+        "x": 3693,
+        "y": 1245,
+        "width": 1734,
+        "height": 1158
+      }
+    },
+    {
+      "id": "fresh13-photoB-3",
+      "split": "held-out",
+      "class": "photograph-crop",
+      "width": 289,
+      "height": 193,
+      "layout": "RGBA",
+      "source": "photo",
+      "stride": 1156,
+      "qualities": [60, 75, 85],
+      "sha256": "0f36335bbcc14e3d72d247f95d7d4bcfb67e6d940ba1ae4956629d0b81f4d440",
+      "photo": "photoB",
+      "region": {
+        "x": 3117,
+        "y": 1245,
+        "width": 1445,
+        "height": 965
+      }
+    },
+    {
+      "id": "fresh13-duplicate-hold",
+      "split": "held-out",
+      "class": "intentional-duplicate",
+      "width": 401,
+      "height": 271,
+      "layout": "RGBA",
+      "source": "photo",
+      "repeatOf": "fresh13-photoA-1",
+      "stride": 1604,
+      "qualities": [60, 75, 85],
+      "sha256": "844c71a33d93068470565449d1bf333fd7462a16af99286f876b05f9fe1c5440",
+      "photo": "photoA",
+      "region": {
+        "x": 110,
+        "y": 1282,
+        "width": 1604,
+        "height": 1084
+      }
+    }
+  ]
+}

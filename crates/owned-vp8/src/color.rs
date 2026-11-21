@@ -27,6 +27,40 @@ pub(crate) fn convert_2x2(rgb: [[u8; 3]; 4]) -> ([u8; 4], u8, u8) {
     (y, u, v)
 }
 
+/// Input-only nearest-chroma RGB error over the visible part of one 2x2 cell.
+/// Both visible dimensions are at most two. Each channel difference is at most
+/// 255, so a cell contributes at most 4 * 3 * 255^2 = 780_300.
+#[inline]
+pub(crate) fn nearest_chroma_rgb_error(
+    rgb: [[u8; 3]; 4],
+    luma: [u8; 4],
+    u: u8,
+    v: u8,
+    visible_width: usize,
+    visible_height: usize,
+) -> u64 {
+    debug_assert!(visible_width <= 2 && visible_height <= 2);
+    let d = i32::from(u) - 128;
+    let e = i32::from(v) - 128;
+    let mut sum = 0u64;
+    for dy in 0..visible_height {
+        for dx in 0..visible_width {
+            let index = dy * 2 + dx;
+            let c = i32::from(luma[index]) - 16;
+            let predicted = [
+                ((298 * c + 409 * e + 128) >> 8).clamp(0, 255),
+                ((298 * c - 100 * d - 208 * e + 128) >> 8).clamp(0, 255),
+                ((298 * c + 516 * d + 128) >> 8).clamp(0, 255),
+            ];
+            for (source, output) in rgb[index].into_iter().zip(predicted) {
+                let difference = i32::from(source) - output;
+                sum += (difference * difference) as u64;
+            }
+        }
+    }
+    sum
+}
+
 #[inline]
 fn gamma_average(samples: [u8; 4]) -> i32 {
     let sum = samples
@@ -74,7 +108,18 @@ const LINEAR_TO_GAMMA: [u8; 33] = [
 
 #[cfg(test)]
 mod tests {
-    use super::convert_2x2;
+    use super::{convert_2x2, nearest_chroma_rgb_error};
+
+    #[test]
+    fn nearest_chroma_proxy_counts_visible_pixels_only() {
+        let rgb = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255; 3]];
+        let (luma, u, v) = convert_2x2(rgb);
+        assert_eq!((luma, u, v), ([82, 145, 41, 235], 128, 128));
+        assert_eq!(nearest_chroma_rgb_error(rgb, luma, u, v, 2, 2), 152_325);
+        assert_eq!(nearest_chroma_rgb_error(rgb, luma, u, v, 1, 1), 43_542);
+        assert_eq!(nearest_chroma_rgb_error(rgb, luma, u, v, 0, 2), 0);
+        assert_eq!(nearest_chroma_rgb_error(rgb, luma, u, v, 2, 0), 0);
+    }
 
     // Native libwebp 6c484cbf WebPPictureImportRGB(), use_argb=0, before encode.
     // Oracle source SHA256: 31be241217f587930778af5427156c15e4e54dc4edde3107412011f7b3cfdf6a.

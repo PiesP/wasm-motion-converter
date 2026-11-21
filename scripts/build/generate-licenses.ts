@@ -147,11 +147,45 @@ function collectViteHelperOwner(pkg: Record<string, unknown>): LicenseEntry | nu
   return collectInstalledDependency('vite', 'Build-generated Vite/Rolldown browser helpers', true);
 }
 
+function collectOwnedVp8Attribution(): LicenseEntry {
+  const manifest = readFileSync(join(ROOT, 'crates/owned-vp8/Cargo.toml'), 'utf-8');
+  const field = (name: string): string | undefined =>
+    manifest.match(new RegExp(`^${name}\\s*=\\s*"([^"]+)"\\s*$`, 'm'))?.[1];
+  if (field('name') !== 'owned-vp8' || field('license') !== 'MIT AND BSD-3-Clause') {
+    throw new Error('Review owned VP8 crate identity and license before generating notices.');
+  }
+  const version = requiredString(field('version'), 'version', 'owned-vp8');
+  const notice = (file: string): { file: string; text: string } => {
+    const text = readFileSync(join(ROOT, file), 'utf-8').trim();
+    if (!text) throw new Error(`Empty owned VP8 notice ${file}.`);
+    return { file, text };
+  };
+  return {
+    name: 'owned-vp8',
+    version,
+    license: 'MIT AND BSD-3-Clause',
+    url: 'https://github.com/PiesP/wasm-motion-converter/tree/master/crates/owned-vp8',
+    purpose:
+      'Conversion-owned Rust VP8 encoder: original MIT code, attributed libwebp transform, color, source-activity, quantization and filter calculations, and RFC 6386 format constants',
+    notices: [
+      notice('LICENSE'),
+      notice('crates/owned-vp8/LICENSE.libwebp'),
+      notice('crates/owned-vp8/PATENTS.libwebp'),
+      {
+        file: 'RFC 6386 format reference',
+        text: 'RFC 6386 (VP8 Data Format and Decoding Guide), sections 7, 9, 11, 13, 14 and 19.2, Copyright (c) 2011 IETF Trust and the identified contributors. Numeric format tables and bitstream semantics are referenced independently of libwebp source code. https://www.rfc-editor.org/rfc/rfc6386.html',
+      },
+    ],
+  };
+}
+
 function generateLicenseText(
   entries: LicenseEntry[],
   viteHelperOwner: LicenseEntry | null,
   ownedGif: LicenseEntry | null,
-  demuxOracle: LicenseEntry | null
+  demuxOracle: LicenseEntry | null,
+  ownedVp8: LicenseEntry | null,
+  webpOracle: LicenseEntry | null
 ): string {
   let md = `# Third-Party Licenses
 
@@ -159,20 +193,18 @@ function generateLicenseText(
 > Do not edit manually — run \`vp run build\` to regenerate.
 
 Declared runtime dependencies and their installed license/notice texts follow.
-Owned GIF source attribution, the development-only MediaBunny oracle, and supplemental wasm-webp notices are classified separately from runtime package ownership.
+Additional sections document the owned GIF and VP8 source attribution and the development-only MediaBunny and wasm-webp comparison packages.
 
 `;
-  for (const entry of [
-    ...entries,
-    ...(ownedGif ? [ownedGif] : []),
-    ...(demuxOracle ? [demuxOracle] : []),
-  ]) {
-    md +=
-      entry === ownedGif
-        ? '## Owned GIF source attribution (gifenc)\n\n'
-        : entry === demuxOracle
-          ? '## Development-only demux oracle (MediaBunny)\n\n'
-          : `## ${entry.name}\n\n`;
+  const sections = entries.map((entry) => ({ entry, title: entry.name }));
+  if (ownedGif) sections.push({ entry: ownedGif, title: 'Owned GIF source attribution (gifenc)' });
+  if (demuxOracle)
+    sections.push({ entry: demuxOracle, title: 'Development-only demux oracle (MediaBunny)' });
+  if (ownedVp8) sections.push({ entry: ownedVp8, title: 'Owned VP8 source attribution' });
+  if (webpOracle)
+    sections.push({ entry: webpOracle, title: 'Development-only VP8 oracle (wasm-webp)' });
+  for (const { entry, title } of sections) {
+    md += `## ${title}\n\n`;
     md += `- **Version:** ${entry.version}\n`;
     md += `- **License:** ${entry.license}\n`;
     if (entry.url) md += `- **Repository:** ${entry.url}\n`;
@@ -208,7 +240,7 @@ Owned GIF source attribution, the development-only MediaBunny oracle, and supple
       }
       const text = readFileSync(join(__dirname, 'wasm-webp-NOTICES.txt'), 'utf-8').trim();
       if (!text) throw new Error('Empty bundled native notices for wasm-webp.');
-      entry.notices.push({ file: 'Bundled native and generated runtime notices', text });
+      entry.notices.push({ file: 'Native and generated notices from the pinned package', text });
     }
     for (const notice of entry.notices) {
       md += `### ${notice.file}\n\n`;
@@ -273,7 +305,16 @@ export function generateLicenses(): void {
     !entries.some((entry) => entry.name === 'mediabunny')
       ? collectInstalledDependency('mediabunny', inferPurpose('mediabunny'))
       : null;
-  const licenseMd = `${generateLicenseText(entries, viteHelperOwner, ownedGif, demuxOracle).trimEnd()}\n`;
+  const webpOracle =
+    dev && typeof dev === 'object' && 'wasm-webp' in dev
+      ? collectInstalledDependency('wasm-webp', 'Pinned development-only VP8 comparison encoder')
+      : null;
+  const scripts = pkg.scripts;
+  const ownedVp8 =
+    scripts && typeof scripts === 'object' && !Array.isArray(scripts) && 'build:vp8-wasm' in scripts
+      ? collectOwnedVp8Attribution()
+      : null;
+  const licenseMd = `${generateLicenseText(entries, viteHelperOwner, ownedGif, demuxOracle, ownedVp8, webpOracle).trimEnd()}\n`;
   const outputPath = join(ROOT, 'public', 'LICENSES.md');
   writeFileSync(outputPath, licenseMd, 'utf-8');
 

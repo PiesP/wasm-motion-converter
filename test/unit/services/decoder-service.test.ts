@@ -10,6 +10,7 @@ import {
   WebpFrameMemoryBudget,
 } from '@services/frame-memory';
 import { clearCanvasCache } from '@services/frame-utils';
+import { OwnedVp8MemoryAdmissionError } from '@services/owned-vp8-core';
 import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
 import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from '@services/worker-pool';
 import {
@@ -2250,6 +2251,84 @@ describe('decoder-service', () => {
       expect(budget.usage.targetBytes).toBe(0);
       budget.dispose();
       expect(budget.usage.totalBytes).toBe(0);
+    });
+
+    it.each([16_667, null])(
+      'closes a decoded frame when conversion-wide source admission throws (%s duration)',
+      async (duration) => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const budget = new WebpFrameMemoryBudget({
+          codedWidth: 8,
+          codedHeight: 8,
+          displayWidth: 8,
+          displayHeight: 8,
+          targetWidth: 8,
+          targetHeight: 8,
+          workerCount: 1,
+        });
+        const target = await budget.acquireTarget();
+        const memoryError = new OwnedVp8MemoryAdmissionError('conversion-wide source ceiling');
+        const removeGuard = budget.installAdmissionGuard((nextUsage) => {
+          if (nextUsage.sourceBytes > 0) throw memoryError;
+        });
+        const onFrameAvailable = vi.fn(releasePixels);
+        await expect(
+          decodeFrames(
+            {
+              ...deliveryDemux(),
+              chunks: [fixtureChunk(0, 40, { frameDuration: duration })],
+            },
+            {
+              width: 8,
+              height: 8,
+              frameMemoryBudget: budget,
+              onFrameAvailable,
+            }
+          )
+        ).rejects.toBe(memoryError);
+        expect(onFrameAvailable).not.toHaveBeenCalled();
+        expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+        expect(budget.usage.sourceBytes).toBe(0);
+        target.release();
+        removeGuard();
+        budget.dispose();
+      }
+    );
+
+    it('preserves a pool admission error through copy probing and recovers on a new job', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const budget = new WebpFrameMemoryBudget({
+        codedWidth: 8,
+        codedHeight: 8,
+        displayWidth: 8,
+        displayHeight: 8,
+        targetWidth: 8,
+        targetHeight: 8,
+        workerCount: 1,
+      });
+      const memoryError = new OwnedVp8MemoryAdmissionError('conversion-wide pool ceiling');
+      const removeGuard = globalBufferPool.installGrowthGuard(() => {
+        throw memoryError;
+      });
+      await expect(
+        decodeFrames(deliveryDemux(), {
+          width: 8,
+          height: 8,
+          frameMemoryBudget: budget,
+          onFrameAvailable: releasePixels,
+        })
+      ).rejects.toBe(memoryError);
+      expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+      expect(budget.usage.sourceBytes).toBe(0);
+      expect(budget.usage.targetBytes).toBe(0);
+      expect(globalBufferPool.totalRetainedMemory).toBe(0);
+      removeGuard();
+      budget.dispose();
+
+      await expect(
+        decodeFrames(deliveryDemux(), { width: 8, height: 8, onFrameAvailable: releasePixels })
+      ).resolves.toMatchObject({ selectedFrames: 1 });
+      expect(FakeVideoFrame.instances[1]?.close).toHaveBeenCalledOnce();
     });
 
     it('keeps shared-budget flush output serial while closing the full source burst', async () => {

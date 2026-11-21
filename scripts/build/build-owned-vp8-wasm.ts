@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-/** Rebuild the development-only owned VP8 ABI2 module from a closed source set. */
+/** Rebuild the candidate product-owned VP8 ABI2 module from a closed source set. */
 import { deepStrictEqual } from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -34,14 +34,23 @@ const provenance = join(crate, 'wasm-provenance.json');
 const compiler = '1.100.0';
 const compilerCommit = '0ef1bc386059596dada8fb65b50425aab2ea637a';
 const target = 'wasm32-unknown-unknown';
-const cargoArgs = ['build', '--release', '--target', target, '--locked', '--offline'];
+const cargoArgs = [
+  'build',
+  '--release',
+  '--target',
+  target,
+  '--locked',
+  '--offline',
+  '--features',
+  'activity-allocation',
+];
 const maxLinearBytes = 192 * 1024 * 1024;
 const maximumRawBytes = 482_273;
 const maximumGzipBytes = 184_377;
 const rustflags =
-  '-C link-arg=--export-memory -C target-feature=-simd128,-relaxed-simd -C link-arg=--max-memory=201326592';
+  '-C link-arg=--export-memory -C target-feature=+simd128,-relaxed-simd -C link-arg=--max-memory=201326592';
 const pathRemapping = { checkout: '/wmc', rustLibrary: `/rustc/${compilerCommit}` };
-const manifestSha = '1d4289b067f623bd5fe2ac55c5360b3b54bc2e098b371d810418c02d152b5b3d';
+const manifestSha = 'ac6f79bca9f586a4fae7dceb6b808c7332c95404df6d6199537d62ed0e116be8';
 const lockSha = 'cc03cead7fdcd8a393696571a65db032193f1a9c4a6fd0102f1307c2ffda44b0';
 const requiredExports = [
   'vp8_v2_abi_version',
@@ -250,7 +259,7 @@ export function inspectOwnedVp8Wasm(bytes: Buffer): object {
 function expected(bytes: Buffer): object {
   return {
     schemaVersion: 1,
-    role: 'development-only owned VP8 ABI2 candidate; no product build graph or production asset',
+    role: 'candidate product-owned VP8 ABI2 module; imported by candidate routes, not yet qualified for master delivery',
     compiler,
     compilerCommit,
     target,

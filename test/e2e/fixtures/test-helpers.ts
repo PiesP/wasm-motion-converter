@@ -4,6 +4,11 @@ import { fileURLToPath } from 'node:url';
 import type { Page } from '@playwright/test';
 
 import type { ConversionProfileReport } from '../../../src/services/conversion-profiler';
+import type {
+  OwnedVp8CancellationResult,
+  OwnedVp8FixtureRequest,
+  OwnedVp8FixtureResult,
+} from '../../../src/test-helpers';
 
 /**
  * E2E test helpers — uses __TEST_HELPERS__ exposed by the app in dev mode.
@@ -16,6 +21,8 @@ import type { ConversionProfileReport } from '../../../src/services/conversion-p
 // ── Types ──────────────────────────────────────────────────────
 
 export interface TestHelpers {
+  encodeOwnedVp8Fixture(request: OwnedVp8FixtureRequest): Promise<OwnedVp8FixtureResult>;
+  cancelOwnedVp8AfterStep(request: OwnedVp8FixtureRequest): Promise<OwnedVp8CancellationResult>;
   getConversionProfile(): ConversionProfileReport | null;
   getAppState(): string;
   getProgress(): number;

@@ -42,6 +42,7 @@ import {
   shouldSkipAdaptiveFrame,
 } from './adaptive-frame-skip';
 import { globalBufferPool } from './buffer-pool';
+import { ConversionMemoryLimitError } from './conversion-memory-limit-error';
 import type { ProfileCopyPathRecorder, ProfileOperationRecorder } from './conversion-profiler';
 import { type DemuxResult, getEncodedChunkRetainedBytes } from './demuxer-service';
 import {
@@ -64,6 +65,7 @@ import {
   MOTION_SIGNATURE_PEAK_BYTES,
   type MotionSignature,
 } from './frame-utils';
+import { OwnedVp8MemoryAdmissionError } from './owned-vp8-core';
 import { createPresentationSampler, type PresentationInterval } from './presentation-timing';
 
 export type { PresentationInterval } from './presentation-timing';
@@ -507,6 +509,11 @@ export async function decodeFrames(
         errorCount: conversionErrorCount,
         firstError: pipelineFailure.error.message,
       });
+      if (
+        pipelineFailure.error instanceof OwnedVp8MemoryAdmissionError ||
+        pipelineFailure.error instanceof ConversionMemoryLimitError
+      )
+        return pipelineFailure.error;
       return new Error(`Frame processing failed: ${pipelineFailure.error.message}`, {
         cause: pipelineFailure.error,
       });
@@ -850,8 +857,14 @@ export async function decodeFrames(
           frame.close();
           return;
         }
-        sourceMemoryReservation =
-          frameMemoryBudget?.tryReserveSource(sourceReservationBytes) ?? null;
+        try {
+          sourceMemoryReservation =
+            frameMemoryBudget?.tryReserveSource(sourceReservationBytes) ?? null;
+        } catch (error) {
+          recordDecoderError(error);
+          frame.close();
+          return;
+        }
         if (
           frameMemoryBudget
             ? sourceMemoryReservation === null
