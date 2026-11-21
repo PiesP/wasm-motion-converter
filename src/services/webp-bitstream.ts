@@ -102,10 +102,22 @@ export function extractVp8Chunk(webp: Uint8Array): Uint8Array {
   return parseVp8Chunk(webp, false).bitstream;
 }
 
-/** Parse the supported Canvas VP8 + optional ICC profile combination. */
-export function extractCanvasWebp(webp: Uint8Array): CanvasWebpFrame {
+function normalizeCanvasWebp(webp: Uint8Array, ownsContainer: boolean): CanvasWebpFrame {
   const parsed = parseVp8Chunk(webp, true);
-  const bitstream = new Uint8Array(parsed.bitstream);
+  // A transferred ICC view already keeps the entire RIFF allocation alive.
+  // Reuse that backing for VP8 too. Without ICC, transfer only the VP8 payload.
+  const bitstream =
+    ownsContainer && parsed.iccProfile ? parsed.bitstream : new Uint8Array(parsed.bitstream);
   bitstream[0] = bitstream[0]! | 0x10;
   return { bitstream, iccProfile: parsed.iccProfile };
+}
+
+/** Read a borrowed Canvas WebP without modifying its bytes. */
+export function extractCanvasWebp(webp: Uint8Array): CanvasWebpFrame {
+  return normalizeCanvasWebp(webp, false);
+}
+
+/** Consume a fresh Blob buffer. Transferring bitstream.buffer also transfers any ICC view. */
+export function takeCanvasWebpForTransfer(buffer: ArrayBuffer): CanvasWebpFrame {
+  return normalizeCanvasWebp(new Uint8Array(buffer), true);
 }

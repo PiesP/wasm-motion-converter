@@ -150,23 +150,38 @@ impl CompactIndex {
         }
         u32be(self.sizes.entry(&self.raw, index as usize)?, 0)
     }
-    fn cumulative_size(&self, index: u32) -> Result<u64, Error> {
-        if index > self.count {
-            return Err(Error::Invalid);
-        }
-        if self.fixed_size != 0 {
-            return u64::from(index)
-                .checked_mul(u64::from(self.fixed_size))
-                .ok_or(Error::Overflow);
-        }
-        let block = index as usize / SIZE_STRIDE;
-        let mut sum = *self.size_prefix.get(block).ok_or(Error::Invalid)?;
-        for sample in block * SIZE_STRIDE..index as usize {
+    fn sum_sample_sizes(
+        &self,
+        mut sum: u64,
+        samples: std::ops::Range<usize>,
+    ) -> Result<u64, Error> {
+        for sample in samples {
             sum = sum
                 .checked_add(u64::from(u32be(self.sizes.entry(&self.raw, sample)?, 0)?))
                 .ok_or(Error::Overflow)?;
         }
         Ok(sum)
+    }
+    fn chunk_relative_offset(&self, first: u32, index: u32) -> Result<u64, Error> {
+        if self.fixed_size != 0 {
+            let distance = index.checked_sub(first).ok_or(Error::Overflow)?;
+            return u64::from(distance)
+                .checked_mul(u64::from(self.fixed_size))
+                .ok_or(Error::Overflow);
+        }
+        let first = first as usize;
+        let index = index as usize;
+        if first / SIZE_STRIDE == index / SIZE_STRIDE {
+            return self.sum_sample_sizes(0, first..index);
+        }
+        let cumulative_size = |end: usize| {
+            let block = end / SIZE_STRIDE;
+            let prefix = *self.size_prefix.get(block).ok_or(Error::Invalid)?;
+            self.sum_sample_sizes(prefix, block * SIZE_STRIDE..end)
+        };
+        cumulative_size(index)?
+            .checked_sub(cumulative_size(first)?)
+            .ok_or(Error::Overflow)
     }
     fn time(&self, index: u32) -> Result<(i64, u32), Error> {
         let run = self
@@ -183,8 +198,10 @@ impl CompactIndex {
             entry.delta,
         ))
     }
-    fn pts(&self, index: u32) -> Result<(i64, u32), Error> {
-        let (dts, duration) = self.time(index)?;
+    fn pts(&self, index: u32) -> Result<i64, Error> {
+        self.pts_from_dts(index, self.time(index)?.0)
+    }
+    fn pts_from_dts(&self, index: u32, dts: i64) -> Result<i64, Error> {
         let offset = if self.offset_runs.is_empty() {
             0
         } else {
@@ -195,12 +212,9 @@ impl CompactIndex {
                 .ok_or(Error::Invalid)?;
             self.offset_runs[run].offset
         };
-        Ok((
-            dts.checked_add(offset)
-                .and_then(|n| n.checked_add(self.edit_shift))
-                .ok_or(Error::Overflow)?,
-            duration,
-        ))
+        dts.checked_add(offset)
+            .and_then(|n| n.checked_add(self.edit_shift))
+            .ok_or(Error::Overflow)
     }
     fn key(&self, index: u32) -> Result<bool, Error> {
         let Some(stss) = self.stss else {
@@ -253,11 +267,7 @@ impl CompactIndex {
             u64::from(u32be(entry, 0)?)
         };
         let offset = chunk_offset
-            .checked_add(
-                self.cumulative_size(index)?
-                    .checked_sub(self.cumulative_size(first_sample)?)
-                    .ok_or(Error::Overflow)?,
-            )
+            .checked_add(self.chunk_relative_offset(first_sample, index)?)
             .ok_or(Error::Overflow)?;
         let size = self.size(index)?;
         if size == 0
@@ -268,8 +278,8 @@ impl CompactIndex {
         {
             return Err(Error::ResourceLimit);
         }
-        let (pts, stts_duration) = self.pts(index)?;
-        let (dts, _) = self.time(index)?;
+        let (dts, stts_duration) = self.time(index)?;
+        let pts = self.pts_from_dts(index, dts)?;
         Ok(Packet {
             offset,
             size,
@@ -330,14 +340,14 @@ impl CompactIndex {
             let mut high = end;
             while low < high {
                 let mid = low + (high - low) / 2;
-                if (self.pts(mid)?.0, mid) <= (query.packet.pts, query.index) {
+                if (self.pts(mid)?, mid) <= (query.packet.pts, query.index) {
                     low = mid + 1;
                 } else {
                     high = mid;
                 }
             }
             if low < end {
-                let candidate = (self.pts(low)?.0, low);
+                let candidate = (self.pts(low)?, low);
                 if query.next.is_none_or(|next| candidate < next) {
                     query.next = Some(candidate);
                 }
@@ -390,7 +400,7 @@ impl CompactIndex {
         let mut right = end.min(limit);
         while left < right {
             let mid = left + (right - left) / 2;
-            if self.pts(mid)?.0 <= target {
+            if self.pts(mid)? <= target {
                 left = mid + 1;
             } else {
                 right = mid;
@@ -400,7 +410,7 @@ impl CompactIndex {
             return Ok(None);
         };
         Ok(Some(Candidate {
-            pts: self.pts(index)?.0,
+            pts: self.pts(index)?,
             index,
             run: run as u32,
         }))
@@ -490,7 +500,7 @@ impl CompactIndex {
             let (start, _) = self.run_bounds(candidate.run as usize);
             if let Some(previous) = self.previous_key(start, candidate.index)? {
                 self.push_candidate(Candidate {
-                    pts: self.pts(previous)?.0,
+                    pts: self.pts(previous)?,
                     index: previous,
                     run: candidate.run,
                 })?;
@@ -993,8 +1003,8 @@ impl CompactBuilder {
                 Phase::BuildRuns => {
                     if self.run_at < self.index.offset_runs.len() {
                         let (first, end) = self.index.run_bounds(self.run_at);
-                        let start_pts = self.index.pts(first)?.0;
-                        let last_pts = self.index.pts(end - 1)?.0;
+                        let start_pts = self.index.pts(first)?;
+                        let last_pts = self.index.pts(end - 1)?;
                         self.index.sorted_runs.push(RunOrder {
                             run: u32::try_from(self.run_at).map_err(|_| Error::ResourceLimit)?,
                             start_pts,
@@ -1331,6 +1341,62 @@ mod tests {
             complete(ctts, file_len, &mut track()).err(),
             Some(Error::Invalid)
         );
+    }
+
+    #[test]
+    fn packet_offsets_match_a_linear_scan_across_size_checkpoints_and_chunk_runs() {
+        let chunk_sizes = [253u32, 5, 5, 300, 1];
+        let chunk_offsets = [100u32, 4000, 5000, 6000, 12000];
+        let count: u32 = chunk_sizes.iter().sum();
+        let words = |values: &[u32]| {
+            values
+                .iter()
+                .flat_map(|v| v.to_be_bytes())
+                .collect::<Vec<_>>()
+        };
+        let stsc = words(&[0, 4, 1, 253, 1, 2, 5, 1, 4, 300, 1, 5, 1, 1]);
+        let mut stco = words(&[0, chunk_offsets.len() as u32]);
+        stco.extend(words(&chunk_offsets));
+        for fixed in [0, 7] {
+            let sizes: Vec<u32> = (0..count)
+                .map(|i| if fixed == 0 { 1 + i % 17 } else { fixed })
+                .collect();
+            let mut stsz = words(&[0, fixed, count]);
+            if fixed == 0 {
+                stsz.extend(words(&sizes));
+            }
+            let raw = [
+                atom(b"stsz", &stsz),
+                atom(b"stco", &stco),
+                atom(b"stsc", &stsc),
+                atom(b"stts", &table_body(&[(255, 3), (count - 255, 7)])),
+            ]
+            .concat();
+            let mut track = track();
+            track.edit_shift = -19;
+            let index = complete(raw, 13000, &mut track).unwrap();
+
+            let mut sample = 0;
+            let mut dts = track.edit_shift;
+            for (samples, start) in chunk_sizes.into_iter().zip(chunk_offsets) {
+                let mut offset = u64::from(start);
+                for _ in 0..samples {
+                    let size = sizes[sample as usize];
+                    let delta = if sample < 255 { 3 } else { 7 };
+                    let packet = index.packet(sample).unwrap();
+                    assert_eq!(
+                        (packet.offset, packet.size),
+                        (offset, size),
+                        "sample {sample}"
+                    );
+                    assert_eq!((packet.dts, packet.pts, packet.duration), (dts, dts, delta));
+                    offset += u64::from(size);
+                    dts += delta as i64;
+                    sample += 1;
+                }
+            }
+            assert_eq!(index.packet(count).err(), Some(Error::Invalid));
+        }
     }
 
     #[test]

@@ -126,15 +126,25 @@ describe('WebP encoder worker message security', () => {
     });
   });
 
-  it('sets the Canvas VP8 display flag without changing coded dimensions', async () => {
+  it.each([false, true])('transfers one VP8 backing (ICC: %s)', async (icc) => {
     const bitstream = new Uint8Array([0x06, 0, 0, 0x9d, 0x01, 0x2a, 1, 0, 1, 0]);
-    const webp = new Uint8Array(20 + bitstream.length);
+    const vp8Offset = icc ? 42 : 12;
+    const webp = new Uint8Array(vp8Offset + 8 + bitstream.length);
     webp.set([0x52, 0x49, 0x46, 0x46], 0);
     webp.set([0x57, 0x45, 0x42, 0x50], 8);
-    webp.set([0x56, 0x50, 0x38, 0x20], 12);
-    new DataView(webp.buffer).setUint32(4, webp.length - 8, true);
-    new DataView(webp.buffer).setUint32(16, bitstream.length, true);
-    webp.set(bitstream, 20);
+    const view = new DataView(webp.buffer);
+    view.setUint32(4, webp.length - 8, true);
+    if (icc) {
+      webp.set([0x56, 0x50, 0x38, 0x58], 12); // VP8X, 1x1
+      view.setUint32(16, 10, true);
+      webp[20] = 0x20;
+      webp.set([0x49, 0x43, 0x43, 0x50], 30); // ICCP
+      view.setUint32(34, 3, true);
+      webp.set([1, 2, 3], 38);
+    }
+    webp.set([0x56, 0x50, 0x38, 0x20], vp8Offset);
+    view.setUint32(vp8Offset + 4, bitstream.length, true);
+    webp.set(bitstream, vp8Offset + 8);
 
     const workerScope: WorkerScopeStub = { onmessage: null, postMessage: vi.fn() };
     const imageDataInputs: Array<{ data: Uint8ClampedArray; height: number; width: number }> = [];
@@ -173,11 +183,17 @@ describe('WebP encoder worker message security', () => {
       source: null,
     } as unknown as MessageEvent);
 
-    const result = workerScope.postMessage.mock.calls[0]?.[0] as
-      | { id: number; bitstream: Uint8Array }
-      | undefined;
-    expect(result?.id).toBe(7);
-    expect(result?.bitstream).toEqual(new Uint8Array([0x16, 0, 0, 0x9d, 0x01, 0x2a, 1, 0, 1, 0]));
+    const [message, transfer] = workerScope.postMessage.mock.calls[0]! as [
+      { id: number; bitstream: Uint8Array; iccProfile: Uint8Array | null },
+      ArrayBuffer[],
+    ];
+    expect(transfer).toHaveLength(1);
+    expect(transfer[0]?.byteLength).toBe(icc ? webp.byteLength : bitstream.byteLength);
+    const result = structuredClone(message, { transfer });
+    expect(result.id).toBe(7);
+    expect(result.bitstream).toEqual(new Uint8Array([0x16, 0, 0, 0x9d, 0x01, 0x2a, 1, 0, 1, 0]));
+    expect(result.iccProfile).toEqual(icc ? new Uint8Array([1, 2, 3]) : null);
+    if (icc) expect(result.iccProfile?.buffer).toBe(result.bitstream.buffer);
     expect(imageDataInputs).toHaveLength(1);
     expect(imageDataInputs[0]).toMatchObject({ height: 1, width: 1 });
     expect(imageDataInputs[0]?.data).toEqual(new Uint8ClampedArray([0, 0, 0, 255]));
