@@ -30,6 +30,7 @@ import type {
   Request as PlaywrightRequest,
 } from '@playwright/test';
 
+import { pagesFileUrl } from '../../scripts/test/pages-file-url.ts';
 import {
   RETIRED_WEBP_CALLERS,
   RETIRED_WEBP_EXECUTABLES,
@@ -853,6 +854,14 @@ async function loadApplication(page: Page, url: string) {
     crossOriginIsolated: await page.evaluate(() => globalThis.crossOriginIsolated === true),
     csp: true,
   };
+}
+
+async function waitForMp4SampleBudgetError(page: Page) {
+  const error = page.locator('[data-testid="error-display"]');
+  await error.waitFor({ state: 'visible', timeout: 10_000 });
+  // ABI error 3 is ResourceLimit, which the owned parser returns before expanding stsz.
+  assert.deepEqual(await error.locator('pre').allTextContents(), ['Owned demux parser error 3']);
+  return error;
 }
 
 async function selectFixture(page: Page, filePath: string, inspectAnalysis = false) {
@@ -2722,11 +2731,12 @@ async function exercisePublicTarget(
       );
       assert(Number.isSafeInteger(file.size) && file.size >= 0);
       assert(/^[a-f0-9]{64}$/.test(file.sha256));
-      const path =
-        file.path === 'index.html' ? '/' : file.path === '404.html' ? '/404' : `/${file.path}`;
-      const response: APIResponse = await context.request.get(new URL(path, target.url).href, {
-        maxRedirects: 0,
-      });
+      const response: APIResponse = await context.request.get(
+        pagesFileUrl(target.url, file.path).href,
+        {
+          maxRedirects: 0,
+        }
+      );
       assert.equal(response.status(), 200, `Public asset ${file.path} did not return 200`);
       const bytes = await response.body();
       assert.equal(bytes.byteLength, file.size, `Public asset size differs: ${file.path}`);
@@ -2735,7 +2745,7 @@ async function exercisePublicTarget(
     }
     const representative = metadata.files.find((file) => file.path.endsWith('.js'));
     assert(representative, 'Public metadata contains no JavaScript asset');
-    const representativeUrl = new URL(`/${representative.path}`, target.url).href;
+    const representativeUrl = pagesFileUrl(target.url, representative.path).href;
     const initialAsset = await context.request.get(representativeUrl);
     assert.equal(initialAsset.status(), 200);
     assert.match(initialAsset.headers()['cache-control'] ?? '', /\bimmutable\b/i);
@@ -2826,9 +2836,7 @@ async function exercisePublicTarget(
       mimeType: 'video/mp4',
       buffer: budgetFixture.bytes,
     });
-    const metadataError = page.locator('[data-testid="error-display"]');
-    await metadataError.waitFor({ state: 'visible', timeout: 10_000 });
-    assert((await metadataError.textContent())?.includes('ISOBMFF sample metadata'));
+    await waitForMp4SampleBudgetError(page);
     await page
       .locator(
         '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
@@ -6446,10 +6454,7 @@ export async function run({
       mimeType: 'video/mp4',
       buffer: budgetFixture.bytes,
     });
-    const metadataError = page.locator('[data-testid="error-display"]');
-    await metadataError.waitFor({ state: 'visible', timeout: 10_000 });
-    const errorText = await metadataError.textContent();
-    assert(errorText?.includes('ISOBMFF sample metadata') && errorText.includes('sample count'));
+    const metadataError = await waitForMp4SampleBudgetError(page);
     const selectDifferent = page.locator(
       '[data-testid="error-select-different-button"], [data-testid="error-select-different-fallback-button"]'
     );

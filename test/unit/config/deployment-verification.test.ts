@@ -121,43 +121,58 @@ describe('source-bound public verification', () => {
     }
   });
 
-  it('checks both HTML documents at canonical Pages paths without following redirects', async () => {
-    const missing = '<!doctype html><main>not found fixture</main>';
+  it('checks top-level and nested documents at canonical Pages URLs and rejects redirects', async () => {
+    const nestedAndOtherFiles = [
+      { path: '404.html', route: '/404', body: '<main>Not found</main>' },
+      { path: 'notices/index.html', route: '/notices/', body: '<main>Notices</main>' },
+      {
+        path: 'notices/rust-1.100.0.html',
+        route: '/notices/rust-1.100.0',
+        body: '<main>Rust notices</main>',
+      },
+      { path: 'notices/gif-source.json', route: '/notices/gif-source.json', body: '{"source":1}' },
+    ];
     const expected: DeploymentState = {
       ...state,
       files: [
         ...state.files,
-        {
-          path: '404.html',
-          size: missing.length,
-          sha256: createHash('sha256').update(missing).digest('hex'),
-        },
+        ...nestedAndOtherFiles.map((file) => ({
+          path: file.path,
+          size: Buffer.byteLength(file.body),
+          sha256: createHash('sha256').update(file.body).digest('hex'),
+        })),
       ],
     };
     const paths: string[] = [];
     let redirect = false;
     const fetcher: typeof fetch = async (input, init) => {
       expect(init?.redirect).toBe('error');
-      const path = new URL(String(input)).pathname;
+      const url = new URL(String(input));
+      expect(url.origin).toBe(target.origin);
+      const path = url.pathname;
       paths.push(path);
       if (path === '/deployment-state.json')
         return new Response(JSON.stringify(expected), {
           headers: { 'content-type': 'application/json' },
         });
       if (path === '/') return new Response(body);
-      if (path === '/404')
-        return redirect
-          ? new Response(null, { status: 308, headers: { location: '/elsewhere' } })
-          : new Response(missing);
+      if (redirect && path === '/notices/rust-1.100.0')
+        return new Response(null, { status: 308, headers: { location: '/elsewhere' } });
+      const served = nestedAndOtherFiles.find((file) => file.route === path);
+      if (served) return new Response(served.body);
       throw new Error(`Unexpected document path: ${path}`);
     };
     await expect(verifyDeploymentBytes(target, expected, fetcher)).resolves.toMatchObject({
       files: expected.files.map((file) => expect.objectContaining(file)),
     });
-    expect(paths).toEqual(['/deployment-state.json', '/', '/404']);
+    expect(paths).toEqual([
+      '/deployment-state.json',
+      '/',
+      ...nestedAndOtherFiles.map((file) => file.route),
+    ]);
     redirect = true;
     await expect(verifyDeploymentBytes(target, expected, fetcher)).rejects.toThrow(
-      '404.html returned 308'
+      'notices/rust-1.100.0.html returned 308'
     );
   });
 
