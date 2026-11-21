@@ -3910,9 +3910,8 @@ export async function run({
   assert.equal(typeof output, 'string', 'run.output must be the evidence directory path');
 
   const bundleRoot = await realpath(resolve(root));
-  const handoffSelector = 'service-worker-handoff.json';
-  const inputs = 'validation/windows/inputs';
-  const handoffConfigPath = `${inputs}/${handoffSelector}`;
+  const handoffConfigPath = 'validation/windows/inputs/service-worker-handoff.json';
+  const handoffSelector = basename(handoffConfigPath);
   let handoffConfig: unknown;
   try {
     if ((await stat(resolve(bundleRoot, handoffConfigPath))).isFile()) {
@@ -3923,9 +3922,9 @@ export async function run({
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
   if (isRecord(handoffConfig) && handoffConfig.mode === 'm5-legacy-removal') {
-    const competingSelectors = (await readdir(resolve(bundleRoot, inputs))).filter(
-      (name) => name.endsWith('.json') && name !== handoffSelector
-    );
+    const competingSelectors = (
+      await readdir(resolve(bundleRoot, dirname(handoffConfigPath)))
+    ).filter((name) => name.endsWith('.json') && name !== handoffSelector);
     assert.deepEqual(competingSelectors, [], 'Owned-only removal requires an exclusive selector');
   }
   const pixelScenario = 'owned-vp8-product-v8-low-inputs';

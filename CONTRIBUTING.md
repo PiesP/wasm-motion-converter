@@ -393,11 +393,19 @@ bytes are observed lower bounds; zero entries may be cached or unavailable,
 missing response encodings stay unknown, and runtime memory is not measured.
 Compare runs only when source/build inputs and delivery conditions support it.
 
-Service-worker assets use one bounded app-owned cache across this update.
-Previously cached entries are body-validated once during admission migration;
-admitted hits need no fetch, clone, write or FIFO enumeration. A removed lazy
-asset that was never cached cannot be reconstructed. Independently of worker
-updates, a clean production build compiles its source SHA into the running app.
+The service worker installs a byte-verified copy of the current HTML, eager
+JavaScript and CSS in its static cache. It caches ordinary lazy assets on use
+in a separate dynamic cache limited to 64 asset entries. During the transition
+from 7d9e0f1b, recognized old clients can read previously cached predecessor
+assets. Each historical codec file also requires its original size and SHA-256.
+A foreground message from the current app triggers a client census. Once all
+remaining app windows are current, the worker records closure, removes
+predecessor-only keys and cached archived documents, and retries incomplete
+cleanup on later foreground checks. Controlled requests for retired assets
+then fail before reaching the network. The current software encoder loads on
+demand.
+
+A clean production build compiles its source SHA into the running app.
 The app compares it with validated `/deployment-state.json` from its current
 origin, including immutable deployments and local serving. SHAs are opaque
 identities: a different build need not have a higher package version, and the
@@ -577,7 +585,7 @@ it does not guarantee that an old tab can load an asset it has never used.
 | Situation | Support contract |
 | --- | --- |
 | Fresh navigation | Load the current document and its current asset graph. |
-| Old open tab with loaded modules or a valid cached asset | Continue using available bytes. A worker update does not intentionally discard admitted asset entries, but cache storage is bounded. |
+| Old open tab with loaded modules or a valid cached asset | An identified old client can continue using previously loaded modules and eligible cached assets during the transition. Cache storage is bounded. |
 | Old open tab first requesting an asset after deployment | If its old URL is unavailable, show the asset failure and retain existing results and recovery actions. An update notice does not establish that old bytes still exist. |
 | Offline cache hit, miss or eviction | A valid hit can work. A miss remains unavailable; neither the worker nor a longer HTTP cache lifetime can reconstruct missing bytes. Fully offline conversion is not guaranteed. |
 | Expiry, emergency withdrawal or authorized rollback | An absent asset path must remain a genuine, non-immutable 404 at the origin, without substituting current code under an old URL. Withdrawal and rollback need separate review and do not promise to restore old assets. |

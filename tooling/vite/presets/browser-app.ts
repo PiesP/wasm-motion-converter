@@ -1,7 +1,6 @@
 import { lazyPlugins, type UserConfig } from 'vite-plus';
 
 export function browserAppManualChunk(id: string): string | undefined {
-  // Keep Vite's shared preload helper separate from the lazy codec chunk.
   if (id === '\0vite/preload-helper.js') {
     return 'preload-helper';
   }

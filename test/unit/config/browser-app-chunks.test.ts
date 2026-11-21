@@ -13,7 +13,7 @@ describe('browser app chunk boundary', () => {
     }
   });
 
-  it('keeps Vite preload support outside the lazy codec chunk', () => {
+  it('emits the shared Vite preload helper as a separate chunk', () => {
     expect(browserAppManualChunk('\0vite/preload-helper.js')).toBe('preload-helper');
   });
 });

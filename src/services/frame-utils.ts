@@ -8,8 +8,8 @@
  * - VideoFrame.copyTo() for standard 4-channel formats (RGBA/BGRA/RGBX/BGRX)
  * - createImageBitmap fallback only for unsupported formats
  *
- * Modern encoders retain opaque RGBA. The legacy WASM WebP path can still
- * request packed RGB from the same exact native/canvas strategy.
+ * The owned VP8 encoder can request packed RGB or opaque RGBA from the
+ * same native or canvas frame source.
  *
  * BufferPool: Reuses Uint8Array allocations across frames to reduce GC.
  */
