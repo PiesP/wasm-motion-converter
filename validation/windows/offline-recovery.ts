@@ -24,6 +24,8 @@ import {
   LEGACY_WEBP_DEPLOYMENT,
   LEGACY_WEBP_WASM_ASSET,
   OWNED_VP8_ASSET,
+  RETIRED_WEBP_CALLERS,
+  RETIRED_WEBP_DELIVERY_FILES,
   RETIRED_WEBP_EXECUTABLES,
   RETIRED_WEBP_SHIM,
 } from '../../scripts/test/retired-webp-assets.ts';
@@ -52,9 +54,10 @@ export type RetirementOriginSnapshot = {
   overflow: boolean;
   requests: RetirementOriginRequest[];
 };
+export type RetirementOriginScope = boolean | 'callers';
 type ArchivedOriginControl = {
   setArchivedOrigin: (archive: string | null, assets: readonly ArchivedAsset[]) => Promise<void>;
-  archivedOriginSnapshot: (includeShim: boolean) => RetirementOriginSnapshot;
+  archivedOriginSnapshot: (scope: RetirementOriginScope) => RetirementOriginSnapshot;
 };
 type StartedServer = {
   server: Server;
@@ -456,6 +459,105 @@ async function cachedLegacyExecutablePaths(page: Page, knownPaths: string[] = []
   ].sort();
 }
 
+export function selectPredecessorAssetSet(
+  prior: readonly ArchivedAsset[],
+  current: readonly ArchivedAsset[]
+) {
+  const hashedPath = /^assets\/[^/]+[.-][\w-]{8}\.(?:js|css|wasm)$/;
+  const currentHashed = current.filter(({ path }) => hashedPath.test(path));
+  const newAssets = new Map(currentHashed.map((asset) => [asset.path, asset]));
+  const oldOnly: ArchivedAsset[] = [];
+  const shared: ArchivedAsset[] = [];
+  const seen = new Set<string>();
+  assert.equal(newAssets.size, currentHashed.length, 'Duplicate current hashed path');
+  for (const asset of prior.filter(({ path }) => hashedPath.test(path))) {
+    assert(!seen.has(asset.path), `Duplicate predecessor hashed path: ${asset.path}`);
+    seen.add(asset.path);
+    const next = newAssets.get(asset.path);
+    if (!next) oldOnly.push(asset);
+    else {
+      assert.equal(next.sha256, asset.sha256, `Shared hashed path changed digest: ${asset.path}`);
+      assert.equal(next.size, asset.size, `Shared hashed path changed extent: ${asset.path}`);
+      shared.push(asset);
+    }
+  }
+  return { oldOnly, shared };
+}
+
+type PredecessorAssets = ReturnType<typeof selectPredecessorAssetSet>;
+
+async function snapshotPredecessorCaches(page: Page, assets: PredecessorAssets) {
+  return page.evaluate(async ({ oldOnly, shared }) => {
+    const oldPaths = new Set(oldOnly.map((asset) => '/' + asset.path));
+    const sharedPaths = new Map(shared.map((asset) => ['/' + asset.path, asset]));
+    const oldKeys = [];
+    const sharedKeys = [];
+    const navigation = [];
+    const cacheNames = (await caches.keys())
+      .filter((name) => /^dropconvert-(?:static|dynamic)-/.test(name))
+      .sort();
+    for (const name of cacheNames) {
+      const cache = await caches.open(name);
+      for (const request of await cache.keys()) {
+        const url = new URL(request.url);
+        if (url.origin !== location.origin) continue;
+        const { pathname: path, search } = url;
+        const key = { cache: name, path, search };
+        const expected = sharedPaths.get(path);
+        const isNavigation = path === '/' || path === '/index.html';
+        if (oldPaths.has(path)) oldKeys.push(key);
+        else if (expected || isNavigation) {
+          const response = await cache.match(request);
+          if (!response?.ok) continue;
+          const bytes = await response.arrayBuffer();
+          const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+          const sha256 = [...digest].map((value) => value.toString(16).padStart(2, '0')).join('');
+          const row = { ...key, size: bytes.byteLength, sha256 };
+          if (isNavigation) navigation.push(row);
+          else if (expected && row.sha256 === expected.sha256 && row.size === expected.size)
+            sharedKeys.push(row);
+        }
+      }
+    }
+    return { cacheNames, oldKeys, sharedKeys, navigation };
+  }, assets);
+}
+
+type PredecessorCacheSnapshot = Awaited<ReturnType<typeof snapshotPredecessorCaches>>;
+
+function assertPredecessorCacheSettlement(
+  settled: PredecessorCacheSnapshot,
+  beforeClose: PredecessorCacheSnapshot,
+  priorIndexSha256: string,
+  currentIndexSha256: string
+) {
+  assert.deepEqual(settled.oldKeys, [], 'An archived-only key survived retirement');
+  assert(
+    beforeClose.sharedKeys.length > 0,
+    'No actual shared asset was available as a preservation control'
+  );
+  for (const key of beforeClose.sharedKeys)
+    assert(
+      settled.sharedKeys.some(
+        (row) =>
+          row.cache === key.cache &&
+          row.path === key.path &&
+          row.search === key.search &&
+          row.size === key.size &&
+          row.sha256 === key.sha256
+      ),
+      `A shared cache key changed or disappeared: ${key.cache} ${key.path}${key.search}`
+    );
+  assert(
+    !settled.navigation.some(({ sha256 }) => sha256 === priorIndexSha256),
+    'A stable URL still holds the archived document'
+  );
+  assert(
+    settled.navigation.some(({ sha256 }) => sha256 === currentIndexSha256),
+    'No exact current offline shell survived'
+  );
+}
+
 async function observeCurrentClientRetirement(page: Page, sourceSha: string) {
   await page.addInitScript((generation) => {
     globalThis.__wmcRetirementEvents = [];
@@ -481,11 +583,16 @@ async function observeCurrentClientRetirement(page: Page, sourceSha: string) {
   }, sourceSha);
 }
 
-async function seedArchivedCacheAliases(page: Page, bundleRoot: string, archive: string) {
+async function seedArchivedCacheAliases(
+  page: Page,
+  bundleRoot: string,
+  archive: string,
+  assets: readonly ArchivedAsset[] = RETIRED_WEBP_EXECUTABLES
+) {
   // Add known physical query keys to the old profile before changing origin.
   // Retain the real requests and canonical entries warmed by both old tabs.
   const entries = await Promise.all(
-    RETIRED_WEBP_EXECUTABLES.map(async (asset) => {
+    assets.map(async (asset) => {
       const bytes = await readFile(join(bundleRoot, archive, asset.path));
       assert.equal(bytes.length, asset.size);
       assert.equal(sha256(bytes), asset.sha256);
@@ -514,13 +621,11 @@ async function seedArchivedCacheAliases(page: Page, bundleRoot: string, archive:
       )
     );
   }, entries);
-  const keys = (await cachedLegacyExecutableKeys(page)).filter(
-    ({ search }) => search === STALE_ALIAS_QUERY
+  const paths = assets.map(assetPath);
+  const keys = (await cachedLegacyExecutableKeys(page, paths)).filter(
+    ({ path, search }) => paths.includes(path) && search === STALE_ALIAS_QUERY
   );
-  assert.deepEqual(
-    keys.map(({ path }) => path).sort(),
-    RETIRED_WEBP_EXECUTABLES.map(assetPath).sort()
-  );
+  assert.deepEqual(keys.map(({ path }) => path).sort(), paths.sort());
   return keys;
 }
 
@@ -544,6 +649,98 @@ async function verifyAppDocument(
   );
   if (fromServiceWorker)
     assert(response.fromServiceWorker(), 'Offline document bypassed the service worker');
+}
+
+function observeArchivedCallerResponses(context: BrowserContext, baseUrl: string) {
+  const origin = new URL(baseUrl).origin;
+  const responses: BrowserResponse[] = [];
+  let overflow = false;
+  const record = (response: BrowserResponse) => {
+    const url = new URL(response.url());
+    if (
+      url.origin === origin &&
+      RETIRED_WEBP_CALLERS.some((asset) => assetPath(asset) === url.pathname)
+    ) {
+      if (responses.length < 32) responses.push(response);
+      else overflow = true;
+    }
+  };
+  context.on('response', record);
+  return {
+    async read() {
+      assert(!overflow, 'Archived caller response observation overflowed');
+      return Promise.all(
+        responses.map(async (response) => {
+          const request = response.request();
+          const path = new URL(response.url()).pathname;
+          const expected = RETIRED_WEBP_CALLERS.find((asset) => assetPath(asset) === path);
+          assert(expected);
+          assert.equal(response.status(), 200);
+          assert(isExecutableMediaType(response.headers()['content-type'] ?? ''));
+          const bytes = await response.body();
+          const digest = sha256(bytes);
+          assert.equal(bytes.length, expected.size);
+          assert.equal(digest, expected.sha256);
+          return {
+            path,
+            requestUrl: request.url(),
+            method: request.method(),
+            resourceType: request.resourceType(),
+            fromServiceWorker: response.fromServiceWorker(),
+            serviceWorkerInitiated: Boolean(request.serviceWorker()),
+            status: response.status(),
+            size: bytes.length,
+            sha256: digest,
+          };
+        })
+      );
+    },
+    stop() {
+      context.off('response', record);
+    },
+  };
+}
+
+async function verifyArchivedWorkerCaller(
+  context: BrowserContext,
+  baseUrl: string,
+  build: Build,
+  fixture: string
+) {
+  const tab = await context.newPage();
+  const traffic = observeArchivedCallerResponses(context, baseUrl);
+  const workerUrls = new Set<string>();
+  const workerPath = assetPath(RETIRED_WEBP_CALLERS[1]);
+  tab.on('worker', (worker) => workerUrls.add(worker.url()));
+  try {
+    await verifyAppDocument(await tab.goto(baseUrl), build);
+    await tab.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    await tab.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated');
+    await tab.locator('[data-testid="option-format-gif"]').click();
+    await tab.locator('[data-testid="file-input"]').setInputFiles(fixture);
+    await tab.locator('[data-testid="convert-button"]').click();
+    const confirm = tab.locator('[data-testid="modal-confirm-button"]');
+    if (await confirm.isVisible()) await confirm.click();
+    await tab
+      .locator('[data-testid="result-section"]')
+      .waitFor({ state: 'visible', timeout: 120_000 });
+    const expected = new URL(workerPath, baseUrl).href;
+    const responses = await traffic.read();
+    const observedExactWorker = workerUrls.has(expected);
+    return {
+      route: 'old application GIF conversion',
+      workerUrls: [...workerUrls],
+      observedExactWorker,
+      byteEvidence:
+        observedExactWorker && responses.some(({ requestUrl }) => requestUrl === expected)
+          ? 'observed'
+          : 'unverified',
+      responses,
+    };
+  } finally {
+    traffic.stop();
+    await tab.close();
+  }
 }
 
 async function verifyArchivedAssetFetches(
@@ -655,20 +852,19 @@ function requireQuietOrigin(before: RetirementOriginSnapshot, after: RetirementO
 async function retiredBrowserOriginWindow(
   page: Page,
   origin: ArchivedOriginControl,
-  includeShim: boolean,
+  scope: RetirementOriginScope,
   cache: 'default' | 'no-store',
   search = ''
 ) {
-  const before = origin.archivedOriginSnapshot(includeShim);
-  const rows = await verifyArchivedAssetFetches(
-    page,
-    false,
-    cache,
-    false,
-    includeShim ? RETIRED_WEBP_EXECUTABLES : LEGACY_WEBP_DEPLOYMENT.files,
-    search
-  );
-  const after = origin.archivedOriginSnapshot(includeShim);
+  const assets =
+    scope === 'callers'
+      ? RETIRED_WEBP_CALLERS
+      : scope
+        ? RETIRED_WEBP_EXECUTABLES
+        : LEGACY_WEBP_DEPLOYMENT.files;
+  const before = origin.archivedOriginSnapshot(scope);
+  const rows = await verifyArchivedAssetFetches(page, false, cache, false, assets, search);
+  const after = origin.archivedOriginSnapshot(scope);
   requireQuietOrigin(before, after);
   return { before, after, rows };
 }
@@ -679,13 +875,14 @@ async function readDirectArchivedOrigin(
   origin: ArchivedOriginControl,
   assets: readonly ArchivedAsset[],
   available: boolean,
-  includeShim: boolean
+  scope: RetirementOriginScope,
+  search = available ? STALE_ALIAS_QUERY : ''
 ) {
-  const before = origin.archivedOriginSnapshot(includeShim);
+  const before = origin.archivedOriginSnapshot(scope);
   const rows = [];
   for (const asset of assets) {
     const path = assetPath(asset);
-    const requestUrl = new URL(path + (available ? STALE_ALIAS_QUERY : ''), baseUrl).href;
+    const requestUrl = new URL(path + search, baseUrl).href;
     const response: APIResponse = await page.context().request.get(requestUrl, {
       maxRedirects: 0,
       failOnStatusCode: false,
@@ -703,7 +900,7 @@ async function readDirectArchivedOrigin(
       assert.equal(bytes.length, asset.size);
       assert.equal(digest, asset.sha256);
     } else {
-      assert.equal(status, 404, `Origin served retired executable \${asset.path}`);
+      assert.equal(status, 404, `Origin served retired executable ${asset.path}`);
       assert(!isExecutableMediaType(contentType) && !/\bimmutable\b/i.test(cacheControl));
       assert.notEqual(digest, asset.sha256);
     }
@@ -718,7 +915,7 @@ async function readDirectArchivedOrigin(
       sha256: digest,
     });
   }
-  const after = origin.archivedOriginSnapshot(includeShim);
+  const after = origin.archivedOriginSnapshot(scope);
   assert(!before.overflow && !after.overflow, 'Direct origin recorder overflowed');
   assert.deepEqual(after.requests.slice(0, before.requests.length), before.requests);
   const recorded = after.requests.slice(before.requests.length);
@@ -727,7 +924,7 @@ async function readDirectArchivedOrigin(
     const record = recorded[index];
     assert(record && record.disposition === 'finished', 'Direct origin request did not settle');
     assert.equal(record.path, row.path);
-    assert.equal(record.target, row.path + (available ? STALE_ALIAS_QUERY : ''));
+    assert.equal(record.target, row.path + search);
     assert.equal(record.distribution, 'dist');
     for (const key of [
       'method',
@@ -736,9 +933,57 @@ async function readDirectArchivedOrigin(
       'contentType',
       'cacheControl',
     ] as const)
-      assert.equal(record[key], row[key], `Direct origin \${key} differs from client request`);
+      assert.equal(record[key], row[key], `Direct origin ${key} differs from client request`);
   }
   return { before, after, rows };
+}
+
+async function verifyCallerReadmissionDenied(
+  page: Page,
+  baseUrl: string,
+  archivedOrigin: ArchivedOriginControl,
+  archive: string
+) {
+  const before = await retirementClientIdentity(page);
+  const readDirect = (available: boolean, search: string) =>
+    readDirectArchivedOrigin(
+      page,
+      baseUrl,
+      archivedOrigin,
+      RETIRED_WEBP_CALLERS,
+      available,
+      'callers',
+      search
+    );
+  await archivedOrigin.setArchivedOrigin(archive, RETIRED_WEBP_CALLERS);
+  let direct;
+  let denied;
+  try {
+    direct = {
+      canonical: await readDirect(true, ''),
+      aliases: await readDirect(true, STALE_ALIAS_QUERY),
+    };
+    denied = {
+      canonical: await retiredBrowserOriginWindow(page, archivedOrigin, 'callers', 'default'),
+      aliases: await retiredBrowserOriginWindow(
+        page,
+        archivedOrigin,
+        'callers',
+        'no-store',
+        STALE_ALIAS_QUERY
+      ),
+    };
+    requireQuietOrigin(direct.aliases.after, denied.aliases.after);
+  } finally {
+    await archivedOrigin.setArchivedOrigin(null, []);
+  }
+  const candidate = {
+    canonical: await readDirect(false, ''),
+    aliases: await readDirect(false, STALE_ALIAS_QUERY),
+  };
+  assert.deepEqual(candidate.canonical.before, denied.aliases.after);
+  assert.deepEqual(await retirementClientIdentity(page), before);
+  return { client: before, direct, denied, candidate };
 }
 
 async function retirementClientIdentity(page: Page) {
@@ -779,15 +1024,39 @@ async function verifyFreshOfflineDuringGrace(retainedTab: Page, baseUrl: string,
     );
     const retainedPaths = await cachedLegacyExecutablePaths(fresh);
     assert(LEGACY_WEBP_DEPLOYMENT.files.every((asset) => retainedPaths.includes(assetPath(asset))));
+    const callerKeys = (
+      await cachedLegacyExecutableKeys(retainedTab, RETIRED_WEBP_CALLERS.map(assetPath))
+    ).filter(({ cache, search }) => /^dropconvert-(?:static|dynamic)-/.test(cache) && !search);
+    const residentCallers = RETIRED_WEBP_CALLERS.filter((asset) =>
+      callerKeys.some(({ path }) => path === assetPath(asset))
+    );
+    const [callerCanonical, oldWindowCacheReads] = await Promise.all([
+      verifyArchivedAssetFetches(fresh, false, 'default', false, RETIRED_WEBP_CALLERS),
+      verifyArchivedAssetFetches(retainedTab, true, 'no-store', true, residentCallers),
+    ]);
+    const callerAliases = await verifyArchivedAssetFetches(
+      fresh,
+      false,
+      'no-store',
+      false,
+      RETIRED_WEBP_CALLERS,
+      STALE_ALIAS_QUERY
+    );
     return {
-      sourceSha: build.state.sourceSha,
-      sha256: build.indexSha256,
-      fromServiceWorker: true,
-      eagerCodecRequests: 0,
-      eagerConversionWorkers: workersStarted,
-      denied: { canonical, aliases },
-      retainedOldCanonical,
-      retainedPaths,
+      codec: {
+        sourceSha: build.state.sourceSha,
+        sha256: build.indexSha256,
+        fromServiceWorker: true,
+        eagerCodecRequests: 0,
+        eagerConversionWorkers: workersStarted,
+        denied: { canonical, aliases },
+        retainedOldCanonical,
+        retainedPaths,
+      },
+      callers: {
+        denied: { canonical: callerCanonical, aliases: callerAliases },
+        oldWindowCacheReads,
+      },
     };
   } finally {
     traffic.stop();
@@ -1148,6 +1417,9 @@ async function exerciseBuildUpgrade(
     requireChangedWorker && !removal ? null : softwareWebpInventory(currentBuild.state.files);
   const priorSoftware =
     currentSoftware?.family === 'owned-vp8' ? softwareWebpInventory(priorBuild.state.files) : null;
+  const predecessorAssets = removal
+    ? selectPredecessorAssetSet(priorBuild.state.files, currentBuild.state.files)
+    : null;
   if (priorSoftware) {
     const entry = await readFile(join(bundleRoot, priorRelativePath, priorBuild.main.path));
     assert(
@@ -1181,7 +1453,8 @@ async function exerciseBuildUpgrade(
     );
     assert.equal(priorSoftware?.family, 'wasm-webp');
     assert(archivedOrigin, 'The private archived-origin control is required');
-    for (const asset of RETIRED_WEBP_EXECUTABLES) {
+    assert.equal(priorBuild.main.path, RETIRED_WEBP_CALLERS[0].path);
+    for (const asset of RETIRED_WEBP_DELIVERY_FILES) {
       assert.deepEqual(
         priorBuild.state.files.find(({ path }) => path === asset.path),
         asset
@@ -1221,6 +1494,7 @@ async function exerciseBuildUpgrade(
     const page = context.pages()[0] ?? (await context.newPage());
     if (priorSoftware) await forceMainSoftwareWebp(page);
     if (removal) await observeCurrentClientRetirement(page, currentBuild.state.sourceSha);
+    const earlyCallerTraffic = removal ? observeArchivedCallerResponses(context, baseUrl) : null;
     await setDistribution(priorRelativePath);
     await page.goto(baseUrl);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
@@ -1228,6 +1502,16 @@ async function exerciseBuildUpgrade(
     const priorNavigation = await page.reload();
     if (removal) await verifyAppDocument(priorNavigation, priorBuild);
     await page.locator('[data-testid="choose-file-button"]').waitFor({ state: 'visible' });
+    const archivedEntryResponses = earlyCallerTraffic ? await earlyCallerTraffic.read() : null;
+    earlyCallerTraffic?.stop();
+    if (archivedEntryResponses)
+      assert(
+        archivedEntryResponses.some(
+          ({ path, serviceWorkerInitiated }) =>
+            path === assetPath(RETIRED_WEBP_CALLERS[0]) && !serviceWorkerInitiated
+        ),
+        'No actual archived document entry response'
+      );
     await page.waitForFunction(async () => {
       const names = await caches.keys();
       for (const name of names.filter((value) => value.startsWith('dropconvert-dynamic-'))) {
@@ -1364,6 +1648,15 @@ async function exerciseBuildUpgrade(
       );
     const seededArchiveKeys = removal
       ? await seedArchivedCacheAliases(page, bundleRoot, priorRelativePath)
+      : null;
+    const archivedWorkerRequests = removal
+      ? await verifyArchivedWorkerCaller(context, baseUrl, priorBuild, smallFixture)
+      : null;
+    const predecessorBeforeUpdate = predecessorAssets
+      ? await snapshotPredecessorCaches(page, predecessorAssets)
+      : null;
+    const seededCallerAliases = removal
+      ? await seedArchivedCacheAliases(page, bundleRoot, priorRelativePath, RETIRED_WEBP_CALLERS)
       : null;
     const cachedPaths = await page.evaluate(async () => {
       const paths = [];
@@ -1589,9 +1882,10 @@ async function exerciseBuildUpgrade(
       activeDocumentTimeOrigin,
       'Service worker upgrade reloaded an actively converting old tab'
     );
-    const freshOfflineDuringGrace = removal
+    const freshGrace = removal
       ? await verifyFreshOfflineDuringGrace(page, baseUrl, currentBuild)
       : null;
+    const freshOfflineDuringGrace = freshGrace?.codec ?? null;
     if (removal) {
       assert.equal(await page.evaluate(() => performance.timeOrigin), oldDocumentTimeOrigin);
       assert.equal(
@@ -1892,6 +2186,18 @@ async function exerciseBuildUpgrade(
     }
     const clientBeforeClose = removal ? await retirementClientIdentity(page) : null;
     const originBeforeClose = archivedOrigin?.archivedOriginSnapshot(false);
+    const predecessorBeforeClose = predecessorAssets
+      ? await snapshotPredecessorCaches(page, predecessorAssets)
+      : null;
+    if (predecessorBeforeClose && seededCallerAliases) {
+      for (const key of seededCallerAliases)
+        assert(
+          predecessorBeforeClose.oldKeys.some(
+            (row) => row.cache === key.cache && row.path === key.path && row.search === key.search
+          ),
+          `Caller alias disappeared before the last old tab closed: ${key.path}${key.search}`
+        );
+    }
     await activePage.close();
     let currentClientWake = null;
     if (removal) {
@@ -1953,9 +2259,20 @@ async function exerciseBuildUpgrade(
       };
     }
     const cachedLegacyWithoutOldTabs = await cachedLegacyExecutablePaths(page, priorLegacyPaths);
+    const predecessorAfterClose = predecessorAssets
+      ? await snapshotPredecessorCaches(page, predecessorAssets)
+      : null;
+    if (predecessorAfterClose && predecessorBeforeClose)
+      assertPredecessorCacheSettlement(
+        predecessorAfterClose,
+        predecessorBeforeClose,
+        priorBuild.indexSha256,
+        currentBuild.indexSha256
+      );
     let retiredAssetsAfterUpgrade = null;
     let retirementOrigin = null;
     let archivedOriginDenial = null;
+    let predecessorReadmission = null;
     if (removal) {
       assert(archivedOrigin && clientBeforeClose && originBeforeClose);
       const clientAfter = await retirementClientIdentity(page);
@@ -2057,24 +2374,65 @@ async function exerciseBuildUpgrade(
         controlledRequestsReachedOrigin: 0,
         physicalKeys,
       };
+      assert(predecessorAssets && predecessorBeforeClose);
+      const callerChallenge = await verifyCallerReadmissionDenied(
+        page,
+        baseUrl,
+        archivedOrigin,
+        priorRelativePath
+      );
+      const afterChallenge = await snapshotPredecessorCaches(page, predecessorAssets);
+      assertPredecessorCacheSettlement(
+        afterChallenge,
+        predecessorBeforeClose,
+        priorBuild.indexSha256,
+        currentBuild.indexSha256
+      );
+      predecessorReadmission = { ...callerChallenge, afterChallenge };
     }
     let restart = null;
+    let predecessorRestart = null;
     if (persistent) {
       assert(currentSoftware?.ownedOnly && currentForcedWebp && 'version' in warm);
+      assert(predecessorAssets && predecessorBeforeClose);
       // Close the entire process for the profile that actually upgraded from
       // the archived build. A fresh candidate profile cannot prove eviction survives restart.
       await context.close();
       context = undefined;
-      restart = await verifyInstalledProfileRestart(
+      const { predecessor, ...legacyRestart } = await verifyInstalledProfileRestart(
         persistent,
         warm.version,
         baseUrl,
         currentBuild,
         smallFixture,
         currentSoftware,
-        currentForcedWebp.outputSha256
+        currentForcedWebp.outputSha256,
+        predecessorAssets,
+        predecessorBeforeClose,
+        priorBuild.indexSha256
       );
+      restart = legacyRestart;
+      predecessorRestart = predecessor;
     }
+    const predecessorMigration =
+      predecessorAssets && predecessorBeforeUpdate
+        ? {
+            schemaVersion: 1,
+            inventory: predecessorAssets,
+            archivedEntryResponses,
+            archivedWorkerRequests,
+            absentBeforeUpdate: predecessorAssets.oldOnly
+              .map(assetPath)
+              .filter((path) => !predecessorBeforeUpdate.oldKeys.some((row) => row.path === path)),
+            beforeUpdate: predecessorBeforeUpdate,
+            seededCallerAliases,
+            grace: freshGrace?.callers,
+            beforeLastClose: predecessorBeforeClose,
+            afterLastClose: predecessorAfterClose,
+            readmission: predecessorReadmission,
+            restart: predecessorRestart,
+          }
+        : null;
     return {
       id: 'real-build-upgrade',
       status: 'passed',
@@ -2119,6 +2477,7 @@ async function exerciseBuildUpgrade(
             retirementOrigin,
             retiredAssetsAfterUpgrade,
             restart,
+            predecessorMigration,
           }
         : {}),
       cachedLegacyBeforeUpdate,
@@ -2144,6 +2503,9 @@ async function exerciseBuildUpgrade(
             archivedOriginDenial &&
             retirementOrigin &&
             retiredAssetsAfterUpgrade &&
+            predecessorMigration &&
+            predecessorReadmission &&
+            predecessorRestart &&
             restart))
       ),
       priorWorkerSha256: priorBuild.workerSha256,
@@ -2239,7 +2601,10 @@ async function verifyInstalledProfileRestart(
   build: Build,
   fixture: string,
   software: ReturnType<typeof softwareWebpInventory>,
-  outputSha256: string
+  outputSha256: string,
+  predecessorAssets: PredecessorAssets,
+  predecessorBeforeClose: PredecessorCacheSnapshot,
+  priorIndexSha256: string
 ) {
   const { context, version: after } = await persistent.launch();
   try {
@@ -2271,6 +2636,30 @@ async function verifyInstalledProfileRestart(
     const webp = await convertAndVerifySoftwareWebp(page, baseUrl, fixture, software, true);
     assert.equal(webp.outputSha256, outputSha256, 'Offline restart changed WebP output');
     assert.deepEqual(await cachedLegacyExecutablePaths(page), []);
+    const callerRequests = {
+      canonical: await verifyArchivedAssetFetches(
+        page,
+        false,
+        'default',
+        false,
+        RETIRED_WEBP_CALLERS
+      ),
+      aliases: await verifyArchivedAssetFetches(
+        page,
+        false,
+        'no-store',
+        false,
+        RETIRED_WEBP_CALLERS,
+        STALE_ALIAS_QUERY
+      ),
+    };
+    const settled = await snapshotPredecessorCaches(page, predecessorAssets);
+    assertPredecessorCacheSettlement(
+      settled,
+      predecessorBeforeClose,
+      priorIndexSha256,
+      build.indexSha256
+    );
     return {
       status: 'passed',
       profile: 'migrated',
@@ -2280,6 +2669,7 @@ async function verifyInstalledProfileRestart(
       cachePaths,
       retiredRequests,
       webp,
+      predecessor: { callerRequests, settled },
     };
   } finally {
     await context.close();

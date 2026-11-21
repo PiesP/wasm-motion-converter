@@ -31,6 +31,7 @@ import type {
 } from '@playwright/test';
 
 import {
+  RETIRED_WEBP_CALLERS,
   RETIRED_WEBP_EXECUTABLES,
   RETIRED_WEBP_SHIM,
 } from '../../scripts/test/retired-webp-assets.ts';
@@ -79,6 +80,7 @@ import {
   exerciseOfflineRecovery,
   type RemovalVerification,
   type RetirementOriginRequest,
+  type RetirementOriginScope,
   type RetirementOriginSnapshot,
   runRecoveryBuilds,
 } from './offline-recovery.ts';
@@ -570,15 +572,18 @@ export async function startStaticServer(
   const missingAssetResponses: { path: string; status: number }[] = [];
   let archivedOrigin = new Map<string, Buffer>();
   const archivePaths = new Set<string>(RETIRED_WEBP_EXECUTABLES.map(({ path }) => '/' + path));
-  const archivedOriginRequests: RetirementOriginRequest[] = [];
-  let archivedOriginOverflow = false;
-  function archivedOriginSnapshot(includeShim: boolean): RetirementOriginSnapshot {
-    const requests = archivedOriginRequests
-      .filter((row) => includeShim || row.path !== '/' + RETIRED_WEBP_SHIM.path)
+  const callerPaths = new Set<string>(RETIRED_WEBP_CALLERS.map(({ path }) => '/' + path));
+  const makeRecorder = () => ({ requests: new Array<RetirementOriginRequest>(), overflow: false });
+  const codecRecorder = makeRecorder();
+  const callerRecorder = makeRecorder();
+  function archivedOriginSnapshot(scope: RetirementOriginScope): RetirementOriginSnapshot {
+    const recorder = scope === 'callers' ? callerRecorder : codecRecorder;
+    const requests = recorder.requests
+      .filter((row) => scope !== false || row.path !== '/' + RETIRED_WEBP_SHIM.path)
       .map((row, index) => ({ ...row, sequence: index + 1 }));
     return {
       distribution,
-      overflow: archivedOriginOverflow,
+      overflow: recorder.overflow,
       paths: requests.map((row) => row.path),
       requests,
     };
@@ -592,7 +597,12 @@ export async function startStaticServer(
       archivedOrigin.clear();
       return;
     }
-    assert.deepEqual(assets, RETIRED_WEBP_EXECUTABLES);
+    assert.deepEqual(
+      assets,
+      assets.length === RETIRED_WEBP_CALLERS.length
+        ? RETIRED_WEBP_CALLERS
+        : RETIRED_WEBP_EXECUTABLES
+    );
     const root = await realpath(join(bundleRoot, archive));
     assert(isWithin(bundleRoot, root), 'Archived positive control escapes the fixture bundle');
     const entries = await Promise.all(
@@ -658,11 +668,16 @@ export async function startStaticServer(
       const { pathname } = requestUrl;
       if (recordRetirementOrigin) {
         const path = '/' + decodeURIComponent(pathname).split('/').filter(Boolean).join('/');
-        if (archivePaths.has(path)) {
-          if (archivedOriginRequests.length >= 128) archivedOriginOverflow = true;
+        const recorder = archivePaths.has(path)
+          ? codecRecorder
+          : callerPaths.has(path)
+            ? callerRecorder
+            : null;
+        if (recorder) {
+          if (recorder.requests.length >= 128) recorder.overflow = true;
           else {
             const row: RetirementOriginRequest = {
-              sequence: archivedOriginRequests.length + 1,
+              sequence: recorder.requests.length + 1,
               path,
               target: (request.url ?? '/').slice(0, 512),
               method: request.method,
@@ -673,7 +688,7 @@ export async function startStaticServer(
               contentType: null,
               cacheControl: null,
             };
-            archivedOriginRequests.push(row);
+            recorder.requests.push(row);
             response.once('finish', () => {
               row.disposition = 'finished';
               row.status = response.statusCode;
@@ -6241,8 +6256,10 @@ export async function run({
       diagnostics.error = String(error)
         .replaceAll(bundleRoot, '<bundle>')
         .replaceAll(outputRoot, '<evidence>');
-      if (finalRemoval && started)
+      if (finalRemoval && started) {
         diagnostics.retirementOriginFailure = started.archivedOriginSnapshot(true);
+        diagnostics.predecessorCallerOriginFailure = started.archivedOriginSnapshot('callers');
+      }
       throw error;
     } finally {
       if (started) await closeServer(started.server);
