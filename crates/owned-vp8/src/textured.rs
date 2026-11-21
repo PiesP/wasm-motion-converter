@@ -2410,7 +2410,7 @@ fn rate_profile_filter(filter: FilterConfig, requested: u32, effective: u32) -> 
     }
 }
 
-fn q85_luma_edge_grid(
+fn q85_source_grid(
     segments: SegmentConfig,
     quality: u32,
     counts: [usize; 4],
@@ -2431,8 +2431,58 @@ fn q85_luma_edge_grid(
         // grid avoids spending the fine q85 steps on luma-driven edges.
         // The ordinary q85 Textured grid supplies the physical base index.
         SegmentConfig::nonsegmented(segments.base_qindex + 1)
+    } else if quality == 85
+        && !neutral_chroma
+        && fine > 0
+        && flat > 0
+        && textured > 0
+        && fine + flat > ramp + textured
+        && segments.map_exceeds_rate_allowance(counts)
+    {
+        // The per-block map costs more than the rate allowance. Use the
+        // weighted median and chromatic-ramp floor used by mixed presets.
+        segments.with_uniform_qindex(counts, crate::presets::chromatic_ramp_qindex(quality))
     } else {
         segments
+    }
+}
+
+fn q60_mixed_rate_grids(
+    segments: &mut SegmentConfig,
+    deltas: &mut Deltas,
+    requested_quality: u32,
+    class_counts: [usize; 4],
+    curvature: segmentation::CurvatureTotals,
+    mixed_y1_ac: bool,
+    protected_chroma: bool,
+) {
+    if requested_quality != 60 || protected_chroma || segments.neutral_smooth_grid {
+        return;
+    }
+    let [fine, flat, ramp, textured] = class_counts;
+    if mixed_y1_ac
+        && !segments.enabled
+        && fine > 0
+        && flat > 0
+        && textured > 0
+        // Leave the q60 counterpart of the existing q75 shared-rate
+        // profiles unchanged, regardless of their map-rate estimate.
+        && ramp <= fine + flat + textured
+        && !smooth_pair_with_sparse_texture(class_counts)
+    {
+        // The collapsed physical grid retains the fine compensation used
+        // before map selection. Relax its UV AC step for mixed edge content.
+        let mixed_grid_offset = crate::presets::MIXED_Y1_AC_QINDEX_INCREASE as i8;
+        deltas.uv_ac = (deltas.uv_ac + mixed_grid_offset).min(15);
+    } else if segments.enabled
+        && !mixed_y1_ac
+        && textured > fine + flat + ramp
+        && curvature.only_luma_exceeds_cutoff(fine + flat + ramp + textured)
+    {
+        // Keep the original grid for the smooth minority of this luma-led
+        // mixture. Only the texture residuals use the adjacent coarser grid.
+        let texture = segmentation::TEXTURED as usize;
+        segments.qindex[texture] = (segments.qindex[texture] + 2).min(127);
     }
 }
 
@@ -3252,7 +3302,7 @@ fn encode_observed(
         segments = config;
         deltas = allocation_deltas;
     } else {
-        segments = q85_luma_edge_grid(segments, quality, class_counts, neutral_chroma, curvature);
+        segments = q85_source_grid(segments, quality, class_counts, neutral_chroma, curvature);
         small_palette.allocate_texture(
             &mut segments,
             requested_quality,
@@ -3260,6 +3310,15 @@ fn encode_observed(
             smooth_grid_source.near_neutral,
             crate::presets::chroma_loss_limit(width as u32, height as u32)
                 .is_none_or(|limit| rgb_error_sum > limit),
+        );
+        q60_mixed_rate_grids(
+            &mut segments,
+            &mut deltas,
+            requested_quality,
+            class_counts,
+            curvature,
+            mixed_y1_ac,
+            neutral_chroma || high_chroma_loss,
         );
     }
     if high_chroma_loss {
@@ -6054,7 +6113,7 @@ impl FrameEncoder {
 
     fn prepare_analysis(&mut self) -> Result<(), Status> {
         if !self.activity.selected() {
-            self.segments = q85_luma_edge_grid(
+            self.segments = q85_source_grid(
                 self.segments,
                 self.effective_quality,
                 self.class_counts,
@@ -6068,6 +6127,15 @@ impl FrameEncoder {
                 self.smooth_grid_source.near_neutral,
                 crate::presets::chroma_loss_limit(self.request.width, self.request.height)
                     .is_none_or(|limit| self.rgb_error_sum > limit),
+            );
+            q60_mixed_rate_grids(
+                &mut self.segments,
+                &mut self.deltas,
+                self.request.quality,
+                self.class_counts,
+                self.curvature,
+                self.mixed_y1_ac,
+                self.neutral_chroma || self.high_chroma_loss,
             );
         }
         self.method4 = activity_matrices(self.activity.selected(), self.segments, self.deltas);
@@ -12384,6 +12452,84 @@ mod tests {
     }
 
     #[test]
+    fn q60_mixed_rate_grid_preserves_shared_and_protected_profiles() {
+        let low = segmentation::CurvatureTotals::default();
+        let original = crate::presets::mixed_y1_ac_deltas(crate::presets::deltas(60), true);
+        for (quality, counts, protected, expected) in [
+            (60, [3, 3, 1, 3], false, -11),
+            (75, [3, 3, 1, 3], false, -15),
+            (60, [3, 3, 1, 3], true, -15),
+            (60, [3, 3, 10, 3], false, -15),
+            (60, [64, 64, 0, 1], false, -15),
+            (60, [3, 0, 1, 3], false, -15),
+        ] {
+            let mut segments = SegmentConfig::nonsegmented(32);
+            let mut deltas = original;
+            q60_mixed_rate_grids(
+                &mut segments,
+                &mut deltas,
+                quality,
+                counts,
+                low,
+                true,
+                protected,
+            );
+            assert!(!segments.enabled);
+            assert_eq!(segments.base_qindex, 32);
+            assert_eq!(
+                deltas,
+                Deltas {
+                    uv_ac: expected,
+                    ..original
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn q60_mixed_rate_grids_match_both_encoding_paths() {
+        let (width, height) = (416, 384);
+        let mixed = mixed_chroma_input(width, height, |column| column % 4);
+        let request = Request {
+            quality: 60,
+            ..engine_request(width, height, 0, &mixed, width * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let encoded = run_engine(FrameEncoder::new(request, mixed.clone(), plan).unwrap());
+        assert!(encoded.mixed_y1_ac && !encoded.segments.enabled);
+        assert_eq!(encoded.deltas.uv_ac, -11);
+        assert_eq!(
+            encoded.output(),
+            encode_textured(&mixed, request.width, request.height, request.stride, 0, 60).unwrap()
+        );
+
+        let texture = photo_allocation_input();
+        let mut rough = Vec::new();
+        for tile_row in texture.as_chunks::<64>().0 {
+            for _ in 0..16 {
+                rough.extend_from_slice(&[96, 96, 101, 255]);
+            }
+            rough.extend_from_slice(tile_row);
+            rough.extend_from_slice(tile_row);
+        }
+        let request = Request {
+            quality: 60,
+            ..engine_request(48, 16, 0, &rough, 48 * 4)
+        };
+        let plan = ResourcePlan::checked(request).unwrap();
+        let encoded = run_engine(FrameEncoder::new(request, rough.clone(), plan).unwrap());
+        assert!(encoded.segments.enabled && !encoded.mixed_y1_ac);
+        assert!(encoded.curvature.only_luma_exceeds_cutoff(3));
+        assert_eq!(encoded.class_counts[segmentation::TEXTURED as usize], 2);
+        // This bounded palette first moves the ordinary index from 32 to 36.
+        assert_eq!(encoded.segments.qindex_for(segmentation::TEXTURED), 38);
+        assert_eq!(
+            encoded.output(),
+            encode_textured(&rough, 48, 16, 48 * 4, 0, 60).unwrap()
+        );
+    }
+
+    #[test]
     fn q85_luma_edge_grid_requires_complete_luma_only_curvature() {
         let baseline = SegmentConfig::nonsegmented(14);
         let all_textured = [0, 0, 0, 2];
@@ -12401,9 +12547,38 @@ mod tests {
                 sums,
                 ..Default::default()
             };
-            let selected = q85_luma_edge_grid(baseline, quality, counts, neutral, curvature);
+            let selected = q85_source_grid(baseline, quality, counts, neutral, curvature);
             assert!(!selected.enabled);
             assert_eq!(selected.qindex_for(segmentation::TEXTURED), expected);
+        }
+    }
+
+    #[test]
+    fn q85_uniform_grid_requires_an_expensive_smooth_majority_map() {
+        for (quality, neutral, counts, collapse) in [
+            (85, false, [512, 384, 0, 128], true),
+            (85, false, [768, 128, 32, 96], true),
+            (85, false, [3, 2, 0, 1], false),
+            (85, false, [256, 256, 0, 512], false),
+            (85, false, [0, 768, 0, 256], false),
+            (85, false, [768, 0, 0, 256], false),
+            (85, false, [512, 512, 0, 0], false),
+            (85, true, [512, 384, 0, 128], false),
+            (75, false, [512, 384, 0, 128], false),
+            (60, false, [512, 384, 0, 128], false),
+        ] {
+            let original =
+                SegmentConfig::from_counts(quality, counts, counts.iter().sum(), neutral);
+            let selected = q85_source_grid(original, quality, counts, neutral, Default::default());
+            assert_eq!(selected.enabled, !collapse, "{counts:?}");
+            for class in 0..4 {
+                let expected = if collapse {
+                    crate::presets::chromatic_ramp_qindex(85)
+                } else {
+                    original.qindex_for(class)
+                };
+                assert_eq!(selected.qindex_for(class), expected);
+            }
         }
     }
 

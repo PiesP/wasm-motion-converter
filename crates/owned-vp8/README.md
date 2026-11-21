@@ -169,6 +169,15 @@ visible chroma tiles, each UV mode uses bounded DC error feedback inside the
 8×8 tile. Both paths use full I16/I4/UV analysis without display-based chroma
 refinement or its extra search quota.
 
+For the ordinary requested q60 profile, a collapsed mixed grid with FineSmooth,
+ChromaticFlat and Textured blocks relaxes its UV AC compensation by the existing
+four-index mixed-grid adjustment. The potential shared q60/q75 rate profiles
+keep their exact quantizers. A separate mixed grid that retains segmentation,
+has a strict majority of Textured blocks, and exceeds the curvature cutoff in
+luma alone increases only the Textured segment index by two. Both adjustments
+reuse the classified input, keep active source-activity grids and high-import
+profiles unchanged, and add no retained state or analysis pass.
+
 The estimate uses the fixed quality contract's 128-byte absolute allowance
 as the cutoff. It does not change the external size gate. The three failed
 exposed rows enter the diagnostic first, followed by the frozen 45 tuning
@@ -244,6 +253,12 @@ remains owned Rust; these adapted arithmetic/table portions retain attribution. 
 [LICENSE.libwebp](LICENSE.libwebp) and [PATENTS.libwebp](PATENTS.libwebp) with source
 and eventual binary distributions. Format tables and decoder reconstruction are
 attributed to the RFC; no external production Cargo crate is used.
+
+At q85, chromatic frames with both smooth classes, some texture and a
+strict majority of FineSmooth and ChromaticFlat blocks use a uniform grid
+when the original segment map exceeds the existing rate allowance. The
+lower weighted median has the same chromatic-ramp floor as the other mixed
+presets. Activity-selected grids retain their allocation.
 
 For q60 and q75, the color-import pass tracks up to eight distinct visible
 RGB colors. A ninth color ends palette collection. In a non-neutral frame
@@ -427,9 +442,11 @@ Two exposed q75 rate-profile conditions select the complete q60 profile for
 non-neutral frames that pass the three-plane mean curvature cutoff and the
 q60 high-chroma-loss cutoff. The first requires both FineSmooth and
 ChromaticFlat and excludes other classes. The second requires an enabled map
-above the existing 128-byte estimated allowance and a strict majority of
-original ChromaticRamp IDs. This second condition uses the original class
-counts and applies before either profile changes the wire quantizers.
+above the existing 128-byte estimated allowance, with either a strict majority
+of original ChromaticRamp IDs or a FineSmooth/ChromaticFlat pair with no ramps
+and a nonzero Textured minority of at most one block per 32. This condition
+uses the original class counts before either profile changes the wire
+quantizers.
 Single-class frames, mixed maps outside either condition, high import error,
 and other requested presets retain their usual profiles.
 

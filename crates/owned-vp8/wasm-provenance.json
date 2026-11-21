@@ -25,7 +25,7 @@
     "crates/owned-vp8/rust-toolchain.toml": "63eade4342cf85d77a436ffb9b086d301d7be4b3a7f5d01940eb2ce4f78a26f0",
     "crates/owned-vp8/LICENSE.libwebp": "5aec868f669e384a22372a4e8a1a6cd7d44c64cd451f960ca69cc170d1e13acf",
     "crates/owned-vp8/PATENTS.libwebp": "cc3273e0694ea5896145e0677699b53471b03ea43021ddc50e7923fbb9f5023c",
-    "crates/owned-vp8/README.md": "0cfa74e62903d7cf649cd4867830d9e67c0bc64b5ee8e46cd9d80758b42ac768",
+    "crates/owned-vp8/README.md": "100f78407c8fd32200fef6b4aa38b065956f42d727fa2b6dea40fba2334ed9d5",
     "crates/owned-vp8/src/abi.rs": "79b9c11bba23c0337c6016c4f6c869a28ef6b3d6c990c3c3fbaec2c042ea84f2",
     "crates/owned-vp8/src/ac_quant.rs": "65bae8549550ef096fc8481b2685e17442055af0f1ef24f14756990f06b0ba12",
     "crates/owned-vp8/src/activity.rs": "567c7c46892aac133cdca2c1da7a8063dc3f104005a9ee1ccb792f33d34da82c",
@@ -46,15 +46,15 @@
     "crates/owned-vp8/src/rate.rs": "8056f94b8e86cbdf6a9a99da1f22c7d08ef0e3bbd4f42c0afed0f980545ca882",
     "crates/owned-vp8/src/residual.rs": "4c06cec98e5278fcb5cfb6b42f7d191add296d0b66d78695be27697cba1151df",
     "crates/owned-vp8/src/segmentation.rs": "dae5526d60ad2231dad079305b9a257b286a134d95afb2194978ed9b176a7c3a",
-    "crates/owned-vp8/src/textured.rs": "2b298f6ec183bdbedf0a05351c82234691fbb6a3e05e64a58a7dc416dce60a13",
+    "crates/owned-vp8/src/textured.rs": "5d38777bd376ad0b9e1f22c623642a0b065934d2a649cb9b60bcf94c679880f3",
     "crates/owned-vp8/src/transform.rs": "fa418d388542f0a8b08b968b7ff7d4b0b30c5c7a2402e0bcaa49e9b6ab2a77a2",
     "scripts/build/build-owned-vp8-wasm.ts": "b7051d739f2ad6d29ddee7ab96359aa5d9cf681c06caf6c037f3fec05a187955",
     "scripts/build/build-gif-scalar-wasm.ts": "1a24a58b72be880aa8b5f151b0acd0258772e8434f33517f614af53aa4a69439"
   },
   "artifact": {
-    "sha256": "ef453e69db054ed6f560d9835cc9d587a9fc7d730e30784bf54f68fa0a251e1f",
-    "rawBytes": 307896,
-    "gzipBytes": 105961,
+    "sha256": "c567b7eb759d4fb746ce0a41c3af91097ff2705bebdcbf8692cb3642da98b3e9",
+    "rawBytes": 308157,
+    "gzipBytes": 106058,
     "gzipMethod": "gzip level 9, mtime 0",
     "initialLinearBytes": 1114112,
     "maxLinearBytes": 201326592
