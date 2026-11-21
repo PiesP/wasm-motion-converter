@@ -155,9 +155,14 @@ impl CompactIndex {
         mut sum: u64,
         samples: std::ops::Range<usize>,
     ) -> Result<u64, Error> {
-        for sample in samples {
+        if samples.end > self.sizes.count {
+            return Err(Error::Invalid);
+        }
+        let bytes = self.raw.get(self.sizes.start..).ok_or(Error::Truncated)?;
+        let (entries, _) = bytes.as_chunks::<4>();
+        for size in entries.get(samples).ok_or(Error::Truncated)? {
             sum = sum
-                .checked_add(u64::from(u32be(self.sizes.entry(&self.raw, sample)?, 0)?))
+                .checked_add(u64::from(u32::from_be_bytes(*size)))
                 .ok_or(Error::Overflow)?;
         }
         Ok(sum)
