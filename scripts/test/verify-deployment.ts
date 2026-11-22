@@ -18,6 +18,7 @@ import type { DeploymentState } from '../build/deployment-state.ts';
 import { runChild } from '../check/run-child.ts';
 import { preserveDeploymentDiagnostics } from './deployment-diagnostics.ts';
 import { pagesFileUrl } from './pages-file-url.ts';
+import { readRegularFile } from './regular-file.ts';
 import { runPlaywright } from './run-playwright.ts';
 
 const sha = /^[a-f0-9]{40}$/;
@@ -221,7 +222,7 @@ export async function verifyDeploymentBytes(
   };
 }
 
-function verifyLocalArtifact(directory: string, expected: DeploymentState): void {
+async function verifyLocalArtifact(directory: string, expected: DeploymentState): Promise<void> {
   const root = resolve(directory);
   if (!lstatSync(root).isDirectory()) throw new Error('Deployment artifact is not a directory');
   const inventory = new Map(expected.files.map((file) => [file.path, file]));
@@ -240,18 +241,16 @@ function verifyLocalArtifact(directory: string, expected: DeploymentState): void
       if (!entry.isFile() || !remaining.delete(path))
         throw new Error(`Unaccounted deployment artifact file: ${path}`);
       if (path === BUILD_DATE_PATH) {
-        const datePath = join(root, path);
-        if (lstatSync(datePath).size > 256)
-          throw new Error('Build date metadata exceeds byte limit');
-        verifiedBuildDate(readFileSync(datePath), expected.sourceSha);
+        const date = await readRegularFile(join(root, path), 'Build date metadata', 256);
+        verifiedBuildDate(date, expected.sourceSha);
         continue;
       }
       const file = inventory.get(path);
       if (!file) continue;
-      const localPath = join(root, path);
+      const bytes = await readRegularFile(join(root, path), path, file.size);
       if (
-        lstatSync(localPath).size !== file.size ||
-        createHash('sha256').update(readFileSync(localPath)).digest('hex') !== file.sha256
+        bytes.length !== file.size ||
+        createHash('sha256').update(bytes).digest('hex') !== file.sha256
       )
         throw new Error(`Local deployment artifact bytes differ: ${path}`);
     }
@@ -303,7 +302,7 @@ export async function verifyPublication(): Promise<void> {
         expectedManifestSha256: createHash('sha256').update(artifact).digest('hex'),
       }
     : {};
-  if (requireOwnedVp8Only) verifyLocalArtifact(artifactDirectory, expected);
+  if (requireOwnedVp8Only) await verifyLocalArtifact(artifactDirectory, expected);
   const attempts = process.env.VERIFY_CURRENT_MASTER === '1' ? 8 : 1;
   let matched = false;
   let lastObservation = 'expected source not observed';
