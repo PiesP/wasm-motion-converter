@@ -46,6 +46,7 @@
   "error.technicalDetails": "Detalles técnicos",
   "error.timeout": "La conversión tardó demasiado. Prueba con un vídeo más corto o una configuración de calidad más baja.",
   "error.unknown": "La conversión falló inesperadamente",
+  "footer.buildDate": "Fecha de compilación (UTC)",
   "footer.licenseAttribution": "Atribución de licencias y pie de página",
   "footer.linkGitHub": "{name} en GitHub (se abre en una pestaña nueva)",
   "footer.openIssue": "Abrir un problema en GitHub (se abre en una nueva pestaña)",

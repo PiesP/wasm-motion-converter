@@ -15,6 +15,7 @@ Thanks for improving **dropconvert**.
 
 ### Bug reports: include diagnostics
 
+- The UTC build date shown in the page footer
 - The WebCodecs or input-codec error shown by the application
 - Relevant browser console errors
 - Browser + version
@@ -46,9 +47,7 @@ COOP/COEP headers are configured in `vite.config.ts` for development and preview
 Dependabot manages workflow dependencies. The reviewed shared
 `browser-core/automation/actions/setup-project` action installs catalog-pinned
 Vite+, selects `.node-version` and `packageManager`, and performs a frozen
-install. Routing, provenance, and publication checks opt out of dependency
-installation. Tagged release jobs pass the verified numeric source Node pin;
-unsupported historical sources fail during provenance before publication.
+install. Changed-path routing runs without installing project dependencies.
 
 Every workflow action job first invokes the [browser-core Node trust preparation](https://github.com/PiesP/browser-core/blob/381b4ca733494cf069212cd0d16458389a83c623/automation/README.md#consumer-contract) at that reviewed SHA, with OpenSSL trust settings inherited by action bootstrap and post steps. The helper supports Ubuntu 24.04 and Alpine 3.23; unsupported systems fail before later actions. Its step boundary does not cover runner downloads or container pulls that happen before steps.
 
@@ -58,13 +57,12 @@ release. Update any affected independent allowed-SHA expectations, including
 same reviewed change; do not add unrelated expectations for other actions. Keep
 the protected checkout, verified runtime, action inputs, cache behavior, locked
 installation, and publication boundaries intact. Do not make the expected SHA
-follow the workflow being tested. Local release recipes retain their separately
-reviewed compatibility contracts.
+follow the workflow being tested.
 
 Run the focused toolchain and dependency-policy tests, then `vp run verify` and
 the applicable workflow checks. Preserve failed evidence and distinguish a
 reviewed pin-contract update from a runtime failure before splitting or closing
-an update PR. A setup check does not authorize release publication.
+an update PR.
 
 ## Command catalog
 
@@ -84,12 +82,11 @@ pinned. The table records execution stage, inputs, side effects and checks.
 | `vp run prepare:e2e:fixture`, `pretest:e2e:ci`, `pretest:e2e:resource`, `pretest:e2e:deploy` | `scripts/test/generate-e2e-video.ts` uses host FFmpeg/ffprobe; `scripts/test/prepare-resource-fixtures.ts` selects resource fixtures. | Writes ignored `public/test-video-*` files; requires codec tools on PATH. `test/unit/e2e-fixtures.test.ts`, child adapter tests, and affected E2E profile check outputs. |
 | `vp run test:e2e`, `test:e2e:ci`, `test:e2e:resource`, `test:e2e:deploy` | Plain `test:e2e` runs Playwright; `scripts/test/run-playwright.ts` selects the named CI, resource or deploy profile in the caller environment. | Requires built app/fixtures and browsers; writes test results/screenshots. `scripts/check/run-child.test.ts` covers argv, cwd, env, exit and signal; browser profiles have distinct scopes. |
 | `vp run verify:full` | Runs verify, coverage and `scripts/test/run-e2e-on-free-port.ts` CI smoke; chooses an ephemeral loopback port and invokes the project-local Vite+ task with process-group signal cleanup. | May bind loopback, generate fixtures, build, launch browsers and write reports; `test/unit/config/playwright-profile.test.ts` and CI smoke are checks. It is not all hardware/codec/Windows acceptance. |
-| `vp run test`, `test:watch`, `test:cov`, `test:ci` | Vite+ projects: `unit` owns pure logic, configuration, file and VM suites under Node; `browser` owns `.browser.test` DOM, Solid and browser lifecycle suites under Chromium; `node-policy` owns `scripts/ci/repository-authority.test.ts`, `scripts/release/verify-source.test.ts`, `scripts/check/run-child.test.ts` and native HTTP/recovery tests. | `test`, `test:watch` and `test:cov` select `unit` and `browser` exactly once; `test:watch` stays active to rerun changed tests. Browser Mode requires local Chromium, installed in CI before coverage. Coverage retains the source scope and thresholds. `test:ci` selects `node-policy` with real Node globals, timers, Fetch/HTTP and no browser setup. It checks repository authority, tagged source, portable child execution and loopback server behavior. Its subprocesses still execute actual Node, and its signal tests require POSIX where marked. Quality owns it; unit-only CI runs it before unit coverage so policy assertions are neither skipped nor repeated. |
+| `vp run test`, `test:watch`, `test:cov`, `test:ci` | Vite+ projects: `unit` owns pure logic, configuration, file and VM suites under Node; `browser` owns `.browser.test` DOM, Solid and browser lifecycle suites under Chromium; `node-policy` owns `scripts/ci/repository-authority.test.ts`, `scripts/check/run-child.test.ts` and native HTTP/recovery tests. | `test`, `test:watch` and `test:cov` select `unit` and `browser` exactly once; `test:watch` stays active to rerun changed tests. Browser Mode requires local Chromium, installed in CI before coverage. Coverage retains the source scope and thresholds. `test:ci` selects `node-policy` with real Node globals, timers, Fetch/HTTP and no browser setup. It checks repository authority, portable child execution and loopback server behavior. Its subprocesses still execute actual Node, and its signal tests require POSIX where marked. Quality owns it; unit-only CI runs it before unit coverage so policy assertions are neither skipped nor repeated. |
 | `vp run check`, `typecheck` | Standalone type-only Vite+ checking under `src/`, `scripts/`, `tooling/`, `worker/`, `validation/windows/`, and `test/`, using each file's nearest `tsconfig.json`. The root context owns Vite, Vitest and Playwright configuration. `tsconfig.node.json` keeps scripts and tooling on strict, erasable NodeNext types; Windows helpers add DOM types for evaluated browser code, and the service worker uses WebWorker types. | Read-only; quality already performs full type checking through `lint` and does not repeat this command. `test/unit/config/{typecheck-contexts,conversion-contract-types,node-script-boundaries}.test.ts` verifies positive and negative contracts with the same checker. |
 | `vp run check:i18n` | `scripts/check/i18n.ts` compares locale JSON key sets. | Reads `src/i18n/*.json`; no writes; failure reports missing/extra keys. Run command plus i18n tests. |
 | `vp run fmt`, `fmt:check`, `lint`, `circular` | Vite+ Oxfmt/Oxlint including CSS formatting and static/type source-cycle analysis. | Read-only; `circular` is a focused alias for native source lint. `fmt:fix`, `lint:fix`, `quality:fix` write fixes and require diff review. |
 | `vp run quality`, `verify` | Quality runs Oxfmt formatting/import order, then Oxlint with warnings denied and full type checking enabled, the Node-policy project and i18n. Full type checking and native static-cycle analysis each run once through `lint`. Verify adds production `build:ci`. | Verify generates build output and can update licenses; it excludes Vitest coverage and browser E2E. Inspect generated artifacts and affected tests. |
-| `vp run release:prepare` | `scripts/release/prepare.ts` creates a source/version-bound release bundle after verified build; `scripts/release/publication-guard.ts` with `published-asset.ts` owns live publication order in release workflow. | Validates version, package version, built `dist`, source SHA and matching nonempty changelog entry before writing. Later packaging errors can leave disposable partial output. Writes release assets/metadata/checksums locally. `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts` and artifact inspection. Preparation is not publication. |
 
 `vp run circular` runs `vp lint src --deny-warnings`; ordinary quality already
 runs the same native cycle rule within `lint` and does not repeat the alias.
@@ -132,14 +129,13 @@ The crate experiment notes describe the sources and outcomes of earlier comparis
 | --- | --- | --- |
 | `.github/workflows/ci.yaml`, `security.yaml` changed-path jobs | `scripts/ci/classify-workflow-changes.ts` uses the trusted base on PR/merge-group and protected checkout on push, reads Git event and NUL-safe no-renames diff, writes conservative fixed gate outputs. | `test/unit/config/workflow-routing.test.ts` exercises real temporary Git repositories; verify exact-SHA hosted gates run relevant jobs. |
 | `.github/workflows/security.yaml` pinned tools and OSV | `scripts/ci/pinned-tools.json` owns tool versions/digests; trusted private `pinned-tools.ts` and `check-pinned-tools.ts` provide image env and freshness checks. The independently pinned browser-core `automation/actions/prepare-osv` supplies the private `consumer` OSV helper; `packages/core` is the runtime gitlink. | `test/unit/config/pinned-tools-cli.test.ts`, `test/unit/config/osv-workflow-composition.test.ts`, and provider OSV fixtures; `docs/osv-workflow.md` explains trust order and live-container limits. |
-| `.github/workflows/release.yaml` | `scripts/release/verify-source.ts` checks protected tagged source before validation fan-out; `prepare.ts` creates local files and `publication-guard.ts` plus `published-asset.ts` own the locked public write decision. Short runner `run:` blocks select checkout, append outputs and launch actions. | `test/unit/config/{release-infrastructure,release-publication-guard,release-runtime}.test.ts`, `scripts/release/verify-source.test.ts` and artifact inspection. Preparation is not publication. |
 | `.github/dependabot.yaml`, `update-browser-core.yaml` | Dependabot opens npm and GitHub Actions update PRs for maintainer review; repository workflows do not approve or merge dependency updates. `scripts/ci/update-browser-core.ts` verifies remote SHA/impact and owns gitlink PR preparation/publication. Runner shell passes event inputs and bounded output/checkout glue. | `test/unit/config/{dependency-review-policy,browser-core-automation}.test.ts` and `scripts/ci/repository-authority.test.ts`; hosted exact-SHA checks establish privileged results. |
 | `.githooks/pre-commit`, `.githooks/pre-push` | Minimal Git-launched Bash guard rejects detached/default-branch commits and direct default-branch pushes before pinned Node setup. | `test/unit/config/git-hooks.test.ts`. Retain as a small pre-runtime Git adapter; revisit if the hook installer guarantees pinned Node for every local Git invocation without loosening the refusal. |
-| Test subprocess callers | `test/unit/config/{command-adapters,workflow-routing,release-runtime,release-publication-guard,git-hooks,node-script-boundaries,playwright-profile}.test.ts`, `scripts/check/run-child.test.ts`, and `scripts/ci/repository-authority.test.ts` exercise CLI, child, Git, and release policy in fixtures. Provider tests own OSV parser/scanner behavior. | Keep callers and NodeNext configs aligned; fixture tests do not prove browser media or publication acceptance. |
+| Test subprocess callers | `test/unit/config/{command-adapters,workflow-routing,git-hooks,node-script-boundaries,playwright-profile}.test.ts`, `scripts/check/run-child.test.ts`, and `scripts/ci/repository-authority.test.ts` exercise CLI, child-process and Git behavior in fixtures. Provider tests own OSV parser/scanner behavior. | Keep callers and NodeNext configs aligned; browser media and production deployments require separate checks. |
 
-CI and release cache Chromium, Firefox, and WebKit under an exact key containing
+CI caches Chromium, Firefox, and WebKit under an exact key containing
 the installed Playwright version, runner OS/architecture, and Ubuntu 24.04.
-Both workflows install browser and OS dependencies and run their E2E suite after
+CI installs browser and OS dependencies and runs its E2E suite after
 cache restoration. [Issue #324](https://github.com/PiesP/wasm-motion-converter/issues/324)
 records the comparison behind this choice; revisit the cache when the runner
 image, browser set, Playwright installation contract, or cache behavior changes.
@@ -265,10 +261,11 @@ remain the ongoing checks. An occasional CLI investigation should use an
 explicitly reviewed, pinned tool for that investigation, not an implicit download
 in project scripts.
 Keep previews disabled unless a separate change approves their intended layout.
-The generated `release` branch has a different root layout and release cadence;
-it is not the production source. A prebuilt migration requires a current,
-source-bound artifact and a reviewed rollout, rather than reusing the historical
-release merely because it exists.
+Cloudflare Pages is the only distribution channel for new builds. Merge changes
+through the protected `master` branch. Version tags, GitHub Releases, and
+updates to the generated `release` branch have been discontinued. Historical
+distribution and source-access follow-up is tracked in
+[issue #532](https://github.com/PiesP/wasm-motion-converter/issues/532).
 
 The source-build settings are an empty repository root, output `dist`, build
 command `node --experimental-strip-types scripts/build/pages-build.ts`, and
@@ -276,8 +273,10 @@ command `node --experimental-strip-types scripts/build/pages-build.ts`, and
 `.node-version` and `package.json`, restores and verifies the core gitlink,
 installs the frozen lockfile with build dependencies,
 then runs `vp run build`. Its quality, license and postbuild lifecycle stays a
-deployment prerequisite. License notices omit build dates so CI and Pages can
-reproduce the same public bytes across a date boundary. Read the provider log
+deployment prerequisite. At the end of the build, `build-date.json` records its UTC
+calendar date and source commit. The footer shows this date in the selected language.
+CI and Pages validate their own date against the source commit. The deployment
+manifest and inventoried files remain byte-identical across build dates. Read the provider log
 for effective tools and core SHA. Declare `SKIP_DEPENDENCY_INSTALL = "1"` in
 Wrangler `[vars]` as well as
 the project settings: Pages projects using a Wrangler file read its variables
@@ -357,16 +356,15 @@ retained until their original script is identified and removal is separately
 validated; they do not authorize analytics or external script loading.
 
 `deployment-state.json` records source/tree/core identity and hashes of the
-postprocessed public distribution. It is separate from the tagged release's
-`release-state.json`; a package version or 200 HTML fallback cannot identify
-a deployment. After every successful `master` CI run, Production verification
+postprocessed public distribution. The source SHA distinguishes revisions built
+on the same date. After every successful `master` CI run, Production verification
 downloads that exact run's build artifact, waits at most eight source checks
 for Pages, compares the complete runtime inventory, and executes the maintained
 deploy profile. It has read permissions and no production secrets. Superseded
 sources fail explicitly as incomplete verification; unavailable expected metadata fails with a
 provider pending/failed/skipped diagnostic instead of accepting old production.
 The provider deployment ID, terminal result and source still need account
-readback during a release/issue closeout.
+readback when closing a deployment issue.
 
 For an authorized local public check, build the clean expected source and run:
 
@@ -626,37 +624,6 @@ recovery without cross-deployment asset retention. Revisit it if measured need
 and an approved delivery contract justify that work. This comparison did not
 compose or deploy retained assets.
 
-## Release publication order
-
-The manual release workflow accepts a verified `vX.Y.Z` tag from protected
-`master`. Its validation and build jobs can run concurrently. The `publish` job
-has one lock shared by all tags; after it obtains the lock, it checks the live
-tag, public releases, Latest, and the `release` branch before either write.
-Ordinary historical publication and deployment rollback are rejected. New
-stable releases explicitly become Latest. A retry of the same version and source
-skips writes already completed. A published release is accepted only after
-verifying the uploaded archive, `metadata.json`, and `checksums.txt`, including
-their sizes, digests, and the two checksum entries. Incomplete or unverifiable
-published assets stop the retry and require maintainer review. The workflow
-never replaces existing release assets or retargets tags. An intentional rollback
-needs a separate reviewed procedure.
-
-Defer replaying an immutable historical tag that selects an unremediated runtime
-until that runtime's trust behavior or an environment-specific mitigation is qualified. The current manifest pin
-does not change existing tags.
-
-Each new release-branch artifact contains `release-state.json` with the version and verified
-tagged commit. The downloadable `metadata.json` records that same identity.
-The release branch now contains a marker: `4478d5d83c95999241c0b26b957ed27ecfeefa59`
-records v0.2.3 and source `7de3449ea709e55168d7585dc97cd73de9357f59`.
-The initial markerless migration and its archive comparison are preserved at
-[`8a3e359a01e7c7594126afff3c94e5a47f248c56`](https://github.com/PiesP/wasm-motion-converter/blob/8a3e359a01e7c7594126afff3c94e5a47f248c56/scripts/release/legacy-state.ts).
-An existing branch missing a valid marker stops publication before either writer.
-Recovery requires a separate maintainer review of the branch tree, live tag,
-public release and source identity, followed by an explicit repair procedure.
-The guard does not infer or repair branch state automatically. A true first
-publication still works when both the branch and published releases are absent.
-
 ## Project constraints
 
 - Keep media processing in the browser; do not add server uploads.
@@ -709,9 +676,9 @@ Validate a fresh dependency resolution as well as the frozen install, since
 a migration lockfile can otherwise hide peer metadata conflicts.
 
 The maintained scope covers browser source, Node scripts, tests and helpers,
-Vite tooling, raw Windows validation modules, the release-runtime action
-module, root TypeScript/JSON/HTML configuration, the service worker, 404 page,
-and bundled dependency metadata. The shared `packages/core` checkout,
+Vite tooling, raw Windows validation modules, root TypeScript/JSON/HTML
+configuration, the service worker, 404 page, and bundled dependency metadata.
+The shared `packages/core` checkout,
 dependencies, generated distributions and reports, lockfiles, media, binary
 snapshots, patches, and generated Windows inputs/prior distributions/public
 targets are excluded. Vite+ is the sole routine formatter/linter. Oxfmt formats
@@ -846,10 +813,9 @@ The browser-core updater computes impact and previews publication in a read-only
 job. A separate writer checks out trusted current source, installs no project
 dependencies, reprepares the update and requires the classified base/target to
 match before publishing only the gitlink PR. Its pinned runtime setup and
-publication code still require maintainer trust. Release build/test jobs remain
-read-only; existing protected-source, integrity and locked publication checks
-remain required. Manual review, pins, checksums and attestations do not prove
-that an upstream compiler, Action or resulting build is free of malicious code.
+publication code still require maintainer trust. Manual review, pins, checksums
+and attestations do not prove that an upstream compiler, Action or resulting
+build is free of malicious code.
 
 ## License
 

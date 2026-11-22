@@ -74,47 +74,38 @@ describe('Playwright workflow profiles', () => {
   it('runs capability smoke coverage in Firefox and WebKit', () => {
     const config = readFileSync(resolve(root, 'playwright.config.ts'), 'utf8');
     const workflow = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
-    const releaseWorkflow = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
 
     expect(config).toContain("name: 'firefox'");
     expect(config).toContain("name: 'webkit'");
     expect(config).toContain("'e2e/browser-capability.spec.ts'");
     expect(config).toContain('IS_DEPLOY_PROFILE || IS_RESOURCE_PROFILE');
     expect(workflow).toContain('playwright install --with-deps chromium firefox webkit');
-    expect(releaseWorkflow).toContain('playwright install --with-deps chromium firefox webkit');
   });
 
   it('uses an exact installed-version browser cache without skipping installation', () => {
     const ci = readFileSync(resolve(root, '.github/workflows/ci.yaml'), 'utf8');
-    const release = readFileSync(resolve(root, '.github/workflows/release.yaml'), 'utf8');
     expect(ci).not.toContain('cache_trial');
 
-    for (const [name, workflow, end] of [
-      ['CI', ci, '\n  build:\n'],
-      ['release', release, '\n  build:\n'],
-    ] as const) {
-      const e2e = workflow.slice(workflow.indexOf('  e2e:\n'), workflow.indexOf(end));
-      expect(e2e, name).toContain('timeout-minutes: 90');
-      const setup = e2e.indexOf('      - name: 📦 Setup project');
-      const version = e2e.indexOf('      - name: 🎭 Resolve installed Playwright version');
-      const cache = e2e.indexOf('      - name: 🎭 Cache Playwright browsers');
-      const install = e2e.indexOf('vp exec playwright install --with-deps chromium firefox webkit');
-      const run = e2e.indexOf('vp run test:e2e:ci');
-      const verificationStep = e2e.slice(e2e.lastIndexOf('\n      - name:', run), run);
-      expect(verificationStep, name).toContain(`timeout-minutes: ${name === 'CI' ? 60 : 20}`);
-      expect(
-        setup >= 0 && setup < version && version < cache && cache < install && install < run,
-        name
-      ).toBe(true);
-      expect(e2e, name).toContain("require('@playwright/test/package.json').version");
-      const cacheStep = e2e.slice(cache, e2e.indexOf('\n      - name:', cache + 1));
-      expect(cacheStep, name).toContain('path: ~/.cache/ms-playwright');
-      expect(cacheStep, name).toContain('runner.os');
-      expect(cacheStep, name).toContain('runner.arch');
-      expect(cacheStep, name).toContain('ubuntu-24.04-chromium-firefox-webkit');
-      expect(cacheStep, name).toContain('steps.playwright.outputs.version');
-      expect(cacheStep, name).not.toContain('restore-keys:');
-      expect(cacheStep, name).not.toContain('pnpm-lock.yaml');
-    }
+    const e2e = ci.slice(ci.indexOf('  e2e:\n'), ci.indexOf('\n  build:\n'));
+    expect(e2e).toContain('timeout-minutes: 90');
+    const setup = e2e.indexOf('      - name: 📦 Setup project');
+    const version = e2e.indexOf('      - name: 🎭 Resolve installed Playwright version');
+    const cache = e2e.indexOf('      - name: 🎭 Cache Playwright browsers');
+    const install = e2e.indexOf('vp exec playwright install --with-deps chromium firefox webkit');
+    const run = e2e.indexOf('vp run test:e2e:ci');
+    const verificationStep = e2e.slice(e2e.lastIndexOf('\n      - name:', run), run);
+    expect(verificationStep).toContain('timeout-minutes: 60');
+    expect(
+      setup >= 0 && setup < version && version < cache && cache < install && install < run
+    ).toBe(true);
+    expect(e2e).toContain("require('@playwright/test/package.json').version");
+    const cacheStep = e2e.slice(cache, e2e.indexOf('\n      - name:', cache + 1));
+    expect(cacheStep).toContain('path: ~/.cache/ms-playwright');
+    expect(cacheStep).toContain('runner.os');
+    expect(cacheStep).toContain('runner.arch');
+    expect(cacheStep).toContain('ubuntu-24.04-chromium-firefox-webkit');
+    expect(cacheStep).toContain('steps.playwright.outputs.version');
+    expect(cacheStep).not.toContain('restore-keys:');
+    expect(cacheStep).not.toContain('pnpm-lock.yaml');
   });
 });

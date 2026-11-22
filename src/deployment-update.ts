@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { readDeploymentJson } from './deployment-json.ts';
+
 const SOURCE_SHA = /^[a-f0-9]{40}$/;
 const VERSION = /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/;
 const MIN_ATTEMPT_INTERVAL_MS = 60_000;
@@ -25,43 +27,7 @@ function deploymentUrl(): URL | null {
 }
 
 async function readMetadata(response: Response, expectedUrl: string): Promise<string> {
-  if (
-    response.status !== 200 ||
-    response.redirected ||
-    response.url !== expectedUrl ||
-    response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/json'
-  )
-    throw new Error('Unusable deployment metadata response');
-
-  const contentLength = response.headers.get('content-length');
-  if (
-    contentLength !== null &&
-    (!/^\d+$/.test(contentLength) || Number(contentLength) > MAX_METADATA_BYTES)
-  )
-    throw new Error('Invalid deployment metadata length');
-  if (!response.body) throw new Error('Missing deployment metadata body');
-
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_METADATA_BYTES) throw new Error('Deployment metadata is too large');
-      chunks.push(value);
-    }
-  } finally {
-    void reader.cancel().catch(() => {});
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  const value = await readDeploymentJson(response, expectedUrl, MAX_METADATA_BYTES);
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Invalid deployment metadata schema');
   const metadata = value as Record<string, unknown>;

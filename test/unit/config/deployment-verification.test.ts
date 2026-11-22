@@ -46,6 +46,8 @@ describe('source-bound public verification', () => {
     null,
     { ...state, schemaVersion: 2 },
     { ...state, sourceDirty: true },
+    { ...state, buildDatePath: '../../secret.json' },
+    { ...state, files: [{ ...state.files[0], path: 'build-date.json' }] },
     { ...state, sourceSha: 'v0.2.3' },
     { ...state, files: [] },
     { ...state, files: [{ ...state.files[0], path: '../private' }] },
@@ -87,6 +89,33 @@ describe('source-bound public verification', () => {
     );
     metadata = { ...state, sourceSha: 'e'.repeat(40) };
     await expect(verifyDeploymentBytes(target, state, fetcher)).rejects.toThrow('sourceSha');
+  });
+
+  it('verifies the served UTC build date independently and binds it to the exact source', async () => {
+    const expected = { ...state, buildDatePath: 'build-date.json' } as const;
+    const manifest = JSON.stringify(expected);
+    const manifestHash = createHash('sha256').update(manifest).digest('hex');
+    let sidecar = { sourceSha: state.sourceSha, date: '2026-11-22' };
+    const fetcher: typeof fetch = async (input) => {
+      switch (new URL(String(input)).pathname) {
+        case '/deployment-state.json':
+          return Response.json(expected);
+        case '/build-date.json':
+          return Response.json(sidecar);
+        default:
+          return new Response(body);
+      }
+    };
+    await expect(
+      verifyDeploymentBytes(target, expected, fetcher, manifestHash)
+    ).resolves.toMatchObject({
+      buildDate: '2026-11-22',
+      manifestSha256: manifestHash,
+    });
+    sidecar = { ...sidecar, date: '2026-02-30' };
+    await expect(verifyDeploymentBytes(target, expected, fetcher)).rejects.toThrow('build date');
+    sidecar = { sourceSha: 'e'.repeat(40), date: '2026-11-22' };
+    await expect(verifyDeploymentBytes(target, expected, fetcher)).rejects.toThrow('build date');
   });
 
   it('requires the original metadata bytes in the final mode', async () => {

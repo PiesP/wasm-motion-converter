@@ -3,10 +3,12 @@
 All notable changes to **WASM Motion Converter** are documented in this file.
 
 The format follows the principles of
-[Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and the project
-roughly adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+[Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioned entries
+below describe historical file releases.
 
-## [Unreleased]
+## Pages updates
+
+- Cloudflare Pages is the only channel for new builds. The page footer displays the build date in UTC.
 
 ## [0.2.5] - 2026-11-11
 

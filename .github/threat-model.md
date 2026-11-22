@@ -15,7 +15,7 @@ Protect these assets:
 - Integrity and availability of the page, conversion result, browser tab, and
   persistent service-worker cache.
 - Integrity of runtime bundles, WASM, deployment headers, dependencies, CI, and
-  release artifacts.
+  Pages build artifacts.
 
 ## Trust boundaries and attacker-controlled inputs
 
@@ -38,8 +38,8 @@ Protect these assets:
 - The service worker and browser cache form a persistent boundary across
   deployments. Network responses and request URLs must not weaken same-origin
   behavior or persist attacker-selected content.
-- Vite configuration, `public/_headers`, workflows, dependencies, release tags,
-  and Cloudflare publication form the build and release boundary.
+- The protected `master` branch, Vite configuration, `public/_headers`, workflows,
+  dependencies, and the Cloudflare Pages Git integration control what reaches production.
 
 ## Required security properties
 
@@ -61,8 +61,9 @@ Protect these assets:
 - Owned GIF/demux WASM must have no host imports. Their exports, initial memory,
   source inputs, toolchain, declared memory maximum and byte budgets must match
   the reviewed build contract before the app consumes them.
-- Release and CI workflows use least privilege, immutable action pins, trusted
-  inputs, and do not expose credentials to code from untrusted pull requests.
+- CI and production verification workflows use least privilege, immutable action
+  pins and trusted inputs. Credentials stay isolated from untrusted pull
+  request code.
 
 ## High-value review surfaces
 
@@ -81,7 +82,7 @@ Protect these assets:
   `src/sw-register.ts`, `public/_headers`, `vite.config.ts`, and generated build
   integrity checks.
 - `package.json`, `pnpm-workspace.yaml`, lockfiles, scripts, GitHub Actions,
-  release automation, and Cloudflare configuration.
+  and Cloudflare Pages configuration.
 
 ## Scope boundaries and coverage limits
 
@@ -112,11 +113,11 @@ path violates the local-only or same-origin properties.
 
 ## Severity guidance
 
-- **Critical:** remote release compromise or application behavior that
+- **Critical:** compromise of the production deployment or application behavior that
   exfiltrates local media or executes attacker code with durable user impact.
 - **High:** attacker-controlled media reliably crashes the tab despite bounds,
   exposes local media, creates meaningful unauthorized requests, or bypasses a
-  privileged build/release boundary.
+  privileged build or deployment boundary.
 - **Medium:** reproducible, persistent CPU/memory exhaustion or conversion/cache
   corruption from untrusted media until reload or cache recovery.
 - **Low:** defense-in-depth gaps with bounded impact or issues requiring

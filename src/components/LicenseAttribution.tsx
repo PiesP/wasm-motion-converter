@@ -2,7 +2,11 @@
 // Copyright (c) 2025-2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
-import type { Component } from 'solid-js';
+import { type Component, createSignal, onMount, Show } from 'solid-js';
+
+import { loadBuildDate } from '@/build-date';
+
+declare const __APP_SOURCE_SHA__: string | null;
 
 const LIBRARIES = [
   {
@@ -20,7 +24,11 @@ const linkClass =
   'text-link hover:text-link-hover underline underline-offset-2 px-1.5 py-1 inline-flex items-center min-h-[44px]';
 
 const LicenseAttribution: Component = () => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const [buildDate, setBuildDate] = createSignal<string | null>(null);
+  onMount(() => {
+    if (import.meta.env.PROD) void loadBuildDate(__APP_SOURCE_SHA__).then(setBuildDate);
+  });
 
   return (
     <footer
@@ -79,6 +87,18 @@ const LicenseAttribution: Component = () => {
             {t('footer.openIssue')}
           </a>
         </p>
+        <Show when={buildDate()}>
+          {(date) => (
+            <p>
+              {t('footer.buildDate')}{' '}
+              <time datetime={date()}>
+                {new Intl.DateTimeFormat(locale(), { dateStyle: 'long', timeZone: 'UTC' }).format(
+                  new Date(date())
+                )}
+              </time>
+            </p>
+          )}
+        </Show>
       </div>
     </footer>
   );

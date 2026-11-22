@@ -46,6 +46,7 @@
   "error.technicalDetails": "技術的詳細",
   "error.timeout": "変換時間が長すぎます。短い動画または低い品質設定をお試しください。",
   "error.unknown": "変換が予期せず失敗しました",
+  "footer.buildDate": "ビルド日（UTC）",
   "footer.licenseAttribution": "ライセンス帰属とフッター",
   "footer.linkGitHub": "GitHubで{name}を見る（新しいタブで開く）",
   "footer.openIssue": "GitHubでイシューを開く（新しいタブで開く）",

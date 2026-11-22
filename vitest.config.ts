@@ -51,7 +51,6 @@ export default defineConfig({
           setupFiles: [],
           include: [
             'scripts/ci/repository-authority.test.ts',
-            'scripts/release/verify-source.test.ts',
             'scripts/check/run-child.test.ts',
             'test/native/deployment-update.test.ts',
             'test/native/offline-recovery.test.ts',

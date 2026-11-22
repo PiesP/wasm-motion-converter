@@ -31,6 +31,7 @@ import {
 } from '../../scripts/test/retired-webp-assets';
 import { hasLegacyWebpInRetiredBuild } from '../../scripts/test/retired-webp-worker';
 import { parseDeploymentState } from '../../scripts/test/verify-deployment';
+import { parseBuildDate } from '../../src/utils/build-date';
 import {
   forceMainSoftwareWebp,
   observeSoftwareWebp,
@@ -279,6 +280,7 @@ test.describe('Deployment: Page Load', () => {
   });
 
   test('Pages serves one security and cache policy per document, metadata, and fingerprinted asset', async ({
+    page,
     request,
   }, testInfo) => {
     const metadataUrl = new URL('/deployment-state.json', DEPLOY_URL).href;
@@ -305,6 +307,21 @@ test.describe('Deployment: Page Load', () => {
         files: expect.any(Array),
       })
     );
+    if (metadata.buildDatePath) {
+      const buildDate = await request.get(new URL(metadata.buildDatePath, DEPLOY_URL).href, {
+        maxRedirects: 0,
+      });
+      expect(buildDate.status()).toBe(200);
+      expect(buildDate.headers()['content-type']).toMatch(/^application\/json(?:\s*;|$)/i);
+      await expectSecurityHeaders(buildDate, csp);
+      expectSingleHeader(buildDate, 'cache-control', REVALIDATION);
+      const date = parseBuildDate(await buildDate.json(), metadata.sourceSha);
+      expect(date).toBeTruthy();
+      await page.goto(DEPLOY_URL);
+      const displayed = page.getByRole('contentinfo').locator('time');
+      await expect(displayed).toBeVisible();
+      await expect(displayed).toHaveAttribute('datetime', date!);
+    }
     const files = (metadata as { files: { path: string; size: number; sha256: string }[] }).files;
     expect(files.length).toBeGreaterThan(0);
     expect(files.length).toBeLessThanOrEqual(100);

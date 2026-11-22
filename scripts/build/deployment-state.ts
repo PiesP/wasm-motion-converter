@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
+import { BUILD_DATE_PATH } from '../../src/utils/build-date.ts';
+
 export interface DeploymentFile {
   path: string;
   size: number;
@@ -15,6 +17,7 @@ export interface DeploymentState {
   treeSha: string;
   coreSha: string;
   version: string;
+  buildDatePath?: typeof BUILD_DATE_PATH;
   branch: string;
   sourceDirty: boolean;
   headersSha256: string;
@@ -26,7 +29,7 @@ const fingerprintedAsset = /^[\w.-]+[.-][\w-]{8}\.(js|css|wasm)$/;
 
 export function fingerprintedAssetHeaders(template: string, assets: string[]): string {
   const rules = assets.filter((asset) => fingerprintedAsset.test(asset)).sort();
-  if (rules.length + 6 > 100) throw new Error('Pages header rule limit exceeded');
+  if (rules.length + 7 > 100) throw new Error('Pages header rule limit exceeded');
   return `${template.trimEnd()}\n\n# Emitted fingerprinted assets only; missing paths keep Pages revalidation.\n${rules
     .map((asset) => `/assets/${asset}\n  Cache-Control: public, max-age=31536000, immutable\n`)
     .join('\n')}`;
@@ -44,6 +47,7 @@ export function distributionFiles(dist: string): DeploymentFile[] {
         if (
           [
             'deployment-state.json',
+            BUILD_DATE_PATH,
             '_headers',
             '_redirects',
             '_routes.json',
@@ -99,6 +103,13 @@ export function applicationSourceSha(root: string): string | null {
 
 export function writeDeploymentState(root: string, dist: string): void {
   const source = readSource(root);
+  // Independent Pages and CI builds keep identical source and asset manifests.
+  // Their wall-clock completion dates can legitimately differ.
+  const buildDate = {
+    sourceSha: source && !source.sourceDirty ? source.sourceSha : null,
+    date: new Date().toISOString().slice(0, 10),
+  };
+  writeFileSync(join(dist, BUILD_DATE_PATH), JSON.stringify(buildDate) + '\n');
   if (!source) {
     console.log('[postbuild] Source metadata unavailable outside a Git checkout');
     return;
@@ -119,6 +130,7 @@ export function writeDeploymentState(root: string, dist: string): void {
     treeSha: git(['rev-parse', 'HEAD^{tree}']),
     coreSha,
     version: manifest.version,
+    buildDatePath: BUILD_DATE_PATH,
     branch: process.env.CF_PAGES_BRANCH || git(['rev-parse', '--abbrev-ref', 'HEAD']),
     sourceDirty: source.sourceDirty,
     headersSha256: createHash('sha256')

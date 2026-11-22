@@ -35,7 +35,7 @@ workflow checks.
 
 Vite+'s `unit` project runs the scanner fixture and workflow-contract suites
 above. The `node-policy` project in `vitest.config.ts` owns repository-authority,
-release-source, child-runner and native HTTP/recovery suites. `test:ci` selects
+child-runner and native HTTP/recovery suites. `test:ci` selects
 that project without DOM setup or browser mocks; real Node subprocess probes
 retain dependency-free execution checks.
 `src/test-helpers.ts` remains a browser development runtime module exercised by

@@ -11,6 +11,7 @@ a clear question and enough context to understand the workflow.
 
 Use the Bug Report template and include:
 
+- UTC build date from the page footer
 - Browser + version, OS + device
 - Steps to reproduce (clicks/inputs)
 - Expected vs. actual result
