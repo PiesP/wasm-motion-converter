@@ -55,7 +55,9 @@ export const RETIRED_WEBP_DELIVERY_FILES = [...RETIRED_WEBP_EXECUTABLES, ...RETI
 
 export const RETIRED_REQUEST_MODES = ['ordinary', 'revalidated'] as const;
 
-const LEGACY_WEBP_EXECUTABLE = /(?:^|\/)(?:webp-wasm|wasm-webp)(?:[.-][\w-]+)*\.(?:wasm|[cm]?js)$/i;
+// The first suffix may start with a hyphen. Inside a suffix, only dots separate segments.
+const LEGACY_WEBP_EXECUTABLE =
+  /(?:^|\/)(?:webp-wasm|wasm-webp)(?:-[\w-]+)?(?:\.[\w-]+)*\.(?:wasm|[cm]?js)$/i;
 
 export function isRetiredWebpExecutable(path: string, sha256?: string): boolean {
   return (

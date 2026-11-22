@@ -38,7 +38,7 @@ const legacy = {
 };
 const demux = { path: 'assets/owned-demux-vJnqndga.wasm', size: 20, sha256: prior };
 
-test('retirement origin records real alias targets and projects the original three paths', async () => {
+test('retirement origin rejects unverified caller bytes and records the requested aliases', async () => {
   const bundle = await mkdtemp(join(tmpdir(), 'wmc-retirement-origin-'));
   try {
     await mkdir(join(bundle, 'dist'));
@@ -48,6 +48,14 @@ test('retirement origin records real alias targets and projects the original thr
     );
     const started = await startStaticServer(bundle, { recordRetirementOrigin: true });
     try {
+      await mkdir(join(bundle, 'archive', 'assets'), { recursive: true });
+      for (const caller of RETIRED_WEBP_CALLERS) {
+        await writeFile(join(bundle, 'archive', caller.path), new Uint8Array(caller.size));
+      }
+      await assert.rejects(started.setArchivedOrigin('archive', RETIRED_WEBP_CALLERS), {
+        name: 'AssertionError',
+        expected: /^[0-9a-f]{64}$/,
+      });
       assert.deepEqual(started.archivedOriginSnapshot(true).requests, []);
       const callerAlias = '/' + RETIRED_WEBP_CALLERS[0].path + '?known=1';
       const callerResponse = await fetch(started.url + callerAlias);

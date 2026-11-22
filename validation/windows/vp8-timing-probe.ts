@@ -1,5 +1,10 @@
 /** Validation-only numeric observations; snapshots are read after UI timing seals. */
 export function installVp8TimingProbe() {
+  const DedicatedScope = Reflect.get(globalThis, 'DedicatedWorkerGlobalScope');
+  const isDedicatedWorker =
+    typeof DedicatedScope === 'function' && globalThis instanceof DedicatedScope;
+  if (!isDedicatedWorker && typeof document === 'undefined')
+    throw new Error('VP8 timing probe requires a page or a dedicated Worker scope');
   const marker = '__wmcVp8TimingSnapshot';
   const NativeInstance = WebAssembly.Instance;
   const NativeUint8Array = Uint8Array;
@@ -252,8 +257,10 @@ export function installVp8TimingProbe() {
       capacity(memory);
     }
   );
-  if (typeof document === 'undefined') {
+  if (isDedicatedWorker) {
     globalThis.addEventListener('message', (event: MessageEvent) => {
+      // The owner's implicit port delivers trusted events with empty origin and null source.
+      if (!event.isTrusted || event.origin !== '' || event.source !== null) return;
       const message = event.data as Record<string, unknown> | null;
       if (message?.type === 'start' && typeof message.requestId === 'string')
         current = blank(message.requestId);

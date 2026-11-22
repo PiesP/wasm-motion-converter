@@ -440,6 +440,20 @@ describe('deployment diagnostic artifact', () => {
     }
   });
 
+  it.each([
+    ['webp-wasm.js', true],
+    ['/assets/WASM-WEBP.worker-v2.MJS', true],
+    ['assets/webp-wasm-build_1.min-v2.cjs', true],
+    ['assets/wasm-webp--.wasm', true],
+    ['assets/webp-wasm-.js', false],
+    ['assets/wasm-webp.min..js', false],
+    ['assets/webp-wasm.js.map', false],
+    ['assets/prefix-webp-wasm.js', false],
+    ['assets/wasm-webp/dist.js', false],
+  ] as const)('classifies the retired WebP executable path %s', (path, expected) => {
+    expect(isRetiredWebpExecutable(path)).toBe(expected);
+  });
+
   it('identifies the predecessor shim even when renamed, while allowing the generic Vite helper', () => {
     expect(isRetiredWebpExecutable(RETIRED_WEBP_SHIM.path)).toBe(true);
     expect(isRetiredWebpExecutable(`/${RETIRED_WEBP_SHIM.path}`)).toBe(true);

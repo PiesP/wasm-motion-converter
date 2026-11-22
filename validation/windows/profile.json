@@ -570,6 +570,7 @@
     "public/test-video-matroska-metadata.mkv",
     "validation/windows/offline-recovery.ts",
     "scripts/test/pages-file-url.ts",
+    "scripts/test/regular-file.ts",
     "scripts/test/retired-webp-assets.ts",
     "scripts/test/retired-webp-worker.ts",
     "node_modules/.pnpm/@babel+parser@7.29.14/node_modules/@babel/parser/package.json",
