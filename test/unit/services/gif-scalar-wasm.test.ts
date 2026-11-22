@@ -502,6 +502,115 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
 });
 
 describe('conversion-owned WASM glue', () => {
+  it('keeps a direct retained input exclusive until the asynchronous frame copy settles', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () => new Response(wasmBytes, { headers: { 'content-type': 'application/wasm' } })
+    );
+    const reads = vi.fn();
+    const q = await createGifScalarQuantizer(
+      () => {},
+      () => {},
+      undefined,
+      reads
+    );
+    expect(q.enableRetained(4)).toBe(true);
+    const original = new Uint8Array([100, 20, 0, 1, 50, 60, 70, 2, 255, 128, 16, 3, 1, 2, 3, 4]);
+    let complete!: () => void;
+    const frame = {
+      displayWidth: 2,
+      displayHeight: 2,
+      allocationSize: () => 16,
+      copyTo(destination: AllowSharedBufferSource) {
+        if (!(destination instanceof Uint8Array)) throw Error('Expected a byte view');
+        return new Promise<PlaneLayout[]>((resolve) => {
+          complete = () => {
+            destination.set(original);
+            resolve([{ offset: 0, stride: 8 }]);
+          };
+        });
+      },
+    };
+    const read = q.prepareNative!(frame, 2, 2, 0);
+    expect(() => q.prepare(original, 2, 2, 0)).toThrow('readback is pending');
+    expect(() => q.releaseRetained(1)).toThrow('readback is pending');
+    complete();
+    const prepared = await read;
+    expect(reads).toHaveBeenCalledOnce();
+    expect(reads.mock.calls[0]![0]).toBeGreaterThanOrEqual(0);
+    expect(prepared).not.toBeNull();
+    expect([...prepared!]).toEqual([...original]);
+    const colors = q.quantizePreparedRetained(8);
+    const handle = q.mapRetained(prepared!, colors);
+    q.releaseRetained(handle);
+    const transient = {
+      ...frame,
+      copyTo: vi.fn(async () => {
+        throw new DOMException('Frame unavailable', 'InvalidStateError');
+      }),
+    };
+    expect(await q.prepareNative!(transient, 2, 2, 0)).toBeNull();
+    expect(await q.prepareNative!(transient, 2, 2, 0)).toBeNull();
+    expect(transient.copyTo).toHaveBeenCalledTimes(2);
+    const failed = {
+      ...frame,
+      copyTo: vi.fn(async () => {
+        throw new DOMException('Format unavailable', 'NotSupportedError');
+      }),
+    };
+    expect(await q.prepareNative!(failed, 2, 2, 0)).toBeNull();
+    expect(await q.prepareNative!(failed, 2, 2, 0)).toBeNull();
+    expect(failed.copyTo).toHaveBeenCalledOnce();
+    expect(reads).toHaveBeenCalledOnce();
+    expect(() => q.prepare(original, 2, 2, 0)).not.toThrow();
+  });
+
+  it('waits for in-flight native writes after cancellation before rejecting the retired conversion', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () => new Response(wasmBytes, { headers: { 'content-type': 'application/wasm' } })
+    );
+    const controller = new AbortController();
+    const encoder = await createGifScalarQuantizer(
+      () => {},
+      () => {},
+      controller.signal
+    );
+    expect(encoder.enableRetained(4)).toBe(true);
+    const pixels = new Uint8Array(16);
+    const gate = Promise.withResolvers<PlaneLayout[]>();
+    let destination: Uint8Array | undefined;
+    const read = encoder.prepareNative!(
+      {
+        displayWidth: 2,
+        displayHeight: 2,
+        allocationSize: () => 16,
+        copyTo(view: AllowSharedBufferSource) {
+          if (!(view instanceof Uint8Array)) throw Error('Missing byte destination');
+          destination = view;
+          return gate.promise;
+        },
+      },
+      2,
+      2,
+      0
+    );
+    controller.abort();
+    expect(() => encoder.prepare(pixels, 2, 2, 0)).toThrow('readback is pending');
+    expect(() => encoder.releaseRetained(1)).toThrow('readback is pending');
+    destination!.fill(17);
+    gate.resolve([{ offset: 0, stride: 8 }]);
+    await expect(read).rejects.toMatchObject({ name: 'AbortError' });
+    expect(() => encoder.quantizePreparedRetained(8)).toThrow('Conversion cancelled');
+    const next = await createGifScalarQuantizer(
+      () => {},
+      () => {}
+    );
+    expect(next.enableRetained(4)).toBe(true);
+    next.prepare(pixels, 2, 2, 0);
+    expect(next.quantizePreparedRetained(8)).toBeGreaterThan(0);
+  });
+
   it('emits the same complete GIF bytes as the JS-index path with deferred compression', async () => {
     vi.stubGlobal(
       'fetch',

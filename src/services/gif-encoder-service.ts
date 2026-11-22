@@ -29,7 +29,7 @@ import {
 import { logger } from '@utils/logger';
 
 import { globalBufferPool } from './buffer-pool';
-import { decodeFrames, type PresentationInterval } from './decoder-service';
+import { decodeFrames, type BorrowedGifFrame, type PresentationInterval } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
@@ -235,7 +235,13 @@ export async function encodeGif(
     (bytes) => {
       wasmCapacity = bytes;
     },
-    signal
+    signal,
+    opts.profileOperation || opts.profileCopyPath
+      ? (milliseconds) => {
+          opts.profileOperation?.('pixelCopy', milliseconds);
+          opts.profileCopyPath?.('RGBX');
+        }
+      : undefined
   );
   // A refused prospective reservation keeps the entire conversion on the
   // existing JS-index route. A failed actual growth remains terminal.
@@ -428,6 +434,218 @@ export async function encodeGif(
     }
   }
 
+  const consume = async (
+    source: Uint8Array | BorrowedGifFrame,
+    _frameDurationMs: number,
+    frameNum: number,
+    _memoryHandoff: unknown,
+    presentation: PresentationInterval
+  ) => {
+    let pixels = source instanceof Uint8Array ? source : null;
+    const releaseInput = () => {
+      if (pixels) {
+        globalBufferPool.release(pixels);
+        pixels = null;
+      }
+      if (!(source instanceof Uint8Array)) source.release();
+    };
+    if (signal?.aborted) {
+      releaseInput();
+      throw new DOMException('Cancelled', 'AbortError');
+    }
+
+    totalInputFrames = frameNum;
+
+    // Yield to browser event loop every 5 frames to prevent UI freezing.
+    // Per-frame setTimeout(0) adds 1-4ms overhead per frame (150-600ms total
+    // for a 150-frame video). Yielding every 5 frames reduces this to ~30-120ms
+    // while still keeping the UI responsive.
+    if (frameNum % 5 === 0) {
+      try {
+        await yieldToMain();
+      } catch (error) {
+        releaseInput();
+        throw error;
+      }
+    }
+    if (signal?.aborted) {
+      releaseInput();
+      throw new DOMException('Cancelled', 'AbortError');
+    }
+
+    if (
+      !Number.isSafeInteger(presentation.startUs) ||
+      !Number.isSafeInteger(presentation.endUs) ||
+      presentation.startUs < 0 ||
+      presentation.endUs <= presentation.startUs
+    ) {
+      releaseInput();
+      throw new RangeError('Invalid GIF presentation interval');
+    }
+
+    // ── Dynamic decimation based on memory pressure ──
+    const shouldSkip = decimationController.shouldSkip(frameNum);
+
+    if (shouldSkip) {
+      // The next selected source timestamp extends the preceding hold.
+      releaseInput();
+      return;
+    }
+
+    const frameStartCs = gifTimeCs(presentation.startUs);
+    // A new distinct image cannot be displayed for less than 2cs. Keep
+    // the pending image and omit this source sample; a later sample may
+    // still be admitted at its own timestamp. Rounded absolute starts
+    // shift admitted boundaries by at most 5ms without cumulative drift.
+    if (pendingStartCs !== null && frameStartCs - pendingStartCs < GIF_MIN_FRAME_DELAY_CS) {
+      releaseInput();
+      return;
+    }
+
+    try {
+      // A predecessor is retained only until another representable sample
+      // proves that its successor has a full 2cs hold.
+      if (deferredPredecessor) await flushDeferredPredecessor();
+
+      const projectedEndCs = Math.max(
+        gifTimeCs(presentation.endUs),
+        frameStartCs + GIF_MIN_FRAME_DELAY_CS
+      );
+      const deferPredecessor =
+        lastIndexedData !== null &&
+        firstPendingStartUs !== null &&
+        (outputTotalDelay + projectedEndCs - pendingStartCs!) * 10 -
+          (presentation.endUs - firstPendingStartUs) / 1000 >
+          20;
+      if (lastIndexedData && !retained) {
+        // A second index is optional. If the aggregate guard cannot
+        // admit it, flush first and take the original one-index path.
+        try {
+          assertGifWorkingMemory(
+            encoder.stream.buffer.byteLength,
+            liveIndexedBytes + pixelCount + GIF_PALETTE_COMPARISON_BYTES
+          );
+        } catch (error) {
+          if (!(error instanceof Error) || !/memory/i.test(error.message)) throw error;
+          // If this may be the terminal scene, retaining its predecessor
+          // is necessary to coalesce the endpoint without inflating it.
+          if (deferPredecessor) {
+            releaseInput();
+
+            return;
+          }
+          await flushPending(frameStartCs);
+        }
+      }
+      if (!lastIndexedData) assertCanWriteOutputFrame();
+      assertGifWorkingMemory(encoder.stream.buffer.byteLength, liveIndexedBytes);
+      const pixelPreparationStart = opts.profileOperation ? performance.now() : null;
+      let exactRgba =
+        source instanceof Uint8Array
+          ? null
+          : await quantizePalette.prepareNative?.(source.frame, w, h, ditherStrength);
+      if (!exactRgba) {
+        if (!(source instanceof Uint8Array)) pixels = await source.readFallback();
+        if (!pixels || pixels.byteLength < exactRgbaBytes)
+          throw new RangeError('Decoded RGBA buffer is too small for the GIF geometry');
+        exactRgba = pixels.subarray(0, exactRgbaBytes);
+        quantizePalette.prepare(exactRgba, w, h, ditherStrength);
+      }
+      releaseInput();
+
+      if (pixelPreparationStart !== null) {
+        opts.profileOperation?.(
+          'gifPixelPreparation',
+          Math.max(0, performance.now() - pixelPreparationStart)
+        );
+      }
+
+      // Quantize independently; only an exact post-quantization match may
+      // extend the pending frame's source presentation interval.
+      const quantizationStart = opts.profileOperation ? performance.now() : null;
+      const framePalette = retained
+        ? quantizePalette.quantizePreparedRetained(maxColors)
+        : quantizePalette.quantizePrepared(maxColors);
+      if (quantizationStart !== null) {
+        opts.profileOperation?.(
+          'gifQuantization',
+          Math.max(0, performance.now() - quantizationStart)
+        );
+      }
+      const retainedMappingStart = retained && opts.profileOperation ? performance.now() : null;
+      const candidate = retained
+        ? {
+            indexed: quantizePalette.mapRetained(exactRgba, framePalette as number),
+            palette: null,
+            colorHash: 0,
+            indexedBytes: 0,
+          }
+        : prepareIndexedFrame(exactRgba, framePalette as number[][]);
+      if (retained) retainedMappedFrames++;
+      if (retainedMappingStart !== null) {
+        const elapsed = Math.max(0, performance.now() - retainedMappingStart);
+        opts.profileOperation?.('gifPaletteMapping', elapsed);
+        opts.profileOperation?.('gifRetainedIndexMapping', elapsed);
+      }
+      const precedingIndexedBytes = liveIndexedBytes;
+      liveIndexedBytes += candidate.indexedBytes;
+      comparisonWorkingBytes = !retained && lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
+      if (
+        lastIndexedData &&
+        (retained
+          ? quantizePalette.sameRetainedPixels(
+              lastIndexedData as number,
+              candidate.indexed as number
+            )
+          : lastPalette &&
+            sameExpandedGifPixels(
+              lastIndexedData as Uint8Array,
+              lastPalette,
+              lastColorHash,
+              candidate.indexed as Uint8Array,
+              candidate.palette!,
+              candidate.colorHash
+            ))
+      ) {
+        if (retained) quantizePalette.releaseRetained(candidate.indexed as number);
+        liveIndexedBytes = precedingIndexedBytes;
+        comparisonWorkingBytes = 0;
+      } else {
+        if (lastIndexedData && deferPredecessor) {
+          deferredPredecessor = {
+            indexed: lastIndexedData,
+            palette: lastPalette,
+            colorHash: lastColorHash,
+            indexedBytes: lastIndexedBytes,
+            startUs: pendingStartUs!,
+            startCs: pendingStartCs!,
+          };
+        } else if (lastIndexedData) {
+          await flushPending(frameStartCs);
+        }
+        lastIndexedData = retained
+          ? quantizePalette.promoteRetained(candidate.indexed as number)
+          : candidate.indexed;
+        lastPalette = candidate.palette;
+        lastColorHash = candidate.colorHash;
+        lastIndexedBytes = candidate.indexedBytes;
+        comparisonWorkingBytes = 0;
+        pendingStartUs = presentation.startUs;
+        pendingStartCs = frameStartCs;
+        firstPendingStartUs ??= presentation.startUs;
+      }
+    } finally {
+      releaseInput();
+    }
+
+    // Report encoding progress (50~90% range in pipeline)
+    if (opts.onFrameEncoded) {
+      opts.onFrameEncoded(encodeIdx + 1, estimatedTotalFrames);
+    }
+
+    encodeIdx++;
+  };
+
   try {
     // Decode frames with a streaming callback and retain at most two pending indices.
     const {
@@ -457,209 +675,10 @@ export async function encodeGif(
           // Forward the decoder's bounded, selection-independent observations.
           opts.onFrameDecoded?.(nativeFrameCount, total);
         },
-        // Streaming callback: index each selected frame after flushing its predecessor.
-        onFrameAvailable: async (
-          rgbaData: Uint8Array,
-          _frameDurationMs: number,
-          frameNum: number,
-          _memoryHandoff: unknown,
-          presentation: PresentationInterval
-        ) => {
-          if (signal?.aborted) {
-            globalBufferPool.release(rgbaData);
-            throw new DOMException('Cancelled', 'AbortError');
-          }
-
-          totalInputFrames = frameNum;
-
-          // Yield to browser event loop every 5 frames to prevent UI freezing.
-          // Per-frame setTimeout(0) adds 1-4ms overhead per frame (150-600ms total
-          // for a 150-frame video). Yielding every 5 frames reduces this to ~30-120ms
-          // while still keeping the UI responsive.
-          if (frameNum % 5 === 0) {
-            try {
-              await yieldToMain();
-            } catch (error) {
-              globalBufferPool.release(rgbaData);
-              throw error;
-            }
-          }
-          if (signal?.aborted) {
-            globalBufferPool.release(rgbaData);
-            throw new DOMException('Cancelled', 'AbortError');
-          }
-
-          if (
-            !Number.isSafeInteger(presentation.startUs) ||
-            !Number.isSafeInteger(presentation.endUs) ||
-            presentation.startUs < 0 ||
-            presentation.endUs <= presentation.startUs
-          ) {
-            globalBufferPool.release(rgbaData);
-            throw new RangeError('Invalid GIF presentation interval');
-          }
-
-          // ── Dynamic decimation based on memory pressure ──
-          const shouldSkip = decimationController.shouldSkip(frameNum);
-
-          if (shouldSkip) {
-            // The next selected source timestamp extends the preceding hold.
-            globalBufferPool.release(rgbaData);
-            return;
-          }
-
-          const frameStartCs = gifTimeCs(presentation.startUs);
-          // A new distinct image cannot be displayed for less than 2cs. Keep
-          // the pending image and omit this source sample; a later sample may
-          // still be admitted at its own timestamp. Rounded absolute starts
-          // shift admitted boundaries by at most 5ms without cumulative drift.
-          if (pendingStartCs !== null && frameStartCs - pendingStartCs < GIF_MIN_FRAME_DELAY_CS) {
-            globalBufferPool.release(rgbaData);
-            return;
-          }
-
-          let rgbaReleased = false;
-          try {
-            // A predecessor is retained only until another representable sample
-            // proves that its successor has a full 2cs hold.
-            if (deferredPredecessor) await flushDeferredPredecessor();
-
-            const projectedEndCs = Math.max(
-              gifTimeCs(presentation.endUs),
-              frameStartCs + GIF_MIN_FRAME_DELAY_CS
-            );
-            const deferPredecessor =
-              lastIndexedData !== null &&
-              firstPendingStartUs !== null &&
-              (outputTotalDelay + projectedEndCs - pendingStartCs!) * 10 -
-                (presentation.endUs - firstPendingStartUs) / 1000 >
-                20;
-            if (lastIndexedData && !retained) {
-              // A second index is optional. If the aggregate guard cannot
-              // admit it, flush first and take the original one-index path.
-              try {
-                assertGifWorkingMemory(
-                  encoder.stream.buffer.byteLength,
-                  liveIndexedBytes + pixelCount + GIF_PALETTE_COMPARISON_BYTES
-                );
-              } catch (error) {
-                if (!(error instanceof Error) || !/memory/i.test(error.message)) throw error;
-                // If this may be the terminal scene, retaining its predecessor
-                // is necessary to coalesce the endpoint without inflating it.
-                if (deferPredecessor) {
-                  globalBufferPool.release(rgbaData);
-                  rgbaReleased = true;
-                  return;
-                }
-                await flushPending(frameStartCs);
-              }
-            }
-            if (!lastIndexedData) assertCanWriteOutputFrame();
-            if (rgbaData.byteLength < exactRgbaBytes) {
-              throw new RangeError(
-                `Decoded RGBA buffer is too small: expected ${exactRgbaBytes} bytes, got ${rgbaData.byteLength}`
-              );
-            }
-            assertGifWorkingMemory(encoder.stream.buffer.byteLength, liveIndexedBytes);
-            const pixelPreparationStart = opts.profileOperation ? performance.now() : null;
-            const exactRgba = rgbaData.subarray(0, exactRgbaBytes);
-            quantizePalette.prepare(exactRgba, w, h, ditherStrength);
-            globalBufferPool.release(rgbaData);
-            rgbaReleased = true;
-            if (pixelPreparationStart !== null) {
-              opts.profileOperation?.(
-                'gifPixelPreparation',
-                Math.max(0, performance.now() - pixelPreparationStart)
-              );
-            }
-
-            // Quantize independently; only an exact post-quantization match may
-            // extend the pending frame's source presentation interval.
-            const quantizationStart = opts.profileOperation ? performance.now() : null;
-            const framePalette = retained
-              ? quantizePalette.quantizePreparedRetained(maxColors)
-              : quantizePalette.quantizePrepared(maxColors);
-            if (quantizationStart !== null) {
-              opts.profileOperation?.(
-                'gifQuantization',
-                Math.max(0, performance.now() - quantizationStart)
-              );
-            }
-            const retainedMappingStart =
-              retained && opts.profileOperation ? performance.now() : null;
-            const candidate = retained
-              ? {
-                  indexed: quantizePalette.mapRetained(exactRgba, framePalette as number),
-                  palette: null,
-                  colorHash: 0,
-                  indexedBytes: 0,
-                }
-              : prepareIndexedFrame(exactRgba, framePalette as number[][]);
-            if (retained) retainedMappedFrames++;
-            if (retainedMappingStart !== null) {
-              const elapsed = Math.max(0, performance.now() - retainedMappingStart);
-              opts.profileOperation?.('gifPaletteMapping', elapsed);
-              opts.profileOperation?.('gifRetainedIndexMapping', elapsed);
-            }
-            const precedingIndexedBytes = liveIndexedBytes;
-            liveIndexedBytes += candidate.indexedBytes;
-            comparisonWorkingBytes =
-              !retained && lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
-            if (
-              lastIndexedData &&
-              (retained
-                ? quantizePalette.sameRetainedPixels(
-                    lastIndexedData as number,
-                    candidate.indexed as number
-                  )
-                : lastPalette &&
-                  sameExpandedGifPixels(
-                    lastIndexedData as Uint8Array,
-                    lastPalette,
-                    lastColorHash,
-                    candidate.indexed as Uint8Array,
-                    candidate.palette!,
-                    candidate.colorHash
-                  ))
-            ) {
-              if (retained) quantizePalette.releaseRetained(candidate.indexed as number);
-              liveIndexedBytes = precedingIndexedBytes;
-              comparisonWorkingBytes = 0;
-            } else {
-              if (lastIndexedData && deferPredecessor) {
-                deferredPredecessor = {
-                  indexed: lastIndexedData,
-                  palette: lastPalette,
-                  colorHash: lastColorHash,
-                  indexedBytes: lastIndexedBytes,
-                  startUs: pendingStartUs!,
-                  startCs: pendingStartCs!,
-                };
-              } else if (lastIndexedData) {
-                await flushPending(frameStartCs);
-              }
-              lastIndexedData = retained
-                ? quantizePalette.promoteRetained(candidate.indexed as number)
-                : candidate.indexed;
-              lastPalette = candidate.palette;
-              lastColorHash = candidate.colorHash;
-              lastIndexedBytes = candidate.indexedBytes;
-              comparisonWorkingBytes = 0;
-              pendingStartUs = presentation.startUs;
-              pendingStartCs = frameStartCs;
-              firstPendingStartUs ??= presentation.startUs;
-            }
-          } finally {
-            if (!rgbaReleased) globalBufferPool.release(rgbaData);
-          }
-
-          // Report encoding progress (50~90% range in pipeline)
-          if (opts.onFrameEncoded) {
-            opts.onFrameEncoded(encodeIdx + 1, estimatedTotalFrames);
-          }
-
-          encodeIdx++;
-        },
+        onFrameAvailable: consume,
+        ...(retained && typeof quantizePalette.prepareNative === 'function'
+          ? { onSelectedGifFrame: consume }
+          : {}),
       },
       signal
     );

@@ -7,10 +7,10 @@
  * Extracts RGB or opaque RGBA frames from demuxed video chunks using VideoDecoder,
  * with hardware acceleration support, frame decimation, and abort handling.
  *
- * This internal API supports CPU streaming only; batch results and VideoFrame
- * callback delivery were retired after the maintained-caller audit. GIF and
- * WebP callers receive ordered CPU pixels through an awaited callback.
- * Invocation transfers ownership of the pixels to that callback.
+ * Encoders receive selected frames in presentation order through awaited
+ * callbacks. A CPU callback owns its pixel buffer. An eligible retained GIF
+ * callback borrows the decoded VideoFrame until its direct or fallback read
+ * finishes, and the decoder closes any source still held on return.
  *
  * Both encoders share the same demux output and frame extraction logic;
  * only the GIF and WebP encoding steps differ.
@@ -70,7 +70,53 @@ import { createPresentationSampler, type PresentationInterval } from './presenta
 
 export type { PresentationInterval } from './presentation-timing';
 
+function canReadGifFrame(frame: VideoFrame, width: number, height: number): boolean {
+  if (
+    frame.format !== 'I420' &&
+    frame.format !== 'I422' &&
+    frame.format !== 'I444' &&
+    frame.format !== 'NV12'
+  )
+    return false;
+  const rect = frame.visibleRect;
+  if (
+    !rect ||
+    rect.x !== 0 ||
+    rect.y !== 0 ||
+    rect.width !== width ||
+    rect.height !== height ||
+    frame.displayWidth !== width ||
+    frame.displayHeight !== height ||
+    ('rotation' in frame && frame.rotation !== 0) ||
+    ('flip' in frame && frame.flip)
+  )
+    return false;
+  // Explicit color management on padded surfaces uses the existing Canvas path.
+  if (frame.codedWidth === width && frame.codedHeight === height) return true;
+  const space = frame.colorSpace;
+  return (
+    space.primaries == null &&
+    space.matrix == null &&
+    space.transfer == null &&
+    space.fullRange === false
+  );
+}
+
+export interface BorrowedGifFrame {
+  frame: VideoFrame;
+  readFallback(): Promise<Uint8Array>;
+  release(): void;
+}
+
 export interface DecodeOptions {
+  /** An awaited retained GIF reader can consume an unscaled selected native frame. */
+  onSelectedGifFrame?: (
+    source: BorrowedGifFrame,
+    durationMs: number,
+    frameNum: number,
+    handoff: FrameMemoryHandoff | undefined,
+    presentation: PresentationInterval
+  ) => Promise<void>;
   width: number;
   height: number;
   /** Source/target FPS ratio for presentation-time selection. */
@@ -179,6 +225,7 @@ export async function decodeFrames(
     profileOperation,
     profileCopyPath,
     onFrameAvailable,
+    onSelectedGifFrame,
     smartFrameSkip: effectiveSmartSkip = 'off',
     processingFailureSignal,
     stagedCopyLookahead = false,
@@ -949,6 +996,52 @@ export async function decodeFrames(
               discardStagedOutputs ||
               hasProcessingFailure()
             ) {
+              return;
+            }
+
+            if (
+              onSelectedGifFrame &&
+              pressureBeforeCopy &&
+              !isAdaptive &&
+              (demux.rotation ?? 0) === 0 &&
+              frameCtx.copyPath !== 'canvas' &&
+              canReadGifFrame(frame, width, height)
+            ) {
+              await previousProcessing;
+              enteredOrderedProcessing = true;
+              if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) return;
+              keptFrameCount++;
+              const input: BorrowedGifFrame = {
+                frame,
+                async readFallback() {
+                  const start = profileOperation ? performance.now() : null;
+                  let pixels: Uint8Array | undefined;
+                  try {
+                    pixels = await copyFrameToPixels(frame, width, height, frameCtx, 'rgba');
+                    return pixels;
+                  } finally {
+                    try {
+                      if (start !== null)
+                        profileOperation?.('pixelCopy', Math.max(0, performance.now() - start));
+                      profileCopyPath?.(frameCtx.copyPath ?? 'unknown');
+                    } catch (error) {
+                      if (pixels) globalBufferPool.release(pixels);
+                      throw error;
+                    }
+                  }
+                },
+                release() {
+                  closeSourceFrame();
+                  releaseSourceReservation();
+                },
+              };
+              await onSelectedGifFrame(
+                input,
+                frameDuration,
+                frameNum,
+                targetMemoryHandoff,
+                presentation
+              );
               return;
             }
 
