@@ -580,6 +580,8 @@ The sections below identify the shipped code and the separate development oracle
 - **Repository:** https://github.com/tailwindlabs/tailwindcss
 - **Purpose:** Theme and Preflight styles in the shipped CSS
 
+[Tailwind Preflight](https://tailwindcss.com/docs/preflight) adapts styles from modern-normalize. Its [upstream MIT notice](https://github.com/sindresorhus/modern-normalize/blob/076c61bd806ba4770a8d766d8e63903e4fb0dfa6/license) is included below.
+
 ### LICENSE
 
     MIT License
@@ -603,6 +605,20 @@ The sections below identify the shipped code and the separate development oracle
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
+
+### scripts/build/modern-normalize-LICENSE.txt
+
+    MIT License
+
+    Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+    Copyright (c) Jonathan Neal
+    Copyright (c) Nicolas Gallagher
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Owned GIF source attribution (gifenc)
 

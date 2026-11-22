@@ -314,6 +314,11 @@ ${wasmIndex}`;
     md += `- **License:** ${entry.license}\n`;
     if (entry.url) md += `- **Repository:** ${entry.url}\n`;
     md += `- **Purpose:** ${entry.purpose}\n\n`;
+    if (entry.name === 'tailwindcss') {
+      md +=
+        '[Tailwind Preflight](https://tailwindcss.com/docs/preflight) adapts styles from modern-normalize. Its [upstream MIT notice](https://github.com/sindresorhus/modern-normalize/blob/076c61bd806ba4770a8d766d8e63903e4fb0dfa6/license) is included below.\n\n';
+      entry.notices.push(notice('scripts/build/modern-normalize-LICENSE.txt'));
+    }
     if (entry.name === 'mediabunny' || entry.name === 'wasm-webp') {
       const patch = `patches/${entry.name}@${entry.version}.patch`;
       const bytes = readFileSync(join(ROOT, patch));

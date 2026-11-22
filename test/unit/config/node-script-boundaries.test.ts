@@ -51,6 +51,7 @@ function fixture() {
     'tooling/vite/plugins/emit-service-worker.ts',
     'scripts/build/heroicons-v1-LICENSE.txt',
     'scripts/build/heroicons-v2-LICENSE.txt',
+    'scripts/build/modern-normalize-LICENSE.txt',
     'scripts/build/gifenc-pnn-NOTICES.txt',
     'scripts/build/gifenc-LICENSE.txt',
     'scripts/build/build-gif-scalar-wasm.ts',
@@ -688,6 +689,12 @@ export const quantize = () => {};
       expect(missing.status).not.toBe(0);
       expect(missing.stderr).toContain(`missing the full ${heading} notice`);
     }
+    const upstreamCredit = 'Copyright (c) Jonathan Neal';
+    expect(notices).toContain(upstreamCredit);
+    writeFileSync(noticesPath, notices.replace(upstreamCredit, ''));
+    const missingPreflightCredit = run('scripts/build/postbuild.ts');
+    expect(missingPreflightCredit.status).not.toBe(0);
+    expect(missingPreflightCredit.stderr).toContain('modern-normalize-LICENSE.txt');
     writeFileSync(noticesPath, notices);
     writeFileSync(
       join(root, 'dist/index.html'),
