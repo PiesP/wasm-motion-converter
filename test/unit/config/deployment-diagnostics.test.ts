@@ -27,6 +27,7 @@ import {
 } from '../../../scripts/test/retired-webp-assets';
 import {
   collectRetiredWebpUrls,
+  RETIRED_WEBP_TEST,
   retiredWebpResponseIsSafe,
 } from '../../../scripts/test/retired-webp-probes';
 
@@ -48,9 +49,16 @@ const module = {
   size: 129,
   sha256: 'f'.repeat(64),
 };
-const finalState = { ...state, files: [...state.files, module] };
+const errorBody = 'missing';
+const errorDocument = {
+  path: '404.html',
+  size: Buffer.byteLength(errorBody),
+  sha256: createHash('sha256').update(errorBody).digest('hex'),
+};
+const finalState = { ...state, files: [...state.files, module, errorDocument] };
 const manifestSha256 = '1'.repeat(64);
-const finalMode = { requireOwnedVp8Only: true, expectedManifestSha256: manifestSha256 };
+const archivalMode = { requireOwnedVp8Only: true, expectedManifestSha256: manifestSha256 };
+const finalMode = { ...archivalMode, requireIndependentRetirementTest: true };
 const forcedEncoder = {
   sourceSha: state.sourceSha,
   treeSha: state.treeSha,
@@ -77,14 +85,14 @@ const retiredUrls = RETIRED_REQUEST_MODES.flatMap((mode) =>
     cfRay: 'a5e3dab81b7ceb6b-SEA',
     cfCacheStatus: 'DYNAMIC',
     age: null,
-    responseBytes: 432,
+    responseBytes: errorDocument.size,
     wasmMagic: false,
     error: null,
     url: new URL(`/${file.path}`, target).href,
     priorSha256: file.sha256,
-    responseSha256: '3'.repeat(64),
+    responseSha256: errorDocument.sha256,
     status: 404,
-    cacheControl: 'public, max-age=0, must-revalidate',
+    cacheControl: 'no-store',
     contentType: 'text/html; charset=utf-8',
   }))
 );
@@ -154,6 +162,7 @@ function report(
     final?: boolean;
     forcedEncoder?: unknown;
     retiredUrls?: unknown;
+    historicalRetirement?: boolean;
   } = {}
 ) {
   function suite(
@@ -207,7 +216,9 @@ function report(
         'Pages serves one security and cache policy per document, metadata, and fingerprinted asset',
         'conditional-header-observations',
         options.final ? [...conditional, { ...conditional[0], path: module.path }] : conditional,
-        options.final ? [['retired-webp-urls', options.retiredUrls ?? retiredUrls]] : []
+        options.historicalRetirement
+          ? [['retired-webp-urls', options.retiredUrls ?? retiredUrls]]
+          : []
       ),
       suite('e2e/dogfood-qa.spec.ts', 'total JS transfer size under 150KB', 'js-transfer-timing', {
         ...timing,
@@ -228,6 +239,16 @@ function report(
         traffic('forced-webp-wasm'),
         options.final ? [['forced-webp-encoder', options.forcedEncoder ?? forcedEncoder]] : []
       ),
+      ...(options.final && !options.historicalRetirement
+        ? [
+            suite(
+              'e2e/deploy-smoke.spec.ts',
+              RETIRED_WEBP_TEST,
+              'retired-webp-urls',
+              options.retiredUrls ?? retiredUrls
+            ),
+          ]
+        : []),
     ],
   };
 }
@@ -252,7 +273,7 @@ describe('deployment diagnostic artifact', () => {
     const path = preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode);
     const artifact = JSON.parse(readFileSync(path, 'utf8'));
     expect(artifact.diagnostics[3].attempts[0].forcedEncoder).toEqual(forcedEncoder);
-    expect(artifact.diagnostics[0].attempts[0].retiredUrls).toEqual(retiredUrls);
+    expect(artifact.diagnostics[4].attempts[0].retiredUrls).toEqual(retiredUrls);
   });
 
   it('still reads the original passing seven-field observations without assigning an edge', () => {
@@ -267,11 +288,24 @@ describe('deployment diagnostic artifact', () => {
         responseSha256,
       })
     );
-    const { file, output } = fixture(report({ final: true, retiredUrls: historical }));
-    const path = preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode);
-    expect(JSON.parse(readFileSync(path, 'utf8')).diagnostics[0].attempts[0].retiredUrls).toEqual(
-      historical
-    );
+    for (const previous of [historical, retiredUrls]) {
+      const old = previous.map((row) => ({
+        ...row,
+        responseSha256: '3'.repeat(64),
+        cacheControl: 'public, max-age=0, must-revalidate',
+      }));
+      const { file, output } = fixture(
+        report({ final: true, retiredUrls: old, historicalRetirement: true })
+      );
+      const path = preserveDeploymentDiagnostics(file, finalState, target, 0, output, archivalMode);
+      expect(JSON.parse(readFileSync(path, 'utf8')).diagnostics[0].attempts[0].retiredUrls).toEqual(
+        old
+      );
+      // A current run must never downgrade to the historical contract.
+      expect(() =>
+        preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode)
+      ).toThrow('absent or duplicated');
+    }
   });
 
   it('collects and retains all exact requests on an unsafe edge, a transport failure and a redirect', async () => {
@@ -304,9 +338,15 @@ describe('deployment diagnostic artifact', () => {
         res.writeHead(302, { Location: '/not-a-probe' });
         return res.end();
       }
+      res.setHeader('Cache-Control', 'no-store');
+      if (requests.length === 5) res.removeHeader('Cache-Control');
+      if (requests.length === 6) res.removeHeader('Content-Type');
+      if (requests.length === 7) res.setHeader('Content-Type', 'text/plain');
+      if (requests.length === 8)
+        res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
       if (requests.length === 4) res.setHeader('Cache-Control', 'x'.repeat(512) + ',immutable');
       res.writeHead(404);
-      return res.end('missing');
+      return res.end(requests.length === 9 ? 'changed' : errorBody);
     });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
@@ -341,12 +381,11 @@ describe('deployment diagnostic artifact', () => {
       });
       expect(rows[2]?.status).toBe(302);
       expect(rows[3]).toMatchObject({ cacheControl: 'x'.repeat(512), error: 'headers-too-long' });
-      expect(rows.map(retiredWebpResponseIsSafe)).toEqual([
-        false,
-        false,
-        false,
-        false,
-        ...Array(8).fill(true),
+      expect(rows[4]?.cacheControl).toBeNull();
+      expect(rows[5]?.contentType).toBeNull();
+      expect(rows.map((row) => retiredWebpResponseIsSafe(row, errorDocument))).toEqual([
+        ...Array(9).fill(false),
+        ...Array(3).fill(true),
       ]);
 
       const value = report({
@@ -354,19 +393,23 @@ describe('deployment diagnostic artifact', () => {
         retiredUrls: rows,
         missing: 'conditional-header-observations',
       });
-      const failed = value.suites[0]!.specs[0]!.tests[0]!;
+      const conditionalTest = value.suites[0]!.specs[0]!.tests[0]!;
+      conditionalTest.status = 'unexpected';
+      conditionalTest.results[0]!.status = 'failed';
+      const failed = value.suites[4]!.specs[0]!.tests[0]!;
       failed.status = 'unexpected';
       failed.results[0]!.status = 'failed';
-      value.stats.unexpected = 1;
+      value.stats.unexpected = 2;
       // Other passing tests are bound to the report target.
-      for (const suite of value.suites.slice(1)) {
+      for (const suite of value.suites.slice(1, 4)) {
         suite.specs[0]!.tests[0]!.results[0]!.status = 'skipped';
       }
       const { file, output } = fixture(value);
       const path = preserveDeploymentDiagnostics(file, finalState, origin, 1, output, finalMode);
       const artifact = JSON.parse(readFileSync(path, 'utf8'));
       expect(artifact.playwrightExitCode).toBe(1);
-      expect(artifact.diagnostics[0].attempts).toEqual([
+      expect(artifact.diagnostics[0].attempts).toEqual([{ retry: 0, status: 'failed' }]);
+      expect(artifact.diagnostics[4].attempts).toEqual([
         { retry: 0, status: 'failed', retiredUrls: rows },
       ]);
       expect(JSON.stringify(artifact)).not.toContain('example=private');
@@ -376,7 +419,7 @@ describe('deployment diagnostic artifact', () => {
       failed.results[0]!.status = 'passed';
       writeFileSync(file, JSON.stringify(value));
       expect(() =>
-        preserveDeploymentDiagnostics(file, finalState, origin, 0, output, finalMode)
+        preserveDeploymentDiagnostics(file, finalState, origin, 1, output, finalMode)
       ).toThrow('Invalid retired WebP URL observation');
     } finally {
       await Promise.all([ordinary.dispose(), revalidated.dispose()]);
@@ -436,6 +479,16 @@ describe('deployment diagnostic artifact', () => {
       [{ ...retiredUrls[0], observedAt: 'unknown' }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], status: 302 }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], cacheControl: 'immutable' }, ...retiredUrls.slice(1)],
+      ...[null, '', 'x-no-store', 'public, max-age=86400'].map((cacheControl) => [
+        { ...retiredUrls[0], cacheControl },
+        ...retiredUrls.slice(1),
+      ]),
+      ...[null, '', 'text/html-other', 'text/plain'].map((contentType) => [
+        { ...retiredUrls[0], contentType },
+        ...retiredUrls.slice(1),
+      ]),
+      [{ ...retiredUrls[0], responseBytes: errorDocument.size + 1 }, ...retiredUrls.slice(1)],
+      [{ ...retiredUrls[0], responseSha256: '3'.repeat(64) }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], contentType: 'application/wasm' }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], responseSha256: retiredUrls[0]?.priorSha256 }, ...retiredUrls.slice(1)],
     ].map((rows) => ({ rows }))
