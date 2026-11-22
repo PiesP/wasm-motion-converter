@@ -67,14 +67,18 @@ it.each([
       const row = rows.get(key!);
       expect(row, key).toBeDefined();
       const body = row!;
-      const projectRefs = [
-        ...body.matchAll(
-          /github\.com\/PiesP\/wasm-motion-converter\/(?:blob|tree)\/([a-f0-9]{40})/g
-        ),
-      ];
-      expect([...new Set(projectRefs.map((item) => item[1]))], key).toEqual(
-        source === '-' ? [] : [source]
-      );
+      const projectRefs = new Set<string>();
+      for (const [, href] of body.matchAll(/href="([^"]+)"/g)) {
+        const url = new URL(href!, 'https://wasm-motion-converter.pages.dev');
+        const ref = /^\/PiesP\/wasm-motion-converter\/(?:blob|tree)\/([a-f0-9]{40})(?:\/|$)/.exec(
+          url.pathname
+        );
+        if (ref) {
+          expect(url.origin, key).toBe('https://github.com');
+          projectRefs.add(ref[1]!);
+        }
+      }
+      expect([...projectRefs], key).toEqual(source === '-' ? [] : [source]);
       if (source !== '-') expect(body, key).toContain(`href="${projectUrl}/tree/${source}"`);
       const noticeLocation = group === 'omission' ? block.slice(0, block.indexOf('<table>')) : body;
       const noticeLinks = [...noticeLocation.matchAll(/href="original\/([a-f0-9]{64})\.md"/g)];
