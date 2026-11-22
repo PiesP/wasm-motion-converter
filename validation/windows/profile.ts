@@ -31,6 +31,7 @@ import type {
 } from '@playwright/test';
 
 import { pagesFileUrl } from '../../scripts/test/pages-file-url.ts';
+import { readRegularFile } from '../../scripts/test/regular-file.ts';
 import {
   RETIRED_WEBP_CALLERS,
   RETIRED_WEBP_EXECUTABLES,
@@ -525,6 +526,14 @@ function decodeRequestPath(requestUrl: string | undefined) {
   return segments.length === 0 ? 'index.html' : segments.join('/');
 }
 
+async function resolveDistributionFile(distRoot: string, candidate: string) {
+  const file = await realpath(candidate);
+  if (!isWithin(distRoot, file)) {
+    throw httpStatusError('Request resolved outside the distribution root', 400);
+  }
+  return file;
+}
+
 async function resolveStaticFile(distRoot: string, requestUrl: string | undefined) {
   const candidate = resolve(distRoot, decodeRequestPath(requestUrl));
   if (!isWithin(distRoot, candidate)) {
@@ -533,10 +542,7 @@ async function resolveStaticFile(distRoot: string, requestUrl: string | undefine
 
   const candidateStat = await stat(candidate);
   const fileCandidate = candidateStat.isDirectory() ? join(candidate, 'index.html') : candidate;
-  const resolvedFile = await realpath(fileCandidate);
-  if (!isWithin(distRoot, resolvedFile)) {
-    throw httpStatusError('Request resolved outside the distribution root', 400);
-  }
+  const resolvedFile = await resolveDistributionFile(distRoot, fileCandidate);
   const fileStat = await stat(resolvedFile);
   if (!fileStat.isFile()) {
     throw httpStatusError('Not a file', 404);
@@ -609,9 +615,8 @@ export async function startStaticServer(
     const entries = await Promise.all(
       assets.map(async (asset) => {
         const path = '/' + asset.path;
-        const file = await resolveStaticFile(root, path);
-        assert.equal((await stat(file)).size, asset.size);
-        const bytes = await readFile(file);
+        const resolvedFile = await resolveDistributionFile(root, join(root, asset.path));
+        const bytes = await readRegularFile(resolvedFile, path, asset.size);
         assert.equal(bytes.length, asset.size);
         assert.equal(sha256(bytes), asset.sha256);
         return [path, bytes] as const;

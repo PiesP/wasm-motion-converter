@@ -39,16 +39,22 @@ class FakeWorker extends EventTarget {
   }
 }
 
-function realm(extra: Record<string, unknown>) {
+function realm(extra: Record<string, unknown>, scope: 'page' | 'dedicated' | 'shared' = 'page') {
   const context: Record<string, unknown> = {
     WebAssembly: { Instance: FakeInstance, Memory: FakeMemory },
     Uint8Array: FakeBytes,
     WeakRef,
     WeakSet,
     Worker: FakeWorker,
-    document: {},
     ...extra,
   };
+  if (scope === 'page') context.document = {};
+  if (scope === 'dedicated')
+    runInNewContext(
+      'globalThis.DedicatedWorkerGlobalScope = class {}; Object.setPrototypeOf(globalThis, DedicatedWorkerGlobalScope.prototype)',
+      context
+    );
+  if (scope === 'shared') context.onconnect = null;
   const install = runInNewContext(`(${installVp8TimingProbe.toString()})`, context) as () => void;
   install();
   return context;
@@ -171,18 +177,38 @@ test('stale and mismatched completions strip reserved metadata before product ha
   }
 });
 
-test('worker prefix adds only bounded scalar state to existing completion transfer', () => {
-  const handlers: Array<(event: { data: unknown }) => void> = [];
+test('timing probe refuses a shared Worker scope before instrumenting it', () => {
+  const wasm = { Instance: FakeInstance, Memory: FakeMemory };
+  assert.throws(
+    () => realm({ WebAssembly: wasm }, 'shared'),
+    /requires a page or a dedicated Worker/
+  );
+  assert.equal(wasm.Instance, FakeInstance);
+});
+
+test('worker prefix admits owner messages and adds only bounded state to the completion transfer', () => {
+  type Input = { data: unknown; isTrusted: boolean; origin: string; source: unknown };
+  const handlers: Array<(event: Input) => void> = [];
   const sent: Array<{ message: Record<string, unknown>; transfer?: unknown }> = [];
-  const context = realm({
-    document: undefined,
-    addEventListener: (_type: string, handler: (event: { data: unknown }) => void) =>
-      handlers.push(handler),
-    postMessage: (message: Record<string, unknown>, transfer?: unknown) =>
-      sent.push({ message, transfer }),
-  });
-  const requestId = '11111111-2222-4333-8444-555555555555';
-  handlers[0]!({ data: { type: 'start', requestId } });
+  const context = realm(
+    {
+      addEventListener: (_type: string, handler: (event: Input) => void) => handlers.push(handler),
+      postMessage: (message: Record<string, unknown>, transfer?: unknown) =>
+        sent.push({ message, transfer }),
+    },
+    'dedicated'
+  );
+  const owner = { isTrusted: true, origin: '', source: null };
+  handlers[0]!({ ...owner, data: { type: 'start', requestId } });
+  for (const other of [{ origin: 'https://example.test' }, { source: {} }, { isTrusted: false }]) {
+    handlers[0]!({
+      ...owner,
+      ...other,
+      get data(): never {
+        throw new Error('Read a message outside the owner channel');
+      },
+    });
+  }
   const transfer = [new ArrayBuffer(4)];
   const complete = { type: 'complete', requestId, outputBuffer: transfer[0] };
   (context.postMessage as (message: unknown, transfer: unknown) => void)(complete, transfer);

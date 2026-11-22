@@ -93,10 +93,15 @@ function paceGifFrameCopies(onHold: () => void): () => void {
 }
 
 export function installGifProgressWorkerCopyGate(): void {
+  const DedicatedScope = Reflect.get(globalThis, 'DedicatedWorkerGlobalScope');
+  if (typeof DedicatedScope !== 'function' || !(globalThis instanceof DedicatedScope))
+    throw new Error('GIF copy gate requires a dedicated Worker scope');
   const release = paceGifFrameCopies(() => {
     self.postMessage({ type: gifCopyMessage, state: 'held' });
   });
   const onMessage = (event: MessageEvent<unknown>) => {
+    // The owner's implicit port delivers trusted events with empty origin and null source.
+    if (!event.isTrusted || event.origin !== '' || event.source !== null) return;
     if (event.data !== gifCopyMessage && event.data !== gifCopyCleanup) return;
     event.stopImmediatePropagation();
     self.removeEventListener('message', onMessage);

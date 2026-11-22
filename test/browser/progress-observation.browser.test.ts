@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vite-plus/test';
 
 import {
   finishProgressObservation,
+  installGifProgressWorkerCopyGate,
   installProgressObservation,
 } from '../e2e/fixtures/progress-observation';
 
@@ -23,6 +24,12 @@ describe('progress observation evidence', () => {
     }
     vi.unstubAllGlobals();
     document.body.innerHTML = '';
+  });
+
+  it('refuses to install the Worker copy gate on a page', () => {
+    const originalCopy = VideoFrame.prototype.copyTo;
+    expect(() => installGifProgressWorkerCopyGate()).toThrow('requires a dedicated Worker scope');
+    expect(VideoFrame.prototype.copyTo).toBe(originalCopy);
   });
 
   it('keeps missing DOM distinct from numeric zero and captures useful changes at the same count', async () => {
