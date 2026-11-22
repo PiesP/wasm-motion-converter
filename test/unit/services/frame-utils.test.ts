@@ -220,14 +220,14 @@ describe('clearCanvasCache', () => {
   it('closes transient bitmaps and releases cached canvas backing stores', async () => {
     const canvases: Array<{ width: number; height: number }> = [];
     const closeBitmap = vi.fn();
+    const backing = new Uint8ClampedArray([
+      97, 255, 0, 0, 0, 0, 255, 0, 48, 0, 0, 255, 128, 255, 255, 255, 255, 93,
+    ]);
+    const original = backing.slice();
     const context = {
       clearRect: vi.fn(),
       drawImage: vi.fn(),
-      getImageData: vi.fn(() => ({
-        data: new Uint8ClampedArray([
-          255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
-        ]),
-      })),
+      getImageData: vi.fn(() => ({ data: backing.subarray(1) })),
     };
     class FakeOffscreenCanvas {
       width: number;
@@ -258,6 +258,7 @@ describe('clearCanvasCache', () => {
     const rgb = await copyFrameToPixels(frame, 2, 2, { copyPath: null }, 'rgb');
 
     expect([...rgb.subarray(0, 12)]).toEqual([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]);
+    expect(backing).toEqual(original);
     expect(closeBitmap).toHaveBeenCalledOnce();
     expect(canvases).toEqual([{ width: 2, height: 2 }]);
     globalBufferPool.release(rgb);

@@ -315,9 +315,9 @@ function convertImageData(
     imageData.data.byteOffset,
     validBytes
   );
+  if (pixelFormat === 'rgb') return convertRGBAToRGB(rgba, width, height, 'RGBA');
   for (let offset = 3; offset < validBytes; offset += 4) rgba[offset] = 255;
-  if (pixelFormat === 'rgba') return rgba;
-  return convertRGBAToRGB(rgba, width, height, 'RGBA');
+  return rgba;
 }
 
 /**
