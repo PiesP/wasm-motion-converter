@@ -238,13 +238,28 @@ impl Frame<'_> {
     }
 
     pub(super) fn affected(&self, bx: usize, by: usize) -> (usize, usize, usize, usize) {
-        let x = self.mx * 16 + bx * 8;
-        let y = self.my * 16 + by * 8;
+        self.chroma_footprint(self.mx * 16 + bx * 8, self.my * 16 + by * 8, 8)
+    }
+
+    fn chroma_footprint(&self, x: usize, y: usize, size: usize) -> (usize, usize, usize, usize) {
+        // Direct chroma maps one sample to its own two-by-two display pixels.
+        // The bicubic path can also affect neighboring pixels across the patch.
+        let halo = if self.height.is_multiple_of(2) { 0 } else { 4 };
+        self.footprint_with_halo(x, y, size, halo)
+    }
+
+    fn footprint_with_halo(
+        &self,
+        x: usize,
+        y: usize,
+        size: usize,
+        halo: usize,
+    ) -> (usize, usize, usize, usize) {
         (
-            x.saturating_sub(4),
-            (x + 12).min(self.width),
-            y.saturating_sub(4),
-            (y + 12).min(self.height),
+            x.saturating_sub(halo),
+            (x + size + halo).min(self.width),
+            y.saturating_sub(halo),
+            (y + size + halo).min(self.height),
         )
     }
 
@@ -384,6 +399,13 @@ fn intersecting_windows(
 impl Frame<'_> {
     pub(super) fn has_affected_windows(&self, bx: usize, by: usize) -> bool {
         intersecting_windows(self, self.affected(bx, by)).is_some()
+    }
+
+    // The budgeted beam admits descriptors in this original halo order. A
+    // zero-score move can still consume a proposal or seed a later move.
+    pub(super) fn admits_joint_patch(&self, bx: usize, by: usize) -> bool {
+        let bounds = self.footprint_with_halo(self.mx * 16 + bx * 8, self.my * 16 + by * 8, 8, 4);
+        intersecting_windows(self, bounds).is_some()
     }
 }
 
@@ -773,13 +795,18 @@ impl LocalCache {
     }
 
     fn build(frame: &Frame<'_>, mut chroma_sum: impl FnMut(Axis, Axis) -> (i64, i64)) -> Self {
-        let bounds = (
-            (frame.mx * 16).saturating_sub(4),
-            (frame.mx * 16 + 20).min(frame.width),
-            (frame.my * 16).saturating_sub(4),
-            (frame.my * 16 + 20).min(frame.height),
-        );
-        let windows = intersecting_windows(frame, bounds).expect("rate-qualified visible window");
+        let bounds = frame.chroma_footprint(frame.mx * 16, frame.my * 16, 16);
+        let windows = intersecting_windows(frame, bounds)
+            .or_else(|| {
+                // A tail tile admitted by the joint search can be invisible to
+                // the direct metric. Its score is zero; preserve the old cache
+                // construction contract for that otherwise valid descriptor.
+                intersecting_windows(
+                    frame,
+                    frame.footprint_with_halo(frame.mx * 16, frame.my * 16, 16, 4),
+                )
+            })
+            .expect("rate-qualified visible window");
         let x0 = windows.x0 * 4;
         let y0 = windows.y0 * 4;
         let right = (windows.x1 - 1) * 4 + 8;
@@ -927,12 +954,7 @@ impl LocalCache {
     // Score the complete U/V trial jointly. Replacing the baseline moments
     // once per rendered pixel retains chroma coupling and overlapping windows.
     pub(super) fn score_tiles(&self, frame: &Frame<'_>, u: &[u8; 64], v: &[u8; 64]) -> f64 {
-        let bounds = (
-            (frame.mx * 16).saturating_sub(4),
-            (frame.mx * 16 + 20).min(frame.width),
-            (frame.my * 16).saturating_sub(4),
-            (frame.my * 16 + 20).min(frame.height),
-        );
+        let bounds = frame.chroma_footprint(frame.mx * 16, frame.my * 16, 16);
         let Some(windows) = intersecting_windows(frame, bounds) else {
             return 0.0;
         };
@@ -1575,6 +1597,10 @@ mod tests {
             (1, 11),
             (2, 9),
             (7, 9),
+            (9, 8),
+            (10, 10),
+            (12, 12),
+            (17, 18),
             (11, 13),
             (15, 19),
             (17, 17),
@@ -1686,20 +1712,62 @@ mod tests {
                                 );
                             }
                         }
+                        for patch in 0..4 {
+                            let bx = patch % 2;
+                            let by = patch / 2;
+                            let x = mx * 16 + bx * 8;
+                            let y = my * 16 + by * 8;
+                            let original = (
+                                x.saturating_sub(4),
+                                (x + 12).min(width),
+                                y.saturating_sub(4),
+                                (y + 12).min(height),
+                            );
+                            assert_eq!(
+                                frame.admits_joint_patch(bx, by),
+                                intersecting_windows(&frame, original).is_some()
+                            );
+                        }
                         if !(0..4).any(|patch| frame.has_affected_windows(patch % 2, patch / 2)) {
+                            if (0..4).any(|patch| frame.admits_joint_patch(patch % 2, patch / 2)) {
+                                let cache = LocalCache::new(&frame);
+                                assert_eq!(cache.score_tiles(&frame, &[0; 64], &[255; 64]), 0.0);
+                            }
                             continue;
                         }
                         let cache = LocalCache::new(&frame);
                         let scalar_cache = LocalCache::new_scalar(&frame);
-                        let bounds = (
+                        // The cache stores only windows that can see this tile. Check the
+                        // full original halo independently: a window excluded by the new
+                        // direct footprint cannot sample even one chroma pixel in this tile.
+                        let halo = (
                             (mx * 16).saturating_sub(4),
                             (mx * 16 + 20).min(width),
                             (my * 16).saturating_sub(4),
                             (my * 16 + 20).min(height),
                         );
-                        let windows = intersecting_windows(&frame, bounds).unwrap();
-                        for wy in windows.y0..windows.y1 {
-                            for wx in windows.x0..windows.x1 {
+                        let original_windows = intersecting_windows(&frame, halo).unwrap();
+                        let bounds = frame.chroma_footprint(mx * 16, my * 16, 16);
+                        let retained_windows = intersecting_windows(&frame, bounds).unwrap();
+                        for wy in original_windows.y0..original_windows.y1 {
+                            for wx in original_windows.x0..original_windows.x1 {
+                                if (retained_windows.y0..retained_windows.y1).contains(&wy)
+                                    && (retained_windows.x0..retained_windows.x1).contains(&wx)
+                                {
+                                    continue;
+                                }
+                                assert!(direct);
+                                for py in wy * 4..wy * 4 + 8 {
+                                    for px in wx * 4..wx * 4 + 8 {
+                                        let sx = metric_sample(px, width) / 2;
+                                        let sy = metric_sample(py, height) / 2;
+                                        assert!(sx / 8 != mx || sy / 8 != my);
+                                    }
+                                }
+                            }
+                        }
+                        for wy in retained_windows.y0..retained_windows.y1 {
+                            for wx in retained_windows.x0..retained_windows.x1 {
                                 let mut expected = [Moment::default(); 3];
                                 for dy in 0..8 {
                                     for dx in 0..8 {

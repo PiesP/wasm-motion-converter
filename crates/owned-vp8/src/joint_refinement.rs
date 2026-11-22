@@ -209,7 +209,7 @@ impl JointSearch {
         let mut move_count = 0;
         for plane in 0..2 {
             for patch in 0..4 {
-                if !base_frame.has_affected_windows(patch % 2, patch / 2) {
+                if !base_frame.admits_joint_patch(patch % 2, patch / 2) {
                     continue;
                 }
                 let coefficients = if plane == 0 {

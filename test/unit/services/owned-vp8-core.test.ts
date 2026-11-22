@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
@@ -66,6 +67,55 @@ afterEach(() => {
 });
 
 describe('owned VP8 conversion-owned host adapter', () => {
+  it('preserves budgeted chroma proposals along an even-height metric boundary', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(wasmResponse()));
+    const encoder = await core.createOwnedVp8Encoder({ accounting: accounting() });
+    const palette = [
+      [244, 29, 171],
+      [35, 227, 91],
+      [89, 61, 239],
+      [22, 94, 198],
+    ];
+    // The second chroma patch is outside the direct metric window but still consumes
+    // an ordered joint proposal. Omitting it changes the saved bitstream.
+    const rows = [
+      '210001020',
+      '001321111',
+      '021102213',
+      '311133102',
+      '320333231',
+      '030030012',
+      '333202001',
+      '002000200',
+    ];
+    const rgb = Uint8Array.from(
+      rows
+        .join('')
+        .split('')
+        .flatMap((index) => palette[Number(index)]!)
+    );
+    try {
+      const result = await encoder.encode(
+        rgb,
+        {
+          ...settings(9, 8),
+          stride: 27,
+          layout: 4,
+          externalLiveBytes: rgb.byteLength,
+        },
+        (bytes) => {
+          expect(createHash('sha256').update(bytes).digest('hex')).toBe(
+            'b7bfefce0e0ae47590a12d7c70f2cf60f915b9cce92c262fcb77a976107aac29'
+          );
+        }
+      );
+      expect(result.steps).toBe(391);
+      expect(result.finalizedVp8Bytes).toBe(119);
+    } finally {
+      encoder.retire();
+    }
+  });
+
   it('does not cache a failed load, then reuses compiled code with separate instances', async () => {
     const fetchMock = vi
       .fn()
