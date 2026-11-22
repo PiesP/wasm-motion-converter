@@ -27,6 +27,30 @@ export function retirementErrorDocument(files: readonly DeploymentFile[]): Deplo
   return document;
 }
 
+const NO_STORE_COMPANIONS = new Set([
+  'no-store',
+  'private',
+  'no-cache',
+  'no-transform',
+  'must-revalidate',
+  'proxy-revalidate',
+]);
+
+function hasNoStorePolicy(header: string | null): boolean {
+  if (!header) return false;
+  const directives = header
+    .toLowerCase()
+    .split(',')
+    .map((value) => value.trim());
+  // A quoted field list or unknown directive cannot supply proof of the required policy.
+  return (
+    directives.includes('no-store') &&
+    directives.every(
+      (value) => NO_STORE_COMPANIONS.has(value) || /^(?:s-maxage|max-age)\s*=\s*0$/.test(value)
+    )
+  );
+}
+
 export function retiredWebpResponseIsSafe(
   row: {
     status: number | null;
@@ -43,7 +67,7 @@ export function retiredWebpResponseIsSafe(
   return (
     row.error === null &&
     row.status === 404 &&
-    row.cacheControl?.trim().toLowerCase() === 'no-store' &&
+    hasNoStorePolicy(row.cacheControl) &&
     row.contentType !== null &&
     /^text\/html(?:\s*;\s*charset=(?:utf-8|"utf-8"))?$/i.test(row.contentType.trim()) &&
     row.responseBytes === expectedDocument.size &&

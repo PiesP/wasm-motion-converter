@@ -276,6 +276,19 @@ describe('deployment diagnostic artifact', () => {
     expect(artifact.diagnostics[4].attempts[0].retiredUrls).toEqual(retiredUrls);
   });
 
+  it.each([
+    'no-store',
+    'private, No-Store',
+    'no-store, max-age=0',
+    'proxy-revalidate, s-maxage=0, no-cache, no-transform, must-revalidate, no-store',
+  ])('accepts a complete no-store policy with compatible directives: %s', (cacheControl) => {
+    const values = retiredUrls.map((row) => ({ ...row, cacheControl }));
+    const { file, output } = fixture(report({ final: true, retiredUrls: values }));
+    expect(() =>
+      preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode)
+    ).not.toThrow();
+  });
+
   it('still reads the original passing seven-field observations without assigning an edge', () => {
     const historical = retiredUrls.map(
       ({ mode, url, priorSha256, status, cacheControl, contentType, responseSha256 }) => ({
@@ -479,10 +492,15 @@ describe('deployment diagnostic artifact', () => {
       [{ ...retiredUrls[0], observedAt: 'unknown' }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], status: 302 }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], cacheControl: 'immutable' }, ...retiredUrls.slice(1)],
-      ...[null, '', 'x-no-store', 'public, max-age=86400'].map((cacheControl) => [
-        { ...retiredUrls[0], cacheControl },
-        ...retiredUrls.slice(1),
-      ]),
+      ...[
+        null,
+        '',
+        'x-no-store',
+        'public, max-age=86400',
+        'no-store, immutable',
+        'no-store, max-age=60',
+        'private="field-a,no-store,field-b"',
+      ].map((cacheControl) => [{ ...retiredUrls[0], cacheControl }, ...retiredUrls.slice(1)]),
       ...[null, '', 'text/html-other', 'text/plain'].map((contentType) => [
         { ...retiredUrls[0], contentType },
         ...retiredUrls.slice(1),
