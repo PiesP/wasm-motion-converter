@@ -538,14 +538,71 @@ describe('conversion-owned WASM glue', () => {
     const colors = q.quantizePreparedRetained(8);
     const handle = q.mapRetained(prepared!, colors);
     q.releaseRetained(handle);
+    const transient = {
+      ...frame,
+      copyTo: vi.fn(async () => {
+        throw new DOMException('Frame unavailable', 'InvalidStateError');
+      }),
+    };
+    expect(await q.prepareNative!(transient, 2, 2, 0)).toBeNull();
+    expect(await q.prepareNative!(transient, 2, 2, 0)).toBeNull();
+    expect(transient.copyTo).toHaveBeenCalledTimes(2);
     const failed = {
       ...frame,
-      copyTo: async () => {
+      copyTo: vi.fn(async () => {
         throw new DOMException('Format unavailable', 'NotSupportedError');
-      },
+      }),
     };
     expect(await q.prepareNative!(failed, 2, 2, 0)).toBeNull();
+    expect(await q.prepareNative!(failed, 2, 2, 0)).toBeNull();
+    expect(failed.copyTo).toHaveBeenCalledOnce();
     expect(() => q.prepare(original, 2, 2, 0)).not.toThrow();
+  });
+
+  it('waits for in-flight native writes after cancellation before rejecting the retired conversion', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () => new Response(wasmBytes, { headers: { 'content-type': 'application/wasm' } })
+    );
+    const controller = new AbortController();
+    const encoder = await createGifScalarQuantizer(
+      () => {},
+      () => {},
+      controller.signal
+    );
+    expect(encoder.enableRetained(4)).toBe(true);
+    const pixels = new Uint8Array(16);
+    const gate = Promise.withResolvers<PlaneLayout[]>();
+    let destination: Uint8Array | undefined;
+    const read = encoder.prepareNative!(
+      {
+        displayWidth: 2,
+        displayHeight: 2,
+        allocationSize: () => 16,
+        copyTo(view: AllowSharedBufferSource) {
+          if (!(view instanceof Uint8Array)) throw Error('Missing byte destination');
+          destination = view;
+          return gate.promise;
+        },
+      },
+      2,
+      2,
+      0
+    );
+    controller.abort();
+    expect(() => encoder.prepare(pixels, 2, 2, 0)).toThrow('readback is pending');
+    expect(() => encoder.releaseRetained(1)).toThrow('readback is pending');
+    destination!.fill(17);
+    gate.resolve([{ offset: 0, stride: 8 }]);
+    await expect(read).rejects.toMatchObject({ name: 'AbortError' });
+    expect(() => encoder.quantizePreparedRetained(8)).toThrow('Conversion cancelled');
+    const next = await createGifScalarQuantizer(
+      () => {},
+      () => {}
+    );
+    expect(next.enableRetained(4)).toBe(true);
+    next.prepare(pixels, 2, 2, 0);
+    expect(next.quantizePreparedRetained(8)).toBeGreaterThan(0);
   });
 
   it('emits the same complete GIF bytes as the JS-index path with deferred compression', async () => {

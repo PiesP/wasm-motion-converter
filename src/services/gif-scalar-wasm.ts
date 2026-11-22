@@ -162,6 +162,14 @@ export async function createGifScalarQuantizer(
   let retainedEnabled = false;
   let retainedPixelCount = 0;
   let pendingInput = false;
+  let nativeInputUnsupported = false;
+  const rememberUnsupportedNativeInput = (error: unknown): void => {
+    if (
+      error instanceof TypeError ||
+      (error instanceof DOMException && error.name === 'NotSupportedError')
+    )
+      nativeInputUnsupported = true;
+  };
   function assertInputAvailable() {
     if (pendingInput) throw new GifScalarAbiError('GIF input readback is pending');
   }
@@ -283,6 +291,7 @@ export async function createGifScalarQuantizer(
     if (!Number.isInteger(strength) || strength < 0 || strength > 255)
       throw new GifScalarAbiError('Invalid GIF dither strength');
     if (
+      nativeInputUnsupported ||
       !retainedEnabled ||
       !Number.isSafeInteger(length) ||
       width !== frame.displayWidth ||
@@ -297,7 +306,8 @@ export async function createGifScalarQuantizer(
     };
     try {
       if (frame.allocationSize(opts) !== length) return null;
-    } catch {
+    } catch (error) {
+      rememberUnsupportedNativeInput(error);
       return null;
     }
     lastInput = null;
@@ -307,7 +317,8 @@ export async function createGifScalarQuantizer(
     pendingInput = true;
     try {
       copied = await frame.copyTo(destination, opts);
-    } catch {
+    } catch (error) {
+      rememberUnsupportedNativeInput(error);
       copied = undefined;
     } finally {
       pendingInput = false;
