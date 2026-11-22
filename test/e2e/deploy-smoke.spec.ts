@@ -26,6 +26,8 @@ import {
 
 import {
   collectRetiredWebpUrls,
+  RETIRED_WEBP_TEST,
+  retirementErrorDocument,
   retiredWebpResponseIsSafe,
 } from '../../scripts/test/retired-webp-probes';
 import { hasLegacyWebpInRetiredBuild } from '../../scripts/test/retired-webp-worker';
@@ -278,6 +280,29 @@ test.describe('Deployment: Page Load', () => {
     }
   });
 
+  test(RETIRED_WEBP_TEST, async ({ request }, testInfo) => {
+    test.skip(!REQUIRE_OWNED_ONLY, 'Retirement verification requires a source-bound build');
+    const manifest = await request.get(new URL('/deployment-state.json', DEPLOY_URL).href, {
+      maxRedirects: 0,
+    });
+    const { deployed } = await readVerifiedDeployment(manifest);
+    const document = retirementErrorDocument(deployed.files);
+    const ordinary = await playwrightRequest.newContext();
+    try {
+      const rows = await collectRetiredWebpUrls(new URL(DEPLOY_URL), {
+        ordinary,
+        revalidated: request,
+      });
+      await testInfo.attach('retired-webp-urls', {
+        body: JSON.stringify(rows),
+        contentType: 'application/json',
+      });
+      expect(rows.filter((row) => !retiredWebpResponseIsSafe(row, document))).toEqual([]);
+    } finally {
+      await ordinary.dispose();
+    }
+  });
+
   test('Pages serves one security and cache policy per document, metadata, and fingerprinted asset', async ({
     page,
     request,
@@ -334,20 +359,6 @@ test.describe('Deployment: Page Load', () => {
     }
     const assetFiles = files.filter((file) => FINGERPRINTED_ASSET.test(file.path));
     if (REQUIRE_OWNED_ONLY) {
-      const ordinary = await playwrightRequest.newContext();
-      try {
-        const retiredUrls = await collectRetiredWebpUrls(new URL(DEPLOY_URL), {
-          ordinary,
-          revalidated: request,
-        });
-        await testInfo.attach('retired-webp-urls', {
-          body: JSON.stringify(retiredUrls),
-          contentType: 'application/json',
-        });
-        expect(retiredUrls.filter((row) => !retiredWebpResponseIsSafe(row))).toEqual([]);
-      } finally {
-        await ordinary.dispose();
-      }
       const inventory = softwareWebpInventory(files);
       expect(inventory.ownedOnly, JSON.stringify(inventory)).toBe(true);
       for (const file of files.filter(({ path }) => /\.[cm]?js$/.test(path))) {
