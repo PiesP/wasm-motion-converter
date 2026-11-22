@@ -157,6 +157,19 @@ it('preserves deployment-specific source and patch choices under shared notice h
   ]);
 });
 
+it('links historical browser-core recipients to the grant and ships the upstream MIT text', () => {
+  const entry = section('errata').match(/<li id="browser-core">([\s\S]*?)<\/li>/)?.[1];
+  expect(entry).toContain('href="../browser-core-mit.txt"');
+  expect(entry).toContain(
+    'href="https://github.com/PiesP/browser-core/blob/c64ba353fcc22e3b65dac7214f1992f86644d2ab/README.md#license"'
+  );
+  const license = readFileSync(join(root, '../browser-core-mit.txt'));
+  // SHA-256 of browser-core's LICENSE at 2c9f6acf.
+  expect(createHash('sha256').update(license).digest('hex')).toBe(
+    '205bbbf88448772c423f3ddf5b61866064eae0d070a6035ba63e2b6dc8edf20f'
+  );
+});
+
 it('keeps source and applicability links for compiler and external core corrections', () => {
   const rust = section('rust');
   expect(rust).toContain('/2026-10-15/rust-std-1.99.1-wasm32-unknown-unknown.tar.xz"');
