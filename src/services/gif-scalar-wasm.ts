@@ -57,6 +57,13 @@ function throwStatus(status: number, stage: string): never {
 
 export interface GifScalarQuantizer {
   (rgba: Uint8Array, colors: number): number[][];
+  /** The returned prepared view belongs to this retained conversion until mapping. */
+  prepareNative?(
+    frame: Pick<VideoFrame, 'allocationSize' | 'copyTo' | 'displayWidth' | 'displayHeight'>,
+    width: number,
+    height: number,
+    strength: number
+  ): Promise<Uint8Array | null>;
   prepare(rgba: Uint8Array, width: number, height: number, strength: number): void;
   quantizePrepared(colors: number): number[][];
   quantizePreparedRetained(colors: number): number;
@@ -154,7 +161,12 @@ export async function createGifScalarQuantizer(
   let reservedLength = 0;
   let retainedEnabled = false;
   let retainedPixelCount = 0;
+  let pendingInput = false;
+  function assertInputAvailable() {
+    if (pendingInput) throw new GifScalarAbiError('GIF input readback is pending');
+  }
   const abort = (): void => {
+    assertInputAvailable();
     if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
   };
   function admit(end: number, rgbaBytes: number): void {
@@ -239,18 +251,23 @@ export async function createGifScalarQuantizer(
     ) {
       throw new GifScalarAbiError('GIF scalar WASM requires exact nonempty RGBA geometry');
     }
+    reserveRgba(rgba.byteLength).set(rgba);
+    finishInput(rgba, width, height, strength);
+  };
+  function reserveRgba(length: number): Uint8Array {
     const pointer = wasm.input_ptr();
-    const end = pointer + rgba.byteLength;
+    const end = pointer + length;
     if (!validOffset(pointer) || !validOffset(end) || pointer < wasm.palette_ptr() + 768) {
       throw new GifScalarAbiError('GIF scalar WASM input offset is invalid');
     }
-    admit(end, rgba.byteLength);
-    const reserve = wasm.reserve_input(rgba.byteLength);
+    admit(end, length);
+    const reserve = wasm.reserve_input(length);
     if (reserve !== 0) {
       throwStatus(reserve, 'input reservation');
     }
-    // memory.grow detaches old views; construct a fresh view for every copy.
-    new Uint8Array(wasm.memory.buffer, pointer, rgba.byteLength).set(rgba);
+    return checkedView(pointer, length);
+  }
+  function finishInput(rgba: Uint8Array, width: number, height: number, strength: number) {
     const prepared = wasm.prepare_rgba(rgba.byteLength, width, height, strength);
     if (prepared !== 0) throwStatus(prepared, 'RGBA preparation');
     if (wasm.memory.buffer.byteLength !== capacity) {
@@ -259,6 +276,54 @@ export async function createGifScalarQuantizer(
     reservedLength = rgba.byteLength;
     preparedInput = rgba;
     abort();
+  }
+  quantizer.prepareNative = async (frame, width, height, strength) => {
+    abort();
+    const length = width * height * 4;
+    if (!Number.isInteger(strength) || strength < 0 || strength > 255)
+      throw new GifScalarAbiError('Invalid GIF dither strength');
+    if (
+      !retainedEnabled ||
+      !Number.isSafeInteger(length) ||
+      width !== frame.displayWidth ||
+      height !== frame.displayHeight ||
+      retainedPixelCount !== width * height
+    )
+      return null;
+    const opts: VideoFrameCopyToOptions = {
+      format: 'RGBX',
+      rect: { x: 0, y: 0, width, height },
+      layout: [{ offset: 0, stride: width * 4 }],
+    };
+    try {
+      if (frame.allocationSize(opts) !== length) return null;
+    } catch {
+      return null;
+    }
+    lastInput = null;
+    preparedInput = null;
+    const destination = reserveRgba(length);
+    let copied: PlaneLayout[] | undefined;
+    pendingInput = true;
+    try {
+      copied = await frame.copyTo(destination, opts);
+    } catch {
+      copied = undefined;
+    } finally {
+      pendingInput = false;
+    }
+    abort();
+    if (destination.buffer !== wasm.memory.buffer || wasm.memory.buffer.byteLength !== capacity)
+      throw new GifScalarMemoryError('GIF input memory changed during frame readback');
+    if (
+      !copied ||
+      copied.length !== 1 ||
+      copied[0]?.offset !== 0 ||
+      copied[0]?.stride !== width * 4
+    )
+      return null;
+    finishInput(destination, width, height, strength);
+    return destination;
   };
   quantizer.quantizePrepared = (colors) => {
     abort();
@@ -397,6 +462,7 @@ export async function createGifScalarQuantizer(
     return retainedHandle(wasm.promote_retained(handle), 'retained promotion');
   };
   quantizer.releaseRetained = (handle) => {
+    assertInputAvailable();
     const status = wasm.release_retained(handle);
     if (status !== 0) throwStatus(status, 'retained release');
   };

@@ -70,7 +70,53 @@ import { createPresentationSampler, type PresentationInterval } from './presenta
 
 export type { PresentationInterval } from './presentation-timing';
 
+function canReadGifFrame(frame: VideoFrame, width: number, height: number): boolean {
+  if (
+    frame.format !== 'I420' &&
+    frame.format !== 'I422' &&
+    frame.format !== 'I444' &&
+    frame.format !== 'NV12'
+  )
+    return false;
+  const rect = frame.visibleRect;
+  if (
+    !rect ||
+    rect.x !== 0 ||
+    rect.y !== 0 ||
+    rect.width !== width ||
+    rect.height !== height ||
+    frame.displayWidth !== width ||
+    frame.displayHeight !== height ||
+    ('rotation' in frame && frame.rotation !== 0) ||
+    ('flip' in frame && frame.flip)
+  )
+    return false;
+  // Explicit color management on padded surfaces uses the existing Canvas path.
+  if (frame.codedWidth === width && frame.codedHeight === height) return true;
+  const space = frame.colorSpace;
+  return (
+    space.primaries == null &&
+    space.matrix == null &&
+    space.transfer == null &&
+    space.fullRange === false
+  );
+}
+
+export interface BorrowedGifFrame {
+  frame: VideoFrame;
+  readFallback(): Promise<Uint8Array>;
+  release(): void;
+}
+
 export interface DecodeOptions {
+  /** An awaited retained GIF reader can consume an unscaled selected native frame. */
+  onSelectedGifFrame?: (
+    source: BorrowedGifFrame,
+    durationMs: number,
+    frameNum: number,
+    handoff: FrameMemoryHandoff | undefined,
+    presentation: PresentationInterval
+  ) => Promise<void>;
   width: number;
   height: number;
   /** Source/target FPS ratio for presentation-time selection. */
@@ -179,6 +225,7 @@ export async function decodeFrames(
     profileOperation,
     profileCopyPath,
     onFrameAvailable,
+    onSelectedGifFrame,
     smartFrameSkip: effectiveSmartSkip = 'off',
     processingFailureSignal,
     stagedCopyLookahead = false,
@@ -949,6 +996,36 @@ export async function decodeFrames(
               discardStagedOutputs ||
               hasProcessingFailure()
             ) {
+              return;
+            }
+
+            if (
+              onSelectedGifFrame &&
+              pressureBeforeCopy &&
+              !isAdaptive &&
+              (demux.rotation ?? 0) === 0 &&
+              frameCtx.copyPath !== 'canvas' &&
+              canReadGifFrame(frame, width, height)
+            ) {
+              await previousProcessing;
+              enteredOrderedProcessing = true;
+              if (signal?.aborted || discardStagedOutputs || hasProcessingFailure()) return;
+              keptFrameCount++;
+              const input: BorrowedGifFrame = {
+                frame,
+                readFallback: () => copyFrameToPixels(frame, width, height, frameCtx, 'rgba'),
+                release() {
+                  closeSourceFrame();
+                  releaseSourceReservation();
+                },
+              };
+              await onSelectedGifFrame(
+                input,
+                frameDuration,
+                frameNum,
+                targetMemoryHandoff,
+                presentation
+              );
               return;
             }
 

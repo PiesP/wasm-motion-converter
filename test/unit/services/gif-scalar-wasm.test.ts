@@ -502,6 +502,52 @@ describe('compiled scalar WASM and gifenc 1.0.3', () => {
 });
 
 describe('conversion-owned WASM glue', () => {
+  it('keeps a direct retained input exclusive until the asynchronous frame copy settles', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () => new Response(wasmBytes, { headers: { 'content-type': 'application/wasm' } })
+    );
+    const q = await createGifScalarQuantizer(
+      () => {},
+      () => {}
+    );
+    expect(q.enableRetained(4)).toBe(true);
+    const original = new Uint8Array([100, 20, 0, 1, 50, 60, 70, 2, 255, 128, 16, 3, 1, 2, 3, 4]);
+    let complete!: () => void;
+    const frame = {
+      displayWidth: 2,
+      displayHeight: 2,
+      allocationSize: () => 16,
+      copyTo(destination: AllowSharedBufferSource) {
+        if (!(destination instanceof Uint8Array)) throw Error('Expected a byte view');
+        return new Promise<PlaneLayout[]>((resolve) => {
+          complete = () => {
+            destination.set(original);
+            resolve([{ offset: 0, stride: 8 }]);
+          };
+        });
+      },
+    };
+    const read = q.prepareNative!(frame, 2, 2, 0);
+    expect(() => q.prepare(original, 2, 2, 0)).toThrow('readback is pending');
+    expect(() => q.releaseRetained(1)).toThrow('readback is pending');
+    complete();
+    const prepared = await read;
+    expect(prepared).not.toBeNull();
+    expect([...prepared!]).toEqual([...original]);
+    const colors = q.quantizePreparedRetained(8);
+    const handle = q.mapRetained(prepared!, colors);
+    q.releaseRetained(handle);
+    const failed = {
+      ...frame,
+      copyTo: async () => {
+        throw new DOMException('Format unavailable', 'NotSupportedError');
+      },
+    };
+    expect(await q.prepareNative!(failed, 2, 2, 0)).toBeNull();
+    expect(() => q.prepare(original, 2, 2, 0)).not.toThrow();
+  });
+
   it('emits the same complete GIF bytes as the JS-index path with deferred compression', async () => {
     vi.stubGlobal(
       'fetch',

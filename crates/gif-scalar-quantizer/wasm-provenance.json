@@ -20,16 +20,16 @@
     "crates/gif-scalar-quantizer/LICENSE.pnn": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5",
     "crates/gif-scalar-quantizer/NOTICE.md": "bed2957c4a6ca7d3d9f969fc634cbaf40423b4082ff3a60b18213ce961caf10e",
     "crates/gif-scalar-quantizer/rust-toolchain.toml": "63eade4342cf85d77a436ffb9b086d301d7be4b3a7f5d01940eb2ce4f78a26f0",
-    "crates/gif-scalar-quantizer/src/lib.rs": "8b4b5586731f80619d88a2d3d29925c5cc496a7deeb5d4abffd34c3a2b15e88d",
+    "crates/gif-scalar-quantizer/src/lib.rs": "e9cf1a74a3027c2e943de4d3414b8764eaa31c00b218d123795739358f8e8498",
     "crates/gif-scalar-quantizer/src/lzw.rs": "a9bd4dded51bc2526c2f56d128846e23a101180eaeeff794f5fa7524cf776fd8",
     "crates/gif-scalar-quantizer/src/mapper.rs": "bca069c1f74b344993fd6a5e188774d4c3b44d4993b42242f1978f57f5876e66",
     "crates/gif-scalar-quantizer/src/palette.rs": "bf627fa4e456acbda175074bcd5d8482447990269376251fdbb34323f2a81109",
     "scripts/build/build-gif-scalar-wasm.ts": "bd3275dc3ada13f26af1f89d2c1a7c64c03a0a6a1786c95b6d524a93b0768a08"
   },
-  "matchingSourceSha256": "aa642edad2ab77337527dd907132857ed0b0108ba983c39ad7fdb1f925e4dee8",
+  "matchingSourceSha256": "729605f9f21d3e4b88f009d038ed3b3da2bd71c65a644521380b1e761a7a64b5",
   "artifact": {
-    "sha256": "60907b1489b708638c5a3e684a891ca379cbfa80f6b178e30dc5e4c50fa55dfc",
-    "rawBytes": 28753,
-    "gzipBytes": 12357
+    "sha256": "fef5249791baf96a4fb521535d5295d05ecc0129741fee4c2bb0d387b8c922f1",
+    "rawBytes": 28886,
+    "gzipBytes": 12422
   }
 }

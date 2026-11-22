@@ -269,16 +269,16 @@ pub extern "C" fn prepare_rgba(input_len: u32, width: u32, height: u32, strength
     let rgba =
         unsafe { core::slice::from_raw_parts_mut(input_start() as *mut u8, input_len as usize) };
     if strength != 0 {
-        for y in 0..height as usize {
-            for x in 0..width as usize {
-                let threshold =
-                    ((BAYER_8X8[(y & 7) * 8 + (x & 7)] - 32) as i32 * strength as i32) / 64;
-                if threshold == 0 {
-                    continue;
-                }
-                let offset = (y * width as usize + x) * 4;
-                for channel in &mut rgba[offset..offset + 3] {
-                    *channel = (*channel as i32 + threshold).clamp(0, 255) as u8;
+        let offsets = BAYER_8X8.map(|b| (i32::from(b - 32) * strength as i32) / 64);
+        for (y, row) in rgba.chunks_exact_mut(width as usize * 4).enumerate() {
+            let phases = &offsets[(y & 7) * 8..(y & 7) * 8 + 8];
+            for block in row.chunks_mut(8 * 4) {
+                for (px, &delta) in block.as_chunks_mut::<4>().0.iter_mut().zip(phases) {
+                    if delta != 0 {
+                        for c in &mut px[..3] {
+                            *c = (i32::from(*c) + delta).clamp(0, 255) as u8;
+                        }
+                    }
                 }
             }
         }
