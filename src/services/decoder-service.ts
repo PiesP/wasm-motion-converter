@@ -7,10 +7,10 @@
  * Extracts RGB or opaque RGBA frames from demuxed video chunks using VideoDecoder,
  * with hardware acceleration support, frame decimation, and abort handling.
  *
- * This internal API supports CPU streaming only; batch results and VideoFrame
- * callback delivery were retired after the maintained-caller audit. GIF and
- * WebP callers receive ordered CPU pixels through an awaited callback.
- * Invocation transfers ownership of the pixels to that callback.
+ * Encoders receive selected frames in presentation order through awaited
+ * callbacks. A CPU callback owns its pixel buffer. An eligible retained GIF
+ * callback borrows the decoded VideoFrame until its direct or fallback read
+ * finishes, and the decoder closes any source still held on return.
  *
  * Both encoders share the same demux output and frame extraction logic;
  * only the GIF and WebP encoding steps differ.
@@ -1013,7 +1013,23 @@ export async function decodeFrames(
               keptFrameCount++;
               const input: BorrowedGifFrame = {
                 frame,
-                readFallback: () => copyFrameToPixels(frame, width, height, frameCtx, 'rgba'),
+                async readFallback() {
+                  const start = profileOperation ? performance.now() : null;
+                  let pixels: Uint8Array | undefined;
+                  try {
+                    pixels = await copyFrameToPixels(frame, width, height, frameCtx, 'rgba');
+                    return pixels;
+                  } finally {
+                    try {
+                      if (start !== null)
+                        profileOperation?.('pixelCopy', Math.max(0, performance.now() - start));
+                      profileCopyPath?.(frameCtx.copyPath ?? 'unknown');
+                    } catch (error) {
+                      if (pixels) globalBufferPool.release(pixels);
+                      throw error;
+                    }
+                  }
+                },
                 release() {
                   closeSourceFrame();
                   releaseSourceReservation();

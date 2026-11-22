@@ -507,9 +507,12 @@ describe('conversion-owned WASM glue', () => {
       'fetch',
       async () => new Response(wasmBytes, { headers: { 'content-type': 'application/wasm' } })
     );
+    const reads = vi.fn();
     const q = await createGifScalarQuantizer(
       () => {},
-      () => {}
+      () => {},
+      undefined,
+      reads
     );
     expect(q.enableRetained(4)).toBe(true);
     const original = new Uint8Array([100, 20, 0, 1, 50, 60, 70, 2, 255, 128, 16, 3, 1, 2, 3, 4]);
@@ -533,6 +536,8 @@ describe('conversion-owned WASM glue', () => {
     expect(() => q.releaseRetained(1)).toThrow('readback is pending');
     complete();
     const prepared = await read;
+    expect(reads).toHaveBeenCalledOnce();
+    expect(reads.mock.calls[0]![0]).toBeGreaterThanOrEqual(0);
     expect(prepared).not.toBeNull();
     expect([...prepared!]).toEqual([...original]);
     const colors = q.quantizePreparedRetained(8);
@@ -556,6 +561,7 @@ describe('conversion-owned WASM glue', () => {
     expect(await q.prepareNative!(failed, 2, 2, 0)).toBeNull();
     expect(await q.prepareNative!(failed, 2, 2, 0)).toBeNull();
     expect(failed.copyTo).toHaveBeenCalledOnce();
+    expect(reads).toHaveBeenCalledOnce();
     expect(() => q.prepare(original, 2, 2, 0)).not.toThrow();
   });
 

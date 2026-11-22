@@ -235,7 +235,13 @@ export async function encodeGif(
     (bytes) => {
       wasmCapacity = bytes;
     },
-    signal
+    signal,
+    opts.profileOperation || opts.profileCopyPath
+      ? (milliseconds) => {
+          opts.profileOperation?.('pixelCopy', milliseconds);
+          opts.profileCopyPath?.('RGBX');
+        }
+      : undefined
   );
   // A refused prospective reservation keeps the entire conversion on the
   // existing JS-index route. A failed actual growth remains terminal.

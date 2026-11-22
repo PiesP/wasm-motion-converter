@@ -86,7 +86,8 @@ export interface GifScalarQuantizer {
 export async function createGifScalarQuantizer(
   assertCapacity: (oldBytes: number, newBytes: number) => void,
   setCapacity: (bytes: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  recordNativeReadback?: (milliseconds: number) => void
 ): Promise<GifScalarQuantizer> {
   // Instantiate may allocate its initial memory before its exports are visible.
   assertCapacity(0, MAX_INITIAL_LINEAR_BYTES);
@@ -315,8 +316,11 @@ export async function createGifScalarQuantizer(
     const destination = reserveRgba(length);
     let copied: PlaneLayout[] | undefined;
     pendingInput = true;
+    const readStart = recordNativeReadback ? performance.now() : null;
+    let readMilliseconds = 0;
     try {
       copied = await frame.copyTo(destination, opts);
+      if (readStart !== null) readMilliseconds = Math.max(0, performance.now() - readStart);
     } catch (error) {
       rememberUnsupportedNativeInput(error);
       copied = undefined;
@@ -333,6 +337,7 @@ export async function createGifScalarQuantizer(
       copied[0]?.stride !== width * 4
     )
       return null;
+    recordNativeReadback?.(readMilliseconds);
     finishInput(destination, width, height, strength);
     return destination;
   };
