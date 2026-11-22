@@ -1,19 +1,21 @@
-/** Keep successful Playwright deployment observations in the uploaded test-results artifact. */
+/** Keep bounded Playwright deployment observations in the uploaded test-results artifact. */
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { DeploymentState } from '../build/deployment-state.ts';
 import {
-  isExecutableMediaType,
   isRetiredWebpExecutable,
   isUnexpectedWasm,
   LEGACY_WEBP_DEPLOYMENT,
   LEGACY_WEBP_WASM_ASSET,
   OWNED_VP8_ASSET,
-  RETIRED_REQUEST_MODES,
-  RETIRED_WEBP_DELIVERY_FILES,
 } from './retired-webp-assets.ts';
+import {
+  MAX_PROBE_HEADER,
+  retiredWebpResponseIsSafe,
+  retiredWebpTargets,
+} from './retired-webp-probes.ts';
 
 const MAX_REPORT_BYTES = 2_000_000;
 const MAX_DIAGNOSTIC_BYTES = 128_000;
@@ -86,17 +88,18 @@ function observedTests(report: JsonRecord): JsonRecord[] {
   return tests;
 }
 
-function diagnosticBody(result: JsonRecord, name: string): unknown {
+function diagnosticBody(result: JsonRecord, name: string, optional = false): unknown {
   const matches = entries(result.attachments, 'attachments')
     .map((attachment) => record(attachment, 'attachment'))
     .filter((attachment) => attachment.name === name);
+  if (optional && matches.length === 0) return undefined;
   if (
     matches.length !== 1 ||
     matches[0]?.contentType !== 'application/json' ||
     typeof matches[0]?.body !== 'string' ||
     matches[0].body.length > MAX_DIAGNOSTIC_BYTES * 2
   )
-    throw new Error(`Successful deployment test has no unique ${name} JSON attachment`);
+    throw new Error(`Deployment test has no unique ${name} JSON attachment`);
   const bytes = Buffer.from(matches[0].body, 'base64');
   if (bytes.length > MAX_DIAGNOSTIC_BYTES) throw new Error(`${name} exceeds diagnostic byte limit`);
   return JSON.parse(bytes.toString('utf8')) as unknown;
@@ -296,33 +299,105 @@ function forcedWebpEncoder(
   return value;
 }
 
-function retiredWebpUrls(value: unknown, target: URL): unknown {
+function isProbeHeader(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= MAX_PROBE_HEADER;
+}
+
+function retiredWebpUrls(value: unknown, target: URL, passed: boolean): unknown {
   const rows = entries(value, 'retired WebP URLs');
-  const expectedRows = RETIRED_REQUEST_MODES.flatMap((mode) =>
-    RETIRED_WEBP_DELIVERY_FILES.map((file) => ({ mode, ...file }))
-  );
-  if (rows.length !== expectedRows.length)
-    throw new Error('Incomplete retired WebP URL observations');
-  for (const [index, row] of rows.entries()) {
+  const targets = retiredWebpTargets(target);
+  if (rows.length !== targets.length) throw new Error('Incomplete retired WebP URL observations');
+  return rows.map((row, index) => {
     const evidence = record(row, 'retired URL');
-    const expected = expectedRows[index];
-    if (!expected) throw new Error('Unknown retired WebP URL');
+    const expected = targets[index]!;
+    const { mode, url, priorSha256, status, cacheControl, contentType, responseSha256 } = evidence;
+    const invalid = 'Invalid retired WebP URL observation';
+    if (mode !== expected.mode || url !== expected.url || priorSha256 !== expected.priorSha256)
+      throw new Error(invalid);
+
+    // Historical passing reports carried the seven original fields. Never infer edge or body data.
+    const original = { ...expected, status, cacheControl, contentType, responseSha256 };
+    const historical = passed && Object.keys(evidence).every((key) => Object.hasOwn(original, key));
+    const { observedAt, cfRay, cfCacheStatus, age, responseBytes, wasmMagic, error } = evidence;
     if (
-      evidence.mode !== expected.mode ||
-      evidence.url !== new URL(`/${expected.path}`, target).href ||
-      evidence.priorSha256 !== expected.sha256 ||
-      evidence.status !== 404 ||
-      typeof evidence.cacheControl !== 'string' ||
-      /\bimmutable\b/i.test(evidence.cacheControl) ||
-      typeof evidence.contentType !== 'string' ||
-      isExecutableMediaType(evidence.contentType) ||
-      typeof evidence.responseSha256 !== 'string' ||
-      !HEX_SHA256.test(evidence.responseSha256) ||
-      evidence.responseSha256 === expected.sha256
+      !historical &&
+      (typeof observedAt !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(observedAt) ||
+        Number.isNaN(Date.parse(observedAt)) ||
+        ![cfRay, cfCacheStatus, age].every((header) => header === null || isProbeHeader(header)))
     )
-      throw new Error('Invalid retired WebP URL observation');
-  }
-  return value;
+      throw new Error(invalid);
+
+    const observed = {
+      ...original,
+      observedAt,
+      cfRay,
+      cfCacheStatus,
+      age,
+      responseBytes,
+      wasmMagic,
+      error,
+    };
+    if (error === 'request-failed') {
+      if (
+        passed ||
+        ![
+          status,
+          cacheControl,
+          contentType,
+          cfRay,
+          cfCacheStatus,
+          age,
+          responseBytes,
+          responseSha256,
+          wasmMagic,
+        ].every((field) => field === null)
+      )
+        throw new Error(invalid);
+      return observed;
+    }
+    if (
+      typeof status !== 'number' ||
+      !Number.isInteger(status) ||
+      status < 100 ||
+      status > 599 ||
+      !isProbeHeader(cacheControl) ||
+      !isProbeHeader(contentType)
+    )
+      throw new Error(invalid);
+
+    if (error === 'body-unavailable') {
+      if (passed || responseBytes !== null || responseSha256 !== null || wasmMagic !== null)
+        throw new Error(invalid);
+      return observed;
+    }
+    if (
+      typeof responseSha256 !== 'string' ||
+      !HEX_SHA256.test(responseSha256) ||
+      (!historical &&
+        (typeof responseBytes !== 'number' ||
+          !Number.isSafeInteger(responseBytes) ||
+          responseBytes < 0 ||
+          typeof wasmMagic !== 'boolean' ||
+          (error !== null && error !== 'headers-too-long')))
+    )
+      throw new Error(invalid);
+    if (
+      passed &&
+      !retiredWebpResponseIsSafe({
+        status,
+        cacheControl,
+        contentType,
+        priorSha256: expected.priorSha256,
+        responseSha256,
+        // The historical producer checked magic before attaching each row.
+        wasmMagic: historical ? false : (wasmMagic as boolean),
+        error: historical ? null : (error as string | null),
+      })
+    )
+      throw new Error(invalid);
+    return historical ? original : observed;
+  });
 }
 
 /** Extract only bounded public observations; the caller owns Playwright's exit status. */
@@ -373,15 +448,15 @@ export function preserveDeploymentDiagnostics(
         retry: result.retry,
         status: result.status,
       };
-      if (result.status === 'passed') {
+      const passed = result.status === 'passed';
+      if (producer.name === 'conditional-header-observations' && mode.requireOwnedVp8Only) {
+        const retired = diagnosticBody(result, 'retired-webp-urls', !passed);
+        if (retired !== undefined) attempt.retiredUrls = retiredWebpUrls(retired, target, passed);
+      }
+      if (passed) {
         attempt.observation = diagnosticBody(result, producer.name);
         if (producer.name === 'conditional-header-observations') {
           validateConditional(attempt.observation, expected, target);
-          if (mode.requireOwnedVp8Only)
-            attempt.retiredUrls = retiredWebpUrls(
-              diagnosticBody(result, 'retired-webp-urls'),
-              target
-            );
         } else if (producer.name === 'js-transfer-timing')
           validateTiming(attempt.observation, target);
         else

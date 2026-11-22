@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import {
   appendFileSync,
   mkdtempSync,
@@ -6,9 +8,12 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { request } from 'playwright';
 import { afterEach, describe, expect, it } from 'vite-plus/test';
 
 import type { DeploymentState } from '../../../scripts/build/deployment-state';
@@ -20,6 +25,10 @@ import {
   RETIRED_WEBP_DELIVERY_FILES,
   RETIRED_WEBP_SHIM,
 } from '../../../scripts/test/retired-webp-assets';
+import {
+  collectRetiredWebpUrls,
+  retiredWebpResponseIsSafe,
+} from '../../../scripts/test/retired-webp-probes';
 
 const target = new URL('https://wasm-motion-converter.pages.dev/');
 const asset = 'assets/app-12345678.js';
@@ -64,6 +73,13 @@ const forcedEncoder = {
 const retiredUrls = RETIRED_REQUEST_MODES.flatMap((mode) =>
   RETIRED_WEBP_DELIVERY_FILES.map((file) => ({
     mode,
+    observedAt: '2026-11-22T00:00:00.000Z',
+    cfRay: 'a5e3dab81b7ceb6b-SEA',
+    cfCacheStatus: 'DYNAMIC',
+    age: null,
+    responseBytes: 432,
+    wasmMagic: false,
+    error: null,
     url: new URL(`/${file.path}`, target).href,
     priorSha256: file.sha256,
     responseSha256: '3'.repeat(64),
@@ -239,6 +255,135 @@ describe('deployment diagnostic artifact', () => {
     expect(artifact.diagnostics[0].attempts[0].retiredUrls).toEqual(retiredUrls);
   });
 
+  it('still reads the original passing seven-field observations without assigning an edge', () => {
+    const historical = retiredUrls.map(
+      ({ mode, url, priorSha256, status, cacheControl, contentType, responseSha256 }) => ({
+        mode,
+        url,
+        priorSha256,
+        status,
+        cacheControl,
+        contentType,
+        responseSha256,
+      })
+    );
+    const { file, output } = fixture(report({ final: true, retiredUrls: historical }));
+    const path = preserveDeploymentDiagnostics(file, finalState, target, 0, output, finalMode);
+    expect(JSON.parse(readFileSync(path, 'utf8')).diagnostics[0].attempts[0].retiredUrls).toEqual(
+      historical
+    );
+  });
+
+  it('collects and retains all exact requests on an unsafe edge, a transport failure and a redirect', async () => {
+    const requests: {
+      path: string;
+      cacheControl: string | undefined;
+      pragma: string | undefined;
+    }[] = [];
+    const wasm = Buffer.from('0061736d01000000', 'hex');
+    const server = createServer((req, res) => {
+      requests.push({
+        path: req.url!,
+        cacheControl: req.headers['cache-control'],
+        pragma: req.headers.pragma,
+      });
+      if (requests.length === 2) return req.socket.destroy();
+      res.setHeader('CF-Ray', 'a5e39e1c99b9ace2-MSP');
+      res.setHeader('CF-Cache-Status', 'HIT');
+      res.setHeader('Age', '42');
+      res.setHeader('Set-Cookie', 'example=private');
+      res.setHeader('Content-Type', 'text/html');
+      if (requests.length === 1) {
+        res.writeHead(200, {
+          'Cache-Control': 'public, immutable',
+          'Content-Type': 'application/wasm',
+        });
+        return res.end(wasm);
+      }
+      if (requests.length === 3) {
+        res.writeHead(302, { Location: '/not-a-probe' });
+        return res.end();
+      }
+      if (requests.length === 4) res.setHeader('Cache-Control', 'x'.repeat(512) + ',immutable');
+      res.writeHead(404);
+      return res.end('missing');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const origin = new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+    const ordinary = await request.newContext();
+    const revalidated = await request.newContext();
+    try {
+      const rows = await collectRetiredWebpUrls(origin, { ordinary, revalidated });
+      expect(requests).toEqual(
+        RETIRED_REQUEST_MODES.flatMap((mode) =>
+          RETIRED_WEBP_DELIVERY_FILES.map(({ path }) => ({
+            path: '/' + path,
+            cacheControl: mode === 'ordinary' ? undefined : 'no-cache',
+            pragma: mode === 'ordinary' ? undefined : 'no-cache',
+          }))
+        )
+      );
+      expect(rows[0]).toMatchObject({
+        status: 200,
+        cfRay: 'a5e39e1c99b9ace2-MSP',
+        cfCacheStatus: 'HIT',
+        age: '42',
+        responseSha256: createHash('sha256').update(wasm).digest('hex'),
+        responseBytes: 8,
+        wasmMagic: true,
+        error: null,
+      });
+      expect(rows[1]).toMatchObject({
+        status: null,
+        responseSha256: null,
+        error: 'request-failed',
+      });
+      expect(rows[2]?.status).toBe(302);
+      expect(rows[3]).toMatchObject({ cacheControl: 'x'.repeat(512), error: 'headers-too-long' });
+      expect(rows.map(retiredWebpResponseIsSafe)).toEqual([
+        false,
+        false,
+        false,
+        false,
+        ...Array(8).fill(true),
+      ]);
+
+      const value = report({
+        final: true,
+        retiredUrls: rows,
+        missing: 'conditional-header-observations',
+      });
+      const failed = value.suites[0]!.specs[0]!.tests[0]!;
+      failed.status = 'unexpected';
+      failed.results[0]!.status = 'failed';
+      value.stats.unexpected = 1;
+      // Other passing tests are bound to the report target.
+      for (const suite of value.suites.slice(1)) {
+        suite.specs[0]!.tests[0]!.results[0]!.status = 'skipped';
+      }
+      const { file, output } = fixture(value);
+      const path = preserveDeploymentDiagnostics(file, finalState, origin, 1, output, finalMode);
+      const artifact = JSON.parse(readFileSync(path, 'utf8'));
+      expect(artifact.playwrightExitCode).toBe(1);
+      expect(artifact.diagnostics[0].attempts).toEqual([
+        { retry: 0, status: 'failed', retiredUrls: rows },
+      ]);
+      expect(JSON.stringify(artifact)).not.toContain('example=private');
+      expect(() =>
+        preserveDeploymentDiagnostics(file, finalState, origin, 0, output, finalMode)
+      ).toThrow('did not pass');
+      failed.results[0]!.status = 'passed';
+      writeFileSync(file, JSON.stringify(value));
+      expect(() =>
+        preserveDeploymentDiagnostics(file, finalState, origin, 0, output, finalMode)
+      ).toThrow('Invalid retired WebP URL observation');
+    } finally {
+      await Promise.all([ordinary.dispose(), revalidated.dispose()]);
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('identifies the predecessor shim even when renamed, while allowing the generic Vite helper', () => {
     expect(isRetiredWebpExecutable(RETIRED_WEBP_SHIM.path)).toBe(true);
     expect(isRetiredWebpExecutable(`/${RETIRED_WEBP_SHIM.path}`)).toBe(true);
@@ -286,6 +431,9 @@ describe('deployment diagnostic artifact', () => {
         retiredUrls.filter((row) => row.priorSha256 !== caller.sha256)
       ),
       [{ ...retiredUrls[0], mode: 'revalidated' }, ...retiredUrls.slice(1)],
+      [{ ...retiredUrls[0], wasmMagic: true }, ...retiredUrls.slice(1)],
+      [{ ...retiredUrls[0], cfRay: 'X'.repeat(513) }, ...retiredUrls.slice(1)],
+      [{ ...retiredUrls[0], observedAt: 'unknown' }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], status: 302 }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], cacheControl: 'immutable' }, ...retiredUrls.slice(1)],
       [{ ...retiredUrls[0], contentType: 'application/wasm' }, ...retiredUrls.slice(1)],
