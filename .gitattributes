@@ -38,6 +38,8 @@ crates/gif-scalar-quantizer/LICENSE.pnn text eol=lf
 crates/owned-vp8/LICENSE.* text eol=lf
 crates/owned-vp8/PATENTS.* text eol=lf
 public/notices/*.txt text eol=lf
+# Recipient copies are identified by their as-delivered byte hashes.
+public/notices/historical-gif/original/*.md -text -whitespace linguist-vendored
 
 # Binary
 *.png binary
