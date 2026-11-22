@@ -238,13 +238,18 @@ impl Frame<'_> {
     }
 
     pub(super) fn affected(&self, bx: usize, by: usize) -> (usize, usize, usize, usize) {
-        let x = self.mx * 16 + bx * 8;
-        let y = self.my * 16 + by * 8;
+        self.chroma_footprint(self.mx * 16 + bx * 8, self.my * 16 + by * 8, 8)
+    }
+
+    fn chroma_footprint(&self, x: usize, y: usize, size: usize) -> (usize, usize, usize, usize) {
+        // Direct chroma maps one sample to its own two-by-two display pixels.
+        // The bicubic path can also affect neighboring pixels across the patch.
+        let halo = if self.height.is_multiple_of(2) { 0 } else { 4 };
         (
-            x.saturating_sub(4),
-            (x + 12).min(self.width),
-            y.saturating_sub(4),
-            (y + 12).min(self.height),
+            x.saturating_sub(halo),
+            (x + size + halo).min(self.width),
+            y.saturating_sub(halo),
+            (y + size + halo).min(self.height),
         )
     }
 
@@ -773,12 +778,7 @@ impl LocalCache {
     }
 
     fn build(frame: &Frame<'_>, mut chroma_sum: impl FnMut(Axis, Axis) -> (i64, i64)) -> Self {
-        let bounds = (
-            (frame.mx * 16).saturating_sub(4),
-            (frame.mx * 16 + 20).min(frame.width),
-            (frame.my * 16).saturating_sub(4),
-            (frame.my * 16 + 20).min(frame.height),
-        );
+        let bounds = frame.chroma_footprint(frame.mx * 16, frame.my * 16, 16);
         let windows = intersecting_windows(frame, bounds).expect("rate-qualified visible window");
         let x0 = windows.x0 * 4;
         let y0 = windows.y0 * 4;
@@ -927,12 +927,7 @@ impl LocalCache {
     // Score the complete U/V trial jointly. Replacing the baseline moments
     // once per rendered pixel retains chroma coupling and overlapping windows.
     pub(super) fn score_tiles(&self, frame: &Frame<'_>, u: &[u8; 64], v: &[u8; 64]) -> f64 {
-        let bounds = (
-            (frame.mx * 16).saturating_sub(4),
-            (frame.mx * 16 + 20).min(frame.width),
-            (frame.my * 16).saturating_sub(4),
-            (frame.my * 16 + 20).min(frame.height),
-        );
+        let bounds = frame.chroma_footprint(frame.mx * 16, frame.my * 16, 16);
         let Some(windows) = intersecting_windows(frame, bounds) else {
             return 0.0;
         };
@@ -1691,15 +1686,37 @@ mod tests {
                         }
                         let cache = LocalCache::new(&frame);
                         let scalar_cache = LocalCache::new_scalar(&frame);
-                        let bounds = (
+                        // The cache stores only windows that can see this tile. Check the
+                        // full original halo independently: a window excluded by the new
+                        // direct footprint cannot sample even one chroma pixel in this tile.
+                        let halo = (
                             (mx * 16).saturating_sub(4),
                             (mx * 16 + 20).min(width),
                             (my * 16).saturating_sub(4),
                             (my * 16 + 20).min(height),
                         );
-                        let windows = intersecting_windows(&frame, bounds).unwrap();
-                        for wy in windows.y0..windows.y1 {
-                            for wx in windows.x0..windows.x1 {
+                        let original_windows = intersecting_windows(&frame, halo).unwrap();
+                        let bounds = frame.chroma_footprint(mx * 16, my * 16, 16);
+                        let retained_windows = intersecting_windows(&frame, bounds).unwrap();
+                        for wy in original_windows.y0..original_windows.y1 {
+                            for wx in original_windows.x0..original_windows.x1 {
+                                if (retained_windows.y0..retained_windows.y1).contains(&wy)
+                                    && (retained_windows.x0..retained_windows.x1).contains(&wx)
+                                {
+                                    continue;
+                                }
+                                assert!(direct);
+                                for py in wy * 4..wy * 4 + 8 {
+                                    for px in wx * 4..wx * 4 + 8 {
+                                        let sx = metric_sample(px, width) / 2;
+                                        let sy = metric_sample(py, height) / 2;
+                                        assert!(sx / 8 != mx || sy / 8 != my);
+                                    }
+                                }
+                            }
+                        }
+                        for wy in retained_windows.y0..retained_windows.y1 {
+                            for wx in retained_windows.x0..retained_windows.x1 {
                                 let mut expected = [Moment::default(); 3];
                                 for dy in 0..8 {
                                     for dx in 0..8 {
