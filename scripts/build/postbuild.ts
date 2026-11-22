@@ -151,13 +151,16 @@ function verifyUiNotices(root: string, dist: string): void {
   const sections = readFileSync(resolve(dist, 'LICENSES.md'), 'utf8').split(/^## /m);
   for (const [heading, licensePath] of [
     ['Tailwind CSS', 'node_modules/tailwindcss/LICENSE'],
+    ['Tailwind CSS', 'scripts/build/modern-normalize-LICENSE.txt'],
     ['Heroicons v1', 'scripts/build/heroicons-v1-LICENSE.txt'],
     ['Heroicons v2', 'scripts/build/heroicons-v2-LICENSE.txt'],
   ] as const) {
     const license = readFileSync(resolve(root, licensePath), 'utf8').trim().replace(/\s+/g, ' ');
     const section = sections.find((text) => text.startsWith(`${heading}\n`));
     if (!license || !section?.replace(/\s+/g, ' ').includes(license)) {
-      throw new Error(`[postbuild] dist/LICENSES.md is missing the full ${heading} notice`);
+      throw new Error(
+        `[postbuild] dist/LICENSES.md is missing the full ${heading} notice (${licensePath})`
+      );
     }
   }
 }

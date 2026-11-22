@@ -2,12 +2,15 @@
 
 ## MediaBunny source for earlier releases
 
-The v0.2.4 and v0.2.5 browser builds shipped patched MediaBunny under MPL-2.0.
+The v0.2.3 through v0.2.5 browser builds shipped patched MediaBunny under MPL-2.0.
 Each published package includes its TypeScript source and license. The linked
-patch supplies the project changes for that release.
+patch supplies the project changes for that release. See the
+[historical recipient index](https://wasm-motion-converter.pages.dev/notices/historical-gif/)
+for supplemental notices and other builds.
 
 | Application release | Original MediaBunny package | Project modifications at release | Distributed notices |
 | --- | --- | --- | --- |
+| v0.2.3 | [1.59.1 package](https://registry.npmjs.org/mediabunny/-/mediabunny-1.59.1.tgz) | [1.59.1 patch](https://raw.githubusercontent.com/PiesP/wasm-motion-converter/7de3449ea709e55168d7585dc97cd73de9357f59/patches/mediabunny@1.59.1.patch) | [v0.2.3 original notice](../public/notices/historical-gif/original/f9a12fea3060d940fd7513aac0f4e9ffda3a4c10fda951e35c06b269c6a14895.md) |
 | v0.2.4 | [1.62.1 package](https://registry.npmjs.org/mediabunny/-/mediabunny-1.62.1.tgz) | [1.62.1 patch](https://raw.githubusercontent.com/PiesP/wasm-motion-converter/6de815e39678a07acf596824006fa5f41ed6329e/patches/mediabunny@1.62.1.patch) | [v0.2.4 notices](https://github.com/PiesP/wasm-motion-converter/blob/6de815e39678a07acf596824006fa5f41ed6329e/public/LICENSES.md) |
 | v0.2.5 | [1.65.2 package](https://registry.npmjs.org/mediabunny/-/mediabunny-1.65.2.tgz) | [1.65.2 patch](https://raw.githubusercontent.com/PiesP/wasm-motion-converter/90b5e592755d5885b5ad67da19175f4fc017a10f/patches/mediabunny@1.65.2.patch) | [v0.2.5 notices](https://github.com/PiesP/wasm-motion-converter/blob/90b5e592755d5885b5ad67da19175f4fc017a10f/public/LICENSES.md) |
 
