@@ -22,11 +22,12 @@
       <h1>Historical GIF sources and notices</h1>
       <p>Find the version, deployment ID, or SHA-256 of a GIF build you received. Each original
         notice is an exact copy of the delivered LICENSES.md. The filename is its SHA-256.
-        The supplemental attribution below records what we learned after distribution.</p>
+        The corrections below explain the recorded dependencies, licenses and source for earlier recipients.</p>
       <nav aria-label="Historical build records">
         <a href="#releases">Release downloads</a> · <a href="#rust">Rust deployments</a> ·
         <a href="#previews">Early previews</a> · <a href="#omissions">Early notice omissions</a> ·
-        <a href="#supplement">Supplemental attribution</a>
+        <a href="#errata">License corrections</a> · <a href="#ffmpeg">Earlier FFmpeg core</a> ·
+        <a href="#supplement">GIF attribution</a>
       </nav>
       <h2 id="releases">Release downloads</h2>
       <p>Versions v0.1.5 and v0.2.0 published the JavaScript and notice as separate assets.
@@ -84,12 +85,20 @@
       </div>
       <p>The lockfiles pin the upstream packages and their integrity values. The package patches
         for v0.2.3, v0.2.4 and v0.2.5 include wasm-webp 0.1.0 and MediaBunny 1.59.1, 1.62.1
-        and 1.65.2 respectively. See the patch directory at the commit for your version.</p>
+        and 1.65.2 respectively. See the patch directory at the commit for your version. Read the
+        <a href="#errata">license corrections</a> alongside the original notices for v0.1.5 through v0.2.3.</p>
       <h2 id="rust">Rust-era Pages deployments</h2>
       <p>Match the first eight characters of the deployment ID to the original Pages hostname.
         The first deployment used Rust for the palette and gifenc JavaScript for mapping and
         encoding. Later deployments used the Rust encoder. Each build record includes the
         compiler version, target, Cargo flags and SHA-256 of the generator, inputs and WASM.</p>
+      <p>The first ten rows used Rust 1.99.1. Its
+        <a href="https://static.rust-lang.org/dist/2026-10-15/rust-std-1.99.1-wasm32-unknown-unknown.tar.xz">official wasm32-unknown-unknown standard library archive</a>
+        includes <code>COPYRIGHT</code>, <code>LICENSE-MIT</code> and <code>LICENSE-APACHE</code>.
+        Its <a href="https://static.rust-lang.org/dist/channel-rust-1.99.1.toml">release manifest</a> records SHA-256
+        <code>5f628f857dd00a8aa3fcac2e275665d2782066a5795274ed124c5b560f46423c</code>.
+        The last five rows used Rust 1.100.0. See the
+        <a href="../rust-1.100.0.html">standard library notices for Rust 1.100.0</a>.</p>
       <div class="scroll">
         <table>
           <thead><tr><th scope="col">Deployment ID</th><th scope="col">GIF artifact SHA-256</th><th scope="col">Delivered notice and SHA-256</th><th scope="col">Source and build inputs</th></tr></thead>
@@ -190,7 +199,8 @@
       <h2 id="previews">Early Pages previews</h2>
       <p>All three preview hostnames served <code>gifenc.WHnUCFL7.js</code> (8,975 bytes,
         SHA-256 <code>9bebfc07c9afb6d14ed9e44c75830452438bb613c8d1ca8f82af56fe8465315c</code>).
-        Their full provider IDs and application commits remain unconfirmed.</p>
+        Their full provider IDs and application commits remain unconfirmed. The
+        <a href="#errata">license corrections</a> apply to the original notices linked below.</p>
       <div class="scroll">
         <table>
           <thead><tr><th scope="col">Preview hostname</th><th scope="col">Delivered notice and SHA-256</th></tr></thead>
@@ -212,179 +222,286 @@
       </div>
       <h2 id="omissions">Early deployments with an omitted gifenc notice</h2>
       <p>Of 706 early deployments with preserved notices, 666 named gifenc and 40 served the
-        same notice omitting gifenc. Recipients of the 40 builds listed below should read the
-        <a href="#supplement">supplemental attribution</a> alongside this copy.</p>
+        same notice omitting gifenc. The shared notice lists FFmpeg/ffmpeg.wasm and gif-encoder-2.
+        The recorded source for all 40 deployments declares gifenc 1.0.3, wasm-webp 0.1.0, Solid 1.9.13 and MediaBunny.
+        These revisions contain no earlier FFmpeg loader or gif-encoder-2 import in the production source.
+        The original names MediaBunny 1.46.0 for every build. The table gives the actual locked
+        version and upstream source package for each deployment. See the
+        <a href="#errata">package notices</a> and <a href="#supplement">GIF attribution</a>.</p>
       <p><a href="original/270e5bd71479a1f957b6d32117d80eeb679f4de91999fd4687b8678e6f5b5944.md">Original notice</a> <code>270e5bd71479a1f957b6d32117d80eeb679f4de91999fd4687b8678e6f5b5944</code></p>
       <details>
         <summary>Look up the 40 deployment IDs and source commits</summary>
       <div class="scroll">
         <table>
-          <thead><tr><th scope="col">Deployment ID</th><th scope="col">Recorded source commit</th></tr></thead>
+          <thead><tr><th scope="col">Deployment ID</th><th scope="col">Recorded source commit</th><th scope="col">Locked MediaBunny source</th></tr></thead>
           <tbody>
             <tr>
               <th scope="row"><code>0b766259-a08d-4ab6-bda5-8bc3faee9816</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/85923627e82a8add17769bed37f8493ec1e0c0f3">85923627e82a8add17769bed37f8493ec1e0c0f3</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.0.tgz">1.48.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>18f48fbd-bcd8-45f4-acd8-1d4ec91b8205</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/c12787ca3b3fe25cf70d0e4d0e4401fa6bcd76a1">c12787ca3b3fe25cf70d0e4d0e4401fa6bcd76a1</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>217ac463-c040-4f25-9b86-6ba32135a36d</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/44e2ce5db9998e886b6d1f3a15bb61983800393b">44e2ce5db9998e886b6d1f3a15bb61983800393b</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>3149e242-c348-4d70-862d-54d26722c590</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/aa953369ec0297ef6908d5821870479c7476250e">aa953369ec0297ef6908d5821870479c7476250e</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.0.tgz">1.48.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>3317802d-77be-4860-acbb-f1fe6d02ae89</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/d54cca7a9a75433cb954fb4c6d3494687c81cce7">d54cca7a9a75433cb954fb4c6d3494687c81cce7</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>474a8334-b831-49c8-9bb8-474e1b188ba2</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/473dba24f391922713cfb247709e3cfd2c355e05">473dba24f391922713cfb247709e3cfd2c355e05</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>4a80fd35-e51c-44b3-b2b7-0ca80715cc1b</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/d01a219a59994403b4d86890b7f46059eab00c0d">d01a219a59994403b4d86890b7f46059eab00c0d</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>4ee6240a-1e4a-4284-968e-def458de3e9b</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/f6a25f277094a70abee4ae782e92400a145b0f64">f6a25f277094a70abee4ae782e92400a145b0f64</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>51ab59c9-3721-4e61-bfc0-1b7348a919bf</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/79574963832906e9fe5f40dc6d2bed6707eea739">79574963832906e9fe5f40dc6d2bed6707eea739</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>58bfd1fe-c196-4606-9f70-88582d9e07d9</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/15048ea041de4e816398ec14abc4e46d7849f6df">15048ea041de4e816398ec14abc4e46d7849f6df</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.1.tgz">1.48.1</a></td>
             </tr>
             <tr>
               <th scope="row"><code>59c52c73-27f2-48c7-b911-360f241a76e2</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/ca057f2903c519f8cec005d057f5f1f99fe56041">ca057f2903c519f8cec005d057f5f1f99fe56041</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>65ec8783-8831-460a-b948-4d33816ec552</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/dc1ad45a9b9246b1c573caf884f795ff59c239e8">dc1ad45a9b9246b1c573caf884f795ff59c239e8</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.0.tgz">1.48.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>6727c01e-6954-4b21-a72f-c720c28474c9</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/aad9b47fc16756062561a34dce86b31efcc71320">aad9b47fc16756062561a34dce86b31efcc71320</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>6bcfca74-7454-4848-9cd1-4a8607c0ce94</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/3738946d58ba49bc7cafae46e1fdd867d5f25b2a">3738946d58ba49bc7cafae46e1fdd867d5f25b2a</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>6c04e143-ca18-4ec4-9105-4ca5494eb0ab</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/df590566cf58ac21bdd3b09475c39d5131683799">df590566cf58ac21bdd3b09475c39d5131683799</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.0.tgz">1.48.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>7d4f4700-a1d2-42b0-896f-93db90e0283e</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/8b1ec0956148dec551c98d5aee5b79b3c595e207">8b1ec0956148dec551c98d5aee5b79b3c595e207</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>80c9b04e-7fe1-4b2f-83ca-a40512eced13</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/d54cca7a9a75433cb954fb4c6d3494687c81cce7">d54cca7a9a75433cb954fb4c6d3494687c81cce7</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>8cd7074a-4742-440e-9953-c9bca5270daa</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/a7b8620fa4ac56b07624b942a6d5346b38b80d32">a7b8620fa4ac56b07624b942a6d5346b38b80d32</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.0.tgz">1.48.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>9fe8864c-7ddf-47fe-9413-78f42832118d</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/fa6d8f429cdb1db64755c4e503d9361fbce2f347">fa6d8f429cdb1db64755c4e503d9361fbce2f347</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>a2f2e453-cfba-4c81-a9d8-f274388f8ffc</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/2394c23b9e41c52aa27345b5f115ab4b2b1170bf">2394c23b9e41c52aa27345b5f115ab4b2b1170bf</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>a32661cb-1938-4eca-89c7-35bd1218f0e7</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/6404719a30da6515cd35c07d0b4416df68788f96">6404719a30da6515cd35c07d0b4416df68788f96</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>a822f648-1da0-47d5-a066-6fa666f6637c</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/e1f2c5394da68893b791ecc629de2d259d142df2">e1f2c5394da68893b791ecc629de2d259d142df2</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.0.tgz">1.48.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>a85d38fb-0d60-4f66-9d8b-fe40058fc7dc</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/bfabe6a75334c541fc69eb267815499dc5ab6446">bfabe6a75334c541fc69eb267815499dc5ab6446</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>adea0105-910e-491e-bed7-bc14bd98eb2d</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/1fbc8378ad7ed613633eb7575d6d97d4d674abd1">1fbc8378ad7ed613633eb7575d6d97d4d674abd1</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>b65f4922-3859-4b08-ba72-9b7b7934518e</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/f8e48f182528f9e550d9193f1b700dc8b12bcd4e">f8e48f182528f9e550d9193f1b700dc8b12bcd4e</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>c9c332b2-53b0-45c6-8863-b66bd2707b2a</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/c2fa264b70a51d096bcf301557be9bda5e5264cd">c2fa264b70a51d096bcf301557be9bda5e5264cd</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.1.tgz">1.48.1</a></td>
             </tr>
             <tr>
               <th scope="row"><code>ce69065d-7377-4df5-a038-00de1d9df22e</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/f6a25f277094a70abee4ae782e92400a145b0f64">f6a25f277094a70abee4ae782e92400a145b0f64</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>cf9101b3-c968-40c6-bc5f-3e5c944ec07b</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/6801e5f864a1678b29e7e748d802db2255e72363">6801e5f864a1678b29e7e748d802db2255e72363</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>cff2d4c8-a51e-4ac4-be32-75cf29b378f6</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/e8eef4f13049162c77d80b1a17bacb49c336694e">e8eef4f13049162c77d80b1a17bacb49c336694e</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.1.tgz">1.48.1</a></td>
             </tr>
             <tr>
               <th scope="row"><code>d4097c90-ebc5-4d67-b46f-a0bb6ced3db3</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/0b8d16fb908e003ebcf2b088bc6c4756b4be1392">0b8d16fb908e003ebcf2b088bc6c4756b4be1392</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.1.tgz">1.48.1</a></td>
             </tr>
             <tr>
               <th scope="row"><code>d6ba7ce4-dafc-490d-bb4c-a264311b9d76</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/fa6d8f429cdb1db64755c4e503d9361fbce2f347">fa6d8f429cdb1db64755c4e503d9361fbce2f347</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>d9210257-7134-455e-b382-63005476ae35</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/b0d2e1d41530775bdbe71b3a73b37ac03f064fed">b0d2e1d41530775bdbe71b3a73b37ac03f064fed</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.0.tgz">1.48.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>d9e87be5-5a7d-4f92-93f3-71bc544bd614</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/2d1ddbf5f6ded09d7898b9eefde72951c8a602fb">2d1ddbf5f6ded09d7898b9eefde72951c8a602fb</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>db402680-8c40-4ae1-8a85-a802ea6fc882</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/43b9e7a57faea64af82000e83c3bb337be69482f">43b9e7a57faea64af82000e83c3bb337be69482f</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.0.tgz">1.48.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>e280ffd4-d36c-4d5e-992b-3c9a03c57a62</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/169f7a1d7b8bd7f28e584804d2f7d8aadd07515a">169f7a1d7b8bd7f28e584804d2f7d8aadd07515a</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.1.tgz">1.48.1</a></td>
             </tr>
             <tr>
               <th scope="row"><code>e47ffbfd-09fb-46bd-b636-af6154abff0d</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/1fbc8378ad7ed613633eb7575d6d97d4d674abd1">1fbc8378ad7ed613633eb7575d6d97d4d674abd1</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>e6f071f7-7898-4b53-80bd-6d58f69b9799</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/df590566cf58ac21bdd3b09475c39d5131683799">df590566cf58ac21bdd3b09475c39d5131683799</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.48.0.tgz">1.48.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>f15c3d3d-d4a0-459a-b2c6-2b16c814c605</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/62120d37456814dceee4069f0c2a6ca6a11caab1">62120d37456814dceee4069f0c2a6ca6a11caab1</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.46.0.tgz">1.46.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>f3aacff1-4a97-4f03-baeb-2fabe2039aa6</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/3017131036c372ef6815328dd84fe1e4a3f46fd9">3017131036c372ef6815328dd84fe1e4a3f46fd9</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
             <tr>
               <th scope="row"><code>ff4c2f4f-65ce-44a8-a150-bc765f4f95f1</code></th>
               <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/9139f221b80e3923ce3a5479b680de6cf1aba05d">9139f221b80e3923ce3a5479b680de6cf1aba05d</a></td>
+              <td><a href="https://registry.npmjs.org/mediabunny/-/mediabunny-1.47.0.tgz">1.47.0</a></td>
             </tr>
           </tbody>
         </table>
       </div>
       </details>
+      <h2 id="errata">Corrections to earlier third-party notices</h2>
+      <p>Of 706 early deployment notices checked, 622 contained the same inaccurate MPL summary
+        and generic MIT copyright. Match the SHA-256 of your original LICENSES.md against the
+        <a href="early-notice-fingerprints.tsv">121 notice fingerprints and package versions (TSV)</a>.
+        Each row gives the number of observed deployments with those exact bytes. MediaBunny,
+        Solid and browser-core versions are as named in that notice. A dash means browser-core
+        was absent from the notice. Five historical download versions (v0.1.5 and v0.2.0–v0.2.3)
+        and the three previews above also have matching notice fingerprints.</p>
+      <p>Search the <a href="early-deployment-sources.tsv">622 deployment IDs and source commits (TSV)</a>
+        by the eight-character ID from your Pages hostname. Follow the application source link for
+        that build. Two original notice fingerprints each correspond to more than one MediaBunny
+        patch state. Use the deployment ID to select the exact source and the patch at
+        <code>patches/mediabunny@VERSION.patch</code>. The table gives its SHA-256 and the
+        browser-core submodule commit when present. A dash in either column means the build used
+        no MediaBunny patch or no browser-core submodule, respectively.</p>
+      <p><strong>MediaBunny (MPL 2.0).</strong> Section 5.2 terminates the grants in section 2.1
+        if a recipient initiates specified patent litigation alleging that a Contributor Version
+        infringes a patent. The provision excludes declaratory judgments, counterclaims and cross-claims.
+        The statement in the old notices that no patent retaliation clause applies is incorrect.
+        See <a href="https://www.mozilla.org/en-US/MPL/2.0/#termination">MPL 2.0, section 5</a>
+        and <a href="https://www.mozilla.org/en-US/MPL/2.0/#distribution-of-executable-form">section 3.2 on executable distribution and access to source</a>.
+        Use the lockfile and any project patch in the corresponding source commit to recover the
+        applicable MediaBunny source.</p>
+      <p><strong>MIT and native component notices.</strong> The generic copyright line in the old
+        notice omitted the following individual notices. Read the full license and upstream terms
+        for the package used by your build.</p>
+      <ul>
+        <li>gifenc 1.0.3 — copyright © 2017 Matt DesLauriers.
+          The <a href="#supplement">GIF supplement</a> links to the original MIT notice,
+          package source and PNN/LZW credits.</li>
+        <li>Solid — copyright © 2016–2025 Ryan Carniato. The four affected published packages carry
+          the same <a href="https://cdn.jsdelivr.net/npm/solid-js@1.9.13/LICENSE">MIT license</a>.
+          The source packages are
+          <a href="https://registry.npmjs.org/solid-js/-/solid-js-1.9.13.tgz">1.9.13</a>,
+          <a href="https://registry.npmjs.org/solid-js/-/solid-js-1.9.14.tgz">1.9.14</a>,
+          <a href="https://registry.npmjs.org/solid-js/-/solid-js-1.9.15.tgz">1.9.15</a> and
+          <a href="https://registry.npmjs.org/solid-js/-/solid-js-1.9.17.tgz">1.9.17</a>.</li>
+        <li>wasm-webp 0.1.0 JavaScript wrapper — copyright © 2024 nieyuyao0826@hotmail.com.
+          Read the <a href="https://cdn.jsdelivr.net/npm/wasm-webp@0.1.0/LICENSE">wrapper MIT notice</a>,
+          <a href="https://registry.npmjs.org/wasm-webp/-/wasm-webp-0.1.0.tgz">original package</a> and
+          <a href="https://github.com/PiesP/wasm-motion-converter/blob/c95c7e1fa5c5c670560d895d244c5df4700d8bc3/scripts/build/wasm-webp-NOTICES.txt">native and generated code notices</a>.
+          These include Google’s libwebp BSD terms and patent grant, and Emscripten notices.
+          The published WASM and the wrapper’s referenced source tree contain different WASM files.</li>
+        <li>@piesp/browser-core — recorded as a local 0.1.0 dependency in 439 of the 622 notices.
+          The <a href="https://github.com/PiesP/browser-core/blob/2c9f6acf86a72883cd145434ce6ade4f467e629f/LICENSE">MIT license</a>
+          names copyright © 2024–2026 PiesP. The earlier
+          <a href="https://github.com/PiesP/browser-core/tree/3b7d18921cc3300851db8fd03353e0afa95fa7c0">3b7d1892 snapshot</a>,
+          used by v0.1.5 and 11 of the 622 Pages observations, contains no license file or package license field. The later MIT text
+          first appears in commit 2c9f6acf. Request the maintainer’s disposition for that earlier snapshot in
+          <a href="https://github.com/PiesP/wasm-motion-converter/issues/532">issue #532</a>.</li>
+      </ul>
+      <h2 id="ffmpeg">Earlier CDN-loaded FFmpeg core</h2>
+      <p>The <a href="https://github.com/PiesP/wasm-motion-converter/blob/dd114f79beb142b1464d5819d15b1f35a0006099/public/LICENSES.md#L72-L80">notice at dd114f79</a>
+        described the core as LGPL 2.1+. That source recorded an
+        <a href="https://github.com/PiesP/wasm-motion-converter/blob/dd114f79beb142b1464d5819d15b1f35a0006099/public/cdn-integrity.json#L69-L76">integrity pin</a>
+        for the multithreaded <a href="https://registry.npmjs.org/@ffmpeg/core-mt/0.12.10">@ffmpeg/core-mt 0.12.10</a> package.
+        The 32,718,323-byte external CDN WASM matched
+        <code>sha384-IXnr5PE2UFcQ5DvI5LyubPqmMF46EkyIMlbdn4CNQR1iQ8/2irEkyhDFnVDxv4f/</code>
+        and contained <code>--enable-gpl</code>, <code>--enable-libx264</code> and <code>--enable-libx265</code>.
+        The package declares GPL-2.0-or-later, consistent with
+        <a href="https://ffmpeg.org/legal.html">FFmpeg’s licensing for GPL-enabled builds</a>.
+        This observation identifies the source pin and external object. Delivery from a specific
+        Pages deployment at dd114f79 and receipt by any individual user remain unverified.</p>
       <h2 id="supplement">Supplemental attribution for historical builds</h2>
       <p>This correction applies to the historical gifenc code and its Rust adaptations.
         Read it alongside the original notice for your build.</p>
