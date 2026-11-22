@@ -3,8 +3,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { DeploymentState } from '../build/deployment-state.ts';
+import type { DeploymentFile, DeploymentState } from '../build/deployment-state.ts';
 import {
+  isExecutableMediaType,
   isRetiredWebpExecutable,
   isUnexpectedWasm,
   LEGACY_WEBP_DEPLOYMENT,
@@ -13,6 +14,8 @@ import {
 } from './retired-webp-assets.ts';
 import {
   MAX_PROBE_HEADER,
+  RETIRED_WEBP_TEST,
+  retirementErrorDocument,
   retiredWebpResponseIsSafe,
   retiredWebpTargets,
 } from './retired-webp-probes.ts';
@@ -232,6 +235,7 @@ function firstConversionObservation(
 type DiagnosticMode = {
   requireOwnedVp8Only?: boolean;
   expectedManifestSha256?: string;
+  requireIndependentRetirementTest?: boolean;
 };
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
 
@@ -303,7 +307,12 @@ function isProbeHeader(value: unknown): value is string {
   return typeof value === 'string' && value.length <= MAX_PROBE_HEADER;
 }
 
-function retiredWebpUrls(value: unknown, target: URL, passed: boolean): unknown {
+function retiredWebpUrls(
+  value: unknown,
+  target: URL,
+  passed: boolean,
+  expectedDocument?: DeploymentFile
+): unknown {
   const rows = entries(value, 'retired WebP URLs');
   const targets = retiredWebpTargets(target);
   if (rows.length !== targets.length) throw new Error('Incomplete retired WebP URL observations');
@@ -317,7 +326,10 @@ function retiredWebpUrls(value: unknown, target: URL, passed: boolean): unknown 
 
     // Historical passing reports carried the seven original fields. Never infer edge or body data.
     const original = { ...expected, status, cacheControl, contentType, responseSha256 };
-    const historical = passed && Object.keys(evidence).every((key) => Object.hasOwn(original, key));
+    const historical =
+      !expectedDocument &&
+      passed &&
+      Object.keys(evidence).every((key) => Object.hasOwn(original, key));
     const { observedAt, cfRay, cfCacheStatus, age, responseBytes, wasmMagic, error } = evidence;
     if (
       !historical &&
@@ -361,8 +373,8 @@ function retiredWebpUrls(value: unknown, target: URL, passed: boolean): unknown 
       !Number.isInteger(status) ||
       status < 100 ||
       status > 599 ||
-      !isProbeHeader(cacheControl) ||
-      !isProbeHeader(contentType)
+      (cacheControl !== null && !isProbeHeader(cacheControl)) ||
+      (contentType !== null && !isProbeHeader(contentType))
     )
       throw new Error(invalid);
 
@@ -382,20 +394,32 @@ function retiredWebpUrls(value: unknown, target: URL, passed: boolean): unknown 
           (error !== null && error !== 'headers-too-long')))
     )
       throw new Error(invalid);
-    if (
-      passed &&
-      !retiredWebpResponseIsSafe({
-        status,
-        cacheControl,
-        contentType,
-        priorSha256: expected.priorSha256,
-        responseSha256,
-        // The historical producer checked magic before attaching each row.
-        wasmMagic: historical ? false : (wasmMagic as boolean),
-        error: historical ? null : (error as string | null),
-      })
-    )
-      throw new Error(invalid);
+    if (passed) {
+      // Older reports predate comparison with the error document and the independent test.
+      // Validate them against the conditions their producer actually evaluated.
+      const safe = expectedDocument
+        ? retiredWebpResponseIsSafe(
+            {
+              status,
+              cacheControl,
+              contentType,
+              priorSha256: expected.priorSha256,
+              responseSha256,
+              responseBytes: responseBytes as number,
+              wasmMagic: wasmMagic as boolean,
+              error: error as string | null,
+            },
+            expectedDocument
+          )
+        : status === 404 &&
+          cacheControl !== null &&
+          !/\bimmutable\b/i.test(cacheControl) &&
+          contentType !== null &&
+          !isExecutableMediaType(contentType) &&
+          responseSha256 !== expected.priorSha256 &&
+          (historical || (wasmMagic === false && error === null));
+      if (!safe) throw new Error(invalid);
+    }
     return historical ? original : observed;
   });
 }
@@ -412,7 +436,19 @@ export function preserveDeploymentDiagnostics(
   const report = record(JSON.parse(readBoundedReport(reportFile)), 'report');
   const specs = observedTests(report);
   const runId = randomUUID();
-  const diagnostics = PRODUCERS.map((producer) => {
+  const retirementProducer = {
+    file: 'e2e/deploy-smoke.spec.ts',
+    title: RETIRED_WEBP_TEST,
+    name: 'retired-webp-urls',
+  } as const;
+  const independent =
+    mode.requireOwnedVp8Only &&
+    (mode.requireIndependentRetirementTest ||
+      specs.some(
+        (spec) => spec.file === retirementProducer.file && spec.title === retirementProducer.title
+      ));
+  const producers = independent ? [...PRODUCERS, retirementProducer] : PRODUCERS;
+  const diagnostics = producers.map((producer) => {
     const matches = specs.filter(
       (spec) =>
         spec.file === producer.file &&
@@ -449,11 +485,22 @@ export function preserveDeploymentDiagnostics(
         status: result.status,
       };
       const passed = result.status === 'passed';
-      if (producer.name === 'conditional-header-observations' && mode.requireOwnedVp8Only) {
+      if (
+        producer.name === 'retired-webp-urls' ||
+        (!independent &&
+          producer.name === 'conditional-header-observations' &&
+          mode.requireOwnedVp8Only)
+      ) {
         const retired = diagnosticBody(result, 'retired-webp-urls', !passed);
-        if (retired !== undefined) attempt.retiredUrls = retiredWebpUrls(retired, target, passed);
+        if (retired !== undefined)
+          attempt.retiredUrls = retiredWebpUrls(
+            retired,
+            target,
+            passed,
+            independent ? retirementErrorDocument(expected.files) : undefined
+          );
       }
-      if (passed) {
+      if (passed && producer.name !== 'retired-webp-urls') {
         attempt.observation = diagnosticBody(result, producer.name);
         if (producer.name === 'conditional-header-observations') {
           validateConditional(attempt.observation, expected, target);

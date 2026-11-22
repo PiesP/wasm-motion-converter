@@ -299,6 +299,7 @@ export async function verifyPublication(): Promise<void> {
   const diagnosticMode = requireOwnedVp8Only
     ? {
         requireOwnedVp8Only,
+        requireIndependentRetirementTest: true,
         expectedManifestSha256: createHash('sha256').update(artifact).digest('hex'),
       }
     : {};
