@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Historical GIF sources and notices · dropconvert</title>
+    <style>
+      body { font: 1rem/1.5 system-ui, sans-serif; margin: 1.5rem auto; max-width: 82rem; padding: 0 1rem; }
+      h1, h2, h3 { line-height: 1.2; }
+      h2 { margin-top: 2.5rem; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; vertical-align: top; padding: .6rem; border: 1px solid #888; }
+      th[scope="row"], td, code { overflow-wrap: anywhere; }
+      td p { margin: 0 0 .5rem; }
+      .scroll { overflow-x: auto; }
+      summary { cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a href="../index.html">All licenses and source notices</a>
+      <h1>Historical GIF sources and notices</h1>
+      <p>Find the version, deployment ID, or SHA-256 of a GIF build you received. Each original
+        notice is an exact copy of the delivered LICENSES.md. The filename is its SHA-256.
+        The supplemental attribution below records what we learned after distribution.</p>
+      <nav aria-label="Historical build records">
+        <a href="#releases">Release downloads</a> · <a href="#rust">Rust deployments</a> ·
+        <a href="#previews">Early previews</a> · <a href="#omissions">Early notice omissions</a> ·
+        <a href="#supplement">Supplemental attribution</a>
+      </nav>
+      <h2 id="releases">Release downloads</h2>
+      <p>Versions v0.1.5 and v0.2.0 published the JavaScript and notice as separate assets.
+        Later versions included both in a tar archive. For v0.1.5, v0.2.0, v0.2.1 and v0.2.3,
+        the checked-in notice has a different generation date from the delivered copy.
+        These releases used gifenc 1.0.3 for quantization, palette mapping and encoding.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th scope="col">Version</th><th scope="col">Asset and GIF JavaScript SHA-256</th><th scope="col">Delivered notice and SHA-256</th><th scope="col">Source and build inputs</th></tr></thead>
+          <tbody>
+            <tr>
+              <th scope="row">v0.1.5</th>
+              <td><p>gifenc.CfSnNMp-.js (asset 482511653)<br /><code>b445615e38fbb301b1131a56283df53f0db2cb9926751729657aefcbcd9cf302</code></p></td>
+              <td><a href="original/e34d5e892b370b8cfc4ad29762b831545a610e5d5b6bd55c9a6f4da9481d1823.md">Original notice</a> <code>e34d5e892b370b8cfc4ad29762b831545a610e5d5b6bd55c9a6f4da9481d1823</code><br />Notice asset 482511651</td>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/b08ab33a166854787a41b0d3aa626cb8f4e95de3">b08ab33a16</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/b08ab33a166854787a41b0d3aa626cb8f4e95de3/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/b08ab33a166854787a41b0d3aa626cb8f4e95de3/package.json">pnpm@11.2.2</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/b08ab33a166854787a41b0d3aa626cb8f4e95de3/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/3b7d18921cc3300851db8fd03353e0afa95fa7c0">browser-core 3b7d18921c</a></td>
+            </tr>
+            <tr>
+              <th scope="row">v0.2.0</th>
+              <td><p>gifenc.Bftcc3u8.js (asset 503496999)<br /><code>1ba49a121be346fd995a71e207cea39bc544234301516f2c45ccfa08813bb845</code></p></td>
+              <td><a href="original/4797ada68f2fb39573ed840caeda9850e8d49643d5f6beb1790f0bb34049f5e8.md">Original notice</a> <code>4797ada68f2fb39573ed840caeda9850e8d49643d5f6beb1790f0bb34049f5e8</code><br />Notice asset 503496991</td>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/63bfc1966b81afb3e4074257c5472f9d296b9d42">63bfc1966b</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/63bfc1966b81afb3e4074257c5472f9d296b9d42/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/63bfc1966b81afb3e4074257c5472f9d296b9d42/package.json">pnpm@11.17.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/63bfc1966b81afb3e4074257c5472f9d296b9d42/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/870606832fbab3bf210297913f42b27947f15611">browser-core 870606832f</a></td>
+            </tr>
+            <tr>
+              <th scope="row">v0.2.1</th>
+              <td><p>wasm-motion-converter-0.2.1.tar.gz (asset 503526044)<br /><code>f245af87831497724bc5b2eed319197872a0e82045d38fbd142e79d0fd6161a3</code></p><p>./assets/gifenc.Bftcc3u8.js<br /><code>1ba49a121be346fd995a71e207cea39bc544234301516f2c45ccfa08813bb845</code></p></td>
+              <td><a href="original/4797ada68f2fb39573ed840caeda9850e8d49643d5f6beb1790f0bb34049f5e8.md">Original notice</a> <code>4797ada68f2fb39573ed840caeda9850e8d49643d5f6beb1790f0bb34049f5e8</code></td>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/502dc4c0799f3de2e2d90df556585e6b91a124fa">502dc4c079</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/502dc4c0799f3de2e2d90df556585e6b91a124fa/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/502dc4c0799f3de2e2d90df556585e6b91a124fa/package.json">pnpm@11.17.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/502dc4c0799f3de2e2d90df556585e6b91a124fa/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/870606832fbab3bf210297913f42b27947f15611">browser-core 870606832f</a></td>
+            </tr>
+            <tr>
+              <th scope="row">v0.2.2</th>
+              <td><p>wasm-motion-converter-0.2.2.tar.gz (asset 581581746)<br /><code>997e8e270b35847ef05d2c09ab1dd9f735dd0add707e1c94aff00b93fe94d6f2</code></p><p>./assets/gifenc.BflCamI7.js<br /><code>bd474b99ec94dfa77fec069d853b691e935f2656e3b97517f2a06419c76a1480</code></p></td>
+              <td><a href="original/9ed31fb6f4af612cb4f0f839858b2775ba51b40e0bc54ac7decdbc79a1696675.md">Original notice</a> <code>9ed31fb6f4af612cb4f0f839858b2775ba51b40e0bc54ac7decdbc79a1696675</code></td>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/4500d6193bdd576a7a5050b7eb280be0e67eb53b">4500d6193b</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/4500d6193bdd576a7a5050b7eb280be0e67eb53b/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/4500d6193bdd576a7a5050b7eb280be0e67eb53b/package.json">pnpm@11.26.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/4500d6193bdd576a7a5050b7eb280be0e67eb53b/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/53cd39ab5eeee11f6e19d8d85e39b157ecd5b797">browser-core 53cd39ab5e</a></td>
+            </tr>
+            <tr>
+              <th scope="row">v0.2.3</th>
+              <td><p>wasm-motion-converter-0.2.3.tar.gz (asset 626372335)<br /><code>e0cff3fbb1156681db540d6427c0a2201f8a6ce9c982501d5ae07291699daaf6</code></p><p>./assets/gifenc.BflCamI7.js<br /><code>bd474b99ec94dfa77fec069d853b691e935f2656e3b97517f2a06419c76a1480</code></p></td>
+              <td><a href="original/f9a12fea3060d940fd7513aac0f4e9ffda3a4c10fda951e35c06b269c6a14895.md">Original notice</a> <code>f9a12fea3060d940fd7513aac0f4e9ffda3a4c10fda951e35c06b269c6a14895</code></td>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/7de3449ea709e55168d7585dc97cd73de9357f59">7de3449ea7</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/7de3449ea709e55168d7585dc97cd73de9357f59/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/7de3449ea709e55168d7585dc97cd73de9357f59/package.json">pnpm@11.26.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/7de3449ea709e55168d7585dc97cd73de9357f59/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/5af10d3d6832507ce81d88164bc0af6bba4edb10">browser-core 5af10d3d68</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/7de3449ea709e55168d7585dc97cd73de9357f59/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row">v0.2.4</th>
+              <td><p>wasm-motion-converter-0.2.4.tar.gz (asset 683736692)<br /><code>2975b616bb7f1c4200a3abc0aae73dd35ce547db1ee9d661690b5bac127f8712</code></p><p>./assets/gifenc.VW7PxvxG.js<br /><code>d64ddd89cebaec97a3105762815a0c14e1af3c48505a6122b9361db0af5e91d5</code></p></td>
+              <td><a href="original/e3efdf8a72d9deae2253d226059d7d0103b90e67c9f0bb010b7d929ae25a6ca5.md">Original notice</a> <code>e3efdf8a72d9deae2253d226059d7d0103b90e67c9f0bb010b7d929ae25a6ca5</code></td>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/6de815e39678a07acf596824006fa5f41ed6329e">6de815e396</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6de815e39678a07acf596824006fa5f41ed6329e/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6de815e39678a07acf596824006fa5f41ed6329e/package.json">pnpm@12.15.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6de815e39678a07acf596824006fa5f41ed6329e/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/b783358a3dd3bf167cf89a6df550166ded36dbd1">browser-core b783358a3d</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/6de815e39678a07acf596824006fa5f41ed6329e/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row">v0.2.5</th>
+              <td><p>wasm-motion-converter-0.2.5.tar.gz (asset 733879529)<br /><code>abc2bb7593090df2a63712f567ae19145eac131cf180e7c85a6ff1cdec93fc47</code></p><p>./assets/gifenc.DX9XWy_R.js<br /><code>47afbf7008b2e1c73f1c17fd4ecd2d461d736560222f6344e584f6d619565ef1</code></p></td>
+              <td><a href="original/25f6937fa78d4e00f879d1a75bdf17606fa256726d35151d31ed700e9eee515a.md">Original notice</a> <code>25f6937fa78d4e00f879d1a75bdf17606fa256726d35151d31ed700e9eee515a</code></td>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/90b5e592755d5885b5ad67da19175f4fc017a10f">90b5e59275</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/90b5e592755d5885b5ad67da19175f4fc017a10f/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/90b5e592755d5885b5ad67da19175f4fc017a10f/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/90b5e592755d5885b5ad67da19175f4fc017a10f/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/068b57a6a37c0d8a0af8e151d0c160250ce3d105">browser-core 068b57a6a3</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/90b5e592755d5885b5ad67da19175f4fc017a10f/patches">package patches</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The lockfiles pin the upstream packages and their integrity values. The package patches
+        for v0.2.3, v0.2.4 and v0.2.5 include wasm-webp 0.1.0 and MediaBunny 1.59.1, 1.62.1
+        and 1.65.2 respectively. See the patch directory at the commit for your version.</p>
+      <h2 id="rust">Rust-era Pages deployments</h2>
+      <p>Match the first eight characters of the deployment ID to the original Pages hostname.
+        The first deployment used Rust for the palette and gifenc JavaScript for mapping and
+        encoding. Later deployments used the Rust encoder. Each build record includes the
+        compiler version, target, Cargo flags and SHA-256 of the generator, inputs and WASM.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th scope="col">Deployment ID</th><th scope="col">GIF artifact SHA-256</th><th scope="col">Delivered notice and SHA-256</th><th scope="col">Source and build inputs</th></tr></thead>
+          <tbody>
+            <tr>
+              <th scope="row"><code>947106ea-ea4f-4975-b740-72b662137755</code></th>
+              <td><p>gif-scalar-quantizer-DgmIIy2L.wasm<br /><code>fb6b33b702fb4aae6a0e9f2cc36a799c16ef6db46be942ac2fa409a9795264c3</code></p><p>gifenc.DX9XWy_R.js<br /><code>47afbf7008b2e1c73f1c17fd4ecd2d461d736560222f6344e584f6d619565ef1</code></p></td>
+              <td><a href="original/0f70aa15883b9f45d6e56b9c4528f6d384bad50a114303d550fb2c1a5b22bfd9.md">Original notice</a> <code>0f70aa15883b9f45d6e56b9c4528f6d384bad50a114303d550fb2c1a5b22bfd9</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/60902dc9d3c7cf6c9c08d43e3df7c332a2ba8654/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/60902dc9d3c7cf6c9c08d43e3df7c332a2ba8654/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/60902dc9d3c7cf6c9c08d43e3df7c332a2ba8654/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/60902dc9d3c7cf6c9c08d43e3df7c332a2ba8654">60902dc9d3</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/60902dc9d3c7cf6c9c08d43e3df7c332a2ba8654/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/60902dc9d3c7cf6c9c08d43e3df7c332a2ba8654/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/60902dc9d3c7cf6c9c08d43e3df7c332a2ba8654/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/4638d703806b38734430a761104ee73512cbdf5c">browser-core 4638d70380</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/60902dc9d3c7cf6c9c08d43e3df7c332a2ba8654/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>c91b5cec-ef64-43bb-9a8a-9ebd26169b5e</code></th>
+              <td><p>gif-scalar-quantizer-CAMC1X-v.wasm<br /><code>fe8e5086cbf89d43ad962f18ab3b506d5821b51138ee83770d54715dacf07dbf</code></p></td>
+              <td><a href="original/fcbb64d5546a5b6e485b3c808f71d45486006915ef04272c521b0daee135cc67.md">Original notice</a> <code>fcbb64d5546a5b6e485b3c808f71d45486006915ef04272c521b0daee135cc67</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/f2d6bf67e4a1e3509e92b439901acb5a922b6914/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/f2d6bf67e4a1e3509e92b439901acb5a922b6914/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/f2d6bf67e4a1e3509e92b439901acb5a922b6914/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/f2d6bf67e4a1e3509e92b439901acb5a922b6914">f2d6bf67e4</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/f2d6bf67e4a1e3509e92b439901acb5a922b6914/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/f2d6bf67e4a1e3509e92b439901acb5a922b6914/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/f2d6bf67e4a1e3509e92b439901acb5a922b6914/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/4638d703806b38734430a761104ee73512cbdf5c">browser-core 4638d70380</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/f2d6bf67e4a1e3509e92b439901acb5a922b6914/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>0fd78e6d-d2d6-44c9-9aed-fccf21c774f4</code></th>
+              <td><p>gif-scalar-quantizer-CAMC1X-v.wasm<br /><code>fe8e5086cbf89d43ad962f18ab3b506d5821b51138ee83770d54715dacf07dbf</code></p></td>
+              <td><a href="original/fcbb64d5546a5b6e485b3c808f71d45486006915ef04272c521b0daee135cc67.md">Original notice</a> <code>fcbb64d5546a5b6e485b3c808f71d45486006915ef04272c521b0daee135cc67</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/6870f1e0e4a702ba04863bfa234d604c9e01f3ba/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6870f1e0e4a702ba04863bfa234d604c9e01f3ba/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6870f1e0e4a702ba04863bfa234d604c9e01f3ba/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/6870f1e0e4a702ba04863bfa234d604c9e01f3ba">6870f1e0e4</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6870f1e0e4a702ba04863bfa234d604c9e01f3ba/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6870f1e0e4a702ba04863bfa234d604c9e01f3ba/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6870f1e0e4a702ba04863bfa234d604c9e01f3ba/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/4638d703806b38734430a761104ee73512cbdf5c">browser-core 4638d70380</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/6870f1e0e4a702ba04863bfa234d604c9e01f3ba/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>c054b80f-06f6-47cf-92b0-94dc560dc4bf</code></th>
+              <td><p>gif-scalar-quantizer-Dtg-UZzk.wasm<br /><code>b9ac86604ce9fbd372139cc53446e173cb4c4ca4b28cd3d15e7e56f6b5728156</code></p></td>
+              <td><a href="original/fcbb64d5546a5b6e485b3c808f71d45486006915ef04272c521b0daee135cc67.md">Original notice</a> <code>fcbb64d5546a5b6e485b3c808f71d45486006915ef04272c521b0daee135cc67</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/95f14d1f2e46fb5ab6db59ace03bc2b157c7982a/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/95f14d1f2e46fb5ab6db59ace03bc2b157c7982a/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/95f14d1f2e46fb5ab6db59ace03bc2b157c7982a/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/95f14d1f2e46fb5ab6db59ace03bc2b157c7982a">95f14d1f2e</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/95f14d1f2e46fb5ab6db59ace03bc2b157c7982a/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/95f14d1f2e46fb5ab6db59ace03bc2b157c7982a/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/95f14d1f2e46fb5ab6db59ace03bc2b157c7982a/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/4638d703806b38734430a761104ee73512cbdf5c">browser-core 4638d70380</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/95f14d1f2e46fb5ab6db59ace03bc2b157c7982a/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>47cbc6d5-786a-436a-97cc-18e1fc2255d3</code></th>
+              <td><p>gif-scalar-quantizer-Dtg-UZzk.wasm<br /><code>b9ac86604ce9fbd372139cc53446e173cb4c4ca4b28cd3d15e7e56f6b5728156</code></p></td>
+              <td><a href="original/a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a.md">Original notice</a> <code>a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/be35f5fa89a60189475fe2ef7fd446e9fa18cef4/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/be35f5fa89a60189475fe2ef7fd446e9fa18cef4/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/be35f5fa89a60189475fe2ef7fd446e9fa18cef4/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/be35f5fa89a60189475fe2ef7fd446e9fa18cef4">be35f5fa89</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/be35f5fa89a60189475fe2ef7fd446e9fa18cef4/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/be35f5fa89a60189475fe2ef7fd446e9fa18cef4/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/be35f5fa89a60189475fe2ef7fd446e9fa18cef4/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/4638d703806b38734430a761104ee73512cbdf5c">browser-core 4638d70380</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/be35f5fa89a60189475fe2ef7fd446e9fa18cef4/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>15ce561a-c4ca-467d-af0f-e2fd6dbfd214</code></th>
+              <td><p>gif-scalar-quantizer-Dtg-UZzk.wasm<br /><code>b9ac86604ce9fbd372139cc53446e173cb4c4ca4b28cd3d15e7e56f6b5728156</code></p></td>
+              <td><a href="original/a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a.md">Original notice</a> <code>a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/a49c5f3ead8b85914aefcd1041912037fc5151aa/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/a49c5f3ead8b85914aefcd1041912037fc5151aa/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/a49c5f3ead8b85914aefcd1041912037fc5151aa/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/a49c5f3ead8b85914aefcd1041912037fc5151aa">a49c5f3ead</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/a49c5f3ead8b85914aefcd1041912037fc5151aa/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/a49c5f3ead8b85914aefcd1041912037fc5151aa/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/a49c5f3ead8b85914aefcd1041912037fc5151aa/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/4638d703806b38734430a761104ee73512cbdf5c">browser-core 4638d70380</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/a49c5f3ead8b85914aefcd1041912037fc5151aa/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>363216db-34aa-46a8-9a36-d60c3d05da39</code></th>
+              <td><p>gif-scalar-quantizer-Dtg-UZzk.wasm<br /><code>b9ac86604ce9fbd372139cc53446e173cb4c4ca4b28cd3d15e7e56f6b5728156</code></p></td>
+              <td><a href="original/a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a.md">Original notice</a> <code>a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/103058d7792d43b33647ed14d92db3a5994251cf/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/103058d7792d43b33647ed14d92db3a5994251cf/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/103058d7792d43b33647ed14d92db3a5994251cf/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/103058d7792d43b33647ed14d92db3a5994251cf">103058d779</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/103058d7792d43b33647ed14d92db3a5994251cf/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/103058d7792d43b33647ed14d92db3a5994251cf/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/103058d7792d43b33647ed14d92db3a5994251cf/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/4638d703806b38734430a761104ee73512cbdf5c">browser-core 4638d70380</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/103058d7792d43b33647ed14d92db3a5994251cf/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>d1e482e3-ed93-43de-ab15-694c612c9d06</code></th>
+              <td><p>gif-scalar-quantizer-Dtg-UZzk.wasm<br /><code>b9ac86604ce9fbd372139cc53446e173cb4c4ca4b28cd3d15e7e56f6b5728156</code></p></td>
+              <td><a href="original/a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a.md">Original notice</a> <code>a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/3d379275917f2ccaf8cba2c7b578ac58ce0f3db5/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3d379275917f2ccaf8cba2c7b578ac58ce0f3db5/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3d379275917f2ccaf8cba2c7b578ac58ce0f3db5/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/3d379275917f2ccaf8cba2c7b578ac58ce0f3db5">3d37927591</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3d379275917f2ccaf8cba2c7b578ac58ce0f3db5/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3d379275917f2ccaf8cba2c7b578ac58ce0f3db5/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3d379275917f2ccaf8cba2c7b578ac58ce0f3db5/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/4638d703806b38734430a761104ee73512cbdf5c">browser-core 4638d70380</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/3d379275917f2ccaf8cba2c7b578ac58ce0f3db5/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>4e465f9b-2bbd-40e0-9886-306d9a93cc7d</code></th>
+              <td><p>gif-scalar-quantizer-Dtg-UZzk.wasm<br /><code>b9ac86604ce9fbd372139cc53446e173cb4c4ca4b28cd3d15e7e56f6b5728156</code></p></td>
+              <td><a href="original/a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a.md">Original notice</a> <code>a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/eda8a2a872ac0f8c0703b24763e545407ee07846/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/eda8a2a872ac0f8c0703b24763e545407ee07846/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/eda8a2a872ac0f8c0703b24763e545407ee07846/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/eda8a2a872ac0f8c0703b24763e545407ee07846">eda8a2a872</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/eda8a2a872ac0f8c0703b24763e545407ee07846/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/eda8a2a872ac0f8c0703b24763e545407ee07846/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/eda8a2a872ac0f8c0703b24763e545407ee07846/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/a656a200bd2178f787f4ff585a23470d8ed97c72">browser-core a656a200bd</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/eda8a2a872ac0f8c0703b24763e545407ee07846/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>3683b8d5-ed02-44af-8b3b-e7490c7dd31c</code></th>
+              <td><p>gif-scalar-quantizer-Dtg-UZzk.wasm<br /><code>b9ac86604ce9fbd372139cc53446e173cb4c4ca4b28cd3d15e7e56f6b5728156</code></p></td>
+              <td><a href="original/a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a.md">Original notice</a> <code>a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/3169b89c97750901e445273cb6b5f0b41488b240/crates/gif-scalar-quantizer">Rust 1.99.1 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3169b89c97750901e445273cb6b5f0b41488b240/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3169b89c97750901e445273cb6b5f0b41488b240/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/3169b89c97750901e445273cb6b5f0b41488b240">3169b89c97</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3169b89c97750901e445273cb6b5f0b41488b240/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3169b89c97750901e445273cb6b5f0b41488b240/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/3169b89c97750901e445273cb6b5f0b41488b240/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/a656a200bd2178f787f4ff585a23470d8ed97c72">browser-core a656a200bd</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/3169b89c97750901e445273cb6b5f0b41488b240/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>e6b9a989-9463-43fa-b18c-cdd4e6a5621a</code></th>
+              <td><p>gif-scalar-quantizer-C4eFz0Ox.wasm<br /><code>a0753c05b7b7163a15b5608fde8189e41466da7fddd9d1eb7250ef0f3dfcf23d</code></p></td>
+              <td><a href="original/a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a.md">Original notice</a> <code>a6014cf956016903c151429ca0d31eb2429e4e6fbf572ea1bc96880062be554a</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/d7e7ac53c5a5f4bafc6fa9d3b452ce24c5112ca7/crates/gif-scalar-quantizer">Rust 1.100.0 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/d7e7ac53c5a5f4bafc6fa9d3b452ce24c5112ca7/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/d7e7ac53c5a5f4bafc6fa9d3b452ce24c5112ca7/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/d7e7ac53c5a5f4bafc6fa9d3b452ce24c5112ca7">d7e7ac53c5</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/d7e7ac53c5a5f4bafc6fa9d3b452ce24c5112ca7/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/d7e7ac53c5a5f4bafc6fa9d3b452ce24c5112ca7/package.json">pnpm@12.18.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/d7e7ac53c5a5f4bafc6fa9d3b452ce24c5112ca7/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/a656a200bd2178f787f4ff585a23470d8ed97c72">browser-core a656a200bd</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/d7e7ac53c5a5f4bafc6fa9d3b452ce24c5112ca7/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>70b01621-b789-41e3-9d1f-1fb70fefd7aa</code></th>
+              <td><p>gif-scalar-quantizer-C4eFz0Ox.wasm<br /><code>a0753c05b7b7163a15b5608fde8189e41466da7fddd9d1eb7250ef0f3dfcf23d</code></p></td>
+              <td><a href="original/87eeabbc004a1b8f3c6d7d5c8ec4b94c3930d813f5c0fced253549f8bc48be14.md">Original notice</a> <code>87eeabbc004a1b8f3c6d7d5c8ec4b94c3930d813f5c0fced253549f8bc48be14</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/6e79420a94a8b4663d16a9b7419a79647d4d8a95/crates/gif-scalar-quantizer">Rust 1.100.0 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6e79420a94a8b4663d16a9b7419a79647d4d8a95/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6e79420a94a8b4663d16a9b7419a79647d4d8a95/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/6e79420a94a8b4663d16a9b7419a79647d4d8a95">6e79420a94</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6e79420a94a8b4663d16a9b7419a79647d4d8a95/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6e79420a94a8b4663d16a9b7419a79647d4d8a95/package.json">pnpm@12.22.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/6e79420a94a8b4663d16a9b7419a79647d4d8a95/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/2369755b9ba1460f8024ffb40b3093f67154c88a">browser-core 2369755b9b</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/6e79420a94a8b4663d16a9b7419a79647d4d8a95/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>bf661b60-649b-4b2a-97c3-93863436e0b0</code></th>
+              <td><p>gif-scalar-quantizer-C4eFz0Ox.wasm<br /><code>a0753c05b7b7163a15b5608fde8189e41466da7fddd9d1eb7250ef0f3dfcf23d</code></p></td>
+              <td><a href="original/87eeabbc004a1b8f3c6d7d5c8ec4b94c3930d813f5c0fced253549f8bc48be14.md">Original notice</a> <code>87eeabbc004a1b8f3c6d7d5c8ec4b94c3930d813f5c0fced253549f8bc48be14</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/ff7c77cea529d60624b000e06c32ed556884de2f/crates/gif-scalar-quantizer">Rust 1.100.0 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/ff7c77cea529d60624b000e06c32ed556884de2f/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/ff7c77cea529d60624b000e06c32ed556884de2f/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/ff7c77cea529d60624b000e06c32ed556884de2f">ff7c77cea5</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/ff7c77cea529d60624b000e06c32ed556884de2f/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/ff7c77cea529d60624b000e06c32ed556884de2f/package.json">pnpm@12.22.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/ff7c77cea529d60624b000e06c32ed556884de2f/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/2369755b9ba1460f8024ffb40b3093f67154c88a">browser-core 2369755b9b</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/ff7c77cea529d60624b000e06c32ed556884de2f/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>9d84afcf-8a0a-4c76-b551-cec9139e04c6</code></th>
+              <td><p>gif-scalar-quantizer-C4eFz0Ox.wasm<br /><code>a0753c05b7b7163a15b5608fde8189e41466da7fddd9d1eb7250ef0f3dfcf23d</code></p></td>
+              <td><a href="original/87eeabbc004a1b8f3c6d7d5c8ec4b94c3930d813f5c0fced253549f8bc48be14.md">Original notice</a> <code>87eeabbc004a1b8f3c6d7d5c8ec4b94c3930d813f5c0fced253549f8bc48be14</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3/crates/gif-scalar-quantizer">Rust 1.100.0 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3">7d9e0f1bc6</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3/package.json">pnpm@12.22.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/2369755b9ba1460f8024ffb40b3093f67154c88a">browser-core 2369755b9b</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/7d9e0f1bc6cfcf01a04052674f1b500c8a4b9cd3/patches">package patches</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>8eaf4d74-98d7-4844-8b2a-62ba5792a30e</code></th>
+              <td><p>gif-scalar-quantizer-C4eFz0Ox.wasm<br /><code>a0753c05b7b7163a15b5608fde8189e41466da7fddd9d1eb7250ef0f3dfcf23d</code></p></td>
+              <td><a href="original/6c1b36c66f9eddf5c4f7c9b62b9704e087f0a1b13afc7cb9e107ac495e40a412.md">Original notice</a> <code>6c1b36c66f9eddf5c4f7c9b62b9704e087f0a1b13afc7cb9e107ac495e40a412</code></td>
+              <td><p><a href="https://github.com/PiesP/wasm-motion-converter/tree/02f1cc2188b83a7047f57f9b1ca8880ca74d5ec1/crates/gif-scalar-quantizer">Rust 1.100.0 sources and Cargo inputs</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/02f1cc2188b83a7047f57f9b1ca8880ca74d5ec1/scripts/build/build-gif-scalar-wasm.ts">generator</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/02f1cc2188b83a7047f57f9b1ca8880ca74d5ec1/crates/gif-scalar-quantizer/wasm-provenance.json">build record</a></p><a href="https://github.com/PiesP/wasm-motion-converter/tree/02f1cc2188b83a7047f57f9b1ca8880ca74d5ec1">02f1cc2188</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/02f1cc2188b83a7047f57f9b1ca8880ca74d5ec1/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/02f1cc2188b83a7047f57f9b1ca8880ca74d5ec1/package.json">pnpm@12.22.0</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/02f1cc2188b83a7047f57f9b1ca8880ca74d5ec1/pnpm-lock.yaml">lockfile</a> · <a href="https://github.com/PiesP/browser-core/tree/2369755b9ba1460f8024ffb40b3093f67154c88a">browser-core 2369755b9b</a> · <a href="https://github.com/PiesP/wasm-motion-converter/tree/02f1cc2188b83a7047f57f9b1ca8880ca74d5ec1/patches">package patches</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <h2 id="previews">Early Pages previews</h2>
+      <p>All three preview hostnames served <code>gifenc.WHnUCFL7.js</code> (8,975 bytes,
+        SHA-256 <code>9bebfc07c9afb6d14ed9e44c75830452438bb613c8d1ca8f82af56fe8465315c</code>).
+        Their full provider IDs and application commits remain unconfirmed.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th scope="col">Preview hostname</th><th scope="col">Delivered notice and SHA-256</th></tr></thead>
+          <tbody>
+            <tr>
+              <th scope="row"><code>6d82b6f8.wasm-motion-converter.pages.dev</code></th>
+              <td><a href="original/770e514a74969643e715795c402aecb121964b4a22b92713cf1577eb538cd620.md">Original notice</a> <code>770e514a74969643e715795c402aecb121964b4a22b92713cf1577eb538cd620</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>790fcb49.wasm-motion-converter.pages.dev</code></th>
+              <td><a href="original/770e514a74969643e715795c402aecb121964b4a22b92713cf1577eb538cd620.md">Original notice</a> <code>770e514a74969643e715795c402aecb121964b4a22b92713cf1577eb538cd620</code></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>ce1ff136.wasm-motion-converter.pages.dev</code></th>
+              <td><a href="original/ff73e9c7a087394aa704f01c66ebc9c1c635f06bf055b2f3ca0598064861149e.md">Original notice</a> <code>ff73e9c7a087394aa704f01c66ebc9c1c635f06bf055b2f3ca0598064861149e</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <h2 id="omissions">Early deployments with an omitted gifenc notice</h2>
+      <p>Of 706 early deployments with preserved notices, 666 named gifenc and 40 served the
+        same notice omitting gifenc. Recipients of the 40 builds listed below should read the
+        <a href="#supplement">supplemental attribution</a> alongside this copy.</p>
+      <p><a href="original/270e5bd71479a1f957b6d32117d80eeb679f4de91999fd4687b8678e6f5b5944.md">Original notice</a> <code>270e5bd71479a1f957b6d32117d80eeb679f4de91999fd4687b8678e6f5b5944</code></p>
+      <details>
+        <summary>Look up the 40 deployment IDs and source commits</summary>
+      <div class="scroll">
+        <table>
+          <thead><tr><th scope="col">Deployment ID</th><th scope="col">Recorded source commit</th></tr></thead>
+          <tbody>
+            <tr>
+              <th scope="row"><code>0b766259-a08d-4ab6-bda5-8bc3faee9816</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/85923627e82a8add17769bed37f8493ec1e0c0f3">85923627e82a8add17769bed37f8493ec1e0c0f3</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>18f48fbd-bcd8-45f4-acd8-1d4ec91b8205</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/c12787ca3b3fe25cf70d0e4d0e4401fa6bcd76a1">c12787ca3b3fe25cf70d0e4d0e4401fa6bcd76a1</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>217ac463-c040-4f25-9b86-6ba32135a36d</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/44e2ce5db9998e886b6d1f3a15bb61983800393b">44e2ce5db9998e886b6d1f3a15bb61983800393b</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>3149e242-c348-4d70-862d-54d26722c590</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/aa953369ec0297ef6908d5821870479c7476250e">aa953369ec0297ef6908d5821870479c7476250e</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>3317802d-77be-4860-acbb-f1fe6d02ae89</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/d54cca7a9a75433cb954fb4c6d3494687c81cce7">d54cca7a9a75433cb954fb4c6d3494687c81cce7</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>474a8334-b831-49c8-9bb8-474e1b188ba2</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/473dba24f391922713cfb247709e3cfd2c355e05">473dba24f391922713cfb247709e3cfd2c355e05</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>4a80fd35-e51c-44b3-b2b7-0ca80715cc1b</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/d01a219a59994403b4d86890b7f46059eab00c0d">d01a219a59994403b4d86890b7f46059eab00c0d</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>4ee6240a-1e4a-4284-968e-def458de3e9b</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/f6a25f277094a70abee4ae782e92400a145b0f64">f6a25f277094a70abee4ae782e92400a145b0f64</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>51ab59c9-3721-4e61-bfc0-1b7348a919bf</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/79574963832906e9fe5f40dc6d2bed6707eea739">79574963832906e9fe5f40dc6d2bed6707eea739</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>58bfd1fe-c196-4606-9f70-88582d9e07d9</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/15048ea041de4e816398ec14abc4e46d7849f6df">15048ea041de4e816398ec14abc4e46d7849f6df</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>59c52c73-27f2-48c7-b911-360f241a76e2</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/ca057f2903c519f8cec005d057f5f1f99fe56041">ca057f2903c519f8cec005d057f5f1f99fe56041</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>65ec8783-8831-460a-b948-4d33816ec552</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/dc1ad45a9b9246b1c573caf884f795ff59c239e8">dc1ad45a9b9246b1c573caf884f795ff59c239e8</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>6727c01e-6954-4b21-a72f-c720c28474c9</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/aad9b47fc16756062561a34dce86b31efcc71320">aad9b47fc16756062561a34dce86b31efcc71320</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>6bcfca74-7454-4848-9cd1-4a8607c0ce94</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/3738946d58ba49bc7cafae46e1fdd867d5f25b2a">3738946d58ba49bc7cafae46e1fdd867d5f25b2a</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>6c04e143-ca18-4ec4-9105-4ca5494eb0ab</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/df590566cf58ac21bdd3b09475c39d5131683799">df590566cf58ac21bdd3b09475c39d5131683799</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>7d4f4700-a1d2-42b0-896f-93db90e0283e</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/8b1ec0956148dec551c98d5aee5b79b3c595e207">8b1ec0956148dec551c98d5aee5b79b3c595e207</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>80c9b04e-7fe1-4b2f-83ca-a40512eced13</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/d54cca7a9a75433cb954fb4c6d3494687c81cce7">d54cca7a9a75433cb954fb4c6d3494687c81cce7</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>8cd7074a-4742-440e-9953-c9bca5270daa</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/a7b8620fa4ac56b07624b942a6d5346b38b80d32">a7b8620fa4ac56b07624b942a6d5346b38b80d32</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>9fe8864c-7ddf-47fe-9413-78f42832118d</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/fa6d8f429cdb1db64755c4e503d9361fbce2f347">fa6d8f429cdb1db64755c4e503d9361fbce2f347</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>a2f2e453-cfba-4c81-a9d8-f274388f8ffc</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/2394c23b9e41c52aa27345b5f115ab4b2b1170bf">2394c23b9e41c52aa27345b5f115ab4b2b1170bf</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>a32661cb-1938-4eca-89c7-35bd1218f0e7</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/6404719a30da6515cd35c07d0b4416df68788f96">6404719a30da6515cd35c07d0b4416df68788f96</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>a822f648-1da0-47d5-a066-6fa666f6637c</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/e1f2c5394da68893b791ecc629de2d259d142df2">e1f2c5394da68893b791ecc629de2d259d142df2</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>a85d38fb-0d60-4f66-9d8b-fe40058fc7dc</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/bfabe6a75334c541fc69eb267815499dc5ab6446">bfabe6a75334c541fc69eb267815499dc5ab6446</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>adea0105-910e-491e-bed7-bc14bd98eb2d</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/1fbc8378ad7ed613633eb7575d6d97d4d674abd1">1fbc8378ad7ed613633eb7575d6d97d4d674abd1</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>b65f4922-3859-4b08-ba72-9b7b7934518e</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/f8e48f182528f9e550d9193f1b700dc8b12bcd4e">f8e48f182528f9e550d9193f1b700dc8b12bcd4e</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>c9c332b2-53b0-45c6-8863-b66bd2707b2a</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/c2fa264b70a51d096bcf301557be9bda5e5264cd">c2fa264b70a51d096bcf301557be9bda5e5264cd</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>ce69065d-7377-4df5-a038-00de1d9df22e</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/f6a25f277094a70abee4ae782e92400a145b0f64">f6a25f277094a70abee4ae782e92400a145b0f64</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>cf9101b3-c968-40c6-bc5f-3e5c944ec07b</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/6801e5f864a1678b29e7e748d802db2255e72363">6801e5f864a1678b29e7e748d802db2255e72363</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>cff2d4c8-a51e-4ac4-be32-75cf29b378f6</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/e8eef4f13049162c77d80b1a17bacb49c336694e">e8eef4f13049162c77d80b1a17bacb49c336694e</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>d4097c90-ebc5-4d67-b46f-a0bb6ced3db3</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/0b8d16fb908e003ebcf2b088bc6c4756b4be1392">0b8d16fb908e003ebcf2b088bc6c4756b4be1392</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>d6ba7ce4-dafc-490d-bb4c-a264311b9d76</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/fa6d8f429cdb1db64755c4e503d9361fbce2f347">fa6d8f429cdb1db64755c4e503d9361fbce2f347</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>d9210257-7134-455e-b382-63005476ae35</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/b0d2e1d41530775bdbe71b3a73b37ac03f064fed">b0d2e1d41530775bdbe71b3a73b37ac03f064fed</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>d9e87be5-5a7d-4f92-93f3-71bc544bd614</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/2d1ddbf5f6ded09d7898b9eefde72951c8a602fb">2d1ddbf5f6ded09d7898b9eefde72951c8a602fb</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>db402680-8c40-4ae1-8a85-a802ea6fc882</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/43b9e7a57faea64af82000e83c3bb337be69482f">43b9e7a57faea64af82000e83c3bb337be69482f</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>e280ffd4-d36c-4d5e-992b-3c9a03c57a62</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/169f7a1d7b8bd7f28e584804d2f7d8aadd07515a">169f7a1d7b8bd7f28e584804d2f7d8aadd07515a</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>e47ffbfd-09fb-46bd-b636-af6154abff0d</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/1fbc8378ad7ed613633eb7575d6d97d4d674abd1">1fbc8378ad7ed613633eb7575d6d97d4d674abd1</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>e6f071f7-7898-4b53-80bd-6d58f69b9799</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/df590566cf58ac21bdd3b09475c39d5131683799">df590566cf58ac21bdd3b09475c39d5131683799</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>f15c3d3d-d4a0-459a-b2c6-2b16c814c605</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/62120d37456814dceee4069f0c2a6ca6a11caab1">62120d37456814dceee4069f0c2a6ca6a11caab1</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>f3aacff1-4a97-4f03-baeb-2fabe2039aa6</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/3017131036c372ef6815328dd84fe1e4a3f46fd9">3017131036c372ef6815328dd84fe1e4a3f46fd9</a></td>
+            </tr>
+            <tr>
+              <th scope="row"><code>ff4c2f4f-65ce-44a8-a150-bc765f4f95f1</code></th>
+              <td><a href="https://github.com/PiesP/wasm-motion-converter/tree/9139f221b80e3923ce3a5479b680de6cf1aba05d">9139f221b80e3923ce3a5479b680de6cf1aba05d</a></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      </details>
+      <h2 id="supplement">Supplemental attribution for historical builds</h2>
+      <p>This correction applies to the historical gifenc code and its Rust adaptations.
+        Read it alongside the original notice for your build.</p>
+      <ul>
+        <li>gifenc 1.0.3 is copyright © 2017 Matt DesLauriers. Consult its <a href="https://github.com/PiesP/wasm-motion-converter/blob/c578929d8fc61e9a6bb8b53148fd0d12fd9d3e13/scripts/build/gifenc-LICENSE.txt">MIT notice</a>, <a href="https://github.com/mattdesl/gifenc/tree/15e2c3e65ed03c977b42fec48de59b05ee9b9f54/src">versioned source</a> and <a href="https://registry.npmjs.org/gifenc/-/gifenc-1.0.3.tgz">original npm source package</a>. The release lockfiles record the package integrity as
+          <code>sha512-xdr6AdrfGBcfzncONUOlXMBuc5wJDtOueE3c5rdG0oNgtINLD+f2iFZltrBRZYzACRbKr+mSVU/x98zv2u3jmw==</code>.</li>
+        <li>The historical PNN quantizer credits Mark Tyler, Dmitry Groshev and Miller Cy Chan.
+          gifenc identifies <a href="https://github.com/mcychan/PnnQuant.js/blob/d3de676eccec6d98efaee292d16d4536f87b0a64/src/pnnquant.js">PnnQuant.js</a> as its source (<a href="https://github.com/PiesP/wasm-motion-converter/blob/c578929d8fc61e9a6bb8b53148fd0d12fd9d3e13/crates/gif-scalar-quantizer/LICENSE.pnn">MPL 2.0</a>). Earlier sources include
+          <a href="https://github.com/mcychan/nQuantCpp/tree/1ffaac3a038b938e96391514e6ff412cdb599fa3">nQuantCpp</a> (GPLv3) and <a href="https://github.com/wjaguar/mtPaint/blob/7ff5b87f41159e2480d3441b7fe5826a126c7868/src/memory.c#L2161">mtPaint</a> (GPL-3.0-or-later). Read the <a href="../pnn-upstream-gpl-3.0.txt">GPLv3 text</a>.</li>
+        <li>The LZW source credits Kevin Weiner, Thibault Imbert, Johan Nordberg and David
+          Rowley, the original compress authors, and optimizations by Matt DesLauriers and Mathieu Henri.
+          The <a href="https://github.com/PiesP/wasm-motion-converter/blob/c578929d8fc61e9a6bb8b53148fd0d12fd9d3e13/scripts/build/gifenc-pnn-NOTICES.txt">upstream author list</a> gives all six compress authors.
+          The <a href="https://github.com/geoserver/geoserver/blob/8f517dcb8c3e6db916e07ad97c9c1e723d744000/licenses/NOTICE.md#L96-L128">Poskanzer and Elliott notices</a> describe Jef Poskanzer’s grant and J. M. G. Elliott’s dedication of his own changes.</li>
+      </ul>
+      <p>The early JS release notices omitted the PNN and LZW lineage. The first Rust-era notice
+        recorded PNN attribution and omitted LZW credits. Later Rust notices added LZW credits.
+        The historical evidence supports component-specific grants. Permission covering all
+        inherited PNN contributions and the applicable Rowley and Weiner LZW terms remain open.</p>
+      <p>For a source or notice request, give the version, deployment ID, or digest you have in
+        <a href="https://github.com/PiesP/wasm-motion-converter/issues/532">issue #532</a>. The
+        <a href="https://github.com/PiesP/wasm-motion-converter/issues/532#issuecomment-7069786119">artifact inventory</a>, <a href="https://github.com/PiesP/wasm-motion-converter/issues/532#issuecomment-7069858386">early deployment inventory</a> and <a href="https://github.com/PiesP/wasm-motion-converter/issues/532#issuecomment-7071669418">release notice verification</a> record the historical observations.</p>
+    </main>
+  </body>
+</html>
