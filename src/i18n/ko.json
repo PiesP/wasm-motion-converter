@@ -46,6 +46,7 @@
   "error.technicalDetails": "기술 세부 정보",
   "error.timeout": "변환 시간이 초과되었습니다. 더 짧은 비디오나 낮은 품질 설정을 시도해 주세요.",
   "error.unknown": "변환이 예기치 않게 실패했습니다",
+  "footer.buildDate": "빌드 날짜(UTC)",
   "footer.licenseAttribution": "라이선스 귀속 및 푸터",
   "footer.linkGitHub": "{name}의 GitHub 저장소 (새 탭에서 열기)",
   "footer.openIssue": "GitHub에서 이슈 열기 (새 탭에서 열기)",

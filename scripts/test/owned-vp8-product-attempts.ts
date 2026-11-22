@@ -1,8 +1,7 @@
 /** Join retained Windows controller attempts to the existing V8 timing arithmetic. */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import { lstat, open, readdir, realpath, type FileHandle } from 'node:fs/promises';
+import { lstat, readdir, realpath } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -12,6 +11,7 @@ import {
   readDistribution,
   verifyTiming,
 } from './owned-vp8-product-timing.ts';
+import { readRegularFile, withRegularFile } from './regular-file.ts';
 
 const SHA = /^[a-f0-9]{64}$/i;
 const SOURCE = /^[a-f0-9]{40}$/;
@@ -67,80 +67,6 @@ function safePayloadPath(value: unknown): string {
   return value;
 }
 
-/** Read the opened file, not a pathname checked before a second open. */
-async function withRegularFile<T>(
-  path: string,
-  label: string,
-  limit: number,
-  consume: (handle: FileHandle, size: number) => Promise<T>
-): Promise<T> {
-  try {
-    // Open first: POSIX flags reject a leaf link and avoid blocking on a FIFO.
-    // Windows Node lacks O_NOFOLLOW; compare the handle with the path before
-    // consuming bytes. The digest still binds the admitted content.
-    const flags =
-      constants.O_RDONLY |
-      (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const handle = await open(path, flags);
-    try {
-      const [before, entry] = await Promise.all([handle.stat(), lstat(path)]);
-      assert(
-        before.isFile() &&
-          entry.isFile() &&
-          !entry.isSymbolicLink() &&
-          before.dev === entry.dev &&
-          before.ino === entry.ino,
-        `${label} is missing or linked`
-      );
-      assert(
-        Number.isSafeInteger(before.size) && before.size <= limit,
-        `${label} exceeds byte limit`
-      );
-      const value = await consume(handle, before.size);
-      const [after, pathAfter] = await Promise.all([handle.stat(), lstat(path)]);
-      assert(
-        after.isFile() &&
-          pathAfter.isFile() &&
-          !pathAfter.isSymbolicLink() &&
-          after.dev === before.dev &&
-          after.ino === before.ino &&
-          pathAfter.dev === before.dev &&
-          pathAfter.ino === before.ino &&
-          after.size === before.size &&
-          after.mtimeMs === before.mtimeMs,
-        `${label} changed while reading`
-      );
-      return value;
-    } finally {
-      await handle.close();
-    }
-  } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'ELOOP')
-      throw new Error(`${label} is missing or linked`);
-    if (error instanceof Error && 'code' in error && error.code !== 'ERR_ASSERTION')
-      throw new Error(`${label} is missing or unreadable`);
-    throw error;
-  }
-}
-async function regular(path: string, label: string, limit: number): Promise<Buffer> {
-  return withRegularFile(path, label, limit, async (handle, size) => {
-    const bytes = Buffer.alloc(size);
-    let offset = 0;
-    while (offset < size) {
-      const { bytesRead } = await handle.read(
-        bytes,
-        offset,
-        Math.min(size - offset, 64 * 1024),
-        offset
-      );
-      assert(bytesRead > 0, `${label} changed while reading`);
-      offset += bytesRead;
-    }
-    const { bytesRead } = await handle.read(Buffer.alloc(1), 0, 1, size);
-    assert(bytesRead === 0, `${label} changed while reading`);
-    return bytes;
-  });
-}
 async function directory(path: string, label: string): Promise<void> {
   try {
     const stat = await lstat(path);
@@ -156,7 +82,7 @@ async function json(
   label: string,
   limit = JSON_LIMIT
 ): Promise<{ value: unknown; sha256: string; byteLength: number }> {
-  const bytes = await regular(path, label, limit);
+  const bytes = await readRegularFile(path, label, limit);
   try {
     return {
       value: JSON.parse(bytes.toString('utf8').replace(/^\uFEFF/, '')) as unknown,
@@ -321,14 +247,14 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
     const selectorFile = await json(join(root, 'payload', selectorPath), 'selector');
     same(selectorFile.value, { scenario: bundle.scenario }, 'selector content');
     same(
-      hash(await regular(join(root, 'run.ps1'), 'controller script', JSON_LIMIT)),
+      hash(await readRegularFile(join(root, 'run.ps1'), 'controller script', JSON_LIMIT)),
       hex(bundle.controller_sha256, 'controller identity'),
       'controller script digest'
     );
     hex(bundle.packager_sha256, 'packager identity');
     hex(bundle.build_log_sha256, 'build log identity');
     same(
-      hash(await regular(join(root, 'build.log'), 'build log', FILE_LIMIT)),
+      hash(await readRegularFile(join(root, 'build.log'), 'build log', FILE_LIMIT)),
       hex(bundle.build_log_sha256, 'build log identity'),
       'build log digest'
     );
@@ -345,7 +271,11 @@ export async function readAttempts(roots: readonly string[], pins: AttemptPins) 
       const name = safeName(item.file, 'collected file name');
       assert(!collected.has(name), 'duplicate collected file name');
       collected.add(name);
-      const bytes = await regular(join(root, 'output', name), `collected ${name}`, FILE_LIMIT);
+      const bytes = await readRegularFile(
+        join(root, 'output', name),
+        `collected ${name}`,
+        FILE_LIMIT
+      );
       collectedSizes.set(name, bytes.length);
       total += bytes.length;
       assert(total <= TOTAL_LIMIT, 'collection exceeds controller aggregate limit');

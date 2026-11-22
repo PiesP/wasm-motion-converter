@@ -101,7 +101,7 @@ function classifyPath(routes: Routes, path: string): void {
     enable(routes, 'quality', 'e2e', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path.startsWith('scripts/test/')) {
     enable(routes, 'quality', 'unit', 'e2e', 'codeql', 'semgrep', 'semgrep_full');
-  } else if (path.startsWith('scripts/build/') || path.startsWith('scripts/release/')) {
+  } else if (path.startsWith('scripts/build/')) {
     enable(routes, 'quality', 'unit', 'build', 'codeql', 'semgrep', 'semgrep_full');
   } else if (path.startsWith('scripts/ci/')) {
     if (path === 'scripts/ci/pinned-tools.json') {

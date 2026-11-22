@@ -46,6 +46,8 @@ describe('source-bound public verification', () => {
     null,
     { ...state, schemaVersion: 2 },
     { ...state, sourceDirty: true },
+    { ...state, buildDatePath: '../../secret.json' },
+    { ...state, files: [{ ...state.files[0], path: 'build-date.json' }] },
     { ...state, sourceSha: 'v0.2.3' },
     { ...state, files: [] },
     { ...state, files: [{ ...state.files[0], path: '../private' }] },
@@ -87,6 +89,33 @@ describe('source-bound public verification', () => {
     );
     metadata = { ...state, sourceSha: 'e'.repeat(40) };
     await expect(verifyDeploymentBytes(target, state, fetcher)).rejects.toThrow('sourceSha');
+  });
+
+  it('verifies the served UTC build date independently and binds it to the exact source', async () => {
+    const expected = { ...state, buildDatePath: 'build-date.json' } as const;
+    const manifest = JSON.stringify(expected);
+    const manifestHash = createHash('sha256').update(manifest).digest('hex');
+    let sidecar = { sourceSha: state.sourceSha, date: '2026-11-22' };
+    const fetcher: typeof fetch = async (input) => {
+      switch (new URL(String(input)).pathname) {
+        case '/deployment-state.json':
+          return Response.json(expected);
+        case '/build-date.json':
+          return Response.json(sidecar);
+        default:
+          return new Response(body);
+      }
+    };
+    await expect(
+      verifyDeploymentBytes(target, expected, fetcher, manifestHash)
+    ).resolves.toMatchObject({
+      buildDate: '2026-11-22',
+      manifestSha256: manifestHash,
+    });
+    sidecar = { ...sidecar, date: '2026-02-30' };
+    await expect(verifyDeploymentBytes(target, expected, fetcher)).rejects.toThrow('build date');
+    sidecar = { sourceSha: 'e'.repeat(40), date: '2026-11-22' };
+    await expect(verifyDeploymentBytes(target, expected, fetcher)).rejects.toThrow('build date');
   });
 
   it('requires the original metadata bytes in the final mode', async () => {
@@ -232,6 +261,47 @@ describe('source-bound public verification', () => {
       vi.mocked(execFileSync).mockReturnValue(`${'e'.repeat(40)}\trefs/heads/master\n`);
       await expect(verifyPublication()).rejects.toThrow('was superseded on master');
       expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      fetcher.mockRestore();
+      vi.unstubAllEnvs();
+      rmSync(directory, { recursive: true });
+    }
+  });
+
+  it('accepts a regular local build-date file up to and including 256 bytes', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'wmc-build-date-'));
+    const fetcher = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 503 }));
+    try {
+      const headers = '/\n  X-Content-Type-Options: nosniff\n';
+      const manifest = {
+        ...state,
+        buildDatePath: 'build-date.json',
+        headersSha256: createHash('sha256').update(headers).digest('hex'),
+      };
+      writeFileSync(join(directory, 'deployment-state.json'), JSON.stringify(manifest));
+      writeFileSync(join(directory, '_headers'), headers);
+      writeFileSync(join(directory, 'index.html'), body);
+      vi.stubEnv('DEPLOY_DIST', directory);
+      vi.stubEnv('DEPLOY_URL', 'http://127.0.0.1:4123/');
+      vi.stubEnv('DEPLOY_REQUIRE_OWNED_VP8_ONLY', '1');
+      vi.stubEnv('EXPECTED_SOURCE_SHA', state.sourceSha);
+      vi.stubEnv('VERIFY_CURRENT_MASTER', '0');
+
+      const path = join(directory, manifest.buildDatePath);
+      mkdirSync(path);
+      await expect(verifyPublication()).rejects.toThrow(/build-date\.json/);
+      rmSync(path, { recursive: true });
+
+      const json = JSON.stringify({ sourceSha: state.sourceSha, date: '2026-11-22' });
+      writeFileSync(path, json.padEnd(257));
+      await expect(verifyPublication()).rejects.toThrow(/byte limit/i);
+      expect(fetcher).not.toHaveBeenCalled();
+
+      writeFileSync(path, json.padEnd(256));
+      await expect(verifyPublication()).rejects.toThrow('Expected Pages source unavailable');
+      expect(fetcher).toHaveBeenCalledOnce();
     } finally {
       fetcher.mockRestore();
       vi.unstubAllEnvs();

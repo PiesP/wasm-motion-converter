@@ -48,11 +48,11 @@ body:
       required: true
 
   - type: input
-    id: app_version
+    id: app_build
     attributes:
-      label: "App version / commit"
-      description: "Git tag, release version, or commit SHA (if known)"
-      placeholder: "v0.1.0 or 1a2b3c4"
+      label: "App build date or commit"
+      description: "Copy the UTC build date from the page footer, or provide the source commit if known."
+      placeholder: "2026-11-22 or 1a2b3c4"
 
   - type: dropdown
     id: browser

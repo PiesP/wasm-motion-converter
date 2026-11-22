@@ -1,9 +1,9 @@
 # Security Policy
 
-## Supported versions
+## Supported deployment
 
-Security support is provided for the latest released version. Older deployments
-are not maintained, so users should keep the application up to date.
+Security fixes are deployed to the [production app on Cloudflare Pages](https://wasm-motion-converter.pages.dev/).
+Reports for the hosted app should include the UTC build date shown in its footer.
 
 ## Reporting a vulnerability
 

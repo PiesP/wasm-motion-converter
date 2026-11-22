@@ -32,7 +32,7 @@ describe('Windows media profile package', () => {
       const path = resolve(root, module);
       expect(existsSync(path), `${module} is missing`).toBe(true);
       const source = readFileSync(path, 'utf8');
-      for (const match of source.matchAll(/\bfrom\s+['"](\.\/[^'"]+\.ts)['"]/g)) {
+      for (const match of source.matchAll(/\bfrom\s+['"](\.{1,2}\/[^'"]+\.ts)['"]/g)) {
         const dependency = normalize(join(dirname(module), match[1]!));
         expect(declared.has(dependency), `${module} imports undeclared ${dependency}`).toBe(true);
         pending.push(dependency);

@@ -46,6 +46,7 @@
   "error.technicalDetails": "技术细节",
   "error.timeout": "转换时间过长。请尝试较短的视频或降低质量设置。",
   "error.unknown": "转换意外失败",
+  "footer.buildDate": "构建日期（UTC）",
   "footer.licenseAttribution": "许可证归属和页脚",
   "footer.linkGitHub": "{name} GitHub（新标签页打开）",
   "footer.openIssue": "在GitHub上提交问题（新标签页打开）",

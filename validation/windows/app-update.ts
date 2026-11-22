@@ -15,6 +15,8 @@ import type {
   Response as PlaywrightResponse,
 } from '@playwright/test';
 
+import { BUILD_DATE_PATH, parseBuildDate } from '../../src/utils/build-date.ts';
+
 type CleanupError = Error & { cleanupErrors?: string[] };
 type ValidateBundleFile = (root: string, relativePath: string) => Promise<string>;
 type Artifact = { kind: string; file: string; bytes: number; sha256: string };
@@ -25,6 +27,7 @@ type BuildState = {
   treeSha: string;
   coreSha: string;
   headersSha256: string;
+  buildDatePath?: typeof BUILD_DATE_PATH;
   sourceDirty: boolean;
   version: string;
   files: InventoryFile[];
@@ -209,6 +212,7 @@ function assertBuildState(value: unknown): asserts value is BuildState {
   assert(
     'version' in value && typeof value.version === 'string' && /^\d+\.\d+\.\d+/.test(value.version)
   );
+  assert(!('buildDatePath' in value) || value.buildDatePath === BUILD_DATE_PATH);
   assert('files' in value && Array.isArray(value.files));
   assert(value.files.length > 0 && value.files.length <= 100);
   for (const file of value.files) {
@@ -233,6 +237,16 @@ export async function readBuild(
   assert.equal(state.sourceDirty, false, `${relativePath} must be built from clean source`);
   if (verifyInventory) {
     const seen = new Set<string>();
+    if (state.buildDatePath) {
+      const datePath = await validateBundleFile(bundleRoot, `${relativePath}/${BUILD_DATE_PATH}`);
+      const dateBytes = await readFile(datePath);
+      assert(
+        dateBytes.length <= 256 &&
+          parseBuildDate(JSON.parse(dateBytes.toString('utf8')), state.sourceSha),
+        `${relativePath} has invalid build date metadata`
+      );
+      seen.add(BUILD_DATE_PATH);
+    }
     for (const file of state.files) {
       assert(
         typeof file.path === 'string' &&

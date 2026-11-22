@@ -46,6 +46,7 @@
   "error.technicalDetails": "تفاصيل تقنية",
   "error.timeout": "استغرق التحويل وقتًا طويلاً. جرب فيديو أقصر أو إعدادات جودة أقل.",
   "error.unknown": "فشل التحويل بشكل غير متوقع",
+  "footer.buildDate": "تاريخ البناء (UTC)",
   "footer.licenseAttribution": "إسناد التراخيص والتذييل",
   "footer.linkGitHub": "{name} على GitHub (يفتح في علامة تبويب جديدة)",
   "footer.openIssue": "فتح مشكلة على GitHub (يفتح في تبويب جديد)",

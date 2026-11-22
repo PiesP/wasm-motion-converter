@@ -35,8 +35,6 @@ const entries = [
   'scripts/build/generate-licenses.ts',
   'scripts/build/postbuild.ts',
   'scripts/check/i18n.ts',
-  'scripts/release/prepare.ts',
-  'scripts/release/publication-guard.ts',
   'scripts/test/generate-e2e-video.ts',
   'scripts/test/run-e2e-on-free-port.ts',
 ] as const;
@@ -47,8 +45,8 @@ function fixture() {
   for (const path of [
     ...entries,
     'scripts/check/run-child.ts',
-    'scripts/release/published-asset.ts',
     'scripts/build/deployment-state.ts',
+    'src/utils/build-date.ts',
     'scripts/build/verify-service-worker-output.ts',
     'tooling/vite/plugins/emit-service-worker.ts',
     'scripts/build/heroicons-v1-LICENSE.txt',
@@ -163,7 +161,7 @@ describe('direct Node script boundaries', () => {
     writeFileSync(join(root, 'dist/sentinel'), 'preserve');
     writeFileSync(join(root, 'public/LICENSES.md'), 'preserve');
     const bin = join(root, 'bin');
-    for (const name of ['tar', 'ffmpeg', 'ffprobe'])
+    for (const name of ['ffmpeg', 'ffprobe'])
       stub(join(bin, name), 'printf invoked >> "$SPAWN_RECORD"\nexit 91');
     for (const entry of entries) {
       const code = `process.argv[1] = '/definitely/missing/entry.ts'; await import(${JSON.stringify(join(root, entry))});`;
@@ -176,7 +174,6 @@ describe('direct Node script boundaries', () => {
             ...process.env,
             PATH: `${bin}:${process.env.PATH ?? ''}`,
             SPAWN_RECORD: join(root, 'spawned'),
-            RELEASE_VERSION: 'invalid',
           },
           encoding: 'utf8',
         }

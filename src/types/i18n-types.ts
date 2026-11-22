@@ -94,6 +94,7 @@ export interface TranslationKeys {
   // Header / Footer
   'header.exportLogs': string;
   'header.exportLogsTooltip': string;
+  'footer.buildDate': string;
   'footer.viewLicenses': string;
   'footer.openIssue': string;
   'footer.licenseAttribution': string;

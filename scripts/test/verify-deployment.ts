@@ -13,10 +13,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
+import { BUILD_DATE_PATH, parseBuildDate } from '../../src/utils/build-date.ts';
 import type { DeploymentState } from '../build/deployment-state.ts';
 import { runChild } from '../check/run-child.ts';
 import { preserveDeploymentDiagnostics } from './deployment-diagnostics.ts';
 import { pagesFileUrl } from './pages-file-url.ts';
+import { readRegularFile } from './regular-file.ts';
 import { runPlaywright } from './run-playwright.ts';
 
 const sha = /^[a-f0-9]{40}$/;
@@ -35,6 +37,7 @@ export function parseDeploymentState(value: unknown): DeploymentState {
   if (
     state.schemaVersion !== 1 ||
     state.sourceDirty !== false ||
+    (state.buildDatePath !== undefined && state.buildDatePath !== BUILD_DATE_PATH) ||
     !['sourceSha', 'treeSha', 'coreSha'].every(
       (key) => typeof state[key] === 'string' && sha.test(state[key])
     ) ||
@@ -61,6 +64,7 @@ export function parseDeploymentState(value: unknown): DeploymentState {
       file.path.split('/').some((part) => part === '.' || part === '..') ||
       file.path.startsWith('_') ||
       file.path === 'deployment-state.json' ||
+      file.path === BUILD_DATE_PATH ||
       paths.has(file.path) ||
       typeof file.size !== 'number' ||
       !Number.isSafeInteger(file.size) ||
@@ -121,8 +125,8 @@ async function bytes(response: Response, limit: number): Promise<Uint8Array> {
   return result;
 }
 
-async function readMetadata(target: URL, fetcher: Fetch) {
-  const response = await fetcher(new URL('/deployment-state.json', target), {
+async function readJsonBytes(target: URL, path: string, limit: number, fetcher: Fetch) {
+  const response = await fetcher(new URL(path, target), {
     redirect: 'error',
     signal: AbortSignal.timeout(20_000),
   });
@@ -131,11 +135,26 @@ async function readMetadata(target: URL, fetcher: Fetch) {
     response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'application/json'
   )
     throw new Error('Deployment metadata is not successful JSON');
-  const metadata = await bytes(response, MAX_METADATA_BYTES);
+  return bytes(response, limit);
+}
+
+async function readMetadata(target: URL, fetcher: Fetch) {
+  const metadata = await readJsonBytes(
+    target,
+    '/deployment-state.json',
+    MAX_METADATA_BYTES,
+    fetcher
+  );
   return {
     state: parseDeploymentState(JSON.parse(new TextDecoder().decode(metadata))),
     sha256: createHash('sha256').update(metadata).digest('hex'),
   };
+}
+
+function verifiedBuildDate(body: Uint8Array, sourceSha: string): string {
+  const date = parseBuildDate(JSON.parse(new TextDecoder().decode(body)), sourceSha);
+  if (!date) throw new Error('Invalid build date for deployment source');
+  return date;
 }
 
 export async function readDeploymentState(
@@ -155,7 +174,14 @@ export async function verifyDeploymentBytes(
   const { state: actual } = metadata;
   if (expectedManifestSha256 !== undefined && metadata.sha256 !== expectedManifestSha256)
     throw new Error('Served deployment metadata bytes differ from build artifact');
-  for (const key of ['sourceSha', 'treeSha', 'coreSha', 'version', 'headersSha256'] as const) {
+  for (const key of [
+    'sourceSha',
+    'treeSha',
+    'coreSha',
+    'version',
+    'headersSha256',
+    'buildDatePath',
+  ] as const) {
     if (actual[key] !== expected[key])
       throw new Error(`Deployment ${key} differs from build artifact`);
   }
@@ -177,7 +203,15 @@ export async function verifyDeploymentBytes(
       etag: response.headers.get('etag'),
     });
   }
+  // Pages and CI build independently. Validate each build's own UTC date.
+  const buildDate = actual.buildDatePath
+    ? verifiedBuildDate(
+        await readJsonBytes(target, BUILD_DATE_PATH, 256, fetcher),
+        actual.sourceSha
+      )
+    : undefined;
   return {
+    ...(buildDate && { buildDate }),
     target: target.href,
     sourceSha: actual.sourceSha,
     treeSha: actual.treeSha,
@@ -188,11 +222,12 @@ export async function verifyDeploymentBytes(
   };
 }
 
-function verifyLocalArtifact(directory: string, expected: DeploymentState): void {
+async function verifyLocalArtifact(directory: string, expected: DeploymentState): Promise<void> {
   const root = resolve(directory);
   if (!lstatSync(root).isDirectory()) throw new Error('Deployment artifact is not a directory');
   const inventory = new Map(expected.files.map((file) => [file.path, file]));
   const remaining = new Set([...inventory.keys(), '_headers', 'deployment-state.json']);
+  if (expected.buildDatePath) remaining.add(BUILD_DATE_PATH);
   const pending = [''];
   let visited = 0;
   for (const prefix of pending) {
@@ -205,12 +240,17 @@ function verifyLocalArtifact(directory: string, expected: DeploymentState): void
       }
       if (!entry.isFile() || !remaining.delete(path))
         throw new Error(`Unaccounted deployment artifact file: ${path}`);
+      if (path === BUILD_DATE_PATH) {
+        const date = await readRegularFile(join(root, path), 'Build date metadata', 256);
+        verifiedBuildDate(date, expected.sourceSha);
+        continue;
+      }
       const file = inventory.get(path);
       if (!file) continue;
-      const localPath = join(root, path);
+      const bytes = await readRegularFile(join(root, path), path, file.size);
       if (
-        lstatSync(localPath).size !== file.size ||
-        createHash('sha256').update(readFileSync(localPath)).digest('hex') !== file.sha256
+        bytes.length !== file.size ||
+        createHash('sha256').update(bytes).digest('hex') !== file.sha256
       )
         throw new Error(`Local deployment artifact bytes differ: ${path}`);
     }
@@ -262,7 +302,7 @@ export async function verifyPublication(): Promise<void> {
         expectedManifestSha256: createHash('sha256').update(artifact).digest('hex'),
       }
     : {};
-  if (requireOwnedVp8Only) verifyLocalArtifact(artifactDirectory, expected);
+  if (requireOwnedVp8Only) await verifyLocalArtifact(artifactDirectory, expected);
   const attempts = process.env.VERIFY_CURRENT_MASTER === '1' ? 8 : 1;
   let matched = false;
   let lastObservation = 'expected source not observed';

@@ -46,6 +46,7 @@
   "error.technicalDetails": "Technical details",
   "error.timeout": "The conversion took too long. Try a shorter video or lower quality settings.",
   "error.unknown": "Conversion failed unexpectedly",
+  "footer.buildDate": "Build date (UTC)",
   "footer.licenseAttribution": "License attribution and footer",
   "footer.linkGitHub": "{name} on GitHub (opens in new tab)",
   "footer.openIssue": "Open an issue on GitHub (opens in new tab)",

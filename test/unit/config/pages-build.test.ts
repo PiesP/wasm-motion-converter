@@ -352,6 +352,7 @@ describe('Pages source-build contract', () => {
     expect(matched('/assets/unversioned.wasm')).toEqual([]);
     expect(matched('/')).toEqual(['public, max-age=0, must-revalidate']);
     expect(matched('/service-worker.js')).toEqual(['public, max-age=0, must-revalidate']);
+    expect(matched('/build-date.json')).toEqual(['public, max-age=0, must-revalidate']);
   });
 
   it('records postprocessed bytes and distinct Git/core identity, and rejects a provider source mismatch', () => {
@@ -362,17 +363,39 @@ describe('Pages source-build contract', () => {
     git(['config', 'user.email', 'test@example.test']);
     git(['config', 'user.name', 'Test']);
     git(['config', 'commit.gpgSign', 'false']);
-    git(['add', 'package.json', '.node-version', 'pnpm-workspace.yaml']);
+    writeFileSync(join(root, '.gitignore'), 'dist/\n');
+    git(['add', 'package.json', '.node-version', 'pnpm-workspace.yaml', '.gitignore']);
     git(['commit', '-qm', 'fixture']);
     const core = git(['rev-parse', 'HEAD']);
     git(['update-index', '--add', '--cacheinfo', `160000,${core},packages/core`]);
     git(['commit', '-qm', 'pin core']);
+    mkdirSync(join(root, 'packages/core'), { recursive: true });
     mkdirSync(join(root, 'dist/assets'), { recursive: true });
     writeFileSync(join(root, 'dist/_headers'), '/*\n  X-Content-Type-Options: nosniff\n');
     writeFileSync(join(root, 'dist/index.html'), '<main>fixture</main>');
     writeFileSync(join(root, 'dist/assets/app.1234abcd.js'), 'postprocessed');
-    writeDeploymentState(root, join(root, 'dist'));
-    const state = JSON.parse(readFileSync(join(root, 'dist/deployment-state.json'), 'utf8'));
+    const readManifest = () => readFileSync(join(root, 'dist/deployment-state.json'), 'utf8');
+    const readBuildDate = () =>
+      JSON.parse(readFileSync(join(root, 'dist/build-date.json'), 'utf8'));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let manifest: string;
+    try {
+      vi.setSystemTime(new Date('2026-11-22T23:59:59Z'));
+      writeDeploymentState(root, join(root, 'dist'));
+      manifest = readManifest();
+      expect(readBuildDate()).toEqual({
+        sourceSha: git(['rev-parse', 'HEAD']),
+        date: '2026-11-22',
+      });
+      vi.setSystemTime(new Date('2026-11-23T00:00:01Z'));
+      writeDeploymentState(root, join(root, 'dist'));
+      expect(readBuildDate().date).toBe('2026-11-23');
+      expect(readManifest()).toBe(manifest);
+    } finally {
+      vi.useRealTimers();
+    }
+    const state = JSON.parse(manifest);
+    expect(state.buildDatePath).toBe('build-date.json');
     expect(state.sourceSha).toBe(git(['rev-parse', 'HEAD']));
     expect(state.coreSha).toBe(core);
     expect(state.files.map((file: { path: string }) => file.path)).toEqual([

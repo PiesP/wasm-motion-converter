@@ -18,6 +18,9 @@
 /deployment-state.json
   Cache-Control: public, max-age=0, must-revalidate
 
+/build-date.json
+  Cache-Control: public, max-age=0, must-revalidate
+
 # Security headers apply to documents, assets and error responses.
 /*
   Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-dhTAj/p2tcWB3q8ACHjAvUY9vq8602iOu4/ItmGkyJQ=' 'sha256-9aZj+ksN13qgCb5jrVDA3Hisq1nb33/Vq6OxRwHLtY1='; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' blob:; worker-src 'self'

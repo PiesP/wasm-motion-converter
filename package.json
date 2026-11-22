@@ -62,7 +62,6 @@
     "test:e2e:deploy": "node --experimental-strip-types scripts/test/run-playwright.ts deploy",
     "quality:fix": "vp run fmt:fix && vp run lint:fix && vp run quality",
     "verify:deploy": "node --experimental-strip-types scripts/test/verify-deployment.ts",
-    "release:prepare": "node --experimental-strip-types scripts/release/prepare.ts",
     "test:cov": "vp test run --project unit --project browser --coverage",
     "pretest:cov": "vp run build:owned-wasm",
     "check:i18n": "node --experimental-strip-types scripts/check/i18n.ts",
