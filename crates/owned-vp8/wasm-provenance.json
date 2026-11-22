@@ -37,9 +37,9 @@
     "crates/owned-vp8/src/compact_filter.rs": "29a4e9b2404adccc8b8331f49d91cfaf3f7c89e5c1d89bdae6a067ef38b685b3",
     "crates/owned-vp8/src/dc_quant.rs": "48bbed02933a89646e7daad57d32f8ae00c63b0a2df1f066421bc42cd3568b16",
     "crates/owned-vp8/src/default_coeff_probs.rs": "8b33dfef985de073a52d44592d2e95c37f422e4e62c385b31f80914fbe3cb3a7",
-    "crates/owned-vp8/src/display_rgb.rs": "96b696c816967aac0874eeb7ab777c3c568c145f1fe4c0a225d2540913096510",
+    "crates/owned-vp8/src/display_rgb.rs": "ae5f8b35b79231a036618cd9679361595cd7bd2fd4a2aec8dbe7b14d0bb61fe6",
     "crates/owned-vp8/src/filter.rs": "2cdf0b2fd8ee1e5a6d07f0c4d84f78efec8cf9151b59feb66c965adf85740f9a",
-    "crates/owned-vp8/src/joint_refinement.rs": "46d6e983cacc43655a41b32e46ae3fa6b8f0a9e4d2328f4b56d6094d1ceeefe9",
+    "crates/owned-vp8/src/joint_refinement.rs": "58d2f3770aa03d7bcfa1b5260f1588f235d87014b7e563e447ab1da78f2231d2",
     "crates/owned-vp8/src/lib.rs": "8860d46bf29b798ff99ee053e6f68faacd31ec517a5eb49998dc1371104aed15",
     "crates/owned-vp8/src/limits.rs": "45ff31df44d55669546abd192fa8ddca90f6a6ceb5c233e9de3ce3c67a72408b",
     "crates/owned-vp8/src/prediction.rs": "cbbda806c4ecda0c9cce6c75926e90e4740f250abd361c219a74bc6a4ad36c54",
@@ -54,9 +54,9 @@
     "scripts/build/build-gif-scalar-wasm.ts": "bd3275dc3ada13f26af1f89d2c1a7c64c03a0a6a1786c95b6d524a93b0768a08"
   },
   "artifact": {
-    "sha256": "bdd363c55ffe4612851dfe79786ab8b37aeacbe8d07cd4333e16da2253a0fcbb",
-    "rawBytes": 308475,
-    "gzipBytes": 106271,
+    "sha256": "f3480236acaaec2e47c8d6b08c214e83442923972b48f627aedcff9ba1cc31cd",
+    "rawBytes": 308935,
+    "gzipBytes": 106457,
     "gzipMethod": "gzip level 9, mtime 0",
     "initialLinearBytes": 1114112,
     "maxLinearBytes": 201326592
