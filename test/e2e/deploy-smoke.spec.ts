@@ -25,10 +25,9 @@ import {
 } from '@playwright/test';
 
 import {
-  isExecutableMediaType,
-  RETIRED_WEBP_DELIVERY_FILES,
-  RETIRED_REQUEST_MODES,
-} from '../../scripts/test/retired-webp-assets';
+  collectRetiredWebpUrls,
+  retiredWebpResponseIsSafe,
+} from '../../scripts/test/retired-webp-probes';
 import { hasLegacyWebpInRetiredBuild } from '../../scripts/test/retired-webp-worker';
 import { parseDeploymentState } from '../../scripts/test/verify-deployment';
 import { parseBuildDate } from '../../src/utils/build-date';
@@ -335,48 +334,20 @@ test.describe('Deployment: Page Load', () => {
     }
     const assetFiles = files.filter((file) => FINGERPRINTED_ASSET.test(file.path));
     if (REQUIRE_OWNED_ONLY) {
-      const retiredUrls = [];
       const ordinary = await playwrightRequest.newContext();
       try {
-        for (const mode of RETIRED_REQUEST_MODES) {
-          const context = mode === 'ordinary' ? ordinary : request;
-          for (const prior of RETIRED_WEBP_DELIVERY_FILES) {
-            const url = new URL(`/${prior.path}`, DEPLOY_URL).href;
-            const response = await context.get(url, {
-              maxRedirects: 0,
-              failOnStatusCode: false,
-              ...(mode === 'revalidated'
-                ? { headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } }
-                : {}),
-            });
-            const cacheControl = response.headers()['cache-control'] ?? '';
-            const contentType = response.headers()['content-type'] ?? '';
-            const bytes = await response.body();
-            const responseSha256 = createHash('sha256').update(bytes).digest('hex');
-            const label = `${mode} ${prior.path}`;
-            expect(response.status(), label).toBe(404);
-            expect(cacheControl, label).not.toMatch(/\bimmutable\b/i);
-            expect(isExecutableMediaType(contentType), label).toBe(false);
-            expect(responseSha256, label).not.toBe(prior.sha256);
-            expect(bytes.subarray(0, 4).toString('hex'), label).not.toBe('0061736d');
-            retiredUrls.push({
-              mode,
-              url,
-              priorSha256: prior.sha256,
-              responseSha256,
-              status: response.status(),
-              cacheControl,
-              contentType,
-            });
-          }
-        }
+        const retiredUrls = await collectRetiredWebpUrls(new URL(DEPLOY_URL), {
+          ordinary,
+          revalidated: request,
+        });
+        await testInfo.attach('retired-webp-urls', {
+          body: JSON.stringify(retiredUrls),
+          contentType: 'application/json',
+        });
+        expect(retiredUrls.filter((row) => !retiredWebpResponseIsSafe(row))).toEqual([]);
       } finally {
         await ordinary.dispose();
       }
-      await testInfo.attach('retired-webp-urls', {
-        body: JSON.stringify(retiredUrls),
-        contentType: 'application/json',
-      });
       const inventory = softwareWebpInventory(files);
       expect(inventory.ownedOnly, JSON.stringify(inventory)).toBe(true);
       for (const file of files.filter(({ path }) => /\.[cm]?js$/.test(path))) {
