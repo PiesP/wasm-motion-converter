@@ -92,6 +92,14 @@
         The first deployment used Rust for the palette and gifenc JavaScript for mapping and
         encoding. Later deployments used the Rust encoder. Each build record includes the
         compiler version, target, Cargo flags and SHA-256 of the generator, inputs and WASM.</p>
+      <p>All 15 deployments listed below were withdrawn on 24 November 2026. Cloudflare
+        listed no aliases for them. After withdrawal, requests from Osaka (KIX) returned
+        HTTP 404 for each deployment's root, manifest, original notice and GIF module.
+        Use the table to find the archived notice, source and build record for your copy.</p>
+      <p>At 05:08 JST that day, the production hostname still served the original
+        <code>/assets/gif-scalar-quantizer-C4eFz0Ox.wasm</code> from the Osaka cache.
+        See the <a href="https://github.com/PiesP/wasm-motion-converter/issues/532#issuecomment-7112653362">dated cache check</a>
+        for the response and file hash.</p>
       <p>The first ten rows used Rust 1.99.1. Its
         <a href="https://static.rust-lang.org/dist/2026-10-15/rust-std-1.99.1-wasm32-unknown-unknown.tar.xz">official wasm32-unknown-unknown standard library archive</a>
         includes <code>COPYRIGHT</code>, <code>LICENSE-MIT</code> and <code>LICENSE-APACHE</code>.
@@ -213,8 +221,10 @@
                 <p><a href="original/770e514a74969643e715795c402aecb121964b4a22b92713cf1577eb538cd620.md">Original notice</a> <code>770e514a74969643e715795c402aecb121964b4a22b92713cf1577eb538cd620</code></p>
                 <p><a href="https://github.com/PiesP/wasm-motion-converter/tree/ae71ba190c81c401c6750a6837f22a41c3221077">Recorded Git revision ae71ba190c</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/ae71ba190c81c401c6750a6837f22a41c3221077/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/ae71ba190c81c401c6750a6837f22a41c3221077/pnpm-lock.yaml">lockfile</a></p>
                 <p>Pages deployment <code>6d82b6f8-650a-4bdf-9a7c-7316f6f0d9ad</code>.
-                  Cloudflare listed <code>feat-fix-analyzing-stuck-ux.wasm-motion-converter.pages.dev</code>
-                  as its branch alias on 23 November 2026.</p>
+                  This preview and its branch alias,
+                  <code>feat-fix-analyzing-stuck-ux.wasm-motion-converter.pages.dev</code>,
+                  were withdrawn on 24 November 2026. If you received files from either
+                  hostname, use the original notice and recorded Git revision in this row.</p>
               </td>
             </tr>
             <tr>
@@ -223,7 +233,9 @@
                 <p><a href="original/770e514a74969643e715795c402aecb121964b4a22b92713cf1577eb538cd620.md">Original notice</a> <code>770e514a74969643e715795c402aecb121964b4a22b92713cf1577eb538cd620</code></p>
                 <p><a href="https://github.com/PiesP/wasm-motion-converter/tree/08ca6fac7d8ed45be8ecf024e712f4d4e3f9a402">Recorded Git revision 08ca6fac7d</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/08ca6fac7d8ed45be8ecf024e712f4d4e3f9a402/src/services/gif-encoder-service.ts">GIF caller</a> · <a href="https://github.com/PiesP/wasm-motion-converter/blob/08ca6fac7d8ed45be8ecf024e712f4d4e3f9a402/pnpm-lock.yaml">lockfile</a></p>
                 <p>Pages deployment <code>790fcb49-a033-46f0-af18-71bb05446505</code>.
-                  Cloudflare listed zero aliases for this deployment on 23 November 2026.</p>
+                  By 00:21 JST on 24 November 2026, this preview had been withdrawn.
+                  Cloudflare listed no aliases at withdrawal. If you received files from
+                  this hostname, use the original notice and recorded Git revision in this row.</p>
               </td>
             </tr>
             <tr>
