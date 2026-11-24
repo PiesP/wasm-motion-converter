@@ -42,7 +42,10 @@ uses bounded Blob range reads and keeps credits for retired unabortable reads
 until they truly settle. Ordinary contiguous packet payloads go from host source
 ranges to native EncodedVideoChunk without a WASM payload detour. MPEG-TS uses
 explicitly prepared reconstructed-packet scratch, admitted before external ready.
-A parser error, OOM, cancellation, trap or post-bootstrap failure is terminal.
+A parser error, OOM, cancellation, trap or post-bootstrap failure ends the
+conversion. On a ready session, a packet query with an already-aborted signal
+rejects that call and evicts the packet window. A later query can still use
+the session until its owner releases it.
 
 Indexes preserve decode order and original signed timebases; trim starts from an
 actually bitstream-verified key and retains required preroll/B-frame references.
@@ -94,10 +97,11 @@ miss; expanded and imported snapshots retain their existing wire format.
 
 Snapshot exports are bounded logical records, never raw Rust heap dumps. A
 versioned header, track/configuration, packet descriptors and optional TS source
-records end in CRC32. At most8MiB is exported/imported, in <=8KiB transfers and
-<=256 decoded records per bounded import step. Export begin0 means only a
-prospective oversize cache miss; high-bit status records retain distinct parser
-error codes. Malformed imports are terminal and cannot trigger a retry parse.
+records end in CRC32. At most 8 MiB is exported or imported, in transfers of up
+to 8 KiB and up to 256 decoded records per import step. Export begin returns
+zero for an idle compact index or an expanded snapshot that would exceed the
+size limit. Both are cache misses. High-bit statuses retain the parser error
+codes. Malformed imports are terminal and cannot trigger a retry parse.
 Session/generation leases prohibit snapshot work during reads/seeks or another
 snapshot operation. A complete import releases its wire buffer and prepares TS
 scratch before the host publishes ready.

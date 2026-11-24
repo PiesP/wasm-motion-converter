@@ -177,7 +177,7 @@ jobs:
         if: ${{ needs.changes.outputs.unit == 'true' }}
         run: vp run build:gif-wasm:check && vp run build:demux-wasm:check
 
-      - name: 🦀 Verify experimental VP8 engineering correctness
+      - name: 🦀 Verify the owned VP8 encoder and compiled WASM
         if: ${{ needs.changes.outputs.unit == 'true' }}
         run: |
           rustup component add clippy rustfmt --toolchain 1.100.0
