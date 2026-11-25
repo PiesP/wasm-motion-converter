@@ -147,6 +147,16 @@ export interface TranslationKeys {
   'settings.sharing.sizeHint': string;
   'settings.sharing.title': string;
 
+  // Playback count
+  'playback.title': string;
+  'playback.forever': string;
+  'playback.once': string;
+  'playback.custom': string;
+  'playback.customLabel': string;
+  'playback.tooltip': string;
+  'playback.invalid': string;
+  'result.replay': string;
+
   // Format Selector
   'format.title': string;
   'format.gif': string;

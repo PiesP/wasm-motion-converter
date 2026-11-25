@@ -457,6 +457,9 @@ const App: Component = () => {
                   setConversionSettings({ ...conversionSettings(), quality })
                 }
                 onScaleChange={(scale) => setConversionSettings({ ...conversionSettings(), scale })}
+                onPlayCountChange={(playCount) =>
+                  setConversionSettings({ ...conversionSettings(), playCount })
+                }
                 onSharingSettings={() =>
                   setConversionSettings({ ...conversionSettings(), quality: 'low', scale: 0.5 })
                 }

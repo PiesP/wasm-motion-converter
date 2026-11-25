@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 PiesP
 
 import FormatSelector from '@components/FormatSelector';
+import PlaybackCountSelector from '@components/PlaybackCountSelector';
 import QualitySelector from '@components/QualitySelector';
 import ScaleSelector from '@components/ScaleSelector';
 import SmartFrameSkipSelector from '@components/SmartFrameSkipSelector';
@@ -9,8 +10,9 @@ import Button from '@components/ui/Button';
 import Panel from '@components/ui/Panel';
 import { useLocale } from '@hooks/use-locale';
 import type { ConversionSettings, VideoMetadata } from '@t/conversion-types';
+import { DEFAULT_PLAY_COUNT } from '@utils/playback-count';
 import type { Component } from 'solid-js';
-import { createMemo, Show, splitProps } from 'solid-js';
+import { createMemo, createSignal, Show, splitProps } from 'solid-js';
 
 interface SettingsPanelProps {
   isBusy: boolean;
@@ -24,6 +26,7 @@ interface SettingsPanelProps {
   onFormatChange: (format: ConversionSettings['format']) => void;
   onQualityChange: (quality: ConversionSettings['quality']) => void;
   onScaleChange: (scale: ConversionSettings['scale']) => void;
+  onPlayCountChange: (count: number) => void;
   onSharingSettings: () => void;
   onSmartFrameSkipChange: (mode: ConversionSettings['smartFrameSkip']) => void;
 }
@@ -50,6 +53,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     'onFormatChange',
     'onQualityChange',
     'onScaleChange',
+    'onPlayCountChange',
     'onSharingSettings',
     'onSmartFrameSkipChange',
   ]);
@@ -66,7 +70,8 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     !local.metadata || local.isComplete ? 'ghost' : ('primary' as const)
   );
 
-  const convertDisabled = createMemo(() => !local.metadata || local.isBusy);
+  const [playCountValid, setPlayCountValid] = createSignal(true);
+  const convertDisabled = createMemo(() => !local.metadata || local.isBusy || !playCountValid());
 
   const convertText = createMemo(() =>
     !local.metadata
@@ -111,6 +116,13 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
         onChange={local.onScaleChange}
         tooltip={t('settings.tooltip.scale')}
         value={local.settings.scale}
+      />
+
+      <PlaybackCountSelector
+        value={local.settings.playCount ?? DEFAULT_PLAY_COUNT}
+        onChange={local.onPlayCountChange}
+        onValidityChange={setPlayCountValid}
+        disabled={local.isConversionActive}
       />
 
       <details class="mb-6 border-t border-border-subtle pt-3" data-testid="advanced-settings">
