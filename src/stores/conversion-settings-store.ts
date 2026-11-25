@@ -9,6 +9,7 @@ import {
   isSmartFrameSkipMode,
 } from '@t/conversion-types';
 import { logger } from '@utils/logger';
+import { DEFAULT_PLAY_COUNT, isPlayCount } from '@utils/playback-count';
 import { createSignal } from 'solid-js';
 
 import {
@@ -25,6 +26,7 @@ export const DEFAULT_CONVERSION_SETTINGS: ConversionSettings = {
   trimStart: 0,
   trimEnd: 0,
   smartFrameSkip: 'off',
+  playCount: DEFAULT_PLAY_COUNT,
 };
 
 export type ConversionSettingsPersistenceStatus = 'writable' | 'future' | 'unreadable';
@@ -59,6 +61,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const MIGRATIONS: ReadonlyArray<(settings: Record<string, unknown>) => Record<string, unknown>> = [
   // v0 → v1: Initial schema versioning (no field changes)
   (_settings) => _settings,
+  // v1 → v2: Existing animations repeat forever.
+  (settings) => ({ ...settings, playCount: DEFAULT_PLAY_COUNT }),
 ];
 
 // ── Load ─────────────────────────────────────────────────────────────────
@@ -92,6 +96,7 @@ function parseStoredSettings(raw: Record<string, unknown>): ConversionSettings |
       trimStart: validTrim ? trimStart : 0,
       trimEnd: validTrim ? trimEnd : 0,
       smartFrameSkip: raw.smartFrameSkip,
+      playCount: isPlayCount(raw.playCount) ? raw.playCount : DEFAULT_PLAY_COUNT,
     };
   }
   return null;
@@ -191,6 +196,7 @@ export const saveConversionSettings = (settings: ConversionSettings): void => {
         trimStart: settings.trimStart,
         trimEnd: settings.trimEnd,
         smartFrameSkip: settings.smartFrameSkip,
+        playCount: isPlayCount(settings.playCount) ? settings.playCount : DEFAULT_PLAY_COUNT,
       })
     );
     setConversionSettingsPersistenceStatus('writable');

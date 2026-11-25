@@ -99,6 +99,7 @@ export function serializeConversionInputs(
           ? memoryPressureCadenceRatio
           : undefined,
       smartFrameSkip: settings.smartFrameSkip,
+      ...(settings.playCount === undefined ? {} : { playCount: settings.playCount }),
     },
   };
 }

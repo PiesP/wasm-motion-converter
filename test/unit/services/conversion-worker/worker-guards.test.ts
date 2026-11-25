@@ -36,6 +36,16 @@ describe('isWorkerRequest', () => {
     expect(isWorkerRequest(validStart)).toBe(true);
   });
 
+  it.each([0, 1, 2, 3, 10, 65535])('accepts playback count %i', (playCount) => {
+    const request = { ...validStart, options: { ...validStart.options, playCount } };
+    expect(isWorkerRequest(request)).toBe(true);
+  });
+
+  it.each([-1, 1.5, 65536, NaN, Infinity, null, '3'])('rejects playback count %s', (playCount) => {
+    const request = { ...validStart, options: { ...validStart.options, playCount } };
+    expect(isWorkerRequest(request)).toBe(false);
+  });
+
   it('accepts every supported format, quality, and smart-frame-skip mode', () => {
     for (const format of ['gif', 'webp']) {
       for (const quality of ['low', 'medium', 'high']) {

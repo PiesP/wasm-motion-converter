@@ -22,6 +22,7 @@ import { isOwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import { isOwnedVp8FailureKind, OWNED_VP8_FAILURE_CODES } from '@services/owned-vp8-errors';
 import { isConversionFormat, isConversionQuality, isSmartFrameSkipMode } from '@t/conversion-types';
 import { CONVERSION_MEMORY_BUDGET_BYTES } from '@utils/constants';
+import { isPlayCount } from '@utils/playback-count';
 
 import type { WorkerRequest, WorkerResponse } from './types';
 import {
@@ -233,6 +234,7 @@ function isValidConversionOptions(options: unknown): options is Record<string, u
     (options.memoryPressureCadenceRatio === undefined ||
       isFinitePositive(options.memoryPressureCadenceRatio)) &&
     (options.smartFrameSkip === undefined || isSmartFrameSkipMode(options.smartFrameSkip)) &&
+    (options.playCount === undefined || isPlayCount(options.playCount)) &&
     (options.maxMemoryMB === undefined || isFinitePositive(options.maxMemoryMB))
   );
 }

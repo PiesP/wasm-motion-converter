@@ -124,6 +124,8 @@ export interface ConversionSettings {
   trimEnd: number;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip: SmartFrameSkipMode;
+  /** Total plays, including the first; zero or omitted means forever. */
+  playCount?: number | undefined;
 }
 
 /**
@@ -290,6 +292,8 @@ export interface ConversionRequest {
   memoryPressureCadenceRatio?: number | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
+  /** Total plays (zero or omitted means forever). */
+  playCount?: number | undefined;
 }
 
 /** Progress phase identifier for pipeline operations and UI display */

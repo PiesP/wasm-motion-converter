@@ -110,6 +110,24 @@ afterEach(() => {
 
 describe('worker pipeline smart frame skip forwarding', () => {
   it.each(['gif', 'webp'] as const)(
+    'forwards playback counts to the %s encoder',
+    async (format) => {
+      const encoder = format === 'gif' ? mocks.encodeGif : mocks.encodeWebp;
+      for (const playCount of [0, 1, 3, 65535]) {
+        encoder.mockClear();
+        await runWorkerPipeline(
+          new ArrayBuffer(8),
+          { ...baseOptions, format, playCount },
+          vi.fn(),
+          'playback-count'
+        );
+        expect(encoder).toHaveBeenCalledOnce();
+        expect(encoder.mock.calls[0]?.[1]).toMatchObject({ playCount });
+      }
+    }
+  );
+
+  it.each(['gif', 'webp'] as const)(
     'forwards independent normal, pressure, and explicit-gap policies to %s',
     async (format) => {
       await runWorkerPipeline(

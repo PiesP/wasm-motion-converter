@@ -96,6 +96,7 @@ describe('UI state clarity', () => {
           onFormatChange={() => {}}
           onQualityChange={() => {}}
           onScaleChange={() => {}}
+          onPlayCountChange={() => {}}
           onSharingSettings={() => {}}
           onSmartFrameSkipChange={() => {}}
           settings={settings}
@@ -133,6 +134,7 @@ describe('UI state clarity', () => {
           onFormatChange={() => {}}
           onQualityChange={() => {}}
           onScaleChange={() => {}}
+          onPlayCountChange={() => {}}
           onSharingSettings={() => {}}
           onSmartFrameSkipChange={() => {}}
           settings={settings}
@@ -270,6 +272,68 @@ describe('UI state clarity', () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
 
     dispose();
+  });
+
+  it('replays finite output without changing the download URL or retaining old preview URLs', async () => {
+    await commands.setReducedMotion(false);
+    const createUrl = vi.spyOn(URL, 'createObjectURL');
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const blob = new Blob(
+      [
+        Uint8Array.from(
+          atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
+          (character) => character.charCodeAt(0)
+        ),
+      ],
+      { type: 'image/gif' }
+    );
+    const dispose = render(
+      () => (
+        <ResultPreview
+          originalName="sample.mp4"
+          originalSize={1000}
+          outputBlob={blob}
+          outputWidth={1}
+          outputHeight={1}
+          settings={{ ...settings, playCount: 3 }}
+        />
+      ),
+      container
+    );
+    disposeLoadedPreview = dispose;
+    await Promise.resolve();
+
+    const download = container.querySelector<HTMLAnchorElement>(
+      '[data-testid="download-result-button"]'
+    )!;
+    const replay = container.querySelector<HTMLButtonElement>(
+      '[data-testid="result-preview-replay"]'
+    )!;
+    const originalUrl = download.getAttribute('href');
+    expect(container.querySelector('[data-result-play-count="3"]')?.textContent).toBe('3');
+    const originalImage = container.querySelector<HTMLImageElement>('[data-testid="result-image"]');
+    replay.click();
+    const firstReplay = container.querySelector<HTMLImageElement>('[data-testid="result-image"]')!;
+    expect(firstReplay).not.toBe(originalImage);
+    expect(firstReplay.getAttribute('src')).not.toBe(originalUrl);
+    const firstReplayUrl = firstReplay.getAttribute('src');
+    replay.click();
+    const secondReplayUrl = container
+      .querySelector<HTMLImageElement>('[data-testid="result-image"]')!
+      .getAttribute('src');
+    expect(secondReplayUrl).not.toBe(firstReplayUrl);
+    expect(revokeUrl).toHaveBeenCalledWith(firstReplayUrl);
+    expect(download.getAttribute('href')).toBe(originalUrl);
+    expect(revokeUrl).not.toHaveBeenCalledWith(originalUrl);
+    container.querySelector<HTMLButtonElement>('[data-testid="result-preview-toggle"]')!.click();
+    expect(revokeUrl).toHaveBeenCalledWith(secondReplayUrl);
+    expect(container.querySelector('[data-testid="result-image"]')).toBeNull();
+    expect(createUrl).toHaveBeenCalledTimes(3);
+    dispose();
+    disposeLoadedPreview = undefined;
+    expect(revokeUrl).toHaveBeenCalledWith(originalUrl);
   });
 
   it('opts into reduced-motion previews, detaches the image when hidden, and preserves the download URL', async () => {

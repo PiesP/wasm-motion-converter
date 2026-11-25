@@ -60,6 +60,7 @@ const baseRequest: ConversionRequest = {
   trimEnd: 0,
   maxMemoryMB: 512,
   smartFrameSkip: 'adaptive',
+  playCount: 3,
 };
 
 function stubCanvasWebpSupport(): void {
@@ -331,6 +332,7 @@ describe('main conversion pipeline encoder options', () => {
         maxFrames: 9000,
         maxOutputBytes: 268435456,
         smartFrameSkip: 'adaptive',
+        playCount: 3,
       }),
       undefined
     );
@@ -440,6 +442,7 @@ describe('main conversion pipeline encoder options', () => {
         maxFrames: 9000,
         maxOutputBytes: 100663296,
         smartFrameSkip: 'adaptive',
+        playCount: 3,
       }),
       expect.anything(),
       undefined
@@ -458,6 +461,7 @@ describe('main conversion pipeline encoder options', () => {
         maxFrames: 9000,
         maxOutputBytes: 100663296,
         smartFrameSkip: 'adaptive',
+        playCount: 3,
       }),
       expect.anything(),
       undefined

@@ -6,6 +6,7 @@ import { copyOwnedInputIndex } from '@services/owned-input-index-cache';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import type { ConversionRequest, PrecomputedVideoMetadata } from '@t/conversion-types';
 import { DEFAULT_FPS, WORKER_MAX_MEMORY_MB } from '@utils/constants';
+import { resolvePlayCount } from '@utils/playback-count';
 
 import type { SerializedConversionOptions, SerializedDecoderConfig } from './types';
 
@@ -84,5 +85,6 @@ export function buildConversionRequest(
     forceDecimation: options.forceDecimation,
     memoryPressureCadenceRatio: options.memoryPressureCadenceRatio,
     smartFrameSkip: options.smartFrameSkip ?? 'off',
+    ...(options.playCount === undefined ? {} : { playCount: resolvePlayCount(options.playCount) }),
   };
 }

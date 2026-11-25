@@ -37,6 +37,7 @@ import {
 import { scheduleTask } from '@utils/dom-utils';
 import { logger } from '@utils/logger';
 import { getMemoryUsageMB } from '@utils/memory-monitor';
+import { resolvePlayCount } from '@utils/playback-count';
 import { createThrottledProgress } from '@utils/throttled-progress';
 
 import { globalBufferPool } from './buffer-pool';
@@ -90,6 +91,7 @@ export async function runConversionPipeline(
 ): Promise<ArrayBuffer> {
   const pipelineStart = performance.now();
   const format = request.format;
+  resolvePlayCount(request.playCount);
   const previousLoad = waitForOwnedVp8Load(signal);
   if (previousLoad) await previousLoad;
   signal?.throwIfAborted();
@@ -408,6 +410,7 @@ async function _runPipelineInner(
                 minimumSourceFrameGap: gifCadence.minimumSourceFrameGap,
                 pressureCadenceRatio: gifCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
+                playCount: request.playCount,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
                 profileOperation,
@@ -525,7 +528,8 @@ async function _runPipelineInner(
           outputLimits,
           signal,
           frameMemoryBudget,
-          profileOperation
+          profileOperation,
+          request.playCount
         );
         streamingWebpEncoder = streamingEncoder;
 
@@ -627,6 +631,7 @@ async function _runPipelineInner(
                 minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
                 pressureCadenceRatio: webpCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
+                playCount: request.playCount,
                 decimationMemoryCheck,
                 onEncodingComplete: recordCompletedFrameCounts,
                 profileOperation,
@@ -668,6 +673,7 @@ async function _runPipelineInner(
                 minimumSourceFrameGap: webpCadence.minimumSourceFrameGap,
                 pressureCadenceRatio: webpCadence.pressureCadenceRatio,
                 smartFrameSkip: request.smartFrameSkip,
+                playCount: request.playCount,
                 decimationMemoryCheck,
                 assertOwnedVp8AdditionalMemoryBytes: assertMemoryBudget,
                 onEncodingComplete: recordCompletedFrameCounts,

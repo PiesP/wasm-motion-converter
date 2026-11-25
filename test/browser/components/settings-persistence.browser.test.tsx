@@ -41,7 +41,7 @@ afterEach(() => {
 it('keeps a future settings record byte-for-byte through initial debounce, edits, and unmount flush', async () => {
   vi.useFakeTimers();
   const futureRecord = JSON.stringify({
-    __schemaVersion: 2,
+    __schemaVersion: 3,
     format: 'gif',
     quality: 'high',
     scale: 1,

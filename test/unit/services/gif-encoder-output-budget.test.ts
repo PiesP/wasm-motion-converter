@@ -72,7 +72,7 @@ const demux = {
   sourceTotalMs: 200,
   totalFrames: 2,
 };
-const frameOptions = { palette: [[0, 0, 0]], colorDepth: 2, repeat: 0, delay: 20 };
+const frameOptions = { palette: [[0, 0, 0]], colorDepth: 2, delay: 20 };
 
 beforeEach(() => {
   mocks.frameCount = 2;

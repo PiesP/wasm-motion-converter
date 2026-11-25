@@ -31,7 +31,7 @@ test('a future settings record survives app startup and a visible edit', async (
     if (message.type() === 'error') browserErrors.push(message.text());
   });
   const futureRecord = JSON.stringify({
-    __schemaVersion: 2,
+    __schemaVersion: 3,
     format: 'gif',
     quality: 'high',
     scale: 1,
@@ -101,6 +101,83 @@ test('invalid visible trim blocks Convert until the edited range is submitted', 
   expect(durationSeconds).toBeGreaterThanOrEqual(0.4);
   expect(durationSeconds).toBeLessThanOrEqual(0.7);
 });
+
+/** Independently read the loop metadata emitted by the ordinary conversion path. */
+function readPlaybackCount(output: Buffer, format: 'gif' | 'webp'): number {
+  if (format === 'gif') {
+    const packed = output[10]!;
+    const offset = 13 + ((packed & 0x80) !== 0 ? 3 * (1 << ((packed & 7) + 1)) : 0);
+    if (output[offset] === 0x21 && output[offset + 1] === 0xf9) return 1;
+    expect(output.subarray(offset, offset + 3)).toEqual(Buffer.from([0x21, 0xff, 11]));
+    expect(output.toString('ascii', offset + 3, offset + 14)).toBe('NETSCAPE2.0');
+    expect(output.subarray(offset + 14, offset + 16)).toEqual(Buffer.from([3, 1]));
+    expect(output[offset + 18]).toBe(0);
+    const repeat = output.readUInt16LE(offset + 16);
+    return repeat === 0 ? 0 : repeat + 1;
+  }
+
+  let count: number | undefined;
+  for (let offset = 12; offset + 8 <= output.length;) {
+    const size = output.readUInt32LE(offset + 4);
+    expect(offset + 8 + size).toBeLessThanOrEqual(output.length);
+    if (output.toString('ascii', offset, offset + 4) === 'ANIM') {
+      expect(count).toBeUndefined();
+      expect(size).toBe(6);
+      count = output.readUInt16LE(offset + 12);
+    }
+    offset += 8 + size + (size & 1);
+  }
+  expect(count).toBeDefined();
+  return count!;
+}
+
+for (const format of ['gif', 'webp'] as const) {
+  test(`writes finite playback counts into ordinary saved ${format.toUpperCase()} files`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.goto('/');
+    await injectTestFile(page, FIXTURE);
+    await setFormat(page, format);
+    await setQuality(page, 'low');
+    await setScale(page, '50%');
+    const convert = page.getByTestId('convert-button');
+
+    await page.getByTestId('option-playback-count-once').click();
+    await clickConvert(page);
+    expect(await waitForConversionComplete(page)).toBe('done');
+    const once = await downloadResult(page);
+    expect(readPlaybackCount(once, format)).toBe(1);
+    await expect(page.locator('[data-result-play-count="1"]')).toBeVisible();
+
+    await page.getByTestId('option-playback-count-custom').click();
+    const input = page.getByTestId('custom-playback-count');
+    await input.fill('');
+    await expect(input).toHaveAttribute('aria-invalid', 'true');
+    await expect(convert).toBeDisabled();
+    await input.fill('65536');
+    await expect(convert).toBeDisabled();
+    await input.fill('3');
+    await expect(input).toHaveAttribute('aria-invalid', 'false');
+    await expect(convert).toBeEnabled();
+    // Editing settings must not relabel the already-created result.
+    await expect(page.locator('[data-result-play-count="1"]')).toBeVisible();
+
+    await clickConvert(page);
+    expect(await waitForConversionComplete(page)).toBe('done');
+    const custom = await downloadResult(page);
+    expect(readPlaybackCount(custom, format)).toBe(3);
+    await expect(page.locator('[data-result-play-count="3"]')).toBeVisible();
+    const download = page.getByTestId('download-result-button');
+    const href = await download.getAttribute('href');
+    const preview = page.getByTestId('result-image');
+    const initialSrc = await preview.getAttribute('src');
+    await page.getByTestId('result-preview-replay').click();
+    await expect(preview).not.toHaveAttribute('src', initialSrc!);
+    await expect(download).toHaveAttribute('href', href!);
+    expect(await downloadResult(page)).toEqual(custom);
+  });
+}
 
 test('Change video keeps the current selection on picker cancellation and preserves the result', async ({
   page,
@@ -347,6 +424,7 @@ test.describe('CI codec smoke', () => {
       const output = await downloadResult(page);
       const validation = validateFileMagic(output, format);
       expect(validation).toMatchObject({ valid: true });
+      expect(readPlaybackCount(output, format)).toBe(0);
     });
   }
 });

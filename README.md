@@ -11,7 +11,8 @@ application.
 ## How to use it
 
 1. Select a video from your device. The file stays in your browser.
-2. Choose GIF or WebP, a quality preset, and an output scale. If the browser can
+2. Choose GIF or WebP, a quality preset, an output scale, and how many times the
+   animation plays (forever by default). If the browser can
    read the video's duration, you can also select a shorter clip.
 3. Start the conversion, then preview and download the result. Progress and
    cancellation controls remain available while conversion is running.

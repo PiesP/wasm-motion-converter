@@ -7,6 +7,7 @@ import Panel from '@components/ui/Panel';
 import { useLocale } from '@hooks/use-locale';
 import type { ConversionSettings } from '@t/conversion-types';
 import { formatBytes, formatDurationSeconds } from '@utils/format-utils';
+import { DEFAULT_PLAY_COUNT } from '@utils/playback-count';
 import { resultDownloadName } from '@utils/result-download';
 import {
   type Component,
@@ -76,6 +77,27 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
   // We use a plain let variable closed over by the effect, so that
   // setPreviewUrl()/setDownloadUrl() do NOT cause the effect to re-run.
   let currentUrl: string | null = null;
+  let replayUrl: string | null = null;
+  const playCount = createMemo(() => local.settings.playCount ?? DEFAULT_PLAY_COUNT);
+
+  const releaseReplayUrl = (): void => {
+    if (replayUrl) URL.revokeObjectURL(replayUrl);
+    replayUrl = null;
+  };
+
+  const restartPreview = (): void => {
+    if (!previewShown()) return;
+    const url = URL.createObjectURL(local.outputBlob);
+    releaseReplayUrl();
+    replayUrl = url;
+    previewResizeObserver?.disconnect();
+    previewResizeObserver = undefined;
+    resultImageRef = undefined;
+    setLoaded(false);
+    setPreviewError(false);
+    setRenderedScalePercent(null);
+    setPreviewUrl(url);
+  };
 
   const hidePreview = (): void => {
     previewResizeObserver?.disconnect();
@@ -84,6 +106,8 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     setLoaded(false);
     setRenderedScalePercent(null);
     setPreviewShown(false);
+    releaseReplayUrl();
+    setPreviewUrl(currentUrl);
   };
 
   const togglePreview = (): void => {
@@ -126,6 +150,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
     previewResizeObserver?.disconnect();
     previewResizeObserver = undefined;
 
+    releaseReplayUrl();
     // Revoke previous URL (stored in closure variable, not reactive)
     if (currentUrl) {
       URL.revokeObjectURL(currentUrl);
@@ -146,6 +171,7 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
       pendingResultScrollFrame = undefined;
     }
     previewResizeObserver?.disconnect();
+    releaseReplayUrl();
     if (currentUrl) {
       URL.revokeObjectURL(currentUrl);
       currentUrl = null;
@@ -324,6 +350,16 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
         >
           {t(previewShown() ? 'result.hidePreview' : 'result.showPreview')}
         </button>
+        <Show when={previewShown() && playCount() !== 0}>
+          <button
+            type="button"
+            class="min-h-target-minimum rounded-button border border-border-standard bg-bg-panel px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-bg-elevated focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+            onClick={restartPreview}
+            data-testid="result-preview-replay"
+          >
+            {t('result.replay')}
+          </button>
+        </Show>
         <Show when={previewShown()}>
           <fieldset class="inline-flex rounded-button border border-border-standard bg-white/[0.02] p-0.5">
             <legend class="sr-only">{t('result.previewSize')}</legend>
@@ -389,27 +425,29 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
               }}
             />
           </Show>
-          <Show when={previewUrl()}>
-            <img
-              ref={(element) => {
-                resultImageRef = element;
-              }}
-              src={previewUrl()!}
-              alt={t('result.aria.previewAlt', {
-                format: outputExtension().toUpperCase(),
-                name: downloadFileName(),
-              })}
-              aria-label={t('result.aria.previewAlt', {
-                format: outputExtension().toUpperCase(),
-                name: downloadFileName(),
-              })}
-              class={`col-start-1 row-start-1 block h-auto max-h-[70vh] justify-self-center rounded object-contain opacity-100 transition-opacity duration-300 ${
-                previewSizeMode() === 'fit' ? 'w-full' : 'w-auto max-w-full'
-              }`}
-              onLoad={handlePreviewLoad}
-              onError={handlePreviewError}
-              data-testid="result-image"
-            />
+          <Show when={previewUrl()} keyed>
+            {(url) => (
+              <img
+                ref={(element) => {
+                  resultImageRef = element;
+                }}
+                src={url}
+                alt={t('result.aria.previewAlt', {
+                  format: outputExtension().toUpperCase(),
+                  name: downloadFileName(),
+                })}
+                aria-label={t('result.aria.previewAlt', {
+                  format: outputExtension().toUpperCase(),
+                  name: downloadFileName(),
+                })}
+                class={`col-start-1 row-start-1 block h-auto max-h-[70vh] justify-self-center rounded object-contain opacity-100 transition-opacity duration-300 ${
+                  previewSizeMode() === 'fit' ? 'w-full' : 'w-auto max-w-full'
+                }`}
+                onLoad={handlePreviewLoad}
+                onError={handlePreviewError}
+                data-testid="result-image"
+              />
+            )}
           </Show>
           <Show when={previewError()}>
             <div class="flex flex-col items-center justify-center p-8 text-text-tertiary w-full">
@@ -480,6 +518,14 @@ const ResultPreview: Component<ResultPreviewProps> = (props) => {
             <dt>{t('result.scale')}</dt>
             <dd data-result-scale>
               {(local.settings.scale * SCALE_PERCENTAGE_MULTIPLIER).toFixed(0)}%
+            </dd>
+          </div>
+          <div class="flex items-center gap-1">
+            <dt>{t('playback.title')}</dt>
+            <dd data-result-play-count={playCount()}>
+              {playCount() === 0
+                ? t('playback.forever')
+                : new Intl.NumberFormat(locale()).format(playCount())}
             </dd>
           </div>
         </dl>

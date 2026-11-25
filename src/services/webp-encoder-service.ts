@@ -56,7 +56,7 @@ export async function encodeWebpOwned(
   const startTime = performance.now();
 
   // Streaming encode state — use incremental muxer to avoid O(N) memory accumulation
-  const muxer = new StreamingWebpMuxer(w, h, opts, opts.profileOperation);
+  const muxer = new StreamingWebpMuxer(w, h, opts, opts.profileOperation, opts.playCount);
   const frameMemoryBudget = new WebpFrameMemoryBudget({
     codedWidth: demux.config.codedWidth ?? srcW,
     codedHeight: demux.config.codedHeight ?? srcH,

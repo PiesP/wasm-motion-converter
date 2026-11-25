@@ -127,6 +127,8 @@ export interface SerializedConversionOptions {
   memoryPressureCadenceRatio?: number | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
+  /** Total plays (zero or omitted means forever). */
+  playCount?: number | undefined;
   /** Dynamic memory limit (MB) forwarded from main thread */
   maxMemoryMB?: number | undefined;
 }

@@ -11,6 +11,7 @@
  */
 
 import { VP8_FOURCC as SHARED_VP8_FOURCC, VP8X_FOURCC } from '@utils/constants';
+import { resolvePlayCount } from '@utils/playback-count';
 
 import type { ProfileOperationRecorder } from './conversion-profiler';
 import type { OutputLimitOverrides, OutputLimits } from './output-limits';
@@ -89,6 +90,7 @@ export class StreamingWebpMuxer {
   private iccProfile: Uint8Array | null | undefined;
   private readonly limits: OutputLimits;
   private readonly profileOperation: ProfileOperationRecorder | undefined;
+  private readonly playCount: number;
 
   /** Pre-computed header size: RIFF(12) + VP8X(18) + ANIM(6+8) = 44 bytes */
   private static readonly HEADER_SIZE =
@@ -123,8 +125,10 @@ export class StreamingWebpMuxer {
     width: number,
     height: number,
     limits?: OutputLimitOverrides,
-    profileOperation?: ProfileOperationRecorder
+    profileOperation?: ProfileOperationRecorder,
+    playCount = 0
   ) {
+    this.playCount = resolvePlayCount(playCount);
     if (
       !Number.isInteger(width) ||
       width < 1 ||
@@ -388,7 +392,7 @@ export class StreamingWebpMuxer {
     off += 4;
     view.setUint32(off, 0, true); // background color
     off += 4;
-    view.setUint16(off, 0, true); // loop count
+    view.setUint16(off, this.playCount, true); // total plays; zero means forever
     off += 2;
 
     this.chunks.push(header);

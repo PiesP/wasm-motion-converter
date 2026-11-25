@@ -680,13 +680,12 @@ describe('conversion-owned WASM glue', () => {
       const local = retained.retainedPalette(handle);
       expect(local).toEqual(Uint8Array.from(legacyFrame.palette.flat()));
       const depth = Math.max(2, Math.ceil(Math.log2(local.length / 3)));
-      const options = { palette: legacyFrame.palette, colorDepth: depth, repeat: 0, delay: 20 };
+      const options = { palette: legacyFrame.palette, colorDepth: depth, delay: 20 };
       legacyWriter.writeFrame(legacyFrame.index, width, height, options);
       const compressed = retained.compressRetained(handle, depth);
       retainedWriter.writeCompressedFrame(compressed, pixels, width, height, {
         palette: local,
         colorDepth: depth,
-        repeat: 0,
         delay: 20,
       });
       if (frame === 0) retained.captureGlobalPalette(handle);
@@ -862,9 +861,9 @@ describe('conversion-owned WASM glue', () => {
       const oracleIndices = referenceApplyPalette(expected, palette, 'rgb565');
       expect(indices).toEqual(oracleIndices);
       const depth = Math.max(2, Math.ceil(Math.log2(palette.length)));
-      const options = { palette, colorDepth: depth, repeat: 0, delay: 20 };
+      const options = { palette, colorDepth: depth, delay: 20 };
       owned.writeFrame(indices, width, height, options);
-      oracle.writeFrame(oracleIndices, width, height, options);
+      oracle.writeFrame(oracleIndices, width, height, { ...options, repeat: 0 });
       expect(backing.subarray(width * height * 4)).toEqual(new Uint8Array(32).fill(0xa5));
     }
     owned.finish();
