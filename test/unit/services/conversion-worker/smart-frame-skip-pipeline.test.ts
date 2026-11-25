@@ -127,7 +127,6 @@ describe('worker pipeline smart frame skip forwarding', () => {
     }
   );
 
-
   it.each(['gif', 'webp'] as const)(
     'forwards independent normal, pressure, and explicit-gap policies to %s',
     async (format) => {
