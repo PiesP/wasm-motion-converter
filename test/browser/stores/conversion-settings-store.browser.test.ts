@@ -93,7 +93,14 @@ describe('conversion-settings-store', () => {
   });
 
   it('migrates version 1 to forever without losing existing output settings', async () => {
-    const { playCount: _playCount, ...legacy } = makeTestSettings();
+    const legacy = {
+      format: 'webp',
+      quality: 'high',
+      scale: 1,
+      trimStart: 5,
+      trimEnd: 30,
+      smartFrameSkip: 'off',
+    };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ __schemaVersion: 1, ...legacy }));
     const { conversionSettings } = await importFreshSettingsStore();
     expect(conversionSettings()).toEqual({ ...legacy, playCount: 0 });

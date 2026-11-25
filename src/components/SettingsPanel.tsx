@@ -27,6 +27,7 @@ interface SettingsPanelProps {
   onQualityChange: (quality: ConversionSettings['quality']) => void;
   onScaleChange: (scale: ConversionSettings['scale']) => void;
   onPlayCountChange: (count: number) => void;
+  onPlayCountValidityChange?: ((valid: boolean) => void) | undefined;
   onSharingSettings: () => void;
   onSmartFrameSkipChange: (mode: ConversionSettings['smartFrameSkip']) => void;
 }
@@ -54,6 +55,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     'onQualityChange',
     'onScaleChange',
     'onPlayCountChange',
+    'onPlayCountValidityChange',
     'onSharingSettings',
     'onSmartFrameSkipChange',
   ]);
@@ -121,7 +123,10 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
       <PlaybackCountSelector
         value={local.settings.playCount ?? DEFAULT_PLAY_COUNT}
         onChange={local.onPlayCountChange}
-        onValidityChange={setPlayCountValid}
+        onValidityChange={(valid) => {
+          setPlayCountValid(valid);
+          local.onPlayCountValidityChange?.(valid);
+        }}
         disabled={local.isConversionActive}
       />
 

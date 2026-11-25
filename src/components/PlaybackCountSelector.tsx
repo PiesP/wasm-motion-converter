@@ -2,7 +2,11 @@
 // Copyright (c) 2026 PiesP
 
 import { useLocale } from '@hooks/use-locale';
-import { DEFAULT_CUSTOM_PLAY_COUNT, MAX_PLAY_COUNT, parseCustomPlayCount } from '@utils/playback-count';
+import {
+  DEFAULT_CUSTOM_PLAY_COUNT,
+  MAX_PLAY_COUNT,
+  parseCustomPlayCount,
+} from '@utils/playback-count';
 import type { Component } from 'solid-js';
 import { createEffect, createMemo, createSignal, Show } from 'solid-js';
 

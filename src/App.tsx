@@ -97,6 +97,7 @@ const App: Component = () => {
   const [preferResultPreviewHidden, setPreferResultPreviewHidden] = createSignal(false);
   const [cancellingAnalysis, setCancellingAnalysis] = createSignal(false);
   let prepareTrimSubmission: (() => boolean) | undefined;
+  const [playCountValid, setPlayCountValid] = createSignal(true);
 
   const registerTrimSubmission = (prepare: () => boolean): (() => void) => {
     prepareTrimSubmission = prepare;
@@ -104,7 +105,13 @@ const App: Component = () => {
       if (prepareTrimSubmission === prepare) prepareTrimSubmission = undefined;
     };
   };
-  const prepareCurrentTrim = (): boolean => prepareTrimSubmission?.() ?? true;
+  const prepareOutputSettings = (): boolean => {
+    if (!playCountValid()) {
+      focusElementUnlessUserIsEditing('[data-testid="custom-playback-count"]');
+      return false;
+    }
+    return prepareTrimSubmission?.() ?? true;
+  };
 
   const [memoryUsageText, setMemoryUsageText] = createSignal<string | null>(null);
 
@@ -260,7 +267,7 @@ const App: Component = () => {
   });
 
   const handleReduceSettings = (): void => {
-    if (!prepareCurrentTrim()) return;
+    if (!prepareOutputSettings()) return;
     setConversionSettings({
       ...conversionSettings(),
       quality: 'low',
@@ -282,7 +289,7 @@ const App: Component = () => {
   };
 
   const handleConvertWithMemoryCheck = (): void => {
-    if (!prepareCurrentTrim()) return;
+    if (!prepareOutputSettings()) return;
     if (isMemoryCritical()) {
       setMemoryWarning(true);
       return;
@@ -300,7 +307,7 @@ const App: Component = () => {
   };
 
   const retryWithCurrentTrim = (): void => {
-    if (prepareCurrentTrim()) handleRetry();
+    if (prepareOutputSettings()) handleRetry();
   };
 
   const selectNewFile = (): void => {
@@ -460,6 +467,7 @@ const App: Component = () => {
                 onPlayCountChange={(playCount) =>
                   setConversionSettings({ ...conversionSettings(), playCount })
                 }
+                onPlayCountValidityChange={setPlayCountValid}
                 onSharingSettings={() =>
                   setConversionSettings({ ...conversionSettings(), quality: 'low', scale: 0.5 })
                 }

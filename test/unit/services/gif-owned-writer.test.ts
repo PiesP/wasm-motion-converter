@@ -88,7 +88,11 @@ describe('owned GIF89a writer', () => {
         );
       } else {
         const expected = baseline.slice();
-        new DataView(expected.buffer).setUint16(extensionStart + 16, count === 0 ? 0 : count - 1, true);
+        new DataView(expected.buffer).setUint16(
+          extensionStart + 16,
+          count === 0 ? 0 : count - 1,
+          true
+        );
         expect(actual).toEqual(expected);
       }
     }

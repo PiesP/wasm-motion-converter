@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { isPlayCount, parseCustomPlayCount, resolvePlayCount, toGifRepeat } from '@utils/playback-count';
+import {
+  isPlayCount,
+  parseCustomPlayCount,
+  resolvePlayCount,
+  toGifRepeat,
+} from '@utils/playback-count';
 import { describe, expect, it } from 'vite-plus/test';
 
 describe('playback count', () => {

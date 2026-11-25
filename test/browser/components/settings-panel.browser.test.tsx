@@ -123,7 +123,9 @@ it('commits only valid custom playback counts and keeps the mode when editing', 
     container
   );
   const choose = (mode: string) =>
-    container.querySelector<HTMLInputElement>(`input[name="playback-count"][value="${mode}"]`)!.click();
+    container
+      .querySelector<HTMLInputElement>(`input[name="playback-count"][value="${mode}"]`)!
+      .click();
   choose('custom');
   const input = container.querySelector<HTMLInputElement>('[data-testid="custom-playback-count"]')!;
   expect(settings().playCount).toBe(3);
