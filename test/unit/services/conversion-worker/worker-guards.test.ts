@@ -37,15 +37,13 @@ describe('isWorkerRequest', () => {
   });
 
   it.each([0, 1, 2, 3, 10, 65535])('accepts playback count %i', (playCount) => {
-    expect(
-      isWorkerRequest({ ...validStart, options: { ...validStart.options, playCount } })
-    ).toBe(true);
+    const request = { ...validStart, options: { ...validStart.options, playCount } };
+    expect(isWorkerRequest(request)).toBe(true);
   });
 
   it.each([-1, 1.5, 65536, NaN, Infinity, null, '3'])('rejects playback count %s', (playCount) => {
-    expect(
-      isWorkerRequest({ ...validStart, options: { ...validStart.options, playCount } })
-    ).toBe(false);
+    const request = { ...validStart, options: { ...validStart.options, playCount } };
+    expect(isWorkerRequest(request)).toBe(false);
   });
 
   it('accepts every supported format, quality, and smart-frame-skip mode', () => {

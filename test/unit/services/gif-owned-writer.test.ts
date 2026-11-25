@@ -99,6 +99,7 @@ describe('owned GIF89a writer', () => {
   );
 
   it.each([-1, 1.5, 65536, NaN, Infinity])('rejects invalid playback count %s', (count) => {
-    expect(() => new OwnedGifWriter(64, 8192, () => {}, referenceImageData, count)).toThrow(RangeError);
+    const createWriter = () => new OwnedGifWriter(64, 8192, () => {}, referenceImageData, count);
+    expect(createWriter).toThrow(RangeError);
   });
 });

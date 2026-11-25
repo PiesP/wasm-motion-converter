@@ -308,7 +308,9 @@ describe('UI state clarity', () => {
     const download = container.querySelector<HTMLAnchorElement>(
       '[data-testid="download-result-button"]'
     )!;
-    const replay = container.querySelector<HTMLButtonElement>('[data-testid="result-preview-replay"]')!;
+    const replay = container.querySelector<HTMLButtonElement>(
+      '[data-testid="result-preview-replay"]'
+    )!;
     const originalUrl = download.getAttribute('href');
     expect(container.querySelector('[data-result-play-count="3"]')?.textContent).toBe('3');
     const originalImage = container.querySelector<HTMLImageElement>('[data-testid="result-image"]');

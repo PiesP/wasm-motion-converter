@@ -64,13 +64,15 @@ describe('createStreamingWebpEncoder tail timing', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
       3
     );
     await encoder.submit(new Uint8Array(16), 100);
     mocks.pending.get(0)?.resolve({ id: 0, bitstream: new Uint8Array(8) });
     const output = await encoder.finish();
     expect(String.fromCharCode(...output.subarray(30, 34))).toBe('ANIM');
-    expect(new DataView(output.buffer, output.byteOffset, output.byteLength).getUint16(42, true)).toBe(3);
+    const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+    expect(view.getUint16(42, true)).toBe(3);
   });
 
   it('retains the worker ICC profile once in the animated output', async () => {

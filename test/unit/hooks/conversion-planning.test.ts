@@ -275,7 +275,8 @@ describe('serializeConversionInputs', () => {
         playCount,
       });
       expect(serializedOptions.playCount).toBe(playCount);
-      expect(buildConversionRequest(new ArrayBuffer(0), serializedOptions).playCount).toBe(playCount);
+      const request = buildConversionRequest(new ArrayBuffer(0), serializedOptions);
+      expect(request.playCount).toBe(playCount);
     }
   });
 
