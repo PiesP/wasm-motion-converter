@@ -38,6 +38,7 @@ const DEFAULT_SETTINGS: ConversionSettings = {
   trimStart: 0,
   trimEnd: 0,
   smartFrameSkip: 'off',
+  playCount: 0,
 };
 
 // Helper: create a known-good settings object (different from defaults)
@@ -49,6 +50,7 @@ function makeTestSettings(overrides: Partial<ConversionSettings> = {}): Conversi
     trimStart: 5,
     trimEnd: 30,
     smartFrameSkip: 'off',
+    playCount: 0,
     ...overrides,
   };
 }
@@ -90,6 +92,23 @@ describe('conversion-settings-store', () => {
     expect(conversionSettings()).toEqual(DEFAULT_SETTINGS);
   });
 
+  it('migrates version 1 to forever without losing existing output settings', async () => {
+    const { playCount: _playCount, ...legacy } = makeTestSettings();
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ __schemaVersion: 1, ...legacy }));
+    const { conversionSettings } = await importFreshSettingsStore();
+    expect(conversionSettings()).toEqual({ ...legacy, playCount: 0 });
+  });
+
+  it('recovers only an invalid playback count', async () => {
+    const settings = makeTestSettings();
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ __schemaVersion: 2, ...settings, playCount: 65536 })
+    );
+    const { conversionSettings } = await importFreshSettingsStore();
+    expect(conversionSettings()).toEqual(settings);
+  });
+
   // ── Save / restore round-trip ──────────────────────────────────────
 
   it('saveConversionSettings persists to localStorage', async () => {
@@ -99,7 +118,7 @@ describe('conversion-settings-store', () => {
 
     expect(window.localStorage.setItem).toHaveBeenCalledWith(
       STORAGE_KEY,
-      JSON.stringify({ __schemaVersion: 1, ...settings })
+      JSON.stringify({ __schemaVersion: 2, ...settings })
     );
   });
 
@@ -122,6 +141,7 @@ describe('conversion-settings-store', () => {
       ['quality', ['low', 'medium', 'high']],
       ['scale', [0.5, 0.75, 1]],
       ['smartFrameSkip', ['off', 'low', 'medium', 'high', 'adaptive']],
+      ['playCount', [0, 1, 3, 65535]],
     ] as const) {
       for (const value of values) {
         window.localStorage.clear();
@@ -375,18 +395,20 @@ describe('conversion-settings-store', () => {
     const savedJson = localStorageStore[STORAGE_KEY]!;
     const parsed = JSON.parse(savedJson);
     expect(parsed).toEqual({
-      __schemaVersion: 1,
+      __schemaVersion: 2,
       format: 'webp',
       quality: 'high',
       scale: 1.0,
       trimStart: 5,
       trimEnd: 30,
       smartFrameSkip: 'off',
+      playCount: 0,
     });
     // Ensure no extra keys leaked
     expect(Object.keys(parsed).sort()).toEqual([
       '__schemaVersion',
       'format',
+      'playCount',
       'quality',
       'scale',
       'smartFrameSkip',
@@ -493,7 +515,7 @@ describe('conversion-settings-store', () => {
     it('does not overwrite a future version written after an older tab loaded', async () => {
       const olderTab = await importFreshSettingsStore();
       const futureRecord = JSON.stringify({
-        __schemaVersion: 2,
+        __schemaVersion: 3,
         ...makeTestSettings(),
         futureEncoderOption: { mode: 'new' },
       });
@@ -518,7 +540,7 @@ describe('conversion-settings-store', () => {
       queueSpy.mockRestore();
       expect(queued).toHaveLength(1);
       const futureRecord = JSON.stringify({
-        __schemaVersion: 2,
+        __schemaVersion: 3,
         ...makeTestSettings(),
         futureEncoderOption: { mode: 'new' },
       });
@@ -549,7 +571,7 @@ describe('conversion-settings-store', () => {
       store.saveConversionSettings(makeTestSettings());
       expect(store.conversionSettingsPersistenceStatus()).toBe('writable');
       expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}')).toMatchObject({
-        __schemaVersion: 1,
+        __schemaVersion: 2,
         quality: 'high',
       });
     });
@@ -559,9 +581,9 @@ describe('conversion-settings-store', () => {
       const store = await importFreshSettingsStore();
       expect(store.conversionSettingsPersistenceStatus()).toBe('writable');
       store.saveConversionSettings(makeTestSettings());
-      expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}').__schemaVersion).toBe(1);
+      expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}').__schemaVersion).toBe(2);
 
-      const futureRecord = JSON.stringify({ __schemaVersion: 2, format: 'unknown-new-format' });
+      const futureRecord = JSON.stringify({ __schemaVersion: 3, format: 'unknown-new-format' });
       window.localStorage.setItem(STORAGE_KEY, futureRecord);
       store.saveConversionSettings(makeTestSettings());
       expect(window.localStorage.getItem(STORAGE_KEY)).toBe(futureRecord);
@@ -572,7 +594,7 @@ describe('conversion-settings-store', () => {
       window.localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
-          __schemaVersion: 1,
+          __schemaVersion: 2,
           format: '123',
           quality: 'low',
           scale: 0.5,
@@ -589,7 +611,7 @@ describe('conversion-settings-store', () => {
       window.localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
-          __schemaVersion: 1,
+          __schemaVersion: 2,
           format: null,
           quality: 'low',
           scale: 0.5,
@@ -606,7 +628,7 @@ describe('conversion-settings-store', () => {
       window.localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
-          __schemaVersion: 1,
+          __schemaVersion: 2,
           format: true,
           quality: 'low',
           scale: 0.5,

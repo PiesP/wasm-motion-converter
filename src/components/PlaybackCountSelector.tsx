@@ -19,8 +19,9 @@ interface PlaybackCountSelectorProps {
 
 const PlaybackCountSelector: Component<PlaybackCountSelectorProps> = (props) => {
   const { t } = useLocale();
+  const committed = createMemo(() => props.value);
   const mode = createMemo<PlaybackMode>(() =>
-    props.value === 0 ? 'forever' : props.value === 1 ? 'once' : 'custom'
+    committed() === 0 ? 'forever' : committed() === 1 ? 'once' : 'custom'
   );
   const [draft, setDraft] = createSignal(
     String(props.value >= 2 ? props.value : DEFAULT_CUSTOM_PLAY_COUNT)
@@ -33,7 +34,7 @@ const PlaybackCountSelector: Component<PlaybackCountSelectorProps> = (props) => 
   ]);
 
   createEffect(() => {
-    const count = props.value;
+    const count = committed();
     if (count >= 2) setDraft(String(count));
     props.onValidityChange(true);
   });

@@ -268,6 +268,17 @@ describe('serializeConversionInputs', () => {
     expect(empty.serializedConfig).toHaveProperty('colorSpace', {});
   });
 
+  it('preserves playback count through serialization and request construction', () => {
+    for (const playCount of [0, 1, 3, 65535]) {
+      const { serializedOptions } = serializeConversionInputs(null, undefined, {
+        ...defaultSettings,
+        playCount,
+      });
+      expect(serializedOptions.playCount).toBe(playCount);
+      expect(buildConversionRequest(new ArrayBuffer(0), serializedOptions).playCount).toBe(playCount);
+    }
+  });
+
   it('uses protocol defaults when metadata and decoder config are unavailable', () => {
     expect(serializeConversionInputs(null, undefined, defaultSettings)).toEqual({
       serializedConfig: null,

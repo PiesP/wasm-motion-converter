@@ -8,7 +8,7 @@ import type { Page } from '@playwright/test';
 const KEY = 'conversion-settings';
 const LOCALE_KEY = 'dropconvert.locale';
 const FUTURE = JSON.stringify({
-  __schemaVersion: 2,
+  __schemaVersion: 3,
   format: 'gif',
   quality: 'high',
   scale: 1,

@@ -7,7 +7,9 @@ export const MAX_PLAY_COUNT = 0xffff;
 export const DEFAULT_CUSTOM_PLAY_COUNT = 3;
 
 export function isPlayCount(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= MAX_PLAY_COUNT;
+  return (
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= MAX_PLAY_COUNT
+  );
 }
 
 export function resolvePlayCount(value: unknown = DEFAULT_PLAY_COUNT): number {

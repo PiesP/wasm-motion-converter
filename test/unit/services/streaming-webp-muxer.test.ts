@@ -20,6 +20,30 @@ function dummyBitstream(size = 100, seed = 0): Uint8Array {
 }
 
 describe('StreamingWebpMuxer', () => {
+  it.each([0, 1, 2, 3, 10, 65535])(
+    'writes total playback count %i without changing frame data',
+    async (count) => {
+      const encode = async (playCount: number) => {
+        const muxer = new StreamingWebpMuxer(16, 16, undefined, undefined, playCount);
+        const profile = Uint8Array.of(1, 2, 3);
+        muxer.addPresentationFrame(dummyBitstream(), { startUs: 0, endUs: 100_000 }, profile);
+        muxer.addPresentationFrame(dummyBitstream(100, 1), { startUs: 100_000, endUs: 200_000 }, profile);
+        muxer.finishPresentation(200_000);
+        return muxer.finish();
+      };
+      const expected = await encode(0);
+      const actual = await encode(count);
+      // ICCP precedes ANIM, so its count is not at the ordinary offset.
+      expect(String.fromCharCode(...expected.subarray(42, 46))).toBe('ANIM');
+      new DataView(expected.buffer, expected.byteOffset, expected.byteLength).setUint16(54, count, true);
+      expect(actual).toEqual(expected);
+    }
+  );
+
+  it.each([-1, 1.5, 65536, NaN, Infinity])('rejects invalid playback count %s', (count) => {
+    expect(() => new StreamingWebpMuxer(16, 16, undefined, undefined, count)).toThrow(RangeError);
+  });
+
   it('writes one identical ICC profile before ANIM and enforces profile consistency and bytes', async () => {
     const profile = new Uint8Array([1, 2, 3]);
     const muxer = new StreamingWebpMuxer(16, 16, { maxOutputBytes: 191 });
