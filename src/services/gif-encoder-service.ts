@@ -223,7 +223,8 @@ export async function encodeGif(
     initialStreamCapacity,
     outputLimits.maxOutputBytes,
     (peak) => assertGifWorkingMemory(peak),
-    (indices, depth) => quantizePalette.compress(indices, depth)
+    (indices, depth) => quantizePalette.compress(indices, depth),
+    opts.playCount
   );
   const quantizePalette = await createGifScalarQuantizer(
     (oldBytes, newBytes) =>
@@ -310,7 +311,6 @@ export async function encodeGif(
       encoder.writeCompressedFrame(compressed, pixelCount, w, h, {
         ...(localPalette ? { palette: localPalette } : {}),
         colorDepth: depth,
-        repeat: 0,
         delay,
       });
       if (retainedGlobalLength === 0) {
@@ -323,7 +323,6 @@ export async function encodeGif(
       encoder.writeFrame(indexed, w, h, {
         ...(useGlobalPalette ? {} : { palette }),
         colorDepth: gifColorDepth(useGlobalPalette ? globalPalette!.length : palette.length),
-        repeat: 0,
         delay,
       });
       if (!globalPalette) globalPalette = palette;

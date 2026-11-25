@@ -2,12 +2,13 @@
 // Copyright (c) 2026 PiesP
 // GIF block layout and buffer growth adapted from gifenc 1.0.3 (MIT), Matt DesLauriers.
 
+import { toGifRepeat } from '@utils/playback-count';
+
 import { OutputLimitError } from './output-limits';
 
 interface FrameOptions {
   palette?: number[][] | Uint8Array;
   colorDepth: number;
-  repeat: number;
   delay: number;
 }
 
@@ -21,14 +22,17 @@ export class OwnedGifWriter {
   private cursor = 0;
   private initialized = false;
   private finished = false;
+  private readonly repeat: number | null;
   readonly stream: { readonly buffer: ArrayBuffer };
 
   constructor(
     initialCapacity: number,
     private readonly maxOutputBytes: number,
     private readonly assertPeak: (bytes: number) => void,
-    private readonly compress: (indices: Uint8Array, depth: number) => Uint8Array
+    private readonly compress: (indices: Uint8Array, depth: number) => Uint8Array,
+    playCount = 0
   ) {
+    this.repeat = toGifRepeat(playCount);
     if (
       !Number.isSafeInteger(initialCapacity) ||
       initialCapacity < 1 ||
@@ -112,7 +116,7 @@ export class OwnedGifWriter {
     height: number,
     options: FrameOptions
   ): void {
-    const { palette, colorDepth, repeat, delay } = options;
+    const { palette, colorDepth, delay } = options;
     if (
       this.finished ||
       !Number.isInteger(width) ||
@@ -127,8 +131,7 @@ export class OwnedGifWriter {
       colorDepth > 8 ||
       !Number.isInteger(delay / 10) ||
       delay < 0 ||
-      delay / 10 > 65535 ||
-      repeat !== 0
+      delay / 10 > 65535
     ) {
       throw new RangeError('Invalid owned GIF frame');
     }
@@ -157,7 +160,7 @@ export class OwnedGifWriter {
     height: number,
     options: FrameOptions
   ): void {
-    const { palette, colorDepth, repeat, delay } = options;
+    const { palette, colorDepth, delay } = options;
     const first = !this.initialized;
     if (first) {
       this.text('GIF89a');
@@ -171,14 +174,16 @@ export class OwnedGifWriter {
       this.byte(0);
       this.byte(0);
       this.table(palette!);
-      this.byte(0x21);
-      this.byte(0xff);
-      this.byte(11);
-      this.text('NETSCAPE2.0');
-      this.byte(3);
-      this.byte(1);
-      this.short(repeat);
-      this.byte(0);
+      if (this.repeat !== null) {
+        this.byte(0x21);
+        this.byte(0xff);
+        this.byte(11);
+        this.text('NETSCAPE2.0');
+        this.byte(3);
+        this.byte(1);
+        this.short(this.repeat);
+        this.byte(0);
+      }
       this.initialized = true;
     }
     this.byte(0x21);

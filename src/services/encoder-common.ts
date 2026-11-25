@@ -60,6 +60,8 @@ export interface BaseEncoderOptions {
   onEncodingComplete?: ((counts: EncoderFrameCounts) => void) | undefined;
   /** Smart frame skip mode — similarity-based frame deduplication */
   smartFrameSkip?: SmartFrameSkipMode | undefined;
+  /** Total plays (zero or omitted means forever). */
+  playCount?: number | undefined;
   /** Conversion-owned memory pressure; independent of optional browser heap APIs. */
   decimationMemoryCheck?: (() => { usagePercentage: number } | null) | undefined;
   /** Existing app-specific guard after conversion-owned VP8 reservations are added. */

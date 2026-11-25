@@ -83,7 +83,8 @@ export function createStreamingWebpEncoder(
   limits?: OutputLimitOverrides,
   signal?: AbortSignal,
   sharedMemoryBudget?: WebpFrameMemoryBudget,
-  profileOperation?: ProfileOperationRecorder
+  profileOperation?: ProfileOperationRecorder,
+  playCount = 0
 ): StreamingWebpEncoder {
   const qualityF = getCanvasWebpQuality(quality);
 
@@ -93,7 +94,7 @@ export function createStreamingWebpEncoder(
     throw new Error('Worker pool has no active workers');
   }
 
-  const muxer = new StreamingWebpMuxer(width, height, limits, profileOperation);
+  const muxer = new StreamingWebpMuxer(width, height, limits, profileOperation, playCount);
   const resultBuffer = new Map<number, FrameEncodeResult>();
   let nextExpectedId = 0;
   let submittedCount = 0;

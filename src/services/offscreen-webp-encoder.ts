@@ -87,7 +87,7 @@ export async function encodeWebpOffscreen(
   }
 
   // Streaming encode state — use incremental muxer to avoid O(N) memory accumulation
-  const muxer = new StreamingWebpMuxer(w, h, opts, opts.profileOperation);
+  const muxer = new StreamingWebpMuxer(w, h, opts, opts.profileOperation, opts.playCount);
   let encodeIdx = 0;
 
   // Dynamic decimation controller — monitors JS heap and skips frames under pressure
