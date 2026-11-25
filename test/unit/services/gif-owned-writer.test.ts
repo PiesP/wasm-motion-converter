@@ -69,7 +69,10 @@ describe('owned GIF89a writer', () => {
     (count) => {
       const encode = (playCount: number) => {
         const writer = new OwnedGifWriter(64, 8192, () => {}, referenceImageData, playCount);
-        const palette = [[0, 0, 0], [255, 255, 255]];
+        const palette = [
+          [0, 0, 0],
+          [255, 255, 255],
+        ];
         writer.writeFrame(Uint8Array.of(0, 1), 2, 1, { palette, colorDepth: 2, delay: 20 });
         writer.writeFrame(Uint8Array.of(1, 0), 2, 1, { colorDepth: 2, delay: 40 });
         writer.finish();
@@ -80,19 +83,14 @@ describe('owned GIF89a writer', () => {
       const extensionStart = 19;
       expect(String.fromCharCode(...baseline.subarray(22, 33))).toBe('NETSCAPE2.0');
       if (count === 1) {
-        expect(actual).toEqual(
-          Uint8Array.from([
-            ...baseline.subarray(0, extensionStart),
-            ...baseline.subarray(extensionStart + 19),
-          ])
-        );
+        const before = baseline.subarray(0, extensionStart);
+        const after = baseline.subarray(extensionStart + 19);
+        expect(actual).toEqual(Uint8Array.from([...before, ...after]));
       } else {
         const expected = baseline.slice();
-        new DataView(expected.buffer).setUint16(
-          extensionStart + 16,
-          count === 0 ? 0 : count - 1,
-          true
-        );
+        const view = new DataView(expected.buffer);
+        const repeat = count === 0 ? 0 : count - 1;
+        view.setUint16(extensionStart + 16, repeat, true);
         expect(actual).toEqual(expected);
       }
     }
