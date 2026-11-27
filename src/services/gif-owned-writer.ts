@@ -139,13 +139,14 @@ export class OwnedGifWriter {
     this.writeValidatedFrame(compressed, width, height, options);
   }
 
-  /** Reserve the complete record and its ability to finish before changing the stream. */
+  /** Reserve a complete record and its final copy before changing the stream. */
   tryWritePartFrame(
     compressed: Uint8Array,
     pixelCount: number,
     width: number,
     height: number,
-    options: FrameOptions
+    options: FrameOptions,
+    targetPeakBytes = this.maxOutputBytes
   ): boolean {
     this.validateFrame(pixelCount, width, height, options);
     const global = this.initialized ? undefined : (options.globalPalette ?? options.palette);
@@ -161,7 +162,14 @@ export class OwnedGifWriter {
     const next = this.capacityFor(finalLength);
     const growthPeak = next === current ? current : current + next;
     const peak = Math.max(growthPeak, next + finalLength);
-    if (!Number.isSafeInteger(peak) || peak > this.maxOutputBytes) return false;
+    // A fresh part can hold a single record up to the hard limit.
+    if (
+      !Number.isSafeInteger(peak) ||
+      peak > this.maxOutputBytes ||
+      (this.initialized && peak > targetPeakBytes)
+    ) {
+      return false;
+    }
     this.assertPeak(peak);
     this.reserve(length);
     this.writeValidatedFrame(compressed, width, height, options);

@@ -67,6 +67,8 @@ export const WEBP_MAX_FRAMES = 9000;
 export const GIF_MAX_OUTPUT_FRAMES = 9_000;
 /** Maximum cumulative GIF bytes retained by the owned GIF writer. */
 export const GIF_MAX_OUTPUT_BYTES = 256 * BYTES_PER_MB;
+/** Target writer peak for rolling over a nonempty saved GIF part. */
+export const GIF_PART_WRITER_TARGET_BYTES = 64 * BYTES_PER_MB;
 
 /** Aggregate frame-pipeline and WebP-finalization memory envelope. */
 export const CONVERSION_MEMORY_BUDGET_BYTES = 512 * BYTES_PER_MB;

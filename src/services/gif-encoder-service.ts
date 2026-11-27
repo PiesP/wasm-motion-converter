@@ -25,6 +25,7 @@ import {
   GIF_MAX_BUFFER_BYTES,
   GIF_MAX_FRAME_DELAY_CS,
   GIF_MIN_FRAME_DELAY_MS,
+  GIF_PART_WRITER_TARGET_BYTES,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 
@@ -361,12 +362,19 @@ async function encodeGifOutput(
     delay: number
   ): boolean {
     const headerPalette = partFrameCount === 0 ? partGlobalPalette : undefined;
-    const written = encoder!.tryWritePartFrame(compressed, pixelCount, w, h, {
-      ...(localPalette ? { palette: localPalette } : {}),
-      ...(headerPalette ? { globalPalette: headerPalette } : {}),
-      colorDepth: depth,
-      delay,
-    });
+    const written = encoder!.tryWritePartFrame(
+      compressed,
+      pixelCount,
+      w,
+      h,
+      {
+        ...(localPalette ? { palette: localPalette } : {}),
+        ...(headerPalette ? { globalPalette: headerPalette } : {}),
+        colorDepth: depth,
+        delay,
+      },
+      Math.min(GIF_PART_WRITER_TARGET_BYTES, outputLimits.maxOutputBytes)
+    );
     if (written) partGlobalPalette ??= localPalette;
     return written;
   }

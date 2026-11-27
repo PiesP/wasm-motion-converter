@@ -440,6 +440,21 @@ describe('real retained GIF service route', () => {
     });
   });
 
+  it('reports the caller hard byte limit when a single GIF record cannot fit', async () => {
+    stubWasmFetch();
+    fixture.frames = partFrames;
+    fixture.forceJsIndexes = false;
+    const savePart = vi.fn(() => Promise.resolve());
+
+    await expect(
+      encodeGifParts(fixtureDemux(partFrames, 2, 1), { ...partOpts, maxOutputBytes: 64 }, savePart)
+    ).rejects.toMatchObject({
+      name: 'OutputLimitError',
+      message: 'GIF output byte limit exceeded (64)',
+    });
+    expect(savePart).not.toHaveBeenCalled();
+  });
+
   it('enforces the real 9000-record ceiling per part, even inside one long hold', async () => {
     stubWasmFetch();
     fixture.frames = [frame(0, 18_002_000_000, alternating([red, blue]))];
