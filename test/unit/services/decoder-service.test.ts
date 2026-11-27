@@ -287,20 +287,30 @@ describe('decoder-service', () => {
     }
 
     type PacketReadGate = Parameters<NonNullable<DemuxResult['setPacketReadGate']>>[0];
+    type PressureCandidate = Parameters<PacketReadGate>[1];
 
     function byteCreditDemux(
       packetSizes = [1_500, 1_500],
       encodedChunkBudgetBytes = 3_000,
-      pressureCandidate?: Parameters<PacketReadGate>[1]
+      pressureCandidate?: PressureCandidate | ((index: number) => PressureCandidate),
+      timestampFor = (index: number) => index * 100_000
     ) {
       let gate: PacketReadGate | undefined;
       const readPacket = vi.fn((index: number) =>
-        fixtureChunk(index * 100_000, 40, { byteLength: packetSizes[index]!, duration: 100_000 })
+        fixtureChunk(timestampFor(index), 40, {
+          byteLength: packetSizes[index]!,
+          duration: 100_000,
+        })
       );
       const chunks = (async function* () {
         for (const [index, byteLength] of packetSizes.entries()) {
-          if (gate && !(await gate(byteLength + 1_024, index > 0 ? pressureCandidate : undefined)))
-            return;
+          const keyCandidate =
+            typeof pressureCandidate === 'function'
+              ? pressureCandidate(index)
+              : index > 0
+                ? pressureCandidate
+                : undefined;
+          if (gate && !(await gate(byteLength + 1_024, keyCandidate))) return;
           yield readPacket(index);
         }
       })();
@@ -715,6 +725,72 @@ describe('decoder-service', () => {
       expect(QueuedEventDecoder.instance?.flush).toHaveBeenCalledTimes(2);
       expect(QueuedEventDecoder.instance?.close).toHaveBeenCalledOnce();
     });
+
+    it('flushes at the four-frame source burst bound before hitting encoded byte credit', async () => {
+      // Two source chunks share one PTS. The soft bound must count reservations,
+      // including both duplicates, even when the native control queue is empty.
+      const timestampFor = (index: number) => (index === 2 ? 1 : index) * 100_000;
+      const verify = vi.fn(async () => true);
+      const demux = byteCreditDemux(
+        Array.from({ length: 12 }, () => 1_500),
+        ENCODED_CHUNK_BUDGET_BYTES,
+        (index) => ({ timestampUs: timestampFor(index), verify }),
+        timestampFor
+      );
+      demux.config = { ...demux.config, codedWidth: 3200, codedHeight: 1600 };
+      const epochs: number[] = [];
+      const outstanding: number[] = [];
+      class BoundedBurstDecoder extends ByteCreditDecoder {
+        override readonly decode = vi.fn((chunk: EncodedVideoChunk) => {
+          outstanding.push(chunk.timestamp);
+        });
+        override readonly flush = vi.fn(async () => {
+          expect(demux.readPacket).toHaveBeenCalledTimes(epochs.length * 4 + 4);
+          epochs.push(outstanding.length);
+          for (const timestamp of outstanding.splice(0)) this.emitOutput(timestamp);
+        });
+      }
+      vi.stubGlobal('VideoDecoder', BoundedBurstDecoder);
+      await expect(
+        decodeFrames(demux, { width: 8, height: 8, onFrameAvailable: releasePixels })
+      ).resolves.toMatchObject({
+        consumedChunks: 12,
+        decodedFrames: 12,
+        duplicateTimestamps: 1,
+        presentationEndUs: 1_200_000,
+      });
+      expect(epochs).toEqual([4, 4, 4]);
+      expect(verify).toHaveBeenCalledTimes(2);
+      expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(0);
+    });
+
+    it.each([false, true])(
+      'admits the next dependency at the soft bound when the container key hint is %s',
+      async (hasKeyHint) => {
+        const verify = vi.fn(async () => false);
+        const demux = byteCreditDemux(
+          Array.from({ length: 5 }, () => 1_500),
+          ENCODED_CHUNK_BUDGET_BYTES,
+          (index) =>
+            index === 4 && hasKeyHint ? { timestampUs: index * 100_000, verify } : undefined
+        );
+        demux.config = { ...demux.config, codedWidth: 3200, codedHeight: 1600 };
+        class DependencyDecoder extends ByteCreditDecoder {
+          override readonly decode = vi.fn((chunk: EncodedVideoChunk) => {
+            if (chunk.timestamp !== 400_000) return;
+            expect(this.flush).not.toHaveBeenCalled();
+            for (let index = 0; index < 5; index++) this.emitOutput(index * 100_000);
+          });
+        }
+        vi.stubGlobal('VideoDecoder', DependencyDecoder);
+        await expect(
+          decodeFrames(demux, { width: 8, height: 8, onFrameAvailable: releasePixels })
+        ).resolves.toMatchObject({ consumedChunks: 5, selectedFrames: 5 });
+        expect(verify).toHaveBeenCalledTimes(Number(hasKeyHint));
+        expect(demux.readPacket).toHaveBeenCalledTimes(5);
+        expect(QueuedEventDecoder.instance?.flush).toHaveBeenCalledOnce();
+      }
+    );
 
     it.each([
       { timestampUs: 100_000, probed: true, verified: false },

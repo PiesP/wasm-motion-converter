@@ -317,14 +317,14 @@ export async function decodeFrames(
   }
   const targetWorkingBytes =
     frameMemoryBudget?.targetTaskBytes ?? estimateActiveFrameBytes(width, height, pixelFormat);
-  const queuedSourceHeadroomBytes =
-    estimateRuntimeDecodedSourceFrameBytes(
-      configuredSourceWidth,
-      configuredSourceHeight,
-      configuredDisplayWidth,
-      configuredDisplayHeight,
-      null
-    ) * queuedSourceHeadroomCount;
+  const configuredRuntimeSourceBytes = estimateRuntimeDecodedSourceFrameBytes(
+    configuredSourceWidth,
+    configuredSourceHeight,
+    configuredDisplayWidth,
+    configuredDisplayHeight,
+    null
+  );
+  const queuedSourceHeadroomBytes = configuredRuntimeSourceBytes * queuedSourceHeadroomCount;
   const twoTargetSourceCapacity = calculateStagedFrameSourceCapacity(
     configuredSourceWidth,
     configuredSourceHeight,
@@ -402,6 +402,8 @@ export async function decodeFrames(
   const encodedChunkReservations = new Map<number, EncodedChunkReservation[]>();
   const encodedChunkBudgetBytes = demux.encodedChunkBudgetBytes;
   let retainedEncodedChunkBytes = 0;
+  let outstandingEncodedChunks = 0;
+  let usedMidstreamFlush = false;
   let maxSubmittedTimestampUs = Number.NEGATIVE_INFINITY;
   let inputFrameCount = 0;
   let inputChunkCount = 0;
@@ -633,6 +635,9 @@ export async function decodeFrames(
       }
     }
 
+    encodedChunkReservations.clear();
+    retainedEncodedChunkBytes = 0;
+    outstandingEncodedChunks = 0;
     return primaryFailure ?? cleanupFailure;
   };
 
@@ -683,6 +688,7 @@ export async function decodeFrames(
   const releaseEncodedChunk = (reservation: EncodedChunkReservation): void => {
     if (reservation.released) return;
     reservation.released = true;
+    outstandingEncodedChunks--;
     retainedEncodedChunkBytes = Math.max(0, retainedEncodedChunkBytes - reservation.bytes);
 
     const timestampReservations = encodedChunkReservations.get(reservation.timestamp);
@@ -793,6 +799,7 @@ export async function decodeFrames(
       encodedChunkReservations.set(chunk.timestamp, [reservation]);
     }
     retainedEncodedChunkBytes += bytes;
+    outstandingEncodedChunks++;
     return reservation;
   };
 
@@ -1430,6 +1437,21 @@ export async function decodeFrames(
     retainedEncodedChunkBytes + offeredBytes > encodedChunkBudgetBytes;
   const decodeCapacityBlocked = (offeredBytes: number): boolean =>
     activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE || encodedCreditBlocked(offeredBytes);
+  const needsKeyBoundaryFlush = (offeredBytes: number): boolean => {
+    if (encodedCreditBlocked(offeredBytes)) return true;
+    const availableSourceBytes =
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES -
+      targetWorkingBytes -
+      motionMemoryBytes -
+      retainedSourceFrameBytes;
+    // Native dequeue counts control messages, including ones that have
+    // already left the queue without returning their matching source frame.
+    const burstCapacity = Math.max(
+      1,
+      Math.floor(availableSourceBytes / configuredRuntimeSourceBytes)
+    );
+    return outstandingEncodedChunks >= burstCapacity;
+  };
   const waitForCapacityChange = async (offeredBytes: number): Promise<void> => {
     if (!supportsDequeueEvent) {
       // Older implementations without EventTarget support need a bounded retry.
@@ -1480,12 +1502,21 @@ export async function decodeFrames(
     return !stoppedDecoding();
   };
 
-  const flushForPacketCredit = async (offeredBytes: number): Promise<boolean> => {
-    await Promise.allSettled([...pendingConversions]);
+  const drainBoundaryConversions = async (): Promise<void> => {
+    while (pendingConversions.size > 0 && !stoppedDecoding()) {
+      await Promise.allSettled([...pendingConversions]);
+    }
+  };
+
+  const flushAtKeyBoundary = async (offeredBytes: number): Promise<boolean> => {
+    await drainBoundaryConversions();
     if (stoppedDecoding()) return false;
-    if (!encodedCreditBlocked(offeredBytes) || decodeCapacityBlocked(0))
+    // Only persistent source reservations, such as a pending presentation
+    // frame, remain charged after conversion work drains.
+    if (!needsKeyBoundaryFlush(offeredBytes) || decodeCapacityBlocked(0))
       return waitForDecodeCapacity(offeredBytes);
 
+    usedMidstreamFlush = true;
     const interrupted = Promise.withResolvers<void>();
     // Trim can be reached by an output from this flush. Let it finish before
     // the end-of-stream path runs, but stop promptly on cancellation or failure.
@@ -1505,7 +1536,7 @@ export async function decodeFrames(
     }
 
     if (stoppedDecoding()) return false;
-    await Promise.allSettled([...pendingConversions]);
+    await drainBoundaryConversions();
     // A completed flush does not refund any encoded reservation. Only outputs
     // with matching timestamps can make the offered packet admissible.
     return waitForDecodeCapacity(offeredBytes);
@@ -1524,23 +1555,23 @@ export async function decodeFrames(
     // before reading packet data and reaches EOF without another request.
     demux.setPacketReadGate?.((offeredBytes, keyCandidate) => {
       if (stoppedDecoding()) return false;
-      if (!decodeCapacityBlocked(offeredBytes)) return true;
       if (
         keyCandidate &&
         !decodeCapacityBlocked(0) &&
-        encodedCreditBlocked(offeredBytes) &&
+        needsKeyBoundaryFlush(offeredBytes) &&
         keyCandidate.timestampUs > maxSubmittedTimestampUs
       ) {
         return keyCandidate.verify().then(
           (verified) =>
-            verified ? flushForPacketCredit(offeredBytes) : waitForDecodeCapacity(offeredBytes),
+            verified ? flushAtKeyBoundary(offeredBytes) : waitForDecodeCapacity(offeredBytes),
           (error: unknown) => {
             if (firstPipelineFailure) return false;
             throw error;
           }
         );
       }
-      return waitForDecodeCapacity(offeredBytes);
+      // A soft frame-burst bound cannot block a dependent packet.
+      return decodeCapacityBlocked(offeredBytes) ? waitForDecodeCapacity(offeredBytes) : true;
     });
     // Check native queue count and downstream frame work before asking the
     // demuxer for the next chunk.
@@ -1588,6 +1619,8 @@ export async function decodeFrames(
         break;
       }
     }
+
+    if (usedMidstreamFlush) await drainBoundaryConversions();
 
     // Finish already-emitted lookahead work before entering the decoder flush.
     // Frames emitted by flush capture the serial target limit below.
