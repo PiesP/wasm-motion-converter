@@ -695,7 +695,7 @@ describe('decoder-service', () => {
         height: 8,
         onFrameAvailable: async (pixels, _, frameNumber) => {
           delivered.push(frameNumber);
-          releasePixels(pixels);
+          globalBufferPool.release(pixels);
           if (frameNumber === 0) await firstConversion.promise;
         },
       });
