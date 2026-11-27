@@ -192,6 +192,9 @@ export async function handleConvert(
               settle();
               return;
             }
+            // Abort settles the confirmation only while the user is deciding.
+            // Once started, keep the intent until the pipeline promise settles.
+            intent.signal.removeEventListener('abort', settle);
             void performConversion(
               file,
               settings,

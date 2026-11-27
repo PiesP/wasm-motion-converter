@@ -388,6 +388,39 @@ describe('handleConvert conversion ownership', () => {
     expect(mocks.runPipelineWithFallback).not.toHaveBeenCalled();
   });
 
+  it('keeps the confirmed conversion intent until Stop settles the pipeline', async () => {
+    mocks.settings = { ...mocks.settings, format: 'webp' };
+    mocks.validateVideoDuration.mockResolvedValue({
+      duration: 1_000,
+      warnings: [{ message: 'confirm', requiresConfirmation: true }],
+    });
+    const pipeline = Promise.withResolvers<ArrayBuffer>();
+    mocks.runConversionPipeline.mockReturnValueOnce(pipeline.promise);
+    const runtime = createRuntime();
+    const conversion = handleConvert(runtime, localizedProgressT);
+    await vi.waitFor(() => expect(mocks.confirmation).toBeDefined());
+    mocks.confirmation?.onConfirm();
+    await vi.waitFor(() => expect(mocks.runConversionPipeline).toHaveBeenCalledOnce());
+    mocks.setConversionResults.mockClear();
+
+    try {
+      handleCancelConversion(runtime);
+      await Promise.resolve();
+      expect(mocks.appState).toBe('cancelling');
+      expect(runtime.beginConversionIntent()).toBeNull();
+    } finally {
+      pipeline.resolve(
+        new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x04, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).buffer
+      );
+      await conversion;
+    }
+
+    expect(mocks.setConversionResults).not.toHaveBeenCalled();
+    expect(mocks.appState).toBe('idle');
+    expect(runtime.beginConversionIntent()).not.toBeNull();
+    runtime.dispose();
+  });
+
   it('uses the settings snapshot captured before asynchronous validation', async () => {
     let resolveValidation: ((value: unknown) => void) | undefined;
     mocks.validateVideoDuration.mockReturnValue(
