@@ -349,6 +349,12 @@ export class OwnedDemuxSession {
     return this.indexInfo.seekWorkspaceBytes;
   }
 
+  get reconstructsPackets(): boolean {
+    if (!this.active || !this.ready || !this.indexInfo)
+      throw new Error('Owned demux index unavailable');
+    return this.indexInfo.reconstructs;
+  }
+
   get transferStats(): OwnedDemuxTransferStats {
     const readCredit = ownedReadCreditStats();
     return {

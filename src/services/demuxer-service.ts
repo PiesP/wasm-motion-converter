@@ -22,7 +22,6 @@ import {
   DEMUX_MEMORY_BUDGET_BYTES,
   ENCODED_CHUNK_BUDGET_BYTES,
   ENCODED_PACKET_BUDGET_BYTES,
-  MAX_FILE_SIZE,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getTrimmedDurationSeconds } from '@utils/trim-time';
@@ -144,7 +143,7 @@ export async function demuxVideo(
     // The caller-owned original ArrayBuffer is reported separately. Only incremental
     // parser, range-read, packet, and WebCodecs queue allocations spend this reserve.
     const inputBufferBytes = inputSource instanceof Blob ? 0 : inputSource.byteLength;
-    const { wasmCapacityBytes, indexMode } = session.transferStats;
+    const { wasmCapacityBytes } = session.transferStats;
     const seekWorkspaceBytes = request.trimStart > 0 ? session.seekWorkspaceBytes : 0;
     const descriptionReserveBytes = Math.max(
       2 * track.description.byteLength,
@@ -268,9 +267,9 @@ export async function demuxVideo(
       chunks,
       config,
       encodedChunkBudgetBytes: chunkBudgetBytes,
-      // Compact MP4 exposes exact packet charges on both sides of the size cap.
-      // Expanded large MP4 retains the same pre-read credit as before.
-      ...(inputSource instanceof Blob && (indexMode === 'compact' || inputSizeBytes > MAX_FILE_SIZE)
+      // Direct packet sources use indexed byte credit independently of file size.
+      // The transport-stream reconstruction path keeps its existing boundary.
+      ...(inputSource instanceof Blob && !session.reconstructsPackets
         ? {
             setPacketReadGate(gate: PacketReadGate) {
               packetReadGate = gate;
