@@ -661,6 +661,14 @@ export async function decodeFrames(
     const primaryFailure = getLatchedFailureError() ?? normalizeFailure(error);
     throw (await cleanupDecoderLifecycle(primaryFailure)) ?? primaryFailure;
   }
+  if (
+    demux.canVerifyVp9PressureKey &&
+    queuedSourceHeadroomBytes + targetWorkingBytes + motionMemoryBytes >
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+  ) {
+    // Request earlier output when a native burst could exceed source-frame credit.
+    activeConfig.optimizeForLatency = true;
+  }
 
   // Create per-conversion frame processing context for the pixel-copy path cache.
   const frameCtx: FrameProcessingContext = createFrameProcessingContext();

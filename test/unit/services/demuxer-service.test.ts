@@ -216,6 +216,7 @@ describe('demuxVideo owned packet route', () => {
         { ...request(1), format, inputBuffer: undefined, inputBlob: new Blob() },
         { ...metadata, config: { ...metadata.config, codec: 'vp09.00.10.08' } }
       );
+      expect(result.canVerifyVp9PressureKey).toBe(canProbe ? true : undefined);
       result.setPacketReadGate!(async (chargedBytes, candidate) => {
         expect(chargedBytes).toBe(1028);
         expect(mocks.verifyVisibleVp9Key).not.toHaveBeenCalled();

@@ -484,6 +484,33 @@ describe('decoder-service', () => {
       return { frames, onFrameAvailable };
     }
 
+    it.each([
+      { codedSize: 4000, eligible: true, expected: true },
+      { codedSize: 4000, eligible: undefined, expected: false },
+      { codedSize: 640, eligible: true, expected: false },
+    ] as const)(
+      'requests earlier output only for eligible sources under native burst pressure ($codedSize, $eligible)',
+      async ({ codedSize, eligible, expected }) => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const configure = vi.spyOn(FakeVideoDecoder.prototype, 'configure');
+        try {
+          const demux = deliveryDemux();
+          demux.config.codedWidth = codedSize;
+          demux.config.codedHeight = 2160;
+          await decodeFrames(
+            { ...demux, canVerifyVp9PressureKey: eligible },
+            { width: 8, height: 8, onFrameAvailable: releasePixels }
+          );
+          expect(configure).toHaveBeenCalledWith(
+            expect.objectContaining({ optimizeForLatency: expected })
+          );
+          expect(demux.config).not.toHaveProperty('optimizeForLatency');
+        } finally {
+          configure.mockRestore();
+        }
+      }
+    );
+
     it.each([undefined, null, 'invalid callback', true])(
       'rejects a missing or invalid CPU callback before decoder work (%s)',
       async (invalid) => {
