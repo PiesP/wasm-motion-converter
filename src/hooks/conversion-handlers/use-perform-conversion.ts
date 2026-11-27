@@ -5,6 +5,7 @@ import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error'
 import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
 import { buildConversionRequest } from '@services/conversion-worker/build-conversion-request';
 import {
+  runGifPartsViaWorker,
   runPipelineWithFallback,
   WorkerMemoryLimitError,
   WorkerPipelineError,
@@ -16,6 +17,7 @@ import type {
 } from '@services/conversion-worker/types';
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
+import { createGifPartFileSink, selectGifPartDirectory } from '@services/gif-part-file-sink';
 import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
 import {
   ownedVp8FailureKind,
@@ -247,6 +249,109 @@ export async function handleConvert(
     });
     await performConversion(file, settings, metadata, runtime, t, intent);
   } finally {
+    finishConversionRun(runtime, intent);
+  }
+}
+
+export async function handleConvertGifParts(
+  runtime: ConversionRuntimeController,
+  t: TFunction,
+  report: (message: string) => void
+): Promise<void> {
+  const file = inputFile();
+  const metadata = videoMetadata();
+  const settings = conversionSettings();
+  const state = appState();
+  if (
+    !file ||
+    !metadata ||
+    settings.format !== 'gif' ||
+    state === 'analyzing' ||
+    state === 'converting' ||
+    state === 'cancelling'
+  )
+    return;
+
+  const intent = runtime.beginConversionIntent();
+  if (!intent) return;
+  const { signal, isActive } = intent;
+  let sink: ReturnType<typeof createGifPartFileSink> | undefined;
+  let started = false;
+  let completed = false;
+  let failed = false;
+  try {
+    // Reach the native picker in the trusted click's task, before async preparation.
+    const destination = await selectGifPartDirectory();
+    if (!isActive()) return;
+
+    const { serializedConfig, serializedOptions } = serializeConversionInputs(
+      metadata,
+      undefined,
+      settings
+    );
+    if (!serializedConfig) throw new Error('Unable to determine video configuration');
+
+    sink = createGifPartFileSink(destination);
+    batch(() => {
+      setErrorContext(null);
+      setErrorMessage(null);
+      setConversionResults([]);
+      setConversionStatusMessage('');
+      runtime.prepareForNewConversion(performance.now());
+      transitionToState('converting');
+    });
+    started = true;
+    runtime.startMemoryMonitoring();
+    const summary = await runGifPartsViaWorker(
+      file,
+      serializedConfig,
+      serializedOptions,
+      createProgressCallback(isActive, runtime, t),
+      sink.save,
+      signal,
+      metadata.duration,
+      metadata.framerate
+    );
+    signal.throwIfAborted();
+    if (summary.partCount !== sink.count)
+      throw new Error('GIF part count does not match saved files');
+    await sink.finish(signal);
+    completed = true;
+  } catch (error) {
+    failed = !signal.aborted && (started || !isCancellationError(error));
+    if (failed)
+      logger.warn('conversion', 'GIF part conversion did not finish', {
+        error: getErrorMessage(error),
+      });
+  } finally {
+    try {
+      await sink?.removeEmptyFolder();
+    } catch (error) {
+      failed = true;
+      logger.warn('conversion', 'GIF part folder cleanup failed', {
+        error: getErrorMessage(error),
+      });
+    }
+    if (inputFile() === file) {
+      if (sink && sink.count > 0) {
+        report(
+          t(completed && isActive() ? 'result.gifPartsSaved' : 'result.gifPartsPartial', {
+            count: sink.count,
+            folder: sink.folderName,
+          })
+        );
+      } else if (failed) {
+        report(t('error.gifPartsSaveFailed'));
+      }
+    }
+    if (started && isActive()) {
+      batch(() => {
+        runtime.resetRuntimeState();
+        setConversionStatusMessage('');
+        transitionToState('idle');
+      });
+      focusElementUnlessUserIsEditing('[data-testid="convert-gif-parts-button"]');
+    }
     finishConversionRun(runtime, intent);
   }
 }

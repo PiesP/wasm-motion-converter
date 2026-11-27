@@ -18,6 +18,7 @@ import { useLocale } from '@hooks/use-locale';
 import { useNetworkState } from '@hooks/use-network-state';
 import { debounce } from '@piesp/browser-core/async';
 import { getErrorMessage } from '@piesp/browser-core/error';
+import { supportsGifPartSaving } from '@services/gif-part-file-sink';
 import { dismissConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -98,6 +99,11 @@ const App: Component = () => {
   const [cancellingAnalysis, setCancellingAnalysis] = createSignal(false);
   let prepareTrimSubmission: (() => boolean) | undefined;
   const [playCountValid, setPlayCountValid] = createSignal(true);
+  const [gifPartsStatus, setGifPartsStatus] = createSignal('');
+  createEffect(() => {
+    inputFile();
+    setGifPartsStatus('');
+  });
 
   const registerTrimSubmission = (prepare: () => boolean): (() => void) => {
     prepareTrimSubmission = prepare;
@@ -120,6 +126,7 @@ const App: Component = () => {
   const {
     handleFileSelected,
     handleConvert,
+    handleConvertGifParts,
     handleReset,
     handleCancelConversion,
     handleCancelAnalysis,
@@ -302,6 +309,14 @@ const App: Component = () => {
     });
   };
 
+  const saveGifParts = (): void => {
+    if (!prepareOutputSettings()) return;
+    setGifPartsStatus('');
+    void handleConvertGifParts((message) => {
+      if (!disposed) setGifPartsStatus(message);
+    });
+  };
+
   const clearResultsForReload = (): void => {
     if (!isBusy()) setConversionResults([]);
   };
@@ -450,6 +465,7 @@ const App: Component = () => {
             {/* Right column (desktop): Settings */}
             <div class="lg:sticky lg:top-8 order-2">
               <SettingsPanel
+                gifPartsStatus={gifPartsStatus()}
                 isBusy={isBusy()}
                 isCancelling={appState() === 'cancelling' && isConversionActive()}
                 isComplete={appState() === 'done'}
@@ -457,6 +473,7 @@ const App: Component = () => {
                 metadata={videoMetadata()}
                 onCancel={cancelConversion}
                 onConvert={handleConvertWithMemoryCheck}
+                onConvertGifParts={supportsGifPartSaving() ? saveGifParts : undefined}
                 onFormatChange={(format) =>
                   setConversionSettings({ ...conversionSettings(), format })
                 }

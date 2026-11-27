@@ -135,6 +135,7 @@ export interface TranslationKeys {
   'settings.convert': string;
   'settings.convertAgain': string;
   'settings.stopConversion': string;
+  'settings.saveGifParts': string;
   'settings.tooltip.quality': string;
   'settings.tooltip.scale': string;
   'settings.tooltip.format': string;
@@ -249,6 +250,8 @@ export interface TranslationKeys {
   'result.quality': string;
   'result.scale': string;
   'result.convertedAnimation': string;
+  'result.gifPartsSaved': string;
+  'result.gifPartsPartial': string;
   'result.downloadFile': string;
   'result.downloadButton': string;
   'result.compressionSmaller': string;
@@ -274,6 +277,7 @@ export interface TranslationKeys {
   'error.memory': string;
   'error.unknown': string;
   'error.conversionFailed': string;
+  'error.gifPartsSaveFailed': string;
   'error.dismiss': string;
   'error.retry': string;
   'error.selectDifferent': string;
