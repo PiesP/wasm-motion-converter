@@ -148,7 +148,7 @@ describe('demuxVideo owned packet route', () => {
   });
 
   it.each([MAX_FILE_SIZE, MAX_FILE_SIZE + 1])(
-    'exposes packet admission only above the old file limit (%i bytes)',
+    'exposes packet admission on a Blob on either side of the old file limit (%i bytes)',
     async (size) => {
       const inputBlob = new Blob();
       vi.spyOn(inputBlob, 'size', 'get').mockReturnValue(size);
@@ -156,15 +156,13 @@ describe('demuxVideo owned packet route', () => {
         { ...request(1.2, 1.3), inputBuffer: undefined, inputBlob },
         metadata
       );
-      expect(typeof result.setPacketReadGate).toBe(size > MAX_FILE_SIZE ? 'function' : 'undefined');
+      expect(typeof result.setPacketReadGate).toBe('function');
       expect(mocks.readPacket).not.toHaveBeenCalled();
       result.dispose?.();
     }
   );
 
-  it('offers each indexed charge before reading and closes on refusal', async () => {
-    const inputBlob = new Blob();
-    vi.spyOn(inputBlob, 'size', 'get').mockReturnValue(MAX_FILE_SIZE + 1);
+  it('offers each indexed charge before reading an ArrayBuffer packet and closes on refusal', async () => {
     mocks.packet.mockImplementation((index: number) => ({
       index,
       byteLength: index === 6 ? 4 : 2,
@@ -172,10 +170,7 @@ describe('demuxVideo owned packet route', () => {
       durationTicks: 166_666n,
       key: index === 6,
     }));
-    const result = await demuxVideo(
-      { ...request(1.2, 1.3), inputBuffer: undefined, inputBlob },
-      metadata
-    );
+    const result = await demuxVideo(request(1.2, 1.3), metadata);
     const gate = vi
       .fn<(bytes: number) => boolean>()
       .mockReturnValueOnce(true)

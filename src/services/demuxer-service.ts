@@ -22,7 +22,6 @@ import {
   DEMUX_MEMORY_BUDGET_BYTES,
   ENCODED_CHUNK_BUDGET_BYTES,
   ENCODED_PACKET_BUDGET_BYTES,
-  MAX_FILE_SIZE,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getTrimmedDurationSeconds } from '@utils/trim-time';
@@ -216,7 +215,8 @@ export async function demuxVideo(
               `Demux memory limit exceeded by one encoded packet (${packetBudgetBytes} byte budget)`
             );
           if (packetReadGate) {
-            if (!(await packetReadGate(packetRetainedBytes))) return;
+            const admission = packetReadGate(packetRetainedBytes);
+            if (admission !== true && !(await admission)) return;
             signal?.throwIfAborted();
           }
           let data: ArrayBuffer | null = await session.readPacket(packet, signal);
@@ -267,13 +267,9 @@ export async function demuxVideo(
       chunks,
       config,
       encodedChunkBudgetBytes: chunkBudgetBytes,
-      ...(inputSource instanceof Blob && inputSizeBytes > MAX_FILE_SIZE
-        ? {
-            setPacketReadGate(gate: PacketReadGate) {
-              packetReadGate = gate;
-            },
-          }
-        : {}),
+      setPacketReadGate(gate: PacketReadGate) {
+        packetReadGate = gate;
+      },
       totalFrames: estimatedTotalFrames,
       duration,
       sourceTotalMs: 0,
