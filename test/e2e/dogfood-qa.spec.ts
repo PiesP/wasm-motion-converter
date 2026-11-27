@@ -6,7 +6,7 @@
 // This file documents the systematic QA inspection performed via MCP Playwright
 // against the production deployment at https://wasm-motion-converter.pages.dev/.
 //
-// Run with: vp exec playwright test test/e2e/dogfood-qa.spec.ts --reporter=list
+// Run with: node --experimental-strip-types scripts/test/run-playwright.ts deploy test/e2e/dogfood-qa.spec.ts
 //
 // Last inspection: 2026-07-29
 
@@ -236,14 +236,21 @@ test.describe('Accessibility', () => {
     await advancedSettings.locator('summary').click();
     await expect(advancedSettings).toHaveAttribute('open', '');
 
-    const infoBtns = page.locator('button[aria-label^="Information about"]');
-    await expect(infoBtns).toHaveCount(4);
-    for (const title of ['Output Format', 'Quality Preset', 'Smart Frame Skip', 'Output Scale']) {
-      const group = page.locator(`fieldset[aria-label="${title}"]`);
+    const optionTitles = [
+      'Output Format',
+      'Quality Preset',
+      'Playback count',
+      'Smart Frame Skip',
+      'Output Scale',
+    ];
+    const infoBtns = page.getByRole('button', { name: /^Information about / });
+    await expect(infoBtns).toHaveCount(optionTitles.length);
+    for (const title of optionTitles) {
+      const group = page.getByRole('group', { name: title, exact: true });
       await expect(group).toHaveCount(1);
-      const tooltip = group.locator('legend button');
+      const tooltip = group.locator('legend').getByRole('button');
       await expect(tooltip).toHaveCount(1);
-      await expect(tooltip).toHaveAttribute('aria-label', `Information about ${title}`);
+      await expect(tooltip).toHaveAccessibleName(`Information about ${title}`);
     }
   });
 });
