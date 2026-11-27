@@ -667,7 +667,14 @@ export async function decodeFrames(
       FRAME_PIPELINE_MEMORY_BUDGET_BYTES
   ) {
     // Request earlier output when a native burst could exceed source-frame credit.
-    activeConfig.optimizeForLatency = true;
+    const lowLatencyConfig = { ...activeConfig, optimizeForLatency: true };
+    try {
+      if ((await VideoDecoder.isConfigSupported(lowLatencyConfig)).supported) {
+        activeConfig = lowLatencyConfig;
+      }
+    } catch {
+      // The ordinary configuration has already passed the support check.
+    }
   }
 
   // Create per-conversion frame processing context for the pixel-copy path cache.

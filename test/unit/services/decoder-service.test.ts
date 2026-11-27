@@ -485,14 +485,22 @@ describe('decoder-service', () => {
     }
 
     it.each([
-      { codedSize: 4000, eligible: true, expected: true },
-      { codedSize: 4000, eligible: undefined, expected: false },
-      { codedSize: 640, eligible: true, expected: false },
+      { codedSize: 4000, eligible: true, support: 'supported', expectProbe: true },
+      { codedSize: 4000, eligible: true, support: 'unsupported', expectProbe: true },
+      { codedSize: 4000, eligible: true, support: 'throws', expectProbe: true },
+      { codedSize: 4000, eligible: undefined, support: 'supported', expectProbe: false },
+      { codedSize: 640, eligible: true, support: 'supported', expectProbe: false },
     ] as const)(
-      'requests earlier output only for eligible sources under native burst pressure ($codedSize, $eligible)',
-      async ({ codedSize, eligible, expected }) => {
+      'uses supported low latency only for eligible sources under pressure ($codedSize, $eligible, $support)',
+      async ({ codedSize, eligible, support, expectProbe }) => {
         vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
         const configure = vi.spyOn(FakeVideoDecoder.prototype, 'configure');
+        const probe = vi
+          .spyOn(FakeVideoDecoder, 'isConfigSupported')
+          .mockImplementation(async (config) => {
+            if (config.optimizeForLatency && support === 'throws') throw new Error('probe failed');
+            return { config, supported: !config.optimizeForLatency || support === 'supported' };
+          });
         try {
           const demux = deliveryDemux();
           demux.config.codedWidth = codedSize;
@@ -502,11 +510,17 @@ describe('decoder-service', () => {
             { width: 8, height: 8, onFrameAvailable: releasePixels }
           );
           expect(configure).toHaveBeenCalledWith(
-            expect.objectContaining({ optimizeForLatency: expected })
+            expect.objectContaining({ optimizeForLatency: expectProbe && support === 'supported' })
           );
+          const hintedConfig = probe.mock.calls.find(([config]) => config.optimizeForLatency)?.[0];
+          expect(Boolean(hintedConfig)).toBe(expectProbe);
+          if (expectProbe && support === 'supported') {
+            expect(configure).toHaveBeenCalledWith(hintedConfig);
+          }
           expect(demux.config).not.toHaveProperty('optimizeForLatency');
         } finally {
           configure.mockRestore();
+          probe.mockRestore();
         }
       }
     );
