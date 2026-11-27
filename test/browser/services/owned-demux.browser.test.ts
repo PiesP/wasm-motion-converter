@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vite-plus/test';
 
 import oracle from '../../fixtures/owned-demux/oracle.json';
 import { createMediaBunnyInput } from '../../helpers/mediabunny-oracle';
+import { ownedDemuxFixtureClock } from '../../helpers/owned-demux-fixture-clock';
 
 const sources = import.meta.glob('../../fixtures/owned-demux/*.base64', {
   eager: true,
@@ -139,7 +140,8 @@ describe('owned demux through browser WebCodecs', () => {
       );
       const source = new Blob([bytes]);
       const metadata = await extractVideoMetadata(source);
-      expect(metadata.duration).toBe(fixture.duration);
+      const clock = ownedDemuxFixtureClock(fixture.id, fixture.packets);
+      expect(metadata.duration).toBe(clock.duration(fixture.duration));
       expect(metadata.framerate).toBe(Math.round(fixture.stats.averagePacketRate * 100) / 100);
       expect(metadata.bitrate).toBe(Math.round(fixture.stats.averageBitrate));
       expect(metadata.rotation).toBe(fixture.rotation);
@@ -199,7 +201,12 @@ describe('owned demux through browser WebCodecs', () => {
         expect(baseline.frames.map((frame) => frame.timestamp)).toEqual(
           fixture.packets.map((packet) => packet.timestampUs).sort((a, b) => a - b)
         );
-        expect(candidate.frames).toEqual(baseline.frames);
+        expect(candidate.frames).toEqual(
+          baseline.frames.map((frame) => ({
+            ...frame,
+            timestamp: clock.timestampUs(frame.timestamp),
+          }))
+        );
       } finally {
         reference.dispose();
         session.release();

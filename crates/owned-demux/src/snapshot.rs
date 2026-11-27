@@ -3,7 +3,10 @@
 
 //! Versioned logical packet index. The wire data contains no Rust heap pointers.
 
-use crate::{ts::TsPacketSource, Error, Format, Packet, Track, METADATA_BUDGET, PACKET_BUDGET};
+use crate::{
+    ts::{rebase_presentation, TsPacketSource},
+    Error, Format, Packet, Track, METADATA_BUDGET, PACKET_BUDGET,
+};
 
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const STEP_BYTES: usize = 8 * 1024;
@@ -490,9 +493,21 @@ impl Import {
         {
             return Err(Error::Invalid);
         }
+        let mut track = self.track.take().unwrap();
+        let format = self.format.ok_or(Error::Invalid)?;
+        if format == Format::Ts {
+            // Older TS snapshots used the transport clock. New ones already start at zero.
+            let origin = track
+                .packets
+                .iter()
+                .map(|packet| packet.pts)
+                .min()
+                .ok_or(Error::Invalid)?;
+            rebase_presentation(&mut track, origin)?;
+        }
         Ok((
-            self.track.take().unwrap(),
-            self.format.ok_or(Error::Invalid)?,
+            track,
+            format,
             self.codec.take().ok_or(Error::Invalid)?,
             self.sources,
         ))
@@ -586,6 +601,7 @@ mod tests {
         let mut track = fixture();
         track.packets[0].offset = 0;
         track.packets[1].offset = 188;
+        track.duration += 1024;
         let sources = [
             TsPacketSource {
                 start: 0,
@@ -604,12 +620,46 @@ mod tests {
         ];
         let valid = wire(&track, Format::Ts, &sources);
         let (restored, format, _, restored_sources) = import(&valid).unwrap();
-        assert_eq!(restored.packets, track.packets);
+        assert_eq!(restored.duration, 24_576);
+        assert_eq!(restored.packets[0].pts, 0);
+        assert_eq!(restored.packets[0].dts, -1024);
+        assert_eq!(restored.packets[1].pts, 12_288);
+        assert_eq!(restored.packets[1].dts, 11_264);
+        assert_eq!(restored.packets[1].duration, track.packets[1].duration);
+        assert_eq!(
+            import(&wire(&restored, Format::Ts, &sources)).unwrap().0,
+            restored
+        );
         assert_eq!(format, Format::Ts);
         assert_eq!(restored_sources.as_slice(), sources.as_slice());
         let mut corrupt = valid;
         corrupt[HEADER + TRACK + 2] ^= 1;
         assert_eq!(import(&corrupt), Err(Error::Invalid));
+    }
+
+    #[test]
+    fn restores_legacy_ts_decode_preroll_across_the_clock_wrap() {
+        let mut track = fixture();
+        track.duration = 7;
+        track.packets[0].offset = 0;
+        track.packets[0].pts = 1;
+        track.packets[0].dts = (1i64 << 33) - 2;
+        track.packets[0].duration = 3;
+        track.packets[1].offset = 188;
+        track.packets[1].pts = 4;
+        track.packets[1].dts = 1i64 << 33;
+        track.packets[1].duration = 3;
+        let sources = [0, 188].map(|start| TsPacketSource {
+            start,
+            end: start + 188,
+            pid: 256,
+            stride: 188,
+            prefix: 0,
+        });
+        let restored = import(&wire(&track, Format::Ts, &sources)).unwrap().0;
+        let clocks: Vec<_> = restored.packets.iter().map(|p| (p.pts, p.dts)).collect();
+        assert_eq!(clocks, [(0, -3), (3, -1)]);
+        assert_eq!(restored.duration, 6);
     }
 
     #[test]
