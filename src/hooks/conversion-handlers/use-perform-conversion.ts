@@ -18,10 +18,7 @@ import type {
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { createGifPartFileSink, selectGifPartDirectory } from '@services/gif-part-file-sink';
-import {
-  createGifPartIndexedDbSink,
-  type GifPartIndexedDbSink,
-} from '@services/gif-part-indexed-db-sink';
+import type { GifPartIndexedDbSink } from '@services/gif-part-indexed-db-sink';
 import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
 import {
   ownedVp8FailureKind,
@@ -311,7 +308,11 @@ export async function handleConvertGifParts(
     started = true;
     runtime.startMemoryMonitoring();
     if (destination) sink = createGifPartFileSink(destination);
-    else stored = await createGifPartIndexedDbSink();
+    else {
+      const { createGifPartIndexedDbSink } = await import('@services/gif-part-indexed-db-sink');
+      signal.throwIfAborted();
+      stored = await createGifPartIndexedDbSink();
+    }
     signal.throwIfAborted();
     const output = sink ?? stored;
     if (!output) throw new Error('Unable to open GIF part storage');

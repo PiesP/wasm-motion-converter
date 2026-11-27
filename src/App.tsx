@@ -397,6 +397,7 @@ const App: Component = () => {
         <AppUpdateNotice
           busy={isBusy()}
           hasResults={conversionResults().length > 0}
+          hasStagedResults={storedGifParts() !== undefined}
           onClearResults={clearResultsForReload}
           t={t}
         />
@@ -421,6 +422,7 @@ const App: Component = () => {
               busy={isBusy()}
               cancelling={appState() === 'cancelling'}
               results={conversionResults()}
+              hasStagedResults={storedGifParts() !== undefined}
               onCancel={cancelForRecovery}
               onClearResults={clearResultsForReload}
             />
@@ -528,26 +530,25 @@ const App: Component = () => {
             </div>
           </div>
 
-          <Show when={storedGifParts()} keyed>
-            {(storage) => (
-              <GifPartDownloads
-                storage={storage}
-                busy={isBusy()}
-                onDiscard={() => {
-                  if (storedGifParts() !== storage) return;
-                  setStoredGifParts(undefined);
-                  setGifPartsStatus('');
-                }}
-              />
-            )}
-          </Show>
-
           <ResultSection
             results={conversionResults()}
             preferPreviewHidden={preferResultPreviewHidden()}
             onPreviewHidden={() => setPreferResultPreviewHidden(true)}
           />
         </ErrorBoundary>
+        <Show when={storedGifParts()} keyed>
+          {(storage) => (
+            <GifPartDownloads
+              storage={storage}
+              busy={isBusy()}
+              onDiscard={() => {
+                if (storedGifParts() !== storage) return;
+                setStoredGifParts(undefined);
+                setGifPartsStatus('');
+              }}
+            />
+          )}
+        </Show>
       </main>
 
       <LicenseAttribution />

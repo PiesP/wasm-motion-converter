@@ -17,6 +17,7 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
   const [prepared, setPrepared] = createSignal<{ filename: string; url: string }>();
   const [pending, setPending] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
+  const [discardStarted, setDiscardStarted] = createSignal(false);
   let reader: AbortController | undefined;
   let alive = true;
 
@@ -35,7 +36,7 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
   });
 
   const prepare = async (filename: string): Promise<void> => {
-    if (pending() || props.busy) return;
+    if (pending() || props.busy || discardStarted()) return;
     release();
     setFailed(false);
     setPending(true);
@@ -58,6 +59,7 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
     release();
     setFailed(false);
     setPending(true);
+    setDiscardStarted(true);
     try {
       await props.storage.dispose();
       if (alive) props.onDiscard();
@@ -72,7 +74,7 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
     <section class="mt-6 space-y-3" aria-busy={pending()} aria-label={t('result.gifPartDownloads')}>
       <h2 class="text-base font-semibold">{t('result.gifPartDownloads')}</h2>
       <ul class="space-y-2">
-        <For each={props.storage.files()}>
+        <For each={discardStarted() ? [] : props.storage.files()}>
           {(file) => (
             <li>
               <Button

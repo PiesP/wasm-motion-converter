@@ -13,6 +13,7 @@ import { registerServiceWorker } from '@/sw-register';
 const AppUpdateNotice: Component<{
   busy: boolean;
   hasResults: boolean;
+  hasStagedResults?: boolean;
   onClearResults: () => void;
   t: TFunction;
 }> = (props) => {
@@ -23,6 +24,7 @@ const AppUpdateNotice: Component<{
   const available = (): void => {
     if (!disposed) setNotice('available');
   };
+  const resultsAvailable = () => props.hasResults || props.hasStagedResults === true;
   const currentNotice = createMemo(() => (assetFailure() ? 'unavailable' : notice()));
   onMount(() => {
     cleanupDeployment = observeDeploymentUpdates({
@@ -45,10 +47,7 @@ const AppUpdateNotice: Component<{
     cleanup?.();
   });
   const reload = (): void => {
-    reloadWhenSafe(
-      () => props.busy,
-      () => props.hasResults
-    );
+    reloadWhenSafe(() => props.busy, resultsAvailable);
   };
   const clearResults = (): void => {
     if (!disposed && !props.busy && props.hasResults) props.onClearResults();
@@ -65,13 +64,13 @@ const AppUpdateNotice: Component<{
         <Show when={props.busy}>
           <p>{props.t('update.wait')}</p>
         </Show>
-        <Show when={props.hasResults}>
+        <Show when={resultsAvailable()}>
           <p>{props.t('update.download')}</p>
         </Show>
         <button
           type="button"
           data-testid="app-recovery-reload"
-          disabled={!canReload(props.busy, props.hasResults)}
+          disabled={!canReload(props.busy, resultsAvailable())}
           onClick={reload}
           class="rounded-md bg-brand px-4 py-2 font-medium text-brand-foreground disabled:opacity-50"
         >

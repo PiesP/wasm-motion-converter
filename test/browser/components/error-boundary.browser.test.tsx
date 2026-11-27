@@ -174,3 +174,31 @@ describe('AppErrorFallback', () => {
     dispose();
   });
 });
+
+it('bars recovery reload while staged downloads remain accessible outside the boundary', () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const [staged, setStaged] = createSignal(true);
+  const dispose = render(
+    () => (
+      <AppErrorFallback
+        {...base}
+        error="failure"
+        reset={() => {}}
+        hasStagedResults={staged()}
+        t={t}
+      />
+    ),
+    container
+  );
+  try {
+    const reload = container.querySelector<HTMLButtonElement>('[data-testid="recovery-reload"]')!;
+    expect(reload.disabled).toBe(true);
+    expect(container.textContent).toContain('translated:update.download');
+    expect(container.querySelector('[data-testid="recovery-clear-results"]')).toBeNull();
+    setStaged(false);
+    expect(reload.disabled).toBe(false);
+  } finally {
+    dispose();
+  }
+});

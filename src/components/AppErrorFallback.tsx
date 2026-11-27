@@ -22,11 +22,13 @@ interface AppErrorFallbackProps {
   busy: boolean;
   cancelling: boolean;
   results: ConversionResult[];
+  hasStagedResults?: boolean;
   onCancel: () => void;
   onClearResults: () => void;
 }
 
 const AppErrorFallback: Component<AppErrorFallbackProps> = (props) => {
+  const resultsAvailable = () => props.results.length > 0 || props.hasStagedResults === true;
   onMount(() => {
     logger.warn('general', 'app.feature-render-failed', {
       kind: 'render',
@@ -34,7 +36,7 @@ const AppErrorFallback: Component<AppErrorFallbackProps> = (props) => {
       operation: appState(),
       online: navigator.onLine,
       swControlled: Boolean(navigator.serviceWorker?.controller),
-      hasResults: props.results.length > 0,
+      hasResults: resultsAvailable(),
       assetPath: assetFailure()?.path ?? null,
       assetStatus: assetFailure()?.status ?? null,
       errorName:
@@ -66,8 +68,10 @@ const AppErrorFallback: Component<AppErrorFallbackProps> = (props) => {
             {props.t(props.cancelling ? 'progress.cancelling' : 'dropzone.cancel')}
           </button>
         </Show>
-        <Show when={props.results.length > 0}>
+        <Show when={resultsAvailable()}>
           <p class="mb-3 text-sm text-text-secondary">{props.t('update.download')}</p>
+        </Show>
+        <Show when={props.results.length > 0}>
           <div class="mb-3 flex flex-wrap gap-2">
             <RecoveryResultDownload results={props.results} t={props.t} />
           </div>
@@ -104,13 +108,8 @@ const AppErrorFallback: Component<AppErrorFallbackProps> = (props) => {
           </Show>
           <button
             type="button"
-            disabled={!canReload(props.busy, props.results.length > 0)}
-            onClick={() =>
-              reloadWhenSafe(
-                () => props.busy,
-                () => props.results.length > 0
-              )
-            }
+            disabled={!canReload(props.busy, resultsAvailable())}
+            onClick={() => reloadWhenSafe(() => props.busy, resultsAvailable)}
             class="inline-flex items-center rounded-md border border-border-standard bg-white/[0.02] px-4 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/[0.2] focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elevated cursor-pointer"
             data-testid="recovery-reload"
           >
