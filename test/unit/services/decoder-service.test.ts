@@ -3,6 +3,7 @@
 
 import { globalBufferPool } from '@services/buffer-pool';
 import { type DecodeOptions, type DecodeResult, decodeFrames } from '@services/decoder-service';
+import type { DemuxResult } from '@services/demuxer-service';
 import {
   calculateStagedFrameSourceCapacity,
   estimateActiveFrameBytes,
@@ -285,15 +286,21 @@ describe('decoder-service', () => {
       override decodeQueueSize = 0;
     }
 
-    function byteCreditDemux(packetSizes = [1_500, 1_500], encodedChunkBudgetBytes = 3_000) {
-      type PacketReadGate = (chargedBytes: number) => boolean | Promise<boolean>;
+    type PacketReadGate = Parameters<NonNullable<DemuxResult['setPacketReadGate']>>[0];
+
+    function byteCreditDemux(
+      packetSizes = [1_500, 1_500],
+      encodedChunkBudgetBytes = 3_000,
+      pressureCandidate?: Parameters<PacketReadGate>[1]
+    ) {
       let gate: PacketReadGate | undefined;
       const readPacket = vi.fn((index: number) =>
         fixtureChunk(index * 100_000, 40, { byteLength: packetSizes[index]!, duration: 100_000 })
       );
       const chunks = (async function* () {
         for (const [index, byteLength] of packetSizes.entries()) {
-          if (gate && !(await gate(byteLength + 1_024))) return;
+          if (gate && !(await gate(byteLength + 1_024, index > 0 ? pressureCandidate : undefined)))
+            return;
           yield readPacket(index);
         }
       })();
@@ -668,6 +675,123 @@ describe('decoder-service', () => {
       expect(decoder.dequeueRemoves).toBe(1);
       expect(decoder.close).toHaveBeenCalledOnce();
     });
+
+    it('flushes before reading a verified key that would exceed encoded credit', async () => {
+      const verify = vi.fn(async () => true);
+      const firstConversion = Promise.withResolvers<void>();
+      const delivered: number[] = [];
+      const demux = byteCreditDemux(undefined, undefined, { timestampUs: 100_000, verify });
+      class KeyPressureDecoder extends ByteCreditDecoder {
+        override readonly flush = vi.fn(async () => {
+          expect(demux.readPacket.mock.calls).toEqual(
+            this.flush.mock.calls.length === 1 ? [[0]] : [[0], [1]]
+          );
+          this.emitOutput((this.flush.mock.calls.length - 1) * 100_000);
+        });
+      }
+      vi.stubGlobal('VideoDecoder', KeyPressureDecoder);
+      const decoding = decodeFrames(demux, {
+        width: 8,
+        height: 8,
+        onFrameAvailable: async (pixels, _, frameNumber) => {
+          delivered.push(frameNumber);
+          releasePixels(pixels);
+          if (frameNumber === 0) await firstConversion.promise;
+        },
+      });
+      try {
+        await vi.waitFor(() => expect(delivered).toEqual([0]));
+        expect(demux.readPacket.mock.calls).toEqual([[0]]);
+        expect(verify).toHaveBeenCalledOnce();
+      } finally {
+        firstConversion.resolve();
+      }
+      await expect(decoding).resolves.toMatchObject({
+        consumedChunks: 2,
+        selectedFrames: 2,
+        presentationEndUs: 200_000,
+      });
+      expect(delivered).toEqual([0, 1]);
+      expect(QueuedEventDecoder.instance?.flush).toHaveBeenCalledTimes(2);
+      expect(QueuedEventDecoder.instance?.close).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      { timestampUs: 100_000, probed: true, verified: false },
+      { timestampUs: 0, probed: false, verified: true },
+      { timestampUs: -100_000, probed: false, verified: true },
+    ])('keeps ordinary byte backpressure for an unsafe key boundary %o', async (test) => {
+      vi.stubGlobal('VideoDecoder', ByteCreditDecoder);
+      const verify = vi.fn(async () => test.verified);
+      const demux = byteCreditDemux(undefined, undefined, {
+        timestampUs: test.timestampUs,
+        verify,
+      });
+      const decoding = decodeFrames(demux, {
+        width: 8,
+        height: 8,
+        onFrameAvailable: releasePixels,
+      });
+      await vi.waitFor(() => expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(1));
+      const decoder = QueuedEventDecoder.instance!;
+      expect(demux.readPacket.mock.calls).toEqual([[0]]);
+      expect(verify).toHaveBeenCalledTimes(Number(test.probed));
+      expect(decoder.flush).not.toHaveBeenCalled();
+      decoder.emitOutput(0);
+      decoder.flush.mockImplementation(async () => decoder.emitOutput(100_000));
+      await expect(decoding).resolves.toMatchObject({ consumedChunks: 2, selectedFrames: 2 });
+      expect(decoder.flush).toHaveBeenCalledOnce();
+    });
+
+    it.each(['mismatch', 'cancel', 'timeout', 'flush rejection'] as const)(
+      'settles %s at a verified key without reading the offered packet',
+      async (failure) => {
+        vi.useFakeTimers();
+        try {
+          const cancellation = new AbortController();
+          const verify = vi.fn(async () => true);
+          const demux = byteCreditDemux(undefined, undefined, { timestampUs: 100_000, verify });
+          const pendingFlush = Promise.withResolvers<void>();
+          class KeyPressureDecoder extends ByteCreditDecoder {
+            override readonly flush = vi.fn(() => {
+              if (failure === 'mismatch') {
+                this.emitOutput(-100_000);
+                return Promise.resolve();
+              }
+              return pendingFlush.promise;
+            });
+          }
+          vi.stubGlobal('VideoDecoder', KeyPressureDecoder);
+          const decoding = decodeFrames(
+            demux,
+            { width: 8, height: 8, onFrameAvailable: releasePixels },
+            cancellation.signal
+          );
+          const errors = {
+            mismatch: 'queue stalled',
+            cancel: 'Cancelled',
+            timeout: 'stalled while flushing',
+            'flush rejection': 'fixture pressure failure',
+          };
+          const rejected = expect(decoding).rejects.toThrow(errors[failure]);
+          await vi.waitFor(() => expect(QueuedEventDecoder.instance?.flush).toHaveBeenCalledOnce());
+          const decoder = QueuedEventDecoder.instance!;
+          if (failure === 'cancel') cancellation.abort();
+          else if (failure === 'flush rejection') pendingFlush.reject(new Error(errors[failure]));
+          else {
+            if (failure === 'mismatch') await vi.waitFor(() => expect(decoder.dequeueAdds).toBe(1));
+            await vi.advanceTimersByTimeAsync(STALL_DETECTION_TIMEOUT_MS);
+          }
+          await rejected;
+          expect(demux.readPacket.mock.calls).toEqual([[0]]);
+          expect(decoder.reset).toHaveBeenCalledOnce();
+          expect(decoder.close).toHaveBeenCalledOnce();
+          pendingFlush.resolve();
+        } finally {
+          vi.useRealTimers();
+        }
+      }
+    );
 
     it('reads an admissible small packet needed to release retained large packets', async () => {
       class ForwardProgressDecoder extends ByteCreditDecoder {

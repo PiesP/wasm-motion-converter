@@ -74,6 +74,56 @@ describe('conversion owned packet source window', () => {
     }
   });
 
+  it('validates a VP9 key from a four-byte credit-owned read of its indexed extent', async () => {
+    const { session, source } = await fixtureSession('vp9.webm');
+    try {
+      await session.analyze();
+      session.enablePacketReadWindow();
+      const packet = await session.packetAsync(0);
+      const expectedStart = Number(packet.offset);
+      const slice = source.slice.bind(source);
+      const creditAtSlice: number[] = [];
+      const readRange = vi.spyOn(source, 'slice').mockImplementation((start, end) => {
+        creditAtSlice.push(ownedReadCreditStats().liveBytes);
+        return slice(start, end);
+      });
+      const before = session.transferStats;
+      await expect(session.verifyVisibleVp9Key(packet)).resolves.toBe(true);
+      expect(readRange).toHaveBeenCalledExactlyOnceWith(expectedStart, expectedStart + 4);
+      expect(creditAtSlice).toEqual([4]);
+      expect(session.transferStats.sourceReadBytes - before.sourceReadBytes).toBe(4);
+      expect(session.transferStats.packetReadBytes).toBe(before.packetReadBytes);
+      expect(ownedReadCreditStats().liveBytes).toBe(0);
+
+      await expect(
+        session.verifyVisibleVp9Key({ ...packet, offset: packet.offset + 1n })
+      ).rejects.toThrow('packet descriptor invalid');
+      expect(readRange).toHaveBeenCalledOnce();
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it.each([
+    [0x80, 0x49, 0x83, 0x42], // hidden key
+    [0x86, 0x49, 0x83, 0x42], // visible delta
+    [0x88, 0x49, 0x83, 0x42], // show existing
+    [0x92, 0x49, 0x83, 0x42], // profile 2
+    [0x82, 0x49, 0x83, 0x41], // wrong sync code
+  ])('refuses an unsafe VP9 key prefix (%i, %i, %i, %i)', async (...prefix) => {
+    const { session, source } = await fixtureSession('vp9.webm');
+    try {
+      await session.analyze();
+      const packet = await session.packetAsync(0);
+      vi.spyOn(source, 'slice').mockReturnValue(new Blob([new Uint8Array(prefix)]));
+      await expect(session.verifyVisibleVp9Key(packet)).resolves.toBe(false);
+    } finally {
+      session.release();
+      vi.restoreAllMocks();
+    }
+  });
+
   it('keeps metadata-style sessions on exact reads until conversion admission', async () => {
     const { session, source } = await fixtureSession();
     try {

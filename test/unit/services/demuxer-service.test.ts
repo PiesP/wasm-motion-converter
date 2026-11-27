@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   findVerifiedKey: vi.fn(),
   packet: vi.fn(),
   readPacket: vi.fn(),
+  verifyVisibleVp9Key: vi.fn(async () => true),
   release: vi.fn(),
   enablePacketReadWindow: vi.fn(),
   transferStats: { wasmCapacityBytes: 8 * 1024 * 1024 },
@@ -28,6 +29,7 @@ vi.mock('@services/owned-demux-core', () => ({
     findVerifiedKey: mocks.findVerifiedKey,
     packetAsync: mocks.packet,
     readPacket: mocks.readPacket,
+    verifyVisibleVp9Key: mocks.verifyVisibleVp9Key,
     release: mocks.release,
     enablePacketReadWindow: mocks.enablePacketReadWindow,
     seekWorkspaceBytes: 0,
@@ -199,6 +201,42 @@ describe('demuxVideo owned packet route', () => {
     );
     expect(mocks.release).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ['gif', 'VP90', 'vp09.00.10.08', true],
+    ['gif', 'vp09', 'vp09.00.10.08', true],
+    ['gif', 'vp09', 'vp09.02.10.10', false],
+    ['gif', 'avc1', null, false],
+    ['webp', 'VP90', 'vp09.00.10.08', false],
+  ] as const)(
+    'offers a lazy key probe for direct %s from parsed %s/%s',
+    async (format, codec, codecString, canProbe) => {
+      mocks.analyze.mockResolvedValue({ ...track, codec, codecString });
+      const result = await demuxVideo(
+        { ...request(1), format, inputBuffer: undefined, inputBlob: new Blob() },
+        { ...metadata, config: { ...metadata.config, codec: 'vp09.00.10.08' } }
+      );
+      result.setPacketReadGate!(async (chargedBytes, candidate) => {
+        expect(chargedBytes).toBe(1028);
+        expect(mocks.verifyVisibleVp9Key).not.toHaveBeenCalled();
+        expect(mocks.readPacket).not.toHaveBeenCalled();
+        if (canProbe) {
+          expect(candidate?.timestampUs).toBe(1_000_000);
+          await expect(candidate?.verify()).resolves.toBe(true);
+        } else {
+          expect(candidate).toBeUndefined();
+        }
+        return false;
+      });
+      if (!(Symbol.asyncIterator in result.chunks)) throw new Error('Expected lazy packet stream');
+      await expect(result.chunks[Symbol.asyncIterator]().next()).resolves.toMatchObject({
+        done: true,
+      });
+      expect(mocks.verifyVisibleVp9Key).toHaveBeenCalledTimes(Number(canProbe));
+      expect(mocks.readPacket).not.toHaveBeenCalled();
+      expect(mocks.release).toHaveBeenCalledOnce();
+    }
+  );
 
   it('uses admitted compact seek workspace instead of charging every logical packet', async () => {
     mocks.analyze.mockResolvedValue({ ...track, packetCount: 100_000_000 });

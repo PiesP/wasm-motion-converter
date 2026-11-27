@@ -402,6 +402,7 @@ export async function decodeFrames(
   const encodedChunkReservations = new Map<number, EncodedChunkReservation[]>();
   const encodedChunkBudgetBytes = demux.encodedChunkBudgetBytes;
   let retainedEncodedChunkBytes = 0;
+  let maxSubmittedTimestampUs = Number.NEGATIVE_INFINITY;
   let inputFrameCount = 0;
   let inputChunkCount = 0;
   let keptFrameCount = 0;
@@ -1423,11 +1424,12 @@ export async function decodeFrames(
     typeof activeDecoder.removeEventListener === 'function';
   const stoppedDecoding = (): boolean =>
     Boolean(signal?.aborted || decodeError || trimEndReached || hasProcessingFailure());
+  const encodedCreditBlocked = (offeredBytes: number): boolean =>
+    offeredBytes > 0 &&
+    encodedChunkBudgetBytes !== undefined &&
+    retainedEncodedChunkBytes + offeredBytes > encodedChunkBudgetBytes;
   const decodeCapacityBlocked = (offeredBytes: number): boolean =>
-    activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE ||
-    (offeredBytes > 0 &&
-      encodedChunkBudgetBytes !== undefined &&
-      retainedEncodedChunkBytes + offeredBytes > encodedChunkBudgetBytes);
+    activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE || encodedCreditBlocked(offeredBytes);
   const waitForCapacityChange = async (offeredBytes: number): Promise<void> => {
     if (!supportsDequeueEvent) {
       // Older implementations without EventTarget support need a bounded retry.
@@ -1478,6 +1480,37 @@ export async function decodeFrames(
     return !stoppedDecoding();
   };
 
+  const flushForPacketCredit = async (offeredBytes: number): Promise<boolean> => {
+    await Promise.allSettled([...pendingConversions]);
+    if (stoppedDecoding()) return false;
+    if (!encodedCreditBlocked(offeredBytes) || decodeCapacityBlocked(0))
+      return waitForDecodeCapacity(offeredBytes);
+
+    const interrupted = Promise.withResolvers<void>();
+    // Trim can be reached by an output from this flush. Let it finish before
+    // the end-of-stream path runs, but stop promptly on cancellation or failure.
+    wakeDecodeCapacityWait = () => {
+      if (firstPipelineFailure) interrupted.resolve();
+    };
+    const timeoutId = setTimeout(() => {
+      recordDecoderError(new Error('Video decoder stalled while flushing for packet capacity'));
+    }, STALL_DETECTION_TIMEOUT_MS);
+    try {
+      await Promise.race([activeDecoder.flush(), interrupted.promise]);
+    } catch (error) {
+      recordDecoderError(error);
+    } finally {
+      clearTimeout(timeoutId);
+      wakeDecodeCapacityWait = null;
+    }
+
+    if (stoppedDecoding()) return false;
+    await Promise.allSettled([...pendingConversions]);
+    // A completed flush does not refund any encoded reservation. Only outputs
+    // with matching timestamps can make the offered packet admissible.
+    return waitForDecodeCapacity(offeredBytes);
+  };
+
   let streamedSourceDurationUs = 0;
   chunkStream = (async function* iterateChunks(): AsyncGenerator<EncodedVideoChunk> {
     yield* demux.chunks;
@@ -1489,9 +1522,26 @@ export async function decodeFrames(
   try {
     // Only matching outputs return byte credit. The demuxer asks for credit
     // before reading packet data and reaches EOF without another request.
-    demux.setPacketReadGate?.((offeredBytes) =>
-      decodeCapacityBlocked(offeredBytes) ? waitForDecodeCapacity(offeredBytes) : !stoppedDecoding()
-    );
+    demux.setPacketReadGate?.((offeredBytes, keyCandidate) => {
+      if (stoppedDecoding()) return false;
+      if (!decodeCapacityBlocked(offeredBytes)) return true;
+      if (
+        keyCandidate &&
+        !decodeCapacityBlocked(0) &&
+        encodedCreditBlocked(offeredBytes) &&
+        keyCandidate.timestampUs > maxSubmittedTimestampUs
+      ) {
+        return keyCandidate.verify().then(
+          (verified) =>
+            verified ? flushForPacketCredit(offeredBytes) : waitForDecodeCapacity(offeredBytes),
+          (error: unknown) => {
+            if (firstPipelineFailure) return false;
+            throw error;
+          }
+        );
+      }
+      return waitForDecodeCapacity(offeredBytes);
+    });
     // Check native queue count and downstream frame work before asking the
     // demuxer for the next chunk.
     while (true) {
@@ -1531,6 +1581,7 @@ export async function decodeFrames(
       const reservation = reserveEncodedChunk(nextChunk.value);
       try {
         activeDecoder.decode(nextChunk.value);
+        maxSubmittedTimestampUs = Math.max(maxSubmittedTimestampUs, nextChunk.value.timestamp);
       } catch (error) {
         releaseEncodedChunk(reservation);
         recordDecoderError(error);

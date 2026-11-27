@@ -28,7 +28,10 @@ import { getTrimmedDurationSeconds } from '@utils/trim-time';
 
 import { fingerprintOwnedDemuxSource } from './owned-demux-index-snapshot';
 
-type PacketReadGate = (chargedBytes: number) => boolean | Promise<boolean>;
+type PacketReadGate = (
+  chargedBytes: number,
+  keyCandidate?: { timestampUs: number; verify: () => Promise<boolean> }
+) => boolean | Promise<boolean>;
 
 export interface DemuxResult {
   /** One-shot packet stream. The producer advances only when the decoder requests a chunk. */
@@ -118,6 +121,13 @@ export async function demuxVideo(
     }
     track ??= await session.analyze(signal);
     const config = preComputedMetadata?.config ?? ownedDecoderConfig(track);
+    const directBlobPackets = inputSource instanceof Blob && !session.reconstructsPackets;
+    const mayVerifyPressureKey =
+      request.format === 'gif' &&
+      directBlobPackets &&
+      (track.codec === 'vp09' || track.codec === 'VP90') &&
+      (track.codecString?.startsWith('vp09.00.') ?? track.description[4] === 0) &&
+      config.codec.startsWith('vp09.00.');
     const configDescriptionBytes = config.description?.byteLength ?? 0;
     if (!Number.isSafeInteger(configDescriptionBytes) || configDescriptionBytes > 1024 * 1024)
       throw new OwnedDemuxResourceError('Demux memory limit exceeded by decoder configuration');
@@ -215,7 +225,15 @@ export async function demuxVideo(
               `Demux memory limit exceeded by one encoded packet (${packetBudgetBytes} byte budget)`
             );
           if (packetReadGate) {
-            const admission = packetReadGate(packetRetainedBytes);
+            const admission =
+              mayVerifyPressureKey && packet.key
+                ? packetReadGate(packetRetainedBytes, {
+                    get timestampUs() {
+                      return ownedTimestampUs(packet.ptsTicks, track.timescale);
+                    },
+                    verify: () => session.verifyVisibleVp9Key(packet, signal),
+                  })
+                : packetReadGate(packetRetainedBytes);
             if (admission !== true && !(await admission)) return;
             signal?.throwIfAborted();
           }
@@ -269,7 +287,7 @@ export async function demuxVideo(
       encodedChunkBudgetBytes: chunkBudgetBytes,
       // Direct packet sources use indexed byte credit independently of file size.
       // The transport-stream reconstruction path keeps its existing boundary.
-      ...(inputSource instanceof Blob && !session.reconstructsPackets
+      ...(directBlobPackets
         ? {
             setPacketReadGate(gate: PacketReadGate) {
               packetReadGate = gate;

@@ -887,10 +887,33 @@ export class OwnedDemuxSession {
     return this.readPacketInternal(packet, signal, false);
   }
 
+  async verifyVisibleVp9Key(packet: OwnedDemuxPacket, signal?: AbortSignal): Promise<boolean> {
+    const prefixLength = 4;
+    if (
+      !this.sourceIsBlob ||
+      packet.sourceEnd !== null ||
+      !packet.key ||
+      packet.byteLength <= prefixLength
+    )
+      return false;
+    const [header, sync0, sync1, sync2] = new Uint8Array(
+      await this.readPacketInternal(packet, signal, false, prefixLength)
+    );
+    // Frame marker 2, profile 0, no show-existing, key frame, and show-frame.
+    return (
+      header !== undefined &&
+      (header & 0xfe) === 0x82 &&
+      sync0 === 0x49 &&
+      sync1 === 0x83 &&
+      sync2 === 0x42
+    );
+  }
+
   private async readPacketInternal(
     packet: OwnedDemuxPacket,
     signal: AbortSignal | undefined,
-    fromSeek: boolean
+    fromSeek: boolean,
+    prefixLength?: number
   ): Promise<ArrayBuffer> {
     if (
       !this.active ||
@@ -932,10 +955,21 @@ export class OwnedDemuxSession {
         start + packet.byteLength > this.source.size
       )
         throw new Error('Owned demux packet range invalid');
-      const data = await this.readOrdinaryPacket(start, packet.byteLength, signal);
-      this.packetReadBytes += data.byteLength;
+      const length = prefixLength ?? packet.byteLength;
+      // The pressure probe uses existing realm credit for an exact range read.
+      // It can never fill a window or read the full packet before admission.
+      const data =
+        prefixLength === undefined
+          ? await this.readOrdinaryPacket(start, length, signal)
+          : await readOwnedRange(this.source, start, start + length, signal);
+      if (prefixLength === undefined) {
+        this.packetReadBytes += data.byteLength;
+      } else {
+        this.rangeReads++;
+        this.sourceReadBytes += data.byteLength;
+      }
       signal?.throwIfAborted();
-      if (!this.active || data.byteLength !== packet.byteLength)
+      if (!this.active || data.byteLength !== length)
         throw new Error('Owned demux packet read invalidated');
       return data;
     } catch (error) {
