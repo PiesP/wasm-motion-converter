@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   readPacket: vi.fn(),
   release: vi.fn(),
   enablePacketReadWindow: vi.fn(),
-  transferStats: { wasmCapacityBytes: 8 * 1024 * 1024 },
+  transferStats: { wasmCapacityBytes: 8 * 1024 * 1024, indexMode: 'expanded' },
 }));
 vi.mock('@services/owned-demux-core', () => ({
   createOwnedDemuxSession: vi.fn(async () => ({
@@ -99,6 +99,7 @@ describe('demuxVideo owned packet route', () => {
     vi.clearAllMocks();
     vi.stubGlobal('EncodedVideoChunk', TestEncodedVideoChunk);
     track.maxPacketBytes = 4;
+    mocks.transferStats.indexMode = 'expanded';
     mocks.analyze.mockResolvedValue(track);
     mocks.importIndex.mockResolvedValue(track);
     mocks.findVerifiedKey.mockResolvedValue(6);
@@ -147,22 +148,30 @@ describe('demuxVideo owned packet route', () => {
     expect(mocks.release).toHaveBeenCalledOnce();
   });
 
-  it.each([MAX_FILE_SIZE, MAX_FILE_SIZE + 1])(
-    'exposes packet admission on a Blob on either side of the old file limit (%i bytes)',
-    async (size) => {
+  it.each([
+    ['expanded', MAX_FILE_SIZE, false],
+    ['expanded', MAX_FILE_SIZE + 1, true],
+    ['compact', MAX_FILE_SIZE, true],
+    ['compact', MAX_FILE_SIZE + 1, true],
+  ] as const)(
+    'checks pre-read credit for a %s-index Blob of %i bytes',
+    async (indexMode, size, gated) => {
+      mocks.transferStats.indexMode = indexMode;
       const inputBlob = new Blob();
       vi.spyOn(inputBlob, 'size', 'get').mockReturnValue(size);
       const result = await demuxVideo(
         { ...request(1.2, 1.3), inputBuffer: undefined, inputBlob },
         metadata
       );
-      expect(typeof result.setPacketReadGate).toBe('function');
+      expect(typeof result.setPacketReadGate).toBe(gated ? 'function' : 'undefined');
       expect(mocks.readPacket).not.toHaveBeenCalled();
       result.dispose?.();
     }
   );
 
-  it('offers each indexed charge before reading an ArrayBuffer packet and closes on refusal', async () => {
+  it('offers compact indexed byte charges before reading and closes on refusal', async () => {
+    mocks.transferStats.indexMode = 'compact';
+    const inputBlob = new Blob();
     mocks.packet.mockImplementation((index: number) => ({
       index,
       byteLength: index === 6 ? 4 : 2,
@@ -170,7 +179,10 @@ describe('demuxVideo owned packet route', () => {
       durationTicks: 166_666n,
       key: index === 6,
     }));
-    const result = await demuxVideo(request(1.2, 1.3), metadata);
+    const result = await demuxVideo(
+      { ...request(1.2, 1.3), inputBuffer: undefined, inputBlob },
+      metadata
+    );
     const gate = vi
       .fn<(bytes: number) => boolean>()
       .mockReturnValueOnce(true)
