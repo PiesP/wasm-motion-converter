@@ -108,7 +108,8 @@ const App: Component = () => {
     !nativeGifPartSaving &&
     window.isSecureContext &&
     new URLSearchParams(window.location.search).get('gif-part-storage') === 'indexeddb' &&
-    typeof window.indexedDB !== 'undefined';
+    typeof window.indexedDB?.databases === 'function' &&
+    typeof window.navigator.locks?.request === 'function';
   createEffect(() => {
     inputFile();
     setGifPartsStatus('');

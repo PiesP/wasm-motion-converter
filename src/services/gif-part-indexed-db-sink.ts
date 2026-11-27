@@ -2,11 +2,15 @@
 // Copyright (c) 2026 PiesP
 
 import { BYTES_PER_MB, GIF_MAX_OUTPUT_BYTES, GIF_MAX_OUTPUT_FRAMES } from '@utils/constants';
+import { logger } from '@utils/logger';
 
 import { validateOutput } from './error-recovery';
 import type { GifOutputPart } from './gif-encoder-service';
 
 const CHUNKS = 'chunks';
+const DATABASE_PREFIX = 'dropconvert-gif-v2-';
+const STAGED_DATABASE =
+  /^dropconvert-gif-v2-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/;
 const CHUNK_BYTES = BYTES_PER_MB;
 // Experiment ceiling for staged output (including the manifest), independent of live memory.
 const MAX_STAGED_BYTES = 512 * BYTES_PER_MB;
@@ -55,6 +59,36 @@ function deleteDatabase(name: string): Promise<void> {
   });
 }
 
+async function clearAbandonedStores(): Promise<void> {
+  for (const { name } of await indexedDB.databases()) {
+    if (!name || !STAGED_DATABASE.test(name)) continue;
+    try {
+      await navigator.locks.request(name, { ifAvailable: true }, async (lock) => {
+        if (lock) await deleteDatabase(name);
+      });
+    } catch {
+      logger.warn('conversion', 'Unable to remove abandoned staged GIF storage');
+    }
+  }
+}
+
+function acquireStoreLease(name: string): Promise<() => Promise<void>> {
+  return new Promise((resolve, reject) => {
+    let release!: () => void;
+    const hold = new Promise<void>((done) => {
+      release = done;
+    });
+    const task = navigator.locks.request(name, async () => {
+      resolve(async () => {
+        release();
+        await task;
+      });
+      await hold;
+    });
+    void task.catch(reject);
+  });
+}
+
 function transact<Value>(
   database: IDBDatabase,
   mode: IDBTransactionMode,
@@ -90,9 +124,17 @@ function transact<Value>(
 
 export async function createGifPartIndexedDbSink(): Promise<GifPartIndexedDbSink> {
   const scope = crypto.randomUUID();
-  const databaseName = `dropconvert-gif-${scope}`;
+  const databaseName = DATABASE_PREFIX + scope;
   const token = scope.replaceAll('-', '').slice(0, 16);
-  const database = await openDatabase(databaseName);
+  await clearAbandonedStores();
+  const releaseLease = await acquireStoreLease(databaseName);
+  let database: IDBDatabase;
+  try {
+    database = await openDatabase(databaseName);
+  } catch (error) {
+    await releaseLease();
+    throw error;
+  }
   const lifetime = new AbortController();
   const parts: StoredPart[] = [];
   let manifest: StoredFile | undefined;
@@ -170,6 +212,7 @@ export async function createGifPartIndexedDbSink(): Promise<GifPartIndexedDbSink
       database.close();
       window.removeEventListener('pagehide', onPageHide);
       await deleteDatabase(databaseName);
+      await releaseLease();
       parts.length = 0;
       manifest = undefined;
     })().catch((error: unknown) => {

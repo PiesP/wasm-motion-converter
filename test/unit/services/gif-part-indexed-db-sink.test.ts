@@ -11,16 +11,18 @@ type FakeRequest = { result?: unknown };
 
 function memoryStorage() {
   const databases = new Map<string, Map<string, ArrayBuffer>>();
+  const leases = new Set<string>();
   const writes: number[] = [];
   const reads: string[] = [];
   const window = new EventTarget();
   const storage = {
     beforePut: (_count: number): void | Promise<void> => undefined,
     blockDeletion: false,
-    databases,
+    records: databases,
     writes,
     reads,
     window,
+    databases: vi.fn(async () => [...databases.keys()].map((name) => ({ name }))),
     open: vi.fn((name: string) => {
       const records = databases.get(name) ?? new Map<string, ArrayBuffer>();
       const open = {
@@ -105,6 +107,27 @@ function memoryStorage() {
     }),
   };
   vi.stubGlobal('indexedDB', storage);
+  vi.stubGlobal('navigator', {
+    locks: {
+      async request(
+        name: string,
+        optionsOrCallback:
+          | { ifAvailable?: boolean }
+          | ((lock: { name: string } | null) => Promise<void>),
+        availableCallback?: (lock: { name: string } | null) => Promise<void>
+      ) {
+        const callback =
+          typeof optionsOrCallback === 'function' ? optionsOrCallback : availableCallback!;
+        if (leases.has(name)) return callback(null);
+        leases.add(name);
+        try {
+          await callback({ name });
+        } finally {
+          leases.delete(name);
+        }
+      },
+    },
+  });
   vi.stubGlobal('IDBKeyRange', { bound: (lower: ChunkKey, upper: ChunkKey) => ({ lower, upper }) });
   vi.stubGlobal('window', window);
   return storage;
@@ -181,7 +204,7 @@ describe('staged GIF IndexedDB sink', () => {
       }
       await assertion;
       expect(sink.files()).toEqual(before);
-      expect([...storage.databases.values()][0]!.size).toBe(1);
+      expect([...storage.records.values()][0]!.size).toBe(1);
       await sink.save(gifPart(2, 42), signal);
       expect(sink.count).toBe(2);
       await sink.dispose();
@@ -228,10 +251,10 @@ describe('staged GIF IndexedDB sink', () => {
     storage.blockDeletion = false;
     await sink.dispose();
     expect(storage.deleteDatabase.mock.calls).toEqual([[name], [name]]);
-    expect([...storage.databases.keys()]).toEqual([otherName]);
+    expect([...storage.records.keys()]).toEqual([otherName]);
     storage.window.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: false }));
     await other.dispose();
     expect(storage.deleteDatabase.mock.calls).toEqual([[name], [name], [otherName]]);
-    expect(storage.databases.size).toBe(0);
+    expect(storage.records.size).toBe(0);
   });
 });
