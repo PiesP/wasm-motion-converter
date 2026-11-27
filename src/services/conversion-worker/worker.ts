@@ -11,6 +11,7 @@
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
 import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
+import type { GifOutputPart } from '@services/gif-encoder-service';
 import {
   OwnedDemuxAbiError,
   OwnedDemuxConversionError,
@@ -35,7 +36,32 @@ function ownedDemuxFailureKind(error: unknown): OwnedDemuxFailureKind | undefine
 }
 
 // The pipeline owns realm-wide buffer and canvas resources until it settles.
-let activeConversion: { requestId: string; controller: AbortController } | undefined;
+interface ActiveConversion {
+  requestId: string;
+  controller: AbortController;
+  awaitingSave?: { index: number; resolve: () => void };
+}
+let activeConversion: ActiveConversion | undefined;
+
+async function transferGifPart(job: ActiveConversion, part: GifOutputPart): Promise<void> {
+  const signal = job.controller.signal;
+  signal.throwIfAborted();
+  if (job.awaitingSave) throw new Error('Cannot transfer a second pending GIF part');
+  const saved = Promise.withResolvers<void>();
+  const onAbort = () => saved.reject(signal.reason);
+  job.awaitingSave = { index: part.index, resolve: saved.resolve };
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    self.postMessage(
+      { type: 'gif-part', requestId: job.requestId, part } satisfies WorkerResponse,
+      [part.bytes]
+    );
+    await saved.promise;
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+    delete job.awaitingSave;
+  }
+}
 
 // ─── Message handler ────────────────────────────────────────────────────
 
@@ -88,7 +114,8 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
       const pipelineStart = performance.now();
 
       const abortController = new AbortController();
-      activeConversion = { requestId, controller: abortController };
+      const job: ActiveConversion = { requestId, controller: abortController };
+      activeConversion = job;
 
       // Prepare postMessage helper with response encoding
       const respond = (msg: WorkerResponse, transferables?: Transferable[]) => {
@@ -97,7 +124,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
       };
 
       try {
-        const { outputBuffer, profile } = await runWorkerPipeline(
+        const args = [
           input,
           options,
           respond,
@@ -106,8 +133,15 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
           config,
           duration,
           framerate,
-          indexSnapshot
-        );
+          indexSnapshot,
+        ] as const;
+        if (request.outputMode === 'gif-parts') {
+          const summary = await runWorkerPipeline(...args, (part) => transferGifPart(job, part));
+          abortController.signal.throwIfAborted();
+          respond({ type: 'gif-parts-complete', requestId, ...summary });
+          break;
+        }
+        const { outputBuffer, profile } = await runWorkerPipeline(...args);
         abortController.signal.throwIfAborted();
 
         const durationMs = Math.round(performance.now() - pipelineStart);
@@ -165,6 +199,12 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
       break;
     }
 
+    case 'gif-part-saved': {
+      const job = activeConversion;
+      if (job?.requestId === request.requestId && job.awaitingSave?.index === request.index)
+        job.awaitingSave.resolve();
+      break;
+    }
     case 'abort': {
       if (activeConversion?.requestId === request.requestId) activeConversion.controller.abort();
       break;

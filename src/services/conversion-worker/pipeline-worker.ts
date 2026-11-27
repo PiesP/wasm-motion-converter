@@ -16,7 +16,7 @@ import type { ConversionProfileReport } from '@services/conversion-profiler';
 import { demuxVideo } from '@services/demuxer-service';
 import { type EncoderFrameCounts, resolveCadencePolicy } from '@services/encoder-common';
 import { clearCanvasCache, resolveVideoDimensions } from '@services/frame-utils';
-import { encodeGif } from '@services/gif-encoder-service';
+import { encodeGif, encodeGifParts, type GifOutputPart } from '@services/gif-encoder-service';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import {
   discardOwnedVp8Module,
@@ -38,7 +38,12 @@ import {
 } from '@utils/constants';
 
 import { buildConversionRequest } from './build-conversion-request';
-import type { SerializedConversionOptions, SerializedDecoderConfig, WorkerResponse } from './types';
+import type {
+  GifPartsSummary,
+  SerializedConversionOptions,
+  SerializedDecoderConfig,
+  WorkerResponse,
+} from './types';
 import { createWorkerLogRelay } from './worker-log-relay';
 
 // Decode and encode overlap in this streaming route. Their bounded weighted
@@ -100,7 +105,22 @@ function clampMaxMemoryMB(value: number): number {
  * Runs the full conversion pipeline in a worker.
  * This mirrors the main-thread conversion-pipeline.ts but adapted for worker context.
  */
-export async function runWorkerPipeline(
+type WorkerBufferResult = { outputBuffer: ArrayBuffer; profile?: ConversionProfileReport };
+type WorkerSavePart = (part: GifOutputPart) => Promise<void>;
+
+export function runWorkerPipeline(
+  input: ArrayBuffer | Blob,
+  options: SerializedConversionOptions,
+  postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
+  requestId: string,
+  signal: AbortSignal | undefined,
+  config: SerializedDecoderConfig | undefined,
+  duration: number | undefined,
+  framerate: number | undefined,
+  indexSnapshot: OwnedInputIndexSnapshot | undefined,
+  savePart: WorkerSavePart
+): Promise<GifPartsSummary>;
+export function runWorkerPipeline(
   input: ArrayBuffer | Blob,
   options: SerializedConversionOptions,
   postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
@@ -110,7 +130,19 @@ export async function runWorkerPipeline(
   duration?: number,
   framerate?: number,
   indexSnapshot?: OwnedInputIndexSnapshot
-): Promise<{ outputBuffer: ArrayBuffer; profile?: ConversionProfileReport }> {
+): Promise<WorkerBufferResult>;
+export async function runWorkerPipeline(
+  input: ArrayBuffer | Blob,
+  options: SerializedConversionOptions,
+  postMessage: (msg: WorkerResponse, transferables?: Transferable[]) => void,
+  requestId: string,
+  signal?: AbortSignal,
+  config?: SerializedDecoderConfig,
+  duration?: number,
+  framerate?: number,
+  indexSnapshot?: OwnedInputIndexSnapshot,
+  savePart?: WorkerSavePart
+): Promise<WorkerBufferResult | GifPartsSummary> {
   const pipelineStart = performance.now();
   const previousLoad = waitForOwnedVp8Load(signal);
   if (previousLoad) await previousLoad;
@@ -386,30 +418,34 @@ export async function runWorkerPipeline(
         gifDecimation,
       });
 
-      const gifResult = await encodeGif(
-        demuxResult,
-        {
-          width: codedWidth,
-          height: codedHeight,
-          quality: options.quality,
-          scale: options.scale,
-          frameDecimation: gifDecimation,
-          minimumSourceFrameGap: gifCadence.minimumSourceFrameGap,
-          pressureCadenceRatio: gifCadence.pressureCadenceRatio,
-          smartFrameSkip: options.smartFrameSkip,
-          playCount: request.playCount,
-          decimationMemoryCheck,
-          onEncodingComplete: recordCompletedFrameCounts,
-          profileOperation,
-          profileCopyPath,
-          maxFrames: request.maxFrames,
-          maxOutputBytes: request.maxOutputBytes,
-          assertAdditionalMemoryBytes: assertMemoryBudget,
-          onFrameDecoded: decodeProgressCb,
-          onFrameEncoded: encodedProgressCb,
-        },
-        signal
-      );
+      const gifOptions = {
+        width: codedWidth,
+        height: codedHeight,
+        quality: options.quality,
+        scale: options.scale,
+        frameDecimation: gifDecimation,
+        minimumSourceFrameGap: gifCadence.minimumSourceFrameGap,
+        pressureCadenceRatio: gifCadence.pressureCadenceRatio,
+        smartFrameSkip: options.smartFrameSkip,
+        playCount: request.playCount,
+        decimationMemoryCheck,
+        onEncodingComplete: recordCompletedFrameCounts,
+        profileOperation,
+        profileCopyPath,
+        maxFrames: request.maxFrames,
+        maxOutputBytes: request.maxOutputBytes,
+        assertAdditionalMemoryBytes: assertMemoryBudget,
+        onFrameDecoded: decodeProgressCb,
+        onFrameEncoded: encodedProgressCb,
+      };
+      if (savePart) {
+        const summary = await encodeGifParts(demuxResult, gifOptions, savePart, signal);
+        signal?.throwIfAborted();
+        transcodeSpan?.end(observedCounts);
+        postProgress('assembling', true);
+        return summary;
+      }
+      const gifResult = await encodeGif(demuxResult, gifOptions, signal);
       output = toExactOutputBuffer(gifResult);
     } else {
       const webpCadence = resolveCadencePolicy(
