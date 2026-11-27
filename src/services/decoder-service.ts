@@ -25,6 +25,7 @@ import {
   DEFAULT_FPS,
   FPS_CLAMP_MAX,
   FRAME_PIPELINE_MEMORY_BUDGET_BYTES,
+  GIF_MAX_CODED_RIGHT_PADDING,
   MAX_DECODE_INPUT_CHUNKS,
   MAX_FRAME_PIXEL_COUNT,
   MIN_OUTPUT_FPS,
@@ -165,6 +166,8 @@ export interface DecodeOptions {
   processingFailureSignal?: AbortSignal | undefined;
   /** Allow one ordered CPU pixel copy to overlap a slow downstream delivery. */
   stagedCopyLookahead?: boolean | undefined;
+  /** GIF admitted a serial half-scale decode and two bounded native source owners. */
+  paddedGifSource?: { bytes: number; reserve: () => void } | undefined;
   /** Shared WebP source/task/result reservation ledger for the parallel path. */
   frameMemoryBudget?: WebpFrameMemoryBudget | undefined;
   /** Testable lower ceiling; production callers cannot raise the hard packet-work limit. */
@@ -229,6 +232,7 @@ export async function decodeFrames(
     smartFrameSkip: effectiveSmartSkip = 'off',
     processingFailureSignal,
     stagedCopyLookahead = false,
+    paddedGifSource,
     frameMemoryBudget,
     maxInputChunks,
   } = opts;
@@ -343,6 +347,7 @@ export async function decodeFrames(
       ? frameMemoryBudget.allowsTargetLookahead
       : twoTargetSourceCapacity >= queuedSourceHeadroomCount);
   let retainedSourceFrameBytes = 0;
+  let paddedGifActive = false;
   let activeStagedTargetSlots = 0;
   let stagedTargetGateClosed = false;
   const stagedTargetWaiters: Array<{
@@ -425,8 +430,11 @@ export async function decodeFrames(
     const pending = pendingPresentationFrame;
     pendingPresentationFrame = null;
     if (!pending) return;
-    pending.releaseReservation();
-    pending.frame.close();
+    try {
+      pending.frame.close();
+    } finally {
+      pending.releaseReservation();
+    }
   };
   // Noise floor estimation: collect frame diff stdDev from first N frames
   const noiseFloorSamples: number[] = [];
@@ -707,23 +715,35 @@ export async function decodeFrames(
     if (reservation) releaseEncodedChunk(reservation);
   };
 
+  const isSafeExtent = (frameWidth: number, frameHeight: number): boolean =>
+    Number.isSafeInteger(frameWidth) &&
+    Number.isSafeInteger(frameHeight) &&
+    frameWidth > 0 &&
+    frameHeight > 0 &&
+    frameWidth <= MAX_FRAME_PIXEL_COUNT / frameHeight;
   const hasSafeFrameDimensions = (frame: VideoFrame): boolean => {
-    const dimensions = [
-      [frame.codedWidth, frame.codedHeight],
-      [frame.displayWidth, frame.displayHeight],
-    ] as const;
-    return dimensions.every(
-      ([frameWidth, frameHeight]) =>
-        Number.isSafeInteger(frameWidth) &&
-        Number.isSafeInteger(frameHeight) &&
-        frameWidth > 0 &&
-        frameHeight > 0 &&
-        frameWidth <= MAX_FRAME_PIXEL_COUNT / frameHeight
+    if (!isSafeExtent(frame.displayWidth, frame.displayHeight)) return false;
+    if (isSafeExtent(frame.codedWidth, frame.codedHeight)) return true;
+    if (!paddedGifSource) return false;
+    const rect = frame.visibleRect;
+    return (
+      Number.isSafeInteger(frame.codedWidth) &&
+      frame.codedWidth > configuredSourceWidth &&
+      frame.codedWidth <= configuredSourceWidth + GIF_MAX_CODED_RIGHT_PADDING &&
+      frame.codedHeight === configuredSourceHeight &&
+      frame.displayWidth === configuredSourceWidth &&
+      frame.displayHeight === configuredSourceHeight &&
+      rect != null &&
+      rect.x === 0 &&
+      rect.y === 0 &&
+      rect.width === configuredSourceWidth &&
+      rect.height === configuredSourceHeight &&
+      (!('rotation' in frame) || frame.rotation === 0) &&
+      (!('flip' in frame) || !frame.flip)
     );
   };
 
-  const retainPresentationFrame = (frame: VideoFrame, knownEndUs: number | null): void => {
-    let releaseReservation: () => void;
+  const getSourceReservationBytes = (frame: VideoFrame): number => {
     let runtimeAllocationBytes: number | null = null;
     if (frame.format != null && typeof frame.allocationSize === 'function') {
       try {
@@ -739,6 +759,17 @@ export async function decodeFrames(
       frame.displayHeight,
       runtimeAllocationBytes
     );
+    if (!paddedGifActive || !paddedGifSource) return sourceBytes;
+    if (sourceBytes > paddedGifSource.bytes) {
+      throw new Error('Decoded frame exceeds the padded GIF source byte reservation');
+    }
+    // Charge the full slot even when this frame's runtime layout is smaller.
+    return paddedGifSource.bytes;
+  };
+
+  const retainPresentationFrame = (frame: VideoFrame, knownEndUs: number | null): void => {
+    let releaseReservation: () => void;
+    const sourceBytes = getSourceReservationBytes(frame);
     if (frameMemoryBudget) {
       const reservation = frameMemoryBudget.tryReserveSource(sourceBytes);
       if (!reservation) {
@@ -884,21 +915,7 @@ export async function decodeFrames(
         let sourceReservationActive = false;
         let sourceMemoryReservation: FrameMemoryReservation | null = null;
         try {
-          let runtimeAllocationBytes: number | null = null;
-          if (frame.format != null && typeof frame.allocationSize === 'function') {
-            try {
-              runtimeAllocationBytes = frame.allocationSize();
-            } catch {
-              // Unknown runtime layout uses the conservative 8-Bpp fallback below.
-            }
-          }
-          sourceReservationBytes = estimateRuntimeDecodedSourceFrameBytes(
-            frame.codedWidth,
-            frame.codedHeight,
-            frame.displayWidth,
-            frame.displayHeight,
-            runtimeAllocationBytes
-          );
+          sourceReservationBytes = getSourceReservationBytes(frame);
         } catch (error) {
           recordDecoderError(error);
           frame.close();
@@ -1278,8 +1295,11 @@ export async function decodeFrames(
               releaseStagedTarget();
             }
             releaseProcessing();
-            releaseSourceReservation();
-            closeSourceFrame();
+            try {
+              closeSourceFrame();
+            } finally {
+              releaseSourceReservation();
+            }
           }
         })();
 
@@ -1332,6 +1352,26 @@ export async function decodeFrames(
       if (decodeError || hasProcessingFailure()) {
         frame.close();
         return;
+      }
+      if (
+        paddedGifSource &&
+        !paddedGifActive &&
+        !isSafeExtent(frame.codedWidth, frame.codedHeight)
+      ) {
+        try {
+          // Existing ordinary frames carry a different reservation and cannot
+          // overlap the first padded frame. The old route rejected this frame.
+          if (retainedSourceFrameBytes !== 0) {
+            throw new Error('Decoded frame dimensions exceed the per-frame memory limit');
+          }
+          paddedGifSource.reserve();
+          stagedLookaheadEnabled = false;
+          paddedGifActive = true;
+        } catch (error) {
+          recordDecoderError(error);
+          frame.close();
+          return;
+        }
       }
       if (!Number.isSafeInteger(frame.timestamp)) {
         recordDecoderError(new Error('Decoded frame has an invalid presentation timestamp'));
@@ -1505,7 +1545,7 @@ export async function decodeFrames(
       // frame conversion promises are in flight. This prevents unbounded
       // memory growth when decoded frames accumulate faster than they
       // can be processed (e.g., pixel copy + encoding).
-      if (pendingConversions.size >= maxPendingConversions) {
+      if (pendingConversions.size >= (paddedGifActive ? 2 : maxPendingConversions)) {
         await Promise.race([...pendingConversions]);
       }
 

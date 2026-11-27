@@ -276,7 +276,9 @@ describe('decoder-service', () => {
     function createFlushBurstVideoDecoder(
       frameCount: number,
       sourceWidth = 3840,
-      sourceHeight = 2160
+      sourceHeight = 2160,
+      makeFrame = (index: number) =>
+        new FakeVideoFrame(index, index * 1_000, 16_667, sourceWidth, sourceHeight)
     ) {
       const stats = { maxOutstandingFrames: 0 };
       class FlushBurstVideoDecoder {
@@ -299,13 +301,7 @@ describe('decoder-service', () => {
         async flush(): Promise<void> {
           const emitted: FakeVideoFrame[] = [];
           for (let index = 0; index < frameCount; index++) {
-            const frame = new FakeVideoFrame(
-              index,
-              index * 1_000,
-              16_667,
-              sourceWidth,
-              sourceHeight
-            );
+            const frame = makeFrame(index);
             emitted.push(frame);
             this.output(frame as unknown as VideoFrame);
             stats.maxOutstandingFrames = Math.max(
@@ -3019,6 +3015,156 @@ describe('decoder-service', () => {
       for (const frame of FakeVideoFrame.instances) {
         expect(frame.close).toHaveBeenCalledOnce();
       }
+    });
+
+    describe('bounded right-padded GIF source', () => {
+      const configuredWidth = 4096;
+      const codedWidth = 4160;
+      const sourceHeight = 2457;
+      const sourceSlot = codedWidth * sourceHeight * 8;
+      const target = { width: 2048, height: 1228, pixelFormat: 'rgba' } as const;
+
+      function decodeBurst(
+        count: number,
+        {
+          extraWidth = 0,
+          originX = 0,
+          flip = false,
+          admit = true,
+          reserve = vi.fn(),
+          signal,
+        }: {
+          extraWidth?: number;
+          originX?: number;
+          flip?: boolean;
+          admit?: boolean;
+          reserve?: () => void;
+          signal?: AbortSignal;
+        } = {}
+      ) {
+        const { Decoder } = createFlushBurstVideoDecoder(
+          count,
+          configuredWidth,
+          sourceHeight,
+          (index) =>
+            Object.assign(
+              new FakeVideoFrame(
+                index,
+                index * 500_000,
+                500_000,
+                codedWidth + extraWidth,
+                sourceHeight,
+                configuredWidth,
+                sourceHeight
+              ),
+              {
+                flip,
+                visibleRect: { x: originX, y: 0, width: configuredWidth, height: sourceHeight },
+              }
+            )
+        );
+        vi.stubGlobal('VideoDecoder', Decoder);
+        const canvas = stubScalingCanvas(target.width, target.height);
+        const delivered: number[] = [];
+        const decoding = decodeFrames(
+          {
+            ...queuedEventDemux(),
+            chunks: [],
+            config: {
+              codec: 'vp09.00.10.08',
+              codedWidth: configuredWidth,
+              codedHeight: sourceHeight,
+            },
+            totalFrames: count,
+          },
+          {
+            ...target,
+            paddedGifSource: admit ? { bytes: sourceSlot, reserve } : undefined,
+            onFrameAvailable: (rgba, _duration, index) => {
+              delivered.push(index);
+              globalBufferPool.release(rgba);
+            },
+          },
+          signal
+        );
+        return { canvas, decoding, delivered };
+      }
+
+      it('delivers two source owners serially and closes both', async () => {
+        const { canvas, decoding, delivered } = decodeBurst(2);
+        expect(2 * sourceSlot + estimateActiveFrameBytes(target.width, target.height, 'rgba')).toBe(
+          200_434_688
+        );
+        await expect(decoding).resolves.toMatchObject({ selectedFrames: 2 });
+        expect(canvas.copies()).toBe(2);
+        expect(delivered).toEqual([0, 1]);
+        for (const frame of FakeVideoFrame.instances) expect(frame.close).toHaveBeenCalledOnce();
+      });
+
+      it('rejects a third source owner during a native flush burst', async () => {
+        const { canvas, decoding, delivered } = decodeBurst(3);
+        await expect(decoding).rejects.toThrow('Decoded frame output memory limit exceeded');
+        expect(canvas.copies()).toBe(0);
+        expect(delivered).toEqual([]);
+        expect(FakeVideoFrame.instances).toHaveLength(3);
+        for (const frame of FakeVideoFrame.instances) expect(frame.close).toHaveBeenCalledOnce();
+      });
+
+      it('keeps three unpadded frames on the ordinary reservation path', async () => {
+        const reserve = vi.fn();
+        const { canvas, decoding, delivered } = decodeBurst(3, { extraWidth: -64, reserve });
+        await expect(decoding).resolves.toMatchObject({ selectedFrames: 3 });
+        expect(reserve).not.toHaveBeenCalled();
+        expect(canvas.copies()).toBe(3);
+        expect(delivered).toEqual([0, 1, 2]);
+        for (const frame of FakeVideoFrame.instances) expect(frame.close).toHaveBeenCalledOnce();
+      });
+
+      it.each([{ extraWidth: 1 }, { originX: 1 }, { flip: true }, { admit: false }])(
+        'refuses out-of-policy geometry %j',
+        async (options) => {
+          const { decoding, delivered } = decodeBurst(1, options);
+          await expect(decoding).rejects.toThrow(
+            'Decoded frame dimensions exceed the per-frame memory limit'
+          );
+          expect(delivered).toEqual([]);
+          expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+        }
+      );
+
+      it('rejects a reported layout larger than the source slot', async () => {
+        FakeVideoFrame.allocationBytesPerPixel = 9;
+        const { decoding } = decodeBurst(1);
+        await expect(decoding).rejects.toThrow(
+          'Decoded frame exceeds the padded GIF source byte reservation'
+        );
+        expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+      });
+
+      it('holds the native frame until an in-flight resize settles after Stop', async () => {
+        const stop = new AbortController();
+        const resize = Promise.withResolvers<ImageBitmap>();
+        const { decoding, delivered } = decodeBurst(1, { signal: stop.signal });
+        const createBitmap = vi.fn(() => resize.promise);
+        vi.stubGlobal('createImageBitmap', createBitmap);
+        const settlement = expect(decoding).rejects.toMatchObject({ name: 'AbortError' });
+        const closeBitmap = vi.fn();
+
+        await vi.waitFor(() => expect(createBitmap).toHaveBeenCalledOnce());
+        try {
+          stop.abort();
+          await Promise.resolve();
+          expect(FakeVideoFrame.instances[0]?.close).not.toHaveBeenCalled();
+          expect(delivered).toEqual([]);
+        } finally {
+          resize.resolve({ width: target.width, height: target.height, close: closeBitmap });
+          await settlement;
+        }
+        expect(closeBitmap).toHaveBeenCalledOnce();
+        expect(FakeVideoFrame.instances[0]?.close).toHaveBeenCalledOnce();
+        expect(delivered).toEqual([]);
+        expect(globalBufferPool.totalActiveMemory).toBe(0);
+      });
     });
 
     it('uses high-bit-depth allocationSize for staged source-frame admission', async () => {

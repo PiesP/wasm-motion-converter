@@ -94,6 +94,8 @@ vi.mock('@services/dynamic-decimation-controller', () => ({
   }),
 }));
 
+import { ConversionMemoryLimitError } from '@services/conversion-memory-limit-error';
+import { decodeFrames } from '@services/decoder-service';
 import { encodeGif } from '@services/gif-encoder-service';
 
 beforeEach(() => {
@@ -105,6 +107,32 @@ beforeEach(() => {
 });
 
 describe('encodeGif timing', () => {
+  it('keeps the ordinary decoder available when the optional padding reserve cannot fit', async () => {
+    const halt = new Error('reached ordinary decoding');
+    const probe = vi.mocked(decodeFrames);
+    probe.mockRejectedValueOnce(halt);
+    const assertAdditionalMemoryBytes = vi.fn((bytes: number) => {
+      if (bytes > 1_048_576) throw new ConversionMemoryLimitError('padding does not fit');
+    });
+
+    await expect(
+      encodeGif(
+        {
+          chunks: [],
+          config: { codec: 'vp09.00.10.08', codedWidth: 4096, codedHeight: 2457 },
+          duration: 1,
+          framerate: 2,
+          sourceTotalMs: 1_000,
+          totalFrames: 2,
+        },
+        { width: 4096, height: 2457, quality: 'low', scale: 0.5, assertAdditionalMemoryBytes }
+      )
+    ).rejects.toBe(halt);
+
+    expect(assertAdditionalMemoryBytes.mock.calls).toEqual([[524_288], [200_958_976]]);
+    expect(probe.mock.lastCall?.[1].paddedGifSource).toBeUndefined();
+  });
+
   it('combines decoder and dynamic-decimation trailing duration', async () => {
     const onFrameEncoded = vi.fn();
     const onEncodingComplete = vi.fn();
