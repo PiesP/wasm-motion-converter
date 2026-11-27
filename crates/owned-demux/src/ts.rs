@@ -33,29 +33,23 @@ pub struct TsResult {
     pub codec_string: String,
 }
 
+pub(crate) fn has_separate_decode_epoch(packet: &Packet) -> bool {
+    packet.pts.abs_diff(packet.dts) > (CLOCK_WRAP as u64 / 2)
+}
+
+pub(crate) fn relative_duration(end: u64, origin: i64) -> Result<u64, Error> {
+    let end = i64::try_from(end).map_err(|_| Error::Overflow)?;
+    u64::try_from(end.checked_sub(origin).ok_or(Error::Overflow)?).map_err(|_| Error::Overflow)
+}
+
 /// Use one presentation origin for both clocks; DTS preroll may precede zero.
-pub(crate) fn rebase_presentation(track: &mut Track, origin: i64) -> Result<(), Error> {
-    let first = track.packets.first().ok_or(Error::Invalid)?;
-    // Legacy snapshots could unwrap the first PTS and DTS into different epochs.
-    let aligned_dts = unwrap_clock(first.dts.rem_euclid(CLOCK_WRAP), Some(first.pts))?;
-    let decode_origin = first
-        .dts
-        .checked_sub(aligned_dts)
-        .and_then(|epoch| origin.checked_add(epoch))
-        .ok_or(Error::Overflow)?;
-    if origin == 0 && decode_origin == 0 {
-        return Ok(());
+pub(crate) fn rebase_packet(packet: &mut Packet, origin: i64) -> Result<(), Error> {
+    // A legacy DTS epoch may change within a stream when a PES omits DTS.
+    if has_separate_decode_epoch(packet) {
+        packet.dts = unwrap_clock(packet.dts.rem_euclid(CLOCK_WRAP), Some(packet.pts))?;
     }
-    let end = i64::try_from(track.duration).map_err(|_| Error::Overflow)?;
-    track.duration = u64::try_from(end.checked_sub(origin).ok_or(Error::Overflow)?)
-        .map_err(|_| Error::Overflow)?;
-    for packet in &mut track.packets {
-        packet.pts = packet.pts.checked_sub(origin).ok_or(Error::Overflow)?;
-        packet.dts = packet
-            .dts
-            .checked_sub(decode_origin)
-            .ok_or(Error::Overflow)?;
-    }
+    packet.pts = packet.pts.checked_sub(origin).ok_or(Error::Overflow)?;
+    packet.dts = packet.dts.checked_sub(origin).ok_or(Error::Overflow)?;
     Ok(())
 }
 
@@ -1064,7 +1058,7 @@ impl TsParser {
             color_matrix: video_info.color_matrix,
             color_full_range: video_info.color_full_range,
             timescale: 90_000,
-            duration: u64::try_from(end).map_err(|_| Error::Overflow)?,
+            duration: relative_duration(u64::try_from(end).map_err(|_| Error::Overflow)?, origin)?,
             rotation: 0,
             description: Vec::new(),
             packets: self.packets,
@@ -1073,7 +1067,9 @@ impl TsParser {
             fragment_default_flags: 0,
             edit_shift: 0,
         };
-        rebase_presentation(&mut track, origin)?;
+        for packet in &mut track.packets {
+            rebase_packet(packet, origin)?;
+        }
         Ok(TsResult {
             track,
             packet_sources: self.packet_sources,

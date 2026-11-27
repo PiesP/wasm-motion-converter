@@ -83,8 +83,9 @@ describe('actual compiled owned demux product routes', () => {
         trimEnd: 1.6,
         maxMemoryMB: 512,
       },
-      metadata
+      { ...metadata, duration: 3.7333333333333334 }
     );
+    expect(result.duration).toBe(2);
     const timestamps: number[] = [];
     for await (const chunk of result.chunks) timestamps.push(chunk.timestamp);
     expect(timestamps[0]).toBe(0);

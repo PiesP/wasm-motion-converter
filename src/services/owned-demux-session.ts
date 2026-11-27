@@ -344,6 +344,10 @@ export class OwnedDemuxSession {
     return this.indexInfo.seekWorkspaceBytes;
   }
 
+  get reconstructsPackets(): boolean {
+    return this.indexInfo?.reconstructs ?? false;
+  }
+
   get transferStats(): OwnedDemuxTransferStats {
     const readCredit = ownedReadCreditStats();
     return {
