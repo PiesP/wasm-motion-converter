@@ -112,7 +112,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
 
         const durationMs = Math.round(performance.now() - pipelineStart);
 
-        // Send completion with transferred output buffer
+        // Transfer owned buffers. Immutable Blob handles use structured cloning.
         respond(
           {
             type: 'complete',
@@ -121,7 +121,7 @@ self.onmessage = async (event: MessageEvent<unknown>) => {
             durationMs,
             ...(profile ? { profile } : {}),
           },
-          [outputBuffer]
+          outputBuffer instanceof ArrayBuffer ? [outputBuffer] : []
         );
       } catch (err) {
         const message = getErrorMessage(err);
