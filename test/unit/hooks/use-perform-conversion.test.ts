@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   confirmation: undefined as { onCancel: () => void; onConfirm: () => void } | undefined,
   appState: 'idle' as 'idle' | 'cancelling' | 'error',
   focusElementUnlessUserIsEditing: vi.fn(),
+  selectedFile: null as File | null,
+  selectGifPartDirectory: vi.fn(),
+  createGifPartFileSink: vi.fn(),
+  runGifPartsViaWorker: vi.fn(),
   runPipelineWithFallback: vi.fn(),
   runConversionPipeline: vi.fn(),
   setConversionProgress: vi.fn(),
@@ -50,11 +54,7 @@ vi.mock('@stores/conversion-settings-store', () => ({
 
 vi.mock('@stores/conversion-store', () => ({
   appState: () => mocks.appState,
-  inputFile: () => {
-    const file = new File(['video'], 'video.mp4', { type: 'video/mp4' });
-    Object.defineProperty(file, 'arrayBuffer', { value: mocks.readWholeFile });
-    return file;
-  },
+  inputFile: () => mocks.selectedFile,
   setAppState: mocks.setAppState,
   setConversionProgress: mocks.setConversionProgress,
   setConversionResults: mocks.setConversionResults,
@@ -81,6 +81,11 @@ vi.mock('@stores/confirmation-store', () => ({
 vi.mock('@services/conversion-worker/main-thread-proxy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@services/conversion-worker/main-thread-proxy')>()),
   runPipelineWithFallback: mocks.runPipelineWithFallback,
+  runGifPartsViaWorker: mocks.runGifPartsViaWorker,
+}));
+vi.mock('@services/gif-part-file-sink', () => ({
+  createGifPartFileSink: mocks.createGifPartFileSink,
+  selectGifPartDirectory: mocks.selectGifPartDirectory,
 }));
 vi.mock('@services/conversion-pipeline', () => ({
   runConversionPipeline: mocks.runConversionPipeline,
@@ -135,6 +140,11 @@ beforeEach(() => {
     );
   mocks.setConversionProgress.mockReset();
   mocks.readWholeFile.mockReset().mockRejectedValue(new Error('Full-file reads are forbidden'));
+  mocks.selectedFile = new File(['video'], 'video.mp4', { type: 'video/mp4' });
+  Object.defineProperty(mocks.selectedFile, 'arrayBuffer', { value: mocks.readWholeFile });
+  mocks.selectGifPartDirectory.mockReset();
+  mocks.createGifPartFileSink.mockReset();
+  mocks.runGifPartsViaWorker.mockReset();
   mocks.setInputFile.mockClear();
   mocks.setConversionResults.mockClear();
   mocks.setConversionStatusMessage.mockReset();
@@ -180,6 +190,36 @@ const localizedProgressT = ((key: string, params?: Record<string, string | numbe
   }
   return value;
 }) as Parameters<typeof handleConvert>[1];
+
+it('reports completed GIF parts when the manifest close wins a racing Stop', async () => {
+  const manifestClose = Promise.withResolvers<void>();
+  const finish = vi.fn(() => manifestClose.promise);
+  mocks.selectGifPartDirectory.mockResolvedValue({});
+  mocks.createGifPartFileSink.mockReturnValue({
+    count: 2,
+    folderName: 'owned',
+    save: vi.fn(),
+    finish,
+    removeEmptyFolder: vi.fn(),
+  });
+  mocks.runGifPartsViaWorker.mockResolvedValue({ partCount: 2, frameCount: 9001 });
+  const runtime = createRuntime();
+  const report = vi.fn();
+  const conversion = conversionModule.handleConvertGifParts(runtime, localizedProgressT, report);
+  await vi.waitFor(() => expect(finish).toHaveBeenCalledOnce());
+  try {
+    handleCancelConversion(runtime);
+    expect(mocks.appState).toBe('cancelling');
+    expect(runtime.beginConversionIntent()).toBeNull();
+    expect(report).not.toHaveBeenCalled();
+  } finally {
+    manifestClose.resolve();
+    await conversion;
+  }
+  expect(report).toHaveBeenCalledWith('result.gifPartsSaved');
+  expect(mocks.appState).toBe('idle');
+  runtime.dispose();
+});
 
 describe('handleConvert conversion ownership', () => {
   it('admits only one request while duration validation is pending', async () => {

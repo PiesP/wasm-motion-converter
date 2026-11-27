@@ -62,6 +62,8 @@ async function writeNewFile(
   await requireMissing(directory.getFileHandle(name));
   signal.throwIfAborted();
   const file = await directory.getFileHandle(name, { create: true });
+  // Do not claim an entry containing data if another writer reached it first.
+  if ((await file.getFile()).size !== 0) throw new Error('The output entry already contains data');
   let writer: FileSystemWritableFileStream | undefined;
   try {
     signal.throwIfAborted();
@@ -80,6 +82,11 @@ async function writeNewFile(
     }
     throw error;
   }
+}
+
+function newFileName(stem: string, extension: string): string {
+  const token = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
+  return `${stem}_${token}.${extension}`;
 }
 
 export function createGifPartFileSink(destination: FileSystemDirectoryHandle) {
@@ -105,14 +112,14 @@ export function createGifPartFileSink(destination: FileSystemDirectoryHandle) {
         folder = await destination.getDirectoryHandle(folderName, { create: true });
       }
       const ordinal = String(part.index).padStart(4, '0');
-      const filename = `part-${ordinal}_${part.startCs}-${part.endCs}cs.gif`;
+      const filename = newFileName(`part-${ordinal}_${part.startCs}-${part.endCs}cs`, 'gif');
       await writeNewFile(folder, filename, bytes, signal);
       parts.push({ ...receipt, filename, bytes: bytes.byteLength });
     },
     async finish(signal: AbortSignal): Promise<void> {
       if (!folder || parts.length === 0) throw new Error('Conversion produced no GIF parts');
       const manifest = JSON.stringify({ version: 1, timelineUnit: 'centiseconds', parts }, null, 2);
-      await writeNewFile(folder, 'parts.json', manifest + '\n', signal);
+      await writeNewFile(folder, newFileName('parts', 'json'), manifest + '\n', signal);
     },
     async removeEmptyFolder(): Promise<void> {
       if (folder && parts.length === 0) await removeOwnedEntry(destination, folder);

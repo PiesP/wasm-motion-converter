@@ -338,7 +338,7 @@ export async function handleConvertGifParts(
     if (inputFile() === file) {
       if (sink && sink.count > 0) {
         report(
-          t(completed && isActive() ? 'result.gifPartsSaved' : 'result.gifPartsPartial', {
+          t(completed ? 'result.gifPartsSaved' : 'result.gifPartsPartial', {
             count: sink.count,
             folder: sink.folderName,
           })
