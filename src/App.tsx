@@ -6,6 +6,7 @@ import AppUpdateNotice from '@components/AppUpdateNotice';
 import ConfirmationModal from '@components/ConfirmationModal';
 import ExportLogsButton from '@components/ExportLogsButton';
 import FileDropzone from '@components/FileDropzone';
+import GifPartDownloads from '@components/GifPartDownloads';
 import LanguageSelector from '@components/LanguageSelector';
 import LicenseAttribution from '@components/LicenseAttribution';
 import MemoryWarning from '@components/MemoryWarning';
@@ -19,6 +20,7 @@ import { useNetworkState } from '@hooks/use-network-state';
 import { debounce } from '@piesp/browser-core/async';
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { supportsGifPartSaving } from '@services/gif-part-file-sink';
+import type { GifPartIndexedDbSink } from '@services/gif-part-indexed-db-sink';
 import { dismissConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -100,6 +102,13 @@ const App: Component = () => {
   let prepareTrimSubmission: (() => boolean) | undefined;
   const [playCountValid, setPlayCountValid] = createSignal(true);
   const [gifPartsStatus, setGifPartsStatus] = createSignal('');
+  const [storedGifParts, setStoredGifParts] = createSignal<GifPartIndexedDbSink>();
+  const nativeGifPartSaving = supportsGifPartSaving();
+  const experimentalGifPartStorage =
+    !nativeGifPartSaving &&
+    window.isSecureContext &&
+    new URLSearchParams(window.location.search).get('gif-part-storage') === 'indexeddb' &&
+    typeof window.indexedDB !== 'undefined';
   createEffect(() => {
     inputFile();
     setGifPartsStatus('');
@@ -183,6 +192,14 @@ const App: Component = () => {
 
   onCleanup(() => {
     disposed = true;
+    const storage = storedGifParts();
+    if (storage) {
+      void storage.dispose().catch((error) => {
+        logger.warn('conversion', 'GIF part storage cleanup failed', {
+          error: getErrorMessage(error),
+        });
+      });
+    }
     clearAssetFailure();
     // Revoke video preview blob URL to prevent memory leak on unmount
     const url = videoPreviewUrl();
@@ -310,11 +327,21 @@ const App: Component = () => {
   };
 
   const saveGifParts = (): void => {
+    if (storedGifParts()) return;
     if (!prepareOutputSettings()) return;
     setGifPartsStatus('');
-    void handleConvertGifParts((message) => {
-      if (!disposed) setGifPartsStatus(message);
-    });
+    void handleConvertGifParts(
+      (message) => {
+        if (!disposed) setGifPartsStatus(message);
+      },
+      experimentalGifPartStorage
+        ? (storage) => {
+            if (disposed) return false;
+            setStoredGifParts(storage);
+            return true;
+          }
+        : undefined
+    );
   };
 
   const clearResultsForReload = (): void => {
@@ -473,7 +500,11 @@ const App: Component = () => {
                 metadata={videoMetadata()}
                 onCancel={cancelConversion}
                 onConvert={handleConvertWithMemoryCheck}
-                onConvertGifParts={supportsGifPartSaving() ? saveGifParts : undefined}
+                onConvertGifParts={
+                  nativeGifPartSaving || (experimentalGifPartStorage && !storedGifParts())
+                    ? saveGifParts
+                    : undefined
+                }
                 onFormatChange={(format) =>
                   setConversionSettings({ ...conversionSettings(), format })
                 }
@@ -492,9 +523,24 @@ const App: Component = () => {
                   setConversionSettings({ ...conversionSettings(), smartFrameSkip: mode })
                 }
                 settings={conversionSettings()}
+                storeGifPartsInBrowser={experimentalGifPartStorage}
               />
             </div>
           </div>
+
+          <Show when={storedGifParts()} keyed>
+            {(storage) => (
+              <GifPartDownloads
+                storage={storage}
+                busy={isBusy()}
+                onDiscard={() => {
+                  if (storedGifParts() !== storage) return;
+                  setStoredGifParts(undefined);
+                  setGifPartsStatus('');
+                }}
+              />
+            )}
+          </Show>
 
           <ResultSection
             results={conversionResults()}

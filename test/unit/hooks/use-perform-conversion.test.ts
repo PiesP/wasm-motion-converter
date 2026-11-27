@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   selectedFile: null as File | null,
   selectGifPartDirectory: vi.fn(),
   createGifPartFileSink: vi.fn(),
+  createGifPartIndexedDbSink: vi.fn(),
   runGifPartsViaWorker: vi.fn(),
   runPipelineWithFallback: vi.fn(),
   runConversionPipeline: vi.fn(),
@@ -87,6 +88,9 @@ vi.mock('@services/gif-part-file-sink', () => ({
   createGifPartFileSink: mocks.createGifPartFileSink,
   selectGifPartDirectory: mocks.selectGifPartDirectory,
 }));
+vi.mock('@services/gif-part-indexed-db-sink', () => ({
+  createGifPartIndexedDbSink: mocks.createGifPartIndexedDbSink,
+}));
 vi.mock('@services/conversion-pipeline', () => ({
   runConversionPipeline: mocks.runConversionPipeline,
 }));
@@ -144,6 +148,7 @@ beforeEach(() => {
   Object.defineProperty(mocks.selectedFile, 'arrayBuffer', { value: mocks.readWholeFile });
   mocks.selectGifPartDirectory.mockReset();
   mocks.createGifPartFileSink.mockReset();
+  mocks.createGifPartIndexedDbSink.mockReset();
   mocks.runGifPartsViaWorker.mockReset();
   mocks.setInputFile.mockClear();
   mocks.setConversionResults.mockClear();
@@ -217,6 +222,36 @@ it('reports completed GIF parts when the manifest close wins a racing Stop', asy
     await conversion;
   }
   expect(report).toHaveBeenCalledWith('result.gifPartsSaved');
+  expect(mocks.appState).toBe('idle');
+  runtime.dispose();
+});
+
+it('keeps closed staged parts on Stop and does not open a directory picker', async () => {
+  const worker = Promise.withResolvers<never>();
+  const storage = { count: 1, save: vi.fn(), finish: vi.fn(), dispose: vi.fn() };
+  mocks.createGifPartIndexedDbSink.mockResolvedValue(storage);
+  mocks.runGifPartsViaWorker.mockReturnValue(worker.promise);
+  const runtime = createRuntime();
+  const report = vi.fn();
+  const retain = vi.fn(() => true);
+  const conversion = conversionModule.handleConvertGifParts(
+    runtime,
+    localizedProgressT,
+    report,
+    retain
+  );
+  try {
+    await vi.waitFor(() => expect(mocks.runGifPartsViaWorker).toHaveBeenCalledOnce());
+    handleCancelConversion(runtime);
+  } finally {
+    worker.reject(new DOMException('Cancelled', 'AbortError'));
+    await conversion;
+  }
+  expect(retain).toHaveBeenCalledWith(storage);
+  expect(report).toHaveBeenCalledWith('result.gifPartsStoredPartial');
+  expect(mocks.selectGifPartDirectory).not.toHaveBeenCalled();
+  expect(storage.finish).not.toHaveBeenCalled();
+  expect(storage.dispose).not.toHaveBeenCalled();
   expect(mocks.appState).toBe('idle');
   runtime.dispose();
 });

@@ -18,6 +18,10 @@ import type {
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { createGifPartFileSink, selectGifPartDirectory } from '@services/gif-part-file-sink';
+import {
+  createGifPartIndexedDbSink,
+  type GifPartIndexedDbSink,
+} from '@services/gif-part-indexed-db-sink';
 import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
 import {
   ownedVp8FailureKind,
@@ -259,7 +263,8 @@ export async function handleConvert(
 export async function handleConvertGifParts(
   runtime: ConversionRuntimeController,
   t: TFunction,
-  report: (message: string) => void
+  report: (message: string) => void,
+  retainStoredParts?: (sink: GifPartIndexedDbSink) => boolean
 ): Promise<void> {
   const file = inputFile();
   const metadata = videoMetadata();
@@ -279,12 +284,13 @@ export async function handleConvertGifParts(
   if (!intent) return;
   const { signal, isActive } = intent;
   let sink: ReturnType<typeof createGifPartFileSink> | undefined;
+  let stored: GifPartIndexedDbSink | undefined;
   let started = false;
   let completed = false;
   let failed = false;
   try {
     // Reach the native picker in the trusted click's task, before async preparation.
-    const destination = await selectGifPartDirectory();
+    const destination = retainStoredParts ? undefined : await selectGifPartDirectory();
     if (!isActive()) return;
 
     const { serializedConfig, serializedOptions } = serializeConversionInputs(
@@ -294,7 +300,6 @@ export async function handleConvertGifParts(
     );
     if (!serializedConfig) throw new Error('Unable to determine video configuration');
 
-    sink = createGifPartFileSink(destination);
     batch(() => {
       setErrorContext(null);
       setErrorMessage(null);
@@ -305,20 +310,25 @@ export async function handleConvertGifParts(
     });
     started = true;
     runtime.startMemoryMonitoring();
+    if (destination) sink = createGifPartFileSink(destination);
+    else stored = await createGifPartIndexedDbSink();
+    signal.throwIfAborted();
+    const output = sink ?? stored;
+    if (!output) throw new Error('Unable to open GIF part storage');
     const summary = await runGifPartsViaWorker(
       file,
       serializedConfig,
       serializedOptions,
       createProgressCallback(isActive, runtime, t),
-      sink.save,
+      output.save,
       signal,
       metadata.duration,
       metadata.framerate
     );
     signal.throwIfAborted();
-    if (summary.partCount !== sink.count)
+    if (summary.partCount !== output.count)
       throw new Error('GIF part count does not match saved files');
-    await sink.finish(signal);
+    await output.finish(signal);
     completed = true;
   } catch (error) {
     failed = !signal.aborted && (started || !isCancellationError(error));
@@ -327,15 +337,19 @@ export async function handleConvertGifParts(
         error: getErrorMessage(error),
       });
   } finally {
+    const currentInput = inputFile() === file;
+    const storedCount = stored?.count ?? 0;
+    const retained = stored && storedCount > 0 && currentInput && retainStoredParts?.(stored);
     try {
       await sink?.removeEmptyFolder();
+      if (stored && !retained) await stored.dispose();
     } catch (error) {
       failed = true;
       logger.warn('conversion', 'GIF part folder cleanup failed', {
         error: getErrorMessage(error),
       });
     }
-    if (inputFile() === file) {
+    if (currentInput && inputFile() === file) {
       if (sink && sink.count > 0) {
         report(
           t(completed ? 'result.gifPartsSaved' : 'result.gifPartsPartial', {
@@ -343,8 +357,14 @@ export async function handleConvertGifParts(
             folder: sink.folderName,
           })
         );
+      } else if (retained) {
+        report(
+          t(completed ? 'result.gifPartsStored' : 'result.gifPartsStoredPartial', {
+            count: storedCount,
+          })
+        );
       } else if (failed) {
-        report(t('error.gifPartsSaveFailed'));
+        report(t(retainStoredParts ? 'error.gifPartsStorageFailed' : 'error.gifPartsSaveFailed'));
       }
     }
     if (started && isActive()) {
