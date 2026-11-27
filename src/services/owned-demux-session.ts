@@ -4,7 +4,13 @@
 /** Host-owned Blob or ArrayBuffer ranges for the bounded conversion-owned Rust parser. */
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
+import { MAX_FILE_SIZE } from '@utils/constants';
 
+import {
+  EXTENDED_MP4_HEADER_BYTES,
+  hasExtendedMp4Prefix,
+  ownedInputLimit,
+} from './owned-demux-intake';
 import {
   ownedReadCreditStats,
   readOwnedRange,
@@ -16,7 +22,6 @@ import {
 const ABI_VERSION = 4;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const SNAPSHOT_STEP_BYTES = 8 * 1024;
-const MAX_INPUT_BYTES = 500 * 1024 * 1024;
 const MAX_PACKET_BYTES = 16 * 1024 * 1024 - 1024;
 const PACKET_WINDOW_BYTES = 64 * 1024;
 const MAX_WASM_CAPACITY_BYTES = 64 * 1024 * 1024;
@@ -372,7 +377,7 @@ export class OwnedDemuxSession {
             size: source.byteLength,
             slice: (start, end) => ({ arrayBuffer: async () => source.slice(start, end) }),
           };
-    if (rangeSource.size < 8 || rangeSource.size > MAX_INPUT_BYTES)
+    if (rangeSource.size < 8 || rangeSource.size > ownedInputLimit(source))
       throw new Error('Owned demux input size limit exceeded');
     const instance = new WebAssembly.Instance(module, {});
     const exports = instance.exports as unknown as Record<string, unknown>;
@@ -557,6 +562,15 @@ export class OwnedDemuxSession {
     this.snapshotOperation = true;
     try {
       signal?.throwIfAborted();
+      if (this.source.size > MAX_FILE_SIZE) {
+        const prefix = await readOwnedRange(this.source, 0, EXTENDED_MP4_HEADER_BYTES, signal);
+        this.rangeReads++;
+        this.sourceReadBytes += prefix.byteLength;
+        if (!hasExtendedMp4Prefix(new Uint8Array(prefix), this.source.size))
+          throw new Error('Owned demux snapshot source is not range-backed MP4');
+      }
+      signal?.throwIfAborted();
+      if (!this.active) throw new Error('Owned demux session released');
       const bytes = new Uint8Array(snapshot);
       if (bytes.byteLength < 64 + 64 + 40 + 4 || bytes.byteLength > MAX_SNAPSHOT_BYTES)
         throw new Error('Owned demux snapshot size invalid');

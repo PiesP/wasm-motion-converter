@@ -7,13 +7,12 @@
  * This module provides file validation functions for video conversion:
  * - **Format validation**: Checks file MIME type and extension against supported formats
  * - **Duration extraction**: Uses HTML5 Video API to read video metadata
- * - **Duration validation**: Enforces format-specific constraints (WebP hard limits, GIF soft warnings)
+ * - **Duration validation**: Checks the configured format-specific duration and frame-count policies
  *
  * **Key features**:
  * - Format validation with fallback chain: MIME type → extension check
  * - Safe metadata extraction with cleanup (revokes blob URLs immediately)
  * - Frame count estimation for memory/performance planning (30fps default)
- * - Format-specific limits: WebP (10s max), GIF (warnings at 30s and 60s)
  * - Graceful error handling (continues conversion if duration extraction fails)
  *
  * **Usage patterns**:
@@ -23,6 +22,7 @@
  */
 
 import { getErrorMessage, isCancellationError } from '@piesp/browser-core/error';
+import { readExtendedMp4Prefix } from '@services/owned-demux-intake';
 import type { TranslationKeys } from '@t/i18n-types';
 import type { DurationValidationResult } from '@t/validation-types';
 
@@ -114,7 +114,7 @@ async function detectVideoMagicBytes(file: File): Promise<boolean> {
  * Validate a video file for size and format compatibility
  *
  * Performs two validation checks in order:
- * 1. **File size**: Rejects files >500MB (MAX_FILE_SIZE constant)
+ * 1. **File size**: Uses the standard cap, with an extended limit for range-backed MP4
  * 2. **Format**: Checks MIME type, then extension with fallback chain
  *
  * **MIME/extension fallback chain**:
@@ -135,16 +135,14 @@ async function detectVideoMagicBytes(file: File): Promise<boolean> {
  * const result = validateVideoFile(file, t);
  * // Result: { valid: true }
  *
- * @example
- * // Unsupported format (.flv)
- * const file = new File([...], 'video.flv', { type: 'video/x-flv' });
- * const result = validateVideoFile(file, t);
- * // Result: { valid: false, error: 'Unsupported format...' }
  */
-export async function validateVideoFile(file: File, t: TFunction): Promise<FileValidationResult> {
-  // CHECK 1: File size limit (500MB)
-  // Prevents out-of-memory issues and browser crashes on large files
+export async function validateVideoFile(
+  file: File,
+  t: TFunction,
+  signal?: AbortSignal
+): Promise<FileValidationResult> {
   if (file.size > MAX_FILE_SIZE) {
+    if (await readExtendedMp4Prefix(file, signal)) return { valid: true };
     return {
       valid: false,
       error: t('validation.fileTooLarge'),
@@ -169,10 +167,8 @@ export async function validateVideoFile(file: File, t: TFunction): Promise<FileV
     return { valid: true };
   }
 
-  // CHECK 3b: Magic bytes validation — defense-in-depth against extension spoofing.
-  // If MIME is empty and extension check failed, inspect file signature
-  // to detect video files that were renamed or have missing/invalid extensions.
-  // This prevents malicious files with renamed extensions from passing validation.
+  // When MIME and extension cannot identify the file, allow recognized signatures.
+  // The demuxer validates the container independently.
   if (!mimeType) {
     const detected = await detectVideoMagicBytes(file);
     if (detected) {
