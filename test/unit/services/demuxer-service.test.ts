@@ -6,6 +6,7 @@ import {
   DEMUX_MEMORY_BUDGET_BYTES,
   ENCODED_CHUNK_BUDGET_BYTES,
   ENCODED_PACKET_BUDGET_BYTES,
+  MAX_FILE_SIZE,
 } from '@utils/constants';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
@@ -143,6 +144,52 @@ describe('demuxVideo owned packet route', () => {
     expect(result.trimEndUs).toBe(1_300_000);
     expect(result.totalFrames).toBe(6);
     expect(result.sourceTotalMs).toBeCloseTo(999.996);
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+
+  it.each([MAX_FILE_SIZE, MAX_FILE_SIZE + 1])(
+    'exposes packet admission only above the old file limit (%i bytes)',
+    async (size) => {
+      const inputBlob = new Blob();
+      vi.spyOn(inputBlob, 'size', 'get').mockReturnValue(size);
+      const result = await demuxVideo(
+        { ...request(1.2, 1.3), inputBuffer: undefined, inputBlob },
+        metadata
+      );
+      expect(typeof result.setPacketReadGate).toBe(size > MAX_FILE_SIZE ? 'function' : 'undefined');
+      expect(mocks.readPacket).not.toHaveBeenCalled();
+      result.dispose?.();
+    }
+  );
+
+  it('offers each indexed charge before reading and closes on refusal', async () => {
+    const inputBlob = new Blob();
+    vi.spyOn(inputBlob, 'size', 'get').mockReturnValue(MAX_FILE_SIZE + 1);
+    mocks.packet.mockImplementation((index: number) => ({
+      index,
+      byteLength: index === 6 ? 4 : 2,
+      ptsTicks: BigInt(timestamps[index]!),
+      durationTicks: 166_666n,
+      key: index === 6,
+    }));
+    const result = await demuxVideo(
+      { ...request(1.2, 1.3), inputBuffer: undefined, inputBlob },
+      metadata
+    );
+    const gate = vi
+      .fn<(bytes: number) => boolean>()
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false);
+    result.setPacketReadGate!(gate);
+    if (!(Symbol.asyncIterator in result.chunks)) throw new Error('Expected lazy packet stream');
+    const iterator = result.chunks[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { byteLength: 4 } });
+    await expect(iterator.next()).resolves.toMatchObject({ done: true });
+    expect(gate.mock.calls).toEqual([[1028], [1026]]);
+    expect(mocks.readPacket).toHaveBeenCalledOnce();
+    expect(gate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.readPacket.mock.invocationCallOrder[0]!
+    );
     expect(mocks.release).toHaveBeenCalledOnce();
   });
 

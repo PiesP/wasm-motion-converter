@@ -704,7 +704,10 @@ export async function decodeFrames(
         if (candidate.bytes < reservation.bytes) reservation = candidate;
       }
     }
-    if (reservation) releaseEncodedChunk(reservation);
+    if (reservation) {
+      releaseEncodedChunk(reservation);
+      if (demux.setPacketReadGate) wakeDecodeCapacityWait?.();
+    }
   };
 
   const hasSafeFrameDimensions = (frame: VideoFrame): boolean => {
@@ -1418,7 +1421,14 @@ export async function decodeFrames(
   const supportsDequeueEvent =
     typeof activeDecoder.addEventListener === 'function' &&
     typeof activeDecoder.removeEventListener === 'function';
-  const waitForDecodeCapacity = async (): Promise<void> => {
+  const stoppedDecoding = (): boolean =>
+    Boolean(signal?.aborted || decodeError || trimEndReached || hasProcessingFailure());
+  const decodeCapacityBlocked = (offeredBytes: number): boolean =>
+    activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE ||
+    (offeredBytes > 0 &&
+      encodedChunkBudgetBytes !== undefined &&
+      retainedEncodedChunkBytes + offeredBytes > encodedChunkBudgetBytes);
+  const waitForCapacityChange = async (offeredBytes: number): Promise<void> => {
     if (!supportsDequeueEvent) {
       // Older implementations without EventTarget support need a bounded retry.
       await new Promise<void>((resolve) => setTimeout(resolve, 16));
@@ -1440,13 +1450,7 @@ export async function decodeFrames(
       };
       const checkCapacity = (): void => {
         if (!ready) return;
-        if (
-          activeDecoder.decodeQueueSize <= MAX_DECODE_QUEUE ||
-          signal?.aborted ||
-          decodeError ||
-          trimEndReached ||
-          hasProcessingFailure()
-        ) {
+        if (!decodeCapacityBlocked(offeredBytes) || stoppedDecoding()) {
           finish();
         }
       };
@@ -1462,6 +1466,17 @@ export async function decodeFrames(
       checkCapacity();
     });
   };
+  const waitForDecodeCapacity = async (offeredBytes: number): Promise<boolean> => {
+    const deadline = Date.now() + STALL_DETECTION_TIMEOUT_MS;
+    while (decodeCapacityBlocked(offeredBytes) && !stoppedDecoding()) {
+      if (!supportsDequeueEvent && Date.now() >= deadline) {
+        recordDecoderError(new Error('Video decoder queue stalled while waiting for capacity'));
+        break;
+      }
+      await waitForCapacityChange(offeredBytes);
+    }
+    return !stoppedDecoding();
+  };
 
   let streamedSourceDurationUs = 0;
   chunkStream = (async function* iterateChunks(): AsyncGenerator<EncodedVideoChunk> {
@@ -1472,12 +1487,13 @@ export async function decodeFrames(
   let decodeResult: DecodeResult | null = null;
 
   try {
-    // Pull and feed chunks with backpressure — prevent both the demux host and the
-    // VideoDecoder queue from growing unbounded. Backpressure is checked before
-    // requesting the next chunk, so the producer cannot run ahead.
-    // VideoDecoder internally queues decoded frames; if we feed chunks faster than
-    // they can be decoded, memory grows and GC pressure increases.
-    // We pause when queue size exceeds a threshold and resume when it drains.
+    // Only matching outputs return byte credit. The demuxer asks for credit
+    // before reading packet data and reaches EOF without another request.
+    demux.setPacketReadGate?.((offeredBytes) =>
+      decodeCapacityBlocked(offeredBytes) ? waitForDecodeCapacity(offeredBytes) : !stoppedDecoding()
+    );
+    // Check native queue count and downstream frame work before asking the
+    // demuxer for the next chunk.
     while (true) {
       if (signal?.aborted) {
         recordCancellation();
@@ -1485,21 +1501,7 @@ export async function decodeFrames(
       }
       if (decodeError || hasProcessingFailure() || trimEndReached) break;
 
-      // Backpressure: wait for native dequeue notifications when available.
-      const capacityWaitDeadline = Date.now() + STALL_DETECTION_TIMEOUT_MS;
-      while (
-        activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE &&
-        !signal?.aborted &&
-        !decodeError &&
-        !trimEndReached &&
-        !hasProcessingFailure()
-      ) {
-        if (!supportsDequeueEvent && Date.now() >= capacityWaitDeadline) {
-          recordDecoderError(new Error('Video decoder queue stalled while waiting for capacity'));
-          break;
-        }
-        await waitForDecodeCapacity();
-      }
+      if (decodeCapacityBlocked(0)) await waitForDecodeCapacity(0);
 
       // Backpressure on output processing: wait if too many
       // frame conversion promises are in flight. This prevents unbounded

@@ -22,11 +22,14 @@ import {
   DEMUX_MEMORY_BUDGET_BYTES,
   ENCODED_CHUNK_BUDGET_BYTES,
   ENCODED_PACKET_BUDGET_BYTES,
+  MAX_FILE_SIZE,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 import { getTrimmedDurationSeconds } from '@utils/trim-time';
 
 import { fingerprintOwnedDemuxSource } from './owned-demux-index-snapshot';
+
+type PacketReadGate = (chargedBytes: number) => boolean | Promise<boolean>;
 
 export interface DemuxResult {
   /** One-shot packet stream. The producer advances only when the decoder requests a chunk. */
@@ -34,6 +37,8 @@ export interface DemuxResult {
   config: VideoDecoderConfig;
   /** Maximum encoded bytes that the decoder may retain before emitting matching output. */
   encodedChunkBudgetBytes?: number | undefined;
+  /** Register the decoder's per-packet byte admission before the stream is pulled. */
+  setPacketReadGate?: ((gate: PacketReadGate) => void) | undefined;
   /** Estimated frame count until the stream finishes, then the exact packet count. */
   totalFrames: number;
   duration: number;
@@ -84,10 +89,12 @@ export async function demuxVideo(
   const inputSource = resolveInputSource(request);
   const inputSizeBytes = getInputSizeBytes(inputSource);
   const session = await createOwnedDemuxSession(inputSource, signal);
+  let packetReadGate: PacketReadGate | undefined;
   let disposed = false;
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    packetReadGate = undefined;
     signal?.removeEventListener('abort', dispose);
     session.release();
   }
@@ -208,6 +215,10 @@ export async function demuxVideo(
             throw new OwnedDemuxResourceError(
               `Demux memory limit exceeded by one encoded packet (${packetBudgetBytes} byte budget)`
             );
+          if (packetReadGate) {
+            if (!(await packetReadGate(packetRetainedBytes))) return;
+            signal?.throwIfAborted();
+          }
           let data: ArrayBuffer | null = await session.readPacket(packet, signal);
           signal?.throwIfAborted();
           let chunk: EncodedVideoChunk;
@@ -256,6 +267,13 @@ export async function demuxVideo(
       chunks,
       config,
       encodedChunkBudgetBytes: chunkBudgetBytes,
+      ...(inputSource instanceof Blob && inputSizeBytes > MAX_FILE_SIZE
+        ? {
+            setPacketReadGate(gate: PacketReadGate) {
+              packetReadGate = gate;
+            },
+          }
+        : {}),
       totalFrames: estimatedTotalFrames,
       duration,
       sourceTotalMs: 0,
