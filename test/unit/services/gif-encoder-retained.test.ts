@@ -11,6 +11,8 @@ const fixture = vi.hoisted(() => ({
   forceJsIndexes: false,
   admitted: [] as boolean[],
   mapped: 0,
+  decodeCalls: 0,
+  offeredFrames: 0,
 }));
 
 vi.mock('@services/decoder-service', () => ({
@@ -26,7 +28,9 @@ vi.mock('@services/decoder-service', () => ({
       ) => Promise<void>;
     }
   ) => {
+    fixture.decodeCalls++;
     for (const [index, frame] of fixture.frames.entries()) {
+      fixture.offeredFrames = index + 1;
       await options.onFrameAvailable(
         frame.rgba.slice(),
         (frame.endUs - frame.startUs) / 1000,
@@ -81,7 +85,7 @@ vi.mock('@services/gif-scalar-wasm', async (importOriginal) => {
 });
 
 import { globalBufferPool } from '@services/buffer-pool';
-import { encodeGif } from '@services/gif-encoder-service';
+import { encodeGif, encodeGifParts, type GifOutputPart } from '@services/gif-encoder-service';
 
 const wasmUrl = new URL('../../../src/services/gif-scalar-quantizer.wasm', import.meta.url);
 const wasmBytes = readFileSync(wasmUrl);
@@ -104,9 +108,9 @@ function alternating(colors: readonly (readonly [number, number, number])[]): Ui
   return rgba;
 }
 
-function gifFrames(bytes: Uint8Array): Array<{ delayCs: number; localTable: boolean }> {
+function gifFrames(bytes: Uint8Array) {
   expect(String.fromCharCode(...bytes.subarray(0, 6))).toBe('GIF89a');
-  const frames: Array<{ delayCs: number; localTable: boolean }> = [];
+  const frames: Array<{ delayCs: number; localTable: boolean; image: Uint8Array }> = [];
   let offset = 13;
   const screenPacked = bytes[10]!;
   if (screenPacked & 0x80) offset += 3 * (1 << ((screenPacked & 7) + 1));
@@ -132,20 +136,44 @@ function gifFrames(bytes: Uint8Array): Array<{ delayCs: number; localTable: bool
         skipBlocks();
       }
     } else if (bytes[offset] === 0x2c) {
+      const imageStart = offset;
       const packed = bytes[offset + 9]!;
       const localTable = (packed & 0x80) !== 0;
       offset += 10;
       if (localTable) offset += 3 * (1 << ((packed & 7) + 1));
       offset++;
       skipBlocks();
-      frames.push({ delayCs, localTable });
+      frames.push({ delayCs, localTable, image: bytes.subarray(imageStart, offset) });
       delayCs = 0;
     } else {
       throw new Error(`Unexpected GIF block at ${offset}`);
     }
   }
   expect(bytes[offset]).toBe(0x3b);
+  expect(offset).toBe(bytes.length - 1);
   return frames;
+}
+
+function stubWasmFetch() {
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+    expect(input).toBe(wasmUrl.href);
+    return new Response(wasmBytes, {
+      status: 200,
+      headers: { 'content-type': 'application/wasm' },
+    });
+  });
+}
+
+function fixtureDemux(frames: FixtureFrame[], width: number, height: number) {
+  const endUs = frames.at(-1)!.endUs;
+  return {
+    chunks: [],
+    config: { codec: 'vp09.00.10.08', codedWidth: width, codedHeight: height },
+    duration: endUs / 1_000_000,
+    framerate: 10,
+    sourceTotalMs: endUs / 1000,
+    totalFrames: frames.length,
+  };
 }
 
 async function encodeFixture(
@@ -161,27 +189,16 @@ async function encodeFixture(
   fixture.mapped = 0;
   const operations: string[] = [];
   const completedCounts: import('@services/encoder-common').EncoderFrameCounts[] = [];
-  const endUs = frames.at(-1)!.endUs;
-  const output = await encodeGif(
-    {
-      chunks: [],
-      config: { codec: 'vp09.00.10.08', codedWidth: width, codedHeight: height },
-      duration: endUs / 1_000_000,
-      framerate: 10,
-      sourceTotalMs: endUs / 1000,
-      totalFrames: frames.length,
+  const output = await encodeGif(fixtureDemux(frames, width, height), {
+    width,
+    height,
+    quality,
+    scale: 1,
+    profileOperation: (name) => operations.push(name),
+    onEncodingComplete: (counts) => {
+      completedCounts.push(counts);
     },
-    {
-      width,
-      height,
-      quality,
-      scale: 1,
-      profileOperation: (name) => operations.push(name),
-      onEncodingComplete: (counts) => {
-        completedCounts.push(counts);
-      },
-    }
-  );
+  });
   expect(fixture.admitted).toEqual([!forceJsIndexes]);
   expect(fixture.mapped).toBe(forceJsIndexes ? 0 : frames.length);
   expect(operations.filter((name) => name === 'gifPaletteMapping')).toHaveLength(frames.length);
@@ -319,13 +336,7 @@ describe('real retained GIF service route', () => {
 
   for (const scenario of cases) {
     it(`matches complete JS-index bytes and timing for ${scenario.name}`, async () => {
-      vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
-        expect(input).toBe(wasmUrl.href);
-        return new Response(wasmBytes, {
-          status: 200,
-          headers: { 'content-type': 'application/wasm' },
-        });
-      });
+      stubWasmFetch();
       const retained = await encodeFixture(
         scenario.frames,
         scenario.width,
@@ -347,4 +358,105 @@ describe('real retained GIF service route', () => {
       }
     });
   }
+
+  const partFrames = [
+    frame(30_000, 130_000, alternating([red, blue])),
+    frame(130_000, 4_140_000, alternating([green, blue])),
+    frame(4_140_000, 4_240_000, alternating([blue, red])),
+  ];
+  const partOpts = { width: 2, height: 1, quality: 'high', scale: 1 } as const;
+
+  it.each([
+    { forceJsIndexes: false, maxFrames: 1, maxOutputBytes: 32_768 },
+    { forceJsIndexes: true, maxFrames: 1, maxOutputBytes: 32_768 },
+    { forceJsIndexes: false, maxFrames: 9000, maxOutputBytes: 170 },
+  ])(
+    'preserves exact GIF records and source-time intervals across $maxFrames/$maxOutputBytes limits',
+    async ({ forceJsIndexes, maxFrames, maxOutputBytes }) => {
+      stubWasmFetch();
+      const ordinary = await encodeFixture(partFrames, 2, 1, 'high', forceJsIndexes);
+      const parts: GifOutputPart[] = [];
+      fixture.decodeCalls = 0;
+      const result = await encodeGifParts(
+        fixtureDemux(partFrames, 2, 1),
+        { ...partOpts, maxFrames, maxOutputBytes },
+        async (part) => {
+          const moved = structuredClone(part.bytes, { transfer: [part.bytes] });
+          expect(part.bytes.byteLength).toBe(0);
+          parts.push({ ...part, bytes: moved });
+        }
+      );
+      expect(fixture.decodeCalls).toBe(1);
+      expect(result).toEqual({ partCount: parts.length, frameCount: 5 });
+      expect(parts.length).toBeGreaterThan(1);
+      expect(parts[0]?.startCs).toBe(3);
+      expect(parts.at(-1)?.endCs).toBe(424);
+      const records = parts.flatMap((part, offset) => {
+        const bytes = new Uint8Array(part.bytes);
+        const parsed = gifFrames(bytes);
+        expect(bytes.subarray(0, 38)).toEqual(ordinary.output.subarray(0, 38));
+        if (offset !== 0) expect(part.startCs).toBe(parts[offset - 1]?.endCs);
+        expect(part.index).toBe(offset + 1);
+        expect(part.frameCount).toBe(parsed.length);
+        expect(part.frameCount).toBeLessThanOrEqual(maxFrames);
+        expect(part.endCs - part.startCs).toBe(parsed.reduce((sum, item) => sum + item.delayCs, 0));
+        expect(bytes.length).toBeLessThanOrEqual(maxOutputBytes);
+        return parsed;
+      });
+      expect(records).toEqual(ordinary.parsed);
+    }
+  );
+
+  it('waits for the outstanding part to settle after Stop and restarts cleanly', async () => {
+    stubWasmFetch();
+    fixture.frames = partFrames;
+    fixture.forceJsIndexes = false;
+    const enter = Promise.withResolvers<void>();
+    const acknowledge = Promise.withResolvers<void>();
+    const stop = new AbortController();
+    const opts = { ...partOpts, maxFrames: 1 };
+    const demux = fixtureDemux(partFrames, 2, 1);
+    const savePart = vi.fn(() => {
+      enter.resolve();
+      return acknowledge.promise;
+    });
+    const run = encodeGifParts(demux, opts, savePart, stop.signal);
+    const settled = vi.fn();
+    void run.then(settled, settled);
+    await enter.promise;
+    const framesBeforeAck = fixture.offeredFrames;
+    stop.abort();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(settled).not.toHaveBeenCalled();
+    expect(savePart).toHaveBeenCalledTimes(1);
+    expect(fixture.offeredFrames).toBe(framesBeforeAck);
+    acknowledge.resolve();
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' });
+    expect(savePart).toHaveBeenCalledTimes(1);
+    expect(fixture.offeredFrames).toBe(framesBeforeAck);
+    await expect(encodeGifParts(demux, opts, async () => {})).resolves.toEqual({
+      partCount: 5,
+      frameCount: 5,
+    });
+  });
+
+  it('enforces the real 9000-record ceiling per part, even inside one long hold', async () => {
+    stubWasmFetch();
+    fixture.frames = [frame(0, 18_002_000_000, alternating([red, blue]))];
+    fixture.forceJsIndexes = false;
+    const parts: Array<[number, number, number, number]> = [];
+    const result = await encodeGifParts(
+      fixtureDemux(fixture.frames, 2, 1),
+      partOpts,
+      async ({ index, startCs, endCs, frameCount, bytes }) => {
+        parts.push([index, startCs, endCs, frameCount]);
+        expect(new Uint8Array(bytes)[bytes.byteLength - 1]).toBe(0x3b);
+      }
+    );
+    expect(result).toEqual({ partCount: 2, frameCount: 9001 });
+    expect(parts).toEqual([
+      [1, 0, 1_800_000, 9000],
+      [2, 1_800_000, 1_800_200, 1],
+    ]);
+  });
 });

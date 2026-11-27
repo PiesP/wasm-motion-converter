@@ -64,6 +64,24 @@ describe('owned GIF89a writer', () => {
     expect(compress).not.toHaveBeenCalled();
   });
 
+  it('leaves a part intact when a complete new record would exhaust its final-copy budget', () => {
+    const compressed = referenceImageData(Uint8Array.of(0), 2);
+    const options = { palette: [[0, 0, 0]], colorDepth: 2, delay: 20 };
+    const firstSize = 19 + 19 + 18 + compressed.byteLength + 1;
+    const nextSize = firstSize + 18 + compressed.byteLength;
+    const capacity = nextSize + 8;
+    const limit = capacity + nextSize - 1;
+    const writer = new OwnedGifWriter(capacity, limit, () => {}, referenceImageData);
+    expect(writer.tryWritePartFrame(compressed, 1, 1, 1, options)).toBe(true);
+    expect(writer.partFinalizationBytes()).toBe(capacity + firstSize);
+    const first = writer.bytes();
+    expect(writer.tryWritePartFrame(compressed, 1, 1, 1, { colorDepth: 2, delay: 20 })).toBe(false);
+    expect(writer.bytesView()).toEqual(first);
+    expect(writer.stream.buffer.byteLength).toBe(capacity);
+    writer.finish();
+    expect(writer.bytes()).toEqual(Uint8Array.of(...first, 0x3b));
+  });
+
   it.each([0, 1, 2, 3, 10, 65535])(
     'writes total playback count %i without changing frame data',
     (count) => {
