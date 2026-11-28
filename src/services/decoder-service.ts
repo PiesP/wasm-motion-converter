@@ -661,7 +661,12 @@ export async function decodeFrames(
       queuedSourceHeadroomBytes + targetWorkingBytes + motionMemoryBytes >
         FRAME_PIPELINE_MEMORY_BUDGET_BYTES
     ) {
-      const standalone = await demux.verifyStandaloneVp9Keys().catch(() => false);
+      // Ordinary decoding can deliver two frames in one burst even when all are keys.
+      const fitsTwoSourceFrames =
+        2 * configuredRuntimeSourceBytes + targetWorkingBytes + motionMemoryBytes <=
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES;
+      const standalone =
+        fitsTwoSourceFrames && (await demux.verifyStandaloneVp9Keys().catch(() => false));
       signal?.throwIfAborted();
       processingFailureSignal?.throwIfAborted();
       if (!standalone) {

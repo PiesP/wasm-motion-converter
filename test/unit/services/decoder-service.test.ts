@@ -489,6 +489,7 @@ describe('decoder-service', () => {
       { codedSize: 4000, eligible: true, support: 'unsupported', expectProbe: true },
       { codedSize: 4000, eligible: true, support: 'throws', expectProbe: true },
       { codedSize: 4000, eligible: true, support: 'standalone', expectProbe: false },
+      { codedSize: 6000, eligible: true, support: 'standalone', expectProbe: true },
       { codedSize: 4000, eligible: undefined, support: 'supported', expectProbe: false },
       { codedSize: 640, eligible: true, support: 'supported', expectProbe: false },
     ] as const)(
@@ -496,11 +497,12 @@ describe('decoder-service', () => {
       async ({ codedSize, eligible, support, expectProbe }) => {
         vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
         const configure = vi.spyOn(FakeVideoDecoder.prototype, 'configure');
+        const hintSupported = support === 'supported' || support === 'standalone';
         const probe = vi
           .spyOn(FakeVideoDecoder, 'isConfigSupported')
           .mockImplementation(async (config) => {
             if (config.optimizeForLatency && support === 'throws') throw new Error('probe failed');
-            return { config, supported: !config.optimizeForLatency || support === 'supported' };
+            return { config, supported: !config.optimizeForLatency || hintSupported };
           });
         try {
           const demux = deliveryDemux();
@@ -514,13 +516,13 @@ describe('decoder-service', () => {
             { width: 8, height: 8, onFrameAvailable: releasePixels }
           );
           expect(configure).toHaveBeenCalledWith(
-            expect.objectContaining({ optimizeForLatency: expectProbe && support === 'supported' })
+            expect.objectContaining({ optimizeForLatency: expectProbe && hintSupported })
           );
           const hintedConfig = probe.mock.calls.find(([config]) => config.optimizeForLatency)?.[0];
           expect(Boolean(hintedConfig)).toBe(expectProbe);
           if (verifyStandaloneVp9Keys)
             expect(verifyStandaloneVp9Keys).toHaveBeenCalledTimes(codedSize === 4000 ? 1 : 0);
-          if (expectProbe && support === 'supported') {
+          if (expectProbe && hintSupported) {
             expect(configure).toHaveBeenCalledWith(hintedConfig);
           }
           expect(demux.config).not.toHaveProperty('optimizeForLatency');
