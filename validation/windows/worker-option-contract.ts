@@ -28,23 +28,33 @@ export async function installAppWorkerObserver(page: Page) {
         observations.push(this.record);
         this.addEventListener('message', ({ data }) => {
           if (data === null || typeof data !== 'object') return;
-          if (data.type === 'complete' && data.outputBuffer instanceof ArrayBuffer) {
+          if (
+            data.type === 'complete' &&
+            (data.outputBuffer instanceof ArrayBuffer || data.outputBuffer instanceof Blob)
+          ) {
             const complete = {
               requestId: data.requestId,
-              outputBytes: data.outputBuffer.byteLength,
+              outputBytes:
+                data.outputBuffer instanceof Blob
+                  ? data.outputBuffer.size
+                  : data.outputBuffer.byteLength,
               sha256: null as string | null,
             };
             this.record?.completes.push(complete);
-            void crypto.subtle.digest('SHA-256', data.outputBuffer).then(
-              (digest) => {
-                complete.sha256 = Array.from(new Uint8Array(digest), (byte) =>
-                  byte.toString(16).padStart(2, '0')
-                ).join('');
-              },
-              () => {
-                complete.sha256 = 'digest-failed';
-              }
-            );
+            const output = data.outputBuffer;
+            const bytes = output instanceof Blob ? output.arrayBuffer() : Promise.resolve(output);
+            void bytes
+              .then((buffer) => crypto.subtle.digest('SHA-256', buffer))
+              .then(
+                (digest) => {
+                  complete.sha256 = Array.from(new Uint8Array(digest), (byte) =>
+                    byte.toString(16).padStart(2, '0')
+                  ).join('');
+                },
+                () => {
+                  complete.sha256 = 'digest-failed';
+                }
+              );
           } else if (data.type === 'error') {
             this.record?.errors.push({ requestId: data.requestId, code: data.code });
           }

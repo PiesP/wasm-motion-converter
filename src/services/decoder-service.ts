@@ -321,14 +321,14 @@ export async function decodeFrames(
   }
   const targetWorkingBytes =
     frameMemoryBudget?.targetTaskBytes ?? estimateActiveFrameBytes(width, height, pixelFormat);
-  const queuedSourceHeadroomBytes =
-    estimateRuntimeDecodedSourceFrameBytes(
-      configuredSourceWidth,
-      configuredSourceHeight,
-      configuredDisplayWidth,
-      configuredDisplayHeight,
-      null
-    ) * queuedSourceHeadroomCount;
+  const configuredRuntimeSourceBytes = estimateRuntimeDecodedSourceFrameBytes(
+    configuredSourceWidth,
+    configuredSourceHeight,
+    configuredDisplayWidth,
+    configuredDisplayHeight,
+    null
+  );
+  const queuedSourceHeadroomBytes = configuredRuntimeSourceBytes * queuedSourceHeadroomCount;
   const twoTargetSourceCapacity = calculateStagedFrameSourceCapacity(
     configuredSourceWidth,
     configuredSourceHeight,
@@ -407,6 +407,9 @@ export async function decodeFrames(
   const encodedChunkReservations = new Map<number, EncodedChunkReservation[]>();
   const encodedChunkBudgetBytes = demux.encodedChunkBudgetBytes;
   let retainedEncodedChunkBytes = 0;
+  let outstandingEncodedChunks = 0;
+  let usedMidstreamFlush = false;
+  let maxSubmittedTimestampUs = Number.NEGATIVE_INFINITY;
   let inputFrameCount = 0;
   let inputChunkCount = 0;
   let keptFrameCount = 0;
@@ -640,6 +643,9 @@ export async function decodeFrames(
       }
     }
 
+    encodedChunkReservations.clear();
+    retainedEncodedChunkBytes = 0;
+    outstandingEncodedChunks = 0;
     return primaryFailure ?? cleanupFailure;
   };
 
@@ -658,6 +664,33 @@ export async function decodeFrames(
   let activeConfig: VideoDecoderConfig;
   try {
     activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
+    if (
+      demux.verifyStandaloneVp9Keys &&
+      queuedSourceHeadroomBytes + targetWorkingBytes + motionMemoryBytes >
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    ) {
+      // Ordinary decoding can deliver two frames in one burst even when all are keys.
+      const fitsTwoSourceFrames =
+        2 * configuredRuntimeSourceBytes + targetWorkingBytes + motionMemoryBytes <=
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES;
+      const standalone =
+        fitsTwoSourceFrames && (await demux.verifyStandaloneVp9Keys().catch(() => false));
+      signal?.throwIfAborted();
+      processingFailureSignal?.throwIfAborted();
+      if (!standalone) {
+        // Request earlier output when a native burst could exceed source-frame credit.
+        const lowLatencyConfig = { ...activeConfig, optimizeForLatency: true };
+        try {
+          if ((await VideoDecoder.isConfigSupported(lowLatencyConfig)).supported) {
+            activeConfig = lowLatencyConfig;
+          }
+        } catch {
+          // The ordinary configuration has already passed the support check.
+        }
+      }
+      signal?.throwIfAborted();
+      processingFailureSignal?.throwIfAborted();
+    }
   } catch (error) {
     recordDecoderError(error);
     const primaryFailure = getLatchedFailureError() ?? normalizeFailure(error);
@@ -690,6 +723,7 @@ export async function decodeFrames(
   const releaseEncodedChunk = (reservation: EncodedChunkReservation): void => {
     if (reservation.released) return;
     reservation.released = true;
+    outstandingEncodedChunks--;
     retainedEncodedChunkBytes = Math.max(0, retainedEncodedChunkBytes - reservation.bytes);
 
     const timestampReservations = encodedChunkReservations.get(reservation.timestamp);
@@ -712,7 +746,10 @@ export async function decodeFrames(
         if (candidate.bytes < reservation.bytes) reservation = candidate;
       }
     }
-    if (reservation) releaseEncodedChunk(reservation);
+    if (reservation) {
+      releaseEncodedChunk(reservation);
+      if (demux.setPacketReadGate) wakeDecodeCapacityWait?.();
+    }
   };
 
   const isSafeExtent = (frameWidth: number, frameHeight: number): boolean =>
@@ -820,6 +857,7 @@ export async function decodeFrames(
       encodedChunkReservations.set(chunk.timestamp, [reservation]);
     }
     retainedEncodedChunkBytes += bytes;
+    outstandingEncodedChunks++;
     return reservation;
   };
 
@@ -1458,7 +1496,30 @@ export async function decodeFrames(
   const supportsDequeueEvent =
     typeof activeDecoder.addEventListener === 'function' &&
     typeof activeDecoder.removeEventListener === 'function';
-  const waitForDecodeCapacity = async (): Promise<void> => {
+  const stoppedDecoding = (): boolean =>
+    Boolean(signal?.aborted || decodeError || trimEndReached || hasProcessingFailure());
+  const encodedCreditBlocked = (offeredBytes: number): boolean =>
+    offeredBytes > 0 &&
+    encodedChunkBudgetBytes !== undefined &&
+    retainedEncodedChunkBytes + offeredBytes > encodedChunkBudgetBytes;
+  const decodeCapacityBlocked = (offeredBytes: number): boolean =>
+    activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE || encodedCreditBlocked(offeredBytes);
+  const needsKeyBoundaryFlush = (offeredBytes: number): boolean => {
+    if (encodedCreditBlocked(offeredBytes)) return true;
+    const availableSourceBytes =
+      FRAME_PIPELINE_MEMORY_BUDGET_BYTES -
+      targetWorkingBytes -
+      motionMemoryBytes -
+      retainedSourceFrameBytes;
+    // Native dequeue counts control messages, including ones that have
+    // already left the queue without returning their matching source frame.
+    const burstCapacity = Math.max(
+      1,
+      Math.floor(availableSourceBytes / configuredRuntimeSourceBytes)
+    );
+    return outstandingEncodedChunks >= burstCapacity;
+  };
+  const waitForCapacityChange = async (offeredBytes: number): Promise<void> => {
     if (!supportsDequeueEvent) {
       // Older implementations without EventTarget support need a bounded retry.
       await new Promise<void>((resolve) => setTimeout(resolve, 16));
@@ -1480,13 +1541,7 @@ export async function decodeFrames(
       };
       const checkCapacity = (): void => {
         if (!ready) return;
-        if (
-          activeDecoder.decodeQueueSize <= MAX_DECODE_QUEUE ||
-          signal?.aborted ||
-          decodeError ||
-          trimEndReached ||
-          hasProcessingFailure()
-        ) {
+        if (!decodeCapacityBlocked(offeredBytes) || stoppedDecoding()) {
           finish();
         }
       };
@@ -1502,6 +1557,57 @@ export async function decodeFrames(
       checkCapacity();
     });
   };
+  const waitForDecodeCapacity = async (offeredBytes: number): Promise<boolean> => {
+    const deadline = Date.now() + STALL_DETECTION_TIMEOUT_MS;
+    while (decodeCapacityBlocked(offeredBytes) && !stoppedDecoding()) {
+      if (!supportsDequeueEvent && Date.now() >= deadline) {
+        recordDecoderError(new Error('Video decoder queue stalled while waiting for capacity'));
+        break;
+      }
+      await waitForCapacityChange(offeredBytes);
+    }
+    return !stoppedDecoding();
+  };
+
+  const drainBoundaryConversions = async (): Promise<void> => {
+    while (pendingConversions.size > 0 && !stoppedDecoding()) {
+      await Promise.allSettled([...pendingConversions]);
+    }
+  };
+
+  const flushAtKeyBoundary = async (offeredBytes: number): Promise<boolean> => {
+    await drainBoundaryConversions();
+    if (stoppedDecoding()) return false;
+    // Only persistent source reservations, such as a pending presentation
+    // frame, remain charged after conversion work drains.
+    if (!needsKeyBoundaryFlush(offeredBytes) || decodeCapacityBlocked(0))
+      return waitForDecodeCapacity(offeredBytes);
+
+    usedMidstreamFlush = true;
+    const interrupted = Promise.withResolvers<void>();
+    // Trim can be reached by an output from this flush. Let it finish before
+    // the end-of-stream path runs, but stop promptly on cancellation or failure.
+    wakeDecodeCapacityWait = () => {
+      if (firstPipelineFailure) interrupted.resolve();
+    };
+    const timeoutId = setTimeout(() => {
+      recordDecoderError(new Error('Video decoder stalled while flushing for packet capacity'));
+    }, STALL_DETECTION_TIMEOUT_MS);
+    try {
+      await Promise.race([activeDecoder.flush(), interrupted.promise]);
+    } catch (error) {
+      recordDecoderError(error);
+    } finally {
+      clearTimeout(timeoutId);
+      wakeDecodeCapacityWait = null;
+    }
+
+    if (stoppedDecoding()) return false;
+    await drainBoundaryConversions();
+    // A completed flush does not refund any encoded reservation. Only outputs
+    // with matching timestamps can make the offered packet admissible.
+    return waitForDecodeCapacity(offeredBytes);
+  };
 
   let streamedSourceDurationUs = 0;
   chunkStream = (async function* iterateChunks(): AsyncGenerator<EncodedVideoChunk> {
@@ -1512,12 +1618,30 @@ export async function decodeFrames(
   let decodeResult: DecodeResult | null = null;
 
   try {
-    // Pull and feed chunks with backpressure — prevent both the demux host and the
-    // VideoDecoder queue from growing unbounded. Backpressure is checked before
-    // requesting the next chunk, so the producer cannot run ahead.
-    // VideoDecoder internally queues decoded frames; if we feed chunks faster than
-    // they can be decoded, memory grows and GC pressure increases.
-    // We pause when queue size exceeds a threshold and resume when it drains.
+    // Only matching outputs return byte credit. The demuxer asks for credit
+    // before reading packet data and reaches EOF without another request.
+    demux.setPacketReadGate?.((offeredBytes, keyCandidate) => {
+      if (stoppedDecoding()) return false;
+      if (
+        keyCandidate &&
+        !decodeCapacityBlocked(0) &&
+        needsKeyBoundaryFlush(offeredBytes) &&
+        keyCandidate.timestampUs > maxSubmittedTimestampUs
+      ) {
+        return keyCandidate.verify().then(
+          (verified) =>
+            verified ? flushAtKeyBoundary(offeredBytes) : waitForDecodeCapacity(offeredBytes),
+          (error: unknown) => {
+            if (firstPipelineFailure) return false;
+            throw error;
+          }
+        );
+      }
+      // A soft frame-burst bound cannot block a dependent packet.
+      return decodeCapacityBlocked(offeredBytes) ? waitForDecodeCapacity(offeredBytes) : true;
+    });
+    // Check native queue count and downstream frame work before asking the
+    // demuxer for the next chunk.
     while (true) {
       if (signal?.aborted) {
         recordCancellation();
@@ -1525,21 +1649,7 @@ export async function decodeFrames(
       }
       if (decodeError || hasProcessingFailure() || trimEndReached) break;
 
-      // Backpressure: wait for native dequeue notifications when available.
-      const capacityWaitDeadline = Date.now() + STALL_DETECTION_TIMEOUT_MS;
-      while (
-        activeDecoder.decodeQueueSize > MAX_DECODE_QUEUE &&
-        !signal?.aborted &&
-        !decodeError &&
-        !trimEndReached &&
-        !hasProcessingFailure()
-      ) {
-        if (!supportsDequeueEvent && Date.now() >= capacityWaitDeadline) {
-          recordDecoderError(new Error('Video decoder queue stalled while waiting for capacity'));
-          break;
-        }
-        await waitForDecodeCapacity();
-      }
+      if (decodeCapacityBlocked(0)) await waitForDecodeCapacity(0);
 
       // Backpressure on output processing: wait if too many
       // frame conversion promises are in flight. This prevents unbounded
@@ -1569,12 +1679,15 @@ export async function decodeFrames(
       const reservation = reserveEncodedChunk(nextChunk.value);
       try {
         activeDecoder.decode(nextChunk.value);
+        maxSubmittedTimestampUs = Math.max(maxSubmittedTimestampUs, nextChunk.value.timestamp);
       } catch (error) {
         releaseEncodedChunk(reservation);
         recordDecoderError(error);
         break;
       }
     }
+
+    if (usedMidstreamFlush) await drainBoundaryConversions();
 
     // Finish already-emitted lookahead work before entering the decoder flush.
     // Frames emitted by flush capture the serial target limit below.

@@ -6,7 +6,7 @@
  *
  * Wraps Worker lifecycle (create, communicate, terminate) and provides
  * an async function matching the current pipeline signature:
- *   runPipeline(input, config, options, callbacks) → Promise<ArrayBuffer>
+ *   runPipeline(input, config, options, callbacks) → Promise<ArrayBuffer | Blob>
  *
  * Features:
  * - Clones Blob handles for lazy reads or transfers owned ArrayBuffers
@@ -93,7 +93,7 @@ export class WorkerPipelineError extends Error {
  * @param options - Conversion options (format, quality, scale, etc.)
  * @param onProgress - Progress callback (throttled to ~100ms)
  * @param signal - Abort signal for cancellation
- * @returns Promise resolving to the output ArrayBuffer (GIF or WebP)
+ * @returns Promise resolving to the output GIF Blob or owned ArrayBuffer
  */
 export async function runPipelineViaWorker(
   input: ArrayBuffer | Blob,
@@ -103,7 +103,7 @@ export async function runPipelineViaWorker(
   signal?: AbortSignal,
   duration?: number,
   framerate?: number
-): Promise<ArrayBuffer> {
+): Promise<ArrayBuffer | Blob> {
   clearLastConversionProfileReport();
   if (!isBoundedCodecDescription(config.description)) {
     throw new Error('Invalid worker codec description');
@@ -120,7 +120,7 @@ export async function runPipelineViaWorker(
   signal?.throwIfAborted();
   discardOwnedVp8Module();
 
-  return new Promise<ArrayBuffer>((resolve, reject) => {
+  return new Promise<ArrayBuffer | Blob>((resolve, reject) => {
     const requestId = crypto.randomUUID();
 
     // Classify synchronous Worker construction failures as unavailability.
@@ -391,7 +391,7 @@ export async function runPipelineWithFallback(
   inputBlob?: Blob,
   duration?: number,
   framerate?: number
-): Promise<ArrayBuffer> {
+): Promise<ArrayBuffer | Blob> {
   // Reject untrusted display-aspect metadata before allocating a Worker or
   // transferring the input buffer. The worker pipeline repeats this check
   // after demux as defense in depth.

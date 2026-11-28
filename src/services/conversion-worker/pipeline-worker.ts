@@ -110,7 +110,7 @@ export async function runWorkerPipeline(
   duration?: number,
   framerate?: number,
   indexSnapshot?: OwnedInputIndexSnapshot
-): Promise<{ outputBuffer: ArrayBuffer; profile?: ConversionProfileReport }> {
+): Promise<{ outputBuffer: ArrayBuffer | Blob; profile?: ConversionProfileReport }> {
   const pipelineStart = performance.now();
   const previousLoad = waitForOwnedVp8Load(signal);
   if (previousLoad) await previousLoad;
@@ -154,7 +154,7 @@ export async function runWorkerPipeline(
     `▶ Worker pipeline started: ${options.format} ${options.quality} ${options.scale}x`
   );
 
-  let output: ArrayBuffer | undefined;
+  let output: ArrayBuffer | Blob | undefined;
 
   // ── Memory sampling and guard (H3 fix) ──
   // Workers do not expose performance.memory. Include the transferred input,
@@ -408,9 +408,10 @@ export async function runWorkerPipeline(
           onFrameDecoded: decodeProgressCb,
           onFrameEncoded: encodedProgressCb,
         },
-        signal
+        signal,
+        'blob'
       );
-      output = toExactOutputBuffer(gifResult);
+      output = gifResult;
     } else {
       const webpCadence = resolveCadencePolicy(
         sourceFps,
@@ -470,10 +471,8 @@ export async function runWorkerPipeline(
       }
     }
 
-    transcodeSpan?.end({
-      ...observedCounts,
-      outputBytes: output?.byteLength ?? 0,
-    });
+    const outputBytes = output instanceof Blob ? output.size : (output?.byteLength ?? 0);
+    transcodeSpan?.end({ ...observedCounts, outputBytes });
 
     // ── Finalization bookkeeping (UI progress remains "assembling") ──
     const finalizationSpan = profiler?.begin('finalizing');
@@ -484,7 +483,7 @@ export async function runWorkerPipeline(
       throw new Error('Worker pipeline completed without producing output');
     }
 
-    postProgress('assembling', true, output.byteLength);
+    postProgress('assembling', true, outputBytes);
 
     finalizationSpan?.end();
     const profile = profiler?.finish();

@@ -327,7 +327,12 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
     }
     case 'complete': {
       if (!isNonEmptyString(value.requestId)) return false;
-      if (!(value.outputBuffer instanceof ArrayBuffer)) return false;
+      if (
+        !(value.outputBuffer instanceof ArrayBuffer) &&
+        !(value.outputBuffer instanceof Blob && value.outputBuffer.type === 'image/gif')
+      ) {
+        return false;
+      }
       if (!isFiniteNonNegative(value.durationMs)) return false;
       if (value.profile !== undefined && !isValidProfileReport(value.profile)) return false;
       return true;

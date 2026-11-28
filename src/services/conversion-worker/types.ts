@@ -77,7 +77,7 @@ export type WorkerResponse =
   | {
       type: 'complete';
       requestId: string;
-      outputBuffer: ArrayBuffer;
+      outputBuffer: ArrayBuffer | Blob;
       durationMs: number;
       /** Development-only profile captured inside the Worker realm. */
       profile?: ConversionProfileReport;

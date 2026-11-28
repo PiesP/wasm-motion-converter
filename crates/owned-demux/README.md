@@ -115,8 +115,12 @@ The idle selected state retains no parser instance or codec scratch peak.
 
 ## Bounds and qualification limits
 
-Preserve500MiB input,64KiB header reads,16MiB packet/read-credit,
-32MiB live metadata/index,64MiB linear capacity and128MiB demux policy envelopes.
+The standard input limit is 500 MiB. The host admits file-backed range reads
+up to 512 MiB when the source has a leading ordinary MP4 file-type box.
+At the extended limit, fresh analysis checks that prefix and snapshot import
+requires the MP4 format. The host verifies the source prefix before importing.
+Header reads remain bounded to 64 KiB. The packet/read-credit, metadata/index,
+linear and aggregate demux ceilings remain 16, 32, 64 and 128 MiB respectively.
 Resource admission includes growth overlap, main snapshot master, job copy,
 import source, index/scratch, outstanding/retired reads and native queued-chunk
 allowances. Slots within linear memory are counted once. The caller's existing

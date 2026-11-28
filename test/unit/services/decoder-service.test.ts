@@ -3,6 +3,7 @@
 
 import { globalBufferPool } from '@services/buffer-pool';
 import { type DecodeOptions, type DecodeResult, decodeFrames } from '@services/decoder-service';
+import type { DemuxResult } from '@services/demuxer-service';
 import {
   calculateStagedFrameSourceCapacity,
   estimateActiveFrameBytes,
@@ -14,6 +15,8 @@ import { OwnedVp8MemoryAdmissionError } from '@services/owned-vp8-core';
 import { createStreamingWebpEncoder } from '@services/parallel-webp-encoder';
 import type { EncodeTask, EncodeTaskResult, WebpWorkerPool } from '@services/worker-pool';
 import {
+  BYTES_PER_MB,
+  ENCODED_CHUNK_BUDGET_BYTES,
   FRAME_PIPELINE_MEMORY_BUDGET_BYTES,
   MAX_FRAME_PIXEL_COUNT,
   STALL_DETECTION_TIMEOUT_MS,
@@ -224,10 +227,12 @@ describe('decoder-service', () => {
       readonly reset = vi.fn();
       readonly flush = vi.fn(async () => {});
       private readonly onError: VideoDecoderInit['error'];
+      private readonly onOutput: VideoDecoderInit['output'];
 
       constructor(init: VideoDecoderInit) {
         super();
         this.onError = init.error;
+        this.onOutput = init.output;
         QueuedEventDecoder.instance = this;
       }
 
@@ -262,6 +267,10 @@ describe('decoder-service', () => {
       fail(error: DOMException): void {
         this.onError(error);
       }
+
+      emitOutput(timestamp: number): void {
+        this.onOutput(new FakeVideoFrame(0, timestamp, 100_000) as unknown as VideoFrame);
+      }
     }
 
     const queuedEventDemux = () => ({
@@ -272,6 +281,51 @@ describe('decoder-service', () => {
       sourceTotalMs: 100,
       totalFrames: 1,
     });
+
+    class ByteCreditDecoder extends QueuedEventDecoder {
+      override decodeQueueSize = 0;
+    }
+
+    type PacketReadGate = Parameters<NonNullable<DemuxResult['setPacketReadGate']>>[0];
+    type PressureCandidate = Parameters<PacketReadGate>[1];
+
+    function byteCreditDemux(
+      packetSizes = [1_500, 1_500],
+      encodedChunkBudgetBytes = 3_000,
+      pressureCandidate?: PressureCandidate | ((index: number) => PressureCandidate),
+      timestampFor = (index: number) => index * 100_000
+    ) {
+      let gate: PacketReadGate | undefined;
+      const readPacket = vi.fn((index: number) =>
+        fixtureChunk(timestampFor(index), 40, {
+          byteLength: packetSizes[index]!,
+          duration: 100_000,
+        })
+      );
+      const chunks = (async function* () {
+        for (const [index, byteLength] of packetSizes.entries()) {
+          const keyCandidate =
+            typeof pressureCandidate === 'function'
+              ? pressureCandidate(index)
+              : index > 0
+                ? pressureCandidate
+                : undefined;
+          if (gate && !(await gate(byteLength + 1_024, keyCandidate))) return;
+          yield readPacket(index);
+        }
+      })();
+      return {
+        ...queuedEventDemux(),
+        chunks,
+        readPacket,
+        setPacketReadGate(callback: PacketReadGate) {
+          gate = callback;
+        },
+        encodedChunkBudgetBytes,
+        duration: packetSizes.length / 10,
+        totalFrames: packetSizes.length,
+      };
+    }
 
     function createFlushBurstVideoDecoder(
       frameCount: number,
@@ -425,6 +479,76 @@ describe('decoder-service', () => {
       };
       return { frames, onFrameAvailable };
     }
+
+    it.each([
+      { codedSize: 4000, eligible: true, support: 'supported', expectProbe: true },
+      { codedSize: 4000, eligible: true, support: 'unsupported', expectProbe: true },
+      { codedSize: 4000, eligible: true, support: 'throws', expectProbe: true },
+      { codedSize: 4000, eligible: true, support: 'standalone', expectProbe: false },
+      { codedSize: 6000, eligible: true, support: 'standalone', expectProbe: true },
+      { codedSize: 4000, eligible: undefined, support: 'supported', expectProbe: false },
+      { codedSize: 640, eligible: true, support: 'supported', expectProbe: false },
+    ] as const)(
+      'uses supported low latency only for eligible sources under pressure ($codedSize, $eligible, $support)',
+      async ({ codedSize, eligible, support, expectProbe }) => {
+        vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+        const configure = vi.spyOn(FakeVideoDecoder.prototype, 'configure');
+        const hintSupported = support === 'supported' || support === 'standalone';
+        const probe = vi
+          .spyOn(FakeVideoDecoder, 'isConfigSupported')
+          .mockImplementation(async (config) => {
+            if (config.optimizeForLatency && support === 'throws') throw new Error('probe failed');
+            return { config, supported: !config.optimizeForLatency || hintSupported };
+          });
+        try {
+          const demux = deliveryDemux();
+          demux.config.codedWidth = codedSize;
+          demux.config.codedHeight = 2160;
+          const verifyStandaloneVp9Keys = eligible
+            ? vi.fn(async () => support === 'standalone')
+            : undefined;
+          await decodeFrames(
+            { ...demux, verifyStandaloneVp9Keys },
+            { width: 8, height: 8, onFrameAvailable: releasePixels }
+          );
+          expect(configure).toHaveBeenCalledWith(
+            expect.objectContaining({ optimizeForLatency: expectProbe && hintSupported })
+          );
+          const hintedConfig = probe.mock.calls.find(([config]) => config.optimizeForLatency)?.[0];
+          expect(Boolean(hintedConfig)).toBe(expectProbe);
+          if (verifyStandaloneVp9Keys)
+            expect(verifyStandaloneVp9Keys).toHaveBeenCalledTimes(codedSize === 4000 ? 1 : 0);
+          if (expectProbe && hintSupported) {
+            expect(configure).toHaveBeenCalledWith(hintedConfig);
+          }
+          expect(demux.config).not.toHaveProperty('optimizeForLatency');
+        } finally {
+          configure.mockRestore();
+          probe.mockRestore();
+        }
+      }
+    );
+
+    it('releases demux and does not configure a decoder when the VP9 proof is canceled', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const cancellation = new AbortController();
+      const proof = Promise.withResolvers<boolean>();
+      const verifyStandaloneVp9Keys = vi.fn(() => proof.promise);
+      const demux = deliveryDemux();
+      demux.config.codedWidth = 4000;
+      demux.config.codedHeight = 2160;
+      const result = decodeFrames(
+        { ...demux, verifyStandaloneVp9Keys },
+        { width: 8, height: 8, onFrameAvailable: releasePixels },
+        cancellation.signal
+      );
+      await vi.waitFor(() => expect(verifyStandaloneVp9Keys).toHaveBeenCalledOnce());
+      cancellation.abort();
+      proof.resolve(true);
+      await expect(result).rejects.toThrow('Cancelled');
+      expect(demux.dispose).toHaveBeenCalledOnce();
+      expect(FakeVideoDecoder.configureCalls).toBe(0);
+    });
 
     it.each([undefined, null, 'invalid callback', true])(
       'rejects a missing or invalid CPU callback before decoder work (%s)',
@@ -603,6 +727,295 @@ describe('decoder-service', () => {
         vi.useRealTimers();
       }
     });
+
+    it('waits before reading on matching output credit, then reaches a flush-dependent EOF', async () => {
+      vi.stubGlobal('VideoDecoder', ByteCreditDecoder);
+      const demux = byteCreditDemux();
+      const decoding = decodeFrames(demux, {
+        width: 8,
+        height: 8,
+        onFrameAvailable: releasePixels,
+      });
+      await vi.waitFor(() => expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(1));
+      const decoder = QueuedEventDecoder.instance!;
+      expect(demux.readPacket.mock.calls).toEqual([[0]]);
+      decoder.releaseCapacity();
+      await Promise.resolve();
+      expect(demux.readPacket.mock.calls).toEqual([[0]]);
+
+      decoder.flush.mockImplementation(async () => decoder.emitOutput(100_000));
+      decoder.emitOutput(0);
+      await expect(decoding).resolves.toMatchObject({ consumedChunks: 2, selectedFrames: 2 });
+      expect(demux.readPacket.mock.calls).toEqual([[0], [1]]);
+      expect(decoder.flush).toHaveBeenCalledOnce();
+      expect(decoder.dequeueRemoves).toBe(1);
+      expect(decoder.close).toHaveBeenCalledOnce();
+    });
+
+    it('flushes before reading a verified key that would exceed encoded credit', async () => {
+      const verify = vi.fn(async () => true);
+      const firstConversion = Promise.withResolvers<void>();
+      const delivered: number[] = [];
+      const demux = byteCreditDemux(undefined, undefined, { timestampUs: 100_000, verify });
+      class KeyPressureDecoder extends ByteCreditDecoder {
+        override readonly flush = vi.fn(async () => {
+          expect(demux.readPacket.mock.calls).toEqual(
+            this.flush.mock.calls.length === 1 ? [[0]] : [[0], [1]]
+          );
+          this.emitOutput((this.flush.mock.calls.length - 1) * 100_000);
+        });
+      }
+      vi.stubGlobal('VideoDecoder', KeyPressureDecoder);
+      const decoding = decodeFrames(demux, {
+        width: 8,
+        height: 8,
+        onFrameAvailable: async (pixels, _, frameNumber) => {
+          delivered.push(frameNumber);
+          globalBufferPool.release(pixels);
+          if (frameNumber === 0) await firstConversion.promise;
+        },
+      });
+      try {
+        await vi.waitFor(() => expect(delivered).toEqual([0]));
+        expect(demux.readPacket.mock.calls).toEqual([[0]]);
+        expect(verify).toHaveBeenCalledOnce();
+      } finally {
+        firstConversion.resolve();
+      }
+      await expect(decoding).resolves.toMatchObject({
+        consumedChunks: 2,
+        selectedFrames: 2,
+        presentationEndUs: 200_000,
+      });
+      expect(delivered).toEqual([0, 1]);
+      expect(QueuedEventDecoder.instance?.flush).toHaveBeenCalledTimes(2);
+      expect(QueuedEventDecoder.instance?.close).toHaveBeenCalledOnce();
+    });
+
+    it('flushes at the four-frame source burst bound before hitting encoded byte credit', async () => {
+      // Two source chunks share one PTS. The soft bound must count reservations,
+      // including both duplicates, even when the native control queue is empty.
+      const timestampFor = (index: number) => (index === 2 ? 1 : index) * 100_000;
+      const verify = vi.fn(async () => true);
+      const demux = byteCreditDemux(
+        Array.from({ length: 12 }, () => 1_500),
+        ENCODED_CHUNK_BUDGET_BYTES,
+        (index) => ({ timestampUs: timestampFor(index), verify }),
+        timestampFor
+      );
+      demux.config = { ...demux.config, codedWidth: 3200, codedHeight: 1600 };
+      const epochs: number[] = [];
+      const outstanding: number[] = [];
+      class BoundedBurstDecoder extends ByteCreditDecoder {
+        override readonly decode = vi.fn((chunk: EncodedVideoChunk) => {
+          outstanding.push(chunk.timestamp);
+        });
+        override readonly flush = vi.fn(async () => {
+          expect(demux.readPacket).toHaveBeenCalledTimes(epochs.length * 4 + 4);
+          epochs.push(outstanding.length);
+          for (const timestamp of outstanding.splice(0)) this.emitOutput(timestamp);
+        });
+      }
+      vi.stubGlobal('VideoDecoder', BoundedBurstDecoder);
+      await expect(
+        decodeFrames(demux, { width: 8, height: 8, onFrameAvailable: releasePixels })
+      ).resolves.toMatchObject({
+        consumedChunks: 12,
+        decodedFrames: 12,
+        duplicateTimestamps: 1,
+        presentationEndUs: 1_200_000,
+      });
+      expect(epochs).toEqual([4, 4, 4]);
+      expect(verify).toHaveBeenCalledTimes(2);
+      expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(0);
+    });
+
+    it.each([false, true])(
+      'admits the next dependency at the soft bound when the container key hint is %s',
+      async (hasKeyHint) => {
+        const verify = vi.fn(async () => false);
+        const demux = byteCreditDemux(
+          Array.from({ length: 5 }, () => 1_500),
+          ENCODED_CHUNK_BUDGET_BYTES,
+          (index) =>
+            index === 4 && hasKeyHint ? { timestampUs: index * 100_000, verify } : undefined
+        );
+        demux.config = { ...demux.config, codedWidth: 3200, codedHeight: 1600 };
+        class DependencyDecoder extends ByteCreditDecoder {
+          override readonly decode = vi.fn((chunk: EncodedVideoChunk) => {
+            if (chunk.timestamp !== 400_000) return;
+            expect(this.flush).not.toHaveBeenCalled();
+            for (let index = 0; index < 5; index++) this.emitOutput(index * 100_000);
+          });
+        }
+        vi.stubGlobal('VideoDecoder', DependencyDecoder);
+        await expect(
+          decodeFrames(demux, { width: 8, height: 8, onFrameAvailable: releasePixels })
+        ).resolves.toMatchObject({ consumedChunks: 5, selectedFrames: 5 });
+        expect(verify).toHaveBeenCalledTimes(Number(hasKeyHint));
+        expect(demux.readPacket).toHaveBeenCalledTimes(5);
+        expect(QueuedEventDecoder.instance?.flush).toHaveBeenCalledOnce();
+      }
+    );
+
+    it.each([
+      { timestampUs: 100_000, probed: true, verified: false },
+      { timestampUs: 0, probed: false, verified: true },
+      { timestampUs: -100_000, probed: false, verified: true },
+    ])('keeps ordinary byte backpressure for an unsafe key boundary %o', async (test) => {
+      vi.stubGlobal('VideoDecoder', ByteCreditDecoder);
+      const verify = vi.fn(async () => test.verified);
+      const demux = byteCreditDemux(undefined, undefined, {
+        timestampUs: test.timestampUs,
+        verify,
+      });
+      const decoding = decodeFrames(demux, {
+        width: 8,
+        height: 8,
+        onFrameAvailable: releasePixels,
+      });
+      await vi.waitFor(() => expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(1));
+      const decoder = QueuedEventDecoder.instance!;
+      expect(demux.readPacket.mock.calls).toEqual([[0]]);
+      expect(verify).toHaveBeenCalledTimes(Number(test.probed));
+      expect(decoder.flush).not.toHaveBeenCalled();
+      decoder.emitOutput(0);
+      decoder.flush.mockImplementation(async () => decoder.emitOutput(100_000));
+      await expect(decoding).resolves.toMatchObject({ consumedChunks: 2, selectedFrames: 2 });
+      expect(decoder.flush).toHaveBeenCalledOnce();
+    });
+
+    it.each(['mismatch', 'cancel', 'timeout', 'flush rejection'] as const)(
+      'settles %s at a verified key without reading the offered packet',
+      async (failure) => {
+        vi.useFakeTimers();
+        try {
+          const cancellation = new AbortController();
+          const verify = vi.fn(async () => true);
+          const demux = byteCreditDemux(undefined, undefined, { timestampUs: 100_000, verify });
+          const pendingFlush = Promise.withResolvers<void>();
+          class KeyPressureDecoder extends ByteCreditDecoder {
+            override readonly flush = vi.fn(() => {
+              if (failure === 'mismatch') {
+                this.emitOutput(-100_000);
+                return Promise.resolve();
+              }
+              return pendingFlush.promise;
+            });
+          }
+          vi.stubGlobal('VideoDecoder', KeyPressureDecoder);
+          const decoding = decodeFrames(
+            demux,
+            { width: 8, height: 8, onFrameAvailable: releasePixels },
+            cancellation.signal
+          );
+          const errors = {
+            mismatch: 'queue stalled',
+            cancel: 'Cancelled',
+            timeout: 'stalled while flushing',
+            'flush rejection': 'fixture pressure failure',
+          };
+          const rejected = expect(decoding).rejects.toThrow(errors[failure]);
+          await vi.waitFor(() => expect(QueuedEventDecoder.instance?.flush).toHaveBeenCalledOnce());
+          const decoder = QueuedEventDecoder.instance!;
+          if (failure === 'cancel') cancellation.abort();
+          else if (failure === 'flush rejection') pendingFlush.reject(new Error(errors[failure]));
+          else {
+            if (failure === 'mismatch') await vi.waitFor(() => expect(decoder.dequeueAdds).toBe(1));
+            await vi.advanceTimersByTimeAsync(STALL_DETECTION_TIMEOUT_MS);
+          }
+          await rejected;
+          expect(demux.readPacket.mock.calls).toEqual([[0]]);
+          expect(decoder.reset).toHaveBeenCalledOnce();
+          expect(decoder.close).toHaveBeenCalledOnce();
+          pendingFlush.resolve();
+        } finally {
+          vi.useRealTimers();
+        }
+      }
+    );
+
+    it('reads an admissible small packet needed to release retained large packets', async () => {
+      class ForwardProgressDecoder extends ByteCreditDecoder {
+        override readonly decode = vi.fn((chunk: EncodedVideoChunk) => {
+          if (chunk.timestamp !== 400_000) return;
+          for (let index = 0; index < 5; index++) this.emitOutput(index * 100_000);
+        });
+      }
+
+      vi.stubGlobal('VideoDecoder', ForwardProgressDecoder);
+      const large = 14 * BYTES_PER_MB - 1_024;
+      const small = BYTES_PER_MB - 1_024;
+      const demux = byteCreditDemux(
+        [large, large, large, large, small],
+        ENCODED_CHUNK_BUDGET_BYTES
+      );
+      await expect(
+        decodeFrames(demux, { width: 8, height: 8, onFrameAvailable: releasePixels })
+      ).resolves.toMatchObject({ consumedChunks: 5, selectedFrames: 5 });
+      expect(demux.readPacket.mock.calls).toEqual([[0], [1], [2], [3], [4]]);
+      expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(0);
+      expect(QueuedEventDecoder.instance?.flush).toHaveBeenCalledOnce();
+    });
+
+    it('stops an offered packet when the output that returns credit reaches the trim end', async () => {
+      vi.stubGlobal('VideoDecoder', ByteCreditDecoder);
+      const demux = byteCreditDemux();
+      const decoding = decodeFrames(
+        { ...demux, trimEndUs: 100_000 },
+        { width: 8, height: 8, onFrameAvailable: releasePixels }
+      );
+      await vi.waitFor(() => expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(1));
+      const decoder = QueuedEventDecoder.instance!;
+      decoder.emitOutput(0);
+      await expect(decoding).resolves.toMatchObject({ consumedChunks: 1, selectedFrames: 1 });
+      expect(demux.readPacket.mock.calls).toEqual([[0]]);
+      expect(decoder.flush).toHaveBeenCalledOnce();
+      expect(decoder.dequeueRemoves).toBe(1);
+    });
+
+    it.each(['cancel', 'decoder', 'processing', 'timeout'] as const)(
+      'settles a byte credit wait on %s without reading another packet',
+      async (failure) => {
+        vi.stubGlobal('VideoDecoder', ByteCreditDecoder);
+        vi.useFakeTimers();
+        try {
+          const demux = byteCreditDemux();
+          const cancellation = new AbortController();
+          const processing = new AbortController();
+          const decoding = decodeFrames(
+            demux,
+            {
+              width: 8,
+              height: 8,
+              onFrameAvailable: releasePixels,
+              processingFailureSignal: processing.signal,
+            },
+            cancellation.signal
+          );
+          await vi.waitFor(() => expect(QueuedEventDecoder.instance?.dequeueAdds).toBe(1));
+          const decoder = QueuedEventDecoder.instance!;
+          const expected = {
+            cancel: 'Cancelled',
+            decoder: 'fixture decoder failure',
+            processing: 'fixture downstream failure',
+            timeout: 'queue stalled',
+          };
+          const rejected = expect(decoding).rejects.toThrow(expected[failure]);
+          if (failure === 'cancel') cancellation.abort();
+          else if (failure === 'decoder') decoder.fail(new DOMException(expected.decoder));
+          else if (failure === 'processing') processing.abort(new Error(expected.processing));
+          else await vi.advanceTimersByTimeAsync(STALL_DETECTION_TIMEOUT_MS);
+          await rejected;
+          expect(demux.readPacket.mock.calls).toEqual([[0]]);
+          expect(decoder.flush).not.toHaveBeenCalled();
+          expect(decoder.dequeueRemoves).toBe(1);
+          expect(decoder.close).toHaveBeenCalledOnce();
+        } finally {
+          vi.useRealTimers();
+        }
+      }
+    );
 
     it('reports skipped fixed-frame holds through retained presentation starts', async () => {
       vi.stubGlobal('VideoDecoder', FakeVideoDecoder);

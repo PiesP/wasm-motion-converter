@@ -51,6 +51,40 @@ describe('owned GIF89a writer', () => {
     expect(owned.bytesView()).toEqual(reference.bytes());
   });
 
+  it('seals exact Blob segments, preserves their bytes and charges the staging overlap', async () => {
+    const maxOutput = 8192;
+    const segmentSize = 64;
+    const peaks: number[] = [];
+    const segmented = new OwnedGifWriter(
+      segmentSize,
+      maxOutput,
+      (bytes) => peaks.push(bytes),
+      referenceImageData,
+      3,
+      true
+    );
+    const contiguous = new OwnedGifWriter(segmentSize, maxOutput, () => {}, referenceImageData, 3);
+    const palette = [
+      [250, 0, 0],
+      [0, 15, 250],
+    ];
+    for (let frame = 0; frame < 100; frame++) {
+      const indices = Uint8Array.of(frame % 2, 1, 0, 1);
+      const options = { palette, colorDepth: 2, delay: 20 + frame * 10 };
+      segmented.writeFrame(indices, 2, 2, options);
+      contiguous.writeFrame(indices, 2, 2, options);
+    }
+    segmented.finish();
+    contiguous.finish();
+    const blob = segmented.takeBlob();
+    expect(blob.type).toBe('image/gif');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(contiguous.bytes());
+    expect(Math.max(...peaks)).toBe(blob.size + segmentSize);
+    expect(peaks.length).toBe(Math.ceil(blob.size / segmentSize));
+    expect(segmented.retainedBytes).toBe(0);
+    expect(() => segmented.takeBlob()).toThrow(RangeError);
+  });
+
   it('rejects malformed frame geometry before calling the compressor', () => {
     const compress = vi.fn(referenceImageData);
     const owned = new OwnedGifWriter(64, 8192, () => {}, compress);

@@ -21,8 +21,10 @@ export const BYTES_PER_KB = 1024;
 /** Bytes per megabyte (1024 KB) */
 export const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
 
-/** Maximum file size allowed for upload (500 MB) */
+/** Standard local input size limit (500 MiB). */
 export const MAX_FILE_SIZE = 500 * BYTES_PER_MB;
+/** Extended limit for MP4 validated through file-backed range reads. */
+export const MAX_RANGE_MP4_BYTES = 512 * BYTES_PER_MB;
 
 /** Maximum codec-private decoder configuration retained or sent to a Worker. */
 export const MAX_CODEC_DESCRIPTION_BYTES = 1 * BYTES_PER_MB;
@@ -65,7 +67,7 @@ export const WEBP_MAX_FRAMES = 9000;
 
 /** Maximum number of frames that may be emitted into one GIF output. */
 export const GIF_MAX_OUTPUT_FRAMES = 9_000;
-/** Maximum cumulative GIF bytes retained by the owned GIF writer. */
+/** Maximum GIF output storage, including overlapping write and finalization allocations. */
 export const GIF_MAX_OUTPUT_BYTES = 256 * BYTES_PER_MB;
 
 /** Aggregate frame-pipeline and WebP-finalization memory envelope. */

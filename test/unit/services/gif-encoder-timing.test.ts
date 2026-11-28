@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@services/gif-owned-writer', () => ({
   OwnedGifWriter: class {
-    readonly stream = { buffer: new ArrayBuffer(4096) };
+    readonly retainedBytes = 4096;
     bytes() {
       return new Uint8Array(64);
     }
