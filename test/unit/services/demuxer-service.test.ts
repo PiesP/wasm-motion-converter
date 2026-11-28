@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   packet: vi.fn(),
   readPacket: vi.fn(),
   verifyVisibleVp9Key: vi.fn(async () => true),
+  verifyStandaloneVp9Keys: vi.fn(async () => false),
   release: vi.fn(),
   enablePacketReadWindow: vi.fn(),
   transferStats: { wasmCapacityBytes: 8 * 1024 * 1024 },
@@ -30,6 +31,7 @@ vi.mock('@services/owned-demux-core', () => ({
     packetAsync: mocks.packet,
     readPacket: mocks.readPacket,
     verifyVisibleVp9Key: mocks.verifyVisibleVp9Key,
+    verifyStandaloneVp9Keys: mocks.verifyStandaloneVp9Keys,
     release: mocks.release,
     enablePacketReadWindow: mocks.enablePacketReadWindow,
     seekWorkspaceBytes: 0,
@@ -216,7 +218,12 @@ describe('demuxVideo owned packet route', () => {
         { ...request(1), format, inputBuffer: undefined, inputBlob: new Blob() },
         { ...metadata, config: { ...metadata.config, codec: 'vp09.00.10.08' } }
       );
-      expect(result.canVerifyVp9PressureKey).toBe(canProbe ? true : undefined);
+      expect(Boolean(result.verifyStandaloneVp9Keys)).toBe(canProbe);
+      expect(mocks.verifyStandaloneVp9Keys).not.toHaveBeenCalled();
+      if (canProbe) {
+        await expect(result.verifyStandaloneVp9Keys?.()).resolves.toBe(false);
+        expect(mocks.verifyStandaloneVp9Keys).toHaveBeenCalledWith(6, undefined);
+      }
       result.setPacketReadGate!(async (chargedBytes, candidate) => {
         expect(chargedBytes).toBe(1028);
         expect(mocks.verifyVisibleVp9Key).not.toHaveBeenCalled();

@@ -897,7 +897,7 @@ export class OwnedDemuxSession {
     )
       return false;
     const [header, sync0, sync1, sync2] = new Uint8Array(
-      await this.readPacketInternal(packet, signal, false, prefixLength)
+      await this.readPacketInternal(packet, signal, false, 'vp9-prefix')
     );
     // Frame marker 2, profile 0, no show-existing, key frame, and show-frame.
     return (
@@ -909,11 +909,28 @@ export class OwnedDemuxSession {
     );
   }
 
+  /** Limit the eager scan to 32 indexed packets and at most 160 source bytes. */
+  async verifyStandaloneVp9Keys(startIndex: number, signal?: AbortSignal): Promise<boolean> {
+    const packetCount = this.indexInfo?.packetCount ?? 0;
+    if (!this.sourceIsBlob || startIndex >= packetCount || packetCount - startIndex > 32)
+      return false;
+    for (let index = startIndex; index < packetCount; index++) {
+      const packet = await this.packetAsync(index, signal);
+      if (!(await this.verifyVisibleVp9Key(packet, signal))) return false;
+      const [tail] = new Uint8Array(
+        await this.readPacketInternal(packet, signal, false, 'vp9-suffix')
+      );
+      // Leave packets with any possible superframe index on the pressure path.
+      if (tail === undefined || (tail & 0xe0) === 0xc0) return false;
+    }
+    return true;
+  }
+
   private async readPacketInternal(
     packet: OwnedDemuxPacket,
     signal: AbortSignal | undefined,
     fromSeek: boolean,
-    prefixLength?: number
+    probe?: 'vp9-prefix' | 'vp9-suffix'
   ): Promise<ArrayBuffer> {
     if (
       !this.active ||
@@ -955,14 +972,15 @@ export class OwnedDemuxSession {
         start + packet.byteLength > this.source.size
       )
         throw new Error('Owned demux packet range invalid');
-      const length = prefixLength ?? packet.byteLength;
+      const readStart = probe === 'vp9-suffix' ? start + packet.byteLength - 1 : start;
+      const length = probe === 'vp9-prefix' ? 4 : probe === 'vp9-suffix' ? 1 : packet.byteLength;
       // The pressure probe uses existing realm credit for an exact range read.
       // It can never fill a window or read the full packet before admission.
       const data =
-        prefixLength === undefined
+        probe === undefined
           ? await this.readOrdinaryPacket(start, length, signal)
-          : await readOwnedRange(this.source, start, start + length, signal);
-      if (prefixLength === undefined) {
+          : await readOwnedRange(this.source, readStart, readStart + length, signal);
+      if (probe === undefined) {
         this.packetReadBytes += data.byteLength;
       } else {
         this.rangeReads++;

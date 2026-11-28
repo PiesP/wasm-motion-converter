@@ -41,8 +41,8 @@ export interface DemuxResult {
   encodedChunkBudgetBytes?: number | undefined;
   /** Register the decoder's per-packet byte admission before the stream is pulled. */
   setPacketReadGate?: ((gate: PacketReadGate) => void) | undefined;
-  /** Direct VP9 profile-0 GIF input can verify a key before draining decoder pressure. */
-  canVerifyVp9PressureKey?: true | undefined;
+  /** Optional bounded, pre-decode proof for direct VP9 profile-0 GIF input. */
+  verifyStandaloneVp9Keys?: (() => Promise<boolean>) | undefined;
   /** Estimated frame count until the stream finishes, then the exact packet count. */
   totalFrames: number;
   duration: number;
@@ -287,7 +287,9 @@ export async function demuxVideo(
       chunks,
       config,
       encodedChunkBudgetBytes: chunkBudgetBytes,
-      ...(mayVerifyPressureKey ? { canVerifyVp9PressureKey: true } : {}),
+      ...(mayVerifyPressureKey
+        ? { verifyStandaloneVp9Keys: () => session.verifyStandaloneVp9Keys(startIndex, signal) }
+        : {}),
       // Direct packet sources use indexed byte credit independently of file size.
       // The transport-stream reconstruction path keeps its existing boundary.
       ...(directBlobPackets

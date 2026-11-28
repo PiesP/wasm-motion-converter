@@ -656,25 +656,32 @@ export async function decodeFrames(
   let activeConfig: VideoDecoderConfig;
   try {
     activeConfig = await resolveDecoderConfig(demux.config, hwAccel);
+    if (
+      demux.verifyStandaloneVp9Keys &&
+      queuedSourceHeadroomBytes + targetWorkingBytes + motionMemoryBytes >
+        FRAME_PIPELINE_MEMORY_BUDGET_BYTES
+    ) {
+      const standalone = await demux.verifyStandaloneVp9Keys().catch(() => false);
+      signal?.throwIfAborted();
+      processingFailureSignal?.throwIfAborted();
+      if (!standalone) {
+        // Request earlier output when a native burst could exceed source-frame credit.
+        const lowLatencyConfig = { ...activeConfig, optimizeForLatency: true };
+        try {
+          if ((await VideoDecoder.isConfigSupported(lowLatencyConfig)).supported) {
+            activeConfig = lowLatencyConfig;
+          }
+        } catch {
+          // The ordinary configuration has already passed the support check.
+        }
+      }
+      signal?.throwIfAborted();
+      processingFailureSignal?.throwIfAborted();
+    }
   } catch (error) {
     recordDecoderError(error);
     const primaryFailure = getLatchedFailureError() ?? normalizeFailure(error);
     throw (await cleanupDecoderLifecycle(primaryFailure)) ?? primaryFailure;
-  }
-  if (
-    demux.canVerifyVp9PressureKey &&
-    queuedSourceHeadroomBytes + targetWorkingBytes + motionMemoryBytes >
-      FRAME_PIPELINE_MEMORY_BUDGET_BYTES
-  ) {
-    // Request earlier output when a native burst could exceed source-frame credit.
-    const lowLatencyConfig = { ...activeConfig, optimizeForLatency: true };
-    try {
-      if ((await VideoDecoder.isConfigSupported(lowLatencyConfig)).supported) {
-        activeConfig = lowLatencyConfig;
-      }
-    } catch {
-      // The ordinary configuration has already passed the support check.
-    }
   }
 
   // Create per-conversion frame processing context for the pixel-copy path cache.

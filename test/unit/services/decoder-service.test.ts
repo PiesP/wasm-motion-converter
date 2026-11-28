@@ -488,6 +488,7 @@ describe('decoder-service', () => {
       { codedSize: 4000, eligible: true, support: 'supported', expectProbe: true },
       { codedSize: 4000, eligible: true, support: 'unsupported', expectProbe: true },
       { codedSize: 4000, eligible: true, support: 'throws', expectProbe: true },
+      { codedSize: 4000, eligible: true, support: 'standalone', expectProbe: false },
       { codedSize: 4000, eligible: undefined, support: 'supported', expectProbe: false },
       { codedSize: 640, eligible: true, support: 'supported', expectProbe: false },
     ] as const)(
@@ -505,8 +506,11 @@ describe('decoder-service', () => {
           const demux = deliveryDemux();
           demux.config.codedWidth = codedSize;
           demux.config.codedHeight = 2160;
+          const verifyStandaloneVp9Keys = eligible
+            ? vi.fn(async () => support === 'standalone')
+            : undefined;
           await decodeFrames(
-            { ...demux, canVerifyVp9PressureKey: eligible },
+            { ...demux, verifyStandaloneVp9Keys },
             { width: 8, height: 8, onFrameAvailable: releasePixels }
           );
           expect(configure).toHaveBeenCalledWith(
@@ -514,6 +518,8 @@ describe('decoder-service', () => {
           );
           const hintedConfig = probe.mock.calls.find(([config]) => config.optimizeForLatency)?.[0];
           expect(Boolean(hintedConfig)).toBe(expectProbe);
+          if (verifyStandaloneVp9Keys)
+            expect(verifyStandaloneVp9Keys).toHaveBeenCalledTimes(codedSize === 4000 ? 1 : 0);
           if (expectProbe && support === 'supported') {
             expect(configure).toHaveBeenCalledWith(hintedConfig);
           }
@@ -524,6 +530,27 @@ describe('decoder-service', () => {
         }
       }
     );
+
+    it('releases demux and does not configure a decoder when the VP9 proof is canceled', async () => {
+      vi.stubGlobal('VideoDecoder', FakeVideoDecoder);
+      const cancellation = new AbortController();
+      const proof = Promise.withResolvers<boolean>();
+      const verifyStandaloneVp9Keys = vi.fn(() => proof.promise);
+      const demux = deliveryDemux();
+      demux.config.codedWidth = 4000;
+      demux.config.codedHeight = 2160;
+      const result = decodeFrames(
+        { ...demux, verifyStandaloneVp9Keys },
+        { width: 8, height: 8, onFrameAvailable: releasePixels },
+        cancellation.signal
+      );
+      await vi.waitFor(() => expect(verifyStandaloneVp9Keys).toHaveBeenCalledOnce());
+      cancellation.abort();
+      proof.resolve(true);
+      await expect(result).rejects.toThrow('Cancelled');
+      expect(demux.dispose).toHaveBeenCalledOnce();
+      expect(FakeVideoDecoder.configureCalls).toBe(0);
+    });
 
     it.each([undefined, null, 'invalid callback', true])(
       'rejects a missing or invalid CPU callback before decoder work (%s)',

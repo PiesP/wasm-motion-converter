@@ -106,6 +106,38 @@ describe('conversion owned packet source window', () => {
   });
 
   it.each([
+    [0x00, 1], // no possible superframe marker; continue until the first delta
+    [0xc0, 0], // possible superframe; stop before checking the next descriptor
+  ])(
+    'uses only prefix and suffix reads in the standalone VP9 proof (%i)',
+    async (tail, advance) => {
+      const { session, source } = await fixtureSession('vp9.webm');
+      try {
+        await session.analyze();
+        const first = await session.packetAsync(0);
+        const read = source.slice.bind(source);
+        const range = vi
+          .spyOn(source, 'slice')
+          .mockImplementation((start, end) =>
+            end! - start! === 1 ? new Blob([new Uint8Array([tail])]) : read(start, end)
+          );
+        const descriptors = vi.spyOn(session, 'packetAsync');
+        await expect(session.verifyStandaloneVp9Keys(0)).resolves.toBe(false);
+        expect(descriptors).toHaveBeenCalledTimes(1 + advance);
+        const start = Number(first.offset);
+        expect(range.mock.calls).toEqual([
+          [start, start + 4],
+          [start + first.byteLength - 1, start + first.byteLength],
+        ]);
+        expect(ownedReadCreditStats().liveBytes).toBe(0);
+      } finally {
+        session.release();
+        vi.restoreAllMocks();
+      }
+    }
+  );
+
+  it.each([
     [0x80, 0x49, 0x83, 0x42], // hidden key
     [0x86, 0x49, 0x83, 0x42], // visible delta
     [0x88, 0x49, 0x83, 0x42], // show existing
