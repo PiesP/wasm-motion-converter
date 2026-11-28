@@ -5,7 +5,7 @@
 
 use crate::{
     ts::{has_separate_decode_epoch, rebase_packet, relative_duration, TsPacketSource},
-    Error, Format, Packet, Track, METADATA_BUDGET, PACKET_BUDGET,
+    Error, Format, Packet, Track, METADATA_BUDGET, PACKET_BUDGET, STANDARD_INPUT_LIMIT,
 };
 
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
@@ -305,6 +305,9 @@ impl Import {
             return Err(Error::Invalid);
         }
         let format = parse_format(b[12])?;
+        if self.file_len > STANDARD_INPUT_LIMIT && format != Format::Mp4 {
+            return Err(Error::ResourceLimit);
+        }
         let count = u32::from_le_bytes(b[24..28].try_into().unwrap()) as usize;
         let desc = u32::from_le_bytes(b[28..32].try_into().unwrap()) as usize;
         let codec = u32::from_le_bytes(b[32..36].try_into().unwrap()) as usize;
@@ -607,6 +610,28 @@ mod tests {
         assert_eq!(format, Format::Mp4);
         assert!(codec.is_empty());
         assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn extended_source_snapshot_import_only_accepts_mp4() {
+        let track = fixture();
+        let file_len = STANDARD_INPUT_LIMIT + 1;
+        for (format, tag) in [(Format::Mp4, 1), (Format::Ebml, 2), (Format::Ts, 3)] {
+            let mut bytes = wire(&track, Format::Mp4, &[]);
+            bytes[12] = tag;
+            bytes[16..24].copy_from_slice(&file_len.to_le_bytes());
+            let crc_at = bytes.len() - 4;
+            let crc = !crc32(!0, &bytes[..crc_at]);
+            bytes[crc_at..].copy_from_slice(&crc.to_le_bytes());
+            let mut import = Import::new(bytes.len(), file_len).unwrap();
+            if format == Format::Mp4 {
+                import.feed(&bytes).unwrap();
+                assert!(import.step().unwrap());
+                assert_eq!(import.take().unwrap().1, format);
+            } else {
+                assert_eq!(import.feed(&bytes[..HEADER]), Err(Error::ResourceLimit));
+            }
+        }
     }
 
     #[test]

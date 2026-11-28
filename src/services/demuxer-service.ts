@@ -28,12 +28,21 @@ import { getTrimmedDurationSeconds } from '@utils/trim-time';
 
 import { fingerprintOwnedDemuxSource } from './owned-demux-index-snapshot';
 
+type PacketReadGate = (
+  chargedBytes: number,
+  keyCandidate?: { timestampUs: number; verify: () => Promise<boolean> }
+) => boolean | Promise<boolean>;
+
 export interface DemuxResult {
   /** One-shot packet stream. The producer advances only when the decoder requests a chunk. */
   chunks: Iterable<EncodedVideoChunk> | AsyncIterable<EncodedVideoChunk>;
   config: VideoDecoderConfig;
   /** Maximum encoded bytes that the decoder may retain before emitting matching output. */
   encodedChunkBudgetBytes?: number | undefined;
+  /** Register the decoder's per-packet byte admission before the stream is pulled. */
+  setPacketReadGate?: ((gate: PacketReadGate) => void) | undefined;
+  /** Optional bounded, pre-decode proof for direct VP9 profile-0 GIF input. */
+  verifyStandaloneVp9Keys?: (() => Promise<boolean>) | undefined;
   /** Estimated frame count until the stream finishes, then the exact packet count. */
   totalFrames: number;
   duration: number;
@@ -84,10 +93,12 @@ export async function demuxVideo(
   const inputSource = resolveInputSource(request);
   const inputSizeBytes = getInputSizeBytes(inputSource);
   const session = await createOwnedDemuxSession(inputSource, signal);
+  let packetReadGate: PacketReadGate | undefined;
   let disposed = false;
   function dispose(): void {
     if (disposed) return;
     disposed = true;
+    packetReadGate = undefined;
     signal?.removeEventListener('abort', dispose);
     session.release();
   }
@@ -112,6 +123,13 @@ export async function demuxVideo(
     }
     track ??= await session.analyze(signal);
     const config = preComputedMetadata?.config ?? ownedDecoderConfig(track);
+    const directBlobPackets = inputSource instanceof Blob && !session.reconstructsPackets;
+    const mayVerifyPressureKey =
+      request.format === 'gif' &&
+      directBlobPackets &&
+      (track.codec === 'vp09' || track.codec === 'VP90') &&
+      (track.codecString?.startsWith('vp09.00.') ?? track.description[4] === 0) &&
+      config.codec.startsWith('vp09.00.');
     const configDescriptionBytes = config.description?.byteLength ?? 0;
     if (!Number.isSafeInteger(configDescriptionBytes) || configDescriptionBytes > 1024 * 1024)
       throw new OwnedDemuxResourceError('Demux memory limit exceeded by decoder configuration');
@@ -212,6 +230,19 @@ export async function demuxVideo(
             throw new OwnedDemuxResourceError(
               `Demux memory limit exceeded by one encoded packet (${packetBudgetBytes} byte budget)`
             );
+          if (packetReadGate) {
+            const admission =
+              mayVerifyPressureKey && packet.key
+                ? packetReadGate(packetRetainedBytes, {
+                    get timestampUs() {
+                      return ownedTimestampUs(packet.ptsTicks, track.timescale);
+                    },
+                    verify: () => session.verifyVisibleVp9Key(packet, signal),
+                  })
+                : packetReadGate(packetRetainedBytes);
+            if (admission !== true && !(await admission)) return;
+            signal?.throwIfAborted();
+          }
           let data: ArrayBuffer | null = await session.readPacket(packet, signal);
           signal?.throwIfAborted();
           let chunk: EncodedVideoChunk;
@@ -260,6 +291,18 @@ export async function demuxVideo(
       chunks,
       config,
       encodedChunkBudgetBytes: chunkBudgetBytes,
+      ...(mayVerifyPressureKey
+        ? { verifyStandaloneVp9Keys: () => session.verifyStandaloneVp9Keys(startIndex, signal) }
+        : {}),
+      // Direct packet sources use indexed byte credit independently of file size.
+      // The transport-stream reconstruction path keeps its existing boundary.
+      ...(directBlobPackets
+        ? {
+            setPacketReadGate(gate: PacketReadGate) {
+              packetReadGate = gate;
+            },
+          }
+        : {}),
       totalFrames: estimatedTotalFrames,
       duration,
       sourceTotalMs: 0,
