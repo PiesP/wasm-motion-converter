@@ -80,7 +80,7 @@ export async function handleFileSelected(
 
   let validation: Awaited<ReturnType<typeof validateVideoFile>>;
   try {
-    validation = await validateVideoFile(file, t);
+    validation = await validateVideoFile(file, t, run.signal);
   } catch (error) {
     clearOwnedInputSelection(selectionGeneration);
     runtime.finishAnalysisRun(run);

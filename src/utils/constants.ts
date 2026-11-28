@@ -21,8 +21,10 @@ export const BYTES_PER_KB = 1024;
 /** Bytes per megabyte (1024 KB) */
 export const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
 
-/** Maximum file size allowed for upload (500 MB) */
+/** Standard local input size limit (500 MiB). */
 export const MAX_FILE_SIZE = 500 * BYTES_PER_MB;
+/** Extended limit for MP4 validated through file-backed range reads. */
+export const MAX_RANGE_MP4_BYTES = 512 * BYTES_PER_MB;
 
 /** Maximum codec-private decoder configuration retained or sent to a Worker. */
 export const MAX_CODEC_DESCRIPTION_BYTES = 1 * BYTES_PER_MB;

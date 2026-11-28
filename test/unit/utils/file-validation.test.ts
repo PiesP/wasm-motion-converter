@@ -53,13 +53,27 @@ describe('validateVideoFile', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('rejects file exceeding size limit', async () => {
-    const oversized = new File([new ArrayBuffer(500 * 1024 * 1024 + 1)], 'video.mp4', {
-      type: 'video/mp4',
-    });
-    const result = await validateVideoFile(oversized, mockT);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('too large');
+  it('admits only a valid leading MP4 box up to the extended size limit', async () => {
+    const maximum = 512 * 1024 * 1024;
+    const standard = 500 * 1024 * 1024;
+    const ftyp = new Uint8Array(16);
+    const field = new DataView(ftyp.buffer);
+    field.setUint32(0, 16);
+    field.setUint32(4, 0x66747970);
+    const file = (name: string, size: number, data: Uint8Array<ArrayBuffer>) => {
+      const input = new File([data], name);
+      Object.defineProperty(input, 'size', { value: size });
+      return input;
+    };
+    expect((await validateVideoFile(file('clip.mp4', maximum, ftyp), mockT)).valid).toBe(true);
+    expect((await validateVideoFile(file('clip.mp4', maximum + 1, ftyp), mockT)).valid).toBe(false);
+    expect(
+      (await validateVideoFile(file('clip.mp4', standard + 1, Uint8Array.of(0x47)), mockT)).valid
+    ).toBe(false);
+    field.setUint32(0, 17);
+    expect((await validateVideoFile(file('clip.mp4', standard + 1, ftyp), mockT)).valid).toBe(
+      false
+    );
   });
 
   it('rejects file with unsupported MIME and no valid extension', async () => {

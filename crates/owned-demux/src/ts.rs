@@ -33,6 +33,26 @@ pub struct TsResult {
     pub codec_string: String,
 }
 
+pub(crate) fn has_separate_decode_epoch(packet: &Packet) -> bool {
+    packet.pts.abs_diff(packet.dts) > (CLOCK_WRAP as u64 / 2)
+}
+
+pub(crate) fn relative_duration(end: u64, origin: i64) -> Result<u64, Error> {
+    let end = i64::try_from(end).map_err(|_| Error::Overflow)?;
+    u64::try_from(end.checked_sub(origin).ok_or(Error::Overflow)?).map_err(|_| Error::Overflow)
+}
+
+/// Use one presentation origin for both clocks; DTS preroll may precede zero.
+pub(crate) fn rebase_packet(packet: &mut Packet, origin: i64) -> Result<(), Error> {
+    // A legacy DTS epoch may change within a stream when a PES omits DTS.
+    if has_separate_decode_epoch(packet) {
+        packet.dts = unwrap_clock(packet.dts.rem_euclid(CLOCK_WRAP), Some(packet.pts))?;
+    }
+    packet.pts = packet.pts.checked_sub(origin).ok_or(Error::Overflow)?;
+    packet.dts = packet.dts.checked_sub(origin).ok_or(Error::Overflow)?;
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VideoInfo {
     pub width: u32,
@@ -287,7 +307,7 @@ fn pes_prefix(
     };
     let pts = unwrap_clock(raw_pts, prior_pts)?;
     let dts = if flags == 3 {
-        unwrap_clock(timestamp(&data[14..], 1)?, prior_dts)?
+        unwrap_clock(timestamp(&data[14..], 1)?, prior_dts.or(Some(pts)))?
     } else {
         pts
     };
@@ -1021,8 +1041,12 @@ impl TsParser {
         let end = last_pts
             .checked_add(i64::try_from(duration).map_err(|_| Error::Overflow)?)
             .ok_or(Error::Overflow)?;
+        let (&origin, _) = self
+            .presentation
+            .first_key_value()
+            .ok_or(Error::Unsupported)?;
         let video_info = self.video_info.ok_or(Error::Unsupported)?;
-        let track = Track {
+        let mut track = Track {
             track_id: u32::from(self.video_pid.ok_or(Error::Unsupported)?),
             codec: self.codec.ok_or(Error::Unsupported)?,
             width: video_info.width,
@@ -1034,7 +1058,7 @@ impl TsParser {
             color_matrix: video_info.color_matrix,
             color_full_range: video_info.color_full_range,
             timescale: 90_000,
-            duration: u64::try_from(end).map_err(|_| Error::Overflow)?,
+            duration: relative_duration(u64::try_from(end).map_err(|_| Error::Overflow)?, origin)?,
             rotation: 0,
             description: Vec::new(),
             packets: self.packets,
@@ -1043,6 +1067,9 @@ impl TsParser {
             fragment_default_flags: 0,
             edit_shift: 0,
         };
+        for packet in &mut track.packets {
+            rebase_packet(packet, origin)?;
+        }
         Ok(TsResult {
             track,
             packet_sources: self.packet_sources,
@@ -1271,6 +1298,44 @@ mod tests {
         (file, first, second)
     }
 
+    #[test]
+    fn ts_rebases_wrapped_clocks_without_reordering_packets() {
+        let (file, key, delta) = small_owned_ts();
+        let mut source = file[..TS_BYTES * 2].to_vec();
+        let wrap = CLOCK_WRAP as u64;
+        for (index, (pts, dts, data)) in [
+            (wrap - 3000, wrap - 6000, key.as_slice()),
+            (3000, wrap - 3000, delta.as_slice()),
+            (0, 0, delta.as_slice()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut pts = pts90k(pts);
+            pts[0] |= 0x10;
+            let mut dts = pts90k(dts);
+            dts[0] ^= 0x30;
+            let mut pes = vec![0, 0, 1, 0xe0, 0, 0, 0x80, 0xc0, 10];
+            pes.extend_from_slice(&pts);
+            pes.extend_from_slice(&dts);
+            pes.extend_from_slice(data);
+            source.extend_from_slice(&transport(0x100, true, index as u8, &pes));
+        }
+        let mut parser = TsParser::new(source.len() as u64).unwrap();
+        parser.feed(0, &source).unwrap();
+        let track = parser.finish().unwrap().track;
+        let clocks: Vec<_> = track
+            .packets
+            .iter()
+            .map(|p| (p.pts, p.dts, p.duration))
+            .collect();
+        assert_eq!(
+            clocks,
+            [(0, -3000, 3000), (6000, 0, 3000), (3000, 3000, 3000)]
+        );
+        assert_eq!(track.duration, 9000);
+    }
+
     fn hex_bytes(hex: &str) -> Vec<u8> {
         hex.as_bytes()
             .as_chunks::<2>()
@@ -1344,7 +1409,7 @@ mod tests {
         }
         let result = parser.finish().unwrap();
         assert_eq!((result.track.width, result.track.height), (96, 64));
-        assert_eq!(result.track.duration, 186000);
+        assert_eq!(result.track.duration, 30000);
         assert_eq!(result.track.packets.len(), 2);
         assert!(result.track.packets[0].key);
         assert!(!result.track.packets[1].key);
@@ -1353,7 +1418,7 @@ mod tests {
                 result.track.packets[0].pts,
                 result.track.packets[0].duration
             ),
-            (156000, 15000)
+            (0, 15000)
         );
         for (i, expected) in [first, second].into_iter().enumerate() {
             let source = result.packet_sources[i];
