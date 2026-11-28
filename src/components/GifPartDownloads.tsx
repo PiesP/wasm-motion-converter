@@ -9,6 +9,7 @@ import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js';
 interface GifPartDownloadsProps {
   storage: GifPartIndexedDbSink;
   busy: boolean;
+  continuousGif?: boolean;
   onDiscard: () => void;
 }
 
@@ -70,9 +71,12 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
     }
   };
 
+  const heading = () =>
+    t(props.continuousGif ? 'result.convertedAnimation' : 'result.gifPartDownloads');
+
   return (
-    <section class="mt-6 space-y-3" aria-busy={pending()} aria-label={t('result.gifPartDownloads')}>
-      <h2 class="text-base font-semibold">{t('result.gifPartDownloads')}</h2>
+    <section class="mt-6 space-y-3" aria-busy={pending()} aria-label={heading()}>
+      <h2 class="text-base font-semibold">{heading()}</h2>
       <ul class="space-y-2">
         <For each={discardStarted() ? [] : props.storage.files()}>
           {(file) => (
@@ -109,7 +113,7 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
           onClick={() => void discard()}
           data-testid="discard-gif-parts"
         >
-          {t('result.discardGifParts')}
+          {t(props.continuousGif ? 'update.clearResults' : 'result.discardGifParts')}
         </Button>
       </div>
       <Show when={failed()}>

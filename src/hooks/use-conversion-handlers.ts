@@ -32,7 +32,8 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   handleConvert: () => Promise<void>;
   handleConvertGifParts: (
     report: (message: string) => void,
-    retainStoredParts?: (sink: GifPartIndexedDbSink) => boolean
+    retainStoredParts?: (sink: GifPartIndexedDbSink) => boolean,
+    continuousGif?: boolean
   ) => Promise<void>;
   handleReset: () => void;
   handleCancelConversion: () => void;
@@ -55,8 +56,8 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   return {
     handleFileSelected: (file: File) => handleFileSelected(file, runtime, options.t),
     handleConvert: () => handleConvert(runtime, options.t),
-    handleConvertGifParts: (report, retainStoredParts) =>
-      handleConvertGifParts(runtime, options.t, report, retainStoredParts),
+    handleConvertGifParts: (report, retainStoredParts, continuousGif) =>
+      handleConvertGifParts(runtime, options.t, report, retainStoredParts, continuousGif),
     handleReset: () => handleReset(runtime),
     handleCancelConversion: () => handleCancelConversion(runtime),
     handleCancelAnalysis: () => handleCancelAnalysis(runtime),

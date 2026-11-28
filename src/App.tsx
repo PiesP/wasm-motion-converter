@@ -104,12 +104,19 @@ const App: Component = () => {
   const [gifPartsStatus, setGifPartsStatus] = createSignal('');
   const [storedGifParts, setStoredGifParts] = createSignal<GifPartIndexedDbSink>();
   const nativeGifPartSaving = supportsGifPartSaving();
-  const experimentalGifPartStorage =
-    !nativeGifPartSaving &&
+  const requestedGifStorage = new URLSearchParams(window.location.search).get('gif-part-storage');
+  const continuousGif =
+    requestedGifStorage === 'opfs' &&
     window.isSecureContext &&
-    new URLSearchParams(window.location.search).get('gif-part-storage') === 'indexeddb' &&
-    typeof window.indexedDB?.databases === 'function' &&
-    typeof window.navigator.locks?.request === 'function';
+    typeof navigator.storage?.getDirectory === 'function' &&
+    typeof window.FileSystemFileHandle?.prototype.createWritable === 'function';
+  const experimentalGifPartStorage =
+    continuousGif ||
+    (!nativeGifPartSaving &&
+      window.isSecureContext &&
+      requestedGifStorage === 'indexeddb' &&
+      typeof window.indexedDB?.databases === 'function' &&
+      typeof window.navigator.locks?.request === 'function');
   createEffect(() => {
     inputFile();
     setGifPartsStatus('');
@@ -341,7 +348,8 @@ const App: Component = () => {
             setStoredGifParts(storage);
             return true;
           }
-        : undefined
+        : undefined,
+      continuousGif
     );
   };
 
@@ -504,7 +512,7 @@ const App: Component = () => {
                 onCancel={cancelConversion}
                 onConvert={handleConvertWithMemoryCheck}
                 onConvertGifParts={
-                  nativeGifPartSaving || (experimentalGifPartStorage && !storedGifParts())
+                  (experimentalGifPartStorage ? !storedGifParts() : nativeGifPartSaving)
                     ? saveGifParts
                     : undefined
                 }
@@ -527,6 +535,7 @@ const App: Component = () => {
                 }
                 settings={conversionSettings()}
                 storeGifPartsInBrowser={experimentalGifPartStorage}
+                continuousGif={continuousGif}
               />
             </div>
           </div>
@@ -542,6 +551,7 @@ const App: Component = () => {
             <GifPartDownloads
               storage={storage}
               busy={isBusy()}
+              continuousGif={continuousGif}
               onDiscard={() => {
                 if (storedGifParts() !== storage) return;
                 setStoredGifParts(undefined);

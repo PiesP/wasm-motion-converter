@@ -137,6 +137,7 @@ export interface TranslationKeys {
   'settings.stopConversion': string;
   'settings.saveGifParts': string;
   'settings.storeGifParts': string;
+  'settings.storeContinuousGif': string;
   'settings.tooltip.quality': string;
   'settings.tooltip.scale': string;
   'settings.tooltip.format': string;
@@ -255,6 +256,7 @@ export interface TranslationKeys {
   'result.gifPartsPartial': string;
   'result.gifPartDownloads': string;
   'result.gifPartsStored': string;
+  'result.continuousGifStored': string;
   'result.gifPartsStoredPartial': string;
   'result.prepareGifPart': string;
   'result.downloadGifPart': string;

@@ -24,6 +24,7 @@ interface SettingsPanelProps {
   onConvert: () => void;
   onConvertGifParts?: (() => void) | undefined;
   storeGifPartsInBrowser?: boolean;
+  continuousGif?: boolean;
   gifPartsStatus?: string | undefined;
   onCancel: () => void;
   onFormatChange: (format: ConversionSettings['format']) => void;
@@ -55,6 +56,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     'onConvert',
     'onConvertGifParts',
     'storeGifPartsInBrowser',
+    'continuousGif',
     'gifPartsStatus',
     'onCancel',
     'onFormatChange',
@@ -194,7 +196,13 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
               variant="ghost"
               data-testid="convert-gif-parts-button"
             >
-              {t(local.storeGifPartsInBrowser ? 'settings.storeGifParts' : 'settings.saveGifParts')}
+              {t(
+                local.continuousGif
+                  ? 'settings.storeContinuousGif'
+                  : local.storeGifPartsInBrowser
+                    ? 'settings.storeGifParts'
+                    : 'settings.saveGifParts'
+              )}
             </Button>
           )}
         </Show>

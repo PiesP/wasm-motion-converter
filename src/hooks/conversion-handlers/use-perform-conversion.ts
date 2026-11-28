@@ -261,7 +261,8 @@ export async function handleConvertGifParts(
   runtime: ConversionRuntimeController,
   t: TFunction,
   report: (message: string) => void,
-  retainStoredParts?: (sink: GifPartIndexedDbSink) => boolean
+  retainStoredParts?: (sink: GifPartIndexedDbSink) => boolean,
+  continuousGif = false
 ): Promise<void> {
   const file = inputFile();
   const metadata = videoMetadata();
@@ -308,7 +309,11 @@ export async function handleConvertGifParts(
     started = true;
     runtime.startMemoryMonitoring();
     if (destination) sink = createGifPartFileSink(destination);
-    else {
+    else if (continuousGif) {
+      const { createGifPartOpfsSink } = await import('@services/gif-part-opfs-sink');
+      signal.throwIfAborted();
+      stored = await createGifPartOpfsSink();
+    } else {
       const { createGifPartIndexedDbSink } = await import('@services/gif-part-indexed-db-sink');
       signal.throwIfAborted();
       stored = await createGifPartIndexedDbSink();
@@ -340,7 +345,12 @@ export async function handleConvertGifParts(
   } finally {
     const currentInput = inputFile() === file;
     const storedCount = stored?.count ?? 0;
-    const retained = stored && storedCount > 0 && currentInput && retainStoredParts?.(stored);
+    const retained =
+      stored &&
+      storedCount > 0 &&
+      currentInput &&
+      (!continuousGif || (completed && !signal.aborted)) &&
+      retainStoredParts?.(stored);
     try {
       await sink?.removeEmptyFolder();
       if (stored && !retained) await stored.dispose();
@@ -358,6 +368,8 @@ export async function handleConvertGifParts(
             folder: sink.folderName,
           })
         );
+      } else if (retained && continuousGif) {
+        report(t('result.continuousGifStored'));
       } else if (retained) {
         report(
           t(completed ? 'result.gifPartsStored' : 'result.gifPartsStoredPartial', {
