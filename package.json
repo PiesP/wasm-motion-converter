@@ -81,7 +81,7 @@
     "@playwright/test": "^1.65.1",
     "@tailwindcss/vite": "4.3.5",
     "@types/dom-webcodecs": "^0.1.19",
-    "@types/node": "26.6.6",
+    "@types/node": "26.6.11",
     "@vitest/browser-playwright": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "gifenc": "1.0.3",
