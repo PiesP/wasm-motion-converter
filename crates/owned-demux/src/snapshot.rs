@@ -3,7 +3,10 @@
 
 //! Versioned logical packet index. The wire data contains no Rust heap pointers.
 
-use crate::{ts::TsPacketSource, Error, Format, Packet, Track, METADATA_BUDGET, PACKET_BUDGET};
+use crate::{
+    ts::{has_separate_decode_epoch, rebase_packet, relative_duration, TsPacketSource},
+    Error, Format, Packet, Track, METADATA_BUDGET, PACKET_BUDGET,
+};
 
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub const STEP_BYTES: usize = 8 * 1024;
@@ -230,6 +233,9 @@ pub struct Import {
     bytes: Vec<u8>,
     total: usize,
     decoded: usize,
+    ts_origin: i64,
+    ts_needs_epoch_alignment: bool,
+    rebased: usize,
     track: Option<Track>,
     format: Option<Format>,
     codec: Option<String>,
@@ -251,6 +257,9 @@ impl Import {
             bytes,
             total,
             decoded: 0,
+            ts_origin: i64::MAX,
+            ts_needs_epoch_alignment: false,
+            rebased: 0,
             track: None,
             format: None,
             codec: None,
@@ -344,7 +353,7 @@ impl Import {
         self.bytes.len() == self.total
     }
 
-    /// Decode at most 256 packet records per call after the bounded input copy.
+    /// Decode or rebase at most 256 packet records per call after the input copy.
     pub fn step(&mut self) -> Result<bool, Error> {
         if !self.complete_input() {
             return Err(Error::Invalid);
@@ -424,6 +433,18 @@ impl Import {
         let codec_len = self.codec.as_ref().ok_or(Error::Invalid)?.len();
         let packet_at = HEADER + TRACK + desc + codec_len;
         let source_at = packet_at + count * PACKET;
+        let is_ts = self.format == Some(Format::Ts);
+        if is_ts && self.decoded == count {
+            if self.rebased == 0 {
+                track.duration = relative_duration(track.duration, self.ts_origin)?;
+            }
+            let end = (self.rebased + 256).min(count);
+            for packet in &mut track.packets[self.rebased..end] {
+                rebase_packet(packet, self.ts_origin)?;
+            }
+            self.rebased = end;
+            return Ok(end == count);
+        }
         let end = (self.decoded + 256).min(count);
         for index in self.decoded..end {
             let p = &b[packet_at + index * PACKET..packet_at + (index + 1) * PACKET];
@@ -442,7 +463,7 @@ impl Import {
             {
                 return Err(Error::Invalid);
             }
-            if self.format == Some(Format::Ts) {
+            if is_ts {
                 let s = &b[source_at + index * SOURCE..source_at + (index + 1) * SOURCE];
                 let source_end = u64::from_le_bytes(s[0..8].try_into().unwrap());
                 let stride = u16::from_le_bytes(s[10..12].try_into().unwrap());
@@ -469,30 +490,37 @@ impl Import {
             {
                 return Err(Error::Invalid);
             }
-            track.packets.push(Packet {
+            let packet = Packet {
                 offset,
                 size,
                 dts,
                 pts,
                 duration,
                 key: p[36] == 1,
-            });
+            };
+            if is_ts {
+                self.ts_origin = self.ts_origin.min(pts);
+                self.ts_needs_epoch_alignment |= has_separate_decode_epoch(&packet);
+            }
+            track.packets.push(packet);
         }
         self.decoded = end;
-        Ok(end == count)
+        if is_ts && end == count && self.ts_origin == 0 && !self.ts_needs_epoch_alignment {
+            self.rebased = count; // Already in presentation time.
+        }
+        Ok(end == count && (!is_ts || self.rebased == count))
     }
 
     pub fn take(mut self) -> Result<(Track, Format, String, Vec<TsPacketSource>), Error> {
-        if self
-            .track
-            .as_ref()
-            .is_none_or(|t| self.decoded != t.packets.len())
-        {
+        let format = self.format.ok_or(Error::Invalid)?;
+        let track = self.track.take().ok_or(Error::Invalid)?;
+        let count = track.packets.len();
+        if self.decoded != count || (format == Format::Ts && self.rebased != count) {
             return Err(Error::Invalid);
         }
         Ok((
-            self.track.take().unwrap(),
-            self.format.ok_or(Error::Invalid)?,
+            track,
+            format,
             self.codec.take().ok_or(Error::Invalid)?,
             self.sources,
         ))
@@ -586,6 +614,7 @@ mod tests {
         let mut track = fixture();
         track.packets[0].offset = 0;
         track.packets[1].offset = 188;
+        track.duration += 1024;
         let sources = [
             TsPacketSource {
                 start: 0,
@@ -604,7 +633,16 @@ mod tests {
         ];
         let valid = wire(&track, Format::Ts, &sources);
         let (restored, format, _, restored_sources) = import(&valid).unwrap();
-        assert_eq!(restored.packets, track.packets);
+        assert_eq!(restored.duration, 24_576);
+        assert_eq!(restored.packets[0].pts, 0);
+        assert_eq!(restored.packets[0].dts, -1024);
+        assert_eq!(restored.packets[1].pts, 12_288);
+        assert_eq!(restored.packets[1].dts, 11_264);
+        assert_eq!(restored.packets[1].duration, track.packets[1].duration);
+        assert_eq!(
+            import(&wire(&restored, Format::Ts, &sources)).unwrap().0,
+            restored
+        );
         assert_eq!(format, Format::Ts);
         assert_eq!(restored_sources.as_slice(), sources.as_slice());
         let mut corrupt = valid;
@@ -613,11 +651,81 @@ mod tests {
     }
 
     #[test]
+    fn restores_legacy_ts_decode_preroll_across_the_clock_wrap() {
+        let mut track = fixture();
+        track.duration = 10;
+        track.packets[0].offset = 0;
+        track.packets[0].pts = 1;
+        track.packets[0].dts = (1i64 << 33) - 2;
+        track.packets[0].duration = 3;
+        track.packets[1].offset = 188;
+        track.packets[1].pts = 4;
+        track.packets[1].dts = 4; // A PTS-only PES reset the legacy DTS epoch.
+        track.packets[1].duration = 3;
+        track.packets.push(Packet {
+            offset: 376,
+            pts: 7,
+            dts: 6,
+            duration: 3,
+            ..track.packets[1].clone()
+        });
+        let sources = [0, 188, 376].map(|start| TsPacketSource {
+            start,
+            end: start + 188,
+            pid: 256,
+            stride: 188,
+            prefix: 0,
+        });
+        let restored = import(&wire(&track, Format::Ts, &sources)).unwrap().0;
+        let clocks: Vec<_> = restored.packets.iter().map(|p| (p.pts, p.dts)).collect();
+        assert_eq!(clocks, [(0, -3), (3, 3), (6, 5)]);
+        assert_eq!(restored.duration, 9);
+    }
+
+    #[test]
     fn oversize_index_is_a_prospective_cache_miss() {
         let mut track = fixture();
         let packet = track.packets[0].clone();
         track.packets.resize(210_000, packet);
         assert!(Export::new(&track, Format::Mp4, "", &[]).unwrap().is_none());
+    }
+
+    #[test]
+    fn legacy_ts_clock_conversion_yields_after_256_packets() {
+        let mut track = fixture();
+        track.packets[0].offset = 0;
+        let packet = track.packets[0].clone();
+        track.packets = vec![packet; 600];
+        let sources = vec![
+            TsPacketSource {
+                start: 0,
+                end: 188,
+                pid: 256,
+                stride: 188,
+                prefix: 0,
+            };
+            600
+        ];
+        let bytes = wire(&track, Format::Ts, &sources);
+        let mut import = Import::new(bytes.len(), 1024).unwrap();
+        for chunk in bytes.chunks(STEP_BYTES) {
+            import.feed(chunk).unwrap();
+        }
+        for decoded in [256, 512, 600] {
+            assert!(!import.step().unwrap());
+            assert_eq!(import.decoded, decoded);
+            assert_eq!(import.rebased, 0);
+        }
+        for rebased in [256, 512] {
+            assert!(!import.step().unwrap());
+            assert_eq!(import.rebased, rebased);
+        }
+        assert!(import.step().unwrap());
+        let restored = import.take().unwrap().0;
+        assert!(restored
+            .packets
+            .iter()
+            .all(|p| p.pts == 0 && p.dts == -1024));
     }
 
     #[test]

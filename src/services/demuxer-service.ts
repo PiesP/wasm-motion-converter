@@ -116,7 +116,11 @@ export async function demuxVideo(
     if (!Number.isSafeInteger(configDescriptionBytes) || configDescriptionBytes > 1024 * 1024)
       throw new OwnedDemuxResourceError('Demux memory limit exceeded by decoder configuration');
     ownedTimestampUs(track.durationTicks, track.timescale);
-    const duration = preComputedMetadata?.duration ?? Number(track.durationTicks) / track.timescale;
+    const trackDuration = Number(track.durationTicks) / track.timescale;
+    // The TS index owns its relative clock even when caller metadata is older.
+    const duration = session.reconstructsPackets
+      ? trackDuration
+      : (preComputedMetadata?.duration ?? trackDuration);
     const stats = preComputedMetadata
       ? null
       : await computeOwnedPacketStats(session, track, signal);

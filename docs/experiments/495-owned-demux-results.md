@@ -6,6 +6,12 @@ Coordinator: [#494](https://github.com/PiesP/wasm-motion-converter/issues/494), 
 
 Production MediaBunny metadata and conversion demux are replaced together by lazily loaded owned Rust/WASM ABI4 and a thin bounded Blob-range host. Current successful MP4/QuickTime, Matroska/WebM and MPEG-TS routes retain decoder configuration, decode order/B-frame dependencies, verified keys/preroll/nonzero trim, timestamps/presentation durations, fragmented/cue-less input, rotation/aspect/color and existing browser orchestration. Ordinary contiguous compressed packets remain host ranges; reconstructed TS packets use explicitly admitted scratch. There is no runtime MediaBunny fallback or automatic whole-conversion retry. Load, ABI, resource, parse and conversion failures remain distinct across the Worker boundary; cancellation/deadline and bootstrap-only main fallback preserve their meanings.
 
+The original MPEG-TS comparison used transport-clock timestamps. The indexed TS
+path now rebases both presentation and decode timestamps to the earliest
+unwrapped presentation timestamp so the product's file-relative trim can use
+the same clock. Packet bytes, decode order, and negative DTS preroll are
+preserved. Existing version-1 TS snapshots are rebased on import.
+
 Selected-input reuse is separately owned: one <=8 MiB snapshot, exact immutable Blob identity and generation, supplementary bounded first/last fingerprint, checked fixed-width import into a fresh conversion-owned core. The idle selected input retains no WASM instance. A fingerprint is not a whole-content identity. Preserve 500 MiB input, 16 MiB contiguous/packet, 32 MiB live metadata/index, 64 MiB queued compressed chunks/linear capacity and 128 MiB aggregate demux limits. Live index storage is inside linear capacity, not another allocation to double-count. Reserved capacity and native allowances are not measured process/GPU peaks.
 
 A 64 KiB conversion-owned Blob payload window is enabled only after aggregate admission. Independent packet copies prevent reuse aliasing; misses, large packets, TS, release and failures evict correctly. Read credit remains held until outstanding physical I/O settles after cancellation. Optional credit refusal chooses exact reads before I/O starts; failed, short or cancelled reads are terminal. No physical zero-copy or peak-memory reduction is claimed.
