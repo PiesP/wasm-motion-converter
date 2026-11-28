@@ -281,7 +281,7 @@ export async function handleConvertGifParts(
   let sink: ReturnType<typeof createGifPartFileSink> | undefined;
   let started = false;
   let completed = false;
-  let failed = false;
+  let failureMessage: 'error.memory' | 'error.gifPartsSaveFailed' | undefined;
   try {
     // Reach the native picker in the trusted click's task, before async preparation.
     const destination = await selectGifPartDirectory();
@@ -321,16 +321,20 @@ export async function handleConvertGifParts(
     await sink.finish(signal);
     completed = true;
   } catch (error) {
-    failed = !signal.aborted && (started || !isCancellationError(error));
-    if (failed)
+    if (!signal.aborted && (started || !isCancellationError(error))) {
+      failureMessage =
+        started && error instanceof WorkerMemoryLimitError
+          ? 'error.memory'
+          : 'error.gifPartsSaveFailed';
       logger.warn('conversion', 'GIF part conversion did not finish', {
         error: getErrorMessage(error),
       });
+    }
   } finally {
     try {
       await sink?.removeEmptyFolder();
     } catch (error) {
-      failed = true;
+      failureMessage = 'error.gifPartsSaveFailed';
       logger.warn('conversion', 'GIF part folder cleanup failed', {
         error: getErrorMessage(error),
       });
@@ -343,8 +347,8 @@ export async function handleConvertGifParts(
             folder: sink.folderName,
           })
         );
-      } else if (failed) {
-        report(t('error.gifPartsSaveFailed'));
+      } else if (failureMessage) {
+        report(t(failureMessage));
       }
     }
     if (started && isActive()) {

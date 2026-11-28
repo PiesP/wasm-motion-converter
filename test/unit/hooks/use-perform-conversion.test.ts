@@ -191,6 +191,48 @@ const localizedProgressT = ((key: string, params?: Record<string, string | numbe
   return value;
 }) as Parameters<typeof handleConvert>[1];
 
+it.each([
+  {
+    outcome: 'memory guidance before the first part',
+    workerError: new WorkerMemoryLimitError('Decoded frame dimensions exceed the per-frame limit'),
+    count: 0,
+    message: 'error.memory',
+  },
+  {
+    outcome: 'destination guidance when saving fails',
+    workerError: new DOMException('Destination full', 'QuotaExceededError'),
+    count: 0,
+    message: 'error.gifPartsSaveFailed',
+  },
+  {
+    outcome: 'partial output after a later memory failure',
+    workerError: new WorkerMemoryLimitError('Frame admission failed'),
+    count: 1,
+    message: 'result.gifPartsPartial',
+  },
+])('reports GIF parts $outcome', async ({ workerError, count, message }) => {
+  const removeEmptyFolder = vi.fn();
+  mocks.selectGifPartDirectory.mockResolvedValue({});
+  mocks.createGifPartFileSink.mockReturnValue({
+    count,
+    folderName: 'owned',
+    save: vi.fn(),
+    finish: vi.fn(),
+    removeEmptyFolder,
+  });
+  mocks.runGifPartsViaWorker.mockRejectedValue(workerError);
+  const runtime = createRuntime();
+  const report = vi.fn();
+
+  try {
+    await conversionModule.handleConvertGifParts(runtime, localizedProgressT, report);
+    expect(removeEmptyFolder).toHaveBeenCalledOnce();
+    expect(report).toHaveBeenCalledExactlyOnceWith(message);
+  } finally {
+    runtime.dispose();
+  }
+});
+
 it('reports completed GIF parts when the manifest close wins a racing Stop', async () => {
   const manifestClose = Promise.withResolvers<void>();
   const finish = vi.fn(() => manifestClose.promise);
