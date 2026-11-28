@@ -3,28 +3,28 @@
 
 import Button from '@components/ui/Button';
 import { useLocale } from '@hooks/use-locale';
-import type { GifPartIndexedDbSink } from '@services/gif-part-indexed-db-sink';
-import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js';
+import type { GifPartOpfsSink } from '@services/gif-part-opfs-sink';
+import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
 
 type SavePickerWindow = Window & {
   showSaveFilePicker?: (options: { suggestedName: string }) => Promise<FileSystemFileHandle>;
 };
 
 interface GifPartDownloadsProps {
-  storage: GifPartIndexedDbSink;
+  storage: Pick<GifPartOpfsSink, 'filename' | 'read' | 'dispose'>;
   busy: boolean;
-  continuousGif?: boolean;
   onDiscard: () => void;
 }
 
 export default function GifPartDownloads(props: GifPartDownloadsProps) {
   const { t } = useLocale();
-  const [prepared, setPrepared] = createSignal<{ filename: string; url: string }>();
+  const filename = props.storage.filename;
+  const [prepared, setPrepared] = createSignal<string>();
   const [pending, setPending] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
   const [saved, setSaved] = createSignal<string>();
   const picker = (window as SavePickerWindow).showSaveFilePicker;
-  const usesSavePicker = () => props.continuousGif === true && typeof picker === 'function';
+  const selectTarget = typeof picker === 'function' ? picker : undefined;
   const [discardStarted, setDiscardStarted] = createSignal(false);
   let reader: AbortController | undefined;
   let alive = true;
@@ -32,18 +32,19 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
   const release = (): void => {
     reader?.abort();
     const current = prepared();
-    if (current) URL.revokeObjectURL(current.url);
+    if (current) URL.revokeObjectURL(current);
     setPrepared(undefined);
   };
   createEffect(() => {
-    if (props.busy) release();
+    // The chosen destination belongs to the save until its writer settles.
+    if (!selectTarget && props.busy) release();
   });
   onCleanup(() => {
     alive = false;
     release();
   });
 
-  const prepare = async (filename: string): Promise<void> => {
+  const prepare = async (): Promise<void> => {
     if (pending() || props.busy || discardStarted()) return;
     release();
     setFailed(false);
@@ -51,7 +52,6 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
     setPending(true);
     const controller = new AbortController();
     reader = controller;
-    const selectTarget = props.continuousGif && typeof picker === 'function' ? picker : undefined;
     let pickerPending = selectTarget !== undefined;
     try {
       // Open the picker in the user's click before awaiting OPFS.
@@ -60,14 +60,14 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
         : null;
       pickerPending = false;
       controller.signal.throwIfAborted();
-      const blob = await props.storage.read(filename, controller.signal);
+      const file = await props.storage.read(controller.signal);
       controller.signal.throwIfAborted();
       if (target) {
         const destination = await target.createWritable();
-        await blob.stream().pipeTo(destination, { signal: controller.signal });
-        if (alive) setSaved(filename);
+        await file.stream().pipeTo(destination, { signal: controller.signal });
+        if (alive) setSaved(target.name);
       } else {
-        setPrepared({ filename, url: URL.createObjectURL(blob) });
+        setPrepared(URL.createObjectURL(file));
       }
     } catch (error) {
       if (
@@ -98,43 +98,36 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
     }
   };
 
-  const heading = () =>
-    t(props.continuousGif ? 'result.convertedAnimation' : 'result.gifPartDownloads');
+  const heading = () => t('result.convertedAnimation');
 
   return (
     <section class="mt-6 space-y-3" aria-busy={pending()} aria-label={heading()}>
       <h2 class="text-base font-semibold">{heading()}</h2>
-      <ul class="space-y-2">
-        <For each={discardStarted() ? [] : props.storage.files()}>
-          {(file) => (
-            <li>
-              <Button
-                variant="ghost"
-                class="max-w-full break-all"
-                disabled={pending() || props.busy}
-                onClick={() => void prepare(file.filename)}
-                data-testid="prepare-gif-part-download"
+      <Show when={!discardStarted()}>
+        <div>
+          <Button
+            variant="ghost"
+            class="max-w-full break-all"
+            disabled={pending() || props.busy}
+            onClick={() => void prepare()}
+            data-testid="prepare-gif-part-download"
+          >
+            {t(selectTarget ? 'result.downloadGifPart' : 'result.prepareGifPart', { filename })}
+          </Button>
+          <Show when={prepared()} keyed>
+            {(url) => (
+              <a
+                class="ml-2 inline-flex min-h-target-minimum items-center break-all font-medium text-brand underline"
+                href={url}
+                download={filename}
+                data-testid="download-gif-part"
               >
-                {t(usesSavePicker() ? 'result.downloadGifPart' : 'result.prepareGifPart', {
-                  filename: file.filename,
-                })}
-              </Button>
-              <Show when={prepared()?.filename === file.filename && prepared()} keyed>
-                {(download) => (
-                  <a
-                    class="ml-2 inline-flex min-h-target-minimum items-center break-all font-medium text-brand underline"
-                    href={download.url}
-                    download={download.filename}
-                    data-testid="download-gif-part"
-                  >
-                    {t('result.downloadGifPart', { filename: file.filename })}
-                  </a>
-                )}
-              </Show>
-            </li>
-          )}
-        </For>
-      </ul>
+                {t('result.downloadGifPart', { filename })}
+              </a>
+            )}
+          </Show>
+        </div>
+      </Show>
       <div>
         <Button
           variant="ghost"
@@ -142,11 +135,11 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
           onClick={() => void discard()}
           data-testid="discard-gif-parts"
         >
-          {t(props.continuousGif ? 'update.clearResults' : 'result.discardGifParts')}
+          {t('update.clearResults')}
         </Button>
       </div>
       <Show when={saved()} keyed>
-        {(filename) => <p role="status">{t('result.continuousGifSaved', { filename })}</p>}
+        {(name) => <p role="status">{t('result.continuousGifSaved', { filename: name })}</p>}
       </Show>
       <Show when={failed()}>
         <p role="alert" class="text-status-danger">

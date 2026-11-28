@@ -2,20 +2,23 @@
 // Copyright (c) 2026 PiesP
 
 import GifPartDownloads from '@components/GifPartDownloads';
+import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { expect, it, vi } from 'vite-plus/test';
 
-vi.mock('@hooks/use-locale', () => ({ useLocale: () => ({ t: (key: string) => key }) }));
+vi.mock('@hooks/use-locale', () => ({
+  useLocale: () => ({
+    t: (key: string, params?: { filename: string }) =>
+      params ? `${key}: ${params.filename}` : key,
+  }),
+}));
 
-it('keeps only a discard retry after database deletion fails', async () => {
+it('keeps only a discard retry after removing the OPFS result fails', async () => {
   const container = document.createElement('div');
   document.body.append(container);
   const storage = {
-    count: 1,
-    files: () => [{ filename: 'part.gif', bytes: 10 }],
+    filename: 'continuous.gif',
     read: vi.fn(),
-    save: vi.fn(),
-    finish: vi.fn(),
     dispose: vi.fn().mockRejectedValueOnce(new Error('blocked')).mockResolvedValueOnce(undefined),
   };
   const discarded = vi.fn();
@@ -39,26 +42,26 @@ it('keeps only a discard retry after database deletion fails', async () => {
   }
 });
 
-it('keeps the OPFS result until the selected destination closes', async () => {
+it('finishes the selected native save through unrelated conversion activity', async () => {
   const container = document.createElement('div');
   document.body.append(container);
-  const completion = Promise.withResolvers<void>();
-  const close = vi.fn(() => completion.promise);
-  const write = vi.fn();
-  const createWritable = vi.fn(async () => new WritableStream({ write, close }));
-  const picker = vi.fn(async () => ({ createWritable }));
+  const [busy, setBusy] = createSignal(false);
+  const writeCompletion = Promise.withResolvers<void>();
+  const closeCompletion = Promise.withResolvers<void>();
+  const write = vi.fn(() => writeCompletion.promise);
+  const close = vi.fn(() => closeCompletion.promise);
+  const abort = vi.fn();
+  const createWritable = vi.fn(async () => new WritableStream({ write, close, abort }));
+  const picker = vi.fn(async () => ({ name: 'renamed.gif', createWritable }));
   vi.stubGlobal('showSaveFilePicker', picker);
-  const blob = new Blob([new Uint8Array([1, 2, 3])]);
+  const file = new File([new Uint8Array([1, 2, 3])], 'continuous.gif');
   const storage = {
-    count: 1,
-    files: () => [{ filename: 'continuous.gif', bytes: blob.size }],
-    read: vi.fn(async () => blob),
-    save: vi.fn(),
-    finish: vi.fn(),
+    filename: file.name,
+    read: vi.fn(async () => file),
     dispose: vi.fn(async () => undefined),
   };
   const renderDispose = render(
-    () => <GifPartDownloads storage={storage} busy={false} continuousGif onDiscard={vi.fn()} />,
+    () => <GifPartDownloads storage={storage} busy={busy()} onDiscard={vi.fn()} />,
     container
   );
   try {
@@ -68,19 +71,29 @@ it('keeps the OPFS result until the selected destination closes', async () => {
     const clear = container.querySelector<HTMLButtonElement>('[data-testid="discard-gif-parts"]')!;
     save.click();
     expect(picker).toHaveBeenCalledExactlyOnceWith({ suggestedName: 'continuous.gif' });
+    await vi.waitFor(() =>
+      expect(write).toHaveBeenCalledExactlyOnceWith(new Uint8Array([1, 2, 3]), expect.anything())
+    );
+    setBusy(true);
+    expect(clear.disabled).toBe(true);
+    setBusy(false);
+    expect(clear.disabled).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+    writeCompletion.resolve();
     await vi.waitFor(() => expect(close).toHaveBeenCalledOnce());
-    expect(write).toHaveBeenCalledExactlyOnceWith(new Uint8Array([1, 2, 3]), expect.anything());
+    expect(abort).not.toHaveBeenCalled();
     expect(clear.disabled).toBe(true);
     clear.click();
     expect(storage.dispose).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="download-gif-part"]')).toBeNull();
-    completion.resolve();
+    closeCompletion.resolve();
     await vi.waitFor(() => expect(clear.disabled).toBe(false));
     expect(container.querySelector('[role="status"]')?.textContent).toBe(
-      'result.continuousGifSaved'
+      'result.continuousGifSaved: renamed.gif'
     );
   } finally {
-    completion.resolve();
+    writeCompletion.resolve();
+    closeCompletion.resolve();
     renderDispose();
     vi.unstubAllGlobals();
     container.remove();

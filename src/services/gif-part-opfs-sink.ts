@@ -12,7 +12,6 @@ import { logger } from '@utils/logger';
 
 import type { GifOutputPart } from './gif-encoder-service';
 import { acquireGifOutputLease } from './gif-output-lease';
-import type { GifPartIndexedDbSink } from './gif-part-indexed-db-sink';
 
 const WRITE_BYTES = BYTES_PER_MB;
 const MAX_STAGED_BYTES = 512 * BYTES_PER_MB;
@@ -157,8 +156,10 @@ async function reclaimAbandonedFiles(directory: FileSystemDirectoryHandle): Prom
   }
 }
 
+export type GifPartOpfsSink = Awaited<ReturnType<typeof createGifPartOpfsSink>>;
+
 /** Experimental single-file output that owns each transferred part only until its writes settle. */
-export async function createGifPartOpfsSink(): Promise<GifPartIndexedDbSink> {
+export async function createGifPartOpfsSink() {
   const directory = await navigator.storage.getDirectory();
   await reclaimAbandonedFiles(directory);
   const name = `dropconvert-gif-opfs-${crypto.randomUUID()}.gif`;
@@ -184,7 +185,6 @@ export async function createGifPartOpfsSink(): Promise<GifPartIndexedDbSink> {
     throw cause;
   }
 
-  const filename = 'continuous.gif';
   const lifetime = new AbortController();
   let reference: GifHeader | undefined;
   let count = 0;
@@ -271,10 +271,14 @@ export async function createGifPartOpfsSink(): Promise<GifPartIndexedDbSink> {
 
   window.addEventListener('pagehide', onPageHide);
   return {
+    filename: 'continuous.gif',
     get count() {
       return count;
     },
-    save(part, signal) {
+    get ready() {
+      return published;
+    },
+    save(part: GifOutputPart, signal: AbortSignal): Promise<void> {
       if (published) return Promise.reject(new Error('Staged GIF output is already closed'));
       return run(signal, async (operationSignal) => {
         if (
@@ -320,7 +324,7 @@ export async function createGifPartOpfsSink(): Promise<GifPartIndexedDbSink> {
         endCs = part.endCs;
       });
     },
-    finish(signal) {
+    finish(signal: AbortSignal): Promise<void> {
       return run(signal, async (operationSignal) => {
         if (published) return;
         if (!count || !stream) throw new Error('Conversion produced no GIF parts');
@@ -334,13 +338,10 @@ export async function createGifPartOpfsSink(): Promise<GifPartIndexedDbSink> {
         published = true;
       });
     },
-    files() {
-      return published ? [{ filename, bytes: outputBytes }] : [];
-    },
-    async read(requested, signal) {
+    async read(signal: AbortSignal): Promise<File> {
       const operationSignal = AbortSignal.any([lifetime.signal, signal]);
       operationSignal.throwIfAborted();
-      if (!published || requested !== filename) throw new Error('Staged GIF output is unavailable');
+      if (!published) throw new Error('Staged GIF output is unavailable');
       const file = await handle.getFile();
       operationSignal.throwIfAborted();
       if (file.size !== outputBytes) throw new Error('Staged GIF output is incomplete');

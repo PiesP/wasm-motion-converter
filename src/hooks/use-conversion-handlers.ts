@@ -12,7 +12,7 @@ import {
   handleReset,
   handleRetry,
 } from '@hooks/conversion-handlers/use-perform-conversion';
-import type { GifPartIndexedDbSink } from '@services/gif-part-indexed-db-sink';
+import type { GifPartOpfsSink } from '@services/gif-part-opfs-sink';
 import type { ProgressPhase } from '@t/conversion-types';
 import type { TFunction } from '@t/i18n-types';
 import type { Setter } from 'solid-js';
@@ -32,8 +32,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   handleConvert: () => Promise<void>;
   handleConvertGifParts: (
     report: (message: string) => void,
-    retainStoredParts?: (sink: GifPartIndexedDbSink) => boolean,
-    continuousGif?: boolean
+    retainStoredGif?: (sink: GifPartOpfsSink) => boolean
   ) => Promise<void>;
   handleReset: () => void;
   handleCancelConversion: () => void;
@@ -56,8 +55,8 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   return {
     handleFileSelected: (file: File) => handleFileSelected(file, runtime, options.t),
     handleConvert: () => handleConvert(runtime, options.t),
-    handleConvertGifParts: (report, retainStoredParts, continuousGif) =>
-      handleConvertGifParts(runtime, options.t, report, retainStoredParts, continuousGif),
+    handleConvertGifParts: (report, retainStoredGif) =>
+      handleConvertGifParts(runtime, options.t, report, retainStoredGif),
     handleReset: () => handleReset(runtime),
     handleCancelConversion: () => handleCancelConversion(runtime),
     handleCancelAnalysis: () => handleCancelAnalysis(runtime),

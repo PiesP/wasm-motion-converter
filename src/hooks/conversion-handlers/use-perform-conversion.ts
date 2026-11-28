@@ -18,7 +18,7 @@ import type {
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { createGifPartFileSink, selectGifPartDirectory } from '@services/gif-part-file-sink';
-import type { GifPartIndexedDbSink } from '@services/gif-part-indexed-db-sink';
+import type { GifPartOpfsSink } from '@services/gif-part-opfs-sink';
 import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
 import {
   ownedVp8FailureKind,
@@ -261,8 +261,7 @@ export async function handleConvertGifParts(
   runtime: ConversionRuntimeController,
   t: TFunction,
   report: (message: string) => void,
-  retainStoredParts?: (sink: GifPartIndexedDbSink) => boolean,
-  continuousGif = false
+  retainStoredGif?: (sink: GifPartOpfsSink) => boolean
 ): Promise<void> {
   const file = inputFile();
   const metadata = videoMetadata();
@@ -282,13 +281,13 @@ export async function handleConvertGifParts(
   if (!intent) return;
   const { signal, isActive } = intent;
   let sink: ReturnType<typeof createGifPartFileSink> | undefined;
-  let stored: GifPartIndexedDbSink | undefined;
+  let stored: GifPartOpfsSink | undefined;
   let started = false;
   let completed = false;
   let failed = false;
   try {
     // Reach the native picker in the trusted click's task, before async preparation.
-    const destination = retainStoredParts ? undefined : await selectGifPartDirectory();
+    const destination = retainStoredGif ? undefined : await selectGifPartDirectory();
     if (!isActive()) return;
 
     const { serializedConfig, serializedOptions } = serializeConversionInputs(
@@ -298,6 +297,7 @@ export async function handleConvertGifParts(
     );
     if (!serializedConfig) throw new Error('Unable to determine video configuration');
 
+    if (destination) sink = createGifPartFileSink(destination);
     batch(() => {
       setErrorContext(null);
       setErrorMessage(null);
@@ -308,15 +308,10 @@ export async function handleConvertGifParts(
     });
     started = true;
     runtime.startMemoryMonitoring();
-    if (destination) sink = createGifPartFileSink(destination);
-    else if (continuousGif) {
+    if (retainStoredGif) {
       const { createGifPartOpfsSink } = await import('@services/gif-part-opfs-sink');
       signal.throwIfAborted();
       stored = await createGifPartOpfsSink();
-    } else {
-      const { createGifPartIndexedDbSink } = await import('@services/gif-part-indexed-db-sink');
-      signal.throwIfAborted();
-      stored = await createGifPartIndexedDbSink();
     }
     signal.throwIfAborted();
     const output = sink ?? stored;
@@ -344,13 +339,8 @@ export async function handleConvertGifParts(
       });
   } finally {
     const currentInput = inputFile() === file;
-    const storedCount = stored?.count ?? 0;
     const retained =
-      stored &&
-      storedCount > 0 &&
-      currentInput &&
-      (!continuousGif || (completed && !signal.aborted && stored.files().length === 1)) &&
-      retainStoredParts?.(stored);
+      stored?.ready && currentInput && completed && !signal.aborted && retainStoredGif?.(stored);
     try {
       await sink?.removeEmptyFolder();
       if (stored && !retained) await stored.dispose();
@@ -368,16 +358,10 @@ export async function handleConvertGifParts(
             folder: sink.folderName,
           })
         );
-      } else if (retained && continuousGif) {
-        report(t('result.continuousGifStored'));
       } else if (retained) {
-        report(
-          t(completed ? 'result.gifPartsStored' : 'result.gifPartsStoredPartial', {
-            count: storedCount,
-          })
-        );
+        report(t('result.continuousGifStored'));
       } else if (failed) {
-        report(t(retainStoredParts ? 'error.gifPartsStorageFailed' : 'error.gifPartsSaveFailed'));
+        report(t(retainStoredGif ? 'error.gifPartsStorageFailed' : 'error.gifPartsSaveFailed'));
       }
     }
     if (started && isActive()) {
