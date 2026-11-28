@@ -21,18 +21,23 @@
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
 import {
+  FRAME_PIPELINE_MEMORY_BUDGET_BYTES,
+  GIF_MAX_CODED_RIGHT_PADDING,
   GIF_LZW_RATIO,
   GIF_MAX_BUFFER_BYTES,
   GIF_MAX_FRAME_DELAY_CS,
   GIF_MIN_FRAME_DELAY_MS,
+  MAX_FRAME_PIXEL_COUNT,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 
 import { globalBufferPool } from './buffer-pool';
+import { ConversionMemoryLimitError } from './conversion-memory-limit-error';
 import { decodeFrames, type BorrowedGifFrame, type PresentationInterval } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
 import type { BaseEncoderOptions } from './encoder-common';
+import { estimateActiveFrameBytes, estimateRuntimeDecodedSourceFrameBytes } from './frame-memory';
 import { OwnedGifWriter } from './gif-owned-writer';
 import { createGifScalarQuantizer } from './gif-scalar-wasm';
 import { OutputLimitError, resolveOutputLimits } from './output-limits';
@@ -191,6 +196,34 @@ export async function encodeGif(
   const frameDecimation = opts.frameDecimation ?? 1;
   const outputLimits = resolveOutputLimits('gif', opts);
 
+  // Only change admission where right padding can cross the ordinary pixel
+  // limit. Keep the configured display, scaling and other routes unchanged.
+  const paddedWidth = srcW + GIF_MAX_CODED_RIGHT_PADDING;
+  let paddedSourceBytes: number | undefined;
+  let possiblePaddedDecodeBytes = 0;
+  if (
+    opts.scale === 0.5 &&
+    (opts.smartFrameSkip ?? 'off') === 'off' &&
+    (demux.rotation ?? 0) === 0 &&
+    Number.isSafeInteger(srcW) &&
+    Number.isSafeInteger(srcH) &&
+    srcW > 0 &&
+    srcH > 0 &&
+    srcW <= MAX_FRAME_PIXEL_COUNT / srcH &&
+    paddedWidth > MAX_FRAME_PIXEL_COUNT / srcH &&
+    demux.config.codedWidth === srcW &&
+    demux.config.codedHeight === srcH &&
+    (demux.config.displayAspectWidth ?? srcW) === srcW &&
+    (demux.config.displayAspectHeight ?? srcH) === srcH
+  ) {
+    const sourceBytes = estimateRuntimeDecodedSourceFrameBytes(paddedWidth, srcH, srcW, srcH, null);
+    const decodeBytes = 2 * sourceBytes + estimateActiveFrameBytes(w, h, 'rgba');
+    if (decodeBytes <= FRAME_PIPELINE_MEMORY_BUDGET_BYTES) {
+      paddedSourceBytes = sourceBytes;
+      possiblePaddedDecodeBytes = decodeBytes;
+    }
+  }
+
   logger.info('encoders', '  │  ├─ GIF: codec support check', { codec: demux.config.codec });
 
   const startTime = performance.now();
@@ -212,12 +245,22 @@ export async function encodeGif(
       ? Math.min(initialCapacity, 1024 * 1024, Math.max(1, Math.floor(maxOutputBytes / 8)))
       : Math.min(maxOutputBytes, initialCapacity);
   opts.assertAdditionalMemoryBytes?.(initialStreamCapacity);
+  if (paddedSourceBytes !== undefined) {
+    try {
+      opts.assertAdditionalMemoryBytes?.(initialStreamCapacity + possiblePaddedDecodeBytes);
+    } catch (error) {
+      if (!(error instanceof ConversionMemoryLimitError)) throw error;
+      // The normal decoder route remains available without the padding reserve.
+      paddedSourceBytes = undefined;
+    }
+  }
   const pixelCount = w * h;
   const exactRgbaBytes = pixelCount * 4;
   let lastIndexedData: Uint8Array | number | null = null;
   let liveIndexedBytes = 0;
   let comparisonWorkingBytes = 0;
   let wasmCapacity = 0;
+  let paddedDecodeBytes = 0;
 
   const assertGifWorkingMemory = (
     streamPeakBytes: number,
@@ -225,6 +268,7 @@ export async function encodeGif(
     wasmPeakBytes = wasmCapacity
   ): void => {
     const additionalBytes =
+      paddedDecodeBytes +
       streamPeakBytes +
       indexedBytes +
       wasmPeakBytes +
@@ -680,6 +724,17 @@ export async function encodeGif(
         pressureCadenceRatio: opts.pressureCadenceRatio,
         hwAccel: 'prefer-hardware',
         smartFrameSkip: opts.smartFrameSkip,
+        ...(paddedSourceBytes === undefined
+          ? {}
+          : {
+              paddedGifSource: {
+                bytes: paddedSourceBytes,
+                reserve() {
+                  paddedDecodeBytes = possiblePaddedDecodeBytes;
+                  assertGifWorkingMemory(encoder.retainedBytes);
+                },
+              },
+            }),
         pixelFormat: 'rgba',
         profileOperation: opts.profileOperation,
         profileCopyPath: opts.profileCopyPath,
@@ -695,6 +750,8 @@ export async function encodeGif(
       },
       signal
     );
+    // The resize canvas remains cached in this realm until pipeline cleanup.
+    if (paddedDecodeBytes > 0) paddedDecodeBytes = exactRgbaBytes;
     sourceTotalMs = decodedSourceTotalMs;
 
     totalInputFrames = totalDecoded;

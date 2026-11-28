@@ -178,6 +178,9 @@ export const GIF_LZW_RATIO = 0.1;
 /** GIF encoder maximum initial buffer estimate (32 MB) */
 export const GIF_MAX_BUFFER_BYTES = 32 * BYTES_PER_MB;
 
+/** Maximum native right-edge padding eligible for a half-scale GIF. */
+export const GIF_MAX_CODED_RIGHT_PADDING = 64;
+
 // ============================================================================
 // TIMEOUT CONSTANTS (milliseconds)
 // ============================================================================
@@ -227,11 +230,12 @@ export const MEMORY_DEFAULT_AVAILABLE_MB = 1024;
 export const WORKER_MAX_MEMORY_MB = CONVERSION_MEMORY_BUDGET_BYTES / BYTES_PER_MB;
 
 /**
- * Maximum pixels in one decoded frame under the default worker memory budget.
+ * Ordinary coded and displayed pixel limit for one decoded frame.
  *
  * A live task retains a power-of-two RGB pool buffer plus a decoded surface,
  * RGBA staging, and Canvas storage. Twenty bytes per pixel conservatively
  * covers that rounded peak, and the frame-concurrency gate shares this budget.
+ * Half-scale GIF may admit bounded native right padding under a separate byte check.
  */
 export const MAX_FRAME_PIXEL_COUNT = Math.floor(FRAME_PIPELINE_MEMORY_BUDGET_BYTES / 20);
 
