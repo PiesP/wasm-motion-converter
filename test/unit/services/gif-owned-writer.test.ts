@@ -98,6 +98,68 @@ describe('owned GIF89a writer', () => {
     expect(compress).not.toHaveBeenCalled();
   });
 
+  it('leaves a part intact when a complete new record would exhaust its final-copy budget', () => {
+    const compressed = referenceImageData(Uint8Array.of(0), 2);
+    const options = { palette: [[0, 0, 0]], colorDepth: 2, delay: 20 };
+    const firstSize = 19 + 19 + 18 + compressed.byteLength + 1;
+    const nextSize = firstSize + 18 + compressed.byteLength;
+    const capacity = nextSize + 8;
+    const limit = capacity + nextSize - 1;
+    const writer = new OwnedGifWriter(capacity, limit, () => {}, referenceImageData);
+    expect(writer.tryWritePartFrame(compressed, 1, 1, 1, options)).toBe(true);
+    expect(writer.partFinalizationBytes()).toBe(capacity + firstSize);
+    const first = writer.bytes();
+    expect(writer.tryWritePartFrame(compressed, 1, 1, 1, { colorDepth: 2, delay: 20 })).toBe(false);
+    expect(writer.bytesView()).toEqual(first);
+    expect(writer.stream.buffer.byteLength).toBe(capacity);
+    writer.finish();
+    expect(writer.bytes()).toEqual(Uint8Array.of(...first, 0x3b));
+  });
+
+  it('accepts a projected peak equal to the target and refuses the next record before mutation', () => {
+    const compressed = referenceImageData(Uint8Array.of(0), 2);
+    const frame = { colorDepth: 2, delay: 20 };
+    const firstFrame = { ...frame, palette: [[0, 0, 0]] };
+    const recordBytes = 18 + compressed.byteLength;
+    const capacity = 19 + 19 + 3 * recordBytes + 1;
+    const targetPeak = capacity + 19 + 19 + 2 * recordBytes + 1;
+    const assertPeak = vi.fn();
+    const writer = new OwnedGifWriter(capacity, 8192, assertPeak, referenceImageData);
+
+    expect(writer.tryWritePartFrame(compressed, 1, 1, 1, firstFrame, targetPeak)).toBe(true);
+    expect(writer.tryWritePartFrame(compressed, 1, 1, 1, frame, targetPeak)).toBe(true);
+    expect(writer.partFinalizationBytes()).toBe(targetPeak);
+    const partBytes = writer.bytes();
+    const backing = writer.stream.buffer;
+    assertPeak.mockClear();
+
+    expect(writer.tryWritePartFrame(compressed, 1, 1, 1, frame, targetPeak)).toBe(false);
+    expect(assertPeak).not.toHaveBeenCalled();
+    expect(writer.stream.buffer).toBe(backing);
+    expect(writer.bytesView()).toEqual(partBytes);
+  });
+
+  it('allows an oversize first record within the hard limit and rolls over before adding another', () => {
+    const compressed = referenceImageData(Uint8Array.of(0), 2);
+    const frame = { colorDepth: 2, delay: 20 };
+    const firstFrame = { ...frame, palette: [[0, 0, 0]] };
+    const recordBytes = 18 + compressed.byteLength;
+    const capacity = 19 + 19 + 2 * recordBytes + 1;
+    const targetPeak = capacity + 19 + 19 + recordBytes;
+    const writer = new OwnedGifWriter(capacity, 8192, () => {}, referenceImageData);
+
+    expect(writer.tryWritePartFrame(compressed, 1, 1, 1, firstFrame, targetPeak)).toBe(true);
+    expect(writer.partFinalizationBytes()).toBe(targetPeak + 1);
+    const partBytes = writer.bytes();
+    expect(writer.tryWritePartFrame(compressed, 1, 1, 1, frame, targetPeak)).toBe(false);
+    writer.finish();
+    expect(writer.bytes()).toEqual(Uint8Array.of(...partBytes, 0x3b));
+
+    const hardWriter = new OwnedGifWriter(capacity, targetPeak, () => {}, referenceImageData);
+    expect(hardWriter.tryWritePartFrame(compressed, 1, 1, 1, firstFrame, targetPeak)).toBe(false);
+    expect(hardWriter.bytesView()).toHaveLength(0);
+  });
+
   it.each([0, 1, 2, 3, 10, 65535])(
     'writes total playback count %i without changing frame data',
     (count) => {

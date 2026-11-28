@@ -25,10 +25,12 @@ import {
   GIF_MAX_BUFFER_BYTES,
   GIF_MAX_FRAME_DELAY_CS,
   GIF_MIN_FRAME_DELAY_MS,
+  GIF_PART_WRITER_TARGET_BYTES,
 } from '@utils/constants';
 import { logger } from '@utils/logger';
 
 import { globalBufferPool } from './buffer-pool';
+import { ConversionMemoryLimitError } from './conversion-memory-limit-error';
 import { decodeFrames, type BorrowedGifFrame, type PresentationInterval } from './decoder-service';
 import type { DemuxResult } from './demuxer-service';
 import { createDynamicDecimationController } from './dynamic-decimation-controller';
@@ -59,9 +61,24 @@ const GIF_PALETTE_COMPARISON_BYTES = 32 * 1024;
 /** Ordered number[][] conversion and retained GIF palettes (at most 256 colors). */
 const GIF_SCALAR_PALETTE_BYTES = 32 * 1024;
 
-interface GifEncoderOptions extends BaseEncoderOptions {
+export interface GifEncoderOptions extends BaseEncoderOptions {
   /** Assert the aggregate Worker budget using the GIF stream's live peak bytes. */
   assertAdditionalMemoryBytes?: ((additionalBytes: number) => void) | undefined;
+}
+
+export interface GifOutputPart {
+  /** One-based index and half-open centisecond interval on the output timeline. */
+  index: number;
+  startCs: number;
+  endCs: number;
+  frameCount: number;
+  bytes: ArrayBuffer;
+}
+
+type SaveGifPart = (part: GifOutputPart) => Promise<void>;
+interface GifPartsResult {
+  partCount: number;
+  frameCount: number;
 }
 
 const GIF_MIN_FRAME_DELAY_CS = GIF_MIN_FRAME_DELAY_MS / 10;
@@ -182,6 +199,45 @@ export async function encodeGif(
   signal?: AbortSignal,
   output?: 'blob'
 ): Promise<Uint8Array | Blob> {
+  return output === 'blob'
+    ? encodeGifOutput(demux, opts, signal, output)
+    : encodeGifOutput(demux, opts, signal);
+}
+
+/** Save independently decodable GIFs from one decoder, awaiting each part's settlement. */
+export async function encodeGifParts(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  savePart: SaveGifPart,
+  signal?: AbortSignal
+): Promise<GifPartsResult> {
+  return encodeGifOutput(demux, opts, signal, savePart);
+}
+
+function encodeGifOutput(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  signal?: AbortSignal
+): Promise<Uint8Array>;
+function encodeGifOutput(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  signal: AbortSignal | undefined,
+  output: 'blob'
+): Promise<Blob>;
+function encodeGifOutput(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  signal: AbortSignal | undefined,
+  output: SaveGifPart
+): Promise<GifPartsResult>;
+async function encodeGifOutput(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  signal?: AbortSignal,
+  output?: 'blob' | SaveGifPart
+): Promise<Uint8Array | Blob | GifPartsResult> {
+  const savePart = typeof output === 'function' ? output : undefined;
   const srcW = opts.width;
   const srcH = opts.height;
   const w = Math.max(1, Math.floor(srcW * opts.scale));
@@ -197,7 +253,13 @@ export async function encodeGif(
 
   // Streaming encoder — writes frames one at a time
   const estimatedFrames = Math.max(1, Math.floor(demux.totalFrames / (opts.frameDecimation ?? 1)));
-  const estimatedBytes = Math.min(w * h * estimatedFrames * GIF_LZW_RATIO, GIF_MAX_BUFFER_BYTES);
+  const estimatedPartFrames = savePart
+    ? Math.min(estimatedFrames, outputLimits.maxFrames)
+    : estimatedFrames;
+  const estimatedBytes = Math.min(
+    w * h * estimatedPartFrames * GIF_LZW_RATIO,
+    GIF_MAX_BUFFER_BYTES
+  );
   let initialCapacity = 1;
   const requestedInitialCapacity = Math.max(4096, Math.round(estimatedBytes));
   while (
@@ -207,10 +269,13 @@ export async function encodeGif(
     initialCapacity *= 2;
   }
   const maxOutputBytes = outputLimits.maxOutputBytes;
-  const initialStreamCapacity =
+  const capacityLimit =
     output === 'blob'
-      ? Math.min(initialCapacity, 1024 * 1024, Math.max(1, Math.floor(maxOutputBytes / 8)))
-      : Math.min(maxOutputBytes, initialCapacity);
+      ? Math.min(1024 * 1024, Math.max(1, Math.floor(maxOutputBytes / 8)))
+      : savePart
+        ? Math.max(1, Math.floor(maxOutputBytes / 2))
+        : maxOutputBytes;
+  const initialStreamCapacity = Math.min(capacityLimit, initialCapacity);
   opts.assertAdditionalMemoryBytes?.(initialStreamCapacity);
   const pixelCount = w * h;
   const exactRgbaBytes = pixelCount * 4;
@@ -235,18 +300,22 @@ export async function encodeGif(
     opts.assertAdditionalMemoryBytes?.(additionalBytes);
   };
 
-  const encoder = new OwnedGifWriter(
-    initialStreamCapacity,
-    outputLimits.maxOutputBytes,
-    (peak) => assertGifWorkingMemory(peak),
-    (indices, depth) => quantizePalette.compress(indices, depth),
-    opts.playCount,
-    output === 'blob'
-  );
+  const createWriter = () =>
+    new OwnedGifWriter(
+      initialStreamCapacity,
+      outputLimits.maxOutputBytes,
+      (peak) => assertGifWorkingMemory(peak),
+      (indices, depth) => quantizePalette.compress(indices, depth),
+      opts.playCount,
+      output === 'blob'
+    );
+  let encoder: OwnedGifWriter | null = createWriter();
+  const streamWorkingBytes = () =>
+    savePart ? (encoder?.partFinalizationBytes() ?? 0) : encoder!.retainedBytes;
   const quantizePalette = await createGifScalarQuantizer(
     (oldBytes, newBytes) =>
       assertGifWorkingMemory(
-        encoder.retainedBytes,
+        streamWorkingBytes(),
         liveIndexedBytes + comparisonWorkingBytes,
         oldBytes + newBytes
       ),
@@ -268,6 +337,12 @@ export async function encodeGif(
   let lastPalette: number[][] | null = null;
   let globalPalette: number[][] | null = null;
   let retainedGlobalLength = 0;
+  let partGlobalPalette: Uint8Array | number[][] | undefined;
+  let partCount = 0;
+  let partFrameCount = 0;
+  let partStartCs = 0;
+  let partEndCs = 0;
+  let savedBytes = 0;
   let lastColorHash = 0;
   let outputTotalDelay = 0;
   let encodeIdx = 0;
@@ -299,9 +374,33 @@ export async function encodeGif(
   const decimationController = createDynamicDecimationController(opts.decimationMemoryCheck);
 
   function assertCanWriteOutputFrame(): void {
-    if (outputFrames >= outputLimits.maxFrames) {
+    if (outputLimits.maxFrames < 1 || (!savePart && outputFrames >= outputLimits.maxFrames)) {
       throw new OutputLimitError('gif', 'frame', outputLimits.maxFrames);
     }
+  }
+
+  function writePartFrame(
+    compressed: Uint8Array,
+    localPalette: Uint8Array | number[][] | undefined,
+    depth: number,
+    delay: number
+  ): boolean {
+    const headerPalette = partFrameCount === 0 ? partGlobalPalette : undefined;
+    const written = encoder!.tryWritePartFrame(
+      compressed,
+      pixelCount,
+      w,
+      h,
+      {
+        ...(localPalette ? { palette: localPalette } : {}),
+        ...(headerPalette ? { globalPalette: headerPalette } : {}),
+        colorDepth: depth,
+        delay,
+      },
+      Math.min(GIF_PART_WRITER_TARGET_BYTES, outputLimits.maxOutputBytes)
+    );
+    if (written) partGlobalPalette ??= localPalette;
+    return written;
   }
 
   function writeIndexedFrame(
@@ -309,7 +408,7 @@ export async function encodeGif(
     delay: number,
     palette: number[][] | null,
     useGlobalPalette: boolean
-  ): void {
+  ): boolean {
     if (
       !Number.isInteger(delay) ||
       delay < GIF_MIN_FRAME_DELAY_MS ||
@@ -319,17 +418,22 @@ export async function encodeGif(
     }
     assertCanWriteOutputFrame();
     const writeStart = opts.profileOperation ? performance.now() : null;
+    const writer = encoder!;
     if (retained) {
       if (typeof indexed !== 'number') throw new RangeError('Invalid retained GIF frame');
       const paletteLength = quantizePalette.retainedPaletteLength(indexed);
       const localPalette = useGlobalPalette ? undefined : quantizePalette.retainedPalette(indexed);
       const depth = gifColorDepth(useGlobalPalette ? retainedGlobalLength : paletteLength);
       const compressed = quantizePalette.compressRetained(indexed, depth);
-      encoder.writeCompressedFrame(compressed, pixelCount, w, h, {
-        ...(localPalette ? { palette: localPalette } : {}),
-        colorDepth: depth,
-        delay,
-      });
+      if (savePart) {
+        if (!writePartFrame(compressed, localPalette, depth, delay)) return false;
+      } else {
+        writer.writeCompressedFrame(compressed, pixelCount, w, h, {
+          ...(localPalette ? { palette: localPalette } : {}),
+          colorDepth: depth,
+          delay,
+        });
+      }
       if (retainedGlobalLength === 0) {
         quantizePalette.captureGlobalPalette(indexed);
         retainedGlobalLength = paletteLength;
@@ -337,11 +441,24 @@ export async function encodeGif(
     } else {
       if (!(indexed instanceof Uint8Array) || !palette)
         throw new RangeError('Invalid indexed GIF frame');
-      encoder.writeFrame(indexed, w, h, {
-        ...(useGlobalPalette ? {} : { palette }),
-        colorDepth: gifColorDepth(useGlobalPalette ? globalPalette!.length : palette.length),
-        delay,
-      });
+      const depth = gifColorDepth(useGlobalPalette ? globalPalette!.length : palette.length);
+      if (savePart) {
+        if (
+          !writePartFrame(
+            quantizePalette.compress(indexed, depth),
+            useGlobalPalette ? undefined : palette,
+            depth,
+            delay
+          )
+        )
+          return false;
+      } else {
+        writer.writeFrame(indexed, w, h, {
+          ...(useGlobalPalette ? {} : { palette }),
+          colorDepth: depth,
+          delay,
+        });
+      }
       if (!globalPalette) globalPalette = palette;
     }
     if (writeStart !== null) {
@@ -350,6 +467,63 @@ export async function encodeGif(
       if (retained) opts.profileOperation?.('gifRetainedFrameWrite', elapsed);
     }
     outputFrames++;
+    return true;
+  }
+
+  function finishWriter(writer: OwnedGifWriter): Uint8Array {
+    const finalizationStart = opts.profileOperation ? performance.now() : null;
+    writer.finish();
+    if (finalizationStart !== null)
+      opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
+    const finalCopyPeakBytes = writer.retainedBytes + writer.bytesView().byteLength;
+    if (
+      !Number.isSafeInteger(finalCopyPeakBytes) ||
+      finalCopyPeakBytes > outputLimits.maxOutputBytes
+    ) {
+      throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
+    }
+    assertGifWorkingMemory(finalCopyPeakBytes);
+    const copyStart = opts.profileOperation ? performance.now() : null;
+    const bytes = writer.bytes();
+    if (copyStart !== null) opts.profileOperation?.('outputCopy', performance.now() - copyStart);
+    return bytes;
+  }
+
+  async function publishPart(): Promise<void> {
+    if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
+    const bytes = finishWriter(encoder!).buffer as ArrayBuffer;
+    const length = bytes.byteLength;
+    // Release the growable stream before awaiting the owner of the tight output.
+    encoder = null;
+    await savePart!({
+      index: partCount + 1,
+      startCs: partStartCs,
+      endCs: partEndCs,
+      frameCount: partFrameCount,
+      bytes,
+    });
+    savedBytes += length;
+    partCount++;
+    partFrameCount = 0;
+    if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
+  }
+
+  function appendPartRecord(
+    indexed: Uint8Array | number,
+    delay: number,
+    palette: number[][] | null,
+    useGlobalPalette: boolean
+  ): boolean {
+    try {
+      if (!encoder) {
+        assertGifWorkingMemory(initialStreamCapacity);
+        encoder = createWriter();
+      }
+      return writeIndexedFrame(indexed, delay, palette, useGlobalPalette);
+    } catch (error) {
+      if (partFrameCount > 0 && error instanceof ConversionMemoryLimitError) return false;
+      throw error;
+    }
   }
 
   function prepareIndexedFrame(
@@ -357,7 +531,7 @@ export async function encodeGif(
     palette: number[][]
   ): { indexed: Uint8Array; palette: number[][]; colorHash: number; indexedBytes: number } {
     const comparisonBytes = lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
-    assertGifWorkingMemory(encoder.retainedBytes, liveIndexedBytes + pixelCount + comparisonBytes);
+    assertGifWorkingMemory(streamWorkingBytes(), liveIndexedBytes + pixelCount + comparisonBytes);
     const paletteMapStart = opts.profileOperation ? performance.now() : null;
     const indexed = quantizePalette.mapPalette(rgbaData, palette);
     if (paletteMapStart !== null) {
@@ -373,10 +547,7 @@ export async function encodeGif(
     }
     const indexedBytes =
       indexed.buffer instanceof ArrayBuffer ? indexed.buffer.byteLength : indexed.byteLength;
-    assertGifWorkingMemory(
-      encoder.retainedBytes,
-      liveIndexedBytes + indexedBytes + comparisonBytes
-    );
+    assertGifWorkingMemory(streamWorkingBytes(), liveIndexedBytes + indexedBytes + comparisonBytes);
     const compact = compactIndexedPalette(indexed, palette);
     return { indexed, ...compact, indexedBytes };
   }
@@ -398,7 +569,28 @@ export async function encodeGif(
       if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
       let chunkCs = Math.min(remainingCs, GIF_MAX_FRAME_DELAY_CS);
       if (remainingCs - chunkCs === 1) chunkCs--;
-      writeIndexedFrame(lastIndexedData, chunkCs * 10, lastPalette, useGlobalPalette);
+      const delay = chunkCs * 10;
+      if (savePart) {
+        const startCs = endCs - remainingCs;
+        if (partFrameCount >= outputLimits.maxFrames) await publishPart();
+        if (!appendPartRecord(lastIndexedData, delay, lastPalette, useGlobalPalette)) {
+          let written = false;
+          if (partFrameCount > 0) {
+            // The failed probe discarded its borrowed compression view. Recompress
+            // the pending index only after the previous output is acknowledged.
+            await publishPart();
+            written = appendPartRecord(lastIndexedData, delay, lastPalette, useGlobalPalette);
+          }
+          if (!written) {
+            throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
+          }
+        }
+        if (partFrameCount === 0) partStartCs = startCs;
+        partFrameCount++;
+        partEndCs = startCs + chunkCs;
+      } else {
+        writeIndexedFrame(lastIndexedData, delay, lastPalette, useGlobalPalette);
+      }
       outputTotalDelay += chunkCs;
       // Only the first source image establishes the global table. A later
       // image that failed remapping needs its local table on every record.
@@ -535,7 +727,7 @@ export async function encodeGif(
         // admit it, flush first and take the original one-index path.
         try {
           assertGifWorkingMemory(
-            encoder.retainedBytes,
+            streamWorkingBytes(),
             liveIndexedBytes + pixelCount + GIF_PALETTE_COMPARISON_BYTES
           );
         } catch (error) {
@@ -551,7 +743,7 @@ export async function encodeGif(
         }
       }
       if (!lastIndexedData) assertCanWriteOutputFrame();
-      assertGifWorkingMemory(encoder.retainedBytes, liveIndexedBytes);
+      assertGifWorkingMemory(streamWorkingBytes(), liveIndexedBytes);
       const pixelPreparationStart = opts.profileOperation ? performance.now() : null;
       let exactRgba =
         source instanceof Uint8Array
@@ -689,7 +881,7 @@ export async function encodeGif(
           opts.onFrameDecoded?.(nativeFrameCount, total);
         },
         onFrameAvailable: consume,
-        ...(retained && typeof quantizePalette.prepareNative === 'function'
+        ...(!savePart && retained && typeof quantizePalette.prepareNative === 'function'
           ? { onSelectedGifFrame: consume }
           : {}),
       },
@@ -753,29 +945,19 @@ export async function encodeGif(
     lastIndexedData = null;
     liveIndexedBytes = 0;
     comparisonWorkingBytes = 0;
-    const finalizationStart = opts.profileOperation ? performance.now() : null;
-    encoder.finish();
-    let result: Uint8Array | Blob;
-    if (output === 'blob') {
-      result = encoder.takeBlob();
+    let result: Uint8Array | Blob | undefined;
+    if (savePart) {
+      if (partFrameCount > 0) await publishPart();
+    } else if (output === 'blob') {
+      const finalizationStart = opts.profileOperation ? performance.now() : null;
+      encoder!.finish();
+      result = encoder!.takeBlob();
       if (finalizationStart !== null)
         opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
     } else {
-      if (finalizationStart !== null)
-        opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
-      const finalCopyPeakBytes = encoder.retainedBytes + encoder.bytesView().byteLength;
-      if (
-        !Number.isSafeInteger(finalCopyPeakBytes) ||
-        finalCopyPeakBytes > outputLimits.maxOutputBytes
-      ) {
-        throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
-      }
-      assertGifWorkingMemory(finalCopyPeakBytes);
-      const copyStart = opts.profileOperation ? performance.now() : null;
-      result = encoder.bytes();
-      if (copyStart !== null) opts.profileOperation?.('outputCopy', performance.now() - copyStart);
+      result = finishWriter(encoder!);
     }
-    const outputBytes = result instanceof Blob ? result.size : result.byteLength;
+    const outputBytes = result instanceof Blob ? result.size : (result?.byteLength ?? savedBytes);
     const totalElapsed = (performance.now() - startTime) / 1000;
     opts.onEncodingComplete?.({
       consumedChunks,
@@ -815,7 +997,7 @@ export async function encodeGif(
       smartSkipped,
     });
 
-    return result;
+    return result ?? { partCount, frameCount: outputFrames };
   } finally {
     lastIndexedData = null;
     liveIndexedBytes = 0;

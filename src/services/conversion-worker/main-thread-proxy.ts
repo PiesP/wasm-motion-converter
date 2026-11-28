@@ -17,12 +17,14 @@
  */
 
 import { getErrorMessage } from '@piesp/browser-core/error';
+import { isRecord } from '@piesp/browser-core/util';
 import { isBoundedCodecDescription } from '@services/codec-description';
 import {
   clearLastConversionProfileReport,
   setLastConversionProfileReport,
 } from '@services/conversion-profile-store';
 import { resolveVideoDimensions } from '@services/frame-utils';
+import type { GifOutputPart } from '@services/gif-encoder-service';
 import { copyOwnedInputIndex } from '@services/owned-input-index-cache';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import type { OwnedVp8FailureKind } from '@services/owned-vp8-errors';
@@ -34,6 +36,7 @@ import { logger } from '@utils/logger';
 import { buildConversionRequest } from './build-conversion-request';
 import { isWorkerResponse } from './guards';
 import type {
+  GifPartsSummary,
   OwnedDemuxFailureKind,
   SerializedConversionOptions,
   SerializedDecoderConfig,
@@ -104,6 +107,62 @@ export async function runPipelineViaWorker(
   duration?: number,
   framerate?: number
 ): Promise<ArrayBuffer | Blob> {
+  const result = await dispatchWorker(
+    input,
+    config,
+    options,
+    onProgress,
+    signal,
+    duration,
+    framerate
+  );
+  if (!(result instanceof ArrayBuffer) && !(result instanceof Blob)) {
+    throw new Error('Expected a single conversion output');
+  }
+  return result;
+}
+
+type SaveGifPart = (part: GifOutputPart, signal: AbortSignal) => Promise<void>;
+
+export async function runGifPartsViaWorker(
+  input: Blob,
+  config: SerializedDecoderConfig,
+  options: SerializedConversionOptions,
+  onProgress: ProgressCallback,
+  savePart: SaveGifPart,
+  signal?: AbortSignal,
+  duration?: number,
+  framerate?: number
+): Promise<GifPartsSummary> {
+  if (options.format !== 'gif' || !resolveVideoDimensions(config)) {
+    throw new Error('Invalid GIF parts conversion configuration');
+  }
+  const result = await dispatchWorker(
+    input,
+    config,
+    options,
+    onProgress,
+    signal,
+    duration,
+    framerate,
+    savePart
+  );
+  if (result instanceof ArrayBuffer || result instanceof Blob) {
+    throw new Error('Expected a GIF parts summary');
+  }
+  return result;
+}
+
+async function dispatchWorker(
+  input: Blob | ArrayBuffer,
+  config: SerializedDecoderConfig,
+  options: SerializedConversionOptions,
+  onProgress: ProgressCallback,
+  signal?: AbortSignal,
+  duration?: number,
+  framerate?: number,
+  savePart?: SaveGifPart
+): Promise<ArrayBuffer | Blob | GifPartsSummary> {
   clearLastConversionProfileReport();
   if (!isBoundedCodecDescription(config.description)) {
     throw new Error('Invalid worker codec description');
@@ -120,7 +179,7 @@ export async function runPipelineViaWorker(
   signal?.throwIfAborted();
   discardOwnedVp8Module();
 
-  return new Promise<ArrayBuffer | Blob>((resolve, reject) => {
+  return new Promise<ArrayBuffer | Blob | GifPartsSummary>((resolve, reject) => {
     const requestId = crypto.randomUUID();
 
     // Classify synchronous Worker construction failures as unavailability.
@@ -144,13 +203,32 @@ export async function runPipelineViaWorker(
     };
 
     // Timeout guard: terminate worker and reject if it hangs
-    let timedOut = false;
-    const timeoutId = setTimeout(() => {
-      timedOut = true;
+    let settled = false;
+    const sinkController = savePart ? new AbortController() : undefined;
+    let pendingSave: Promise<void> | null = null;
+    let savedParts = 0;
+    let savedFrames = 0;
+    let savedEndCs = 0;
+    const timeoutId = setTimeout(
+      () => fail(new WorkerTimeoutError(WORKER_PIPELINE_TIMEOUT_MS)),
+      WORKER_PIPELINE_TIMEOUT_MS
+    );
+
+    function fail(error: unknown): void {
+      if (settled) return;
+      settled = true;
       cleanup();
       worker.terminate();
-      reject(new WorkerTimeoutError(WORKER_PIPELINE_TIMEOUT_MS));
-    }, WORKER_PIPELINE_TIMEOUT_MS);
+      sinkController?.abort(error);
+      // The main sink may still be closing or rolling back a file. Its owner
+      // stays active until it settles, even though the Worker is already gone.
+      if (pendingSave)
+        void pendingSave.then(
+          () => reject(error),
+          () => reject(error)
+        );
+      else reject(error);
+    }
 
     // Clear timeout and remove abort listener — shared cleanup for all terminal paths
     const cleanup = () => {
@@ -165,7 +243,11 @@ export async function runPipelineViaWorker(
     const deliverProgress = (update: ConversionProgress) => {
       lastProgressTime = performance.now();
       lastDeliveredPercent = Math.max(lastDeliveredPercent, update.progress);
-      onProgress({ ...update, progress: lastDeliveredPercent });
+      try {
+        onProgress({ ...update, progress: lastDeliveredPercent });
+      } catch (error) {
+        fail(error);
+      }
     };
     const throttledProgress = (update: ConversionProgress) => {
       const now = performance.now();
@@ -178,7 +260,7 @@ export async function runPipelineViaWorker(
       pendingProgressTimer ??= setTimeout(
         () => {
           pendingProgressTimer = null;
-          if (settled || timedOut) {
+          if (settled) {
             pendingProgress = null;
             return;
           }
@@ -192,14 +274,7 @@ export async function runPipelineViaWorker(
 
     // Abort terminates this request's dedicated Worker. Register the listener
     // before checking for a signal that has already been aborted.
-    let settled = false;
-    const onAbort = () => {
-      if (settled || timedOut) return;
-      settled = true;
-      cleanup();
-      worker.terminate();
-      reject(new DOMException('Cancelled', 'AbortError'));
-    };
+    const onAbort = () => fail(new DOMException('Cancelled', 'AbortError'));
 
     if (signal) {
       signal.addEventListener('abort', onAbort, { once: true });
@@ -215,12 +290,22 @@ export async function runPipelineViaWorker(
     // Handle messages from the worker
     worker.onmessage = (event: MessageEvent<unknown>) => {
       // Ignore messages after timeout — worker is already terminated
-      if (settled || timedOut) return;
+      if (settled) return;
 
       // Runtime guard: validate message shape before processing.
       // Malformed responses (null, arrays, primitives, missing fields)
       // are silently ignored.
-      if (!isWorkerResponse(event.data)) return;
+      if (!isWorkerResponse(event.data)) {
+        if (
+          savePart &&
+          isRecord(event.data) &&
+          event.data.requestId === requestId &&
+          (event.data.type === 'gif-part' || event.data.type === 'gif-parts-complete')
+        ) {
+          fail(new Error('Invalid GIF part response'));
+        }
+        return;
+      }
 
       const response = event.data;
       const isInstanceMessage =
@@ -257,13 +342,71 @@ export async function runPipelineViaWorker(
           break;
         }
 
+        case 'gif-part': {
+          const part = response.part;
+          if (
+            !savePart ||
+            !sinkController ||
+            pendingSave ||
+            part.index !== savedParts + 1 ||
+            part.startCs !== savedEndCs ||
+            part.frameCount > options.maxFrames ||
+            part.bytes.byteLength > options.maxOutputBytes ||
+            !Number.isSafeInteger(savedFrames + part.frameCount)
+          ) {
+            fail(new Error('Unexpected GIF part or discontinuous output'));
+            break;
+          }
+          // Publish the pending promise before calling a sink that may cancel synchronously.
+          pendingSave = Promise.resolve().then(() => {
+            sinkController.signal.throwIfAborted();
+            return savePart(part, sinkController.signal);
+          });
+          void pendingSave.then(() => {
+            if (settled) return;
+            pendingSave = null;
+            savedParts++;
+            savedFrames += part.frameCount;
+            savedEndCs = part.endCs;
+            try {
+              worker.postMessage({
+                type: 'gif-part-saved',
+                requestId,
+                index: part.index,
+              } satisfies WorkerRequest);
+            } catch (error) {
+              fail(error);
+            }
+          }, fail);
+          break;
+        }
+        case 'gif-parts-complete': {
+          if (
+            !savePart ||
+            pendingSave ||
+            response.partCount !== savedParts ||
+            response.frameCount !== savedFrames
+          ) {
+            fail(new Error('Incomplete GIF parts conversion'));
+            break;
+          }
+          settled = true;
+          cleanup();
+          worker.terminate();
+          resolve({ partCount: savedParts, frameCount: savedFrames });
+          break;
+        }
         case 'complete': {
+          if (savePart) {
+            fail(new Error('Worker returned a single output during GIF parts conversion'));
+            break;
+          }
           settled = true;
           cleanup();
           if (response.profile) {
             setLastConversionProfileReport(response.profile);
           }
-          // Terminate immediately — transfer is complete once message received.
+          // Terminate immediately — the receiver owns the result after delivery.
           // Deferring with queueMicrotask can race with consumer .then() handlers.
           worker.terminate();
           resolve(response.outputBuffer);
@@ -271,15 +414,11 @@ export async function runPipelineViaWorker(
         }
 
         case 'error': {
-          settled = true;
-          cleanup();
-          worker.terminate();
-
           if (response.code === 'CANCELLED') {
-            reject(new DOMException('Cancelled', 'AbortError'));
+            fail(new DOMException('Cancelled', 'AbortError'));
           } else if (response.code === 'OUT_OF_MEMORY') {
             const { ownedVp8FailureKind } = response;
-            reject(
+            fail(
               new WorkerMemoryLimitError(
                 response.message,
                 response.demuxFailureKind === 'resource' ? 'resource' : undefined,
@@ -289,7 +428,7 @@ export async function runPipelineViaWorker(
               )
             );
           } else {
-            reject(
+            fail(
               new WorkerPipelineError(
                 response.code,
                 response.message,
@@ -320,16 +459,10 @@ export async function runPipelineViaWorker(
 
     // Handle worker errors
     worker.onerror = (error) => {
-      if (settled || timedOut) return;
-      settled = true;
-      cleanup();
-      worker.terminate();
-      if (!workerReady) {
-        reject(new WorkerUnavailableError(error.message));
-      } else {
-        reject(new WorkerPipelineError('WORKER_RUNTIME_ERROR', error.message));
-      }
+      if (!workerReady) fail(new WorkerUnavailableError(error.message));
+      else fail(new WorkerPipelineError('WORKER_RUNTIME_ERROR', error.message));
     };
+    worker.onmessageerror = () => fail(new Error('Conversion worker message could not be decoded'));
 
     // Keep the selected-file master in this realm. A conversion gets one owned
     // copy, transferred only after Worker construction and abort registration.
@@ -340,18 +473,18 @@ export async function runPipelineViaWorker(
           ? copyOwnedInputIndex(input, config.description?.byteLength ?? 0, options.trimStart)
           : null;
     } catch (error) {
-      settled = true;
-      cleanup();
-      worker.terminate();
-      reject(error);
+      fail(error);
       return;
     }
     // Blob handles use structured cloning and remain available for startup
     // fallback. ArrayBuffer ownership moves to the worker through the transfer list.
     const startMsg: WorkerRequest = {
       type: 'start',
+      ...(savePart ? { outputMode: 'gif-parts' as const } : {}),
       requestId,
-      ...(input instanceof Blob ? { inputBlob: input } : { inputBuffer: input }),
+      ...(input instanceof Blob
+        ? { inputBlob: savePart ? input.slice(0, input.size, input.type) : input }
+        : { inputBuffer: input }),
       config,
       options,
       ...(duration !== undefined ? { duration } : {}),
@@ -364,10 +497,7 @@ export async function runPipelineViaWorker(
         ...(indexSnapshot ? [indexSnapshot.bytes] : []),
       ]);
     } catch (error) {
-      settled = true;
-      cleanup();
-      worker.terminate();
-      reject(new WorkerUnavailableError(getErrorMessage(error), { cause: error }));
+      fail(new WorkerUnavailableError(getErrorMessage(error), { cause: error }));
     }
   });
 }

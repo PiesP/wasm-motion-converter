@@ -18,10 +18,17 @@ import {
   PROFILE_OPERATIONS,
   type StageMetrics,
 } from '@services/conversion-profiler';
+import { validateOutput } from '@services/error-recovery';
 import { isOwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import { isOwnedVp8FailureKind, OWNED_VP8_FAILURE_CODES } from '@services/owned-vp8-errors';
 import { isConversionFormat, isConversionQuality, isSmartFrameSkipMode } from '@t/conversion-types';
-import { CONVERSION_MEMORY_BUDGET_BYTES } from '@utils/constants';
+import {
+  CONVERSION_MEMORY_BUDGET_BYTES,
+  GIF_MAX_FRAME_DELAY_CS,
+  GIF_MIN_FRAME_DELAY_MS,
+  GIF_MAX_OUTPUT_BYTES,
+  GIF_MAX_OUTPUT_FRAMES,
+} from '@utils/constants';
 import { isPlayCount } from '@utils/playback-count';
 
 import type { WorkerRequest, WorkerResponse } from './types';
@@ -53,8 +60,12 @@ function isNullableCount(value: unknown): boolean {
   return value === null || isCount(value);
 }
 
-function isCount(value: unknown): boolean {
+function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isPositiveCount(value: unknown): value is number {
+  return isCount(value) && value > 0;
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -257,6 +268,11 @@ export function isWorkerRequest(value: unknown): value is WorkerRequest {
       if (!hasBuffer && !hasBlob) return false;
       if (!isValidDecoderConfig(value.config)) return false;
       if (!isValidConversionOptions(value.options)) return false;
+      if (
+        value.outputMode !== undefined &&
+        (value.outputMode !== 'gif-parts' || !hasBlob || value.options.format !== 'gif')
+      )
+        return false;
       // Optional pre-computed metadata
       if (value.duration !== undefined && !isFiniteNonNegative(value.duration)) return false;
       if (value.framerate !== undefined && !isFiniteNumber(value.framerate)) return false;
@@ -269,6 +285,8 @@ export function isWorkerRequest(value: unknown): value is WorkerRequest {
         return false;
       return true;
     }
+    case 'gif-part-saved':
+      return isNonEmptyString(value.requestId) && isPositiveCount(value.index);
     case 'abort': {
       return isNonEmptyString(value.requestId);
     }
@@ -325,6 +343,40 @@ export function isWorkerResponse(value: unknown): value is WorkerResponse {
         return false;
       return true;
     }
+    case 'gif-part': {
+      const part = value.part;
+      if (!isNonEmptyString(value.requestId) || !isRecord(part)) return false;
+      if (
+        !isPositiveCount(part.index) ||
+        !isPositiveCount(part.frameCount) ||
+        part.frameCount > GIF_MAX_OUTPUT_FRAMES ||
+        !isCount(part.startCs) ||
+        !isCount(part.endCs)
+      )
+        return false;
+      const duration = part.endCs - part.startCs;
+      if (
+        duration < (part.frameCount * GIF_MIN_FRAME_DELAY_MS) / 10 ||
+        duration > part.frameCount * GIF_MAX_FRAME_DELAY_CS
+      )
+        return false;
+      if (
+        !(part.bytes instanceof ArrayBuffer) ||
+        part.bytes.byteLength < 14 ||
+        part.bytes.byteLength > GIF_MAX_OUTPUT_BYTES
+      )
+        return false;
+      const bytes = new Uint8Array(part.bytes);
+      return bytes[bytes.length - 1] === 0x3b && validateOutput(bytes, 'gif');
+    }
+    case 'gif-parts-complete':
+      return (
+        isNonEmptyString(value.requestId) &&
+        isPositiveCount(value.partCount) &&
+        isPositiveCount(value.frameCount) &&
+        value.frameCount >= value.partCount &&
+        Object.keys(value).length === 4
+      );
     case 'complete': {
       if (!isNonEmptyString(value.requestId)) return false;
       if (

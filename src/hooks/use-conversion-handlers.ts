@@ -7,6 +7,7 @@ import {
   handleCancelAnalysis,
   handleCancelConversion,
   handleConvert,
+  handleConvertGifParts,
   handleDismissError,
   handleReset,
   handleRetry,
@@ -28,6 +29,7 @@ interface ConversionHandlersOptions {
 export function useConversionHandlers(options: ConversionHandlersOptions): {
   handleFileSelected: (file: File) => Promise<void>;
   handleConvert: () => Promise<void>;
+  handleConvertGifParts: (report: (message: string) => void) => Promise<void>;
   handleReset: () => void;
   handleCancelConversion: () => void;
   handleCancelAnalysis: () => void;
@@ -49,6 +51,7 @@ export function useConversionHandlers(options: ConversionHandlersOptions): {
   return {
     handleFileSelected: (file: File) => handleFileSelected(file, runtime, options.t),
     handleConvert: () => handleConvert(runtime, options.t),
+    handleConvertGifParts: (report) => handleConvertGifParts(runtime, options.t, report),
     handleReset: () => handleReset(runtime),
     handleCancelConversion: () => handleCancelConversion(runtime),
     handleCancelAnalysis: () => handleCancelAnalysis(runtime),

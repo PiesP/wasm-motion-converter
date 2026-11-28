@@ -4,6 +4,7 @@
 // Message protocol types for the conversion worker
 
 import type { ConversionProfileReport } from '@services/conversion-profiler';
+import type { GifOutputPart } from '@services/gif-encoder-service';
 import type { OwnedInputIndexSnapshot } from '@services/owned-input-index-cache';
 import type { OwnedVp8FailureKind } from '@services/owned-vp8-errors';
 import type {
@@ -34,6 +35,7 @@ type WorkerInput =
 export type WorkerRequest =
   | ({
       type: 'start';
+      outputMode?: 'gif-parts';
       requestId: string;
       config: SerializedDecoderConfig;
       options: SerializedConversionOptions;
@@ -43,9 +45,17 @@ export type WorkerRequest =
       /** Checked logical index copied from the exact selected Blob. */
       indexSnapshot?: OwnedInputIndexSnapshot;
     } & WorkerInput)
+  | { type: 'gif-part-saved'; requestId: string; index: number }
   | { type: 'abort'; requestId: string };
 
+export interface GifPartsSummary {
+  partCount: number;
+  frameCount: number;
+}
+
 export type WorkerResponse =
+  | { type: 'gif-part'; requestId: string; part: GifOutputPart }
+  | ({ type: 'gif-parts-complete'; requestId: string } & GifPartsSummary)
   | { type: 'ready'; requestId: '' }
   | {
       type: 'progress';

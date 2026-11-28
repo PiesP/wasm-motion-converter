@@ -22,6 +22,8 @@ interface SettingsPanelProps {
   settings: ConversionSettings;
   metadata: VideoMetadata | null;
   onConvert: () => void;
+  onConvertGifParts?: (() => void) | undefined;
+  gifPartsStatus?: string | undefined;
   onCancel: () => void;
   onFormatChange: (format: ConversionSettings['format']) => void;
   onQualityChange: (quality: ConversionSettings['quality']) => void;
@@ -50,6 +52,8 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     'settings',
     'metadata',
     'onConvert',
+    'onConvertGifParts',
+    'gifPartsStatus',
     'onCancel',
     'onFormatChange',
     'onQualityChange',
@@ -175,6 +179,31 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
             </Button>
           </Show>
         </div>
+        <Show
+          when={
+            !local.isConversionActive && local.settings.format === 'gif' && local.onConvertGifParts
+          }
+        >
+          {(saveParts) => (
+            <Button
+              class="mt-2 w-full"
+              disabled={convertDisabled()}
+              onClick={saveParts()}
+              variant="ghost"
+              data-testid="convert-gif-parts-button"
+            >
+              {t('settings.saveGifParts')}
+            </Button>
+          )}
+        </Show>
+        <p
+          role="status"
+          class="text-xs text-text-secondary"
+          classList={{ 'mt-2': Boolean(local.gifPartsStatus) }}
+          data-testid="gif-parts-status"
+        >
+          {local.gifPartsStatus}
+        </p>
       </div>
 
       <details class="mt-3 border-t border-border-subtle pt-2" data-testid="sharing-settings">

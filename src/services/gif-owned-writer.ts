@@ -6,14 +6,36 @@ import { toGifRepeat } from '@utils/playback-count';
 
 import { OutputLimitError } from './output-limits';
 
+type Palette = number[][] | Uint8Array;
+
 interface FrameOptions {
-  palette?: number[][] | Uint8Array;
+  palette?: Palette;
+  /** A new stream may use the conversion's global table and a local first record. */
+  globalPalette?: Palette;
   colorDepth: number;
   delay: number;
 }
 
-function paletteLength(palette: number[][] | Uint8Array): number {
+function paletteLength(palette: Palette): number {
   return palette instanceof Uint8Array ? palette.length / 3 : palette.length;
+}
+
+function tableDepth(palette: Palette): number {
+  return Math.max(1, Math.ceil(Math.log2(paletteLength(palette))));
+}
+
+function paletteIsValid(palette: Palette): boolean {
+  return (
+    paletteLength(palette) >= 1 &&
+    paletteLength(palette) <= 256 &&
+    (palette instanceof Uint8Array
+      ? palette.length % 3 === 0
+      : palette.every(
+          (color) =>
+            color.length === 3 &&
+            color.every((channel) => Number.isInteger(channel) && channel >= 0 && channel <= 255)
+        ))
+  );
 }
 
 /** Opaque full-frame GIF89a records only; timing and palette policy belong to the service. */
@@ -79,7 +101,7 @@ export class OwnedGifWriter {
       this.assertPeak(current);
       return;
     }
-    const next = Math.max(required, Math.floor(current * (current < 1024 * 1024 ? 2 : 1.125)), 256);
+    const next = this.capacityFor(required);
     if (next > this.maxOutputBytes || current + next > this.maxOutputBytes) {
       throw new OutputLimitError('gif', 'byte', this.maxOutputBytes);
     }
@@ -87,6 +109,13 @@ export class OwnedGifWriter {
     const grown = new Uint8Array(next);
     grown.set(this.buffer.subarray(0, this.cursor));
     this.buffer = grown;
+  }
+
+  private capacityFor(required: number): number {
+    const current = this.buffer.byteLength;
+    return required <= current
+      ? current
+      : Math.max(required, Math.floor(current * (current < 1024 * 1024 ? 2 : 1.125)), 256);
   }
 
   private byte(value: number): void {
@@ -107,8 +136,8 @@ export class OwnedGifWriter {
     for (let i = 0; i < value.length; i++) this.byte(value.charCodeAt(i));
   }
 
-  private table(palette: number[][] | Uint8Array): void {
-    const count = 1 << Math.max(1, Math.ceil(Math.log2(paletteLength(palette))));
+  private table(palette: Palette): void {
+    const count = 1 << tableDepth(palette);
     for (let i = 0; i < count; i++) {
       const color = palette instanceof Uint8Array ? palette.subarray(i * 3, i * 3 + 3) : palette[i];
       this.byte(color?.[0] ?? 0);
@@ -134,13 +163,55 @@ export class OwnedGifWriter {
     this.writeValidatedFrame(compressed, width, height, options);
   }
 
+  /** Reserve a complete record and its final copy before changing the stream. */
+  tryWritePartFrame(
+    compressed: Uint8Array,
+    pixelCount: number,
+    width: number,
+    height: number,
+    options: FrameOptions,
+    targetPeakBytes = this.maxOutputBytes
+  ): boolean {
+    this.validateFrame(pixelCount, width, height, options);
+    const global = this.initialized ? undefined : (options.globalPalette ?? options.palette);
+    const local = this.initialized || options.globalPalette ? options.palette : undefined;
+    const globalBytes = global
+      ? 13 + (3 << tableDepth(global)) + (this.repeat === null ? 0 : 19)
+      : 0;
+    const localBytes = local ? 3 << tableDepth(local) : 0;
+    // Graphic control and image descriptor, compressed blocks, and the trailer.
+    const length = globalBytes + localBytes + 18 + compressed.byteLength + 1;
+    const finalLength = this.cursor + length;
+    const current = this.buffer.byteLength;
+    const next = this.capacityFor(finalLength);
+    const growthPeak = next === current ? current : current + next;
+    const peak = Math.max(growthPeak, next + finalLength);
+    // A fresh part can hold a single record up to the hard limit.
+    if (
+      !Number.isSafeInteger(peak) ||
+      peak > this.maxOutputBytes ||
+      (this.initialized && peak > targetPeakBytes)
+    ) {
+      return false;
+    }
+    this.assertPeak(peak);
+    this.reserve(length);
+    this.writeValidatedFrame(compressed, width, height, options);
+    return true;
+  }
+
+  /** Live output capacity plus the exact copy reserved for finalizing a part. */
+  partFinalizationBytes(): number {
+    return this.buffer.byteLength + (this.initialized ? this.cursor + 1 : 0);
+  }
+
   private validateFrame(
     indexLength: number,
     width: number,
     height: number,
     options: FrameOptions
   ): void {
-    const { palette, colorDepth, delay } = options;
+    const { palette, globalPalette, colorDepth, delay } = options;
     if (
       this.finished ||
       !Number.isInteger(width) ||
@@ -160,19 +231,9 @@ export class OwnedGifWriter {
       throw new RangeError('Invalid owned GIF frame');
     }
     if (
-      (!this.initialized && !palette) ||
-      (palette &&
-        (paletteLength(palette) < 1 ||
-          paletteLength(palette) > 256 ||
-          (palette instanceof Uint8Array
-            ? palette.length % 3 !== 0
-            : palette.some(
-                (color) =>
-                  color.length !== 3 ||
-                  color.some(
-                    (channel) => !Number.isInteger(channel) || channel < 0 || channel > 255
-                  )
-              ))))
+      (!this.initialized && !palette && !globalPalette) ||
+      (globalPalette && (this.initialized || !paletteIsValid(globalPalette))) ||
+      (palette && !paletteIsValid(palette))
     ) {
       throw new RangeError('Invalid owned GIF palette');
     }
@@ -184,20 +245,19 @@ export class OwnedGifWriter {
     height: number,
     options: FrameOptions
   ): void {
-    const { palette, colorDepth, delay } = options;
+    const { palette, globalPalette, colorDepth, delay } = options;
     const first = !this.initialized;
     if (first) {
+      const global = globalPalette ?? palette!;
       this.text('GIF89a');
       this.short(width);
       this.short(height);
-      this.byte(
-        0x80 |
-          ((colorDepth - 1) << 4) |
-          (Math.max(1, Math.ceil(Math.log2(paletteLength(palette!)))) - 1)
-      );
+      const depth = tableDepth(global);
+      const screenColorDepth = globalPalette ? Math.max(2, depth) : colorDepth;
+      this.byte(0x80 | ((screenColorDepth - 1) << 4) | (depth - 1));
       this.byte(0);
       this.byte(0);
-      this.table(palette!);
+      this.table(global);
       if (this.repeat !== null) {
         this.byte(0x21);
         this.byte(0xff);
@@ -222,8 +282,8 @@ export class OwnedGifWriter {
     this.short(0);
     this.short(width);
     this.short(height);
-    const local = !first && palette;
-    this.byte(local ? 0x80 | (Math.max(1, Math.ceil(Math.log2(paletteLength(local)))) - 1) : 0);
+    const local = (!first || globalPalette) && palette;
+    this.byte(local ? 0x80 | (tableDepth(local) - 1) : 0);
     if (local) this.table(local);
     this.writeImageData(compressed);
   }
