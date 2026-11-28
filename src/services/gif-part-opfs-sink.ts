@@ -238,9 +238,9 @@ export async function createGifPartOpfsSink(): Promise<GifPartIndexedDbSink> {
       return count;
     },
     save(part, signal) {
+      if (published) return Promise.reject(new Error('Staged GIF output is already closed'));
       return run(signal, async (operationSignal) => {
         if (
-          published ||
           part.index !== count + 1 ||
           count >= GIF_MAX_OUTPUT_FRAMES ||
           part.startCs !== endCs ||

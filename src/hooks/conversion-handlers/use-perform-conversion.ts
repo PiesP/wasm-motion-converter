@@ -349,7 +349,7 @@ export async function handleConvertGifParts(
       stored &&
       storedCount > 0 &&
       currentInput &&
-      (!continuousGif || (completed && !signal.aborted)) &&
+      (!continuousGif || (completed && !signal.aborted && stored.files().length === 1)) &&
       retainStoredParts?.(stored);
     try {
       await sink?.removeEmptyFolder();
