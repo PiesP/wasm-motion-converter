@@ -366,6 +366,28 @@ describe('real retained GIF service route', () => {
   ];
   const partOpts = { width: 2, height: 1, quality: 'high', scale: 1 } as const;
 
+  it('preserves the ordinary GIF bytes and avoids a tight output copy for Blob output', async () => {
+    stubWasmFetch();
+    const demux = fixtureDemux(partFrames, 2, 1);
+    fixture.frames = partFrames;
+    fixture.forceJsIndexes = false;
+    const byteCount = vi.fn();
+    const blobCount = vi.fn();
+    const profileOperation = vi.fn();
+    const bytes = await encodeGif(demux, { ...partOpts, onEncodingComplete: byteCount });
+    const blob = await encodeGif(
+      demux,
+      { ...partOpts, onEncodingComplete: blobCount, profileOperation },
+      undefined,
+      'blob'
+    );
+    expect(blob.type).toBe('image/gif');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(bytes);
+    expect(blobCount.mock.calls).toEqual(byteCount.mock.calls);
+    expect(profileOperation).toHaveBeenCalledWith('muxFinalization', expect.any(Number));
+    expect(profileOperation).not.toHaveBeenCalledWith('outputCopy', expect.any(Number));
+  });
+
   it.each([
     { forceJsIndexes: false, maxFrames: 1, maxOutputBytes: 32_768 },
     { forceJsIndexes: true, maxFrames: 1, maxOutputBytes: 32_768 },

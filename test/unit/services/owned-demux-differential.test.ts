@@ -17,6 +17,8 @@ import type { OwnedDemuxPacket } from '@services/owned-demux-session';
 import { EncodedPacket } from 'mediabunny';
 import { beforeAll, describe, expect, it, vi } from 'vite-plus/test';
 
+import { ownedDemuxFixtureClock } from '../../helpers/owned-demux-fixture-clock';
+
 type ExpectedPacket = {
   sequence?: number;
   timestampUs: number;
@@ -79,11 +81,29 @@ describe('actual compiled owned demux versus pinned patched development oracle',
       );
       expect(bytes.length).toBe(fixture.input.size);
       expect(sha(bytes)).toBe(fixture.input.sha256);
+      const clock = ownedDemuxFixtureClock(fixture.id, fixture.packets);
+      const packets = fixture.packets.map(({ sequence: _sequence, ...packet }) => ({
+        ...packet,
+        timestampUs: clock.timestampUs(packet.timestampUs),
+      }));
+      expect(fixture.packets.map((packet) => packet.sequence)).toEqual(
+        packets.map((_, index) => index)
+      );
+      const seeks = fixture.seek.map((seek) => ({
+        ...seek,
+        packet: clock.isTransportStream
+          ? (packets
+              .filter((packet) => packet.type === 'key' && packet.timestampUs <= seek.seconds * 1e6)
+              .sort((a, b) => b.timestampUs - a.timestampUs)[0] ?? null)
+          : seek.packet,
+      }));
       const session = new OwnedDemuxSession(new Blob([bytes]), module);
       try {
         const track = await session.analyze();
         expect(normalizedConfig(session)).toEqual(fixture.config);
-        expect(Number(track.durationTicks) / track.timescale).toBe(fixture.duration);
+        expect(Number(track.durationTicks) / track.timescale).toBe(
+          clock.duration(fixture.duration)
+        );
         expect(track.rotation).toBe(fixture.rotation);
         expect(track.packetCount).toBe(fixture.packets.length);
         const seekBytes = fixture.packets.filter((packet) => packet.type === 'key').length * 12;
@@ -94,11 +114,9 @@ describe('actual compiled owned demux versus pinned patched development oracle',
         });
         const capacity = session.transferStats.wasmCapacityBytes;
         for (let i = 0; i < track.packetCount; i++) {
-          const { sequence, ...expected } = fixture.packets[i]!;
-          expect(sequence).toBe(i);
-          expect(await normalizedPacket(session, await session.packetAsync(i))).toEqual(expected);
+          expect(await normalizedPacket(session, await session.packetAsync(i))).toEqual(packets[i]);
         }
-        for (const seek of fixture.seek) {
+        for (const seek of seeks) {
           const index = await session.findVerifiedKey(seek.seconds);
           expect(
             index === null
@@ -114,19 +132,18 @@ describe('actual compiled owned demux versus pinned patched development oracle',
           const importedTrack = await reused.importIndex(snapshot!);
           expect(normalizedConfig(reused)).toEqual(fixture.config);
           expect(Number(importedTrack.durationTicks) / importedTrack.timescale).toBe(
-            fixture.duration
+            clock.duration(fixture.duration)
           );
           expect(importedTrack.packetCount).toBe(track.packetCount);
           expect(reused.seekWorkspaceBytes).toBe(seekBytes);
           expect(reused.transferStats.rangeReads).toBe(0);
           const importedCapacity = reused.transferStats.wasmCapacityBytes;
           for (let index = 0; index < importedTrack.packetCount; index++) {
-            const { sequence: _sequence, ...expected } = fixture.packets[index]!;
             expect(await normalizedPacket(reused, await reused.packetAsync(index))).toEqual(
-              expected
+              packets[index]
             );
           }
-          for (const seek of fixture.seek) {
+          for (const seek of seeks) {
             const index = await reused.findVerifiedKey(seek.seconds);
             expect(
               index === null

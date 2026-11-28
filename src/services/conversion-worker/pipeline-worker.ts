@@ -105,7 +105,7 @@ function clampMaxMemoryMB(value: number): number {
  * Runs the full conversion pipeline in a worker.
  * This mirrors the main-thread conversion-pipeline.ts but adapted for worker context.
  */
-type WorkerBufferResult = { outputBuffer: ArrayBuffer; profile?: ConversionProfileReport };
+type WorkerOutput = { outputBuffer: ArrayBuffer | Blob; profile?: ConversionProfileReport };
 type WorkerSavePart = (part: GifOutputPart) => Promise<void>;
 
 export function runWorkerPipeline(
@@ -130,7 +130,7 @@ export function runWorkerPipeline(
   duration?: number,
   framerate?: number,
   indexSnapshot?: OwnedInputIndexSnapshot
-): Promise<WorkerBufferResult>;
+): Promise<WorkerOutput>;
 export async function runWorkerPipeline(
   input: ArrayBuffer | Blob,
   options: SerializedConversionOptions,
@@ -142,7 +142,7 @@ export async function runWorkerPipeline(
   framerate?: number,
   indexSnapshot?: OwnedInputIndexSnapshot,
   savePart?: WorkerSavePart
-): Promise<WorkerBufferResult | GifPartsSummary> {
+): Promise<WorkerOutput | GifPartsSummary> {
   const pipelineStart = performance.now();
   const previousLoad = waitForOwnedVp8Load(signal);
   if (previousLoad) await previousLoad;
@@ -186,7 +186,7 @@ export async function runWorkerPipeline(
     `▶ Worker pipeline started: ${options.format} ${options.quality} ${options.scale}x`
   );
 
-  let output: ArrayBuffer | undefined;
+  let output: ArrayBuffer | Blob | undefined;
 
   // ── Memory sampling and guard (H3 fix) ──
   // Workers do not expose performance.memory. Include the transferred input,
@@ -445,8 +445,7 @@ export async function runWorkerPipeline(
         postProgress('assembling', true);
         return summary;
       }
-      const gifResult = await encodeGif(demuxResult, gifOptions, signal);
-      output = toExactOutputBuffer(gifResult);
+      output = await encodeGif(demuxResult, gifOptions, signal, 'blob');
     } else {
       const webpCadence = resolveCadencePolicy(
         sourceFps,
@@ -506,10 +505,8 @@ export async function runWorkerPipeline(
       }
     }
 
-    transcodeSpan?.end({
-      ...observedCounts,
-      outputBytes: output?.byteLength ?? 0,
-    });
+    const outputBytes = output instanceof Blob ? output.size : (output?.byteLength ?? 0);
+    transcodeSpan?.end({ ...observedCounts, outputBytes });
 
     // ── Finalization bookkeeping (UI progress remains "assembling") ──
     const finalizationSpan = profiler?.begin('finalizing');
@@ -520,7 +517,7 @@ export async function runWorkerPipeline(
       throw new Error('Worker pipeline completed without producing output');
     }
 
-    postProgress('assembling', true, output.byteLength);
+    postProgress('assembling', true, outputBytes);
 
     finalizationSpan?.end();
     const profile = profiler?.finish();

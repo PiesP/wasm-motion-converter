@@ -445,7 +445,7 @@ async function performConversion(
       metadata?.framerate
     );
 
-    const blob = validateOutputBlob(output, settings);
+    const blob = await validateOutputBlob(output, settings);
     await handleResult(blob, file, settings, outputDimensions, runtime, startTimeMs, isActive);
     if (isActive()) focusDownloadButton();
   } catch (error) {
@@ -545,7 +545,7 @@ async function executePipeline(
   file: File,
   duration?: number,
   framerate?: number
-): Promise<ArrayBuffer> {
+): Promise<ArrayBuffer | Blob> {
   if (!serializedConfig) {
     throw new Error('Unable to extract VideoDecoderConfig — cannot run conversion pipeline');
   }
@@ -580,17 +580,29 @@ async function executePipeline(
   );
 }
 
-function validateOutputBlob(output: ArrayBuffer, settings: ConversionSettings): Blob {
-  if (output.byteLength === 0) {
+async function validateOutputBlob(
+  output: ArrayBuffer | Blob,
+  settings: ConversionSettings
+): Promise<Blob> {
+  const length = output instanceof Blob ? output.size : output.byteLength;
+  if (length === 0) {
     throw new Error('Conversion produced an empty output file');
   }
 
-  const header = new Uint8Array(output, 0, Math.min(output.byteLength, 16));
+  const prefixLength = Math.min(length, 16);
+  const header =
+    output instanceof Blob
+      ? new Uint8Array(await output.slice(0, prefixLength).arrayBuffer())
+      : new Uint8Array(output, 0, prefixLength);
   if (!validateOutput(header, settings.format)) {
     throw new Error(`Conversion produced an invalid output header for ${settings.format}`);
   }
 
   const mimeType = settings.format === 'gif' ? 'image/gif' : 'image/webp';
+  if (output instanceof Blob) {
+    if (output.type !== mimeType) throw new Error('Conversion produced an invalid MIME type');
+    return output;
+  }
   return new Blob([output], { type: mimeType });
 }
 

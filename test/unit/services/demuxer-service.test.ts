@@ -6,6 +6,7 @@ import {
   DEMUX_MEMORY_BUDGET_BYTES,
   ENCODED_CHUNK_BUDGET_BYTES,
   ENCODED_PACKET_BUDGET_BYTES,
+  MAX_FILE_SIZE,
 } from '@utils/constants';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
@@ -15,9 +16,12 @@ const mocks = vi.hoisted(() => ({
   findVerifiedKey: vi.fn(),
   packet: vi.fn(),
   readPacket: vi.fn(),
+  verifyVisibleVp9Key: vi.fn(async () => true),
+  verifyStandaloneVp9Keys: vi.fn(async () => false),
   release: vi.fn(),
   enablePacketReadWindow: vi.fn(),
   transferStats: { wasmCapacityBytes: 8 * 1024 * 1024 },
+  reconstructsPackets: false,
 }));
 vi.mock('@services/owned-demux-core', () => ({
   createOwnedDemuxSession: vi.fn(async () => ({
@@ -26,10 +30,13 @@ vi.mock('@services/owned-demux-core', () => ({
     findVerifiedKey: mocks.findVerifiedKey,
     packetAsync: mocks.packet,
     readPacket: mocks.readPacket,
+    verifyVisibleVp9Key: mocks.verifyVisibleVp9Key,
+    verifyStandaloneVp9Keys: mocks.verifyStandaloneVp9Keys,
     release: mocks.release,
     enablePacketReadWindow: mocks.enablePacketReadWindow,
     seekWorkspaceBytes: 0,
     transferStats: mocks.transferStats,
+    reconstructsPackets: mocks.reconstructsPackets,
   })),
   computeOwnedPacketStats: vi.fn(async () => ({ averagePacketRate: 6, averageBitrate: 48_000 })),
   classifyOwnedDemuxError: (error: unknown) => error,
@@ -98,6 +105,7 @@ describe('demuxVideo owned packet route', () => {
     vi.clearAllMocks();
     vi.stubGlobal('EncodedVideoChunk', TestEncodedVideoChunk);
     track.maxPacketBytes = 4;
+    mocks.reconstructsPackets = false;
     mocks.analyze.mockResolvedValue(track);
     mocks.importIndex.mockResolvedValue(track);
     mocks.findVerifiedKey.mockResolvedValue(6);
@@ -145,6 +153,98 @@ describe('demuxVideo owned packet route', () => {
     expect(result.sourceTotalMs).toBeCloseTo(999.996);
     expect(mocks.release).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    [true, MAX_FILE_SIZE, false],
+    [false, MAX_FILE_SIZE, true],
+    [false, MAX_FILE_SIZE + 1, true],
+  ] as const)(
+    'checks pre-read credit with reconstruction=%s for a Blob of %i bytes',
+    async (reconstructsPackets, size, gated) => {
+      mocks.reconstructsPackets = reconstructsPackets;
+      const inputBlob = new Blob();
+      vi.spyOn(inputBlob, 'size', 'get').mockReturnValue(size);
+      const result = await demuxVideo(
+        { ...request(1.2, 1.3), inputBuffer: undefined, inputBlob },
+        metadata
+      );
+      expect(typeof result.setPacketReadGate).toBe(gated ? 'function' : 'undefined');
+      expect(mocks.readPacket).not.toHaveBeenCalled();
+      result.dispose?.();
+    }
+  );
+
+  it('offers indexed byte charges before a direct read and closes on refusal', async () => {
+    const inputBlob = new Blob();
+    mocks.packet.mockImplementation((index: number) => ({
+      index,
+      byteLength: index === 6 ? 4 : 2,
+      ptsTicks: BigInt(timestamps[index]!),
+      durationTicks: 166_666n,
+      key: index === 6,
+    }));
+    const result = await demuxVideo(
+      { ...request(1.2, 1.3), inputBuffer: undefined, inputBlob },
+      metadata
+    );
+    const gate = vi
+      .fn<(bytes: number) => boolean>()
+      .mockReturnValueOnce(true)
+      .mockReturnValue(false);
+    result.setPacketReadGate!(gate);
+    if (!(Symbol.asyncIterator in result.chunks)) throw new Error('Expected lazy packet stream');
+    const iterator = result.chunks[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toMatchObject({ done: false, value: { byteLength: 4 } });
+    await expect(iterator.next()).resolves.toMatchObject({ done: true });
+    expect(gate.mock.calls).toEqual([[1028], [1026]]);
+    expect(mocks.readPacket).toHaveBeenCalledOnce();
+    expect(gate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.readPacket.mock.invocationCallOrder[0]!
+    );
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['gif', 'VP90', 'vp09.00.10.08', true],
+    ['gif', 'vp09', 'vp09.00.10.08', true],
+    ['gif', 'vp09', 'vp09.02.10.10', false],
+    ['gif', 'avc1', null, false],
+    ['webp', 'VP90', 'vp09.00.10.08', false],
+  ] as const)(
+    'offers a lazy key probe for direct %s from parsed %s/%s',
+    async (format, codec, codecString, canProbe) => {
+      mocks.analyze.mockResolvedValue({ ...track, codec, codecString });
+      const result = await demuxVideo(
+        { ...request(1), format, inputBuffer: undefined, inputBlob: new Blob() },
+        { ...metadata, config: { ...metadata.config, codec: 'vp09.00.10.08' } }
+      );
+      expect(Boolean(result.verifyStandaloneVp9Keys)).toBe(canProbe);
+      expect(mocks.verifyStandaloneVp9Keys).not.toHaveBeenCalled();
+      if (canProbe) {
+        await expect(result.verifyStandaloneVp9Keys?.()).resolves.toBe(false);
+        expect(mocks.verifyStandaloneVp9Keys).toHaveBeenCalledWith(6, undefined);
+      }
+      result.setPacketReadGate!(async (chargedBytes, candidate) => {
+        expect(chargedBytes).toBe(1028);
+        expect(mocks.verifyVisibleVp9Key).not.toHaveBeenCalled();
+        expect(mocks.readPacket).not.toHaveBeenCalled();
+        if (canProbe) {
+          expect(candidate?.timestampUs).toBe(1_000_000);
+          await expect(candidate?.verify()).resolves.toBe(true);
+        } else {
+          expect(candidate).toBeUndefined();
+        }
+        return false;
+      });
+      if (!(Symbol.asyncIterator in result.chunks)) throw new Error('Expected lazy packet stream');
+      await expect(result.chunks[Symbol.asyncIterator]().next()).resolves.toMatchObject({
+        done: true,
+      });
+      expect(mocks.verifyVisibleVp9Key).toHaveBeenCalledTimes(Number(canProbe));
+      expect(mocks.readPacket).not.toHaveBeenCalled();
+      expect(mocks.release).toHaveBeenCalledOnce();
+    }
+  );
 
   it('uses admitted compact seek workspace instead of charging every logical packet', async () => {
     mocks.analyze.mockResolvedValue({ ...track, packetCount: 100_000_000 });
