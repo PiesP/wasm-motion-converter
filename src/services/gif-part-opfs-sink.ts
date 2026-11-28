@@ -12,9 +12,11 @@ import { logger } from '@utils/logger';
 
 import type { GifOutputPart } from './gif-encoder-service';
 import { acquireGifOutputLease } from './gif-output-lease';
+import { GifStagedOutputLimitError } from './gif-staged-output-limit-error';
 
 const WRITE_BYTES = BYTES_PER_MB;
-const MAX_STAGED_BYTES = 512 * BYTES_PER_MB;
+const MAX_STAGED_MIB = 512;
+const MAX_STAGED_BYTES = MAX_STAGED_MIB * BYTES_PER_MB;
 const OWNED_FILE =
   /^dropconvert-gif-opfs-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}\.gif$/;
 const MAGIC = new TextEncoder().encode('GIF89a');
@@ -298,10 +300,7 @@ export async function createGifPartOpfsSink() {
         let cursor = reference ? partData.recordsStart : 0;
         const newBytes = partData.end - cursor + partData.repairs.length * partData.palette.length;
         if (newBytes >= MAX_STAGED_BYTES - outputBytes) {
-          throw new DOMException(
-            'Staged GIF output exceeds the storage limit',
-            'QuotaExceededError'
-          );
+          throw new GifStagedOutputLimitError(MAX_STAGED_MIB);
         }
 
         // Reuse one palette-sized patch. All unchanged bytes go directly from the offered

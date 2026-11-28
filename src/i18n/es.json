@@ -34,6 +34,7 @@
   "env.webAssemblyUnavailable": "WebAssembly no está disponible. Esta aplicación requiere WebAssembly para codificar la salida WebP.",
   "env.webCodecsUnavailable": "WebCodecs no está disponible. Esta aplicación requiere VideoDecoder y VideoFrame para procesar vídeo.",
   "error.continuousGifSaveFailed": "No se pudo guardar el GIF en la carpeta. Comprueba el acceso y el espacio disponible.",
+  "error.gifContinuousOutputLimit": "Este GIF supera el límite de {limitMiB} MiB para un solo archivo. Acorta el vídeo o reduce la resolución o la calidad.",
   "error.gifPartsSaveFailed": "No se pudieron guardar las partes del GIF. Comprueba el acceso a la carpeta y el espacio disponible.",
   "error.gifPartsStorageFailed": "No se pudo usar el almacenamiento del navegador para las partes del GIF. Comprueba el espacio disponible.",
   "error.codec": "Este códec de vídeo no se puede procesar. Prueba con un archivo diferente.",

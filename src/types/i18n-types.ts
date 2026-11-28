@@ -284,6 +284,7 @@ export interface TranslationKeys {
   'error.unknown': string;
   'error.conversionFailed': string;
   'error.continuousGifSaveFailed': string;
+  'error.gifContinuousOutputLimit': string;
   'error.gifPartsSaveFailed': string;
   'error.gifPartsStorageFailed': string;
   'error.dismiss': string;

@@ -34,6 +34,7 @@
   "env.webAssemblyUnavailable": "WebAssembly غير متاح. يتطلب هذا التطبيق WebAssembly لترميز إخراج WebP.",
   "env.webCodecsUnavailable": "WebCodecs غير متاح. يتطلب هذا التطبيق VideoDecoder وVideoFrame لمعالجة الفيديو.",
   "error.continuousGifSaveFailed": "تعذّر حفظ ملف GIF في المجلد. تحقّق من إذن الوصول والمساحة المتاحة.",
+  "error.gifContinuousOutputLimit": "يتجاوز ملف GIF حدّ {limitMiB} MiB للملف الواحد. قصّر المقطع أو خفّض دقته أو جودته.",
   "error.gifPartsSaveFailed": "تعذر حفظ أجزاء GIF. تحقّق من إذن الوصول إلى المجلد والمساحة المتاحة.",
   "error.gifPartsStorageFailed": "تعذّر استخدام مساحة تخزين المتصفح لأجزاء GIF. تحقّق من المساحة المتاحة.",
   "error.codec": "لا يمكن معالجة ترميز الفيديو هذا. يرجى تجربة ملف مختلف.",

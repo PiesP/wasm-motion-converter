@@ -34,6 +34,7 @@
   "env.webAssemblyUnavailable": "WebAssemblyを利用できません。WebP出力のエンコードにはWebAssemblyが必要です。",
   "env.webCodecsUnavailable": "WebCodecsを利用できません。動画を処理するにはVideoDecoderとVideoFrameが必要です。",
   "error.continuousGifSaveFailed": "フォルダーに GIF を保存できません。アクセス権と空き容量を確認してください。",
+  "error.gifContinuousOutputLimit": "この GIF は 1 ファイルあたりの上限（{limitMiB} MiB）を超えています。動画を短くするか、解像度や画質を下げてください。",
   "error.gifPartsSaveFailed": "GIF の分割ファイルを保存できません。フォルダーのアクセス権と空き容量を確認してください。",
   "error.gifPartsStorageFailed": "ブラウザーで GIF の分割ファイルを保存または読み込めません。空き容量を確認してください。",
   "error.codec": "この動画コデックは処理できません。別のファイルをお試しください。",

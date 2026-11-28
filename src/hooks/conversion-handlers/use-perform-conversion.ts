@@ -19,6 +19,7 @@ import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { createGifPartFileSink, selectGifPartDirectory } from '@services/gif-part-file-sink';
 import type { GifPartOpfsSink } from '@services/gif-part-opfs-sink';
+import { GifStagedOutputLimitError } from '@services/gif-staged-output-limit-error';
 import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
 import {
   ownedVp8FailureKind,
@@ -287,7 +288,11 @@ export async function handleConvertGifParts(
   const storageFailureMessage = retainStoredGif
     ? 'error.gifPartsStorageFailed'
     : 'error.gifPartsSaveFailed';
-  let failureMessage: 'error.memory' | typeof storageFailureMessage | undefined;
+  let failure:
+    | 'error.memory'
+    | typeof storageFailureMessage
+    | GifStagedOutputLimitError
+    | undefined;
   try {
     // Reach the native picker in the trusted click's task, before async preparation.
     const destination = retainStoredGif ? undefined : await selectGifPartDirectory();
@@ -336,8 +341,13 @@ export async function handleConvertGifParts(
     completed = true;
   } catch (error) {
     if (!signal.aborted && (started || !isCancellationError(error))) {
-      failureMessage =
-        started && error instanceof WorkerMemoryLimitError ? 'error.memory' : storageFailureMessage;
+      if (started && error instanceof WorkerMemoryLimitError) {
+        failure = 'error.memory';
+      } else if (retainStoredGif && error instanceof GifStagedOutputLimitError) {
+        failure = error;
+      } else {
+        failure = storageFailureMessage;
+      }
       logger.warn('conversion', 'GIF part conversion did not finish', {
         error: getErrorMessage(error),
       });
@@ -350,7 +360,7 @@ export async function handleConvertGifParts(
       await sink?.removeEmptyFolder();
       if (stored && !retained) await stored.dispose();
     } catch (error) {
-      failureMessage = storageFailureMessage;
+      failure = storageFailureMessage;
       logger.warn('conversion', 'GIF part folder cleanup failed', {
         error: getErrorMessage(error),
       });
@@ -365,8 +375,10 @@ export async function handleConvertGifParts(
         );
       } else if (retained) {
         report(t('result.continuousGifStored'));
-      } else if (failureMessage) {
-        report(t(failureMessage));
+      } else if (failure instanceof GifStagedOutputLimitError) {
+        report(t('error.gifContinuousOutputLimit', { limitMiB: failure.limitMiB }));
+      } else if (failure) {
+        report(t(failure));
       }
     }
     if (started && isActive()) {

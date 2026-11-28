@@ -110,6 +110,7 @@ import {
   WorkerPipelineError,
   WorkerTimeoutError,
 } from '@services/conversion-worker/main-thread-proxy';
+import { GifStagedOutputLimitError } from '@services/gif-staged-output-limit-error';
 import {
   OwnedVp8AbiError,
   OwnedVp8InitializationAbiError,
@@ -266,6 +267,55 @@ it('reports completed GIF parts when the manifest close wins a racing Stop', asy
   expect(report).toHaveBeenCalledWith('result.gifPartsSaved');
   expect(mocks.appState).toBe('idle');
   runtime.dispose();
+});
+
+it.each([
+  {
+    outcome: 'application staging limit',
+    error: new GifStagedOutputLimitError(512),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    message: 'error.gifContinuousOutputLimit',
+  },
+  {
+    outcome: 'native quota failure',
+    error: new DOMException('Origin quota exhausted', 'QuotaExceededError'),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    message: 'error.gifPartsStorageFailed',
+  },
+  {
+    outcome: 'storage cleanup failure after hitting the staging limit',
+    error: new GifStagedOutputLimitError(512),
+    dispose: vi.fn().mockRejectedValue(new DOMException('Removal failed', 'InvalidStateError')),
+    message: 'error.gifPartsStorageFailed',
+  },
+])('reports the $outcome after discarding incomplete OPFS output', async (testCase) => {
+  const storage = {
+    count: 1,
+    ready: false,
+    save: vi.fn(),
+    finish: vi.fn(),
+    dispose: testCase.dispose,
+  };
+  mocks.createGifPartOpfsSink.mockResolvedValue(storage);
+  mocks.runGifPartsViaWorker.mockRejectedValue(testCase.error);
+  const runtime = createRuntime();
+  const report = vi.fn();
+  const t = vi.fn(localizedProgressT);
+  const retain = vi.fn(() => true);
+
+  try {
+    await conversionModule.handleConvertGifParts(runtime, t, report, retain);
+    expect(report).toHaveBeenCalledExactlyOnceWith(testCase.message);
+    if (testCase.message === 'error.gifContinuousOutputLimit') {
+      expect(t).toHaveBeenCalledWith(testCase.message, { limitMiB: 512 });
+    }
+    expect(storage.dispose).toHaveBeenCalledOnce();
+    expect(storage.finish).not.toHaveBeenCalled();
+    expect(retain).not.toHaveBeenCalled();
+    expect(mocks.appState).toBe('idle');
+  } finally {
+    runtime.dispose();
+  }
 });
 
 it('discards the incomplete OPFS result on Stop without opening a directory picker', async () => {

@@ -34,6 +34,7 @@
   "env.webAssemblyUnavailable": "WebAssembly is not available. This application requires WebAssembly to encode WebP output.",
   "env.webCodecsUnavailable": "WebCodecs is not available. This application requires VideoDecoder and VideoFrame to process video.",
   "error.continuousGifSaveFailed": "Could not save the GIF to the folder. Check folder access and available space.",
+  "error.gifContinuousOutputLimit": "This GIF exceeds the {limitMiB} MiB limit for a single file. Shorten the clip or lower the resolution or quality.",
   "error.gifPartsSaveFailed": "Unable to save GIF parts. Check folder access and available space.",
   "error.gifPartsStorageFailed": "Unable to use browser storage for GIF parts. Check available space.",
   "error.codec": "This video codec cannot be processed. Please try a different file.",

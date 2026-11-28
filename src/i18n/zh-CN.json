@@ -34,6 +34,7 @@
   "env.webAssemblyUnavailable": "WebAssembly 不可用。此应用程序需要 WebAssembly 来编码 WebP 输出。",
   "env.webCodecsUnavailable": "WebCodecs 不可用。此应用程序需要 VideoDecoder 和 VideoFrame 来处理视频。",
   "error.continuousGifSaveFailed": "无法将 GIF 保存到文件夹。请检查文件夹权限和可用空间。",
+  "error.gifContinuousOutputLimit": "此 GIF 超出单个文件的 {limitMiB} MiB 上限。请缩短视频片段，或降低分辨率或画质。",
   "error.gifPartsSaveFailed": "无法保存 GIF 分段。请检查文件夹权限和可用空间。",
   "error.gifPartsStorageFailed": "无法使用浏览器存储 GIF 分段。请检查可用空间。",
   "error.codec": "无法处理此视频编解码器。请尝试其他文件。",
