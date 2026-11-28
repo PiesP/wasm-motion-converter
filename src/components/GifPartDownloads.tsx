@@ -51,12 +51,14 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
     setPending(true);
     const controller = new AbortController();
     reader = controller;
+    const selectTarget = props.continuousGif && typeof picker === 'function' ? picker : undefined;
+    let pickerPending = selectTarget !== undefined;
     try {
       // Open the picker in the user's click before awaiting OPFS.
-      const target =
-        props.continuousGif && typeof picker === 'function'
-          ? await picker.call(window, { suggestedName: filename })
-          : null;
+      const target = selectTarget
+        ? await selectTarget.call(window, { suggestedName: filename })
+        : null;
+      pickerPending = false;
       controller.signal.throwIfAborted();
       const blob = await props.storage.read(filename, controller.signal);
       controller.signal.throwIfAborted();
@@ -71,7 +73,7 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
       if (
         alive &&
         !controller.signal.aborted &&
-        !(error instanceof DOMException && error.name === 'AbortError')
+        !(pickerPending && error instanceof DOMException && error.name === 'AbortError')
       )
         setFailed(true);
     } finally {
