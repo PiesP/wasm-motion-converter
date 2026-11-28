@@ -139,6 +139,7 @@
   "result.gifPartsSaved": "已在 {folder} 中保存 {count} 个 GIF 分段。",
   "result.continuousGifStored": "GIF 已可下载。",
   "result.continuousGifSaved": "已保存 {filename}。",
+  "result.saveContinuousGifToFolder": "将 GIF 保存到文件夹",
   "result.prepareGifPart": "准备 {filename}",
   "result.downloadGifPart": "下载 {filename}",
   "result.actualSize": "实际大小",

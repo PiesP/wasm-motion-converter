@@ -52,8 +52,15 @@ it('finishes the selected native save through unrelated conversion activity', as
   const close = vi.fn(() => closeCompletion.promise);
   const abort = vi.fn();
   const createWritable = vi.fn(async () => new WritableStream({ write, close, abort }));
-  const picker = vi.fn(async () => ({ name: 'renamed.gif', createWritable }));
-  vi.stubGlobal('showSaveFilePicker', picker);
+  const getFileHandle = vi
+    .fn()
+    .mockRejectedValueOnce(new DOMException('missing', 'NotFoundError'))
+    .mockResolvedValueOnce({ createWritable, getFile: async () => new File([], 'empty.gif') });
+  const picker = vi.fn(async () => ({ getFileHandle }));
+  const replacePicker = vi.fn();
+  vi.stubGlobal('showDirectoryPicker', picker);
+  vi.stubGlobal('showSaveFilePicker', replacePicker);
+  vi.spyOn(crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111');
   const file = new File([new Uint8Array([1, 2, 3])], 'continuous.gif');
   const storage = {
     filename: file.name,
@@ -70,7 +77,8 @@ it('finishes the selected native save through unrelated conversion activity', as
     )!;
     const clear = container.querySelector<HTMLButtonElement>('[data-testid="discard-gif-parts"]')!;
     save.click();
-    expect(picker).toHaveBeenCalledExactlyOnceWith({ suggestedName: 'continuous.gif' });
+    expect(picker).toHaveBeenCalledExactlyOnceWith({ mode: 'readwrite' });
+    expect(replacePicker).not.toHaveBeenCalled();
     await vi.waitFor(() =>
       expect(write).toHaveBeenCalledExactlyOnceWith(new Uint8Array([1, 2, 3]), expect.anything())
     );
@@ -89,13 +97,14 @@ it('finishes the selected native save through unrelated conversion activity', as
     closeCompletion.resolve();
     await vi.waitFor(() => expect(clear.disabled).toBe(false));
     expect(container.querySelector('[role="status"]')?.textContent).toBe(
-      'result.continuousGifSaved: renamed.gif'
+      'result.continuousGifSaved: continuous_1111111111114111.gif'
     );
   } finally {
     writeCompletion.resolve();
     closeCompletion.resolve();
     renderDispose();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     container.remove();
   }
 });

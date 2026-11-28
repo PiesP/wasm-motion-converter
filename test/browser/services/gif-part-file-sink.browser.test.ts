@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 PiesP
 
-import { createGifPartFileSink } from '@services/gif-part-file-sink';
+import { createGifPartFileSink, saveContinuousGifToDirectory } from '@services/gif-part-file-sink';
 import { expect, it, vi } from 'vite-plus/test';
 
 const bytes = Uint8Array.from(
@@ -160,5 +160,53 @@ it('keeps data from a file created between absence check and acquisition', async
     const result = await folder.getDirectoryHandle(sink.folderName);
     const first = await (await result.getFileHandle(partFilename)).getFile();
     expect(await first.text()).toBe('another writer');
+  });
+});
+
+it('cleans up an interrupted continuous GIF and retries without replacing a prior file', async () => {
+  await withFolder(async (folder) => {
+    const prior = await folder.getFileHandle('continuous.gif', { create: true });
+    const priorWriter = await prior.createWritable();
+    await priorWriter.write('previous result');
+    await priorWriter.close();
+    seedNames();
+    const source = new File([bytes], 'opfs-internal-name');
+    const continueReading = Promise.withResolvers<void>();
+    const firstChunkQueued = Promise.withResolvers<void>();
+    const prefix = new Uint8Array(bytes, 0, 8);
+    vi.spyOn(source, 'stream').mockReturnValueOnce(
+      new ReadableStream<Uint8Array<ArrayBuffer>>({
+        start(controller) {
+          controller.enqueue(prefix);
+        },
+        pull() {
+          firstChunkQueued.resolve();
+          return continueReading.promise;
+        },
+      })
+    );
+    const stop = new AbortController();
+    const saving = saveContinuousGifToDirectory(folder, 'continuous.gif', source, stop.signal);
+    const settlement = expect(saving).rejects.toMatchObject({ name: 'AbortError' });
+    try {
+      await firstChunkQueued.promise;
+      stop.abort();
+    } finally {
+      continueReading.resolve();
+      await settlement;
+    }
+    await expect(folder.getFileHandle('continuous_1111111111114111.gif')).rejects.toMatchObject({
+      name: 'NotFoundError',
+    });
+    const saved = await saveContinuousGifToDirectory(
+      folder,
+      'continuous.gif',
+      source,
+      new AbortController().signal
+    );
+    expect(saved).toBe('continuous_2222222222224222.gif');
+    const result = await (await folder.getFileHandle(saved)).getFile();
+    expect(await result.arrayBuffer()).toEqual(bytes);
+    expect(await (await prior.getFile()).text()).toBe('previous result');
   });
 });

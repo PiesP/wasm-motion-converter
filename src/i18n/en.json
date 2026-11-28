@@ -139,6 +139,7 @@
   "result.gifPartsSaved": "Saved {count} GIF parts in {folder}.",
   "result.continuousGifStored": "The GIF is ready to download.",
   "result.continuousGifSaved": "Saved {filename}.",
+  "result.saveContinuousGifToFolder": "Save GIF to a folder",
   "result.prepareGifPart": "Prepare {filename}",
   "result.downloadGifPart": "Download {filename}",
   "result.actualSize": "Actual size",

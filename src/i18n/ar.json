@@ -139,6 +139,7 @@
   "result.gifPartsSaved": "تم حفظ {count} جزءًا من GIF في {folder}.",
   "result.continuousGifStored": "ملف GIF جاهز للتنزيل.",
   "result.continuousGifSaved": "تم حفظ {filename}.",
+  "result.saveContinuousGifToFolder": "حفظ GIF في مجلد",
   "result.prepareGifPart": "تجهيز {filename}",
   "result.downloadGifPart": "تنزيل {filename}",
   "result.actualSize": "الحجم الفعلي",

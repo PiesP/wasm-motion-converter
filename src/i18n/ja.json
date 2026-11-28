@@ -139,6 +139,7 @@
   "result.gifPartsSaved": "{folder} に GIF ファイルを {count} 個保存しました。",
   "result.continuousGifStored": "GIFをダウンロードできます。",
   "result.continuousGifSaved": "{filename} を保存しました。",
+  "result.saveContinuousGifToFolder": "GIF をフォルダーに保存",
   "result.prepareGifPart": "{filename} を準備",
   "result.downloadGifPart": "{filename} をダウンロード",
   "result.actualSize": "実寸",

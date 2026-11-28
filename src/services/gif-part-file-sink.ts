@@ -55,7 +55,7 @@ async function removeOwnedEntry(
 async function writeNewFile(
   directory: FileSystemDirectoryHandle,
   name: string,
-  contents: ArrayBuffer | string,
+  contents: ArrayBuffer | Blob | string,
   signal: AbortSignal
 ): Promise<void> {
   signal.throwIfAborted();
@@ -69,7 +69,11 @@ async function writeNewFile(
     signal.throwIfAborted();
     writer = await file.createWritable();
     signal.throwIfAborted();
-    await writer.write(contents);
+    if (contents instanceof Blob) {
+      await contents.stream().pipeTo(writer, { preventClose: true, signal });
+    } else {
+      await writer.write(contents);
+    }
     signal.throwIfAborted();
     await writer.close();
   } catch (error) {
@@ -87,6 +91,17 @@ async function writeNewFile(
 function newFileName(stem: string, extension: string): string {
   const token = crypto.randomUUID().replaceAll('-', '').slice(0, 16);
   return `${stem}_${token}.${extension}`;
+}
+
+export async function saveContinuousGifToDirectory(
+  directory: FileSystemDirectoryHandle,
+  suggestedName: string,
+  file: File,
+  signal: AbortSignal
+): Promise<string> {
+  const filename = newFileName(suggestedName.replace(/\.gif$/i, ''), 'gif');
+  await writeNewFile(directory, filename, file, signal);
+  return filename;
 }
 
 export function createGifPartFileSink(destination: FileSystemDirectoryHandle) {

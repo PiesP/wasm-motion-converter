@@ -3,12 +3,13 @@
 
 import Button from '@components/ui/Button';
 import { useLocale } from '@hooks/use-locale';
+import {
+  saveContinuousGifToDirectory,
+  selectGifPartDirectory,
+  supportsGifPartSaving,
+} from '@services/gif-part-file-sink';
 import type { GifPartOpfsSink } from '@services/gif-part-opfs-sink';
 import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
-
-type SavePickerWindow = Window & {
-  showSaveFilePicker?: (options: { suggestedName: string }) => Promise<FileSystemFileHandle>;
-};
 
 interface GifPartDownloadsProps {
   storage: Pick<GifPartOpfsSink, 'filename' | 'read' | 'dispose'>;
@@ -23,8 +24,7 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
   const [pending, setPending] = createSignal(false);
   const [failed, setFailed] = createSignal(false);
   const [saved, setSaved] = createSignal<string>();
-  const picker = (window as SavePickerWindow).showSaveFilePicker;
-  const selectTarget = typeof picker === 'function' ? picker : undefined;
+  const nativeSave = supportsGifPartSaving();
   const [discardStarted, setDiscardStarted] = createSignal(false);
   let reader: AbortController | undefined;
   let alive = true;
@@ -37,7 +37,7 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
   };
   createEffect(() => {
     // The chosen destination belongs to the save until its writer settles.
-    if (!selectTarget && props.busy) release();
+    if (!nativeSave && props.busy) release();
   });
   onCleanup(() => {
     alive = false;
@@ -52,20 +52,22 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
     setPending(true);
     const controller = new AbortController();
     reader = controller;
-    let pickerPending = selectTarget !== undefined;
+    let pickerPending = nativeSave;
     try {
-      // Open the picker in the user's click before awaiting OPFS.
-      const target = selectTarget
-        ? await selectTarget.call(window, { suggestedName: filename })
-        : null;
+      // A save-file picker can truncate an existing file before a writer opens.
+      const directory = nativeSave ? await selectGifPartDirectory() : null;
       pickerPending = false;
       controller.signal.throwIfAborted();
       const file = await props.storage.read(controller.signal);
       controller.signal.throwIfAborted();
-      if (target) {
-        const destination = await target.createWritable();
-        await file.stream().pipeTo(destination, { signal: controller.signal });
-        if (alive) setSaved(target.name);
+      if (directory) {
+        const name = await saveContinuousGifToDirectory(
+          directory,
+          filename,
+          file,
+          controller.signal
+        );
+        if (alive) setSaved(name);
       } else {
         setPrepared(URL.createObjectURL(file));
       }
@@ -112,7 +114,9 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
             onClick={() => void prepare()}
             data-testid="prepare-gif-part-download"
           >
-            {t(selectTarget ? 'result.downloadGifPart' : 'result.prepareGifPart', { filename })}
+            {nativeSave
+              ? t('result.saveContinuousGifToFolder')
+              : t('result.prepareGifPart', { filename })}
           </Button>
           <Show when={prepared()} keyed>
             {(url) => (
