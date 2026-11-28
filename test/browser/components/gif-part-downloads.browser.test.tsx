@@ -108,3 +108,56 @@ it('finishes the selected native save through unrelated conversion activity', as
     container.remove();
   }
 });
+
+it('distinguishes folder and browser storage errors and ignores picker cancellation', async () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const file = new File([new Uint8Array([1])], 'continuous.gif');
+  const read = vi.fn().mockResolvedValueOnce(file).mockRejectedValueOnce(new Error('read failed'));
+  const createWritable = vi.fn().mockRejectedValue(new Error('write failed'));
+  const ownedFile = {
+    kind: 'file',
+    name: 'continuous.gif',
+    createWritable,
+    getFile: async () => new File([], 'empty.gif'),
+    isSameEntry: async () => true,
+  };
+  const getFileHandle = vi
+    .fn()
+    .mockRejectedValueOnce(new DOMException('missing', 'NotFoundError'))
+    .mockResolvedValue(ownedFile);
+  const picker = vi
+    .fn()
+    .mockResolvedValueOnce({ getFileHandle, removeEntry: vi.fn() })
+    .mockResolvedValueOnce({ getFileHandle })
+    .mockRejectedValueOnce(new DOMException('cancelled', 'AbortError'));
+  vi.stubGlobal('showDirectoryPicker', picker);
+  const dispose = render(
+    () => (
+      <GifPartDownloads
+        storage={{ filename: file.name, read, dispose: vi.fn() }}
+        busy={false}
+        onDiscard={vi.fn()}
+      />
+    ),
+    container
+  );
+  try {
+    const save = container.querySelector<HTMLButtonElement>(
+      '[data-testid="prepare-gif-part-download"]'
+    )!;
+    const alert = () => container.querySelector('[role="alert"]')?.textContent;
+    save.click();
+    await vi.waitFor(() => expect(alert()).toBe('error.continuousGifSaveFailed'));
+    save.click();
+    await vi.waitFor(() => expect(alert()).toBe('error.gifPartsStorageFailed'));
+    save.click();
+    await vi.waitFor(() => expect(save.disabled).toBe(false));
+    expect(alert()).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    dispose();
+    vi.unstubAllGlobals();
+    container.remove();
+  }
+});

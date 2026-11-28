@@ -283,6 +283,7 @@ export interface TranslationKeys {
   'error.memory': string;
   'error.unknown': string;
   'error.conversionFailed': string;
+  'error.continuousGifSaveFailed': string;
   'error.gifPartsSaveFailed': string;
   'error.gifPartsStorageFailed': string;
   'error.dismiss': string;

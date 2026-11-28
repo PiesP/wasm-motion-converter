@@ -17,12 +17,14 @@ interface GifPartDownloadsProps {
   onDiscard: () => void;
 }
 
+type SaveError = 'error.gifPartsStorageFailed' | 'error.continuousGifSaveFailed';
+
 export default function GifPartDownloads(props: GifPartDownloadsProps) {
   const { t } = useLocale();
   const filename = props.storage.filename;
   const [prepared, setPrepared] = createSignal<string>();
   const [pending, setPending] = createSignal(false);
-  const [failed, setFailed] = createSignal(false);
+  const [failure, setFailure] = createSignal<SaveError>();
   const [saved, setSaved] = createSignal<string>();
   const nativeSave = supportsGifPartSaving();
   const [discardStarted, setDiscardStarted] = createSignal(false);
@@ -47,20 +49,25 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
   const prepare = async (): Promise<void> => {
     if (pending() || props.busy || discardStarted()) return;
     release();
-    setFailed(false);
+    setFailure(undefined);
     setSaved(undefined);
     setPending(true);
     const controller = new AbortController();
     reader = controller;
     let pickerPending = nativeSave;
+    let errorKey: SaveError = nativeSave
+      ? 'error.continuousGifSaveFailed'
+      : 'error.gifPartsStorageFailed';
     try {
       // A save-file picker can truncate an existing file before a writer opens.
       const directory = nativeSave ? await selectGifPartDirectory() : null;
       pickerPending = false;
+      errorKey = 'error.gifPartsStorageFailed';
       controller.signal.throwIfAborted();
       const file = await props.storage.read(controller.signal);
       controller.signal.throwIfAborted();
       if (directory) {
+        errorKey = 'error.continuousGifSaveFailed';
         const name = await saveContinuousGifToDirectory(
           directory,
           filename,
@@ -77,7 +84,7 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
         !controller.signal.aborted &&
         !(pickerPending && error instanceof DOMException && error.name === 'AbortError')
       )
-        setFailed(true);
+        setFailure(errorKey);
     } finally {
       reader = undefined;
       if (alive) setPending(false);
@@ -87,14 +94,14 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
   const discard = async (): Promise<void> => {
     if (pending() || props.busy) return;
     release();
-    setFailed(false);
+    setFailure(undefined);
     setPending(true);
     setDiscardStarted(true);
     try {
       await props.storage.dispose();
       if (alive) props.onDiscard();
     } catch {
-      if (alive) setFailed(true);
+      if (alive) setFailure('error.gifPartsStorageFailed');
     } finally {
       if (alive) setPending(false);
     }
@@ -145,10 +152,12 @@ export default function GifPartDownloads(props: GifPartDownloadsProps) {
       <Show when={saved()} keyed>
         {(name) => <p role="status">{t('result.continuousGifSaved', { filename: name })}</p>}
       </Show>
-      <Show when={failed()}>
-        <p role="alert" class="text-status-danger">
-          {t('error.gifPartsStorageFailed')}
-        </p>
+      <Show when={failure()} keyed>
+        {(key) => (
+          <p role="alert" class="text-status-danger">
+            {t(key)}
+          </p>
+        )}
       </Show>
     </section>
   );
