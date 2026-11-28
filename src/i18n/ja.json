@@ -140,6 +140,7 @@
   "result.gifPartDownloads": "GIF 分割ファイルのダウンロード",
   "result.gifPartsStored": "{count} 個の GIF 分割ファイルをダウンロードできます。",
   "result.continuousGifStored": "GIFをダウンロードできます。",
+  "result.continuousGifSaved": "{filename} を保存しました。",
   "result.gifPartsStoredPartial": "変換を中止しました。{count} 個の GIF 分割ファイルをダウンロードできます。",
   "result.prepareGifPart": "{filename} を準備",
   "result.downloadGifPart": "{filename} をダウンロード",

@@ -140,6 +140,7 @@
   "result.gifPartDownloads": "تنزيل أجزاء GIF",
   "result.gifPartsStored": "يتوفر {count} جزءًا من GIF للتنزيل.",
   "result.continuousGifStored": "ملف GIF جاهز للتنزيل.",
+  "result.continuousGifSaved": "تم حفظ {filename}.",
   "result.gifPartsStoredPartial": "توقف التحويل. يتوفر {count} جزءًا من GIF للتنزيل.",
   "result.prepareGifPart": "تجهيز {filename}",
   "result.downloadGifPart": "تنزيل {filename}",

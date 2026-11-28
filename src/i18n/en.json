@@ -140,6 +140,7 @@
   "result.gifPartDownloads": "GIF part downloads",
   "result.gifPartsStored": "{count} GIF parts are ready to download.",
   "result.continuousGifStored": "The GIF is ready to download.",
+  "result.continuousGifSaved": "Saved {filename}.",
   "result.gifPartsStoredPartial": "Conversion stopped. {count} GIF parts are ready to download.",
   "result.prepareGifPart": "Prepare {filename}",
   "result.downloadGifPart": "Download {filename}",

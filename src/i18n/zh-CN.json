@@ -140,6 +140,7 @@
   "result.gifPartDownloads": "下载 GIF 分段",
   "result.gifPartsStored": "有 {count} 个 GIF 分段可供下载。",
   "result.continuousGifStored": "GIF 已可下载。",
+  "result.continuousGifSaved": "已保存 {filename}。",
   "result.gifPartsStoredPartial": "转换已停止。有 {count} 个 GIF 分段可供下载。",
   "result.prepareGifPart": "准备 {filename}",
   "result.downloadGifPart": "下载 {filename}",

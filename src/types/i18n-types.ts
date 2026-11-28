@@ -257,6 +257,7 @@ export interface TranslationKeys {
   'result.gifPartDownloads': string;
   'result.gifPartsStored': string;
   'result.continuousGifStored': string;
+  'result.continuousGifSaved': string;
   'result.gifPartsStoredPartial': string;
   'result.prepareGifPart': string;
   'result.downloadGifPart': string;
