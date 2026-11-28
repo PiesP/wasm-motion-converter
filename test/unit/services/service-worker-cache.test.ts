@@ -464,14 +464,21 @@ describe('service worker dynamic cache boundaries', () => {
     const eager = [...worker.staticCacheEntries.keys()].filter((url) =>
       new URL(url).pathname.startsWith('/assets/')
     );
-    expect(eager).toHaveLength(3);
-    await expect(
-      worker.dispatchFetch(
-        eager.find((url) => url.endsWith('.js'))!,
-        'script'
-      )
-    ).resolves.toBeDefined();
-    expect(eager.some((url) => /worker|wasm|conversion-pipeline/.test(url))).toBe(false);
+    const manifest = /^const __DROP_CONVERT_SHELL__=(.+);$/m.exec(emittedWorker);
+    expect(manifest).not.toBeNull();
+    const expected = JSON.parse(manifest![1]!).eager as { path: string }[];
+    expect(eager.toSorted()).toEqual(
+      expected.map(({ path }) => new URL(path, origin).href).toSorted()
+    );
+    for (const asset of eager) {
+      const destination = asset.endsWith('.css') ? 'style' : 'script';
+      await expect(worker.dispatchFetch(asset, destination)).resolves.toBe(
+        worker.staticCacheEntries.get(asset)
+      );
+    }
+    expect(
+      eager.some((url) => /worker|wasm|conversion-pipeline|gif-part-opfs-sink/.test(url))
+    ).toBe(false);
     expect(worker.cacheStores.has(dynamicCacheName)).toBe(false);
   });
 
