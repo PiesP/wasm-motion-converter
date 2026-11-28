@@ -67,7 +67,7 @@ export const WEBP_MAX_FRAMES = 9000;
 
 /** Maximum number of frames that may be emitted into one GIF output. */
 export const GIF_MAX_OUTPUT_FRAMES = 9_000;
-/** Maximum cumulative GIF bytes retained by the owned GIF writer. */
+/** Maximum GIF output storage, including overlapping write and finalization allocations. */
 export const GIF_MAX_OUTPUT_BYTES = 256 * BYTES_PER_MB;
 
 /** Aggregate frame-pipeline and WebP-finalization memory envelope. */

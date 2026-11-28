@@ -163,13 +163,25 @@ function remapToGifGlobalPalette(
  *
  * Instead of collecting all decoded frames into an array first, each frame
  * is encoded immediately upon decoding. This reduces peak memory from
- * O(N × frame_size) to O(frame_size).
+ * O(N × frame_size) to O(frame_size) for decoded frames. Encoded output has a separate budget.
  */
-export async function encodeGif(
+export function encodeGif(
   demux: DemuxResult,
   opts: GifEncoderOptions,
   signal?: AbortSignal
-): Promise<Uint8Array> {
+): Promise<Uint8Array>;
+export function encodeGif(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  signal: AbortSignal | undefined,
+  output: 'blob'
+): Promise<Blob>;
+export async function encodeGif(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  signal?: AbortSignal,
+  output?: 'blob'
+): Promise<Uint8Array | Blob> {
   const srcW = opts.width;
   const srcH = opts.height;
   const w = Math.max(1, Math.floor(srcW * opts.scale));
@@ -194,7 +206,11 @@ export async function encodeGif(
   ) {
     initialCapacity *= 2;
   }
-  const initialStreamCapacity = Math.min(outputLimits.maxOutputBytes, initialCapacity);
+  const maxOutputBytes = outputLimits.maxOutputBytes;
+  const initialStreamCapacity =
+    output === 'blob'
+      ? Math.min(initialCapacity, 1024 * 1024, Math.max(1, Math.floor(maxOutputBytes / 8)))
+      : Math.min(maxOutputBytes, initialCapacity);
   opts.assertAdditionalMemoryBytes?.(initialStreamCapacity);
   const pixelCount = w * h;
   const exactRgbaBytes = pixelCount * 4;
@@ -224,12 +240,13 @@ export async function encodeGif(
     outputLimits.maxOutputBytes,
     (peak) => assertGifWorkingMemory(peak),
     (indices, depth) => quantizePalette.compress(indices, depth),
-    opts.playCount
+    opts.playCount,
+    output === 'blob'
   );
   const quantizePalette = await createGifScalarQuantizer(
     (oldBytes, newBytes) =>
       assertGifWorkingMemory(
-        encoder.stream.buffer.byteLength,
+        encoder.retainedBytes,
         liveIndexedBytes + comparisonWorkingBytes,
         oldBytes + newBytes
       ),
@@ -340,10 +357,7 @@ export async function encodeGif(
     palette: number[][]
   ): { indexed: Uint8Array; palette: number[][]; colorHash: number; indexedBytes: number } {
     const comparisonBytes = lastIndexedData ? GIF_PALETTE_COMPARISON_BYTES : 0;
-    assertGifWorkingMemory(
-      encoder.stream.buffer.byteLength,
-      liveIndexedBytes + pixelCount + comparisonBytes
-    );
+    assertGifWorkingMemory(encoder.retainedBytes, liveIndexedBytes + pixelCount + comparisonBytes);
     const paletteMapStart = opts.profileOperation ? performance.now() : null;
     const indexed = quantizePalette.mapPalette(rgbaData, palette);
     if (paletteMapStart !== null) {
@@ -360,7 +374,7 @@ export async function encodeGif(
     const indexedBytes =
       indexed.buffer instanceof ArrayBuffer ? indexed.buffer.byteLength : indexed.byteLength;
     assertGifWorkingMemory(
-      encoder.stream.buffer.byteLength,
+      encoder.retainedBytes,
       liveIndexedBytes + indexedBytes + comparisonBytes
     );
     const compact = compactIndexedPalette(indexed, palette);
@@ -521,7 +535,7 @@ export async function encodeGif(
         // admit it, flush first and take the original one-index path.
         try {
           assertGifWorkingMemory(
-            encoder.stream.buffer.byteLength,
+            encoder.retainedBytes,
             liveIndexedBytes + pixelCount + GIF_PALETTE_COMPARISON_BYTES
           );
         } catch (error) {
@@ -537,7 +551,7 @@ export async function encodeGif(
         }
       }
       if (!lastIndexedData) assertCanWriteOutputFrame();
-      assertGifWorkingMemory(encoder.stream.buffer.byteLength, liveIndexedBytes);
+      assertGifWorkingMemory(encoder.retainedBytes, liveIndexedBytes);
       const pixelPreparationStart = opts.profileOperation ? performance.now() : null;
       let exactRgba =
         source instanceof Uint8Array
@@ -741,22 +755,27 @@ export async function encodeGif(
     comparisonWorkingBytes = 0;
     const finalizationStart = opts.profileOperation ? performance.now() : null;
     encoder.finish();
-    if (finalizationStart !== null)
-      opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
-    const streamCapacity = encoder.stream.buffer.byteLength;
-    const finalCopyPeakBytes = streamCapacity + encoder.bytesView().byteLength;
-    if (
-      !Number.isSafeInteger(finalCopyPeakBytes) ||
-      finalCopyPeakBytes > outputLimits.maxOutputBytes
-    ) {
-      throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
+    let result: Uint8Array | Blob;
+    if (output === 'blob') {
+      result = encoder.takeBlob();
+      if (finalizationStart !== null)
+        opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
+    } else {
+      if (finalizationStart !== null)
+        opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
+      const finalCopyPeakBytes = encoder.retainedBytes + encoder.bytesView().byteLength;
+      if (
+        !Number.isSafeInteger(finalCopyPeakBytes) ||
+        finalCopyPeakBytes > outputLimits.maxOutputBytes
+      ) {
+        throw new OutputLimitError('gif', 'byte', outputLimits.maxOutputBytes);
+      }
+      assertGifWorkingMemory(finalCopyPeakBytes);
+      const copyStart = opts.profileOperation ? performance.now() : null;
+      result = encoder.bytes();
+      if (copyStart !== null) opts.profileOperation?.('outputCopy', performance.now() - copyStart);
     }
-    opts.assertAdditionalMemoryBytes?.(
-      finalCopyPeakBytes + wasmCapacity + (wasmCapacity > 0 ? GIF_SCALAR_PALETTE_BYTES : 0)
-    );
-    const copyStart = opts.profileOperation ? performance.now() : null;
-    const rawBytes = encoder.bytes();
-    if (copyStart !== null) opts.profileOperation?.('outputCopy', performance.now() - copyStart);
+    const outputBytes = result instanceof Blob ? result.size : result.byteLength;
     const totalElapsed = (performance.now() - startTime) / 1000;
     opts.onEncodingComplete?.({
       consumedChunks,
@@ -773,7 +792,7 @@ export async function encodeGif(
       decodedFrames: totalInputFrames,
       keptFrames: encodeIdx,
       totalFrames: demux.totalFrames,
-      outputBytes: rawBytes.length,
+      outputBytes,
       fps: Math.round(encodeIdx / totalElapsed),
       duration: `${totalElapsed.toFixed(2)}s`,
       resolution: `${w}×${h}`,
@@ -790,13 +809,13 @@ export async function encodeGif(
     });
     logger.info('encoders', '  │  └─ GIF: encode finished', {
       keptFrames: encodeIdx,
-      outputBytes: rawBytes.length,
+      outputBytes,
       duration: `${totalElapsed.toFixed(2)}s`,
       skippedByDecimation,
       smartSkipped,
     });
 
-    return rawBytes;
+    return result;
   } finally {
     lastIndexedData = null;
     liveIndexedBytes = 0;
