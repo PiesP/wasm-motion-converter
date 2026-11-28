@@ -6,7 +6,7 @@
  *
  * Wraps Worker lifecycle (create, communicate, terminate) and provides
  * an async function matching the current pipeline signature:
- *   runPipeline(input, config, options, callbacks) → Promise<ArrayBuffer>
+ *   runPipeline(input, config, options, callbacks) → Promise<ArrayBuffer | Blob>
  *
  * Features:
  * - Clones Blob handles for lazy reads or transfers owned ArrayBuffers
@@ -96,7 +96,7 @@ export class WorkerPipelineError extends Error {
  * @param options - Conversion options (format, quality, scale, etc.)
  * @param onProgress - Progress callback (throttled to ~100ms)
  * @param signal - Abort signal for cancellation
- * @returns Promise resolving to the output ArrayBuffer (GIF or WebP)
+ * @returns Promise resolving to the output GIF Blob or owned ArrayBuffer
  */
 export async function runPipelineViaWorker(
   input: ArrayBuffer | Blob,
@@ -106,7 +106,7 @@ export async function runPipelineViaWorker(
   signal?: AbortSignal,
   duration?: number,
   framerate?: number
-): Promise<ArrayBuffer> {
+): Promise<ArrayBuffer | Blob> {
   const result = await dispatchWorker(
     input,
     config,
@@ -116,7 +116,9 @@ export async function runPipelineViaWorker(
     duration,
     framerate
   );
-  if (!(result instanceof ArrayBuffer)) throw new Error('Expected a single conversion output');
+  if (!(result instanceof ArrayBuffer) && !(result instanceof Blob)) {
+    throw new Error('Expected a single conversion output');
+  }
   return result;
 }
 
@@ -145,7 +147,9 @@ export async function runGifPartsViaWorker(
     framerate,
     savePart
   );
-  if (result instanceof ArrayBuffer) throw new Error('Expected a GIF parts summary');
+  if (result instanceof ArrayBuffer || result instanceof Blob) {
+    throw new Error('Expected a GIF parts summary');
+  }
   return result;
 }
 
@@ -158,7 +162,7 @@ async function dispatchWorker(
   duration?: number,
   framerate?: number,
   savePart?: SaveGifPart
-): Promise<ArrayBuffer | GifPartsSummary> {
+): Promise<ArrayBuffer | Blob | GifPartsSummary> {
   clearLastConversionProfileReport();
   if (!isBoundedCodecDescription(config.description)) {
     throw new Error('Invalid worker codec description');
@@ -175,7 +179,7 @@ async function dispatchWorker(
   signal?.throwIfAborted();
   discardOwnedVp8Module();
 
-  return new Promise<ArrayBuffer | GifPartsSummary>((resolve, reject) => {
+  return new Promise<ArrayBuffer | Blob | GifPartsSummary>((resolve, reject) => {
     const requestId = crypto.randomUUID();
 
     // Classify synchronous Worker construction failures as unavailability.
@@ -402,7 +406,7 @@ async function dispatchWorker(
           if (response.profile) {
             setLastConversionProfileReport(response.profile);
           }
-          // Terminate immediately — transfer is complete once message received.
+          // Terminate immediately — the receiver owns the result after delivery.
           // Deferring with queueMicrotask can race with consumer .then() handlers.
           worker.terminate();
           resolve(response.outputBuffer);
@@ -517,7 +521,7 @@ export async function runPipelineWithFallback(
   inputBlob?: Blob,
   duration?: number,
   framerate?: number
-): Promise<ArrayBuffer> {
+): Promise<ArrayBuffer | Blob> {
   // Reject untrusted display-aspect metadata before allocating a Worker or
   // transferring the input buffer. The worker pipeline repeats this check
   // after demux as defense in depth.

@@ -180,14 +180,28 @@ function remapToGifGlobalPalette(
  *
  * Instead of collecting all decoded frames into an array first, each frame
  * is encoded immediately upon decoding. This reduces peak memory from
- * O(N × frame_size) to O(frame_size).
+ * O(N × frame_size) to O(frame_size) for decoded frames. Encoded output has a separate budget.
  */
-export async function encodeGif(
+export function encodeGif(
   demux: DemuxResult,
   opts: GifEncoderOptions,
   signal?: AbortSignal
-): Promise<Uint8Array> {
-  return encodeGifOutput(demux, opts, signal);
+): Promise<Uint8Array>;
+export function encodeGif(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  signal: AbortSignal | undefined,
+  output: 'blob'
+): Promise<Blob>;
+export async function encodeGif(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  signal?: AbortSignal,
+  output?: 'blob'
+): Promise<Uint8Array | Blob> {
+  return output === 'blob'
+    ? encodeGifOutput(demux, opts, signal, output)
+    : encodeGifOutput(demux, opts, signal);
 }
 
 /** Save independently decodable GIFs from one decoder, awaiting each part's settlement. */
@@ -209,14 +223,21 @@ function encodeGifOutput(
   demux: DemuxResult,
   opts: GifEncoderOptions,
   signal: AbortSignal | undefined,
-  savePart: SaveGifPart
+  output: 'blob'
+): Promise<Blob>;
+function encodeGifOutput(
+  demux: DemuxResult,
+  opts: GifEncoderOptions,
+  signal: AbortSignal | undefined,
+  output: SaveGifPart
 ): Promise<GifPartsResult>;
 async function encodeGifOutput(
   demux: DemuxResult,
   opts: GifEncoderOptions,
   signal?: AbortSignal,
-  savePart?: SaveGifPart
-): Promise<Uint8Array | GifPartsResult> {
+  output?: 'blob' | SaveGifPart
+): Promise<Uint8Array | Blob | GifPartsResult> {
+  const savePart = typeof output === 'function' ? output : undefined;
   const srcW = opts.width;
   const srcH = opts.height;
   const w = Math.max(1, Math.floor(srcW * opts.scale));
@@ -247,12 +268,14 @@ async function encodeGifOutput(
   ) {
     initialCapacity *= 2;
   }
-  const initialStreamCapacity = Math.min(
-    savePart
-      ? Math.max(1, Math.floor(outputLimits.maxOutputBytes / 2))
-      : outputLimits.maxOutputBytes,
-    initialCapacity
-  );
+  const maxOutputBytes = outputLimits.maxOutputBytes;
+  const capacityLimit =
+    output === 'blob'
+      ? Math.min(1024 * 1024, Math.max(1, Math.floor(maxOutputBytes / 8)))
+      : savePart
+        ? Math.max(1, Math.floor(maxOutputBytes / 2))
+        : maxOutputBytes;
+  const initialStreamCapacity = Math.min(capacityLimit, initialCapacity);
   opts.assertAdditionalMemoryBytes?.(initialStreamCapacity);
   const pixelCount = w * h;
   const exactRgbaBytes = pixelCount * 4;
@@ -283,11 +306,12 @@ async function encodeGifOutput(
       outputLimits.maxOutputBytes,
       (peak) => assertGifWorkingMemory(peak),
       (indices, depth) => quantizePalette.compress(indices, depth),
-      opts.playCount
+      opts.playCount,
+      output === 'blob'
     );
   let encoder: OwnedGifWriter | null = createWriter();
   const streamWorkingBytes = () =>
-    savePart ? (encoder?.partFinalizationBytes() ?? 0) : encoder!.stream.buffer.byteLength;
+    savePart ? (encoder?.partFinalizationBytes() ?? 0) : encoder!.retainedBytes;
   const quantizePalette = await createGifScalarQuantizer(
     (oldBytes, newBytes) =>
       assertGifWorkingMemory(
@@ -451,7 +475,7 @@ async function encodeGifOutput(
     writer.finish();
     if (finalizationStart !== null)
       opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
-    const finalCopyPeakBytes = writer.stream.buffer.byteLength + writer.bytesView().byteLength;
+    const finalCopyPeakBytes = writer.retainedBytes + writer.bytesView().byteLength;
     if (
       !Number.isSafeInteger(finalCopyPeakBytes) ||
       finalCopyPeakBytes > outputLimits.maxOutputBytes
@@ -921,9 +945,19 @@ async function encodeGifOutput(
     lastIndexedData = null;
     liveIndexedBytes = 0;
     comparisonWorkingBytes = 0;
-    const rawBytes = savePart ? undefined : finishWriter(encoder!);
-    if (savePart && partFrameCount > 0) await publishPart();
-    const outputBytes = rawBytes?.byteLength ?? savedBytes;
+    let result: Uint8Array | Blob | undefined;
+    if (savePart) {
+      if (partFrameCount > 0) await publishPart();
+    } else if (output === 'blob') {
+      const finalizationStart = opts.profileOperation ? performance.now() : null;
+      encoder!.finish();
+      result = encoder!.takeBlob();
+      if (finalizationStart !== null)
+        opts.profileOperation?.('muxFinalization', performance.now() - finalizationStart);
+    } else {
+      result = finishWriter(encoder!);
+    }
+    const outputBytes = result instanceof Blob ? result.size : (result?.byteLength ?? savedBytes);
     const totalElapsed = (performance.now() - startTime) / 1000;
     opts.onEncodingComplete?.({
       consumedChunks,
@@ -963,7 +997,7 @@ async function encodeGifOutput(
       smartSkipped,
     });
 
-    return rawBytes ?? { partCount, frameCount: outputFrames };
+    return result ?? { partCount, frameCount: outputFrames };
   } finally {
     lastIndexedData = null;
     liveIndexedBytes = 0;

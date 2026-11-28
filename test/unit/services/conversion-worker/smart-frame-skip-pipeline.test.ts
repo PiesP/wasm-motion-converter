@@ -74,7 +74,7 @@ beforeEach(() => {
         gifRetainedImageDataWrites: 10,
         gifRetainedWasmCapacityBytes: 65_536,
       });
-      return new Uint8Array([1, 2, 3]);
+      return new Blob([Uint8Array.of(1, 2, 3)], { type: 'image/gif' });
     }
   );
   mocks.encodeWebp.mockReset().mockImplementation(
@@ -187,7 +187,8 @@ describe('worker pipeline smart frame skip forwarding', () => {
         maxOutputBytes: 1024,
         smartFrameSkip: 'adaptive',
       }),
-      undefined
+      undefined,
+      'blob'
     );
     expect(result.profile?.stages.map((stage) => stage.stage)).toEqual([
       'demuxing',
@@ -264,7 +265,8 @@ describe('worker pipeline smart frame skip forwarding', () => {
     expect(mocks.encodeGif).toHaveBeenCalledWith(
       expect.objectContaining({ rotation: 270 }),
       expect.objectContaining({ width: 48, height: 80 }),
-      undefined
+      undefined,
+      'blob'
     );
   });
 
@@ -344,11 +346,17 @@ describe('worker pipeline smart frame skip forwarding', () => {
   });
 
   it('transfers only output view bytes when the encoder returns spare capacity', async () => {
-    mocks.encodeGif.mockImplementationOnce(async () =>
+    mocks.encodeWebp.mockImplementationOnce(async () =>
       new Uint8Array([99, 1, 2, 3, 99]).subarray(1, 4)
     );
 
-    const result = await runWorkerPipeline(new ArrayBuffer(8), baseOptions, vi.fn(), 'view-output');
+    const result = await runWorkerPipeline(
+      new ArrayBuffer(8),
+      { ...baseOptions, format: 'webp' },
+      vi.fn(),
+      'view-output'
+    );
+    if (!(result.outputBuffer instanceof ArrayBuffer)) throw new TypeError('Expected WebP buffer');
     expect([...new Uint8Array(result.outputBuffer)]).toEqual([1, 2, 3]);
     expect(result.outputBuffer.byteLength).toBe(3);
     expect(result.profile?.operationTotals.outputCopy.samples).toBe(1);
@@ -379,7 +387,7 @@ describe('worker pipeline smart frame skip forwarding', () => {
         nowMs = 480;
         options.onFrameEncoded?.(2, 12);
         options.onEncodingComplete?.({ decodedFrames: 30, encodedFrames: 2, emittedFrames: 2 });
-        return new Uint8Array([1, 2, 3]);
+        return new Blob([Uint8Array.of(1, 2, 3)], { type: 'image/gif' });
       }
     );
     const postMessage = vi.fn();

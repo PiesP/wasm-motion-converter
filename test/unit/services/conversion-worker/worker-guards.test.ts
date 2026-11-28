@@ -618,8 +618,11 @@ describe('isWorkerResponse', () => {
     expect(isWorkerResponse(withoutBuf)).toBe(false);
   });
 
-  it('rejects complete with non-ArrayBuffer outputBuffer', () => {
+  it('accepts immutable GIF output and rejects other non-buffer completions', () => {
     expect(isWorkerResponse({ ...validComplete, outputBuffer: 'not-a-buffer' })).toBe(false);
+    expect(isWorkerResponse({ ...validComplete, outputBuffer: new Blob(['GIF89a']) })).toBe(false);
+    const gif = new Blob(['GIF89a'], { type: 'image/gif' });
+    expect(isWorkerResponse({ ...validComplete, outputBuffer: gif })).toBe(true);
   });
 
   it('rejects a malformed profile at the Worker boundary', () => {

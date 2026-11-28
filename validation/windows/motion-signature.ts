@@ -432,11 +432,14 @@ export function installMotionObserver(options?: { forceConversionWorkerFailure?:
         } else if (
           data.type === 'complete' &&
           'outputBuffer' in data &&
-          data.outputBuffer instanceof ArrayBuffer
+          (data.outputBuffer instanceof ArrayBuffer || data.outputBuffer instanceof Blob)
         ) {
           this.entry.completes.push({
             requestId: 'requestId' in data ? String(data.requestId) : '',
-            outputBytes: data.outputBuffer.byteLength,
+            outputBytes:
+              data.outputBuffer instanceof Blob
+                ? data.outputBuffer.size
+                : data.outputBuffer.byteLength,
             profile:
               'profile' in data && data.profile && typeof data.profile === 'object'
                 ? data.profile

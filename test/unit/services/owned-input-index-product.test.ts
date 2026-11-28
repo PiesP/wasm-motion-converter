@@ -14,6 +14,8 @@ import { extractVideoMetadata } from '@services/video-metadata';
 import type { ConversionRequest } from '@t/conversion-types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vite-plus/test';
 
+import { ownedDemuxFixtureClock } from '../../helpers/owned-demux-fixture-clock';
+
 const wasmBytes = Uint8Array.from(
   readFileSync(new URL('../../../src/services/owned-demux.wasm', import.meta.url))
 );
@@ -123,7 +125,8 @@ describe('actual compiled selected-input index route', () => {
       const source = new Blob([bytes]);
       beginOwnedInputSelection(source);
       const metadata = await extractVideoMetadata(source);
-      expect(metadata.duration).toBe(entry.duration);
+      const clock = ownedDemuxFixtureClock(entry.id, entry.packets);
+      expect(metadata.duration).toBe(clock.duration(entry.duration));
       expect(metadata.framerate).toBe(Math.round(entry.stats.averagePacketRate * 100) / 100);
       expect(metadata.bitrate).toBe(Math.round(entry.stats.averageBitrate));
       const indexSnapshot = copyOwnedInputIndex(source);
@@ -135,7 +138,7 @@ describe('actual compiled selected-input index route', () => {
       expect(result.indexRoute).toBe('imported');
       expect(await packetTrace(result)).toEqual(
         entry.packets.map(({ timestampUs, durationUs, sha256 }) => ({
-          timestampUs,
+          timestampUs: clock.timestampUs(timestampUs),
           durationUs,
           sha256,
         }))

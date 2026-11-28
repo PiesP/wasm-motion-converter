@@ -19,6 +19,8 @@ pub const INPUT_CAPACITY: usize = 64 * 1024;
 pub const METADATA_BUDGET: usize = 32 * 1024 * 1024;
 pub const PACKET_BUDGET: u32 = 16 * 1024 * 1024 - 1024;
 pub const MAX_SAMPLES: usize = 100_000_000;
+const STANDARD_INPUT_LIMIT: u64 = 500 * 1024 * 1024;
+const MP4_INPUT_LIMIT: u64 = 512 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -157,7 +159,7 @@ struct PendingBox {
 
 impl Mp4Session {
     pub fn new(len: u64) -> Result<Self, Error> {
-        if !(8..=500 * 1024 * 1024).contains(&len) {
+        if !(8..=MP4_INPUT_LIMIT).contains(&len) {
             return Err(Error::ResourceLimit);
         }
         Ok(Self {
@@ -481,10 +483,20 @@ impl Mp4Session {
 
     fn step_inner(&mut self, work_credit: u32) -> Result<(), Error> {
         if self.format == Format::Unknown {
-            let Some(prefix) = self.window(0, 5)? else {
-                return Ok(());
-            };
-            self.format =
+            self.format = if self.len > STANDARD_INPUT_LIMIT {
+                let len = self.len;
+                let Some(header) = self.window(0, 16)? else {
+                    return Ok(());
+                };
+                let size = u64::from(u32::from_be_bytes(header[..4].try_into().unwrap()));
+                if &header[4..8] != b"ftyp" || size < 16 || size % 4 != 0 || size > len {
+                    return Err(Error::ResourceLimit);
+                }
+                Format::Mp4
+            } else {
+                let Some(prefix) = self.window(0, 5)? else {
+                    return Ok(());
+                };
                 if u32::from_be_bytes(prefix[..4].try_into().unwrap()) as u64 == ebml::EBML {
                     Format::Ebml
                 } else if prefix[0] == 0x47 || prefix[4] == 0x47 {
@@ -492,7 +504,8 @@ impl Mp4Session {
                     Format::Ts
                 } else {
                     Format::Mp4
-                };
+                }
+            };
         }
         if self.format == Format::Ts {
             return self.step_ts(work_credit);
@@ -1621,6 +1634,62 @@ pub extern "C" fn demux_release() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extended_mp4_requires_a_complete_leading_ftyp_header() {
+        assert!(matches!(
+            Mp4Session::new(MP4_INPUT_LIMIT + 1),
+            Err(Error::ResourceLimit)
+        ));
+        for (size, tag) in [
+            (16, *b"free"),
+            (16, *b"moov"),
+            (0, *b"ftyp"),
+            (1, *b"ftyp"),
+            (12, *b"ftyp"),
+            (17, *b"ftyp"),
+            (MP4_INPUT_LIMIT as u32 + 4, *b"ftyp"),
+            (0x1a45_dfa3, *b"webm"),
+            (0x4700_0000, *b"...."),
+        ] {
+            let mut session = Mp4Session::new(MP4_INPUT_LIMIT).unwrap();
+            assert_eq!(session.step(1), Status::NeedInput);
+            assert_eq!(
+                session.request(),
+                Some(Request {
+                    offset: 0,
+                    length: INPUT_CAPACITY as u32,
+                })
+            );
+            session.input[..4].copy_from_slice(&size.to_be_bytes());
+            session.input[4..8].copy_from_slice(&tag);
+            session.feed(INPUT_CAPACITY).unwrap();
+            assert_eq!(session.step(1), Status::Error);
+            assert_eq!(session.error(), Some(Error::ResourceLimit));
+            assert!(session.request().is_none());
+        }
+    }
+
+    #[test]
+    fn extended_mp4_can_skip_to_a_box_above_the_standard_limit() {
+        let mut session = Mp4Session::new(MP4_INPUT_LIMIT).unwrap();
+        assert_eq!(session.step(1), Status::NeedInput);
+        session.input[..16].copy_from_slice(b"\0\0\0\x10ftypisom\0\0\0\0");
+        let next_box = MP4_INPUT_LIMIT - 8;
+        session.input[16..20].copy_from_slice(&((next_box - 16) as u32).to_be_bytes());
+        session.input[20..24].copy_from_slice(b"free");
+        session.feed(INPUT_CAPACITY).unwrap();
+        assert_eq!(session.step(3), Status::NeedInput);
+        assert_eq!(session.format, Format::Mp4);
+        assert_eq!(
+            session.request(),
+            Some(Request {
+                offset: next_box,
+                length: 8,
+            })
+        );
+        assert_eq!(session.input.capacity(), INPUT_CAPACITY);
+    }
 
     #[test]
     fn snapshot_status_preserves_parser_error_kinds() {

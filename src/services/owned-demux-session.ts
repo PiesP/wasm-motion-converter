@@ -4,7 +4,13 @@
 /** Host-owned Blob or ArrayBuffer ranges for the bounded conversion-owned Rust parser. */
 
 import { schedulerYield as yieldToMain } from '@piesp/browser-core/util';
+import { MAX_FILE_SIZE } from '@utils/constants';
 
+import {
+  EXTENDED_MP4_HEADER_BYTES,
+  hasExtendedMp4Prefix,
+  ownedInputLimit,
+} from './owned-demux-intake';
 import {
   ownedReadCreditStats,
   readOwnedRange,
@@ -16,7 +22,6 @@ import {
 const ABI_VERSION = 4;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const SNAPSHOT_STEP_BYTES = 8 * 1024;
-const MAX_INPUT_BYTES = 500 * 1024 * 1024;
 const MAX_PACKET_BYTES = 16 * 1024 * 1024 - 1024;
 const PACKET_WINDOW_BYTES = 64 * 1024;
 const MAX_WASM_CAPACITY_BYTES = 64 * 1024 * 1024;
@@ -344,6 +349,12 @@ export class OwnedDemuxSession {
     return this.indexInfo.seekWorkspaceBytes;
   }
 
+  get reconstructsPackets(): boolean {
+    if (!this.active || !this.ready || !this.indexInfo)
+      throw new Error('Owned demux index unavailable');
+    return this.indexInfo.reconstructs;
+  }
+
   get transferStats(): OwnedDemuxTransferStats {
     const readCredit = ownedReadCreditStats();
     return {
@@ -372,7 +383,7 @@ export class OwnedDemuxSession {
             size: source.byteLength,
             slice: (start, end) => ({ arrayBuffer: async () => source.slice(start, end) }),
           };
-    if (rangeSource.size < 8 || rangeSource.size > MAX_INPUT_BYTES)
+    if (rangeSource.size < 8 || rangeSource.size > ownedInputLimit(source))
       throw new Error('Owned demux input size limit exceeded');
     const instance = new WebAssembly.Instance(module, {});
     const exports = instance.exports as unknown as Record<string, unknown>;
@@ -557,6 +568,15 @@ export class OwnedDemuxSession {
     this.snapshotOperation = true;
     try {
       signal?.throwIfAborted();
+      if (this.source.size > MAX_FILE_SIZE) {
+        const prefix = await readOwnedRange(this.source, 0, EXTENDED_MP4_HEADER_BYTES, signal);
+        this.rangeReads++;
+        this.sourceReadBytes += prefix.byteLength;
+        if (!hasExtendedMp4Prefix(new Uint8Array(prefix), this.source.size))
+          throw new Error('Owned demux snapshot source is not range-backed MP4');
+      }
+      signal?.throwIfAborted();
+      if (!this.active) throw new Error('Owned demux session released');
       const bytes = new Uint8Array(snapshot);
       if (bytes.byteLength < 64 + 64 + 40 + 4 || bytes.byteLength > MAX_SNAPSHOT_BYTES)
         throw new Error('Owned demux snapshot size invalid');
@@ -867,10 +887,50 @@ export class OwnedDemuxSession {
     return this.readPacketInternal(packet, signal, false);
   }
 
+  async verifyVisibleVp9Key(packet: OwnedDemuxPacket, signal?: AbortSignal): Promise<boolean> {
+    const prefixLength = 4;
+    if (
+      !this.sourceIsBlob ||
+      packet.sourceEnd !== null ||
+      !packet.key ||
+      packet.byteLength <= prefixLength
+    )
+      return false;
+    const [header, sync0, sync1, sync2] = new Uint8Array(
+      await this.readPacketInternal(packet, signal, false, 'vp9-prefix')
+    );
+    // Frame marker 2, profile 0, no show-existing, key frame, and show-frame.
+    return (
+      header !== undefined &&
+      (header & 0xfe) === 0x82 &&
+      sync0 === 0x49 &&
+      sync1 === 0x83 &&
+      sync2 === 0x42
+    );
+  }
+
+  /** Limit the eager scan to 32 indexed packets and at most 160 source bytes. */
+  async verifyStandaloneVp9Keys(startIndex: number, signal?: AbortSignal): Promise<boolean> {
+    const packetCount = this.indexInfo?.packetCount ?? 0;
+    if (!this.sourceIsBlob || startIndex >= packetCount || packetCount - startIndex > 32)
+      return false;
+    for (let index = startIndex; index < packetCount; index++) {
+      const packet = await this.packetAsync(index, signal);
+      if (!(await this.verifyVisibleVp9Key(packet, signal))) return false;
+      const [tail] = new Uint8Array(
+        await this.readPacketInternal(packet, signal, false, 'vp9-suffix')
+      );
+      // Leave packets with any possible superframe index on the pressure path.
+      if (tail === undefined || (tail & 0xe0) === 0xc0) return false;
+    }
+    return true;
+  }
+
   private async readPacketInternal(
     packet: OwnedDemuxPacket,
     signal: AbortSignal | undefined,
-    fromSeek: boolean
+    fromSeek: boolean,
+    probe?: 'vp9-prefix' | 'vp9-suffix'
   ): Promise<ArrayBuffer> {
     if (
       !this.active ||
@@ -912,10 +972,22 @@ export class OwnedDemuxSession {
         start + packet.byteLength > this.source.size
       )
         throw new Error('Owned demux packet range invalid');
-      const data = await this.readOrdinaryPacket(start, packet.byteLength, signal);
-      this.packetReadBytes += data.byteLength;
+      const readStart = probe === 'vp9-suffix' ? start + packet.byteLength - 1 : start;
+      const length = probe === 'vp9-prefix' ? 4 : probe === 'vp9-suffix' ? 1 : packet.byteLength;
+      // The pressure probe uses existing realm credit for an exact range read.
+      // It can never fill a window or read the full packet before admission.
+      const data =
+        probe === undefined
+          ? await this.readOrdinaryPacket(start, length, signal)
+          : await readOwnedRange(this.source, readStart, readStart + length, signal);
+      if (probe === undefined) {
+        this.packetReadBytes += data.byteLength;
+      } else {
+        this.rangeReads++;
+        this.sourceReadBytes += data.byteLength;
+      }
       signal?.throwIfAborted();
-      if (!this.active || data.byteLength !== packet.byteLength)
+      if (!this.active || data.byteLength !== length)
         throw new Error('Owned demux packet read invalidated');
       return data;
     } catch (error) {

@@ -40,8 +40,10 @@ function paletteIsValid(palette: Palette): boolean {
 
 /** Opaque full-frame GIF89a records only; timing and palette policy belong to the service. */
 export class OwnedGifWriter {
-  private buffer: Uint8Array;
+  private buffer: Uint8Array<ArrayBuffer>;
   private cursor = 0;
+  private sealedBytes = 0;
+  private readonly segments: Blob[] | null;
   private initialized = false;
   private finished = false;
   private readonly repeat: number | null;
@@ -52,7 +54,8 @@ export class OwnedGifWriter {
     private readonly maxOutputBytes: number,
     private readonly assertPeak: (bytes: number) => void,
     private readonly compress: (indices: Uint8Array, depth: number) => Uint8Array,
-    playCount = 0
+    playCount = 0,
+    segmented = false
   ) {
     this.repeat = toGifRepeat(playCount);
     if (
@@ -62,6 +65,7 @@ export class OwnedGifWriter {
     ) {
       throw new OutputLimitError('gif', 'byte', maxOutputBytes);
     }
+    this.segments = segmented ? [] : null;
     this.buffer = new Uint8Array(initialCapacity);
     const owner = this;
     this.stream = {
@@ -69,6 +73,22 @@ export class OwnedGifWriter {
         return owner.buffer.buffer as ArrayBuffer;
       },
     };
+  }
+
+  get retainedBytes(): number {
+    return this.sealedBytes + this.buffer.byteLength;
+  }
+
+  private sealSegment(): void {
+    const peakBytes = this.retainedBytes + this.cursor;
+    if (peakBytes > this.maxOutputBytes) {
+      throw new OutputLimitError('gif', 'byte', this.maxOutputBytes);
+    }
+    this.assertPeak(peakBytes);
+    // Blob takes a snapshot. The same mutable staging buffer can then be reused.
+    this.segments!.push(new Blob([this.buffer.subarray(0, this.cursor)]));
+    this.sealedBytes += this.cursor;
+    this.cursor = 0;
   }
 
   private reserve(length: number): void {
@@ -99,7 +119,11 @@ export class OwnedGifWriter {
   }
 
   private byte(value: number): void {
-    this.reserve(1);
+    if (this.segments) {
+      if (this.cursor === this.buffer.byteLength) this.sealSegment();
+    } else {
+      this.reserve(1);
+    }
     this.buffer[this.cursor++] = value;
   }
 
@@ -261,9 +285,24 @@ export class OwnedGifWriter {
     const local = (!first || globalPalette) && palette;
     this.byte(local ? 0x80 | (tableDepth(local) - 1) : 0);
     if (local) this.table(local);
-    this.reserve(compressed.byteLength);
-    this.buffer.set(compressed, this.cursor);
-    this.cursor += compressed.byteLength;
+    this.writeImageData(compressed);
+  }
+
+  private writeImageData(compressed: Uint8Array): void {
+    if (!this.segments) {
+      this.reserve(compressed.byteLength);
+      this.buffer.set(compressed, this.cursor);
+      this.cursor += compressed.byteLength;
+      return;
+    }
+    let offset = 0;
+    while (offset < compressed.byteLength) {
+      if (this.cursor === this.buffer.byteLength) this.sealSegment();
+      const length = Math.min(this.buffer.byteLength - this.cursor, compressed.byteLength - offset);
+      this.buffer.set(compressed.subarray(offset, offset + length), this.cursor);
+      offset += length;
+      this.cursor += length;
+    }
   }
 
   finish(): void {
@@ -272,7 +311,20 @@ export class OwnedGifWriter {
     this.finished = true;
   }
 
+  takeBlob(): Blob {
+    if (!this.finished || !this.segments || (!this.segments.length && !this.cursor)) {
+      throw new RangeError('Invalid owned GIF Blob finalization');
+    }
+    if (this.cursor) this.sealSegment();
+    const output = new Blob(this.segments, { type: 'image/gif' });
+    this.segments.length = 0;
+    this.sealedBytes = 0;
+    this.buffer = new Uint8Array(0);
+    return output;
+  }
+
   bytesView(): Uint8Array {
+    if (this.segments) throw new RangeError('GIF writer has segmented storage');
     return this.buffer.subarray(0, this.cursor);
   }
   bytes(): Uint8Array {
