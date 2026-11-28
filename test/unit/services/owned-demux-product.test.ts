@@ -68,6 +68,33 @@ describe('actual compiled owned demux product routes', () => {
     expect(metadata.config).toMatchObject({ codec: 'avc1.42c00a' });
   });
 
+  it('seeks transport-clock TS from the start of the file presentation', async () => {
+    const source = fixture('avc.ts');
+    const metadata = await extractVideoMetadata(source);
+    expect(metadata.duration).toBe(2);
+    const result = await demuxVideo(
+      {
+        inputBlob: source,
+        fileName: 'avc.ts',
+        format: 'gif',
+        quality: 'medium',
+        scale: 1,
+        trimStart: 0.4,
+        trimEnd: 1.6,
+        maxMemoryMB: 512,
+      },
+      { ...metadata, duration: 3.7333333333333334 }
+    );
+    expect(result.duration).toBe(2);
+    const timestamps: number[] = [];
+    for await (const chunk of result.chunks) timestamps.push(chunk.timestamp);
+    expect(timestamps[0]).toBe(0);
+    expect(timestamps).toHaveLength(12);
+    expect(timestamps.some((pts, index) => index > 0 && pts < timestamps[index - 1]!)).toBe(true);
+    expect(result.trimStartUs).toBe(400_000);
+    expect(result.trimEndUs).toBe(1_600_000);
+  });
+
   it('streams B-frame dependencies after trimEnd in decode order', async () => {
     const source = fixture('avc-bframes.mp4');
     const request: ConversionRequest = {
