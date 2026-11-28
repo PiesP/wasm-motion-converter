@@ -109,6 +109,7 @@ const App: Component = () => {
     requestedGifStorage === 'opfs' &&
     window.isSecureContext &&
     typeof navigator.storage?.getDirectory === 'function' &&
+    typeof navigator.locks?.request === 'function' &&
     typeof window.FileSystemFileHandle?.prototype.createWritable === 'function';
   const experimentalGifPartStorage =
     continuousGif ||

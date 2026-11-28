@@ -8,12 +8,16 @@ import {
   GIF_MAX_OUTPUT_FRAMES,
   GIF_MIN_FRAME_DELAY_MS,
 } from '@utils/constants';
+import { logger } from '@utils/logger';
 
 import type { GifOutputPart } from './gif-encoder-service';
+import { acquireGifOutputLease } from './gif-output-lease';
 import type { GifPartIndexedDbSink } from './gif-part-indexed-db-sink';
 
 const WRITE_BYTES = BYTES_PER_MB;
 const MAX_STAGED_BYTES = 512 * BYTES_PER_MB;
+const OWNED_FILE =
+  /^dropconvert-gif-opfs-[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}\.gif$/;
 const MAGIC = new TextEncoder().encode('GIF89a');
 const LOOP_START = Uint8Array.of(0x21, 0xff, 11, ...new TextEncoder().encode('NETSCAPE2.0'), 3, 1);
 const TRAILER = Uint8Array.of(0x3b);
@@ -135,20 +139,48 @@ async function removeFile(directory: FileSystemDirectoryHandle, name: string): P
   }
 }
 
+async function reclaimAbandonedFiles(directory: FileSystemDirectoryHandle): Promise<void> {
+  try {
+    for await (const entry of directory.values()) {
+      const { name } = entry;
+      if (entry.kind !== 'file' || !OWNED_FILE.test(name)) continue;
+      try {
+        await navigator.locks.request(name, { ifAvailable: true }, async (lock) => {
+          if (lock) await removeFile(directory, name);
+        });
+      } catch {
+        logger.warn('conversion', 'Unable to remove abandoned continuous GIF output');
+      }
+    }
+  } catch {
+    logger.warn('conversion', 'Unable to inspect abandoned continuous GIF output');
+  }
+}
+
 /** Experimental single-file output that owns each transferred part only until its writes settle. */
 export async function createGifPartOpfsSink(): Promise<GifPartIndexedDbSink> {
   const directory = await navigator.storage.getDirectory();
+  await reclaimAbandonedFiles(directory);
   const name = `dropconvert-gif-opfs-${crypto.randomUUID()}.gif`;
-  const handle = await directory.getFileHandle(name, { create: true });
+  const releaseLease = await acquireGifOutputLease(name);
+  let handle: FileSystemFileHandle;
   let stream: FileSystemWritableFileStream | undefined;
   try {
+    handle = await directory.getFileHandle(name, { create: true });
     stream = await handle.createWritable();
   } catch (cause) {
+    const errors = [cause];
     try {
       await removeFile(directory, name);
-    } catch (cleanupError) {
-      throw new AggregateError([cause, cleanupError], 'Unable to open or remove staged GIF output');
+    } catch (error) {
+      errors.push(error);
     }
+    try {
+      await releaseLease();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length > 1) throw new AggregateError(errors, 'Unable to prepare staged GIF output');
     throw cause;
   }
 
@@ -192,6 +224,11 @@ export async function createGifPartOpfsSink(): Promise<GifPartIndexedDbSink> {
       }
       try {
         await removeFile(directory, name);
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await releaseLease();
       } catch (error) {
         errors.push(error);
       }

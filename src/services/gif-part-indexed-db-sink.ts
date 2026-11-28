@@ -6,6 +6,7 @@ import { logger } from '@utils/logger';
 
 import { validateOutput } from './error-recovery';
 import type { GifOutputPart } from './gif-encoder-service';
+import { acquireGifOutputLease } from './gif-output-lease';
 
 const CHUNKS = 'chunks';
 const DATABASE_PREFIX = 'dropconvert-gif-v2-';
@@ -72,23 +73,6 @@ async function clearAbandonedStores(): Promise<void> {
   }
 }
 
-function acquireStoreLease(name: string): Promise<() => Promise<void>> {
-  return new Promise((resolve, reject) => {
-    let release!: () => void;
-    const hold = new Promise<void>((done) => {
-      release = done;
-    });
-    const task = navigator.locks.request(name, async () => {
-      resolve(async () => {
-        release();
-        await task;
-      });
-      await hold;
-    });
-    void task.catch(reject);
-  });
-}
-
 function transact<Value>(
   database: IDBDatabase,
   mode: IDBTransactionMode,
@@ -127,7 +111,7 @@ export async function createGifPartIndexedDbSink(): Promise<GifPartIndexedDbSink
   const databaseName = DATABASE_PREFIX + scope;
   const token = scope.replaceAll('-', '').slice(0, 16);
   await clearAbandonedStores();
-  const releaseLease = await acquireStoreLease(databaseName);
+  const releaseLease = await acquireGifOutputLease(databaseName);
   let database: IDBDatabase;
   try {
     database = await openDatabase(databaseName);
