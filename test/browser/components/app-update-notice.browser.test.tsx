@@ -153,3 +153,29 @@ it('cleans up a registration that resolves after its owner is disposed', async (
   await Promise.resolve();
   expect(registration.cleanup).toHaveBeenCalledTimes(1);
 });
+
+it('keeps staged downloads protected until their independent discard settles', async () => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const [staged, setStaged] = createSignal(true);
+  dispose = render(
+    () => (
+      <AppUpdateNotice
+        busy={false}
+        hasResults={false}
+        hasStagedResults={staged()}
+        onClearResults={() => {}}
+        t={(key) => key}
+      />
+    ),
+    container
+  );
+  await Promise.resolve();
+  registration.deploymentUpdate();
+  const reload = container.querySelector<HTMLButtonElement>('[data-testid="app-recovery-reload"]')!;
+  expect(reload.disabled).toBe(true);
+  expect(container.textContent).toContain('update.download');
+  expect(container.textContent).not.toContain('update.clearResults');
+  setStaged(false);
+  expect(reload.disabled).toBe(false);
+});

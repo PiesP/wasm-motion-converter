@@ -18,6 +18,8 @@ import type {
 import { validateOutput } from '@services/error-recovery';
 import { resolveVideoDimensions } from '@services/frame-utils';
 import { createGifPartFileSink, selectGifPartDirectory } from '@services/gif-part-file-sink';
+import type { GifPartOpfsSink } from '@services/gif-part-opfs-sink';
+import { GifStagedOutputLimitError } from '@services/gif-staged-output-limit-error';
 import { clearOwnedInputSelection } from '@services/owned-input-index-cache';
 import {
   ownedVp8FailureKind,
@@ -259,7 +261,8 @@ export async function handleConvert(
 export async function handleConvertGifParts(
   runtime: ConversionRuntimeController,
   t: TFunction,
-  report: (message: string) => void
+  report: (message: string) => void,
+  retainStoredGif?: (sink: GifPartOpfsSink) => boolean
 ): Promise<void> {
   const file = inputFile();
   const metadata = videoMetadata();
@@ -279,12 +282,20 @@ export async function handleConvertGifParts(
   if (!intent) return;
   const { signal, isActive } = intent;
   let sink: ReturnType<typeof createGifPartFileSink> | undefined;
+  let stored: GifPartOpfsSink | undefined;
   let started = false;
   let completed = false;
-  let failureMessage: 'error.memory' | 'error.gifPartsSaveFailed' | undefined;
+  const storageFailureMessage = retainStoredGif
+    ? 'error.gifPartsStorageFailed'
+    : 'error.gifPartsSaveFailed';
+  let failure:
+    | 'error.memory'
+    | typeof storageFailureMessage
+    | GifStagedOutputLimitError
+    | undefined;
   try {
     // Reach the native picker in the trusted click's task, before async preparation.
-    const destination = await selectGifPartDirectory();
+    const destination = retainStoredGif ? undefined : await selectGifPartDirectory();
     if (!isActive()) return;
 
     const { serializedConfig, serializedOptions } = serializeConversionInputs(
@@ -294,7 +305,7 @@ export async function handleConvertGifParts(
     );
     if (!serializedConfig) throw new Error('Unable to determine video configuration');
 
-    sink = createGifPartFileSink(destination);
+    if (destination) sink = createGifPartFileSink(destination);
     batch(() => {
       setErrorContext(null);
       setErrorMessage(null);
@@ -305,41 +316,56 @@ export async function handleConvertGifParts(
     });
     started = true;
     runtime.startMemoryMonitoring();
+    if (retainStoredGif) {
+      const { createGifPartOpfsSink } = await import('@services/gif-part-opfs-sink');
+      signal.throwIfAborted();
+      stored = await createGifPartOpfsSink();
+    }
+    signal.throwIfAborted();
+    const output = sink ?? stored;
+    if (!output) throw new Error('Unable to open GIF part storage');
     const summary = await runGifPartsViaWorker(
       file,
       serializedConfig,
       serializedOptions,
       createProgressCallback(isActive, runtime, t),
-      sink.save,
+      output.save,
       signal,
       metadata.duration,
       metadata.framerate
     );
     signal.throwIfAborted();
-    if (summary.partCount !== sink.count)
+    if (summary.partCount !== output.count)
       throw new Error('GIF part count does not match saved files');
-    await sink.finish(signal);
+    await output.finish(signal);
     completed = true;
   } catch (error) {
     if (!signal.aborted && (started || !isCancellationError(error))) {
-      failureMessage =
-        started && error instanceof WorkerMemoryLimitError
-          ? 'error.memory'
-          : 'error.gifPartsSaveFailed';
+      if (started && error instanceof WorkerMemoryLimitError) {
+        failure = 'error.memory';
+      } else if (retainStoredGif && error instanceof GifStagedOutputLimitError) {
+        failure = error;
+      } else {
+        failure = storageFailureMessage;
+      }
       logger.warn('conversion', 'GIF part conversion did not finish', {
         error: getErrorMessage(error),
       });
     }
   } finally {
+    const currentInput = inputFile() === file;
+    const retained =
+      stored?.ready && currentInput && completed && !signal.aborted && retainStoredGif?.(stored);
     try {
       await sink?.removeEmptyFolder();
+      if (stored && !retained) await stored.dispose();
     } catch (error) {
-      failureMessage = 'error.gifPartsSaveFailed';
+      failure = storageFailureMessage;
       logger.warn('conversion', 'GIF part folder cleanup failed', {
         error: getErrorMessage(error),
       });
     }
-    if (inputFile() === file) {
+    if (currentInput && inputFile() === file) {
       if (sink && sink.count > 0) {
         report(
           t(completed ? 'result.gifPartsSaved' : 'result.gifPartsPartial', {
@@ -347,8 +373,12 @@ export async function handleConvertGifParts(
             folder: sink.folderName,
           })
         );
-      } else if (failureMessage) {
-        report(t(failureMessage));
+      } else if (retained) {
+        report(t('result.continuousGifStored'));
+      } else if (failure instanceof GifStagedOutputLimitError) {
+        report(t('error.gifContinuousOutputLimit', { limitMiB: failure.limitMiB }));
+      } else if (failure) {
+        report(t(failure));
       }
     }
     if (started && isActive()) {

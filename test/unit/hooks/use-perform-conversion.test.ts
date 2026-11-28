@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   selectedFile: null as File | null,
   selectGifPartDirectory: vi.fn(),
   createGifPartFileSink: vi.fn(),
+  createGifPartOpfsSink: vi.fn(),
   runGifPartsViaWorker: vi.fn(),
   runPipelineWithFallback: vi.fn(),
   runConversionPipeline: vi.fn(),
@@ -87,6 +88,9 @@ vi.mock('@services/gif-part-file-sink', () => ({
   createGifPartFileSink: mocks.createGifPartFileSink,
   selectGifPartDirectory: mocks.selectGifPartDirectory,
 }));
+vi.mock('@services/gif-part-opfs-sink', () => ({
+  createGifPartOpfsSink: mocks.createGifPartOpfsSink,
+}));
 vi.mock('@services/conversion-pipeline', () => ({
   runConversionPipeline: mocks.runConversionPipeline,
 }));
@@ -106,6 +110,7 @@ import {
   WorkerPipelineError,
   WorkerTimeoutError,
 } from '@services/conversion-worker/main-thread-proxy';
+import { GifStagedOutputLimitError } from '@services/gif-staged-output-limit-error';
 import {
   OwnedVp8AbiError,
   OwnedVp8InitializationAbiError,
@@ -144,6 +149,7 @@ beforeEach(() => {
   Object.defineProperty(mocks.selectedFile, 'arrayBuffer', { value: mocks.readWholeFile });
   mocks.selectGifPartDirectory.mockReset();
   mocks.createGifPartFileSink.mockReset();
+  mocks.createGifPartOpfsSink.mockReset();
   mocks.runGifPartsViaWorker.mockReset();
   mocks.setInputFile.mockClear();
   mocks.setConversionResults.mockClear();
@@ -259,6 +265,85 @@ it('reports completed GIF parts when the manifest close wins a racing Stop', asy
     await conversion;
   }
   expect(report).toHaveBeenCalledWith('result.gifPartsSaved');
+  expect(mocks.appState).toBe('idle');
+  runtime.dispose();
+});
+
+it.each([
+  {
+    outcome: 'application staging limit',
+    error: new GifStagedOutputLimitError(512),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    message: 'error.gifContinuousOutputLimit',
+  },
+  {
+    outcome: 'native quota failure',
+    error: new DOMException('Origin quota exhausted', 'QuotaExceededError'),
+    dispose: vi.fn().mockResolvedValue(undefined),
+    message: 'error.gifPartsStorageFailed',
+  },
+  {
+    outcome: 'storage cleanup failure after hitting the staging limit',
+    error: new GifStagedOutputLimitError(512),
+    dispose: vi.fn().mockRejectedValue(new DOMException('Removal failed', 'InvalidStateError')),
+    message: 'error.gifPartsStorageFailed',
+  },
+])('reports the $outcome after discarding incomplete OPFS output', async (testCase) => {
+  const storage = {
+    count: 1,
+    ready: false,
+    save: vi.fn(),
+    finish: vi.fn(),
+    dispose: testCase.dispose,
+  };
+  mocks.createGifPartOpfsSink.mockResolvedValue(storage);
+  mocks.runGifPartsViaWorker.mockRejectedValue(testCase.error);
+  const runtime = createRuntime();
+  const report = vi.fn();
+  const t = vi.fn(localizedProgressT);
+  const retain = vi.fn(() => true);
+
+  try {
+    await conversionModule.handleConvertGifParts(runtime, t, report, retain);
+    expect(report).toHaveBeenCalledExactlyOnceWith(testCase.message);
+    if (testCase.message === 'error.gifContinuousOutputLimit') {
+      expect(t).toHaveBeenCalledWith(testCase.message, { limitMiB: 512 });
+    }
+    expect(storage.dispose).toHaveBeenCalledOnce();
+    expect(storage.finish).not.toHaveBeenCalled();
+    expect(retain).not.toHaveBeenCalled();
+    expect(mocks.appState).toBe('idle');
+  } finally {
+    runtime.dispose();
+  }
+});
+
+it('discards the incomplete OPFS result on Stop without opening a directory picker', async () => {
+  const worker = Promise.withResolvers<never>();
+  const storage = { count: 1, ready: false, save: vi.fn(), finish: vi.fn(), dispose: vi.fn() };
+  mocks.createGifPartOpfsSink.mockResolvedValue(storage);
+  mocks.runGifPartsViaWorker.mockReturnValue(worker.promise);
+  const runtime = createRuntime();
+  const report = vi.fn();
+  const retain = vi.fn(() => true);
+  const conversion = conversionModule.handleConvertGifParts(
+    runtime,
+    localizedProgressT,
+    report,
+    retain
+  );
+  try {
+    await vi.waitFor(() => expect(mocks.runGifPartsViaWorker).toHaveBeenCalledOnce());
+    handleCancelConversion(runtime);
+  } finally {
+    worker.reject(new DOMException('Cancelled', 'AbortError'));
+    await conversion;
+  }
+  expect(retain).not.toHaveBeenCalled();
+  expect(report).not.toHaveBeenCalled();
+  expect(mocks.selectGifPartDirectory).not.toHaveBeenCalled();
+  expect(storage.finish).not.toHaveBeenCalled();
+  expect(storage.dispose).toHaveBeenCalledOnce();
   expect(mocks.appState).toBe('idle');
   runtime.dispose();
 });

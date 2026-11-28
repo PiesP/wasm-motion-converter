@@ -23,6 +23,7 @@ interface SettingsPanelProps {
   metadata: VideoMetadata | null;
   onConvert: () => void;
   onConvertGifParts?: (() => void) | undefined;
+  continuousGif?: boolean;
   gifPartsStatus?: string | undefined;
   onCancel: () => void;
   onFormatChange: (format: ConversionSettings['format']) => void;
@@ -53,6 +54,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     'metadata',
     'onConvert',
     'onConvertGifParts',
+    'continuousGif',
     'gifPartsStatus',
     'onCancel',
     'onFormatChange',
@@ -192,7 +194,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
               variant="ghost"
               data-testid="convert-gif-parts-button"
             >
-              {t('settings.saveGifParts')}
+              {t(local.continuousGif ? 'settings.storeContinuousGif' : 'settings.saveGifParts')}
             </Button>
           )}
         </Show>

@@ -6,6 +6,7 @@ import AppUpdateNotice from '@components/AppUpdateNotice';
 import ConfirmationModal from '@components/ConfirmationModal';
 import ExportLogsButton from '@components/ExportLogsButton';
 import FileDropzone from '@components/FileDropzone';
+import GifPartDownloads from '@components/GifPartDownloads';
 import LanguageSelector from '@components/LanguageSelector';
 import LicenseAttribution from '@components/LicenseAttribution';
 import MemoryWarning from '@components/MemoryWarning';
@@ -19,6 +20,7 @@ import { useNetworkState } from '@hooks/use-network-state';
 import { debounce } from '@piesp/browser-core/async';
 import { getErrorMessage } from '@piesp/browser-core/error';
 import { supportsGifPartSaving } from '@services/gif-part-file-sink';
+import type { GifPartOpfsSink } from '@services/gif-part-opfs-sink';
 import { dismissConfirmation } from '@stores/confirmation-store';
 import {
   conversionSettings,
@@ -100,6 +102,15 @@ const App: Component = () => {
   let prepareTrimSubmission: (() => boolean) | undefined;
   const [playCountValid, setPlayCountValid] = createSignal(true);
   const [gifPartsStatus, setGifPartsStatus] = createSignal('');
+  const [storedGif, setStoredGif] = createSignal<GifPartOpfsSink>();
+  const nativeGifPartSaving = supportsGifPartSaving();
+  const requestedGifStorage = new URLSearchParams(window.location.search).get('gif-part-storage');
+  const continuousGif =
+    requestedGifStorage === 'opfs' &&
+    window.isSecureContext &&
+    typeof navigator.storage?.getDirectory === 'function' &&
+    typeof navigator.locks?.request === 'function' &&
+    typeof window.FileSystemFileHandle?.prototype.createWritable === 'function';
   createEffect(() => {
     inputFile();
     setGifPartsStatus('');
@@ -183,6 +194,14 @@ const App: Component = () => {
 
   onCleanup(() => {
     disposed = true;
+    const storage = storedGif();
+    if (storage) {
+      void storage.dispose().catch((error) => {
+        logger.warn('conversion', 'GIF part storage cleanup failed', {
+          error: getErrorMessage(error),
+        });
+      });
+    }
     clearAssetFailure();
     // Revoke video preview blob URL to prevent memory leak on unmount
     const url = videoPreviewUrl();
@@ -310,11 +329,21 @@ const App: Component = () => {
   };
 
   const saveGifParts = (): void => {
+    if (storedGif()) return;
     if (!prepareOutputSettings()) return;
     setGifPartsStatus('');
-    void handleConvertGifParts((message) => {
-      if (!disposed) setGifPartsStatus(message);
-    });
+    void handleConvertGifParts(
+      (message) => {
+        if (!disposed) setGifPartsStatus(message);
+      },
+      continuousGif
+        ? (storage) => {
+            if (disposed) return false;
+            setStoredGif(storage);
+            return true;
+          }
+        : undefined
+    );
   };
 
   const clearResultsForReload = (): void => {
@@ -370,6 +399,7 @@ const App: Component = () => {
         <AppUpdateNotice
           busy={isBusy()}
           hasResults={conversionResults().length > 0}
+          hasStagedResults={storedGif() !== undefined}
           onClearResults={clearResultsForReload}
           t={t}
         />
@@ -394,6 +424,7 @@ const App: Component = () => {
               busy={isBusy()}
               cancelling={appState() === 'cancelling'}
               results={conversionResults()}
+              hasStagedResults={storedGif() !== undefined}
               onCancel={cancelForRecovery}
               onClearResults={clearResultsForReload}
             />
@@ -473,7 +504,9 @@ const App: Component = () => {
                 metadata={videoMetadata()}
                 onCancel={cancelConversion}
                 onConvert={handleConvertWithMemoryCheck}
-                onConvertGifParts={supportsGifPartSaving() ? saveGifParts : undefined}
+                onConvertGifParts={
+                  (continuousGif ? !storedGif() : nativeGifPartSaving) ? saveGifParts : undefined
+                }
                 onFormatChange={(format) =>
                   setConversionSettings({ ...conversionSettings(), format })
                 }
@@ -492,6 +525,7 @@ const App: Component = () => {
                   setConversionSettings({ ...conversionSettings(), smartFrameSkip: mode })
                 }
                 settings={conversionSettings()}
+                continuousGif={continuousGif}
               />
             </div>
           </div>
@@ -502,6 +536,19 @@ const App: Component = () => {
             onPreviewHidden={() => setPreferResultPreviewHidden(true)}
           />
         </ErrorBoundary>
+        <Show when={storedGif()} keyed>
+          {(storage) => (
+            <GifPartDownloads
+              storage={storage}
+              busy={isBusy()}
+              onDiscard={() => {
+                if (storedGif() !== storage) return;
+                setStoredGif(undefined);
+                setGifPartsStatus('');
+              }}
+            />
+          )}
+        </Show>
       </main>
 
       <LicenseAttribution />
